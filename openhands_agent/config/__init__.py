@@ -1,1 +1,1 @@
-"""Hydra configuration package for the OpenHands agent."""
+'''Hydra configuration package for the OpenHands agent.'''

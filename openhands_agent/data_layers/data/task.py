@@ -1,10 +1,15 @@
-from __future__ import annotations
+from sqlalchemy import Column, Text, VARCHAR
 
-from pydantic import BaseModel
+from core_lib.data_layers.data.db.sqlalchemy.base import Base
 
 
-class Task(BaseModel):
-    id: str
-    summary: str
-    description: str
-    branch_name: str
+class Task(Base):
+    __tablename__ = 'task'
+
+    id = Column(VARCHAR(length=255), primary_key=True)
+    summary = Column(VARCHAR(length=255), nullable=False)
+    description = Column(Text)
+    branch_name = Column(VARCHAR(length=255), nullable=False)
+
+    def __eq__(self, other) -> bool:
+        return type(self) is type(other) and self.__dict__ == other.__dict__

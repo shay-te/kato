@@ -1,8 +1,5 @@
-from __future__ import annotations
-
-from pydantic import ValidationError
-
 from openhands_agent.data_layers.data.review_comment import ReviewComment
+from openhands_agent.data_layers.data.task import Task
 from openhands_agent.data_layers.data_access.implementation_data_access import ImplementationDataAccess
 from openhands_agent.data_layers.data_access.pull_request_data_access import PullRequestDataAccess
 from openhands_agent.data_layers.data_access.task_data_access import TaskDataAccess
@@ -26,36 +23,41 @@ class AgentService:
 
         for task in tasks:
             execution = self.implementation_data_access.implement_task(task)
-            if not execution["success"]:
+            if not execution['success']:
                 continue
 
             pr = self.pull_request_data_access.create_pull_request(
-                title=f"{task.id}: {task.summary}",
-                source_branch=str(execution["branch_name"]),
-                description=str(execution["summary"]),
+                title=f'{task.id}: {task.summary}',
+                source_branch=str(execution[Task.branch_name.key]),
+                description=str(execution[Task.summary.key]),
             )
-            self.pull_request_branch_map[pr["id"]] = str(execution["branch_name"])
-            self.task_data_access.add_pull_request_comment(task.id, pr["url"])
+            self.pull_request_branch_map[pr['id']] = str(execution[Task.branch_name.key])
+            self.task_data_access.add_pull_request_comment(task.id, pr['url'])
             results.append(pr)
 
         return results
 
     def handle_pull_request_comment(self, payload: dict) -> dict[str, str]:
         try:
-            comment = ReviewComment.model_validate(payload)
-        except ValidationError as exc:
-            raise ValueError(f"invalid review comment payload: {exc}") from exc
+            comment = ReviewComment(
+                pull_request_id=str(payload[ReviewComment.pull_request_id.key]),
+                comment_id=str(payload[ReviewComment.comment_id.key]),
+                author=str(payload[ReviewComment.author.key]),
+                body=str(payload[ReviewComment.body.key]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f'invalid review comment payload: {exc}') from exc
 
         branch_name = self.pull_request_branch_map.get(comment.pull_request_id)
         if not branch_name:
-            raise ValueError(f"unknown pull request id: {comment.pull_request_id}")
+            raise ValueError(f'unknown pull request id: {comment.pull_request_id}')
 
         execution = self.implementation_data_access.fix_review_comment(comment, branch_name)
-        if not execution["success"]:
-            raise RuntimeError(f"failed to address comment {comment.comment_id}")
+        if not execution['success']:
+            raise RuntimeError(f'failed to address comment {comment.comment_id}')
 
         return {
-            "status": "updated",
-            "pull_request_id": comment.pull_request_id,
-            "branch_name": branch_name,
+            'status': 'updated',
+            ReviewComment.pull_request_id.key: comment.pull_request_id,
+            Task.branch_name.key: branch_name,
         }

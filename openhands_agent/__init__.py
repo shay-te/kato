@@ -1,1 +1,1 @@
-"""OpenHands YouTrack agent built on core-lib."""
+'''OpenHands YouTrack agent built on core-lib.'''

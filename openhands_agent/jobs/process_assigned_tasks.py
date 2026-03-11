@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from core_lib.jobs.job import Job
 
 

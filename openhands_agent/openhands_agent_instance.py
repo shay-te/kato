@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from omegaconf import DictConfig
 
 from openhands_agent.openhands_agent_core_lib import OpenHandsAgentCoreLib
@@ -16,5 +14,5 @@ class OpenHandsAgentInstance:
     @staticmethod
     def get() -> OpenHandsAgentCoreLib:
         if OpenHandsAgentInstance._app_instance is None:
-            raise RuntimeError("OpenHandsAgentCoreLib is not initialized")
+            raise RuntimeError('OpenHandsAgentCoreLib is not initialized')
         return OpenHandsAgentInstance._app_instance

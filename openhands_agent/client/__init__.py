@@ -1,1 +1,1 @@
-"""Client integrations used by the OpenHands agent."""
+'''Client integrations used by the OpenHands agent.'''

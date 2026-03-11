@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import sys
 import types
 
@@ -59,6 +57,11 @@ def _install_core_lib_stubs() -> None:
     job_module.Job = Job
 
     core_lib_core_module = types.ModuleType("core_lib.core_lib")
+    core_lib_data_layers_module = types.ModuleType("core_lib.data_layers")
+    core_lib_data_module = types.ModuleType("core_lib.data_layers.data")
+    core_lib_db_module = types.ModuleType("core_lib.data_layers.data.db")
+    core_lib_sqlalchemy_module = types.ModuleType("core_lib.data_layers.data.db.sqlalchemy")
+    core_lib_base_module = types.ModuleType("core_lib.data_layers.data.db.sqlalchemy.base")
 
     class CoreLib:
         def __init__(self) -> None:
@@ -66,12 +69,65 @@ def _install_core_lib_stubs() -> None:
 
     core_lib_core_module.CoreLib = CoreLib
 
+    class Base:
+        def __init__(self, **kwargs) -> None:
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+    core_lib_base_module.Base = Base
+
     sys.modules["core_lib"] = core_lib_module
     sys.modules["core_lib.client"] = client_package
     sys.modules["core_lib.client.client_base"] = client_base_module
     sys.modules["core_lib.jobs"] = jobs_package
     sys.modules["core_lib.jobs.job"] = job_module
     sys.modules["core_lib.core_lib"] = core_lib_core_module
+    sys.modules["core_lib.data_layers"] = core_lib_data_layers_module
+    sys.modules["core_lib.data_layers.data"] = core_lib_data_module
+    sys.modules["core_lib.data_layers.data.db"] = core_lib_db_module
+    sys.modules["core_lib.data_layers.data.db.sqlalchemy"] = core_lib_sqlalchemy_module
+    sys.modules["core_lib.data_layers.data.db.sqlalchemy.base"] = core_lib_base_module
+
+
+def _install_sqlalchemy_stub() -> None:
+    if "sqlalchemy" in sys.modules:
+        return
+
+    sqlalchemy_module = types.ModuleType("sqlalchemy")
+
+    class _Type:
+        def __init__(self, *args, **kwargs) -> None:
+            self.args = args
+            self.kwargs = kwargs
+
+    class VARCHAR(_Type):
+        pass
+
+    class Text(_Type):
+        pass
+
+    class Column:
+        def __init__(self, column_type, *args, **kwargs) -> None:
+            self.column_type = column_type
+            self.args = args
+            self.kwargs = kwargs
+            self.key = None
+
+        def __set_name__(self, owner, name) -> None:
+            self.key = name
+
+        def __get__(self, instance, owner):
+            if instance is None:
+                return self
+            return instance.__dict__.get(self.key)
+
+        def __set__(self, instance, value) -> None:
+            instance.__dict__[self.key] = value
+
+    sqlalchemy_module.Column = Column
+    sqlalchemy_module.VARCHAR = VARCHAR
+    sqlalchemy_module.Text = Text
+    sys.modules["sqlalchemy"] = sqlalchemy_module
 
 
 def _install_omegaconf_stub() -> None:
@@ -118,5 +174,6 @@ def _install_pydantic_stub() -> None:
 
 
 _install_core_lib_stubs()
+_install_sqlalchemy_stub()
 _install_omegaconf_stub()
 _install_pydantic_stub()

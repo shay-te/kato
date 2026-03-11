@@ -1,1 +1,1 @@
-"""Domain models for the OpenHands agent."""
+'''Domain models for the OpenHands agent.'''

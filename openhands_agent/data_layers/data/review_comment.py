@@ -1,10 +1,15 @@
-from __future__ import annotations
+from sqlalchemy import Column, Text, VARCHAR
 
-from pydantic import BaseModel
+from core_lib.data_layers.data.db.sqlalchemy.base import Base
 
 
-class ReviewComment(BaseModel):
-    pull_request_id: str
-    comment_id: str
-    author: str
-    body: str
+class ReviewComment(Base):
+    __tablename__ = 'review_comment'
+
+    pull_request_id = Column(VARCHAR(length=255), primary_key=True)
+    comment_id = Column(VARCHAR(length=255), primary_key=True)
+    author = Column(VARCHAR(length=255), nullable=False)
+    body = Column(Text, nullable=False)
+
+    def __eq__(self, other) -> bool:
+        return type(self) is type(other) and self.__dict__ == other.__dict__
