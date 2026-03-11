@@ -2,8 +2,23 @@
 core_lib:
   app:
     name: openhands-agent
+  email_core_lib:
+    client:
+      _target_: email_core_lib.client.send_in_blue_client.SendInBlueClient
+      api_key: ${oc.env:EMIL_CORE_LIB_SEND_IN_BLUE_API_KEY,""}
+      slack_email_error_url: ${oc.env:SLACK_WEBHOOK_URL_ERRORS_EMAIL,""}
 
 openhands_agent:
+  retry:
+    max_retries: ${oc.env:OPENHANDS_AGENT_MAX_RETRIES,3}
+  failure_email:
+    enabled: ${oc.env:OPENHANDS_AGENT_FAILURE_EMAIL_ENABLED,false}
+    template_id: ${oc.env:OPENHANDS_AGENT_FAILURE_EMAIL_TEMPLATE_ID,0}
+    recipients:
+      - ${oc.env:OPENHANDS_AGENT_FAILURE_EMAIL_TO,""}
+    sender:
+      name: ${oc.env:OPENHANDS_AGENT_FAILURE_EMAIL_SENDER_NAME,"OpenHands Agent"}
+      email: ${oc.env:OPENHANDS_AGENT_FAILURE_EMAIL_SENDER_EMAIL,"noreply@example.com"}
   youtrack:
     base_url: ${oc.env:YOUTRACK_BASE_URL}
     token: ${oc.env:YOUTRACK_TOKEN}

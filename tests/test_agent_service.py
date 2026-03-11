@@ -137,3 +137,40 @@ class AgentServiceTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "failed to address comment 99"):
             self.service.handle_pull_request_comment(build_review_comment_payload())
+
+    def test_process_assigned_tasks_returns_empty_when_no_tasks_exist(self) -> None:
+        self.task_client.get_assigned_tasks.return_value = []
+
+        results = self.service.process_assigned_tasks()
+
+        self.assertEqual(results, [])
+        self.openhands_client.implement_task.assert_not_called()
+
+    def test_process_assigned_tasks_uses_task_branch_when_execution_payload_is_partial(self) -> None:
+        self.task_client.get_assigned_tasks.return_value = [build_task()]
+        self.openhands_client.implement_task.side_effect = None
+        self.openhands_client.implement_task.return_value = {
+            ImplementationFields.SUCCESS: True,
+        }
+
+        results = self.service.process_assigned_tasks()
+
+        self.assertEqual(results[0][PullRequestFields.ID], '17')
+        self.pull_request_client.create_pull_request.assert_called_once_with(
+            title='PROJ-1: Fix bug',
+            source_branch='feature/proj-1',
+            workspace='workspace',
+            repo_slug='repo',
+            destination_branch='main',
+            description='',
+        )
+
+    def test_process_assigned_tasks_skips_execution_without_success_flag(self) -> None:
+        self.task_client.get_assigned_tasks.return_value = [build_task()]
+        self.openhands_client.implement_task.side_effect = None
+        self.openhands_client.implement_task.return_value = {}
+
+        results = self.service.process_assigned_tasks()
+
+        self.assertEqual(results, [])
+        self.pull_request_client.create_pull_request.assert_not_called()

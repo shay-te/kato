@@ -30,6 +30,9 @@ def assert_client_headers_and_timeout(
 def build_test_cfg() -> types.SimpleNamespace:
     return types.SimpleNamespace(
         core_lib=types.SimpleNamespace(
+            app=types.SimpleNamespace(
+                name='openhands-agent',
+            ),
             data=types.SimpleNamespace(
                 sqlalchemy=types.SimpleNamespace(
                     db_name='openhands_agent',
@@ -45,9 +48,28 @@ def build_test_cfg() -> types.SimpleNamespace:
                         database=':memory:',
                     ),
                 )
+            ),
+            email_core_lib=types.SimpleNamespace(
+                client=types.SimpleNamespace(
+                    _target_='email_core_lib.client.send_in_blue_client.SendInBlueClient',
+                    api_key='send-in-blue-key',
+                    slack_email_error_url='',
+                )
             )
         ),
         openhands_agent=types.SimpleNamespace(
+            retry=types.SimpleNamespace(
+                max_retries=5,
+            ),
+            failure_email=types.SimpleNamespace(
+                enabled=True,
+                template_id='42',
+                recipients=['ops@example.com', 'dev@example.com'],
+                sender=types.SimpleNamespace(
+                    name='OpenHands Agent',
+                    email='noreply@example.com',
+                ),
+            ),
             youtrack=types.SimpleNamespace(
                 name='youtrack-config',
                 base_url='https://youtrack.example',

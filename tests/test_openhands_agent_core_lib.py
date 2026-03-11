@@ -19,6 +19,8 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
             'openhands_agent.openhands_agent_core_lib.CoreLib.connection_factory_registry.get_or_reg',
             return_value=mock_db_connection,
         ) as mock_get_or_reg, patch(
+            'openhands_agent.openhands_agent_core_lib.EmailCoreLib'
+        ) as mock_email_core_lib_cls, patch(
             'openhands_agent.openhands_agent_core_lib.YouTrackClient'
         ) as mock_youtrack_client_cls, patch(
             'openhands_agent.openhands_agent_core_lib.OpenHandsClient'
@@ -36,9 +38,22 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
             app = OpenHandsAgentCoreLib(self.cfg)
 
         mock_get_or_reg.assert_called_once_with(self.cfg.core_lib.data.sqlalchemy)
-        mock_youtrack_client_cls.assert_called_once_with(self.cfg.openhands_agent.youtrack.base_url, self.cfg.openhands_agent.youtrack.token)
-        mock_openhands_client_cls.assert_called_once_with(self.cfg.openhands_agent.openhands.base_url, self.cfg.openhands_agent.openhands.api_key)
-        mock_bitbucket_client_cls.assert_called_once_with(self.cfg.openhands_agent.bitbucket.base_url, self.cfg.openhands_agent.bitbucket.token)
+        mock_email_core_lib_cls.assert_called_once_with(self.cfg)
+        mock_youtrack_client_cls.assert_called_once_with(
+            self.cfg.openhands_agent.youtrack.base_url,
+            self.cfg.openhands_agent.youtrack.token,
+            self.cfg.openhands_agent.retry.max_retries,
+        )
+        mock_openhands_client_cls.assert_called_once_with(
+            self.cfg.openhands_agent.openhands.base_url,
+            self.cfg.openhands_agent.openhands.api_key,
+            self.cfg.openhands_agent.retry.max_retries,
+        )
+        mock_bitbucket_client_cls.assert_called_once_with(
+            self.cfg.openhands_agent.bitbucket.base_url,
+            self.cfg.openhands_agent.bitbucket.token,
+            self.cfg.openhands_agent.retry.max_retries,
+        )
         mock_task_da_cls.assert_called_once_with(self.cfg.openhands_agent.youtrack, mock_youtrack_client_cls.return_value)
         mock_impl_service_cls.assert_called_once_with(mock_openhands_client_cls.return_value)
         mock_pr_da_cls.assert_called_once_with(self.cfg.openhands_agent.bitbucket, mock_bitbucket_client_cls.return_value)
@@ -49,6 +64,7 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
         )
         self.assertIs(app.service, mock_service_cls.return_value)
         self.assertIs(app._db_connection, mock_db_connection)
+        self.assertIs(app._email_core_lib, mock_email_core_lib_cls.return_value)
         self.assertIs(app._task_data_access, mock_task_da_cls.return_value)
         self.assertIs(app._implementation_service, mock_impl_service_cls.return_value)
         self.assertIs(app._pull_request_data_access, mock_pr_da_cls.return_value)
@@ -56,6 +72,8 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
     def test_exposes_service_instance(self) -> None:
         with patch(
             'openhands_agent.openhands_agent_core_lib.CoreLib.connection_factory_registry.get_or_reg'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.EmailCoreLib'
         ), patch(
             'openhands_agent.openhands_agent_core_lib.YouTrackClient'
         ), patch(
@@ -80,6 +98,8 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
         with patch(
             'openhands_agent.openhands_agent_core_lib.CoreLib.connection_factory_registry.get_or_reg'
         ), patch(
+            'openhands_agent.openhands_agent_core_lib.EmailCoreLib'
+        ), patch(
             'openhands_agent.openhands_agent_core_lib.YouTrackClient'
         ), patch(
             'openhands_agent.openhands_agent_core_lib.OpenHandsClient'
@@ -98,3 +118,28 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
             app = OpenHandsAgentCoreLib(self.cfg)
 
         self.assertIs(app.service, mock_service_cls.return_value)
+
+    def test_notify_failure_sends_email_to_all_recipients(self) -> None:
+        with patch(
+            'openhands_agent.openhands_agent_core_lib.CoreLib.connection_factory_registry.get_or_reg'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.EmailCoreLib'
+        ) as mock_email_core_lib_cls:
+            app = OpenHandsAgentCoreLib(self.cfg)
+
+        result = app.notify_failure(
+            'process_assigned_tasks',
+            RuntimeError('bitbucket unavailable'),
+            {'task_id': 'PROJ-1'},
+        )
+
+        self.assertTrue(result)
+        self.assertEqual(mock_email_core_lib_cls.return_value.send.call_count, 2)
+        first_call = mock_email_core_lib_cls.return_value.send.call_args_list[0]
+        self.assertEqual(first_call.args[0], '42')
+        self.assertEqual(first_call.args[1]['email'], 'ops@example.com')
+        self.assertIn('process_assigned_tasks', first_call.args[1]['subject'])
+        self.assertEqual(
+            first_call.args[2],
+            {'name': 'OpenHands Agent', 'email': 'noreply@example.com'},
+        )

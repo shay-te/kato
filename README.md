@@ -55,9 +55,19 @@ export BITBUCKET_WORKSPACE="your-workspace"
 export BITBUCKET_REPO_SLUG="your-repo"
 export OPENHANDS_BASE_URL="http://localhost:3000"
 export OPENHANDS_API_KEY="..."
+export OPENHANDS_AGENT_MAX_RETRIES="5"
+export OPENHANDS_AGENT_FAILURE_EMAIL_ENABLED="true"
+export OPENHANDS_AGENT_FAILURE_EMAIL_TEMPLATE_ID="42"
+export OPENHANDS_AGENT_FAILURE_EMAIL_TO="ops@example.com"
+export OPENHANDS_AGENT_FAILURE_EMAIL_SENDER_NAME="OpenHands Agent"
+export OPENHANDS_AGENT_FAILURE_EMAIL_SENDER_EMAIL="noreply@example.com"
+export EMIL_CORE_LIB_SEND_IN_BLUE_API_KEY="..."
+export SLACK_WEBHOOK_URL_ERRORS_EMAIL=""
 ```
 
 Allowed YouTrack stages are configured in `openhands_agent/config/core_lib.yaml` under `openhands_agent.youtrack.issue_states`. By default the agent only processes tasks assigned to `YOUTRACK_ASSIGNEE` that are in `Todo` or `Open`.
+Retry count is configured under `openhands_agent.retry.max_retries`.
+Failure emails are configured under `openhands_agent.failure_email` and sent through `email-core-lib`.
 
 ## How To Use
 
@@ -86,6 +96,13 @@ export OPENHANDS_API_KEY="..."
 
 ```yaml
 openhands_agent:
+  retry:
+    max_retries: 5
+  failure_email:
+    enabled: true
+    template_id: "42"
+    recipients:
+      - ops@example.com
   youtrack:
     issue_states:
       - Todo
@@ -98,11 +115,35 @@ openhands_agent:
 python -m openhands_agent.main
 ```
 
+### Docker Compose
+
+You can also run OpenHands and this agent together with Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+What the compose stack does:
+
+- starts an `openhands` container on port `3000`
+- builds and starts an `openhands-agent` container from this repo
+- makes the agent wait until OpenHands is reachable at `http://openhands:3000`
+- then runs `python -m openhands_agent.main`
+
+The compose file uses the official OpenHands image and runtime image pattern from the OpenHands docs:
+
+- https://docs.all-hands.dev/usage/local-setup
+- https://github.com/OpenHands/OpenHands
+
+Before running `docker compose up --build`, export the same environment variables listed above for YouTrack, Bitbucket, OpenHands, retries, and failure email settings.
+
 What happens when it runs:
 
 - It fetches only tasks assigned to `YOUTRACK_ASSIGNEE`.
 - It ignores tasks that are not in the configured `issue_states`.
 - It enriches the task context with YouTrack comments, text attachment contents, and screenshot attachment references.
+- It retries transient client failures up to `openhands_agent.retry.max_retries`.
+- If the overall run fails, it sends failure notifications through `email-core-lib` to the configured recipients.
 - For each eligible task, it asks OpenHands to implement the work and then opens a Bitbucket pull request.
 
 ## Testing

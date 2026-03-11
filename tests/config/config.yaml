@@ -2,8 +2,23 @@
 core_lib:
   app:
     name: openhands-agent-test
+  email_core_lib:
+    client:
+      _target_: email_core_lib.client.send_in_blue_client.SendInBlueClient
+      api_key: test-send-in-blue-api-key
+      slack_email_error_url: ""
 
 openhands_agent:
+  retry:
+    max_retries: 5
+  failure_email:
+    enabled: true
+    template_id: "42"
+    recipients:
+      - ops@example.com
+    sender:
+      name: OpenHands Agent
+      email: noreply@example.com
   youtrack:
     base_url: http://localhost:8080
     token: test-youtrack-token

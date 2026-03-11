@@ -1,5 +1,6 @@
 import types
 import unittest
+from unittest.mock import Mock
 
 import bootstrap  # noqa: F401
 
@@ -22,3 +23,14 @@ class ProcessAssignedTasksJobTests(unittest.TestCase):
     def test_initialized_rejects_invalid_data_handler(self) -> None:
         with self.assertRaises(AssertionError):
             self.job.initialized(types.SimpleNamespace())
+
+    def test_run_sends_failure_notification_before_reraising(self) -> None:
+        self.openhands_core_lib.service = Mock()
+        self.openhands_core_lib.service.process_assigned_tasks.side_effect = RuntimeError('service down')
+        self.openhands_core_lib.notify_failure = Mock()
+        self.job.initialized(self.openhands_core_lib)
+
+        with self.assertRaisesRegex(RuntimeError, 'service down'):
+            self.job.run()
+
+        self.openhands_core_lib.notify_failure.assert_called_once()

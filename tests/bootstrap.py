@@ -68,6 +68,8 @@ def _install_core_lib_stubs() -> None:
     core_lib_base_module = types.ModuleType("core_lib.data_layers.data.db.sqlalchemy.base")
     core_lib_rule_validator_package = types.ModuleType("core_lib.rule_validator")
     core_lib_rule_validator_module = types.ModuleType("core_lib.rule_validator.rule_validator")
+    email_core_lib_package = types.ModuleType("email_core_lib")
+    email_core_lib_module = types.ModuleType("email_core_lib.email_core_lib")
 
     class _Registry:
         def __init__(self) -> None:
@@ -98,6 +100,15 @@ def _install_core_lib_stubs() -> None:
     class SqlAlchemyConnectionFactory:
         def __init__(self, config) -> None:
             self.config = config
+
+    class EmailCoreLib:
+        def __init__(self, config) -> None:
+            self.config = config
+            self.send_calls = []
+
+        def send(self, template_id, params, sender_info):
+            self.send_calls.append((template_id, params, sender_info))
+            return True
 
     class _CacheHandler:
         def flush_all(self) -> None:
@@ -153,6 +164,7 @@ def _install_core_lib_stubs() -> None:
 
     core_lib_rule_validator_module.ValueRuleValidator = ValueRuleValidator
     core_lib_rule_validator_module.RuleValidator = RuleValidator
+    email_core_lib_module.EmailCoreLib = EmailCoreLib
 
     sys.modules["core_lib"] = core_lib_module
     sys.modules["core_lib.client"] = client_package
@@ -171,6 +183,8 @@ def _install_core_lib_stubs() -> None:
     sys.modules["core_lib.data_layers.data.db.sqlalchemy.base"] = core_lib_base_module
     sys.modules["core_lib.rule_validator"] = core_lib_rule_validator_package
     sys.modules["core_lib.rule_validator.rule_validator"] = core_lib_rule_validator_module
+    sys.modules["email_core_lib"] = email_core_lib_package
+    sys.modules["email_core_lib.email_core_lib"] = email_core_lib_module
 
 
 def _install_sqlalchemy_stub() -> None:

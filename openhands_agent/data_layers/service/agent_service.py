@@ -27,16 +27,18 @@ class AgentService:
         tasks = self.task_data_access.get_assigned_tasks()
 
         for task in tasks:
-            execution = self.implementation_service.implement_task(task)
-            if not execution[ImplementationFields.SUCCESS]:
+            execution = self.implementation_service.implement_task(task) or {}
+            if not execution.get(ImplementationFields.SUCCESS, False):
                 continue
+            branch_name = str(execution.get(Task.branch_name.key) or task.branch_name)
+            execution_summary = str(execution.get(Task.summary.key) or '')
 
             pr = self.pull_request_data_access.create_pull_request(
                 title=f'{task.id}: {task.summary}',
-                source_branch=str(execution[Task.branch_name.key]),
-                description=str(execution[Task.summary.key]),
+                source_branch=branch_name,
+                description=execution_summary,
             )
-            self.pull_request_branch_map[pr[PullRequestFields.ID]] = str(execution[Task.branch_name.key])
+            self.pull_request_branch_map[pr[PullRequestFields.ID]] = branch_name
             self.task_data_access.add_pull_request_comment(task.id, pr[PullRequestFields.URL])
             results.append(pr)
 
@@ -48,8 +50,8 @@ class AgentService:
         if not branch_name:
             raise ValueError(f'unknown pull request id: {comment.pull_request_id}')
 
-        execution = self.implementation_service.fix_review_comment(comment, branch_name)
-        if not execution[ImplementationFields.SUCCESS]:
+        execution = self.implementation_service.fix_review_comment(comment, branch_name) or {}
+        if not execution.get(ImplementationFields.SUCCESS, False):
             raise RuntimeError(f'failed to address comment {comment.comment_id}')
 
         return {

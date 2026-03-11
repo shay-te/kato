@@ -9,7 +9,11 @@ def main(cfg: DictConfig) -> int:
     OpenHandsAgentInstance.init(cfg)
     app = OpenHandsAgentInstance.get()
     app.logger.info('starting openhands agent')
-    results = app.service.process_assigned_tasks()
+    try:
+        results = app.service.process_assigned_tasks()
+    except Exception as exc:
+        app.notify_failure('process_assigned_tasks', exc)
+        raise
     app.logger.info('processed %s tasks', len(results))
     return 0
 

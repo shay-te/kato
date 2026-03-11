@@ -9,4 +9,8 @@ class ProcessAssignedTasksJob(Job):
         self._data_handler = data_handler
 
     def run(self) -> list[dict[str, str]]:
-        return self._data_handler.service.process_assigned_tasks()
+        try:
+            return self._data_handler.service.process_assigned_tasks()
+        except Exception as exc:
+            self._data_handler.notify_failure('process_assigned_tasks_job', exc)
+            raise

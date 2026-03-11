@@ -1,0 +1,40 @@
+services:
+  openhands:
+    image: docker.all-hands.dev/all-hands-ai/openhands:0.59
+    pull_policy: always
+    environment:
+      SANDBOX_RUNTIME_CONTAINER_IMAGE: docker.all-hands.dev/all-hands-ai/runtime:0.59-nikolaik
+      LOG_ALL_EVENTS: "true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${OPENHANDS_STATE_DIR:-~/.openhands}:/.openhands
+    ports:
+      - "${OPENHANDS_PORT:-3000}:3000"
+    extra_hosts:
+      - host.docker.internal:host-gateway
+
+  openhands-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - openhands
+    environment:
+      YOUTRACK_BASE_URL: ${YOUTRACK_BASE_URL}
+      YOUTRACK_TOKEN: ${YOUTRACK_TOKEN}
+      YOUTRACK_PROJECT: ${YOUTRACK_PROJECT}
+      YOUTRACK_ASSIGNEE: ${YOUTRACK_ASSIGNEE:-me}
+      BITBUCKET_BASE_URL: ${BITBUCKET_BASE_URL}
+      BITBUCKET_TOKEN: ${BITBUCKET_TOKEN}
+      BITBUCKET_WORKSPACE: ${BITBUCKET_WORKSPACE}
+      BITBUCKET_REPO_SLUG: ${BITBUCKET_REPO_SLUG}
+      OPENHANDS_BASE_URL: http://openhands:3000
+      OPENHANDS_API_KEY: ${OPENHANDS_API_KEY:-local}
+      OPENHANDS_AGENT_MAX_RETRIES: ${OPENHANDS_AGENT_MAX_RETRIES:-5}
+      OPENHANDS_AGENT_FAILURE_EMAIL_ENABLED: ${OPENHANDS_AGENT_FAILURE_EMAIL_ENABLED:-false}
+      OPENHANDS_AGENT_FAILURE_EMAIL_TEMPLATE_ID: ${OPENHANDS_AGENT_FAILURE_EMAIL_TEMPLATE_ID:-0}
+      OPENHANDS_AGENT_FAILURE_EMAIL_TO: ${OPENHANDS_AGENT_FAILURE_EMAIL_TO:-}
+      OPENHANDS_AGENT_FAILURE_EMAIL_SENDER_NAME: ${OPENHANDS_AGENT_FAILURE_EMAIL_SENDER_NAME:-OpenHands Agent}
+      OPENHANDS_AGENT_FAILURE_EMAIL_SENDER_EMAIL: ${OPENHANDS_AGENT_FAILURE_EMAIL_SENDER_EMAIL:-noreply@example.com}
+      EMIL_CORE_LIB_SEND_IN_BLUE_API_KEY: ${EMIL_CORE_LIB_SEND_IN_BLUE_API_KEY:-}
+      SLACK_WEBHOOK_URL_ERRORS_EMAIL: ${SLACK_WEBHOOK_URL_ERRORS_EMAIL:-}
