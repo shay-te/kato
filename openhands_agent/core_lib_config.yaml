@@ -1,0 +1,21 @@
+# @package _global_
+core_lib:
+  app:
+    name: openhands-agent
+
+openhands_agent:
+  youtrack:
+    base_url: ${oc.env:YOUTRACK_BASE_URL}
+    token: ${oc.env:YOUTRACK_TOKEN}
+    project: ${oc.env:YOUTRACK_PROJECT}
+    assignee: me
+    issue_state: Open
+  bitbucket:
+    base_url: ${oc.env:BITBUCKET_BASE_URL}
+    token: ${oc.env:BITBUCKET_TOKEN}
+    workspace: ${oc.env:BITBUCKET_WORKSPACE}
+    repo_slug: ${oc.env:BITBUCKET_REPO_SLUG}
+    destination_branch: main
+  openhands:
+    base_url: ${oc.env:OPENHANDS_BASE_URL}
+    api_key: ${oc.env:OPENHANDS_API_KEY}
