@@ -280,6 +280,7 @@ def _install_hydra_stub() -> None:
 
     hydra_module = types.ModuleType("hydra")
     hydra_core_module = types.ModuleType("hydra.core")
+    hydra_global_hydra_module = types.ModuleType("hydra.core.global_hydra")
     hydra_config_search_path_module = types.ModuleType("hydra.core.config_search_path")
     hydra_plugins_module = types.ModuleType("hydra.plugins")
     hydra_search_path_plugin_module = types.ModuleType("hydra.plugins.search_path_plugin")
@@ -297,12 +298,25 @@ def _install_hydra_stub() -> None:
         def manipulate_search_path(self, search_path: ConfigSearchPath) -> None:
             raise NotImplementedError
 
+    class _GlobalHydraInstance:
+        def clear(self) -> None:
+            return None
+
+    class GlobalHydra:
+        _instance = _GlobalHydraInstance()
+
+        @classmethod
+        def instance(cls):
+            return cls._instance
+
     hydra_config_search_path_module.ConfigSearchPath = ConfigSearchPath
     hydra_search_path_plugin_module.SearchPathPlugin = SearchPathPlugin
+    hydra_global_hydra_module.GlobalHydra = GlobalHydra
     hydra_module.main = main
 
     sys.modules["hydra"] = hydra_module
     sys.modules["hydra.core"] = hydra_core_module
+    sys.modules["hydra.core.global_hydra"] = hydra_global_hydra_module
     sys.modules["hydra.core.config_search_path"] = hydra_config_search_path_module
     sys.modules["hydra.plugins"] = hydra_plugins_module
     sys.modules["hydra.plugins.search_path_plugin"] = hydra_search_path_plugin_module
@@ -329,10 +343,18 @@ def _install_alembic_stub() -> None:
     def upgrade(config, revision: str) -> None:
         return None
 
+    def downgrade(config, revision: str) -> None:
+        return None
+
+    def revision(config, message: str, autogenerate: bool = False) -> None:
+        return None
+
     alembic_module.command = alembic_command_module
     alembic_module.config = alembic_config_module
     alembic_config_module.Config = Config
     alembic_command_module.upgrade = upgrade
+    alembic_command_module.downgrade = downgrade
+    alembic_command_module.revision = revision
     sys.modules["alembic"] = alembic_module
     sys.modules["alembic.command"] = alembic_command_module
     sys.modules["alembic.config"] = alembic_config_module

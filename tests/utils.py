@@ -116,11 +116,11 @@ def build_test_cfg() -> types.SimpleNamespace:
                     'Make sure the tests are green. If not, fix them before creating the pull request.',
                 ],
             ),
-            bitbucket=types.SimpleNamespace(
-                name='bitbucket-config',
+            repository=types.SimpleNamespace(
+                name='repository-config',
                 base_url='https://bitbucket.example',
                 token='bb-token',
-                workspace='workspace',
+                owner='workspace',
                 repo_slug='repo',
                 destination_branch='main',
             ),
@@ -211,7 +211,7 @@ def create_pull_request_with_defaults(
     client,
     title: str = 'PROJ-1: Fix bug',
     source_branch: str = 'feature/proj-1',
-    workspace: str = 'workspace',
+    repo_owner: str = 'workspace',
     repo_slug: str = 'repo',
     destination_branch: str = 'main',
     description: str = '',
@@ -219,7 +219,7 @@ def create_pull_request_with_defaults(
     return client.create_pull_request(
         title=title,
         source_branch=source_branch,
-        workspace=workspace,
+        repo_owner=repo_owner,
         repo_slug=repo_slug,
         destination_branch=destination_branch,
         description=description,

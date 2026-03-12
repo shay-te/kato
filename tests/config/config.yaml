@@ -58,10 +58,10 @@ openhands_agent:
     issue_states:
       - Todo
       - Open
-  bitbucket:
+  repository:
     base_url: http://localhost:8081
     token: test-bitbucket-token
-    workspace: test-workspace
+    owner: test-workspace
     repo_slug: test-repo
     destination_branch: main
   openhands:

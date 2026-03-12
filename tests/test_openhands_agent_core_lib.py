@@ -26,8 +26,8 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
         ) as mock_youtrack_client_cls, patch(
             'openhands_agent.openhands_agent_core_lib.OpenHandsClient'
         ) as mock_openhands_client_cls, patch(
-            'openhands_agent.openhands_agent_core_lib.BitbucketClient'
-        ) as mock_bitbucket_client_cls, patch(
+            'openhands_agent.openhands_agent_core_lib.build_pull_request_client'
+        ) as mock_pull_request_client_builder, patch(
             'openhands_agent.openhands_agent_core_lib.TaskDataAccess'
         ) as mock_task_da_cls, patch(
             'openhands_agent.openhands_agent_core_lib.ImplementationService'
@@ -53,14 +53,13 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
             self.cfg.openhands_agent.retry.max_retries,
             self.cfg.openhands_agent.openhands.pre_pull_request_commands,
         )
-        mock_bitbucket_client_cls.assert_called_once_with(
-            self.cfg.openhands_agent.bitbucket.base_url,
-            self.cfg.openhands_agent.bitbucket.token,
+        mock_pull_request_client_builder.assert_called_once_with(
+            self.cfg.openhands_agent.repository,
             self.cfg.openhands_agent.retry.max_retries,
         )
         mock_task_da_cls.assert_called_once_with(self.cfg.openhands_agent.youtrack, mock_youtrack_client_cls.return_value)
         mock_impl_service_cls.assert_called_once_with(mock_openhands_client_cls.return_value)
-        mock_pr_da_cls.assert_called_once_with(self.cfg.openhands_agent.bitbucket, mock_bitbucket_client_cls.return_value)
+        mock_pr_da_cls.assert_called_once_with(self.cfg.openhands_agent.repository, mock_pull_request_client_builder.return_value)
         mock_notification_service_cls.assert_called_once_with(
             app_name=self.cfg.core_lib.app.name,
             email_core_lib=mock_email_core_lib_cls.return_value,
@@ -86,7 +85,7 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
         ), patch(
             'openhands_agent.openhands_agent_core_lib.OpenHandsClient'
         ), patch(
-            'openhands_agent.openhands_agent_core_lib.BitbucketClient'
+            'openhands_agent.openhands_agent_core_lib.build_pull_request_client'
         ), patch(
             'openhands_agent.openhands_agent_core_lib.TaskDataAccess'
         ), patch(
@@ -114,7 +113,7 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
         ), patch(
             'openhands_agent.openhands_agent_core_lib.OpenHandsClient'
         ), patch(
-            'openhands_agent.openhands_agent_core_lib.BitbucketClient'
+            'openhands_agent.openhands_agent_core_lib.build_pull_request_client'
         ), patch(
             'openhands_agent.openhands_agent_core_lib.TaskDataAccess'
         ), patch(
@@ -146,7 +145,7 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
         ), patch(
             'openhands_agent.openhands_agent_core_lib.OpenHandsClient'
         ), patch(
-            'openhands_agent.openhands_agent_core_lib.BitbucketClient'
+            'openhands_agent.openhands_agent_core_lib.build_pull_request_client'
         ), patch(
             'openhands_agent.openhands_agent_core_lib.TaskDataAccess'
         ), patch(
@@ -167,3 +166,51 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
             completion_email_cfg=cfg.openhands_agent.completion_email,
         )
         mock_service_cls.return_value.validate_connections.assert_called_once_with()
+
+    def test_install_upgrades_database_to_head(self) -> None:
+        with patch(
+            'openhands_agent.openhands_agent_core_lib.GlobalHydra.instance'
+        ) as mock_hydra_instance, patch(
+            'openhands_agent.openhands_agent_core_lib.command.upgrade'
+        ) as mock_upgrade:
+            OpenHandsAgentCoreLib.install(self.cfg)
+
+        mock_hydra_instance.return_value.clear.assert_called_once_with()
+        mock_upgrade.assert_called_once()
+        _, revision = mock_upgrade.call_args.args
+        self.assertEqual(revision, 'head')
+
+    def test_uninstall_downgrades_database_to_base(self) -> None:
+        with patch(
+            'openhands_agent.openhands_agent_core_lib.GlobalHydra.instance'
+        ) as mock_hydra_instance, patch(
+            'openhands_agent.openhands_agent_core_lib.command.downgrade'
+        ) as mock_downgrade:
+            OpenHandsAgentCoreLib.uninstall(self.cfg)
+
+        mock_hydra_instance.return_value.clear.assert_called_once_with()
+        mock_downgrade.assert_called_once()
+        _, revision = mock_downgrade.call_args.args
+        self.assertEqual(revision, 'base')
+
+    def test_create_generates_named_migration(self) -> None:
+        with patch(
+            'openhands_agent.openhands_agent_core_lib.command.revision'
+        ) as mock_revision:
+            OpenHandsAgentCoreLib.create(self.cfg, 'add_repository_table')
+
+        mock_revision.assert_called_once()
+        self.assertEqual(
+            mock_revision.call_args.kwargs,
+            {'message': 'add_repository_table', 'autogenerate': True},
+        )
+
+    def test_downgrade_steps_back_one_revision(self) -> None:
+        with patch(
+            'openhands_agent.openhands_agent_core_lib.command.downgrade'
+        ) as mock_downgrade:
+            OpenHandsAgentCoreLib.downgrade(self.cfg)
+
+        mock_downgrade.assert_called_once()
+        _, revision = mock_downgrade.call_args.args
+        self.assertEqual(revision, '-1')

@@ -2,7 +2,7 @@ from omegaconf import DictConfig
 
 from core_lib.rule_validator.rule_validator import RuleValidator, ValueRuleValidator
 
-from openhands_agent.client.bitbucket_client import BitbucketClient
+from openhands_agent.client.pull_request_client_base import PullRequestClientBase
 from openhands_agent.fields import PullRequestFields
 
 
@@ -17,13 +17,17 @@ pull_request_rule_validator = RuleValidator(
 
 
 class PullRequestDataAccess:
-    def __init__(self, config: DictConfig, client: BitbucketClient) -> None:
+    def __init__(self, config: DictConfig, client: PullRequestClientBase) -> None:
         self._config = config
         self._client = client
 
+    @property
+    def provider_name(self) -> str:
+        return getattr(self._client, 'provider_name', 'repository')
+
     def validate_connection(self) -> None:
         self._client.validate_connection(
-            workspace=self._config.workspace,
+            repo_owner=self._config.owner,
             repo_slug=self._config.repo_slug,
         )
 
@@ -45,7 +49,7 @@ class PullRequestDataAccess:
         return self._client.create_pull_request(
             title=title,
             source_branch=source_branch,
-            workspace=self._config.workspace,
+            repo_owner=self._config.owner,
             repo_slug=self._config.repo_slug,
             destination_branch=destination_branch or self._config.destination_branch,
             description=description,

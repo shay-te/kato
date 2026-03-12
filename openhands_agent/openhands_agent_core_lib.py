@@ -1,10 +1,14 @@
+import logging
+
+from alembic import command
+from hydra.core.global_hydra import GlobalHydra
 from omegaconf import DictConfig
 
 from core_lib.core_lib import CoreLib
 from email_core_lib.email_core_lib import EmailCoreLib
 
-from openhands_agent.client.bitbucket_client import BitbucketClient
 from openhands_agent.client.openhands_client import OpenHandsClient
+from openhands_agent.client.pull_request_client_factory import build_pull_request_client
 from openhands_agent.client.youtrack_client import YouTrackClient
 from openhands_agent.data_layers.data_access.pull_request_data_access import (
     PullRequestDataAccess,
@@ -15,10 +19,35 @@ from openhands_agent.data_layers.service.implementation_service import (
     ImplementationService,
 )
 from openhands_agent.data_layers.service.notification_service import NotificationService
+from openhands_agent.create_db import build_alembic_config
 from openhands_agent.logging_utils import configure_logger
+
+logger = logging.getLogger(__name__)
 
 
 class OpenHandsAgentCoreLib(CoreLib):
+    @staticmethod
+    def install(cfg: DictConfig):
+        GlobalHydra.instance().clear()
+        logger.info('Installing OpenHandsAgentCoreLib')
+        command.upgrade(build_alembic_config(cfg), 'head')
+        logger.info('OpenHandsAgentCoreLib installed successfully')
+
+    @staticmethod
+    def uninstall(cfg: DictConfig):
+        GlobalHydra.instance().clear()
+        logger.info('Uninstalling OpenHandsAgentCoreLib')
+        command.downgrade(build_alembic_config(cfg), 'base')
+        logger.info('OpenHandsAgentCoreLib uninstalled successfully')
+
+    @staticmethod
+    def create(cfg: DictConfig, name: str):
+        command.revision(build_alembic_config(cfg), message=name, autogenerate=True)
+
+    @staticmethod
+    def downgrade(cfg: DictConfig):
+        command.downgrade(build_alembic_config(cfg), '-1')
+
     def __init__(self, cfg: DictConfig) -> None:
         CoreLib.__init__(self)
         self.config = cfg
@@ -35,10 +64,10 @@ class OpenHandsAgentCoreLib(CoreLib):
             retry_cfg.max_retries,
             getattr(open_cfg.openhands, 'pre_pull_request_commands', None),
         )
-        _bitbucket_client = BitbucketClient(open_cfg.bitbucket.base_url, open_cfg.bitbucket.token, retry_cfg.max_retries)
+        _pull_request_client = build_pull_request_client(open_cfg.repository, retry_cfg.max_retries)
         _task_data_access = TaskDataAccess(open_cfg.youtrack, _youtrack_client)
         _implementation_service = ImplementationService(_openhands_client)
-        _pull_request_data_access = PullRequestDataAccess(open_cfg.bitbucket, _bitbucket_client)
+        _pull_request_data_access = PullRequestDataAccess(open_cfg.repository, _pull_request_client)
         notification_service = NotificationService(app_name=self.config.core_lib.app.name, email_core_lib=_email_core_lib, failure_email_cfg=getattr(open_cfg, 'failure_email', None), completion_email_cfg=getattr(open_cfg, 'completion_email', None))
         self.service = AgentService(
             task_data_access=_task_data_access,

@@ -1,6 +1,6 @@
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import bootstrap  # noqa: F401
 
@@ -99,30 +99,31 @@ class TaskDataAccessTests(unittest.TestCase):
 
 
 class PullRequestDataAccessTests(unittest.TestCase):
-    def test_passes_bitbucket_settings_to_client_call(self) -> None:
+    def test_passes_repository_settings_to_client_call(self) -> None:
         config = types.SimpleNamespace(
             base_url="https://bitbucket.example",
             token="bb-token",
-            workspace="workspace",
+            owner="workspace",
             repo_slug="repo",
             destination_branch="main",
         )
 
-        with patch(
-            'openhands_agent.data_layers.data_access.pull_request_data_access.BitbucketClient'
-        ) as mock_client_cls:
-            data_access = PullRequestDataAccess(config, mock_client_cls.return_value)
-            data_access.create_pull_request(
-                title='PROJ-1: Fix bug',
-                source_branch='feature/proj-1',
-                description='Ready for review',
-            )
+        client = types.SimpleNamespace(
+            provider_name='bitbucket',
+            create_pull_request=Mock(),
+        )
 
-        mock_client_cls.assert_not_called()
-        mock_client_cls.return_value.create_pull_request.assert_called_once_with(
+        data_access = PullRequestDataAccess(config, client)
+        data_access.create_pull_request(
             title='PROJ-1: Fix bug',
             source_branch='feature/proj-1',
-            workspace='workspace',
+            description='Ready for review',
+        )
+
+        client.create_pull_request.assert_called_once_with(
+            title='PROJ-1: Fix bug',
+            source_branch='feature/proj-1',
+            repo_owner='workspace',
             repo_slug='repo',
             destination_branch='main',
             description='Ready for review',
@@ -132,7 +133,7 @@ class PullRequestDataAccessTests(unittest.TestCase):
         config = types.SimpleNamespace(
             base_url="https://bitbucket.example",
             token="bb-token",
-            workspace="workspace",
+            owner="workspace",
             repo_slug="repo",
             destination_branch="main",
         )
@@ -163,26 +164,27 @@ class PullRequestDataAccessTests(unittest.TestCase):
         config = types.SimpleNamespace(
             base_url="https://bitbucket.example",
             token="bb-token",
-            workspace="workspace",
+            owner="workspace",
             repo_slug="repo",
             destination_branch="main",
         )
+        client = types.SimpleNamespace(
+            provider_name='bitbucket',
+            create_pull_request=Mock(),
+        )
 
-        with patch(
-            'openhands_agent.data_layers.data_access.pull_request_data_access.BitbucketClient'
-        ) as mock_client_cls:
-            data_access = PullRequestDataAccess(config, mock_client_cls.return_value)
-            data_access.create_pull_request(
-                title='PROJ-1: Fix bug',
-                source_branch='feature/proj-1',
-                destination_branch='release',
-                description='Ready for review',
-            )
-
-        mock_client_cls.return_value.create_pull_request.assert_called_once_with(
+        data_access = PullRequestDataAccess(config, client)
+        data_access.create_pull_request(
             title='PROJ-1: Fix bug',
             source_branch='feature/proj-1',
-            workspace='workspace',
+            destination_branch='release',
+            description='Ready for review',
+        )
+
+        client.create_pull_request.assert_called_once_with(
+            title='PROJ-1: Fix bug',
+            source_branch='feature/proj-1',
+            repo_owner='workspace',
             repo_slug='repo',
             destination_branch='release',
             description='Ready for review',

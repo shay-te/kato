@@ -58,12 +58,12 @@ openhands_agent:
     issue_states:
       - Todo
       - Open
-  bitbucket:
-    base_url: ${oc.env:BITBUCKET_BASE_URL}
-    token: ${oc.env:BITBUCKET_TOKEN}
-    workspace: ${oc.env:BITBUCKET_WORKSPACE}
-    repo_slug: ${oc.env:BITBUCKET_REPO_SLUG}
-    destination_branch: main
+  repository:
+    base_url: ${oc.env:REPOSITORY_BASE_URL}
+    token: ${oc.env:REPOSITORY_TOKEN}
+    owner: ${oc.env:REPOSITORY_OWNER}
+    repo_slug: ${oc.env:REPOSITORY_REPO_SLUG}
+    destination_branch: ${oc.env:REPOSITORY_DESTINATION_BRANCH,"main"}
   openhands:
     base_url: ${oc.env:OPENHANDS_BASE_URL}
     api_key: ${oc.env:OPENHANDS_API_KEY}

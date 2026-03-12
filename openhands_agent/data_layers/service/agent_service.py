@@ -38,7 +38,10 @@ class AgentService:
         validations = [
             ('youtrack', self._task_data_access.validate_connection),
             ('openhands', self._implementation_service.validate_connection),
-            ('bitbucket', self._pull_request_data_access.validate_connection),
+            (
+                self._pull_request_data_access.provider_name,
+                self._pull_request_data_access.validate_connection,
+            ),
         ]
         failures: list[str] = []
 

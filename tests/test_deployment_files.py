@@ -25,6 +25,10 @@ class DeploymentFilesTests(unittest.TestCase):
     def test_env_example_includes_openhands_llm_variables(self) -> None:
         env_example_text = (REPO_ROOT / '.env.example').read_text(encoding='utf-8')
 
+        self.assertIn('REPOSITORY_BASE_URL=', env_example_text)
+        self.assertIn('REPOSITORY_TOKEN=', env_example_text)
+        self.assertIn('REPOSITORY_OWNER=', env_example_text)
+        self.assertIn('REPOSITORY_REPO_SLUG=', env_example_text)
         self.assertIn('OPENHANDS_LLM_MODEL=', env_example_text)
         self.assertIn('OPENHANDS_LLM_API_KEY=', env_example_text)
         self.assertIn('OPENHANDS_LLM_BASE_URL=', env_example_text)

@@ -58,6 +58,7 @@ class AgentServiceTests(unittest.TestCase):
         )
         self.implementation_service = ImplementationService(self.openhands_client)
         pull_request_client = types.SimpleNamespace(
+            provider_name='bitbucket',
             create_pull_request=Mock(
                 return_value={
                     PullRequestFields.ID: "17",
@@ -68,7 +69,7 @@ class AgentServiceTests(unittest.TestCase):
         )
         self.pull_request_client = pull_request_client
         self.pull_request_data_access = PullRequestDataAccess(
-            self.cfg.openhands_agent.bitbucket,
+            self.cfg.openhands_agent.repository,
             pull_request_client,
         )
         self.email_core_lib = Mock()
@@ -108,7 +109,7 @@ class AgentServiceTests(unittest.TestCase):
         )
         self.openhands_client.validate_connection.assert_called_once_with()
         self.pull_request_client.validate_connection.assert_called_once_with(
-            workspace='workspace',
+            repo_owner='workspace',
             repo_slug='repo',
         )
 
@@ -143,7 +144,7 @@ class AgentServiceTests(unittest.TestCase):
         self.pull_request_client.create_pull_request.assert_called_once_with(
             title="PROJ-1: Fix bug",
             source_branch="feature/proj-1",
-            workspace="workspace",
+            repo_owner="workspace",
             repo_slug="repo",
             destination_branch="main",
             description="Implemented PROJ-1",
@@ -223,7 +224,7 @@ class AgentServiceTests(unittest.TestCase):
         self.pull_request_client.create_pull_request.assert_called_once_with(
             title='PROJ-1: Fix bug',
             source_branch='feature/proj-1',
-            workspace='workspace',
+            repo_owner='workspace',
             repo_slug='repo',
             destination_branch='main',
             description='',
