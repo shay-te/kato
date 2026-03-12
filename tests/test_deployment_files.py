@@ -31,6 +31,7 @@ class DeploymentFilesTests(unittest.TestCase):
             'AWS_BEARER_TOKEN_BEDROCK: ${AWS_BEARER_TOKEN_BEDROCK:-}',
             compose_text,
         )
+        self.assertIn('SANDBOX_VOLUMES: ${OPENHANDS_SANDBOX_VOLUMES:-}', compose_text)
         self.assertIn('OH_WEB_URL: ${OPENHANDS_WEB_URL:-}', compose_text)
         self.assertIn(
             'OPENHANDS_AGENT_ISSUE_PLATFORM: ${OPENHANDS_AGENT_ISSUE_PLATFORM:-}',
@@ -57,6 +58,7 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('REPOSITORY_TOKEN=', env_example_text)
         self.assertIn('REPOSITORY_OWNER=', env_example_text)
         self.assertIn('REPOSITORY_REPO_SLUG=', env_example_text)
+        self.assertIn('OPENHANDS_SANDBOX_VOLUMES=', env_example_text)
         self.assertIn('JIRA_BASE_URL=', env_example_text)
         self.assertIn('JIRA_TOKEN=', env_example_text)
         self.assertIn('YOUTRACK_ISSUE_STATES=', env_example_text)
@@ -110,6 +112,7 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('scripts/generate_env.py --output .env', makefile_text)
         self.assertIn('doctor:', makefile_text)
         self.assertIn('run:', makefile_text)
+        self.assertIn('.docker-compose.selected-repos.yml', makefile_text)
         self.assertIn('create_db: true', config_text)
         self.assertIn('repositories:', config_text)
         self.assertIn('YOUTRACK_ISSUE_STATES', config_text)

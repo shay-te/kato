@@ -176,6 +176,7 @@ Supported providers:
 
 For multi-repository tasks, add more entries under `openhands_agent.repositories` in `openhands_agent/config/openhands_agent_core_lib.yaml`. Each repository entry needs `id`, `display_name`, `local_path`, `provider_base_url`, `token`, `owner`, `repo_slug`, and optional `destination_branch` plus `aliases`.
 The flat `REPOSITORY_*` environment variables are only a bootstrap convenience for the first repository entry. Once you need more than one repository, treat `openhands_agent/config/openhands_agent_core_lib.yaml` as the source of truth and add the extra entries there.
+`OPENHANDS_SANDBOX_VOLUMES` lists the exact checked-out repository folders that OpenHands may mount into its runtime containers. `make configure` populates it from the folders you select so Docker runs stay scoped to only those repositories.
 
 If `destination_branch` is empty, the agent infers the repository default branch from the local git checkout. That is convenient for local development, but it also means runtime behavior depends on the checkout state. For production-style runs, set `destination_branch` explicitly for every repository so pull requests cannot target the wrong branch because of a stale or unusual local clone.
 
@@ -270,8 +271,10 @@ What is automated now:
 - `make configure`
   - asks which issue platform holds your tasks
   - asks which platform hosts your code
+  - can scan a projects folder for git repositories and prefill the first repository entry from the selected checkout
   - asks which issue states and review state should be used
   - writes `.env` for the first repository and OpenHands setup
+  - writes `.docker-compose.selected-repos.yml` so the agent container only mounts the selected repository folders
 - `make doctor`
   - validates agent and OpenHands env vars
   - exits non-zero if required values are missing, so it can be used in CI or pre-flight scripts
@@ -423,6 +426,7 @@ The compose file uses the official OpenHands image and runtime image pattern fro
 - https://github.com/OpenHands/OpenHands
 
 Before running `docker compose up --build`, make sure `.env` contains the selected issue-platform settings, repository settings, OpenHands settings, retry settings, and optional email settings you want Docker Compose to pass through.
+`make configure` also writes `.docker-compose.selected-repos.yml`; `make compose-up` automatically includes it so the agent container only sees the repository folders you selected, while OpenHands runtime containers get the matching `OPENHANDS_SANDBOX_VOLUMES` scope.
 
 If you use `.env`, Docker Compose will load it automatically, so you can keep both the agent config and the OpenHands LLM config in one place and avoid manual setup in the OpenHands UI for the env-supported options.
 
