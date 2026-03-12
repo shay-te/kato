@@ -69,93 +69,82 @@ class AgentService(Service):
                 'startup dependency validation failed:\n\n' + '\n\n'.join(failures)
             )
 
-    def process_assigned_tasks(self) -> list[dict]:
-        results: list[dict] = []
+    def get_assigned_tasks(self) -> list[Task]:
+        return self._task_data_access.get_assigned_tasks()
 
-        for task in self._task_data_access.get_assigned_tasks():
-            if self._is_task_processed(task.id):
-                self.logger.info('skipping already processed task %s', task.id)
-                results.append(
-                    {
-                        Task.id.key: task.id,
-                        StatusFields.STATUS: StatusFields.SKIPPED,
-                        PullRequestFields.PULL_REQUESTS: self._processed_task_pull_requests(task.id),
-                        PullRequestFields.FAILED_REPOSITORIES: [],
-                    }
-                )
-                continue
-            self.logger.info('processing task %s', task.id)
-            try:
-                repositories = self._repository_service.resolve_task_repositories(task)
-            except Exception as exc:
-                self.logger.exception('failed to resolve repositories for task %s', task.id)
-                self._handle_task_failure(task, exc)
-                continue
-
-            repository_branches = {
-                repository.id: self._repository_service.build_branch_name(task, repository)
-                for repository in repositories
+    def process_assigned_task(self, task: Task) -> dict | None:
+        if self._is_task_processed(task.id):
+            self.logger.info('skipping already processed task %s', task.id)
+            return {
+                Task.id.key: task.id,
+                StatusFields.STATUS: StatusFields.SKIPPED,
+                PullRequestFields.PULL_REQUESTS: self._processed_task_pull_requests(task.id),
+                PullRequestFields.FAILED_REPOSITORIES: [],
             }
-            task.branch_name = next(iter(repository_branches.values()))
-            setattr(task, 'repositories', repositories)
-            setattr(task, 'repository_branches', repository_branches)
-            execution = self._implementation_service.implement_task(task) or {}
-            if not self._implementation_succeeded(execution):
-                self.logger.warning('implementation failed for task %s', task.id)
-                continue
-            testing = self._testing_service.test_task(task) or {}
-            if not self._testing_succeeded(testing):
-                self._handle_testing_failure(task, testing)
-                results.append(
-                    {
-                        Task.id.key: task.id,
-                        StatusFields.STATUS: StatusFields.TESTING_FAILED,
-                        PullRequestFields.PULL_REQUESTS: [],
-                        PullRequestFields.FAILED_REPOSITORIES: [],
-                    }
-                )
-                continue
 
-            pull_requests, failed_repositories = self._create_pull_requests(
+        self.logger.info('processing task %s', task.id)
+        try:
+            repositories = self._repository_service.resolve_task_repositories(task)
+        except Exception as exc:
+            self.logger.exception('failed to resolve repositories for task %s', task.id)
+            self._handle_task_failure(task, exc)
+            return None
+
+        repository_branches = {
+            repository.id: self._repository_service.build_branch_name(task, repository)
+            for repository in repositories
+        }
+        task.branch_name = next(iter(repository_branches.values()))
+        setattr(task, 'repositories', repositories)
+        setattr(task, 'repository_branches', repository_branches)
+        execution = self._implementation_service.implement_task(task) or {}
+        if not self._implementation_succeeded(execution):
+            self.logger.warning('implementation failed for task %s', task.id)
+            return None
+
+        testing = self._testing_service.test_task(task) or {}
+        if not self._testing_succeeded(testing):
+            self._handle_testing_failure(task, testing)
+            return {
+                Task.id.key: task.id,
+                StatusFields.STATUS: StatusFields.TESTING_FAILED,
+                PullRequestFields.PULL_REQUESTS: [],
+                PullRequestFields.FAILED_REPOSITORIES: [],
+            }
+
+        pull_requests, failed_repositories = self._create_pull_requests(
+            task,
+            execution,
+        )
+        if pull_requests:
+            self._task_data_access.add_comment(
+                task.id,
+                self._pull_request_summary_comment(task, pull_requests, failed_repositories),
+            )
+        if failed_repositories:
+            self._handle_task_failure(
                 task,
-                execution,
+                RuntimeError(
+                    f'failed to create pull requests for repositories: '
+                    f'{", ".join(failed_repositories)}'
+                ),
             )
-            if pull_requests:
-                self._task_data_access.add_comment(
-                    task.id,
-                    self._pull_request_summary_comment(task, pull_requests, failed_repositories),
-                )
-            if failed_repositories:
-                self._handle_task_failure(
-                    task,
-                    RuntimeError(
-                        f'failed to create pull requests for repositories: '
-                        f'{", ".join(failed_repositories)}'
-                    ),
-                )
-                results.append(
-                    {
-                        Task.id.key: task.id,
-                        StatusFields.STATUS: StatusFields.PARTIAL_FAILURE,
-                        PullRequestFields.PULL_REQUESTS: pull_requests,
-                        PullRequestFields.FAILED_REPOSITORIES: failed_repositories,
-                    }
-                )
-                continue
+            return {
+                Task.id.key: task.id,
+                StatusFields.STATUS: StatusFields.PARTIAL_FAILURE,
+                PullRequestFields.PULL_REQUESTS: pull_requests,
+                PullRequestFields.FAILED_REPOSITORIES: failed_repositories,
+            }
 
-            self._task_data_access.move_task_to_review(task.id)
-            self._mark_task_processed(task.id, pull_requests)
-            self._notify_task_ready_for_review(task, pull_requests)
-            results.append(
-                {
-                    Task.id.key: task.id,
-                    StatusFields.STATUS: StatusFields.READY_FOR_REVIEW,
-                    PullRequestFields.PULL_REQUESTS: pull_requests,
-                    PullRequestFields.FAILED_REPOSITORIES: [],
-                }
-            )
-
-        return results
+        self._task_data_access.move_task_to_review(task.id)
+        self._mark_task_processed(task.id, pull_requests)
+        self._notify_task_ready_for_review(task, pull_requests)
+        return {
+            Task.id.key: task.id,
+            StatusFields.STATUS: StatusFields.READY_FOR_REVIEW,
+            PullRequestFields.PULL_REQUESTS: pull_requests,
+            PullRequestFields.FAILED_REPOSITORIES: [],
+        }
 
     def handle_pull_request_comment(self, payload: dict) -> dict[str, str]:
         comment = self._implementation_service.review_comment_from_payload(payload)

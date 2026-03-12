@@ -38,7 +38,7 @@ class ProcessAssignedTasksJobTests(unittest.TestCase):
         with redirect_stdout(stdout):
             returned_results = self.job.run()
 
-        self.assertEqual(returned_results, results)
+        self.assertIsNone(returned_results)
         self.assertEqual(stdout.getvalue().strip(), json.dumps(results))
 
     def test_run_sends_failure_notification_before_reraising(self) -> None:

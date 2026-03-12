@@ -14,20 +14,23 @@ class ProcessAssignedTasksJob(Job):
         assert isinstance(data_handler, OpenHandsAgentCoreLib)
         self._data_handler = data_handler
 
-    def run(self) -> list[dict[str, str]]:
+    def run(self) -> None:
         try:
-            results = self._data_handler.service.process_assigned_tasks()
+            results = []
+            for task in self._data_handler.service.get_assigned_tasks():
+                result = self._data_handler.service.process_assigned_task(task)
+                if result is not None:
+                    results.append(result)
             print(json.dumps(results))
-            return results
         except Exception as exc:
             self.logger.exception('process_assigned_tasks_job failed')
             try:
                 self._data_handler.service.notification_service.notify_failure(
-                    'process_assigned_tasks_job',
+                    'process_assigned_task_job',
                     exc,
                 )
             except Exception:
                 self.logger.exception(
-                    'failed to send failure notification for process_assigned_tasks_job'
+                    'failed to send failure notification for process_assigned_task_job'
                 )
             raise
