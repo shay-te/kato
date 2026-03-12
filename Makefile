@@ -7,7 +7,7 @@ bootstrap:
 	./scripts/bootstrap.sh
 
 configure:
-	$(VENV_PYTHON) -m openhands_agent.configure_project --output .env
+	$(VENV_PYTHON) scripts/generate_env.py --output .env
 
 doctor:
 	$(VENV_PYTHON) -m openhands_agent.validate_env --env-file .env --mode all

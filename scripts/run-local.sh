@@ -14,6 +14,7 @@ if [ ! -x .venv/bin/python ]; then
 fi
 
 set -a
+# shellcheck source=/dev/null
 . ./.env
 set +a
 

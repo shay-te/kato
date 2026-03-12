@@ -107,7 +107,7 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('openhands_agent.create_db', run_local_text)
         self.assertIn('bootstrap:', makefile_text)
         self.assertIn('configure:', makefile_text)
-        self.assertIn('openhands_agent.configure_project --output .env', makefile_text)
+        self.assertIn('scripts/generate_env.py --output .env', makefile_text)
         self.assertIn('doctor:', makefile_text)
         self.assertIn('run:', makefile_text)
         self.assertIn('create_db: true', config_text)

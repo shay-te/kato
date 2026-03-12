@@ -67,10 +67,11 @@ openhands_agent/
       implementation_service.py
   jobs/
     process_assigned_tasks.py
-  configure_project.py
   main.py
   openhands_agent_core_lib.py
   openhands_agent_instance.py
+scripts/
+  generate_env.py
 tests/
   config/
     config.yaml
@@ -87,7 +88,7 @@ make doctor
 make run
 ```
 
-`make configure` runs `python -m openhands_agent.configure_project --output .env` and writes a first-pass `.env` for you. It asks:
+`make configure` runs `python scripts/generate_env.py --output .env` and writes a first-pass `.env` for you. It asks:
 
 - where your tasks live
 - where your source code lives
