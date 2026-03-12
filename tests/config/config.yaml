@@ -28,6 +28,7 @@ core_lib:
       slack_email_error_url: ""
 
 openhands_agent:
+  ticket_system: youtrack
   retry:
     max_retries: 5
   state:
@@ -59,6 +60,17 @@ openhands_agent:
     review_state: In Review
     issue_states:
       - Todo
+      - Open
+  jira:
+    base_url: http://localhost:8082
+    token: test-jira-token
+    email: developer@example.com
+    project: TEST
+    assignee: developer
+    review_state_field: status
+    review_state: In Review
+    issue_states:
+      - To Do
       - Open
   repositories:
     - id: client

@@ -74,6 +74,32 @@ class ValidateEnvTests(unittest.TestCase):
 
         self.assertIn('missing required agent env var: YOUTRACK_ASSIGNEE', errors)
 
+    def test_validate_agent_env_accepts_jira_configuration(self) -> None:
+        errors = validate_agent_env(
+            {
+                'OPENHANDS_AGENT_TICKET_SYSTEM': 'jira',
+                'JIRA_BASE_URL': 'https://jira.example',
+                'JIRA_TOKEN': 'jira-token',
+                'JIRA_PROJECT': 'PROJ',
+                'JIRA_ASSIGNEE': 'developer',
+                'REPOSITORY_ID': 'client',
+                'REPOSITORY_BASE_URL': 'https://bitbucket.example',
+                'REPOSITORY_LOCAL_PATH': '.',
+                'REPOSITORY_TOKEN': 'bb-token',
+                'REPOSITORY_OWNER': 'workspace',
+                'REPOSITORY_REPO_SLUG': 'repo',
+                'OPENHANDS_BASE_URL': 'http://localhost:3000',
+                'OPENHANDS_API_KEY': 'local',
+            }
+        )
+
+        self.assertEqual(errors, [])
+
+    def test_validate_agent_env_rejects_unknown_ticket_system(self) -> None:
+        errors = validate_agent_env({'OPENHANDS_AGENT_TICKET_SYSTEM': 'linear'})
+
+        self.assertIn('unsupported ticket system: linear', errors)
+
     def test_validate_openhands_env_requires_api_key_for_non_bedrock_models(self) -> None:
         errors = validate_openhands_env(
             {

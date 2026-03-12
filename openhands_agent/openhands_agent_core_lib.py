@@ -8,7 +8,7 @@ from core_lib.core_lib import CoreLib
 from email_core_lib.email_core_lib import EmailCoreLib
 
 from openhands_agent.client.openhands_client import OpenHandsClient
-from openhands_agent.client.youtrack_client import YouTrackClient
+from openhands_agent.client.ticket_client_factory import build_ticket_client
 from openhands_agent.data_layers.data_access.agent_state_data_access import (
     AgentStateDataAccess,
 )
@@ -55,10 +55,16 @@ class OpenHandsAgentCoreLib(CoreLib):
         self.logger = configure_logger(cfg.core_lib.app.name)
         open_cfg = cfg.openhands_agent
         retry_cfg = open_cfg.retry
+        ticket_system = str(
+            getattr(open_cfg, 'ticket_system', 'youtrack') or 'youtrack'
+        ).strip().lower()
+        ticket_cfg = getattr(open_cfg, ticket_system, None)
+        if ticket_cfg is None:
+            raise ValueError(f'missing ticket system config for: {ticket_system}')
 
         CoreLib.connection_factory_registry.get_or_reg(self.config.core_lib.data.sqlalchemy)
         _email_core_lib = EmailCoreLib(cfg) if hasattr(cfg.core_lib, 'email_core_lib') else None
-        _youtrack_client = YouTrackClient(open_cfg.youtrack.base_url, open_cfg.youtrack.token, retry_cfg.max_retries)
+        _ticket_client = build_ticket_client(ticket_system, ticket_cfg, retry_cfg.max_retries)
         _implementation_openhands_client = OpenHandsClient(
             open_cfg.openhands.base_url,
             open_cfg.openhands.api_key,
@@ -70,7 +76,7 @@ class OpenHandsAgentCoreLib(CoreLib):
             retry_cfg.max_retries,
         )
         repositories_cfg = getattr(open_cfg, 'repositories', None) or [open_cfg.repository]
-        _task_data_access = TaskDataAccess(open_cfg.youtrack, _youtrack_client)
+        _task_data_access = TaskDataAccess(ticket_cfg, _ticket_client)
         _implementation_service = ImplementationService(_implementation_openhands_client)
         _testing_service = TestingService(_testing_openhands_client)
         _repository_service = RepositoryService(repositories_cfg, retry_cfg.max_retries)

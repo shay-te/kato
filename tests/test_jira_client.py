@@ -1,0 +1,143 @@
+import unittest
+from unittest.mock import patch
+
+import bootstrap  # noqa: F401
+
+from openhands_agent.client.jira_client import JiraClient
+from openhands_agent.data_layers.data.task import Task
+from utils import assert_client_headers_and_timeout, mock_response
+
+
+class JiraClientTests(unittest.TestCase):
+    def test_uses_bearer_auth_by_default(self) -> None:
+        client = JiraClient('https://jira.example', 'jira-token', max_retries=5)
+
+        self.assertEqual(client.max_retries, 5)
+        assert_client_headers_and_timeout(self, client, 'jira-token', 30)
+
+    def test_uses_basic_auth_when_email_is_configured(self) -> None:
+        client = JiraClient('https://jira.example', 'jira-token', 'dev@example.com')
+
+        self.assertIsNone(client.headers)
+        self.assertEqual(client.auth, ('dev@example.com', 'jira-token'))
+
+    def test_validate_connection_checks_search_api(self) -> None:
+        client = JiraClient('https://jira.example', 'jira-token')
+        response = mock_response(json_data={'issues': []})
+
+        with patch.object(client, '_get', return_value=response) as mock_get:
+            client.validate_connection('PROJ', 'developer', ['To Do', 'Open'])
+
+        mock_get.assert_called_once_with(
+            '/rest/api/3/search',
+            params={
+                'jql': 'project = "PROJ" AND assignee = "developer" AND status IN ("To Do", "Open") ORDER BY updated DESC',
+                'fields': 'key',
+                'maxResults': 1,
+            },
+        )
+
+    def test_get_assigned_tasks_maps_description_comments_and_attachments(self) -> None:
+        client = JiraClient('https://jira.example', 'jira-token')
+        response = mock_response(
+            json_data={
+                'issues': [
+                    {
+                        'key': 'PROJ-1',
+                        'fields': {
+                            'summary': 'Fix bug',
+                            'description': {
+                                'type': 'doc',
+                                'content': [
+                                    {'type': 'paragraph', 'content': [{'type': 'text', 'text': 'Details'}]}
+                                ],
+                            },
+                            'comment': {
+                                'comments': [
+                                    {
+                                        'author': {'displayName': 'Reviewer'},
+                                        'body': {
+                                            'type': 'doc',
+                                            'content': [
+                                                {'type': 'paragraph', 'content': [{'type': 'text', 'text': 'Please add tests.'}]}
+                                            ],
+                                        },
+                                    }
+                                ]
+                            },
+                            'attachment': [
+                                {
+                                    'filename': 'notes.txt',
+                                    'mimeType': 'text/plain',
+                                    'content': 'https://jira.example/attachment/1',
+                                }
+                            ],
+                        },
+                    }
+                ]
+            }
+        )
+        attachment_response = mock_response(text='Attachment body')
+
+        with patch.object(client, '_get', return_value=response) as mock_get, patch.object(
+            client.session,
+            'get',
+            return_value=attachment_response,
+        ) as mock_session_get:
+            tasks = client.get_assigned_tasks('PROJ', 'developer', ['To Do'])
+
+        self.assertEqual(len(tasks), 1)
+        self.assertIsInstance(tasks[0], Task)
+        self.assertEqual(tasks[0].id, 'PROJ-1')
+        self.assertIn('Details', tasks[0].description)
+        self.assertIn('Reviewer: Please add tests.', tasks[0].description)
+        self.assertIn('Attachment notes.txt:\nAttachment body', tasks[0].description)
+        mock_get.assert_called_once_with(
+            '/rest/api/3/search',
+            params={
+                'jql': 'project = "PROJ" AND assignee = "developer" AND status IN ("To Do") ORDER BY updated DESC',
+                'fields': 'summary,description,comment,attachment',
+                'maxResults': 100,
+            },
+        )
+        mock_session_get.assert_called_once()
+
+    def test_add_comment_posts_plain_text_body(self) -> None:
+        client = JiraClient('https://jira.example', 'jira-token')
+        response = mock_response()
+
+        with patch.object(client, '_post', return_value=response) as mock_post:
+            client.add_comment('PROJ-1', 'Ready for review')
+
+        mock_post.assert_called_once_with(
+            '/rest/api/3/issue/PROJ-1/comment',
+            json={'body': 'Ready for review'},
+        )
+
+    def test_move_issue_to_review_uses_transition_for_status(self) -> None:
+        client = JiraClient('https://jira.example', 'jira-token')
+        transitions_response = mock_response(
+            json_data={
+                'transitions': [
+                    {'id': '31', 'name': 'In Review', 'to': {'name': 'In Review'}}
+                ]
+            }
+        )
+        update_response = mock_response()
+
+        with patch.object(
+            client,
+            '_get',
+            return_value=transitions_response,
+        ) as mock_get, patch.object(
+            client,
+            '_post',
+            return_value=update_response,
+        ) as mock_post:
+            client.move_issue_to_state('PROJ-1', 'status', 'In Review')
+
+        mock_get.assert_called_once_with('/rest/api/3/issue/PROJ-1/transitions')
+        mock_post.assert_called_once_with(
+            '/rest/api/3/issue/PROJ-1/transitions',
+            json={'transition': {'id': '31'}},
+        )

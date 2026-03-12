@@ -78,3 +78,32 @@ class YouTrackCustomFieldFields:
     ID = 'id'
     NAME = 'name'
     TYPE = '$type'
+
+
+class JiraIssueFields:
+    KEY = 'key'
+    FIELDS = 'fields'
+    SUMMARY = 'summary'
+    DESCRIPTION = 'description'
+    COMMENT = 'comment'
+    ATTACHMENT = 'attachment'
+    STATUS = 'status'
+
+
+class JiraCommentFields:
+    BODY = 'body'
+    AUTHOR = 'author'
+    DISPLAY_NAME = 'displayName'
+
+
+class JiraAttachmentFields:
+    FILENAME = 'filename'
+    MIME_TYPE = 'mimeType'
+    CONTENT = 'content'
+    SIZE = 'size'
+
+
+class JiraTransitionFields:
+    ID = 'id'
+    NAME = 'name'
+    TO = 'to'

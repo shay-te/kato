@@ -99,6 +99,7 @@ def build_test_cfg() -> types.SimpleNamespace:
             )
         ),
         openhands_agent=types.SimpleNamespace(
+            ticket_system='youtrack',
             retry=types.SimpleNamespace(
                 max_retries=5,
             ),
@@ -127,6 +128,7 @@ def build_test_cfg() -> types.SimpleNamespace:
             ),
             youtrack=types.SimpleNamespace(
                 name='youtrack-config',
+                provider_name='youtrack',
                 base_url='https://youtrack.example',
                 token='yt-token',
                 project='PROJ',
@@ -134,6 +136,18 @@ def build_test_cfg() -> types.SimpleNamespace:
                 review_state_field='State',
                 review_state='In Review',
                 issue_states=['Todo', 'Open'],
+            ),
+            jira=types.SimpleNamespace(
+                name='jira-config',
+                provider_name='jira',
+                base_url='https://jira.example',
+                token='jira-token',
+                email='dev@example.com',
+                project='PROJ',
+                assignee='developer',
+                review_state_field='status',
+                review_state='In Review',
+                issue_states=['To Do', 'Open'],
             ),
             openhands=types.SimpleNamespace(
                 name='openhands-config',

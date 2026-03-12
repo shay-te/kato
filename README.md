@@ -1,16 +1,18 @@
-# OpenHands YouTrack Agent
+# OpenHands Ticket Agent
 
 This repository is structured as a [`core-lib`](https://github.com/shay-te/core-lib) application and follows the documented `core-lib` package layout.
 
 The agent is designed to:
 
-1. Read tasks assigned to it from YouTrack.
+1. Read tasks assigned to it from the configured ticket system.
+   Supported ticket systems are YouTrack and Jira.
+   `openhands_agent.ticket_system` defaults to `youtrack`.
    Only tasks assigned to the configured assignee and currently in one of the configured `issue_states` are eligible.
    When loading a task, the agent also reads issue comments, text attachments, and screenshot attachment metadata so OpenHands gets more complete context.
 2. Read each task definition.
 3. Ask OpenHands to implement the required changes.
 4. Create one pull request per affected repository.
-5. Add the aggregated pull request summary back to YouTrack, move the issue to the configured review state, and send a review-ready email.
+5. Add the aggregated pull request summary back to the ticket system, move the issue to the configured review state, and send a review-ready email.
 6. Listen to pull request comments and trigger follow-up fixes.
 
 ## Structure
@@ -19,6 +21,7 @@ The agent is designed to:
 openhands_agent/
   client/
     bitbucket_client.py
+    jira_client.py
     openhands_client.py
     youtrack_client.py
   config/
@@ -65,10 +68,16 @@ make run
 Then fill in `.env`. The most important entries are:
 
 ```dotenv
+OPENHANDS_AGENT_TICKET_SYSTEM=youtrack
 YOUTRACK_BASE_URL=https://your-company.youtrack.cloud
 YOUTRACK_TOKEN=...
 YOUTRACK_PROJECT=PROJ
 YOUTRACK_ASSIGNEE=your-youtrack-login
+JIRA_BASE_URL=
+JIRA_TOKEN=
+JIRA_EMAIL=
+JIRA_PROJECT=
+JIRA_ASSIGNEE=
 REPOSITORY_ID=client
 REPOSITORY_DISPLAY_NAME=Client
 REPOSITORY_LOCAL_PATH=./client
@@ -95,6 +104,8 @@ YOUTRACK_REVIEW_STATE=In Review
 EMAIL_CORE_LIB_SEND_IN_BLUE_API_KEY=...
 SLACK_WEBHOOK_URL_ERRORS_EMAIL=
 ```
+
+Leave `OPENHANDS_AGENT_TICKET_SYSTEM=youtrack` for the default behavior. Set it to `jira` to use the Jira settings instead.
 
 The pull-request provider is selected automatically from `REPOSITORY_BASE_URL`.
 Supported providers:
@@ -146,8 +157,12 @@ OPENHANDS_LLM_MODEL=bedrock/anthropic.claude-3-sonnet-20240229-v1:0
 AWS_BEARER_TOKEN_BEDROCK=...
 ```
 
-Allowed YouTrack stages are configured in `openhands_agent/config/openhands_agent_core_lib.yaml` under `openhands_agent.youtrack.issue_states`. By default the agent only processes tasks assigned to `YOUTRACK_ASSIGNEE` that are in `Todo` or `Open`.
-The target YouTrack review column is configured with `openhands_agent.youtrack.review_state_field` and `openhands_agent.youtrack.review_state`. By default the agent moves completed issues to `State=In Review`.
+The active ticket provider comes from `openhands_agent.ticket_system`, which defaults to `youtrack`.
+YouTrack stages are configured under `openhands_agent.youtrack.issue_states`.
+Jira stages are configured under `openhands_agent.jira.issue_states`.
+The review-state target also comes from the active provider config:
+- YouTrack uses `openhands_agent.youtrack.review_state_field` and `openhands_agent.youtrack.review_state`.
+- Jira uses `openhands_agent.jira.review_state_field` and `openhands_agent.jira.review_state`.
 Retry count is configured under `openhands_agent.retry.max_retries`.
 Processed task state, processed review-comment ids, and pull-request comment context are persisted in `OPENHANDS_AGENT_STATE_FILE` so the agent can skip already-completed work, poll for new review comments, and still resolve review comments after a restart.
 Failure emails are configured under `openhands_agent.failure_email` and sent through `email-core-lib`.
@@ -169,7 +184,7 @@ If a developer is starting from zero, these are the steps:
 1. Clone the repository.
 2. Change into the repository directory.
 3. Copy `.env.example` to `.env`.
-4. Fill in YouTrack credentials.
+4. Fill in the credentials for the ticket system you selected.
 5. Fill in the first repository entry credentials and local path.
 6. Add more repository entries in the config file if tasks can span multiple repos.
 7. Fill in OpenHands server settings.
@@ -182,7 +197,7 @@ If a developer is starting from zero, these are the steps:
 14. Validate the environment values.
 15. Create or upgrade the database schema.
 16. Start the application.
-17. Confirm the agent can connect to YouTrack, OpenHands, and every configured repository.
+17. Confirm the agent can connect to the configured ticket system, OpenHands, and every configured repository.
 
 What is automated now:
 
@@ -250,10 +265,11 @@ pip install -e .
 
 2. Fill `.env` instead of exporting variables one by one. Start from `.env.example` and update the values you need there.
 
-3. Adjust `openhands_agent/config/openhands_agent_core_lib.yaml` if you want different allowed YouTrack stages, a different review column, or review-ready email recipients.
+3. Adjust `openhands_agent/config/openhands_agent_core_lib.yaml` if you want different allowed ticket stages, a different review column, or review-ready email recipients.
 
 ```yaml
 openhands_agent:
+  ticket_system: youtrack
   retry:
     max_retries: 5
   failure_email:
@@ -273,6 +289,12 @@ openhands_agent:
     review_state: In Review
     issue_states:
       - Todo
+      - Open
+  jira:
+    review_state_field: status
+    review_state: In Review
+    issue_states:
+      - To Do
       - Open
 ```
 
@@ -313,7 +335,7 @@ The compose file uses the official OpenHands image and runtime image pattern fro
 - https://docs.all-hands.dev/usage/local-setup
 - https://github.com/OpenHands/OpenHands
 
-Before running `docker compose up --build`, make sure `.env` contains the YouTrack, repository, OpenHands, retry, and optional email settings you want Docker Compose to pass through.
+Before running `docker compose up --build`, make sure `.env` contains the selected ticket-system settings, repository settings, OpenHands settings, retry settings, and optional email settings you want Docker Compose to pass through.
 
 If you use `.env`, Docker Compose will load it automatically, so you can keep both the agent config and the OpenHands LLM config in one place and avoid manual setup in the OpenHands UI for the env-supported options.
 
@@ -321,19 +343,19 @@ OpenHands behavioral rules are also supported from this repo through [`AGENTS.md
 
 What happens when it runs:
 
-- It fetches only tasks assigned to `YOUTRACK_ASSIGNEE`.
+- It fetches only tasks assigned to the configured ticket-system assignee.
 - It ignores tasks that are not in the configured `issue_states`.
-- It enriches the task context with YouTrack comments, text attachment contents, and screenshot attachment references.
+- It enriches the task context with ticket comments, text attachment contents, and screenshot attachment references.
 - It retries transient client failures up to `openhands_agent.retry.max_retries`.
 - If the overall run fails, it sends failure notifications through `email-core-lib` to the configured recipients.
-- For each eligible task, it infers the affected repositories, asks OpenHands to implement the work across that scoped workspace set, opens one pull request per repository, comments the aggregated PR summary back to YouTrack, moves the issue to the configured review state when all repositories succeed, and sends a completion email that asks for review.
+- For each eligible task, it infers the affected repositories, asks OpenHands to implement the work across that scoped workspace set, opens one pull request per repository, comments the aggregated PR summary back to the configured ticket system, moves the issue to the configured review state when all repositories succeed, and sends a completion email that asks for review.
 - After task processing, it polls tracked pull requests for new review comments, passes the full accumulated review-comment context into OpenHands for each unseen comment, and records processed comment ids so the same comment is not reprocessed on the next run.
 
 ### Partial Failure Behavior
 
 If a task spans multiple repositories and one pull request succeeds while another fails, the agent does not roll back the successful pull request. Instead it:
 
-- posts the partial pull-request summary back to YouTrack
+- posts the partial pull-request summary back to the configured ticket system
 - records the failed repository ids in the run result
 - leaves the issue out of the review state transition
 - sends the failure notification path with the failing repositories in the error text
@@ -359,7 +381,7 @@ python3 -m unittest discover -s tests -p 'test_notification_service.py'
 
 - `core-lib` application wrapper for the agent.
 - `core-lib`-style `client`, `data_layers/data`, `data_layers/data_access`, and `data_layers/service` packages.
-- Data-access wrappers around YouTrack, OpenHands, and repository provider integrations.
+- Data-access wrappers around ticket systems, OpenHands, and repository provider integrations.
 - A service layer that orchestrates the full task-to-PR flow.
 - A webhook-style handler for pull-request review comments.
 - A job entrypoint for processing assigned tasks plus a `tests/config` Hydra scaffold.
@@ -368,5 +390,5 @@ python3 -m unittest discover -s tests -p 'test_notification_service.py'
 
 - Real git workspace handling per task.
 - Authentication/signature verification for webhooks.
-- Final adaptation to the exact OpenHands API and your YouTrack fields.
-- No end-to-end integration test exercises a live YouTrack -> OpenHands -> pull-request provider flow yet.
+- Final adaptation to the exact OpenHands API and your ticket-system fields.
+- No end-to-end integration test exercises a live ticket-system -> OpenHands -> pull-request provider flow yet.

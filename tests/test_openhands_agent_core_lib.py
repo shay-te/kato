@@ -24,8 +24,8 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
         ) as mock_get_or_reg, patch(
             'openhands_agent.openhands_agent_core_lib.EmailCoreLib'
         ) as mock_email_core_lib_cls, patch(
-            'openhands_agent.openhands_agent_core_lib.YouTrackClient'
-        ) as mock_youtrack_client_cls, patch(
+            'openhands_agent.openhands_agent_core_lib.build_ticket_client'
+        ) as mock_build_ticket_client, patch(
             'openhands_agent.openhands_agent_core_lib.OpenHandsClient',
             side_effect=[implementation_client, testing_client],
         ) as mock_openhands_client_cls, patch(
@@ -47,9 +47,9 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
 
         mock_get_or_reg.assert_called_once_with(self.cfg.core_lib.data.sqlalchemy)
         mock_email_core_lib_cls.assert_called_once_with(self.cfg)
-        mock_youtrack_client_cls.assert_called_once_with(
-            self.cfg.openhands_agent.youtrack.base_url,
-            self.cfg.openhands_agent.youtrack.token,
+        mock_build_ticket_client.assert_called_once_with(
+            'youtrack',
+            self.cfg.openhands_agent.youtrack,
             self.cfg.openhands_agent.retry.max_retries,
         )
         self.assertEqual(mock_openhands_client_cls.call_count, 2)
@@ -76,7 +76,10 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
         mock_state_data_access_cls.assert_called_once_with(
             self.cfg.openhands_agent.state.file_path,
         )
-        mock_task_da_cls.assert_called_once_with(self.cfg.openhands_agent.youtrack, mock_youtrack_client_cls.return_value)
+        mock_task_da_cls.assert_called_once_with(
+            self.cfg.openhands_agent.youtrack,
+            mock_build_ticket_client.return_value,
+        )
         mock_impl_service_cls.assert_called_once_with(implementation_client)
         mock_testing_service_cls.assert_called_once_with(testing_client)
         mock_notification_service_cls.assert_called_once_with(
@@ -102,7 +105,7 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
         ), patch(
             'openhands_agent.openhands_agent_core_lib.EmailCoreLib'
         ), patch(
-            'openhands_agent.openhands_agent_core_lib.YouTrackClient'
+            'openhands_agent.openhands_agent_core_lib.build_ticket_client'
         ), patch(
             'openhands_agent.openhands_agent_core_lib.OpenHandsClient'
         ), patch(
@@ -133,7 +136,7 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
         ), patch(
             'openhands_agent.openhands_agent_core_lib.EmailCoreLib'
         ), patch(
-            'openhands_agent.openhands_agent_core_lib.YouTrackClient'
+            'openhands_agent.openhands_agent_core_lib.build_ticket_client'
         ), patch(
             'openhands_agent.openhands_agent_core_lib.OpenHandsClient'
         ), patch(
@@ -167,7 +170,7 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
         with patch(
             'openhands_agent.openhands_agent_core_lib.CoreLib.connection_factory_registry.get_or_reg'
         ), patch(
-            'openhands_agent.openhands_agent_core_lib.YouTrackClient'
+            'openhands_agent.openhands_agent_core_lib.build_ticket_client'
         ), patch(
             'openhands_agent.openhands_agent_core_lib.OpenHandsClient'
         ), patch(
@@ -194,6 +197,41 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
             completion_email_cfg=cfg.openhands_agent.completion_email,
         )
         mock_service_cls.return_value.validate_connections.assert_called_once_with()
+
+    def test_builds_jira_ticket_client_when_configured(self) -> None:
+        cfg = build_test_cfg()
+        cfg.openhands_agent.ticket_system = 'jira'
+
+        with patch(
+            'openhands_agent.openhands_agent_core_lib.CoreLib.connection_factory_registry.get_or_reg'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.EmailCoreLib'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.build_ticket_client'
+        ) as mock_build_ticket_client, patch(
+            'openhands_agent.openhands_agent_core_lib.OpenHandsClient'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.AgentStateDataAccess'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.RepositoryService'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.TaskDataAccess'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.ImplementationService'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.TestingService'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.NotificationService'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.AgentService'
+        ):
+            OpenHandsAgentCoreLib(cfg)
+
+        mock_build_ticket_client.assert_called_once_with(
+            'jira',
+            cfg.openhands_agent.jira,
+            cfg.openhands_agent.retry.max_retries,
+        )
 
     def test_install_upgrades_database_to_head(self) -> None:
         with patch(

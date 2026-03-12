@@ -28,6 +28,7 @@ class AgentServiceTests(unittest.TestCase):
         self.client_repo = self.cfg.openhands_agent.repositories[0]
         self.backend_repo = self.cfg.openhands_agent.repositories[1]
         task_client = types.SimpleNamespace(
+            provider_name='youtrack',
             get_assigned_tasks=Mock(return_value=[build_task(description='Update client and backend APIs')]),
             add_comment=Mock(),
             move_issue_to_state=Mock(),

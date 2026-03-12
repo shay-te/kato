@@ -3,7 +3,7 @@ from omegaconf import DictConfig
 from core_lib.data_layers.data_access.data_access import DataAccess
 from core_lib.rule_validator.rule_validator import RuleValidator, ValueRuleValidator
 
-from openhands_agent.client.youtrack_client import YouTrackClient
+from openhands_agent.client.ticket_client_base import TicketClientBase
 from openhands_agent.data_layers.data.task import Task
 
 
@@ -29,9 +29,13 @@ move_to_review_rule_validator = RuleValidator(
 
 
 class TaskDataAccess(DataAccess):
-    def __init__(self, config: DictConfig, client: YouTrackClient) -> None:
+    def __init__(self, config: DictConfig, client: TicketClientBase) -> None:
         self._config = config
         self._client = client
+
+    @property
+    def provider_name(self) -> str:
+        return getattr(self._client, 'provider_name', 'ticket_system')
 
     def validate_connection(self) -> None:
         self._client.validate_connection(

@@ -51,7 +51,7 @@ class AgentService(Service):
 
     def validate_connections(self) -> None:
         validations = [
-            ('youtrack', self._task_data_access.validate_connection),
+            (self._task_data_access.provider_name, self._task_data_access.validate_connection),
             ('openhands', self._implementation_service.validate_connection),
             ('openhands_testing', self._testing_service.validate_connection),
             ('repositories', self._repository_service.validate_connections),

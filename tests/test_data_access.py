@@ -19,17 +19,13 @@ class TaskDataAccessTests(unittest.TestCase):
             assignee="me",
             issue_states=["Todo", "Open"],
         )
+        client = Mock()
 
-        with patch(
-            'openhands_agent.data_layers.data_access.task_data_access.YouTrackClient'
-        ) as mock_client_cls:
-            data_access = TaskDataAccess(config, mock_client_cls.return_value)
-            data_access.get_assigned_tasks()
-            data_access.add_pull_request_comment('PROJ-1', 'https://bitbucket/pr/1')
-            data_access.move_task_to_review('PROJ-1')
+        data_access = TaskDataAccess(config, client)
+        data_access.get_assigned_tasks()
+        data_access.add_pull_request_comment('PROJ-1', 'https://bitbucket/pr/1')
+        data_access.move_task_to_review('PROJ-1')
 
-        mock_client_cls.assert_not_called()
-        client = mock_client_cls.return_value
         client.get_assigned_tasks.assert_called_once_with(
             project='PROJ',
             assignee='me',
@@ -77,15 +73,12 @@ class TaskDataAccessTests(unittest.TestCase):
             assignee="me",
             issue_state="Todo",
         )
+        client = Mock()
 
-        with patch(
-            'openhands_agent.data_layers.data_access.task_data_access.YouTrackClient'
-        ) as mock_client_cls:
-            data_access = TaskDataAccess(config, mock_client_cls.return_value)
-            data_access.get_assigned_tasks()
-            data_access.move_task_to_review('PROJ-1')
+        data_access = TaskDataAccess(config, client)
+        data_access.get_assigned_tasks()
+        data_access.move_task_to_review('PROJ-1')
 
-        client = mock_client_cls.return_value
         client.get_assigned_tasks.assert_called_once_with(
             project='PROJ',
             assignee='me',

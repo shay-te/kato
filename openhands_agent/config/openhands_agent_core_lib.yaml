@@ -28,6 +28,7 @@ core_lib:
       slack_email_error_url: ${oc.env:SLACK_WEBHOOK_URL_ERRORS_EMAIL,""}
 
 openhands_agent:
+  ticket_system: ${oc.env:OPENHANDS_AGENT_TICKET_SYSTEM,"youtrack"}
   retry:
     max_retries: ${oc.env:OPENHANDS_AGENT_MAX_RETRIES,3}
   state:
@@ -59,6 +60,17 @@ openhands_agent:
     review_state: ${oc.env:YOUTRACK_REVIEW_STATE,"In Review"}
     issue_states:
       - Todo
+      - Open
+  jira:
+    base_url: ${oc.env:JIRA_BASE_URL,""}
+    token: ${oc.env:JIRA_TOKEN,""}
+    email: ${oc.env:JIRA_EMAIL,""}
+    project: ${oc.env:JIRA_PROJECT,""}
+    assignee: ${oc.env:JIRA_ASSIGNEE,""}
+    review_state_field: ${oc.env:JIRA_REVIEW_STATE_FIELD,"status"}
+    review_state: ${oc.env:JIRA_REVIEW_STATE,"In Review"}
+    issue_states:
+      - To Do
       - Open
   repositories:
     - id: ${oc.env:REPOSITORY_ID,"primary"}

@@ -18,6 +18,10 @@ class DeploymentFilesTests(unittest.TestCase):
         )
         self.assertIn('OH_WEB_URL: ${OPENHANDS_WEB_URL:-}', compose_text)
         self.assertIn(
+            'OPENHANDS_AGENT_TICKET_SYSTEM: ${OPENHANDS_AGENT_TICKET_SYSTEM:-youtrack}',
+            compose_text,
+        )
+        self.assertIn(
             'OPENHANDS_AGENT_COMPLETION_EMAIL_ENABLED: ${OPENHANDS_AGENT_COMPLETION_EMAIL_ENABLED:-false}',
             compose_text,
         )
@@ -27,11 +31,14 @@ class DeploymentFilesTests(unittest.TestCase):
         env_example_text = (REPO_ROOT / '.env.example').read_text(encoding='utf-8')
 
         self.assertIn('REPOSITORY_ID=', env_example_text)
+        self.assertIn('OPENHANDS_AGENT_TICKET_SYSTEM=', env_example_text)
         self.assertIn('REPOSITORY_LOCAL_PATH=', env_example_text)
         self.assertIn('REPOSITORY_BASE_URL=', env_example_text)
         self.assertIn('REPOSITORY_TOKEN=', env_example_text)
         self.assertIn('REPOSITORY_OWNER=', env_example_text)
         self.assertIn('REPOSITORY_REPO_SLUG=', env_example_text)
+        self.assertIn('JIRA_BASE_URL=', env_example_text)
+        self.assertIn('JIRA_TOKEN=', env_example_text)
         self.assertIn('OPENHANDS_BASE_URL=', env_example_text)
         self.assertIn('OPENHANDS_AGENT_STATE_FILE=', env_example_text)
         self.assertIn('OPENHANDS_LLM_MODEL=', env_example_text)

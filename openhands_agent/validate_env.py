@@ -42,20 +42,10 @@ def _missing(env: dict[str, str], keys: list[str]) -> list[str]:
 
 def validate_agent_env(env: dict[str, str]) -> list[str]:
     errors = []
-    required = [
-        'YOUTRACK_BASE_URL',
-        'YOUTRACK_TOKEN',
-        'YOUTRACK_PROJECT',
-        'YOUTRACK_ASSIGNEE',
-        'REPOSITORY_ID',
-        'REPOSITORY_BASE_URL',
-        'REPOSITORY_LOCAL_PATH',
-        'REPOSITORY_TOKEN',
-        'REPOSITORY_OWNER',
-        'REPOSITORY_REPO_SLUG',
-        'OPENHANDS_BASE_URL',
-        'OPENHANDS_API_KEY',
-    ]
+    ticket_system = str(env.get('OPENHANDS_AGENT_TICKET_SYSTEM', 'youtrack') or 'youtrack').strip().lower()
+    if ticket_system not in {'youtrack', 'jira'}:
+        errors.append(f'unsupported ticket system: {ticket_system}')
+    required = _required_agent_keys(ticket_system)
     for key in _missing(env, required):
         errors.append(f'missing required agent env var: {key}')
 
@@ -82,6 +72,34 @@ def validate_agent_env(env: dict[str, str]) -> list[str]:
             errors.append(f'completion email is enabled but {key} is missing')
 
     return errors
+
+
+def _required_agent_keys(ticket_system: str) -> list[str]:
+    shared_required = [
+        'REPOSITORY_ID',
+        'REPOSITORY_BASE_URL',
+        'REPOSITORY_LOCAL_PATH',
+        'REPOSITORY_TOKEN',
+        'REPOSITORY_OWNER',
+        'REPOSITORY_REPO_SLUG',
+        'OPENHANDS_BASE_URL',
+        'OPENHANDS_API_KEY',
+    ]
+    if ticket_system == 'jira':
+        return [
+            'JIRA_BASE_URL',
+            'JIRA_TOKEN',
+            'JIRA_PROJECT',
+            'JIRA_ASSIGNEE',
+            *shared_required,
+        ]
+    return [
+        'YOUTRACK_BASE_URL',
+        'YOUTRACK_TOKEN',
+        'YOUTRACK_PROJECT',
+        'YOUTRACK_ASSIGNEE',
+        *shared_required,
+    ]
 
 
 def validate_openhands_env(env: dict[str, str]) -> list[str]:
