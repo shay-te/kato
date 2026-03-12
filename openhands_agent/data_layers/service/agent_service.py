@@ -1,6 +1,8 @@
 import logging
 import traceback
 
+from core_lib.data_layers.service.service import Service
+
 from openhands_agent.data_layers.data.review_comment import ReviewComment
 from openhands_agent.data_layers.data.task import Task
 from openhands_agent.data_layers.data_access.task_data_access import TaskDataAccess
@@ -14,7 +16,7 @@ from openhands_agent.data_layers.service.notification_service import Notificatio
 from openhands_agent.data_layers.service.repository_service import RepositoryService
 from openhands_agent.data_layers.service.testing_service import TestingService
 
-class AgentService:
+class AgentService(Service):
     def __init__(
         self,
         task_data_access: TaskDataAccess,
@@ -22,6 +24,7 @@ class AgentService:
         testing_service: TestingService,
         repository_service: RepositoryService,
         notification_service: NotificationService,
+        state_data_access=None,
     ) -> None:
         if testing_service is None:
             raise ValueError('testing_service is required')
@@ -32,6 +35,7 @@ class AgentService:
         self._testing_service = testing_service
         self._repository_service = repository_service
         self._notification_service = notification_service
+        self._state_data_access = state_data_access
         self._pull_request_context_map: dict[str, list[dict[str, str]]] = {}
         self.logger = logging.getLogger(self.__class__.__name__)
 
@@ -46,6 +50,8 @@ class AgentService:
             ('openhands_testing', self._testing_service.validate_connection),
             ('repositories', self._repository_service.validate_connections),
         ]
+        if self._state_data_access is not None:
+            validations.append(('state', self._state_data_access.validate))
         failures: list[str] = []
 
         for service_name, validate in validations:
@@ -67,6 +73,17 @@ class AgentService:
         results: list[dict] = []
 
         for task in self._task_data_access.get_assigned_tasks():
+            if self._is_task_processed(task.id):
+                self.logger.info('skipping already processed task %s', task.id)
+                results.append(
+                    {
+                        Task.id.key: task.id,
+                        StatusFields.STATUS: StatusFields.SKIPPED,
+                        PullRequestFields.PULL_REQUESTS: self._processed_task_pull_requests(task.id),
+                        PullRequestFields.FAILED_REPOSITORIES: [],
+                    }
+                )
+                continue
             self.logger.info('processing task %s', task.id)
             try:
                 repositories = self._repository_service.resolve_task_repositories(task)
@@ -127,6 +144,7 @@ class AgentService:
                 continue
 
             self._task_data_access.move_task_to_review(task.id)
+            self._mark_task_processed(task.id, pull_requests)
             self._notify_task_ready_for_review(task, pull_requests)
             results.append(
                 {
@@ -147,6 +165,10 @@ class AgentService:
             comment.pull_request_id,
         )
         pull_request_contexts = self._pull_request_context_map.get(comment.pull_request_id, [])
+        if not pull_request_contexts:
+            pull_request_contexts = self._load_persisted_pull_request_contexts(
+                comment.pull_request_id
+            )
         if not pull_request_contexts:
             raise ValueError(f'unknown pull request id: {comment.pull_request_id}')
         if len(pull_request_contexts) > 1:
@@ -224,6 +246,19 @@ class AgentService:
                 Task.branch_name.key: branch_name,
             }
         )
+        if self._state_data_access is None:
+            return
+        try:
+            self._state_data_access.remember_pull_request_context(
+                pull_request_id,
+                pull_request[PullRequestFields.REPOSITORY_ID],
+                branch_name,
+            )
+        except Exception:
+            self.logger.exception(
+                'failed to persist pull request context for pull request %s',
+                pull_request_id,
+            )
 
     def _notify_task_ready_for_review(self, task: Task, pull_requests) -> None:
         try:
@@ -252,6 +287,41 @@ class AgentService:
             )
         except Exception:
             self.logger.exception('failed to send failure notification for task %s', task.id)
+
+    def _is_task_processed(self, task_id: str) -> bool:
+        if self._state_data_access is None:
+            return False
+        return self._state_data_access.is_task_processed(task_id)
+
+    def _processed_task_pull_requests(self, task_id: str) -> list[dict[str, str]]:
+        if self._state_data_access is None:
+            return []
+        processed_task = self._state_data_access.get_processed_task(task_id)
+        pull_requests = processed_task.get(PullRequestFields.PULL_REQUESTS, [])
+        return pull_requests if isinstance(pull_requests, list) else []
+
+    def _mark_task_processed(self, task_id: str, pull_requests: list[dict[str, str]]) -> None:
+        if self._state_data_access is None:
+            return
+        try:
+            self._state_data_access.mark_task_processed(task_id, pull_requests)
+        except Exception:
+            self.logger.exception('failed to persist processed task state for task %s', task_id)
+
+    def _load_persisted_pull_request_contexts(
+        self,
+        pull_request_id: str,
+    ) -> list[dict[str, str]]:
+        if self._state_data_access is None:
+            return []
+        try:
+            return self._state_data_access.get_pull_request_contexts(pull_request_id)
+        except Exception:
+            self.logger.exception(
+                'failed to load persisted pull request context for pull request %s',
+                pull_request_id,
+            )
+            return []
 
     @staticmethod
     def _pull_request_summary_comment(

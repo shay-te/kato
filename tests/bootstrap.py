@@ -62,11 +62,17 @@ def _install_core_lib_stubs() -> None:
         "core_lib.connection.sql_alchemy_connection_factory"
     )
     core_lib_data_layers_module = types.ModuleType("core_lib.data_layers")
+    core_lib_data_access_package = types.ModuleType("core_lib.data_layers.data_access")
+    core_lib_data_access_module = types.ModuleType(
+        "core_lib.data_layers.data_access.data_access"
+    )
     core_lib_data_module = types.ModuleType("core_lib.data_layers.data")
     core_lib_data_helpers_module = types.ModuleType("core_lib.data_layers.data.data_helpers")
     core_lib_db_module = types.ModuleType("core_lib.data_layers.data.db")
     core_lib_sqlalchemy_module = types.ModuleType("core_lib.data_layers.data.db.sqlalchemy")
     core_lib_base_module = types.ModuleType("core_lib.data_layers.data.db.sqlalchemy.base")
+    core_lib_service_package = types.ModuleType("core_lib.data_layers.service")
+    core_lib_service_module = types.ModuleType("core_lib.data_layers.service.service")
     core_lib_rule_validator_package = types.ModuleType("core_lib.rule_validator")
     core_lib_rule_validator_module = types.ModuleType("core_lib.rule_validator.rule_validator")
     email_core_lib_package = types.ModuleType("email_core_lib")
@@ -167,7 +173,17 @@ def _install_core_lib_stubs() -> None:
             for key, value in kwargs.items():
                 setattr(self, key, value)
 
+    class DataAccess:
+        def __init__(self) -> None:
+            return None
+
+    class Service:
+        def __init__(self) -> None:
+            return None
+
     core_lib_base_module.Base = Base
+    core_lib_data_access_module.DataAccess = DataAccess
+    core_lib_service_module.Service = Service
     core_lib_connection_factory_module.SqlAlchemyConnectionFactory = (
         SqlAlchemyConnectionFactory
     )
@@ -209,11 +225,15 @@ def _install_core_lib_stubs() -> None:
     sys.modules["core_lib.jobs.job"] = job_module
     sys.modules["core_lib.core_lib"] = core_lib_core_module
     sys.modules["core_lib.data_layers"] = core_lib_data_layers_module
+    sys.modules["core_lib.data_layers.data_access"] = core_lib_data_access_package
+    sys.modules["core_lib.data_layers.data_access.data_access"] = core_lib_data_access_module
     sys.modules["core_lib.data_layers.data"] = core_lib_data_module
     sys.modules["core_lib.data_layers.data.data_helpers"] = core_lib_data_helpers_module
     sys.modules["core_lib.data_layers.data.db"] = core_lib_db_module
     sys.modules["core_lib.data_layers.data.db.sqlalchemy"] = core_lib_sqlalchemy_module
     sys.modules["core_lib.data_layers.data.db.sqlalchemy.base"] = core_lib_base_module
+    sys.modules["core_lib.data_layers.service"] = core_lib_service_package
+    sys.modules["core_lib.data_layers.service.service"] = core_lib_service_module
     sys.modules["core_lib.rule_validator"] = core_lib_rule_validator_package
     sys.modules["core_lib.rule_validator.rule_validator"] = core_lib_rule_validator_module
     sys.modules["email_core_lib"] = email_core_lib_package

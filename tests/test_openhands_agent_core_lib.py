@@ -26,6 +26,8 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
         ) as mock_youtrack_client_cls, patch(
             'openhands_agent.openhands_agent_core_lib.OpenHandsClient'
         ) as mock_openhands_client_cls, patch(
+            'openhands_agent.openhands_agent_core_lib.AgentStateDataAccess'
+        ) as mock_state_data_access_cls, patch(
             'openhands_agent.openhands_agent_core_lib.TaskDataAccess'
         ) as mock_task_da_cls, patch(
             'openhands_agent.openhands_agent_core_lib.ImplementationService'
@@ -56,6 +58,9 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
             self.cfg.openhands_agent.repositories,
             self.cfg.openhands_agent.retry.max_retries,
         )
+        mock_state_data_access_cls.assert_called_once_with(
+            self.cfg.openhands_agent.state.file_path,
+        )
         mock_task_da_cls.assert_called_once_with(self.cfg.openhands_agent.youtrack, mock_youtrack_client_cls.return_value)
         mock_impl_service_cls.assert_called_once_with(mock_openhands_client_cls.return_value)
         mock_testing_service_cls.assert_called_once_with(mock_openhands_client_cls.return_value)
@@ -71,6 +76,7 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
             testing_service=mock_testing_service_cls.return_value,
             repository_service=mock_repository_service_cls.return_value,
             notification_service=mock_notification_service_cls.return_value,
+            state_data_access=mock_state_data_access_cls.return_value,
         )
         mock_service_cls.return_value.validate_connections.assert_called_once_with()
         self.assertIs(app.service, mock_service_cls.return_value)
@@ -84,6 +90,8 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
             'openhands_agent.openhands_agent_core_lib.YouTrackClient'
         ), patch(
             'openhands_agent.openhands_agent_core_lib.OpenHandsClient'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.AgentStateDataAccess'
         ), patch(
             'openhands_agent.openhands_agent_core_lib.RepositoryService'
         ), patch(
@@ -112,6 +120,8 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
             'openhands_agent.openhands_agent_core_lib.YouTrackClient'
         ), patch(
             'openhands_agent.openhands_agent_core_lib.OpenHandsClient'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.AgentStateDataAccess'
         ), patch(
             'openhands_agent.openhands_agent_core_lib.RepositoryService'
         ), patch(
@@ -144,6 +154,8 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
             'openhands_agent.openhands_agent_core_lib.YouTrackClient'
         ), patch(
             'openhands_agent.openhands_agent_core_lib.OpenHandsClient'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.AgentStateDataAccess'
         ), patch(
             'openhands_agent.openhands_agent_core_lib.RepositoryService'
         ), patch(

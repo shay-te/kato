@@ -1,5 +1,6 @@
 from omegaconf import DictConfig
 
+from core_lib.data_layers.data_access.data_access import DataAccess
 from core_lib.rule_validator.rule_validator import RuleValidator, ValueRuleValidator
 
 from openhands_agent.client.pull_request_client_base import PullRequestClientBase
@@ -16,7 +17,7 @@ pull_request_rule_validator = RuleValidator(
 )
 
 
-class PullRequestDataAccess:
+class PullRequestDataAccess(DataAccess):
     def __init__(self, config: DictConfig, client: PullRequestClientBase) -> None:
         self._config = config
         self._client = client

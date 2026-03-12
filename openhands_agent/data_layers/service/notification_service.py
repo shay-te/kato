@@ -3,10 +3,12 @@ import logging
 from importlib import resources
 from string import Template
 
+from core_lib.data_layers.service.service import Service
+
 from openhands_agent.data_layers.data.task import Task
 from openhands_agent.fields import EmailFields, PullRequestFields
 
-class NotificationService:
+class NotificationService(Service):
     def __init__(
         self,
         app_name: str,

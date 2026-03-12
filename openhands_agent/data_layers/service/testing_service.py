@@ -1,10 +1,12 @@
 import logging
 
+from core_lib.data_layers.service.service import Service
+
 from openhands_agent.client.openhands_client import OpenHandsClient
 from openhands_agent.data_layers.data.task import Task
 
 
-class TestingService:
+class TestingService(Service):
     def __init__(self, client: OpenHandsClient) -> None:
         self._client = client
         self.logger = logging.getLogger(self.__class__.__name__)

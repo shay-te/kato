@@ -4,6 +4,7 @@ import re
 import subprocess
 from types import SimpleNamespace
 
+from core_lib.data_layers.service.service import Service
 from omegaconf import DictConfig
 
 from openhands_agent.client.pull_request_client_factory import build_pull_request_client
@@ -14,7 +15,7 @@ from openhands_agent.data_layers.data_access.pull_request_data_access import (
 from openhands_agent.fields import PullRequestFields
 
 
-class RepositoryService:
+class RepositoryService(Service):
     def __init__(self, repositories_config, max_retries: int) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
         self._max_retries = max_retries

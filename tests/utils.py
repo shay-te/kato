@@ -101,6 +101,9 @@ def build_test_cfg() -> types.SimpleNamespace:
             retry=types.SimpleNamespace(
                 max_retries=5,
             ),
+            state=types.SimpleNamespace(
+                file_path='openhands_agent_state.json',
+            ),
             failure_email=types.SimpleNamespace(
                 enabled=True,
                 template_id='42',

@@ -1,12 +1,14 @@
 import logging
 
+from core_lib.data_layers.service.service import Service
+
 from openhands_agent.client.openhands_client import OpenHandsClient
 from openhands_agent.data_layers.data.review_comment import ReviewComment
 from openhands_agent.data_layers.data.task import Task
 from openhands_agent.fields import PullRequestFields
 
 
-class ImplementationService:
+class ImplementationService(Service):
     def __init__(self, client: OpenHandsClient) -> None:
         self._client = client
         self.logger = logging.getLogger(self.__class__.__name__)

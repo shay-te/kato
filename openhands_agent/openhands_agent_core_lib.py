@@ -9,6 +9,9 @@ from email_core_lib.email_core_lib import EmailCoreLib
 
 from openhands_agent.client.openhands_client import OpenHandsClient
 from openhands_agent.client.youtrack_client import YouTrackClient
+from openhands_agent.data_layers.data_access.agent_state_data_access import (
+    AgentStateDataAccess,
+)
 from openhands_agent.data_layers.data_access.task_data_access import TaskDataAccess
 from openhands_agent.data_layers.service.agent_service import AgentService
 from openhands_agent.data_layers.service.implementation_service import (
@@ -62,6 +65,7 @@ class OpenHandsAgentCoreLib(CoreLib):
         _implementation_service = ImplementationService(_openhands_client)
         _testing_service = TestingService(_openhands_client)
         _repository_service = RepositoryService(repositories_cfg, retry_cfg.max_retries)
+        _state_data_access = AgentStateDataAccess(open_cfg.state.file_path)
         notification_service = NotificationService(app_name=self.config.core_lib.app.name, email_core_lib=_email_core_lib, failure_email_cfg=getattr(open_cfg, 'failure_email', None), completion_email_cfg=getattr(open_cfg, 'completion_email', None))
         self.service = AgentService(
             task_data_access=_task_data_access,
@@ -69,5 +73,6 @@ class OpenHandsAgentCoreLib(CoreLib):
             testing_service=_testing_service,
             repository_service=_repository_service,
             notification_service=notification_service,
+            state_data_access=_state_data_access,
         )
         self.service.validate_connections()

@@ -127,6 +127,23 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(self.openhands_client.validate_connection.call_count, 2)
         self.repository_service.validate_connections.assert_called_once_with()
 
+    def test_validate_connections_checks_state_when_configured(self) -> None:
+        state_data_access = types.SimpleNamespace(validate=Mock())
+        service = AgentService(
+            self.task_data_access,
+            self.implementation_service,
+            self.testing_service,
+            self.repository_service,
+            self.notification_service,
+            state_data_access=state_data_access,
+        )
+        self.task_client.validate_connection = Mock()
+        self.openhands_client.validate_connection = Mock()
+
+        service.validate_connections()
+
+        state_data_access.validate.assert_called_once_with()
+
     def test_validate_connections_raises_with_service_stack_traces(self) -> None:
         self.task_client.validate_connection = Mock(side_effect=RuntimeError('youtrack down'))
         self.openhands_client.validate_connection = Mock(side_effect=RuntimeError('openhands down'))
@@ -222,6 +239,50 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(results, [])
         self.openhands_client.implement_task.assert_not_called()
         self.openhands_client.test_task.assert_not_called()
+
+    def test_process_assigned_tasks_skips_already_processed_tasks(self) -> None:
+        state_data_access = types.SimpleNamespace(
+            is_task_processed=Mock(return_value=True),
+            get_processed_task=Mock(
+                return_value={
+                    PullRequestFields.PULL_REQUESTS: [
+                        {
+                            PullRequestFields.REPOSITORY_ID: 'client',
+                            PullRequestFields.ID: '17',
+                        }
+                    ]
+                }
+            ),
+        )
+        service = AgentService(
+            self.task_data_access,
+            self.implementation_service,
+            self.testing_service,
+            self.repository_service,
+            self.notification_service,
+            state_data_access=state_data_access,
+        )
+
+        results = service.process_assigned_tasks()
+
+        self.assertEqual(
+            results,
+            [
+                {
+                    'id': 'PROJ-1',
+                    StatusFields.STATUS: StatusFields.SKIPPED,
+                    PullRequestFields.PULL_REQUESTS: [
+                        {
+                            PullRequestFields.REPOSITORY_ID: 'client',
+                            PullRequestFields.ID: '17',
+                        }
+                    ],
+                    PullRequestFields.FAILED_REPOSITORIES: [],
+                }
+            ],
+        )
+        self.repository_service.resolve_task_repositories.assert_not_called()
+        self.openhands_client.implement_task.assert_not_called()
 
     def test_process_assigned_tasks_skips_execution_without_success_flag(self) -> None:
         self.openhands_client.implement_task.return_value = {}
@@ -334,6 +395,31 @@ class AgentServiceTests(unittest.TestCase):
     def test_handle_pull_request_comment_rejects_unknown_pull_request(self) -> None:
         with self.assertRaisesRegex(ValueError, 'unknown pull request id'):
             self.service.handle_pull_request_comment(build_review_comment_payload())
+
+    def test_handle_pull_request_comment_loads_persisted_context_after_restart(self) -> None:
+        state_data_access = types.SimpleNamespace(
+            get_pull_request_contexts=Mock(
+                return_value=[
+                    {
+                        PullRequestFields.REPOSITORY_ID: 'client',
+                        'branch_name': 'feature/proj-1/client',
+                    }
+                ]
+            )
+        )
+        service = AgentService(
+            self.task_data_access,
+            self.implementation_service,
+            self.testing_service,
+            self.repository_service,
+            self.notification_service,
+            state_data_access=state_data_access,
+        )
+
+        result = service.handle_pull_request_comment(build_review_comment_payload())
+
+        self.assertEqual(result[PullRequestFields.REPOSITORY_ID], 'client')
+        state_data_access.get_pull_request_contexts.assert_called_once_with('17')
 
     def test_handle_pull_request_comment_rejects_ambiguous_pull_request(self) -> None:
         self.service._pull_request_context_map['17'] = [

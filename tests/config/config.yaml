@@ -30,6 +30,8 @@ core_lib:
 openhands_agent:
   retry:
     max_retries: 5
+  state:
+    file_path: openhands_agent_state.json
   failure_email:
     enabled: true
     template_id: "42"

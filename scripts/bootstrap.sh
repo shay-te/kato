@@ -3,18 +3,28 @@ set -eu
 
 cd "$(dirname "$0")/.."
 
+run_step() {
+  printf '%s\n' "==> $*"
+  "$@" || {
+    status=$?
+    printf '%s\n' "Bootstrap failed while running: $*"
+    printf '%s\n' "Fix the error above and rerun ./scripts/bootstrap.sh"
+    exit "$status"
+  }
+}
+
 if [ ! -f .env ]; then
   cp .env.example .env
   printf '%s\n' "Created .env from .env.example"
 fi
 
-if [ ! -d .venv ]; then
-  python3 -m venv .venv
+if [ ! -x .venv/bin/python ]; then
+  run_step python3 -m venv .venv
 fi
 
-.venv/bin/pip install --upgrade pip
-.venv/bin/pip install -e .
-.venv/bin/python -m unittest discover -s tests
+run_step .venv/bin/python -m pip install --upgrade pip
+run_step .venv/bin/python -m pip install -e .
+run_step .venv/bin/python -m unittest discover -s tests
 
 cat <<'EOF'
 

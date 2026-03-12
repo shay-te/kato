@@ -18,7 +18,7 @@ set -a
 set +a
 
 if [ "${1:-}" = "--create-db-only" ]; then
-  exec .venv/bin/python -m openhands_agent.main
+  exec .venv/bin/python -m openhands_agent.create_db
 fi
 
 exec .venv/bin/python -m openhands_agent.main

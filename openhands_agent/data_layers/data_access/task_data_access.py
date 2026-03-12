@@ -1,5 +1,6 @@
 from omegaconf import DictConfig
 
+from core_lib.data_layers.data_access.data_access import DataAccess
 from core_lib.rule_validator.rule_validator import RuleValidator, ValueRuleValidator
 
 from openhands_agent.client.youtrack_client import YouTrackClient
@@ -27,7 +28,7 @@ move_to_review_rule_validator = RuleValidator(
 )
 
 
-class TaskDataAccess:
+class TaskDataAccess(DataAccess):
     def __init__(self, config: DictConfig, client: YouTrackClient) -> None:
         self._config = config
         self._client = client

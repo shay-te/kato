@@ -53,6 +53,15 @@ tests/
 cp .env.example .env
 ```
 
+For the shortest local setup path, use:
+
+```bash
+make bootstrap
+# fill .env
+make doctor
+make run
+```
+
 Then fill in the values you need. The most important variables are:
 
 ```bash
@@ -94,8 +103,9 @@ Supported providers:
 - GitLab: `https://gitlab.com/api/v4`
 
 For multi-repository tasks, add more entries under `openhands_agent.repositories` in `openhands_agent/config/openhands_agent_core_lib.yaml`. Each repository entry needs `id`, `display_name`, `local_path`, `provider_base_url`, `token`, `owner`, `repo_slug`, and optional `destination_branch` plus `aliases`.
+The flat `REPOSITORY_*` environment variables are only a bootstrap convenience for the first repository entry. Once you need more than one repository, treat `openhands_agent/config/openhands_agent_core_lib.yaml` as the source of truth and add the extra entries there.
 
-If `destination_branch` is empty, the agent infers the repository default branch from the local git checkout, so `main` vs `master` does not need to be hardcoded when the local repo already knows it.
+If `destination_branch` is empty, the agent infers the repository default branch from the local git checkout. That is convenient for local development, but it also means runtime behavior depends on the checkout state. For production-style runs, set `destination_branch` explicitly for every repository so pull requests cannot target the wrong branch because of a stale or unusual local clone.
 
 OpenHands itself can now be configured from this project too. Put its LLM settings in `.env` and `docker compose` will pass them into the `openhands` container:
 
@@ -139,9 +149,15 @@ export AWS_BEARER_TOKEN_BEDROCK="..."
 Allowed YouTrack stages are configured in `openhands_agent/config/openhands_agent_core_lib.yaml` under `openhands_agent.youtrack.issue_states`. By default the agent only processes tasks assigned to `YOUTRACK_ASSIGNEE` that are in `Todo` or `Open`.
 The target YouTrack review column is configured with `openhands_agent.youtrack.review_state_field` and `openhands_agent.youtrack.review_state`. By default the agent moves completed issues to `State=In Review`.
 Retry count is configured under `openhands_agent.retry.max_retries`.
+Processed task state and pull-request comment context are persisted in `OPENHANDS_AGENT_STATE_FILE` so the agent can skip already-completed work and still resolve review comments after a restart.
 Failure emails are configured under `openhands_agent.failure_email` and sent through `email-core-lib`.
 Completion emails are configured under `openhands_agent.completion_email` and sent through `email-core-lib`.
-The email body text comes from [completion_email.txt](/Users/shaytessler/Desktop/dev/openhands-agent/openhands_agent/templates/email/completion_email.txt) and [failure_email.txt](/Users/shaytessler/Desktop/dev/openhands-agent/openhands_agent/templates/email/failure_email.txt), rendered with template variables at runtime.
+The email body text comes from [`completion_email.txt`](openhands_agent/templates/email/completion_email.txt) and [`failure_email.txt`](openhands_agent/templates/email/failure_email.txt), rendered with template variables at runtime.
+The Hydra config is registered through [`hydra_plugins/openhands_agent/openhands_agent_searchpath.py`](hydra_plugins/openhands_agent/openhands_agent_searchpath.py), so standard Hydra overrides work. Example:
+
+```bash
+python -m openhands_agent.main openhands_agent.retry.max_retries=7
+```
 
 ## How To Use
 
@@ -176,6 +192,7 @@ What is automated now:
   - runs the tests
 - `make doctor`
   - validates agent and OpenHands env vars
+  - exits non-zero if required values are missing, so it can be used in CI or pre-flight scripts
 - `make run`
   - loads `.env`
   - starts the app
@@ -190,6 +207,7 @@ Still manual:
 - filling real secrets in `.env`
 - choosing the LLM/provider/model
 - choosing whether to use local run or Docker
+- adding extra repository entries directly in YAML when a task can span multiple repositories
 
 ### Quick Commands
 
@@ -206,6 +224,8 @@ make bootstrap
 ```bash
 make doctor
 ```
+
+`make doctor` returns a non-zero exit code on validation failure.
 
 4. Run locally:
 
@@ -311,7 +331,7 @@ Before running `docker compose up --build`, export the same environment variable
 
 If you use `.env`, Docker Compose will load it automatically, so you can keep both the agent config and the OpenHands LLM config in one place and avoid manual setup in the OpenHands UI for the env-supported options.
 
-OpenHands behavioral rules are also supported from this repo through [AGENTS.md](/Users/shaytessler/Desktop/dev/openhands-agent/AGENTS.md). That lets you keep coding/testing instructions in the project instead of configuring them manually in OpenHands.
+OpenHands behavioral rules are also supported from this repo through [`AGENTS.md`](AGENTS.md). That lets you keep coding/testing instructions in the project instead of configuring them manually in OpenHands.
 
 What happens when it runs:
 
@@ -321,6 +341,17 @@ What happens when it runs:
 - It retries transient client failures up to `openhands_agent.retry.max_retries`.
 - If the overall run fails, it sends failure notifications through `email-core-lib` to the configured recipients.
 - For each eligible task, it infers the affected repositories, asks OpenHands to implement the work across that scoped workspace set, opens one pull request per repository, comments the aggregated PR summary back to YouTrack, moves the issue to the configured review state when all repositories succeed, and sends a completion email that asks for review.
+
+### Partial Failure Behavior
+
+If a task spans multiple repositories and one pull request succeeds while another fails, the agent does not roll back the successful pull request. Instead it:
+
+- posts the partial pull-request summary back to YouTrack
+- records the failed repository ids in the run result
+- leaves the issue out of the review state transition
+- sends the failure notification path with the failing repositories in the error text
+
+That behavior is deliberate: the agent prefers explicit partial visibility over trying to revert repository state automatically.
 
 ## Testing
 
@@ -346,9 +377,9 @@ python3 -m unittest discover -s tests -p 'test_notification_service.py'
 - A webhook-style handler for pull-request review comments.
 - A job entrypoint for processing assigned tasks plus a `tests/config` Hydra scaffold.
 
-## What Still Needs Completion
+## Current Limitations
 
 - Real git workspace handling per task.
 - Authentication/signature verification for webhooks.
-- Persistent storage for processed tasks and PR mappings.
 - Final adaptation to the exact OpenHands API and your YouTrack fields.
+- No end-to-end integration test exercises a live YouTrack -> OpenHands -> pull-request provider flow yet.
