@@ -190,6 +190,25 @@ class ConfigureProjectTests(unittest.TestCase):
 
         self.assertEqual(numbers, [1, 3, 4, 5, 10])
 
+    def test_parse_repository_numbers_ignores_empty_segments(self) -> None:
+        numbers = configure_project._parse_repository_numbers('1,4   ,5,   ,10', 10)
+
+        self.assertEqual(numbers, [1, 4, 5, 10])
+
+    def test_prompt_repository_numbers_allows_empty_optional_selection(self) -> None:
+        with self._patch_prompts(
+            {
+                'Additional repository numbers to grant OpenHands access (comma-separated, optional)': '',
+            }
+        ):
+            numbers = configure_project._prompt_repository_numbers(
+                'Additional repository numbers to grant OpenHands access (comma-separated, optional)',
+                10,
+                allow_empty=True,
+            )
+
+        self.assertEqual(numbers, [])
+
     def test_read_git_remote_url_tolerates_duplicate_git_config_options(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repository_path = Path(temp_dir) / 'task-core-lib'
