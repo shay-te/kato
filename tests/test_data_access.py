@@ -26,6 +26,7 @@ class TaskDataAccessTests(unittest.TestCase):
             data_access = TaskDataAccess(config, mock_client_cls.return_value)
             data_access.get_assigned_tasks()
             data_access.add_pull_request_comment('PROJ-1', 'https://bitbucket/pr/1')
+            data_access.move_task_to_review('PROJ-1')
 
         mock_client_cls.assert_not_called()
         client = mock_client_cls.return_value
@@ -38,6 +39,11 @@ class TaskDataAccessTests(unittest.TestCase):
             'PROJ-1',
             'https://bitbucket/pr/1',
         )
+        client.move_issue_to_state.assert_called_once_with(
+            'PROJ-1',
+            'State',
+            'In Review',
+        )
 
     def test_validates_runtime_values(self) -> None:
         config = types.SimpleNamespace(
@@ -45,6 +51,8 @@ class TaskDataAccessTests(unittest.TestCase):
             token="yt-token",
             project="PROJ",
             assignee="me",
+            review_state_field='State',
+            review_state='In Review',
             issue_states=["Todo", "Open"],
         )
         data_access = TaskDataAccess(config, types.SimpleNamespace())
@@ -57,6 +65,37 @@ class TaskDataAccessTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, 'states must be'):
             data_access.get_assigned_tasks(states='Open')
+
+        with self.assertRaisesRegex(ValueError, 'issue_id must be'):
+            data_access.move_task_to_review(17)
+
+    def test_uses_legacy_issue_state_and_default_review_config(self) -> None:
+        config = types.SimpleNamespace(
+            base_url="https://youtrack.example",
+            token="yt-token",
+            project="PROJ",
+            assignee="me",
+            issue_state="Todo",
+        )
+
+        with patch(
+            'openhands_agent.data_layers.data_access.task_data_access.YouTrackClient'
+        ) as mock_client_cls:
+            data_access = TaskDataAccess(config, mock_client_cls.return_value)
+            data_access.get_assigned_tasks()
+            data_access.move_task_to_review('PROJ-1')
+
+        client = mock_client_cls.return_value
+        client.get_assigned_tasks.assert_called_once_with(
+            project='PROJ',
+            assignee='me',
+            states=['Todo'],
+        )
+        client.move_issue_to_state.assert_called_once_with(
+            'PROJ-1',
+            'State',
+            'In Review',
+        )
 
 
 class PullRequestDataAccessTests(unittest.TestCase):
@@ -105,3 +144,46 @@ class PullRequestDataAccessTests(unittest.TestCase):
                 source_branch='feature/proj-1',
                 description='Ready for review',
             )
+
+        with self.assertRaisesRegex(ValueError, 'source_branch must be'):
+            data_access.create_pull_request(
+                title='PROJ-1: Fix bug',
+                source_branch=None,
+                description='Ready for review',
+            )
+
+        with self.assertRaisesRegex(ValueError, 'description must be'):
+            data_access.create_pull_request(
+                title='PROJ-1: Fix bug',
+                source_branch='feature/proj-1',
+                description=None,
+            )
+
+    def test_prefers_runtime_destination_branch_override(self) -> None:
+        config = types.SimpleNamespace(
+            base_url="https://bitbucket.example",
+            token="bb-token",
+            workspace="workspace",
+            repo_slug="repo",
+            destination_branch="main",
+        )
+
+        with patch(
+            'openhands_agent.data_layers.data_access.pull_request_data_access.BitbucketClient'
+        ) as mock_client_cls:
+            data_access = PullRequestDataAccess(config, mock_client_cls.return_value)
+            data_access.create_pull_request(
+                title='PROJ-1: Fix bug',
+                source_branch='feature/proj-1',
+                destination_branch='release',
+                description='Ready for review',
+            )
+
+        mock_client_cls.return_value.create_pull_request.assert_called_once_with(
+            title='PROJ-1: Fix bug',
+            source_branch='feature/proj-1',
+            workspace='workspace',
+            repo_slug='repo',
+            destination_branch='release',
+            description='Ready for review',
+        )

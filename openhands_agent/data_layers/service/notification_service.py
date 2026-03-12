@@ -1,0 +1,137 @@
+import json
+import logging
+from importlib import resources
+from string import Template
+
+from openhands_agent.data_layers.data.task import Task
+from openhands_agent.fields import EmailFields, PullRequestFields
+
+class NotificationService:
+    def __init__(
+        self,
+        app_name: str,
+        email_core_lib,
+        failure_email_cfg=None,
+        completion_email_cfg=None,
+    ) -> None:
+        self._app_name = app_name
+        self._email_core_lib = email_core_lib
+        self._failure_email_cfg = failure_email_cfg
+        self._completion_email_cfg = completion_email_cfg
+        self.logger = logging.getLogger(self.__class__.__name__)
+
+    def notify_failure(
+        self,
+        operation: str,
+        error: Exception,
+        context: dict | None = None,
+    ) -> bool:
+        template_params = {
+            EmailFields.OPERATION: operation,
+            EmailFields.ERROR: str(error),
+            EmailFields.CONTEXT: json.dumps(context or {}, default=str),
+        }
+        return self._send_configured_email(
+            self._failure_email_cfg,
+            {
+                EmailFields.SUBJECT: f'{self._app_name} failure: {operation}',
+                **template_params,
+                EmailFields.MESSAGE: self._render_template(
+                    self._failure_email_cfg,
+                    'failure_email.txt',
+                    template_params,
+                ),
+            },
+        )
+
+    def notify_task_ready_for_review(
+        self,
+        task: Task,
+        pull_request: dict[str, str],
+    ) -> bool:
+        pull_request_url = pull_request.get(PullRequestFields.URL, '')
+        template_params = {
+            EmailFields.TASK_ID: task.id,
+            EmailFields.TASK_SUMMARY: task.summary,
+            EmailFields.PULL_REQUEST_URL: pull_request_url,
+            EmailFields.PULL_REQUEST_TITLE: pull_request.get(PullRequestFields.TITLE, ''),
+        }
+        return self._send_configured_email(
+            self._completion_email_cfg,
+            {
+                EmailFields.SUBJECT: f'Task ready for review: {task.id}',
+                **template_params,
+                EmailFields.MESSAGE: self._render_template(
+                    self._completion_email_cfg,
+                    'completion_email.txt',
+                    template_params,
+                ),
+            },
+        )
+
+    def _send_configured_email(self, email_cfg, params: dict[str, str]) -> bool:
+        if not self._email_core_lib or not email_cfg or not getattr(email_cfg, 'enabled', False):
+            return False
+
+        recipients = self._normalized_recipients(getattr(email_cfg, 'recipients', []))
+        template_id = getattr(email_cfg, 'template_id', None)
+        if not recipients or not template_id:
+            return False
+
+        sender_info = self._sender_info(email_cfg)
+        sent = False
+        for recipient in recipients:
+            try:
+                send_result = self._email_core_lib.send(
+                    template_id,
+                    {
+                        EmailFields.EMAIL: recipient,
+                        **params,
+                    },
+                    sender_info,
+                )
+                if send_result:
+                    sent = True
+            except Exception:
+                self.logger.exception('failed to send email notification to %s', recipient)
+                continue
+        return sent
+
+    @staticmethod
+    def _normalized_recipients(recipients) -> list[str]:
+        if isinstance(recipients, str):
+            return [recipients] if recipients else []
+        if not isinstance(recipients, (list, tuple, set)):
+            return []
+        return [str(recipient) for recipient in recipients if recipient]
+
+    @staticmethod
+    def _sender_info(email_cfg):
+        sender_cfg = getattr(email_cfg, 'sender', None)
+        if not sender_cfg:
+            return None
+        return {
+            'name': getattr(sender_cfg, 'name', ''),
+            'email': getattr(sender_cfg, 'email', ''),
+        }
+
+    def _render_template(
+        self,
+        email_cfg,
+        default_template_name: str,
+        template_params: dict[str, str],
+    ) -> str:
+        template_name = (
+            getattr(email_cfg, 'body_template', default_template_name)
+            if email_cfg
+            else default_template_name
+        )
+        try:
+            template_path = resources.files('openhands_agent.templates.email').joinpath(
+                template_name
+            )
+            template_text = template_path.read_text(encoding='utf-8')
+        except (FileNotFoundError, OSError):
+            self.logger.exception('failed to load email template %s', template_name)
+            return ''
+        return Template(template_text).safe_substitute(template_params).rstrip('\n')

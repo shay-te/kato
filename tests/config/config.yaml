@@ -2,6 +2,25 @@
 core_lib:
   app:
     name: openhands-agent-test
+  data:
+    sqlalchemy:
+      log_queries: false
+      create_db: false
+      session:
+        pool_recycle: 3600
+        pool_pre_ping: false
+      url:
+        protocol: sqlite
+        username: ""
+        password: ""
+        host: ""
+        port: ""
+        path: ""
+        file: ":memory:"
+  alembic:
+    version_table: alembic_version
+    script_location: data_layers/data/db/migrations
+    render_as_batch: true
   email_core_lib:
     client:
       _target_: email_core_lib.client.send_in_blue_client.SendInBlueClient
@@ -14,8 +33,18 @@ openhands_agent:
   failure_email:
     enabled: true
     template_id: "42"
+    body_template: failure_email.txt
     recipients:
       - ops@example.com
+    sender:
+      name: OpenHands Agent
+      email: noreply@example.com
+  completion_email:
+    enabled: true
+    template_id: "77"
+    body_template: completion_email.txt
+    recipients:
+      - reviewers@example.com
     sender:
       name: OpenHands Agent
       email: noreply@example.com
@@ -24,6 +53,8 @@ openhands_agent:
     token: test-youtrack-token
     project: TEST
     assignee: me
+    review_state_field: State
+    review_state: In Review
     issue_states:
       - Todo
       - Open
@@ -36,3 +67,6 @@ openhands_agent:
   openhands:
     base_url: http://localhost:3000
     api_key: test-openhands-api-key
+    pre_pull_request_commands:
+      - Write tests that challenge the new code as much as possible.
+      - Make sure the tests are green. If not, fix them before creating the pull request.

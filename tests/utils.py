@@ -1,6 +1,7 @@
 import types
 import threading
 import unittest
+from unittest.mock import Mock
 
 from core_lib.core_lib import CoreLib
 
@@ -15,6 +16,13 @@ thread_lock = threading.Lock()
 class OblInstance:
     instance = None
     config = None
+
+
+class Timeout(TimeoutError):
+    pass
+
+
+ClientTimeout = Timeout
 
 
 def assert_client_headers_and_timeout(
@@ -35,19 +43,27 @@ def build_test_cfg() -> types.SimpleNamespace:
             ),
             data=types.SimpleNamespace(
                 sqlalchemy=types.SimpleNamespace(
-                    db_name='openhands_agent',
-                    migration_dir='migrations',
                     log_queries=False,
+                    create_db=False,
+                    session=types.SimpleNamespace(
+                        pool_recycle=3600,
+                        pool_pre_ping=False,
+                    ),
                     url=types.SimpleNamespace(
-                        dialect='sqlite',
-                        driver='pysqlite',
+                        protocol='sqlite',
                         username='',
                         password='',
                         host='',
                         port='',
-                        database=':memory:',
+                        path='',
+                        file=':memory:',
                     ),
-                )
+                ),
+            ),
+            alembic=types.SimpleNamespace(
+                version_table='alembic_version',
+                script_location='data_layers/data/db/migrations',
+                render_as_batch=True,
             ),
             email_core_lib=types.SimpleNamespace(
                 client=types.SimpleNamespace(
@@ -64,7 +80,18 @@ def build_test_cfg() -> types.SimpleNamespace:
             failure_email=types.SimpleNamespace(
                 enabled=True,
                 template_id='42',
+                body_template='failure_email.txt',
                 recipients=['ops@example.com', 'dev@example.com'],
+                sender=types.SimpleNamespace(
+                    name='OpenHands Agent',
+                    email='noreply@example.com',
+                ),
+            ),
+            completion_email=types.SimpleNamespace(
+                enabled=True,
+                template_id='77',
+                body_template='completion_email.txt',
+                recipients=['reviewers@example.com', 'teamlead@example.com'],
                 sender=types.SimpleNamespace(
                     name='OpenHands Agent',
                     email='noreply@example.com',
@@ -76,12 +103,18 @@ def build_test_cfg() -> types.SimpleNamespace:
                 token='yt-token',
                 project='PROJ',
                 assignee='me',
+                review_state_field='State',
+                review_state='In Review',
                 issue_states=['Todo', 'Open'],
             ),
             openhands=types.SimpleNamespace(
                 name='openhands-config',
                 base_url='https://openhands.example',
                 api_key='oh-token',
+                pre_pull_request_commands=[
+                    'Write tests that challenge the new code as much as possible.',
+                    'Make sure the tests are green. If not, fix them before creating the pull request.',
+                ],
             ),
             bitbucket=types.SimpleNamespace(
                 name='bitbucket-config',
@@ -106,7 +139,12 @@ def sync_create_start_core_lib() -> OpenHandsAgentCoreLib:
         if not OblInstance.instance:
             [CoreLib.cache_registry.unregister(key) for key in CoreLib.cache_registry.registered()]
             [CoreLib.observer_registry.unregister(key) for key in CoreLib.observer_registry.registered()]
-            OblInstance.instance = OpenHandsAgentCoreLib(load_config())
+            from unittest.mock import patch
+
+            with patch(
+                'openhands_agent.openhands_agent_core_lib.AgentService.validate_connections'
+            ):
+                OblInstance.instance = OpenHandsAgentCoreLib(load_config())
             OblInstance.instance.start_core_lib()
 
         for key in CoreLib.cache_registry.registered():
@@ -153,3 +191,74 @@ def build_review_comment(
         author=author,
         body=body,
     )
+
+
+def mock_response(
+    *,
+    json_data=None,
+    status_code: int = 200,
+    text='',
+    content=b'',
+) -> Mock:
+    response = Mock(status_code=status_code)
+    response.json.return_value = json_data
+    response.text = text
+    response.content = content
+    return response
+
+
+def create_pull_request_with_defaults(
+    client,
+    title: str = 'PROJ-1: Fix bug',
+    source_branch: str = 'feature/proj-1',
+    workspace: str = 'workspace',
+    repo_slug: str = 'repo',
+    destination_branch: str = 'main',
+    description: str = '',
+):
+    return client.create_pull_request(
+        title=title,
+        source_branch=source_branch,
+        workspace=workspace,
+        repo_slug=repo_slug,
+        destination_branch=destination_branch,
+        description=description,
+    )
+
+
+def implement_task_with_defaults(client, task: Task | None = None):
+    return client.implement_task(task or build_task())
+
+
+def fix_review_comment_with_defaults(
+    client,
+    comment: ReviewComment | None = None,
+    branch_name: str = 'feature/proj-1',
+):
+    return client.fix_review_comment(comment or build_review_comment(), branch_name)
+
+
+def get_assigned_tasks_with_defaults(
+    client,
+    project: str = 'PROJ',
+    assignee: str = 'me',
+    states: list[str] | None = None,
+):
+    return client.get_assigned_tasks(project, assignee, states or ['Todo', 'Open'])
+
+
+def add_pull_request_comment_with_defaults(
+    client,
+    issue_id: str = 'PROJ-1',
+    pull_request_url: str = 'https://bitbucket/pr/1',
+):
+    return client.add_pull_request_comment(issue_id, pull_request_url)
+
+
+def move_issue_to_state_with_defaults(
+    client,
+    issue_id: str = 'PROJ-1',
+    field_name: str = 'State',
+    state_name: str = 'In Review',
+):
+    return client.move_issue_to_state(issue_id, field_name, state_name)

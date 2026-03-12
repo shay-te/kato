@@ -1,18 +1,29 @@
 import hydra
 from omegaconf import DictConfig
 
+from openhands_agent.logging_utils import configure_logger
 from openhands_agent.openhands_agent_instance import OpenHandsAgentInstance
 
 
-@hydra.main(version_base=None, config_path='config', config_name='core_lib')
+@hydra.main(
+    version_base=None,
+    config_path='config',
+    config_name='openhands_agent_core_lib',
+)
 def main(cfg: DictConfig) -> int:
+    logger = configure_logger(cfg.core_lib.app.name)
     OpenHandsAgentInstance.init(cfg)
     app = OpenHandsAgentInstance.get()
+    app.logger = getattr(app, 'logger', None) or logger
     app.logger.info('starting openhands agent')
     try:
         results = app.service.process_assigned_tasks()
     except Exception as exc:
-        app.notify_failure('process_assigned_tasks', exc)
+        app.logger.exception('failed to process assigned tasks')
+        try:
+            app.service.notification_service.notify_failure('process_assigned_tasks', exc)
+        except Exception:
+            app.logger.exception('failed to send failure notification for process_assigned_tasks')
         raise
     app.logger.info('processed %s tasks', len(results))
     return 0

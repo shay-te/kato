@@ -1,5 +1,6 @@
 import unittest
 from unittest.mock import Mock, patch
+import types
 
 import bootstrap  # noqa: F401
 
@@ -33,6 +34,8 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
         ) as mock_impl_service_cls, patch(
             'openhands_agent.openhands_agent_core_lib.PullRequestDataAccess'
         ) as mock_pr_da_cls, patch(
+            'openhands_agent.openhands_agent_core_lib.NotificationService'
+        ) as mock_notification_service_cls, patch(
             'openhands_agent.openhands_agent_core_lib.AgentService'
         ) as mock_service_cls:
             app = OpenHandsAgentCoreLib(self.cfg)
@@ -48,6 +51,7 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
             self.cfg.openhands_agent.openhands.base_url,
             self.cfg.openhands_agent.openhands.api_key,
             self.cfg.openhands_agent.retry.max_retries,
+            self.cfg.openhands_agent.openhands.pre_pull_request_commands,
         )
         mock_bitbucket_client_cls.assert_called_once_with(
             self.cfg.openhands_agent.bitbucket.base_url,
@@ -57,17 +61,20 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
         mock_task_da_cls.assert_called_once_with(self.cfg.openhands_agent.youtrack, mock_youtrack_client_cls.return_value)
         mock_impl_service_cls.assert_called_once_with(mock_openhands_client_cls.return_value)
         mock_pr_da_cls.assert_called_once_with(self.cfg.openhands_agent.bitbucket, mock_bitbucket_client_cls.return_value)
+        mock_notification_service_cls.assert_called_once_with(
+            app_name=self.cfg.core_lib.app.name,
+            email_core_lib=mock_email_core_lib_cls.return_value,
+            failure_email_cfg=self.cfg.openhands_agent.failure_email,
+            completion_email_cfg=self.cfg.openhands_agent.completion_email,
+        )
         mock_service_cls.assert_called_once_with(
             task_data_access=mock_task_da_cls.return_value,
             implementation_service=mock_impl_service_cls.return_value,
             pull_request_data_access=mock_pr_da_cls.return_value,
+            notification_service=mock_notification_service_cls.return_value,
         )
+        mock_service_cls.return_value.validate_connections.assert_called_once_with()
         self.assertIs(app.service, mock_service_cls.return_value)
-        self.assertIs(app._db_connection, mock_db_connection)
-        self.assertIs(app._email_core_lib, mock_email_core_lib_cls.return_value)
-        self.assertIs(app._task_data_access, mock_task_da_cls.return_value)
-        self.assertIs(app._implementation_service, mock_impl_service_cls.return_value)
-        self.assertIs(app._pull_request_data_access, mock_pr_da_cls.return_value)
 
     def test_exposes_service_instance(self) -> None:
         with patch(
@@ -87,11 +94,14 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
         ), patch(
             'openhands_agent.openhands_agent_core_lib.PullRequestDataAccess'
         ), patch(
+            'openhands_agent.openhands_agent_core_lib.NotificationService'
+        ), patch(
             'openhands_agent.openhands_agent_core_lib.AgentService'
         ) as mock_service_cls:
             mock_service_cls.return_value.process_assigned_tasks.return_value = [{"id": "17"}]
             app = OpenHandsAgentCoreLib(self.cfg)
 
+        mock_service_cls.return_value.validate_connections.assert_called_once_with()
         self.assertIs(app.service, mock_service_cls.return_value)
 
     def test_service_handles_comment_operations(self) -> None:
@@ -112,34 +122,48 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
         ), patch(
             'openhands_agent.openhands_agent_core_lib.PullRequestDataAccess'
         ), patch(
+            'openhands_agent.openhands_agent_core_lib.NotificationService'
+        ), patch(
             'openhands_agent.openhands_agent_core_lib.AgentService'
         ) as mock_service_cls:
             mock_service_cls.return_value.handle_pull_request_comment.return_value = {"status": "updated"}
             app = OpenHandsAgentCoreLib(self.cfg)
 
+        mock_service_cls.return_value.validate_connections.assert_called_once_with()
         self.assertIs(app.service, mock_service_cls.return_value)
 
-    def test_notify_failure_sends_email_to_all_recipients(self) -> None:
+    def test_builds_without_email_core_lib_config(self) -> None:
+        cfg = build_test_cfg()
+        cfg.core_lib = types.SimpleNamespace(
+            app=cfg.core_lib.app,
+            data=cfg.core_lib.data,
+        )
+
         with patch(
             'openhands_agent.openhands_agent_core_lib.CoreLib.connection_factory_registry.get_or_reg'
         ), patch(
-            'openhands_agent.openhands_agent_core_lib.EmailCoreLib'
-        ) as mock_email_core_lib_cls:
-            app = OpenHandsAgentCoreLib(self.cfg)
+            'openhands_agent.openhands_agent_core_lib.YouTrackClient'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.OpenHandsClient'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.BitbucketClient'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.TaskDataAccess'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.ImplementationService'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.PullRequestDataAccess'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.NotificationService'
+        ) as mock_notification_service_cls, patch(
+            'openhands_agent.openhands_agent_core_lib.AgentService'
+        ) as mock_service_cls:
+            OpenHandsAgentCoreLib(cfg)
 
-        result = app.notify_failure(
-            'process_assigned_tasks',
-            RuntimeError('bitbucket unavailable'),
-            {'task_id': 'PROJ-1'},
+        mock_notification_service_cls.assert_called_once_with(
+            app_name=cfg.core_lib.app.name,
+            email_core_lib=None,
+            failure_email_cfg=cfg.openhands_agent.failure_email,
+            completion_email_cfg=cfg.openhands_agent.completion_email,
         )
-
-        self.assertTrue(result)
-        self.assertEqual(mock_email_core_lib_cls.return_value.send.call_count, 2)
-        first_call = mock_email_core_lib_cls.return_value.send.call_args_list[0]
-        self.assertEqual(first_call.args[0], '42')
-        self.assertEqual(first_call.args[1]['email'], 'ops@example.com')
-        self.assertIn('process_assigned_tasks', first_call.args[1]['subject'])
-        self.assertEqual(
-            first_call.args[2],
-            {'name': 'OpenHands Agent', 'email': 'noreply@example.com'},
-        )
+        mock_service_cls.return_value.validate_connections.assert_called_once_with()

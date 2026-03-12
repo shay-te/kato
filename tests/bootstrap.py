@@ -63,6 +63,7 @@ def _install_core_lib_stubs() -> None:
     )
     core_lib_data_layers_module = types.ModuleType("core_lib.data_layers")
     core_lib_data_module = types.ModuleType("core_lib.data_layers.data")
+    core_lib_data_helpers_module = types.ModuleType("core_lib.data_layers.data.data_helpers")
     core_lib_db_module = types.ModuleType("core_lib.data_layers.data.db")
     core_lib_sqlalchemy_module = types.ModuleType("core_lib.data_layers.data.db.sqlalchemy")
     core_lib_base_module = types.ModuleType("core_lib.data_layers.data.db.sqlalchemy.base")
@@ -114,6 +115,36 @@ def _install_core_lib_stubs() -> None:
         def flush_all(self) -> None:
             return None
 
+    def build_url(
+        protocol: str = None,
+        username: str = None,
+        password: str = None,
+        host: str = None,
+        port: str = None,
+        path: str = None,
+        file: str = None,
+        *args,
+        **kwargs,
+    ) -> str:
+        result = []
+        if protocol:
+            result.extend([protocol, '://'])
+        if username or password:
+            if username:
+                result.append(username)
+                if password:
+                    result.append(f':{password}')
+            result.append('@')
+        if host:
+            result.append(host)
+        if port:
+            result.append(f':{port}')
+        if path:
+            result.append(f'/{path.lstrip("/")}')
+        if file:
+            result.append(f'/{file.lstrip("/")}')
+        return ''.join(result)
+
     class CoreLib:
         cache_registry = _Registry()
         observer_registry = _Registry()
@@ -129,6 +160,7 @@ def _install_core_lib_stubs() -> None:
     CoreLib.cache_registry.register('test-cache', _CacheHandler())
 
     core_lib_core_module.CoreLib = CoreLib
+    core_lib_data_helpers_module.build_url = build_url
 
     class Base:
         def __init__(self, **kwargs) -> None:
@@ -178,6 +210,7 @@ def _install_core_lib_stubs() -> None:
     sys.modules["core_lib.core_lib"] = core_lib_core_module
     sys.modules["core_lib.data_layers"] = core_lib_data_layers_module
     sys.modules["core_lib.data_layers.data"] = core_lib_data_module
+    sys.modules["core_lib.data_layers.data.data_helpers"] = core_lib_data_helpers_module
     sys.modules["core_lib.data_layers.data.db"] = core_lib_db_module
     sys.modules["core_lib.data_layers.data.db.sqlalchemy"] = core_lib_sqlalchemy_module
     sys.modules["core_lib.data_layers.data.db.sqlalchemy.base"] = core_lib_base_module
@@ -251,6 +284,11 @@ def _install_hydra_stub() -> None:
     hydra_plugins_module = types.ModuleType("hydra.plugins")
     hydra_search_path_plugin_module = types.ModuleType("hydra.plugins.search_path_plugin")
 
+    def main(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+
     class ConfigSearchPath:
         def append(self, provider: str, path: str) -> None:
             raise NotImplementedError
@@ -261,12 +299,43 @@ def _install_hydra_stub() -> None:
 
     hydra_config_search_path_module.ConfigSearchPath = ConfigSearchPath
     hydra_search_path_plugin_module.SearchPathPlugin = SearchPathPlugin
+    hydra_module.main = main
 
     sys.modules["hydra"] = hydra_module
     sys.modules["hydra.core"] = hydra_core_module
     sys.modules["hydra.core.config_search_path"] = hydra_config_search_path_module
     sys.modules["hydra.plugins"] = hydra_plugins_module
     sys.modules["hydra.plugins.search_path_plugin"] = hydra_search_path_plugin_module
+
+
+def _install_alembic_stub() -> None:
+    if "alembic" in sys.modules:
+        return
+
+    alembic_module = types.ModuleType("alembic")
+    alembic_command_module = types.ModuleType("alembic.command")
+    alembic_config_module = types.ModuleType("alembic.config")
+
+    class Config:
+        def __init__(self) -> None:
+            self.main_options = {}
+
+        def set_main_option(self, key: str, value: str) -> None:
+            self.main_options[key] = value
+
+        def get_main_option(self, key: str, default=None):
+            return self.main_options.get(key, default)
+
+    def upgrade(config, revision: str) -> None:
+        return None
+
+    alembic_module.command = alembic_command_module
+    alembic_module.config = alembic_config_module
+    alembic_config_module.Config = Config
+    alembic_command_module.upgrade = upgrade
+    sys.modules["alembic"] = alembic_module
+    sys.modules["alembic.command"] = alembic_command_module
+    sys.modules["alembic.config"] = alembic_config_module
 
 
 def _install_pydantic_stub() -> None:
@@ -303,4 +372,5 @@ _install_core_lib_stubs()
 _install_sqlalchemy_stub()
 _install_omegaconf_stub()
 _install_hydra_stub()
+_install_alembic_stub()
 _install_pydantic_stub()

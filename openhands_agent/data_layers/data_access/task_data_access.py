@@ -20,11 +20,24 @@ pull_request_comment_rule_validator = RuleValidator(
     ]
 )
 
+move_to_review_rule_validator = RuleValidator(
+    [
+        ValueRuleValidator('issue_id', str),
+    ]
+)
+
 
 class TaskDataAccess:
     def __init__(self, config: DictConfig, client: YouTrackClient) -> None:
-        self.config = config
-        self.client = client
+        self._config = config
+        self._client = client
+
+    def validate_connection(self) -> None:
+        self._client.validate_connection(
+            project=self._config.project,
+            assignee=self._config.assignee,
+            states=self._configured_issue_states(),
+        )
 
     def get_assigned_tasks(
         self,
@@ -37,9 +50,9 @@ class TaskDataAccess:
                 'states': states,
             }
         )
-        return self.client.get_assigned_tasks(
-            project=self.config.project,
-            assignee=assignee or self.config.assignee,
+        return self._client.get_assigned_tasks(
+            project=self._config.project,
+            assignee=assignee or self._config.assignee,
             states=states or self._configured_issue_states(),
         )
 
@@ -50,9 +63,27 @@ class TaskDataAccess:
                 'pull_request_url': pull_request_url,
             }
         )
-        self.client.add_pull_request_comment(issue_id, pull_request_url)
+        self._client.add_pull_request_comment(issue_id, pull_request_url)
+
+    def move_task_to_review(self, issue_id: str) -> None:
+        move_to_review_rule_validator.validate(
+            {
+                'issue_id': issue_id,
+            }
+        )
+        self._client.move_issue_to_state(
+            issue_id,
+            self._configured_review_state_field(),
+            self._configured_review_state(),
+        )
 
     def _configured_issue_states(self) -> list[str]:
-        if hasattr(self.config, 'issue_states'):
-            return list(self.config.issue_states)
-        return [self.config.issue_state]
+        if hasattr(self._config, 'issue_states'):
+            return list(self._config.issue_states)
+        return [self._config.issue_state]
+
+    def _configured_review_state_field(self) -> str:
+        return getattr(self._config, 'review_state_field', 'State')
+
+    def _configured_review_state(self) -> str:
+        return getattr(self._config, 'review_state', 'In Review')

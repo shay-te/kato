@@ -1,0 +1,72 @@
+# @package _global_
+core_lib:
+  app:
+    name: openhands-agent
+  data:
+    sqlalchemy:
+      log_queries: false
+      create_db: false
+      session:
+        pool_recycle: 3600
+        pool_pre_ping: false
+      url:
+        protocol: ${oc.env:OPENHANDS_AGENT_DB_PROTOCOL,"sqlite"}
+        username: ${oc.env:OPENHANDS_AGENT_DB_USERNAME,""}
+        password: ${oc.env:OPENHANDS_AGENT_DB_PASSWORD,""}
+        host: ${oc.env:OPENHANDS_AGENT_DB_HOST,""}
+        port: ${oc.env:OPENHANDS_AGENT_DB_PORT,""}
+        path: ${oc.env:OPENHANDS_AGENT_DB_PATH,""}
+        file: ${oc.env:OPENHANDS_AGENT_DB_FILE,"openhands_agent.db"}
+  alembic:
+    version_table: alembic_version
+    script_location: data_layers/data/db/migrations
+    render_as_batch: true
+  email_core_lib:
+    client:
+      _target_: email_core_lib.client.send_in_blue_client.SendInBlueClient
+      api_key: ${oc.env:EMAIL_CORE_LIB_SEND_IN_BLUE_API_KEY,""}
+      slack_email_error_url: ${oc.env:SLACK_WEBHOOK_URL_ERRORS_EMAIL,""}
+
+openhands_agent:
+  retry:
+    max_retries: ${oc.env:OPENHANDS_AGENT_MAX_RETRIES,3}
+  failure_email:
+    enabled: ${oc.env:OPENHANDS_AGENT_FAILURE_EMAIL_ENABLED,false}
+    template_id: ${oc.env:OPENHANDS_AGENT_FAILURE_EMAIL_TEMPLATE_ID,0}
+    body_template: failure_email.txt
+    recipients:
+      - ${oc.env:OPENHANDS_AGENT_FAILURE_EMAIL_TO,""}
+    sender:
+      name: ${oc.env:OPENHANDS_AGENT_FAILURE_EMAIL_SENDER_NAME,"OpenHands Agent"}
+      email: ${oc.env:OPENHANDS_AGENT_FAILURE_EMAIL_SENDER_EMAIL,"noreply@example.com"}
+  completion_email:
+    enabled: ${oc.env:OPENHANDS_AGENT_COMPLETION_EMAIL_ENABLED,false}
+    template_id: ${oc.env:OPENHANDS_AGENT_COMPLETION_EMAIL_TEMPLATE_ID,0}
+    body_template: completion_email.txt
+    recipients:
+      - ${oc.env:OPENHANDS_AGENT_COMPLETION_EMAIL_TO,""}
+    sender:
+      name: ${oc.env:OPENHANDS_AGENT_COMPLETION_EMAIL_SENDER_NAME,"OpenHands Agent"}
+      email: ${oc.env:OPENHANDS_AGENT_COMPLETION_EMAIL_SENDER_EMAIL,"noreply@example.com"}
+  youtrack:
+    base_url: ${oc.env:YOUTRACK_BASE_URL}
+    token: ${oc.env:YOUTRACK_TOKEN}
+    project: ${oc.env:YOUTRACK_PROJECT}
+    assignee: ${oc.env:YOUTRACK_ASSIGNEE,me}
+    review_state_field: ${oc.env:YOUTRACK_REVIEW_STATE_FIELD,"State"}
+    review_state: ${oc.env:YOUTRACK_REVIEW_STATE,"In Review"}
+    issue_states:
+      - Todo
+      - Open
+  bitbucket:
+    base_url: ${oc.env:BITBUCKET_BASE_URL}
+    token: ${oc.env:BITBUCKET_TOKEN}
+    workspace: ${oc.env:BITBUCKET_WORKSPACE}
+    repo_slug: ${oc.env:BITBUCKET_REPO_SLUG}
+    destination_branch: main
+  openhands:
+    base_url: ${oc.env:OPENHANDS_BASE_URL}
+    api_key: ${oc.env:OPENHANDS_API_KEY}
+    pre_pull_request_commands:
+      - Write tests that challenge the new code as much as possible.
+      - Make sure the tests are green. If not, fix them before creating the pull request.

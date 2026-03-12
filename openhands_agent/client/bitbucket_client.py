@@ -1,17 +1,16 @@
 from typing import Any
 
-from core_lib.client.client_base import ClientBase
-
-from openhands_agent.client.retry import is_retryable_exception, is_retryable_response
+from openhands_agent.client.retrying_client_base import RetryingClientBase
 from openhands_agent.fields import PullRequestFields
 
 
-class BitbucketClient(ClientBase):
+class BitbucketClient(RetryingClientBase):
     def __init__(self, base_url: str, token: str, max_retries: int = 3) -> None:
-        super().__init__(base_url.rstrip('/'))
-        self.set_headers({'Authorization': f'Bearer {token}'})
-        self.set_timeout(30)
-        self.max_retries = max(1, max_retries)
+        super().__init__(base_url, token, timeout=30, max_retries=max_retries)
+
+    def validate_connection(self, workspace: str, repo_slug: str) -> None:
+        response = self._get_with_retry(f'/repositories/{workspace}/{repo_slug}')
+        response.raise_for_status()
 
     def create_pull_request(
         self,
@@ -24,39 +23,42 @@ class BitbucketClient(ClientBase):
     ) -> dict[str, str]:
         response = self._post_with_retry(
             f'/repositories/{workspace}/{repo_slug}/pullrequests',
-            json={
-                PullRequestFields.TITLE: title,
-                PullRequestFields.DESCRIPTION: description,
-                'source': {'branch': {'name': source_branch}},
-                'destination': {'branch': {'name': destination_branch}},
-            },
+            json=self._pull_request_payload(
+                title=title,
+                source_branch=source_branch,
+                destination_branch=destination_branch,
+                description=description,
+            ),
         )
         response.raise_for_status()
         return self._normalize_pr(response.json())
 
     @staticmethod
+    def _pull_request_payload(
+        title: str,
+        source_branch: str,
+        destination_branch: str | None,
+        description: str,
+    ) -> dict[str, Any]:
+        return {
+            PullRequestFields.TITLE: title,
+            PullRequestFields.DESCRIPTION: description,
+            'source': {'branch': {'name': source_branch}},
+            'destination': {'branch': {'name': destination_branch}},
+        }
+
+    @staticmethod
     def _normalize_pr(payload: dict[str, Any]) -> dict[str, str]:
         if not isinstance(payload, dict) or PullRequestFields.ID not in payload:
             raise ValueError('invalid pull request response payload')
+        links = payload.get('links')
+        if not isinstance(links, dict):
+            links = {}
+        html_link = links.get('html')
+        if not isinstance(html_link, dict):
+            html_link = {}
         return {
             PullRequestFields.ID: str(payload[PullRequestFields.ID]),
-            PullRequestFields.TITLE: payload.get(PullRequestFields.TITLE, ''),
-            PullRequestFields.URL: payload.get('links', {}).get('html', {}).get('href', ''),
+            PullRequestFields.TITLE: str(payload.get(PullRequestFields.TITLE, '')),
+            PullRequestFields.URL: str(html_link.get('href', '')),
         }
-
-    def _post_with_retry(self, path: str, **kwargs):
-        last_response = None
-        for attempt in range(self.max_retries):
-            try:
-                response = self._post(path, **kwargs)
-            except Exception as exc:
-                if attempt == self.max_retries - 1 or not is_retryable_exception(exc):
-                    raise
-                continue
-
-            last_response = response
-            if attempt < self.max_retries - 1 and is_retryable_response(response):
-                continue
-            return response
-
-        return last_response

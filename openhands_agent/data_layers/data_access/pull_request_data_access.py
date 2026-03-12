@@ -18,8 +18,14 @@ pull_request_rule_validator = RuleValidator(
 
 class PullRequestDataAccess:
     def __init__(self, config: DictConfig, client: BitbucketClient) -> None:
-        self.config = config
-        self.client = client
+        self._config = config
+        self._client = client
+
+    def validate_connection(self) -> None:
+        self._client.validate_connection(
+            workspace=self._config.workspace,
+            repo_slug=self._config.repo_slug,
+        )
 
     def create_pull_request(
         self,
@@ -36,11 +42,11 @@ class PullRequestDataAccess:
                 PullRequestFields.DESCRIPTION: description,
             }
         )
-        return self.client.create_pull_request(
+        return self._client.create_pull_request(
             title=title,
             source_branch=source_branch,
-            workspace=self.config.workspace,
-            repo_slug=self.config.repo_slug,
-            destination_branch=destination_branch or self.config.destination_branch,
+            workspace=self._config.workspace,
+            repo_slug=self._config.repo_slug,
+            destination_branch=destination_branch or self._config.destination_branch,
             description=description,
         )

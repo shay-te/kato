@@ -1,34 +1,40 @@
-from core_lib.client.client_base import ClientBase
-
-from openhands_agent.client.retry import is_retryable_exception, is_retryable_response
+from openhands_agent.client.retrying_client_base import RetryingClientBase
 from openhands_agent.data_layers.data.review_comment import ReviewComment
 from openhands_agent.data_layers.data.task import Task
 from openhands_agent.fields import ImplementationFields
 
 
-class OpenHandsClient(ClientBase):
-    def __init__(self, base_url: str, api_key: str, max_retries: int = 3) -> None:
-        super().__init__(base_url.rstrip('/'))
-        self.set_headers({'Authorization': f'Bearer {api_key}'})
-        self.set_timeout(300)
-        self.max_retries = max(1, max_retries)
+class OpenHandsClient(RetryingClientBase):
+    DEFAULT_PRE_PULL_REQUEST_COMMANDS = [
+        'Write tests that challenge the new code as much as possible.',
+        'Make sure the tests are green. If not, fix them before creating the pull request.',
+    ]
+
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        max_retries: int = 3,
+        pre_pull_request_commands: list[str] | None = None,
+    ) -> None:
+        super().__init__(base_url, api_key, timeout=300, max_retries=max_retries)
+        self._pre_pull_request_commands = list(
+            pre_pull_request_commands or self.DEFAULT_PRE_PULL_REQUEST_COMMANDS
+        )
+
+    def validate_connection(self) -> None:
+        response = self._get_with_retry('/api/sessions')
+        response.raise_for_status()
 
     def implement_task(self, task: Task) -> dict[str, str | bool]:
+        self.logger.info('requesting implementation for task %s', task.id)
         response = self._post_with_retry(
             '/api/sessions',
-            json={
-                'prompt': (
-                    f'Implement task {task.id}: {task.summary}\n\n'
-                    f'{task.description}\n\n'
-                    f'Work on branch {task.branch_name}.'
-                )
-            },
+            json={'prompt': self._build_implementation_prompt(task)},
         )
         response.raise_for_status()
-        payload = response.json() or {}
-        if not isinstance(payload, dict):
-            payload = {}
-        return {
+        payload = self._normalized_payload(response)
+        result = {
             Task.branch_name.key: task.branch_name,
             Task.summary.key: payload.get(Task.summary.key, ''),
             ImplementationFields.COMMIT_MESSAGE: payload.get(
@@ -37,22 +43,26 @@ class OpenHandsClient(ClientBase):
             ),
             ImplementationFields.SUCCESS: bool(payload.get(ImplementationFields.SUCCESS, True)),
         }
+        self.logger.info(
+            'implementation finished for task %s with success=%s',
+            task.id,
+            result[ImplementationFields.SUCCESS],
+        )
+        return result
 
     def fix_review_comment(self, comment: ReviewComment, branch_name: str) -> dict[str, str | bool]:
+        self.logger.info(
+            'requesting review fix for pull request %s comment %s',
+            comment.pull_request_id,
+            comment.comment_id,
+        )
         response = self._post_with_retry(
             '/api/sessions',
-            json={
-                'prompt': (
-                    f'Address pull request comment on branch {branch_name}.\n'
-                    f'Comment by {comment.author}: {comment.body}'
-                )
-            },
+            json={'prompt': self._build_review_prompt(comment, branch_name)},
         )
         response.raise_for_status()
-        payload = response.json() or {}
-        if not isinstance(payload, dict):
-            payload = {}
-        return {
+        payload = self._normalized_payload(response)
+        result = {
             Task.branch_name.key: branch_name,
             Task.summary.key: payload.get(Task.summary.key, ''),
             ImplementationFields.COMMIT_MESSAGE: payload.get(
@@ -61,20 +71,34 @@ class OpenHandsClient(ClientBase):
             ),
             ImplementationFields.SUCCESS: bool(payload.get(ImplementationFields.SUCCESS, True)),
         }
+        self.logger.info(
+            'review fix finished for pull request %s comment %s with success=%s',
+            comment.pull_request_id,
+            comment.comment_id,
+            result[ImplementationFields.SUCCESS],
+        )
+        return result
 
-    def _post_with_retry(self, path: str, **kwargs):
-        last_response = None
-        for attempt in range(self.max_retries):
-            try:
-                response = self._post(path, **kwargs)
-            except Exception as exc:
-                if attempt == self.max_retries - 1 or not is_retryable_exception(exc):
-                    raise
-                continue
+    def _build_implementation_prompt(self, task: Task) -> str:
+        prompt = (
+            f'Implement task {task.id}: {task.summary}\n\n'
+            f'{task.description}\n\n'
+            f'Work on branch {task.branch_name}.'
+        )
+        if not self._pre_pull_request_commands:
+            return prompt
 
-            last_response = response
-            if attempt < self.max_retries - 1 and is_retryable_response(response):
-                continue
-            return response
+        commands = '\n'.join(f'- {command}' for command in self._pre_pull_request_commands)
+        return f'{prompt}\n\nBefore creating the pull request:\n{commands}'
 
-        return last_response
+    @staticmethod
+    def _build_review_prompt(comment: ReviewComment, branch_name: str) -> str:
+        return (
+            f'Address pull request comment on branch {branch_name}.\n'
+            f'Comment by {comment.author}: {comment.body}'
+        )
+
+    @staticmethod
+    def _normalized_payload(response) -> dict:
+        payload = response.json() or {}
+        return payload if isinstance(payload, dict) else {}

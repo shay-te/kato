@@ -6,14 +6,14 @@ import bootstrap  # noqa: F401
 from openhands_agent.client.openhands_client import OpenHandsClient
 from openhands_agent.fields import ImplementationFields
 from utils import (
+    ClientTimeout,
     assert_client_headers_and_timeout,
     build_review_comment,
     build_task,
+    fix_review_comment_with_defaults,
+    implement_task_with_defaults,
+    mock_response,
 )
-
-
-class Timeout(Exception):
-    pass
 
 
 class OpenHandsClientTests(unittest.TestCase):
@@ -21,18 +21,67 @@ class OpenHandsClientTests(unittest.TestCase):
         client = OpenHandsClient('https://openhands.example', 'oh-token', max_retries=5)
         self.assertEqual(client.max_retries, 5)
 
+    def test_uses_minimum_retry_count_of_one(self) -> None:
+        client = OpenHandsClient('https://openhands.example', 'oh-token', max_retries=0)
+        self.assertEqual(client.max_retries, 1)
+
+    def test_validate_connection_checks_openhands_api(self) -> None:
+        client = OpenHandsClient('https://openhands.example', 'oh-token')
+        response = mock_response(json_data=[])
+
+        with patch.object(client, '_get', return_value=response) as mock_get:
+            client.validate_connection()
+
+        response.raise_for_status.assert_called_once_with()
+        mock_get.assert_called_once_with('/api/sessions')
+
+    def test_implement_task_prompt_includes_default_pre_pull_request_commands(self) -> None:
+        client = OpenHandsClient('https://openhands.example', 'oh-token')
+
+        prompt = client._build_implementation_prompt(build_task())
+
+        self.assertIn('Before creating the pull request:', prompt)
+        self.assertIn(
+            '- Write tests that challenge the new code as much as possible.',
+            prompt,
+        )
+        self.assertIn(
+            '- Make sure the tests are green. If not, fix them before creating the pull request.',
+            prompt,
+        )
+
+    def test_implement_task_prompt_uses_configured_pre_pull_request_commands(self) -> None:
+        client = OpenHandsClient(
+            'https://openhands.example',
+            'oh-token',
+            pre_pull_request_commands=['Run targeted tests', 'Fix failing tests'],
+        )
+
+        prompt = client._build_implementation_prompt(build_task())
+
+        self.assertIn('- Run targeted tests', prompt)
+        self.assertIn('- Fix failing tests', prompt)
+        self.assertNotIn(
+            '- Write tests that challenge the new code as much as possible.',
+            prompt,
+        )
+
     def test_implement_task_posts_prompt(self) -> None:
         client = OpenHandsClient('https://openhands.example', 'oh-token')
-        response = Mock()
-        response.json.return_value = {
+        client.logger = Mock()
+        response = mock_response(json_data={
             'summary': 'Implemented task',
             ImplementationFields.COMMIT_MESSAGE: 'Implement PROJ-1',
             ImplementationFields.SUCCESS: True,
-        }
+        })
         task = build_task()
 
-        with patch.object(client, '_post', return_value=response) as mock_post:
-            result = client.implement_task(task)
+        with patch.object(client, 'logger', client.logger), patch.object(
+            client,
+            '_post',
+            return_value=response,
+        ) as mock_post:
+            result = implement_task_with_defaults(client, task)
 
         response.raise_for_status.assert_called_once_with()
         self.assertEqual(
@@ -51,19 +100,30 @@ class OpenHandsClientTests(unittest.TestCase):
         self.assertNotIn('headers', kwargs)
         self.assertNotIn('timeout', kwargs)
         self.assertIn('Implement task PROJ-1: Fix bug', kwargs['json']['prompt'])
+        self.assertIn('Before creating the pull request:', kwargs['json']['prompt'])
+        client.logger.info.assert_any_call('requesting implementation for task %s', 'PROJ-1')
+        client.logger.info.assert_any_call(
+            'implementation finished for task %s with success=%s',
+            'PROJ-1',
+            True,
+        )
 
     def test_fix_review_comment_posts_prompt(self) -> None:
         client = OpenHandsClient('https://openhands.example', 'oh-token')
-        response = Mock()
-        response.json.return_value = {
+        client.logger = Mock()
+        response = mock_response(json_data={
             'summary': 'Updated branch',
             ImplementationFields.COMMIT_MESSAGE: 'Address review comments',
             ImplementationFields.SUCCESS: True,
-        }
+        })
         comment = build_review_comment()
 
-        with patch.object(client, '_post', return_value=response) as mock_post:
-            result = client.fix_review_comment(comment, 'feature/proj-1')
+        with patch.object(client, 'logger', client.logger), patch.object(
+            client,
+            '_post',
+            return_value=response,
+        ) as mock_post:
+            result = fix_review_comment_with_defaults(client, comment)
 
         response.raise_for_status.assert_called_once_with()
         self.assertEqual(result['branch_name'], 'feature/proj-1')
@@ -72,46 +132,65 @@ class OpenHandsClientTests(unittest.TestCase):
             'Comment by reviewer: Please rename this variable.',
             mock_post.call_args.kwargs['json']['prompt'],
         )
+        client.logger.info.assert_any_call(
+            'requesting review fix for pull request %s comment %s',
+            '17',
+            '99',
+        )
+        client.logger.info.assert_any_call(
+            'review fix finished for pull request %s comment %s with success=%s',
+            '17',
+            '99',
+            True,
+        )
 
     def test_implement_task_retries_on_timeout(self) -> None:
         client = OpenHandsClient('https://openhands.example', 'oh-token')
-        response = Mock(status_code=200)
-        response.json.return_value = {ImplementationFields.SUCCESS: True}
+        response = mock_response(json_data={ImplementationFields.SUCCESS: True})
 
         with patch.object(
             client,
             '_post',
-            side_effect=[Timeout('gateway timeout'), response],
+            side_effect=[ClientTimeout('gateway timeout'), response],
         ) as mock_post:
-            result = client.implement_task(build_task())
+            result = implement_task_with_defaults(client)
 
         self.assertTrue(result[ImplementationFields.SUCCESS])
         self.assertEqual(mock_post.call_count, 2)
 
     def test_fix_review_comment_retries_on_transient_response(self) -> None:
         client = OpenHandsClient('https://openhands.example', 'oh-token')
-        retry_response = Mock(status_code=503)
-        success_response = Mock(status_code=200)
-        success_response.json.return_value = {ImplementationFields.SUCCESS: True}
+        retry_response = mock_response(status_code=503)
+        success_response = mock_response(json_data={ImplementationFields.SUCCESS: True})
 
         with patch.object(
             client,
             '_post',
             side_effect=[retry_response, success_response],
         ) as mock_post:
-            result = client.fix_review_comment(build_review_comment(), 'feature/proj-1')
+            result = fix_review_comment_with_defaults(client)
 
         self.assertTrue(result[ImplementationFields.SUCCESS])
         self.assertEqual(mock_post.call_count, 2)
 
     def test_implement_task_uses_defaults_for_null_payload(self) -> None:
         client = OpenHandsClient('https://openhands.example', 'oh-token')
-        response = Mock(status_code=200)
-        response.json.return_value = None
+        response = mock_response(json_data=None)
 
         with patch.object(client, '_post', return_value=response):
-            result = client.implement_task(build_task())
+            result = implement_task_with_defaults(client)
 
+        self.assertEqual(result[ImplementationFields.COMMIT_MESSAGE], 'Implement PROJ-1')
+        self.assertTrue(result[ImplementationFields.SUCCESS])
+
+    def test_implement_task_uses_defaults_for_non_dict_payload(self) -> None:
+        client = OpenHandsClient('https://openhands.example', 'oh-token')
+        response = mock_response(json_data=['unexpected'])
+
+        with patch.object(client, '_post', return_value=response):
+            result = implement_task_with_defaults(client)
+
+        self.assertEqual(result['summary'], '')
         self.assertEqual(result[ImplementationFields.COMMIT_MESSAGE], 'Implement PROJ-1')
         self.assertTrue(result[ImplementationFields.SUCCESS])
 
@@ -121,7 +200,35 @@ class OpenHandsClientTests(unittest.TestCase):
         with patch.object(
             client,
             '_post',
-            side_effect=[Timeout('timeout'), Timeout('timeout'), Timeout('timeout')],
+            side_effect=[
+                ClientTimeout('timeout'),
+                ClientTimeout('timeout'),
+                ClientTimeout('timeout'),
+            ],
         ):
-            with self.assertRaises(Timeout):
-                client.fix_review_comment(build_review_comment(), 'feature/proj-1')
+            with self.assertRaises(ClientTimeout):
+                fix_review_comment_with_defaults(client)
+
+    def test_fix_review_comment_uses_defaults_for_non_dict_payload(self) -> None:
+        client = OpenHandsClient('https://openhands.example', 'oh-token')
+        response = mock_response(json_data=['unexpected'])
+
+        with patch.object(client, '_post', return_value=response):
+            result = fix_review_comment_with_defaults(client)
+
+        self.assertEqual(result['summary'], '')
+        self.assertEqual(result[ImplementationFields.COMMIT_MESSAGE], 'Address review comments')
+        self.assertTrue(result[ImplementationFields.SUCCESS])
+
+    def test_implement_task_does_not_retry_non_transient_exception(self) -> None:
+        client = OpenHandsClient('https://openhands.example', 'oh-token')
+
+        with patch.object(
+            client,
+            '_post',
+            side_effect=ValueError('invalid request'),
+        ) as mock_post:
+            with self.assertRaisesRegex(ValueError, 'invalid request'):
+                implement_task_with_defaults(client)
+
+        self.assertEqual(mock_post.call_count, 1)

@@ -18,6 +18,7 @@ class ImplementationServiceTests(unittest.TestCase):
             fix_review_comment=Mock(),
         )
         service = ImplementationService(client)
+        service.logger = Mock()
         task = build_task()
         comment = service.review_comment_from_payload(
             {
@@ -31,6 +32,12 @@ class ImplementationServiceTests(unittest.TestCase):
         service.implement_task(task)
         service.fix_review_comment(comment, 'feature/proj-1')
 
+        service.logger.info.assert_any_call('delegating implementation for task %s', 'PROJ-1')
+        service.logger.info.assert_any_call(
+            'delegating review fix for pull request %s comment %s',
+            '17',
+            '99',
+        )
         client.implement_task.assert_called_once_with(task)
         client.fix_review_comment.assert_called_once_with(
             comment,
@@ -60,3 +67,20 @@ class ImplementationServiceTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "invalid review comment payload"):
             service.review_comment_from_payload({"pull_request_id": "17"})
+
+    def test_review_comment_from_payload_stringifies_non_string_values(self) -> None:
+        service = ImplementationService(types.SimpleNamespace())
+
+        comment = service.review_comment_from_payload(
+            {
+                "pull_request_id": 17,
+                "comment_id": 99,
+                "author": None,
+                "body": 12345,
+            }
+        )
+
+        self.assertEqual(comment.pull_request_id, "17")
+        self.assertEqual(comment.comment_id, "99")
+        self.assertEqual(comment.author, "None")
+        self.assertEqual(comment.body, "12345")

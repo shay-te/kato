@@ -1,20 +1,56 @@
 from typing import Any
 
-from core_lib.client.client_base import ClientBase
-
-from openhands_agent.client.retry import is_retryable_exception, is_retryable_response
+from openhands_agent.client.retrying_client_base import RetryingClientBase
 from openhands_agent.data_layers.data.task import Task
+from openhands_agent.fields import (
+    YouTrackAttachmentFields,
+    YouTrackCommentFields,
+    YouTrackCustomFieldFields,
+)
 
-
-class YouTrackClient(ClientBase):
-    COMMENT_FIELDS = 'id,text,author(login,name)'
-    ATTACHMENT_FIELDS = 'id,name,mimeType,charset,metaData,url'
+class YouTrackClient(RetryingClientBase):
+    COMMENT_FIELDS = ','.join(
+        [
+            YouTrackCommentFields.ID,
+            YouTrackCommentFields.TEXT,
+            (
+                f'{YouTrackCommentFields.AUTHOR}'
+                f'({YouTrackCommentFields.LOGIN},{YouTrackCommentFields.NAME})'
+            ),
+        ]
+    )
+    ATTACHMENT_FIELDS = ','.join(
+        [
+            YouTrackAttachmentFields.ID,
+            YouTrackAttachmentFields.NAME,
+            YouTrackAttachmentFields.MIME_TYPE,
+            YouTrackAttachmentFields.CHARSET,
+            YouTrackAttachmentFields.METADATA,
+            YouTrackAttachmentFields.URL,
+        ]
+    )
+    CUSTOM_FIELD_FIELDS = ','.join(
+        [
+            YouTrackCustomFieldFields.ID,
+            YouTrackCustomFieldFields.NAME,
+            YouTrackCustomFieldFields.TYPE,
+        ]
+    )
     MAX_TEXT_ATTACHMENT_CHARS = 5000
+
     def __init__(self, base_url: str, token: str, max_retries: int = 3) -> None:
-        super().__init__(base_url.rstrip('/'))
-        self.set_headers({'Authorization': f'Bearer {token}'})
-        self.set_timeout(30)
-        self.max_retries = max(1, max_retries)
+        super().__init__(base_url, token, timeout=30, max_retries=max_retries)
+
+    def validate_connection(self, project: str, assignee: str, states: list[str]) -> None:
+        response = self._get_with_retry(
+            '/api/issues',
+            params={
+                'query': self._build_assigned_tasks_query(project, assignee, states),
+                'fields': 'idReadable',
+                '$top': 1,
+            },
+        )
+        response.raise_for_status()
 
     def get_assigned_tasks(self, project: str, assignee: str, states: list[str]) -> list[Task]:
         query = self._build_assigned_tasks_query(project, assignee, states)
@@ -24,17 +60,38 @@ class YouTrackClient(ClientBase):
         )
         response.raise_for_status()
         tasks: list[Task] = []
-        for item in response.json() or []:
+        for item in self._json_list(response):
             try:
                 tasks.append(self._to_task(item))
             except (KeyError, TypeError, ValueError):
+                self.logger.exception('failed to normalize youtrack issue payload')
                 continue
         return tasks
 
     def add_pull_request_comment(self, issue_id: str, pull_request_url: str) -> None:
-        response = self._post(
+        response = self._post_with_retry(
             f'/api/issues/{issue_id}/comments',
             json={'text': f'Pull request created: {pull_request_url}'},
+        )
+        response.raise_for_status()
+
+    def move_issue_to_state(self, issue_id: str, field_name: str, state_name: str) -> None:
+        field = self._get_issue_custom_field(issue_id, field_name)
+        field_type = field.get(YouTrackCustomFieldFields.TYPE)
+        if not field_type:
+            raise ValueError(f'missing issue field type for: {field_name}')
+
+        response = self._post_with_retry(
+            f'/api/issues/{issue_id}',
+            json={
+                'customFields': [
+                    {
+                        YouTrackCustomFieldFields.NAME: field_name,
+                        YouTrackCustomFieldFields.TYPE: field_type,
+                        'value': {'name': state_name},
+                    }
+                ]
+            },
         )
         response.raise_for_status()
 
@@ -44,9 +101,9 @@ class YouTrackClient(ClientBase):
         attachments = self._get_issue_attachments(issue_id)
         return Task(
             id=issue_id,
-            summary=payload.get(Task.summary.key, ''),
+            summary=str(payload.get(Task.summary.key, '') or ''),
             description=self._build_task_description(
-                payload.get(Task.description.key) or '',
+                payload.get(Task.description.key),
                 comments,
                 attachments,
             ),
@@ -60,35 +117,59 @@ class YouTrackClient(ClientBase):
         state_filter = ', '.join(f'{{{state}}}' for state in states)
         return f'project: {project} assignee: {assignee} State: {state_filter}'
 
+    def _get_issue_custom_field(self, issue_id: str, field_name: str) -> dict[str, Any]:
+        response = self._get_with_retry(
+            f'/api/issues/{issue_id}/customFields',
+            params={'fields': self.CUSTOM_FIELD_FIELDS},
+        )
+        response.raise_for_status()
+        for field in self._json_list(response):
+            if isinstance(field, dict) and field.get(YouTrackCustomFieldFields.NAME) == field_name:
+                return field
+        raise ValueError(f'unknown issue field: {field_name}')
+
     def _get_issue_comments(self, issue_id: str) -> list[dict[str, Any]]:
-        try:
-            response = self._get_with_retry(
-                f'/api/issues/{issue_id}/comments',
-                params={'fields': self.COMMENT_FIELDS},
-            )
-            response.raise_for_status()
-            return list(response.json() or [])
-        except Exception:
-            return []
+        return self._get_issue_items(
+            issue_id,
+            suffix='comments',
+            fields=self.COMMENT_FIELDS,
+            item_label='comments',
+        )
 
     def _get_issue_attachments(self, issue_id: str) -> list[dict[str, Any]]:
+        return self._get_issue_items(
+            issue_id,
+            suffix='attachments',
+            fields=self.ATTACHMENT_FIELDS,
+            item_label='attachments',
+        )
+
+    def _get_issue_items(
+        self,
+        issue_id: str,
+        suffix: str,
+        fields: str,
+        item_label: str,
+    ) -> list[dict[str, Any]]:
         try:
             response = self._get_with_retry(
-                f'/api/issues/{issue_id}/attachments',
-                params={'fields': self.ATTACHMENT_FIELDS},
+                f'/api/issues/{issue_id}/{suffix}',
+                params={'fields': fields},
             )
             response.raise_for_status()
-            return list(response.json() or [])
+            return self._json_list(response)
         except Exception:
+            self.logger.exception('failed to fetch %s for issue %s', item_label, issue_id)
             return []
 
     def _build_task_description(
         self,
-        description: str,
+        description,
         comments: list[dict[str, Any]],
         attachments: list[dict[str, Any]],
     ) -> str:
-        sections = [description.strip() or 'No description provided.']
+        base_description = str(description or '').strip()
+        sections = [base_description or 'No description provided.']
 
         comment_lines = self._format_comments(comments)
         if comment_lines:
@@ -110,12 +191,10 @@ class YouTrackClient(ClientBase):
         for comment in comments:
             if not isinstance(comment, dict):
                 continue
-            text = (comment.get('text') or '').strip()
+            text = str(comment.get(YouTrackCommentFields.TEXT) or '').strip()
             if not text:
                 continue
-            author = comment.get('author') or {}
-            author_name = author.get('name') or author.get('login') or 'unknown'
-            lines.append(f'- {author_name}: {text}')
+            lines.append(f'- {YouTrackClient._comment_author_name(comment)}: {text}')
         return lines
 
     def _format_text_attachments(self, attachments: list[dict[str, Any]]) -> list[str]:
@@ -127,13 +206,11 @@ class YouTrackClient(ClientBase):
                 continue
             content = self._read_text_attachment(attachment)
             if content is None:
-                lines.append(
-                    f'Attachment {attachment.get("name", "unknown")} could not be downloaded.'
-                )
+                lines.append(self._attachment_download_failure_message(attachment))
                 continue
             if not content:
                 continue
-            lines.append(f'Attachment {attachment.get("name", "unknown")}:\n{content}')
+            lines.append(f'Attachment {self._attachment_name(attachment)}:\n{content}')
         return lines
 
     @staticmethod
@@ -142,16 +219,16 @@ class YouTrackClient(ClientBase):
         for attachment in attachments:
             if not isinstance(attachment, dict):
                 continue
-            mime_type = attachment.get('mimeType') or ''
+            mime_type = attachment.get(YouTrackAttachmentFields.MIME_TYPE) or ''
             if not mime_type.startswith('image/'):
                 continue
-            metadata = attachment.get('metaData') or 'no metadata'
-            url = attachment.get('url') or ''
-            lines.append(f'- {attachment.get("name", "unknown")} ({metadata}) {url}'.strip())
+            metadata = attachment.get(YouTrackAttachmentFields.METADATA) or 'no metadata'
+            url = attachment.get(YouTrackAttachmentFields.URL) or ''
+            lines.append(f'- {YouTrackClient._attachment_name(attachment)} ({metadata}) {url}'.strip())
         return lines
 
     def _read_text_attachment(self, attachment: dict[str, Any]) -> str | None:
-        url = attachment.get('url')
+        url = attachment.get(YouTrackAttachmentFields.URL)
         if not url:
             return ''
 
@@ -160,39 +237,54 @@ class YouTrackClient(ClientBase):
             response.raise_for_status()
             content = getattr(response, 'text', '')
             if isinstance(content, str) and content:
-                return content[: self.MAX_TEXT_ATTACHMENT_CHARS]
+                return self._truncate_attachment_content(content)
 
             raw_content = getattr(response, 'content', b'')
             if not raw_content:
                 return ''
 
-            charset = attachment.get('charset') or 'utf-8'
-            return raw_content.decode(charset, errors='replace')[: self.MAX_TEXT_ATTACHMENT_CHARS]
+            charset = attachment.get(YouTrackAttachmentFields.CHARSET) or 'utf-8'
+            content = raw_content.decode(charset, errors='replace')
+            return self._truncate_attachment_content(content)
         except Exception:
+            self.logger.exception(
+                'failed to read text attachment %s',
+                self._attachment_name(attachment),
+            )
             return None
 
     @staticmethod
     def _is_text_attachment(attachment: dict[str, Any]) -> bool:
-        mime_type = attachment.get('mimeType') or ''
+        mime_type = attachment.get(YouTrackAttachmentFields.MIME_TYPE) or ''
         return mime_type.startswith('text/') or mime_type in {
             'application/json',
             'application/xml',
             'application/yaml',
         }
 
-    def _get_with_retry(self, path: str, **kwargs):
-        last_response = None
-        for attempt in range(self.max_retries):
-            try:
-                response = self._get(path, **kwargs)
-            except Exception as exc:
-                if attempt == self.max_retries - 1 or not is_retryable_exception(exc):
-                    raise
-                continue
+    @staticmethod
+    def _json_list(response) -> list[dict[str, Any]]:
+        payload = response.json() or []
+        return list(payload) if isinstance(payload, list) else []
 
-            last_response = response
-            if attempt < self.max_retries - 1 and is_retryable_response(response):
-                continue
-            return response
+    @staticmethod
+    def _comment_author_name(comment: dict[str, Any]) -> str:
+        author = comment.get(YouTrackCommentFields.AUTHOR) or {}
+        if not isinstance(author, dict):
+            author = {}
+        return str(
+            author.get(YouTrackCommentFields.NAME)
+            or author.get(YouTrackCommentFields.LOGIN)
+            or 'unknown'
+        )
 
-        return last_response
+    @staticmethod
+    def _attachment_name(attachment: dict[str, Any]) -> str:
+        return str(attachment.get(YouTrackAttachmentFields.NAME, 'unknown'))
+
+    @classmethod
+    def _attachment_download_failure_message(cls, attachment: dict[str, Any]) -> str:
+        return f'Attachment {cls._attachment_name(attachment)} could not be downloaded.'
+
+    def _truncate_attachment_content(self, content: str) -> str:
+        return content[: self.MAX_TEXT_ATTACHMENT_CHARS]
