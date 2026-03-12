@@ -44,9 +44,14 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('REPOSITORY_REPO_SLUG=', env_example_text)
         self.assertIn('JIRA_BASE_URL=', env_example_text)
         self.assertIn('JIRA_TOKEN=', env_example_text)
+        self.assertIn('YOUTRACK_ISSUE_STATES=', env_example_text)
+        self.assertIn('JIRA_ISSUE_STATES=', env_example_text)
         self.assertIn('GITHUB_ISSUES_BASE_URL=', env_example_text)
+        self.assertIn('GITHUB_ISSUES_ISSUE_STATES=', env_example_text)
         self.assertIn('GITLAB_ISSUES_BASE_URL=', env_example_text)
+        self.assertIn('GITLAB_ISSUES_ISSUE_STATES=', env_example_text)
         self.assertIn('BITBUCKET_ISSUES_BASE_URL=', env_example_text)
+        self.assertIn('BITBUCKET_ISSUES_ISSUE_STATES=', env_example_text)
         self.assertIn('OPENHANDS_BASE_URL=', env_example_text)
         self.assertIn('OPENHANDS_AGENT_STATE_FILE=', env_example_text)
         self.assertIn('OPENHANDS_LLM_MODEL=', env_example_text)
@@ -70,6 +75,7 @@ class DeploymentFilesTests(unittest.TestCase):
             agents_text,
         )
         self.assertNotIn('/Users/shaytessler/', readme_text)
+        self.assertIn('make configure', readme_text)
 
     def test_repo_includes_bootstrap_automation_files(self) -> None:
         bootstrap_text = (REPO_ROOT / 'scripts' / 'bootstrap.sh').read_text(encoding='utf-8')
@@ -85,10 +91,13 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertNotIn('openhands_agent.validate_env --mode agent', run_local_text)
         self.assertIn('openhands_agent.create_db', run_local_text)
         self.assertIn('bootstrap:', makefile_text)
+        self.assertIn('configure:', makefile_text)
+        self.assertIn('openhands_agent.configure_project --output .env', makefile_text)
         self.assertIn('doctor:', makefile_text)
         self.assertIn('run:', makefile_text)
         self.assertIn('create_db: true', config_text)
         self.assertIn('repositories:', config_text)
+        self.assertIn('YOUTRACK_ISSUE_STATES', config_text)
 
     def test_repo_includes_ci_workflow(self) -> None:
         workflow_text = (

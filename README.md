@@ -67,6 +67,7 @@ openhands_agent/
       implementation_service.py
   jobs/
     process_assigned_tasks.py
+  configure_project.py
   main.py
   openhands_agent_core_lib.py
   openhands_agent_instance.py
@@ -77,20 +78,32 @@ tests/
 
 ## Required Environment
 
-```bash
-cp .env.example .env
-```
-
-For the shortest local setup path, use:
+For the shortest local setup path, use the interactive configurator:
 
 ```bash
 make bootstrap
-# fill .env
+make configure
 make doctor
 make run
 ```
 
-Then fill in `.env`. The most important entries are:
+`make configure` runs `python -m openhands_agent.configure_project --output .env` and writes a first-pass `.env` for you. It asks:
+
+- where your tasks live
+- where your source code lives
+- which issue states should be processed
+- which review state and field should be used
+- the first repository, OpenHands, and optional email settings
+
+The configurator uses the same style of shell prompts used by `core-lib`, so the setup flow stays consistent with the rest of the stack.
+
+If you prefer to edit the file manually, start here:
+
+```bash
+cp .env.example .env
+```
+
+The most important entries are:
 
 ```dotenv
 OPENHANDS_AGENT_ISSUE_PLATFORM=youtrack
@@ -99,25 +112,30 @@ YOUTRACK_BASE_URL=https://your-company.youtrack.cloud
 YOUTRACK_TOKEN=...
 YOUTRACK_PROJECT=PROJ
 YOUTRACK_ASSIGNEE=your-youtrack-login
+YOUTRACK_ISSUE_STATES=Todo,Open
 JIRA_BASE_URL=
 JIRA_TOKEN=
 JIRA_EMAIL=
 JIRA_PROJECT=
 JIRA_ASSIGNEE=
+JIRA_ISSUE_STATES=To Do,Open
 GITHUB_ISSUES_BASE_URL=https://api.github.com
 GITHUB_ISSUES_TOKEN=
 GITHUB_ISSUES_OWNER=
 GITHUB_ISSUES_REPO=
 GITHUB_ISSUES_ASSIGNEE=
+GITHUB_ISSUES_ISSUE_STATES=open
 GITLAB_ISSUES_BASE_URL=https://gitlab.com/api/v4
 GITLAB_ISSUES_TOKEN=
 GITLAB_ISSUES_PROJECT=
 GITLAB_ISSUES_ASSIGNEE=
+GITLAB_ISSUES_ISSUE_STATES=opened
 BITBUCKET_ISSUES_BASE_URL=https://api.bitbucket.org/2.0
 BITBUCKET_ISSUES_TOKEN=
 BITBUCKET_ISSUES_WORKSPACE=
 BITBUCKET_ISSUES_REPO_SLUG=
 BITBUCKET_ISSUES_ASSIGNEE=
+BITBUCKET_ISSUES_ISSUE_STATES=new,open
 REPOSITORY_ID=client
 REPOSITORY_DISPLAY_NAME=Client
 REPOSITORY_LOCAL_PATH=./client
@@ -200,11 +218,7 @@ AWS_BEARER_TOKEN_BEDROCK=...
 ```
 
 The active issue provider comes from `openhands_agent.issue_platform`, which falls back to `openhands_agent.ticket_system`, and finally defaults to `youtrack`.
-YouTrack stages are configured under `openhands_agent.youtrack.issue_states`.
-Jira stages are configured under `openhands_agent.jira.issue_states`.
-GitHub Issues stages are configured under `openhands_agent.github_issues.issue_states`.
-GitLab Issues stages are configured under `openhands_agent.gitlab_issues.issue_states`.
-Bitbucket Issues stages are configured under `openhands_agent.bitbucket_issues.issue_states`.
+Issue states can be configured directly in `.env` with `YOUTRACK_ISSUE_STATES`, `JIRA_ISSUE_STATES`, `GITHUB_ISSUES_ISSUE_STATES`, `GITLAB_ISSUES_ISSUE_STATES`, and `BITBUCKET_ISSUES_ISSUE_STATES`.
 The review-state target also comes from the active provider config:
 - YouTrack uses `openhands_agent.youtrack.review_state_field` and `openhands_agent.youtrack.review_state`.
 - Jira uses `openhands_agent.jira.review_state_field` and `openhands_agent.jira.review_state`.
@@ -231,21 +245,19 @@ If a developer is starting from zero, these are the steps:
 
 1. Clone the repository.
 2. Change into the repository directory.
-3. Copy `.env.example` to `.env`.
-4. Fill in the credentials for the issue platform you selected.
-5. Fill in the first repository entry credentials and local path.
-6. Add more repository entries in the config file if tasks can span multiple repos.
-7. Fill in OpenHands server settings.
-8. Fill in OpenHands LLM provider settings.
-9. Fill in email settings if notifications are enabled.
-10. Decide whether to run locally or with Docker Compose.
-11. Create a virtual environment for local development.
-12. Install the package in editable mode.
-13. Run the test suite.
-14. Validate the environment values.
-15. Create or upgrade the database schema.
-16. Start the application.
-17. Confirm the agent can connect to the configured issue platform, OpenHands, and every configured repository.
+3. Run `make bootstrap`.
+4. Run `make configure` to create `.env`, or copy `.env.example` to `.env` and edit it manually.
+5. Fill in or confirm the credentials for the selected issue platform.
+6. Fill in or confirm the first repository entry credentials and local path.
+7. Add more repository entries in the config file if tasks can span multiple repos.
+8. Fill in or confirm OpenHands server settings.
+9. Fill in or confirm OpenHands LLM provider settings.
+10. Fill in email settings if notifications are enabled.
+11. Decide whether to run locally or with Docker Compose.
+12. Validate the environment values.
+13. Create or upgrade the database schema.
+14. Start the application.
+15. Confirm the agent can connect to the configured issue platform, OpenHands, and every configured repository.
 
 What is automated now:
 
@@ -254,6 +266,11 @@ What is automated now:
   - creates `.venv` if needed
   - installs the project
   - runs the tests
+- `make configure`
+  - asks which issue platform holds your tasks
+  - asks which platform hosts your code
+  - asks which issue states and review state should be used
+  - writes `.env` for the first repository and OpenHands setup
 - `make doctor`
   - validates agent and OpenHands env vars
   - exits non-zero if required values are missing, so it can be used in CI or pre-flight scripts
@@ -281,7 +298,11 @@ Still manual:
 make bootstrap
 ```
 
-2. Fill `.env`
+2. Create `.env` interactively:
+
+```bash
+make configure
+```
 
 3. Validate config:
 
@@ -313,7 +334,7 @@ pip install -e .
 
 2. Fill `.env` instead of exporting variables one by one. Start from `.env.example` and update the values you need there.
 
-3. Adjust `openhands_agent/config/openhands_agent_core_lib.yaml` if you want different allowed issue stages, a different review column, or review-ready email recipients.
+3. Adjust `openhands_agent/config/openhands_agent_core_lib.yaml` only if you need settings beyond what `.env` exposes, such as extra repositories. Issue states, review columns, and review-ready email recipients can now be configured directly in `.env`.
 
 ```yaml
 openhands_agent:
