@@ -37,7 +37,6 @@ class ConfigureProjectTests(unittest.TestCase):
         with self._patch_prompts(
             {
                 'Where are your tasks tracked': 'youtrack',
-                'Which platform hosts your source code': 'github',
                 'YouTrack base URL': 'https://youtrack.example',
                 'YouTrack token': 'yt-token',
                 'YouTrack assignee login': 'developer',
@@ -46,16 +45,7 @@ class ConfigureProjectTests(unittest.TestCase):
                 'YouTrack review state value': 'In Review',
                 'YouTrack issue states to process': ['Open', 'Ready for Dev'],
                 'Scan a projects folder for checked-out repositories': False,
-                'Repository id': 'client',
-                'Repository display name': 'Client',
-                'Local path to the checked-out repository': './client',
-                'Github API base URL': 'https://api.github.com',
-                'Github repository token': 'gh-token',
-                'Repository owner, workspace, or group': 'shay-te',
-                'Repository name or slug': 'open-hands-agent',
-                'Set an explicit destination branch': True,
-                'Destination branch': 'main',
-                'Additional checked-out repository folders to grant OpenHands access': [],
+                'Projects root folder containing checked-out repositories': './client',
                 'OpenHands base URL': 'http://localhost:3000',
                 'OpenHands API key': 'local',
                 'Maximum retries for external API calls': 5,
@@ -72,8 +62,6 @@ class ConfigureProjectTests(unittest.TestCase):
         self.assertEqual(values['OPENHANDS_AGENT_ISSUE_PLATFORM'], 'youtrack')
         self.assertEqual(values['OPENHANDS_AGENT_TICKET_SYSTEM'], 'youtrack')
         self.assertEqual(values['YOUTRACK_ISSUE_STATES'], 'Open,Ready for Dev')
-        self.assertEqual(values['REPOSITORY_BASE_URL'], 'https://api.github.com')
-        self.assertEqual(values['REPOSITORY_DESTINATION_BRANCH'], 'main')
         self.assertIn(
             f"{Path('./client').resolve()}:{Path('./client').resolve()}:rw",
             values['OPENHANDS_SANDBOX_VOLUMES'],
@@ -86,7 +74,6 @@ class ConfigureProjectTests(unittest.TestCase):
         with self._patch_prompts(
             {
                 'Where are your tasks tracked': 'jira',
-                'Which platform hosts your source code': 'bitbucket',
                 'Jira base URL': 'https://company.atlassian.net',
                 'Jira token': 'jira-token',
                 'Jira assignee account id or username': 'dev-user',
@@ -96,15 +83,7 @@ class ConfigureProjectTests(unittest.TestCase):
                 'Jira issue states to process': ['To Do', 'Selected for Development'],
                 'Jira user email for basic auth': 'dev@example.com',
                 'Scan a projects folder for checked-out repositories': False,
-                'Repository id': 'backend',
-                'Repository display name': 'Backend',
-                'Local path to the checked-out repository': '.',
-                'Bitbucket API base URL': 'https://api.bitbucket.org/2.0',
-                'Bitbucket repository token': 'bb-token',
-                'Repository owner, workspace, or group': 'workspace',
-                'Repository name or slug': 'backend',
-                'Set an explicit destination branch': False,
-                'Additional checked-out repository folders to grant OpenHands access': [],
+                'Projects root folder containing checked-out repositories': '.',
                 'OpenHands base URL': 'http://localhost:3000',
                 'OpenHands API key': 'local',
                 'Maximum retries for external API calls': 7,
@@ -150,28 +129,15 @@ class ConfigureProjectTests(unittest.TestCase):
                 {
                     'Scan a projects folder for checked-out repositories': True,
                     'Projects folder to scan for repositories': str(projects_root),
-                    'Repository numbers to grant OpenHands access': '1, 2',
-                    'Additional repository numbers to grant OpenHands access (comma-separated, optional)': '1, 2',
-                    'Github API base URL': 'https://api.github.com',
-                    'Github repository token': 'gh-token',
-                    'Repository owner, workspace, or group': 'acme',
-                    'Repository name or slug': 'backend',
-                    'Set an explicit destination branch': False,
+                    'Projects root folder containing checked-out repositories': str(projects_root),
                 }
             ):
-                values = configure_project._prompt_repository({}, 'github')
+                values = configure_project._prompt_repository({})
 
-            self.assertEqual(values['REPOSITORY_LOCAL_PATH'], str(backend_repo.resolve()))
-            self.assertEqual(values['REPOSITORY_ID'], 'backend')
-            self.assertEqual(values['REPOSITORY_DISPLAY_NAME'], 'Backend')
+            self.assertEqual(values['REPOSITORY_ROOT_PATH'], str(projects_root.resolve()))
             self.assertEqual(
                 values['OPENHANDS_SANDBOX_VOLUMES'],
-                ','.join(
-                    [
-                        f'{backend_repo.resolve()}:{backend_repo.resolve()}:rw',
-                        f'{client_repo.resolve()}:{client_repo.resolve()}:rw',
-                    ]
-                ),
+                f'{projects_root.resolve()}:{projects_root.resolve()}:rw',
             )
 
     def test_prompt_repository_raises_when_scanned_folder_has_no_git_repositories(self) -> None:
@@ -183,7 +149,7 @@ class ConfigureProjectTests(unittest.TestCase):
                 }
             ):
                 with self.assertRaisesRegex(ValueError, 'no git repositories were found under'):
-                    configure_project._prompt_repository({}, 'github')
+                    configure_project._prompt_repository({})
 
     def test_parse_repository_numbers_supports_spaces(self) -> None:
         numbers = configure_project._parse_repository_numbers('1, 3 ,4,5, 10', 10)
@@ -271,14 +237,7 @@ class ConfigureProjectTests(unittest.TestCase):
                 'YOUTRACK_REVIEW_STATE_FIELD=State\n'
                 'YOUTRACK_REVIEW_STATE=In Review\n'
                 'YOUTRACK_ISSUE_STATES=Todo,Open\n'
-                'REPOSITORY_ID=\n'
-                'REPOSITORY_DISPLAY_NAME=\n'
-                'REPOSITORY_LOCAL_PATH=.\n'
-                'REPOSITORY_BASE_URL=\n'
-                'REPOSITORY_TOKEN=\n'
-                'REPOSITORY_OWNER=\n'
-                'REPOSITORY_REPO_SLUG=\n'
-                'REPOSITORY_DESTINATION_BRANCH=\n'
+                'REPOSITORY_ROOT_PATH=.\n'
                 'OPENHANDS_BASE_URL=http://localhost:3000\n'
                 'OPENHANDS_API_KEY=local\n'
                 'OPENHANDS_AGENT_MAX_RETRIES=5\n'
@@ -303,7 +262,6 @@ class ConfigureProjectTests(unittest.TestCase):
 
             responses = {
                 'Where are your tasks tracked': 'youtrack',
-                'Which platform hosts your source code': 'bitbucket',
                 'YouTrack base URL': 'https://youtrack.example',
                 'YouTrack token': 'yt-token',
                 'YouTrack assignee login': 'me',
@@ -312,15 +270,7 @@ class ConfigureProjectTests(unittest.TestCase):
                 'YouTrack review state value': 'In Review',
                 'YouTrack issue states to process': ['Todo', 'Open'],
                 'Scan a projects folder for checked-out repositories': False,
-                'Repository id': 'client',
-                'Repository display name': 'Client',
-                'Local path to the checked-out repository': '.',
-                'Bitbucket API base URL': 'https://api.bitbucket.org/2.0',
-                'Bitbucket repository token': 'bb-token',
-                'Repository owner, workspace, or group': 'workspace',
-                'Repository name or slug': 'repo',
-                'Set an explicit destination branch': False,
-                'Additional checked-out repository folders to grant OpenHands access': [],
+                'Projects root folder containing checked-out repositories': '.',
                 'OpenHands base URL': 'http://localhost:3000',
                 'OpenHands API key': 'local',
                 'Maximum retries for external API calls': 5,
@@ -368,14 +318,7 @@ class ConfigureProjectTests(unittest.TestCase):
                 'YOUTRACK_REVIEW_STATE_FIELD=State\n'
                 'YOUTRACK_REVIEW_STATE=In Review\n'
                 'YOUTRACK_ISSUE_STATES=Todo,Open\n'
-                'REPOSITORY_ID=\n'
-                'REPOSITORY_DISPLAY_NAME=\n'
-                'REPOSITORY_LOCAL_PATH=.\n'
-                'REPOSITORY_BASE_URL=\n'
-                'REPOSITORY_TOKEN=\n'
-                'REPOSITORY_OWNER=\n'
-                'REPOSITORY_REPO_SLUG=\n'
-                'REPOSITORY_DESTINATION_BRANCH=\n'
+                'REPOSITORY_ROOT_PATH=.\n'
                 'OPENHANDS_BASE_URL=http://localhost:3000\n'
                 'OPENHANDS_API_KEY=local\n'
                 'OPENHANDS_AGENT_MAX_RETRIES=5\n'
@@ -400,7 +343,6 @@ class ConfigureProjectTests(unittest.TestCase):
 
             responses = {
                 'Where are your tasks tracked': 'youtrack',
-                'Which platform hosts your source code': 'bitbucket',
                 'YouTrack base URL': 'https://youtrack.example',
                 'YouTrack token': '',
                 'YouTrack assignee login': 'me',
@@ -409,15 +351,7 @@ class ConfigureProjectTests(unittest.TestCase):
                 'YouTrack review state value': 'In Review',
                 'YouTrack issue states to process': ['Todo', 'Open'],
                 'Scan a projects folder for checked-out repositories': False,
-                'Repository id': 'client',
-                'Repository display name': 'Client',
-                'Local path to the checked-out repository': '.',
-                'Bitbucket API base URL': 'https://api.bitbucket.org/2.0',
-                'Bitbucket repository token': 'bb-token',
-                'Repository owner, workspace, or group': 'workspace',
-                'Repository name or slug': 'repo',
-                'Set an explicit destination branch': False,
-                'Additional checked-out repository folders to grant OpenHands access': [],
+                'Projects root folder containing checked-out repositories': '.',
                 'OpenHands base URL': 'http://localhost:3000',
                 'OpenHands API key': 'local',
                 'Maximum retries for external API calls': 5,

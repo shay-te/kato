@@ -255,14 +255,14 @@ class AgentService(Service):
                 self._remember_pull_request_context(pull_request, branch_name)
                 pull_requests.append(pull_request)
                 self.logger.info(
-                    'created pull request %s for task %s in repository %s',
+                    'published review branch %s for task %s in repository %s',
                     pull_request[PullRequestFields.ID],
                     task.id,
                     repository.id,
                 )
             except Exception:
                 self.logger.exception(
-                    'failed to create pull request for task %s in repository %s',
+                    'failed to publish review branch for task %s in repository %s',
                     task.id,
                     repository.id,
                 )
@@ -488,7 +488,7 @@ class AgentService(Service):
         lines = [f'OpenHands completed task {task.id}: {task.summary}.']
         if pull_requests:
             lines.append('')
-            lines.append('Created pull requests:')
+            lines.append('Published review links:')
             for pull_request in pull_requests:
                 lines.append(
                     f'- {pull_request[PullRequestFields.REPOSITORY_ID]}: '

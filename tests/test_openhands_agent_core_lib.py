@@ -70,7 +70,7 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
             ),
         )
         mock_repository_service_cls.assert_called_once_with(
-            self.cfg.openhands_agent.repositories,
+            self.cfg.openhands_agent,
             self.cfg.openhands_agent.retry.max_retries,
         )
         mock_state_data_access_cls.assert_called_once_with(

@@ -1,7 +1,5 @@
 from pathlib import Path
 
-import hydra
-from alembic import command
 from alembic.config import Config
 from core_lib.data_layers.data.data_helpers import build_url
 from omegaconf import DictConfig
@@ -39,17 +37,3 @@ def build_alembic_config(cfg: DictConfig) -> Config:
         str(bool(alembic_settings.render_as_batch)).lower(),
     )
     return alembic_cfg
-
-
-@hydra.main(
-    version_base=None,
-    config_path='config',
-    config_name='openhands_agent_core_lib',
-)
-def main(cfg: DictConfig) -> int:
-    command.upgrade(build_alembic_config(cfg), 'head')
-    return 0
-
-
-if __name__ == '__main__':
-    raise SystemExit(main())

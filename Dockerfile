@@ -9,6 +9,6 @@ COPY . .
 
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir . && \
-    chmod +x /app/docker/entrypoint-run.sh
+    chmod +x /app/docker/entrypoint-run.sh /app/docker/entrypoint-install.sh
 
 CMD ["/app/docker/entrypoint-run.sh"]

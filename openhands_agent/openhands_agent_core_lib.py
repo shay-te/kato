@@ -20,7 +20,7 @@ from openhands_agent.data_layers.service.implementation_service import (
 from openhands_agent.data_layers.service.notification_service import NotificationService
 from openhands_agent.data_layers.service.repository_service import RepositoryService
 from openhands_agent.data_layers.service.testing_service import TestingService
-from openhands_agent.create_db import build_alembic_config
+from openhands_agent.alembic_config import build_alembic_config
 from openhands_agent.logging_utils import configure_logger
 
 logger = logging.getLogger(__name__)
@@ -73,11 +73,10 @@ class OpenHandsAgentCoreLib(CoreLib):
             open_cfg.openhands.api_key,
             retry_cfg.max_retries,
         )
-        repositories_cfg = getattr(open_cfg, 'repositories', None) or [open_cfg.repository]
         _task_data_access = TaskDataAccess(ticket_cfg, _ticket_client)
         _implementation_service = ImplementationService(_implementation_openhands_client)
         _testing_service = TestingService(_testing_openhands_client)
-        _repository_service = RepositoryService(repositories_cfg, retry_cfg.max_retries)
+        _repository_service = RepositoryService(open_cfg, retry_cfg.max_retries)
         _state_data_access = AgentStateDataAccess(open_cfg.state.file_path)
         notification_service = NotificationService(app_name=self.config.core_lib.app.name, email_core_lib=_email_core_lib, failure_email_cfg=getattr(open_cfg, 'failure_email', None), completion_email_cfg=getattr(open_cfg, 'completion_email', None))
         self.service = AgentService(

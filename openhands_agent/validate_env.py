@@ -80,12 +80,7 @@ def validate_agent_env(env: dict[str, str]) -> list[str]:
 
 def _required_agent_keys(issue_platform: str) -> list[str]:
     shared_required = [
-        'REPOSITORY_ID',
-        'REPOSITORY_BASE_URL',
-        'REPOSITORY_LOCAL_PATH',
-        'REPOSITORY_TOKEN',
-        'REPOSITORY_OWNER',
-        'REPOSITORY_REPO_SLUG',
+        'REPOSITORY_ROOT_PATH',
         'OPENHANDS_BASE_URL',
         'OPENHANDS_API_KEY',
     ]

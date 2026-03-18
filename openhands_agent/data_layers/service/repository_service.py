@@ -5,22 +5,23 @@ import subprocess
 from types import SimpleNamespace
 
 from core_lib.data_layers.service.service import Service
-from omegaconf import DictConfig
 
-from openhands_agent.client.pull_request_client_factory import build_pull_request_client
 from openhands_agent.data_layers.data.task import Task
-from openhands_agent.data_layers.data_access.pull_request_data_access import (
-    PullRequestDataAccess,
-)
 from openhands_agent.fields import PullRequestFields
+from openhands_agent.repository_discovery import (
+    discover_git_repositories,
+    display_name_from_repo_slug,
+    remote_web_base_url,
+    repository_id_from_name,
+    review_url_for_remote,
+)
 
 
 class RepositoryService(Service):
     def __init__(self, repositories_config, max_retries: int) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
         self._max_retries = max_retries
-        self._repositories = self._normalized_repositories(repositories_config)
-        self._data_access_by_id: dict[str, PullRequestDataAccess] = {}
+        self._repositories = self._load_repositories(repositories_config)
         self._validate_inventory()
 
     @property
@@ -30,7 +31,6 @@ class RepositoryService(Service):
     def validate_connections(self) -> None:
         for repository in self._repositories:
             self._validate_local_path(repository)
-            self._data_access(repository).validate_connection()
 
     def resolve_task_repositories(self, task: Task) -> list[object]:
         searchable_text = f'{task.summary}\n{task.description}'.lower()
@@ -59,19 +59,17 @@ class RepositoryService(Service):
         source_branch: str,
         description: str = '',
     ) -> dict[str, str]:
-        pull_request = self._data_access(repository).create_pull_request(
-            title=title,
-            source_branch=source_branch,
-            destination_branch=self.destination_branch(repository),
-            description=description,
-        )
+        self._validate_local_path(repository)
+        destination_branch = self.destination_branch(repository)
+        self._push_branch(repository.local_path, source_branch)
         return {
-            'repository_id': repository.id,
-            PullRequestFields.ID: pull_request[PullRequestFields.ID],
-            PullRequestFields.TITLE: pull_request[PullRequestFields.TITLE],
-            PullRequestFields.URL: pull_request[PullRequestFields.URL],
+            PullRequestFields.REPOSITORY_ID: repository.id,
+            PullRequestFields.ID: source_branch,
+            PullRequestFields.TITLE: title,
+            PullRequestFields.URL: self._review_url(repository, source_branch, destination_branch),
             PullRequestFields.SOURCE_BRANCH: source_branch,
-            PullRequestFields.DESTINATION_BRANCH: self.destination_branch(repository),
+            PullRequestFields.DESTINATION_BRANCH: destination_branch,
+            PullRequestFields.DESCRIPTION: description,
         }
 
     def list_pull_request_comments(
@@ -79,7 +77,12 @@ class RepositoryService(Service):
         repository,
         pull_request_id: str,
     ) -> list[dict[str, str]]:
-        return self._data_access(repository).list_pull_request_comments(pull_request_id)
+        self.logger.info(
+            'skipping pull request comment polling for repository %s; '
+            'review comments now require direct payload handling',
+            repository.id,
+        )
+        return []
 
     def destination_branch(self, repository) -> str:
         configured_branch = str(getattr(repository, 'destination_branch', '') or '').strip()
@@ -92,18 +95,6 @@ class RepositoryService(Service):
                 f'unable to determine destination branch for repository {repository.id}'
             )
         return inferred_branch
-
-    def _data_access(self, repository) -> PullRequestDataAccess:
-        if repository.id not in self._data_access_by_id:
-            client = build_pull_request_client(
-                SimpleNamespace(
-                    base_url=repository.provider_base_url,
-                    token=repository.token,
-                ),
-                self._max_retries,
-            )
-            self._data_access_by_id[repository.id] = PullRequestDataAccess(repository, client)
-        return self._data_access_by_id[repository.id]
 
     def _validate_inventory(self) -> None:
         if not self._repositories:
@@ -136,6 +127,57 @@ class RepositoryService(Service):
                 return [repositories_config]
         return [repositories_config]
 
+    def _load_repositories(self, repository_source) -> list[object]:
+        if self._looks_like_repository_settings(repository_source):
+            configured_repositories = self._normalized_repositories(
+                getattr(repository_source, 'repositories', None)
+            )
+            if configured_repositories:
+                return configured_repositories
+            discovered_repositories = self._discover_repositories_from_root(repository_source)
+            if discovered_repositories:
+                return discovered_repositories
+            return []
+        return self._normalized_repositories(repository_source)
+
+    @staticmethod
+    def _looks_like_repository_settings(repository_source) -> bool:
+        if repository_source is None:
+            return False
+        return any(
+            hasattr(repository_source, attribute)
+            for attribute in (
+                'repositories',
+                'repository_root_path',
+            )
+        )
+
+    def _discover_repositories_from_root(self, repository_source) -> list[object]:
+        root_path = str(getattr(repository_source, 'repository_root_path', '') or '').strip()
+        if not root_path:
+            return []
+
+        repositories: list[object] = []
+        for discovered_repository in discover_git_repositories(root_path):
+            local_path = str(discovered_repository.local_path).strip()
+            folder_name = os.path.basename(local_path)
+            repo_slug = str(discovered_repository.repo_slug or folder_name).strip()
+            repository_name = folder_name or repo_slug
+            aliases = [folder_name, repo_slug]
+            repositories.append(
+                SimpleNamespace(
+                    id=repository_id_from_name(repository_name),
+                    display_name=display_name_from_repo_slug(repository_name),
+                    local_path=local_path,
+                    provider=str(discovered_repository.provider or '').strip(),
+                    remote_url=str(discovered_repository.remote_url or '').strip(),
+                    owner=str(discovered_repository.owner or '').strip(),
+                    repo_slug=repo_slug,
+                    aliases=[alias for alias in aliases if alias],
+                )
+            )
+        return repositories
+
     def _repository_matches(self, searchable_text: str, repository) -> bool:
         return any(
             self._keyword_matches(searchable_text, keyword)
@@ -151,10 +193,14 @@ class RepositoryService(Service):
 
     @staticmethod
     def _repository_aliases(repository) -> list[str]:
+        local_path_alias = os.path.basename(str(getattr(repository, 'local_path', '') or '').strip())
+        if local_path_alias in {'', '.'}:
+            local_path_alias = ''
         aliases = [
             str(getattr(repository, 'id', '') or '').strip().lower(),
             str(getattr(repository, 'display_name', '') or '').strip().lower(),
             str(getattr(repository, 'repo_slug', '') or '').strip().lower(),
+            local_path_alias.lower(),
         ]
         for alias in getattr(repository, 'aliases', []) or []:
             aliases.append(str(alias).strip().lower())
@@ -167,6 +213,83 @@ class RepositoryService(Service):
             raise ValueError(
                 f'missing local repository path for {repository.id}: {local_path or "<empty>"}'
             )
+
+    def _push_branch(self, local_path: str, branch_name: str) -> None:
+        result = subprocess.run(
+            ['git', '-C', local_path, 'push', '-u', 'origin', branch_name],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            return
+        raise RuntimeError(
+            f'failed to push branch {branch_name}: '
+            f'{result.stderr.strip() or result.stdout.strip() or "git push failed"}'
+        )
+
+    def _review_url(self, repository, source_branch: str, destination_branch: str) -> str:
+        remote_url = str(getattr(repository, 'remote_url', '') or '').strip()
+        provider = str(getattr(repository, 'provider', '') or '').strip()
+        owner = str(getattr(repository, 'owner', '') or '').strip()
+        repo_slug = str(getattr(repository, 'repo_slug', '') or '').strip()
+
+        if remote_url and provider and owner and repo_slug:
+            return review_url_for_remote(
+                remote_url=remote_url,
+                provider=provider,
+                owner=owner,
+                repo_slug=repo_slug,
+                source_branch=source_branch,
+                destination_branch=destination_branch,
+            )
+
+        web_base_url = self._fallback_web_base_url(repository)
+        if not web_base_url or not owner or not repo_slug:
+            return ''
+        provider = provider or self._provider_from_base_url(
+            str(getattr(repository, 'provider_base_url', '') or '').strip()
+        )
+        if provider:
+            return review_url_for_remote(
+                remote_url=f'{web_base_url}/{owner}/{repo_slug}.git',
+                provider=provider,
+                owner=owner,
+                repo_slug=repo_slug,
+                source_branch=source_branch,
+                destination_branch=destination_branch,
+            )
+        repository_path = f'{owner}/{repo_slug}'.strip('/')
+        return f'{web_base_url}/{repository_path}'
+
+    @staticmethod
+    def _fallback_web_base_url(repository) -> str:
+        remote_url = str(getattr(repository, 'remote_url', '') or '').strip()
+        if remote_url:
+            return remote_web_base_url(remote_url)
+        provider_base_url = str(getattr(repository, 'provider_base_url', '') or '').strip()
+        if not provider_base_url:
+            return ''
+        if 'api.bitbucket.org' in provider_base_url:
+            return 'https://bitbucket.org'
+        if provider_base_url.rstrip('/').endswith('/api/v4'):
+            return provider_base_url[: -len('/api/v4')]
+        if provider_base_url.rstrip('/').endswith('/api/v3'):
+            return provider_base_url[: -len('/api/v3')]
+        if provider_base_url.rstrip('/').endswith('/api'):
+            return provider_base_url[: -len('/api')]
+        return provider_base_url
+
+    @staticmethod
+    def _provider_from_base_url(provider_base_url: str) -> str:
+        normalized = provider_base_url.lower()
+        if 'bitbucket' in normalized:
+            return 'bitbucket'
+        if 'github' in normalized:
+            return 'github'
+        if 'gitlab' in normalized:
+            return 'gitlab'
+        return ''
 
     @staticmethod
     def _infer_default_branch(local_path: str) -> str:

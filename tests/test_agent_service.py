@@ -213,7 +213,7 @@ class AgentServiceTests(unittest.TestCase):
         )
         self.task_client.add_comment.assert_called_once()
         comment_text = self.task_client.add_comment.call_args.args[1]
-        self.assertIn('Created pull requests:', comment_text)
+        self.assertIn('Published review links:', comment_text)
         self.assertIn('client: https://bitbucket/pr/17', comment_text)
         self.assertIn('backend: https://github/pr/18', comment_text)
         self.task_client.move_issue_to_state.assert_called_once_with('PROJ-1', 'State', 'In Review')

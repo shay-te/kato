@@ -1,7 +1,7 @@
 PYTHON ?= python3
 VENV_PYTHON = .venv/bin/python
 
-.PHONY: bootstrap configure doctor doctor-agent doctor-openhands test create-db run compose-up
+.PHONY: bootstrap configure doctor doctor-agent doctor-openhands test install run compose-up
 
 bootstrap:
 	./scripts/bootstrap.sh
@@ -21,8 +21,8 @@ doctor-openhands:
 test:
 	$(VENV_PYTHON) -m unittest discover -s tests
 
-create-db:
-	$(VENV_PYTHON) -m openhands_agent.create_db
+install:
+	$(VENV_PYTHON) -m openhands_agent.install
 
 run:
 	./scripts/run-local.sh

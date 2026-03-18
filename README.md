@@ -137,14 +137,7 @@ BITBUCKET_ISSUES_WORKSPACE=
 BITBUCKET_ISSUES_REPO_SLUG=
 BITBUCKET_ISSUES_ASSIGNEE=
 BITBUCKET_ISSUES_ISSUE_STATES=new,open
-REPOSITORY_ID=client
-REPOSITORY_DISPLAY_NAME=Client
-REPOSITORY_LOCAL_PATH=./client
-REPOSITORY_BASE_URL=https://api.bitbucket.org/2.0
-REPOSITORY_TOKEN=...
-REPOSITORY_OWNER=your-workspace
-REPOSITORY_REPO_SLUG=your-repo
-REPOSITORY_DESTINATION_BRANCH=
+REPOSITORY_ROOT_PATH=./projects
 OPENHANDS_BASE_URL=http://localhost:3000
 OPENHANDS_API_KEY=...
 OPENHANDS_AGENT_MAX_RETRIES=5
@@ -168,14 +161,9 @@ Use `OPENHANDS_AGENT_ISSUE_PLATFORM` for new setups.
 Supported values are `youtrack`, `jira`, `github`, `gitlab`, and `bitbucket`.
 `OPENHANDS_AGENT_TICKET_SYSTEM` is still accepted as a backward-compatible alias.
 
-The pull-request provider is selected automatically from `REPOSITORY_BASE_URL`.
-Supported providers:
-- Bitbucket: `https://api.bitbucket.org/2.0`
-- GitHub: `https://api.github.com`
-- GitLab: `https://gitlab.com/api/v4`
-
-For multi-repository tasks, add more entries under `openhands_agent.repositories` in `openhands_agent/config/openhands_agent_core_lib.yaml`. Each repository entry needs `id`, `display_name`, `local_path`, `provider_base_url`, `token`, `owner`, `repo_slug`, and optional `destination_branch` plus `aliases`.
-The flat `REPOSITORY_*` environment variables are only a bootstrap convenience for the first repository entry. Once you need more than one repository, treat `openhands_agent/config/openhands_agent_core_lib.yaml` as the source of truth and add the extra entries there.
+Repository metadata is discovered from each repository's `.git` remote under `REPOSITORY_ROOT_PATH`.
+The agent publishes branches with local `git push`, so repository access is expected to come from your machine's existing git auth configuration.
+If you need explicit aliases or repository metadata overrides, add entries under `openhands_agent.repositories` in `openhands_agent/config/openhands_agent_core_lib.yaml`.
 `OPENHANDS_SANDBOX_VOLUMES` lists the exact checked-out repository folders that OpenHands may mount into its runtime containers. `make configure` populates it from the folders you select so Docker runs stay scoped to only those repositories.
 
 If `destination_branch` is empty, the agent infers the repository default branch from the local git checkout. That is convenient for local development, but it also means runtime behavior depends on the checkout state. For production-style runs, set `destination_branch` explicitly for every repository so pull requests cannot target the wrong branch because of a stale or unusual local clone.
@@ -271,9 +259,9 @@ What is automated now:
 - `make configure`
   - asks which issue platform holds your tasks
   - asks which platform hosts your code
-  - can scan a projects folder for git repositories and prefill the first repository entry from the selected checkout
+  - can scan a projects folder for git repositories and select which folders should be available to the agent
   - asks which issue states and review state should be used
-  - writes `.env` for the first repository and OpenHands setup
+  - writes `.env` for the root repository path and OpenHands setup
   - writes `.docker-compose.selected-repos.yml` so the agent container only mounts the selected repository folders
 - `make doctor`
   - validates agent and OpenHands env vars
@@ -281,11 +269,12 @@ What is automated now:
 - `make run`
   - loads `.env`
   - starts the app
+- `make install`
+  - runs `OpenHandsAgentCoreLib.install`
+  - applies the Alembic migrations to the configured database
 - Docker entrypoint
   - waits for OpenHands
   - starts the app
-- Startup
-  - creates the SQLAlchemy schema automatically because `core_lib.data.sqlalchemy.create_db` is enabled
 
 Still manual:
 
@@ -322,7 +311,13 @@ make doctor
 make run
 ```
 
-5. Or run with Docker:
+5. Install or upgrade the database schema:
+
+```bash
+make install
+```
+
+6. Or run with Docker:
 
 ```bash
 make compose-up
@@ -394,16 +389,9 @@ openhands_agent:
 set -a
 source .env
 set +a
+python -m openhands_agent.install
 python -m openhands_agent.main
 ```
-
-If you need to create or upgrade the database schema first, run:
-
-```bash
-python -m openhands_agent.create_db
-```
-
-Normal startup already creates the configured SQLAlchemy tables automatically because `core_lib.data.sqlalchemy.create_db` is set to `true`.
 
 ### Docker Compose
 
@@ -416,7 +404,9 @@ docker compose up --build
 What the compose stack does:
 
 - starts an `openhands` container on port `3000`
+- runs an `install` container that calls `OpenHandsAgentCoreLib.install`
 - builds and starts an `openhands-agent` container from this repo
+- shares the default SQLite database path between `install` and `openhands-agent`
 - makes the agent wait until OpenHands is reachable at `http://openhands:3000`
 - then runs `python -m openhands_agent.main`
 
@@ -427,6 +417,7 @@ The compose file uses the official OpenHands image and runtime image pattern fro
 
 Before running `docker compose up --build`, make sure `.env` contains the selected issue-platform settings, repository settings, OpenHands settings, retry settings, and optional email settings you want Docker Compose to pass through.
 `make configure` also writes `.docker-compose.selected-repos.yml`; `make compose-up` automatically includes it so the agent container only sees the repository folders you selected, while OpenHands runtime containers get the matching `OPENHANDS_SANDBOX_VOLUMES` scope.
+For the default SQLite setup, the compose file stores the database under `/data` in a named Docker volume so the `install` and `openhands-agent` containers use the same file. If you use Postgres or another external database, override `OPENHANDS_AGENT_DB_PATH` and the related DB env vars in `.env`.
 
 If you use `.env`, Docker Compose will load it automatically, so you can keep both the agent config and the OpenHands LLM config in one place and avoid manual setup in the OpenHands UI for the env-supported options.
 

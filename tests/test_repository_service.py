@@ -1,3 +1,5 @@
+from pathlib import Path
+import tempfile
 import types
 import unittest
 from unittest.mock import Mock, patch
@@ -79,6 +81,34 @@ class RepositoryServiceTests(unittest.TestCase):
 
         self.assertEqual([repository.id for repository in repositories], ['client', 'backend'])
 
+    def test_discovers_repositories_from_root_and_matches_task_folder_name(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            projects_root = Path(temp_dir)
+            client_repo = projects_root / 'client-app'
+            backend_repo = projects_root / 'backend-service'
+            self._create_git_repository(
+                client_repo,
+                'git@github.com:acme/client.git',
+            )
+            self._create_git_repository(
+                backend_repo,
+                'git@github.com:acme/backend.git',
+            )
+            service = RepositoryService(
+                types.SimpleNamespace(
+                    repositories=[],
+                    repository_root_path=str(projects_root),
+                ),
+                3,
+            )
+
+            repositories = service.resolve_task_repositories(
+                build_task(description='Work in backend-service only')
+            )
+
+        self.assertEqual([repository.id for repository in repositories], ['backend-service'])
+        self.assertEqual(repositories[0].repo_slug, 'backend')
+
     def test_raises_when_no_repository_matches_task_text(self) -> None:
         service = RepositoryService(self.cfg.openhands_agent.repositories, 3)
         task = build_task(description='Update mobile application')
@@ -114,22 +144,16 @@ class RepositoryServiceTests(unittest.TestCase):
 
     def test_create_pull_request_includes_repository_id_and_inferred_branch(self) -> None:
         repository = self.cfg.openhands_agent.repositories[0]
-        pull_request = {
-            PullRequestFields.ID: '17',
-            PullRequestFields.TITLE: 'PROJ-1: Fix bug',
-            PullRequestFields.URL: 'https://bitbucket/pr/17',
-        }
 
         with patch(
-            'openhands_agent.data_layers.service.repository_service.build_pull_request_client'
-        ) as mock_build_client, patch(
             'openhands_agent.data_layers.service.repository_service.os.path.isdir',
             return_value=True,
         ), patch(
+            'openhands_agent.data_layers.service.repository_service.RepositoryService._push_branch',
+        ) as mock_push_branch, patch(
             'openhands_agent.data_layers.service.repository_service.subprocess.run',
             return_value=Mock(returncode=0, stdout='refs/remotes/origin/master\n'),
         ):
-            mock_build_client.return_value.create_pull_request.return_value = pull_request
             service = RepositoryService(self.cfg.openhands_agent.repositories, 3)
             result = service.create_pull_request(
                 repository,
@@ -139,7 +163,10 @@ class RepositoryServiceTests(unittest.TestCase):
             )
 
         self.assertEqual(result[PullRequestFields.REPOSITORY_ID], 'client')
+        self.assertEqual(result[PullRequestFields.ID], 'feature/proj-1/client')
         self.assertEqual(result[PullRequestFields.DESTINATION_BRANCH], 'master')
+        self.assertIn('/pull-requests/new?', result[PullRequestFields.URL])
+        mock_push_branch.assert_called_once_with('.', 'feature/proj-1/client')
 
     def test_validate_connections_checks_local_paths(self) -> None:
         with patch(
@@ -150,20 +177,22 @@ class RepositoryServiceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'missing local repository path'):
                 service.validate_connections()
 
-    def test_list_pull_request_comments_uses_repository_data_access(self) -> None:
+    def test_list_pull_request_comments_returns_empty_without_provider_api(self) -> None:
         repository = self.cfg.openhands_agent.repositories[0]
+        service = RepositoryService(self.cfg.openhands_agent.repositories, 3)
 
-        with patch(
-            'openhands_agent.data_layers.service.repository_service.build_pull_request_client'
-        ) as mock_build_client:
-            mock_build_client.return_value.list_pull_request_comments.return_value = ['comment']
-            service = RepositoryService(self.cfg.openhands_agent.repositories, 3)
+        comments = service.list_pull_request_comments(repository, '17')
 
-            comments = service.list_pull_request_comments(repository, '17')
+        self.assertEqual(comments, [])
 
-        self.assertEqual(comments, ['comment'])
-        mock_build_client.return_value.list_pull_request_comments.assert_called_once_with(
-            repo_owner='workspace',
-            repo_slug='repo',
-            pull_request_id='17',
+    @staticmethod
+    def _create_git_repository(path: Path, remote_url: str) -> None:
+        git_dir = path / '.git'
+        git_dir.mkdir(parents=True)
+        (git_dir / 'config').write_text(
+            '[core]\n'
+            '\trepositoryformatversion = 0\n'
+            '[remote "origin"]\n'
+            f'\turl = {remote_url}\n',
+            encoding='utf-8',
         )
