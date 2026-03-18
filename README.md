@@ -262,7 +262,7 @@ What is automated now:
   - can scan a projects folder for git repositories and select which folders should be available to the agent
   - asks which issue states and review state should be used
   - writes `.env` for the root repository path and OpenHands setup
-  - writes `.docker-compose.selected-repos.yml` so the agent container only mounts the selected repository folders
+  - writes `.docker-compose.selected-repos.yaml` so the agent container only mounts the selected repository folders
 - `make doctor`
   - validates agent and OpenHands env vars
   - exits non-zero if required values are missing, so it can be used in CI or pre-flight scripts
@@ -410,13 +410,13 @@ What the compose stack does:
 - makes the agent wait until OpenHands is reachable at `http://openhands:3000`
 - then runs `python -m openhands_agent.main`
 
-The compose file uses the official OpenHands image and runtime image pattern from the OpenHands docs:
+The compose file uses the current official OpenHands container image pattern from the OpenHands docs:
 
-- https://docs.all-hands.dev/usage/local-setup
+- https://docs.openhands.dev/openhands/usage/run-openhands/local-setup
 - https://github.com/OpenHands/OpenHands
 
 Before running `docker compose up --build`, make sure `.env` contains the selected issue-platform settings, repository settings, OpenHands settings, retry settings, and optional email settings you want Docker Compose to pass through.
-`make configure` also writes `.docker-compose.selected-repos.yml`; `make compose-up` automatically includes it so the agent container only sees the repository folders you selected, while OpenHands runtime containers get the matching `OPENHANDS_SANDBOX_VOLUMES` scope.
+`make configure` also writes `.docker-compose.selected-repos.yaml`; `make compose-up` automatically includes it so the agent container only sees the repository folders you selected, while OpenHands runtime containers get the matching `OPENHANDS_SANDBOX_VOLUMES` scope.
 For the default SQLite setup, the compose file stores the database under `/data` in a named Docker volume so the `install` and `openhands-agent` containers use the same file. If you use Postgres or another external database, override `OPENHANDS_AGENT_DB_PATH` and the related DB env vars in `.env`.
 
 If you use `.env`, Docker Compose will load it automatically, so you can keep both the agent config and the OpenHands LLM config in one place and avoid manual setup in the OpenHands UI for the env-supported options.

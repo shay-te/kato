@@ -28,8 +28,8 @@ run:
 	./scripts/run-local.sh
 
 compose-up:
-	@if [ -f .docker-compose.selected-repos.yml ]; then \
-		docker compose -f docker-compose.yml -f .docker-compose.selected-repos.yml up --build; \
+	@if [ -f .docker-compose.selected-repos.yaml ]; then \
+		docker compose -f docker-compose.yaml -f .docker-compose.selected-repos.yaml up --build; \
 	else \
 		docker compose up --build; \
 	fi

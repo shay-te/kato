@@ -226,7 +226,7 @@ class ConfigureProjectTests(unittest.TestCase):
             temp_path = Path(temp_dir)
             template_path = temp_path / '.env.example'
             output_path = temp_path / '.env'
-            compose_override_path = temp_path / '.docker-compose.selected-repos.yml'
+            compose_override_path = temp_path / '.docker-compose.selected-repos.yaml'
             template_path.write_text(
                 'OPENHANDS_AGENT_ISSUE_PLATFORM=youtrack\n'
                 'OPENHANDS_AGENT_TICKET_SYSTEM=youtrack\n'
@@ -307,7 +307,7 @@ class ConfigureProjectTests(unittest.TestCase):
             temp_path = Path(temp_dir)
             template_path = temp_path / '.env.example'
             output_path = temp_path / '.env'
-            compose_override_path = temp_path / '.docker-compose.selected-repos.yml'
+            compose_override_path = temp_path / '.docker-compose.selected-repos.yaml'
             template_path.write_text(
                 'OPENHANDS_AGENT_ISSUE_PLATFORM=youtrack\n'
                 'OPENHANDS_AGENT_TICKET_SYSTEM=youtrack\n'

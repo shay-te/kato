@@ -61,10 +61,9 @@ x-openhands-agent-env: &openhands-agent-env
 
 services:
   openhands:
-    image: docker.all-hands.dev/all-hands-ai/openhands:0.59
+    image: docker.openhands.dev/openhands/openhands:1.5
     pull_policy: always
     environment:
-      SANDBOX_RUNTIME_CONTAINER_IMAGE: docker.all-hands.dev/all-hands-ai/runtime:0.59-nikolaik
       LOG_ALL_EVENTS: "true"
       LLM_MODEL: ${OPENHANDS_LLM_MODEL:-}
       LLM_API_KEY: ${OPENHANDS_LLM_API_KEY:-}
@@ -83,8 +82,8 @@ services:
       OH_WEB_URL: ${OPENHANDS_WEB_URL:-}
       OH_PERSISTENCE_DIR: ${OPENHANDS_STATE_DIR:-/.openhands}
       RUNTIME: ${OPENHANDS_RUNTIME:-docker}
-      AGENT_SERVER_IMAGE_REPOSITORY: ${OPENHANDS_AGENT_SERVER_IMAGE_REPOSITORY:-}
-      AGENT_SERVER_IMAGE_TAG: ${OPENHANDS_AGENT_SERVER_IMAGE_TAG:-}
+      AGENT_SERVER_IMAGE_REPOSITORY: ${OPENHANDS_AGENT_SERVER_IMAGE_REPOSITORY:-ghcr.io/openhands/agent-server}
+      AGENT_SERVER_IMAGE_TAG: ${OPENHANDS_AGENT_SERVER_IMAGE_TAG:-1.12.0-python}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${OPENHANDS_STATE_DIR:-~/.openhands}:/.openhands

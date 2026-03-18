@@ -9,7 +9,7 @@ class DeploymentFilesTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         required_paths = [
-            REPO_ROOT / 'docker-compose.yml',
+            REPO_ROOT / 'docker-compose.yaml',
             REPO_ROOT / 'AGENTS.md',
             REPO_ROOT / 'README.md',
             REPO_ROOT / '.env.example',
@@ -22,7 +22,7 @@ class DeploymentFilesTests(unittest.TestCase):
             )
 
     def test_docker_compose_centralizes_openhands_llm_configuration(self) -> None:
-        compose_text = (REPO_ROOT / 'docker-compose.yml').read_text(encoding='utf-8')
+        compose_text = (REPO_ROOT / 'docker-compose.yaml').read_text(encoding='utf-8')
 
         self.assertIn('LLM_MODEL: ${OPENHANDS_LLM_MODEL:-}', compose_text)
         self.assertIn('LLM_API_KEY: ${OPENHANDS_LLM_API_KEY:-}', compose_text)
@@ -104,7 +104,7 @@ class DeploymentFilesTests(unittest.TestCase):
         bootstrap_text = (REPO_ROOT / 'scripts' / 'bootstrap.sh').read_text(encoding='utf-8')
         run_local_text = (REPO_ROOT / 'scripts' / 'run-local.sh').read_text(encoding='utf-8')
         makefile_text = (REPO_ROOT / 'Makefile').read_text(encoding='utf-8')
-        compose_text = (REPO_ROOT / 'docker-compose.yml').read_text(encoding='utf-8')
+        compose_text = (REPO_ROOT / 'docker-compose.yaml').read_text(encoding='utf-8')
         install_entrypoint_text = (
             REPO_ROOT / 'docker' / 'entrypoint-install.sh'
         ).read_text(encoding='utf-8')
@@ -123,11 +123,20 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('doctor:', makefile_text)
         self.assertIn('install:', makefile_text)
         self.assertIn('run:', makefile_text)
-        self.assertIn('.docker-compose.selected-repos.yml', makefile_text)
+        self.assertIn('.docker-compose.selected-repos.yaml', makefile_text)
         self.assertIn('python -m openhands_agent.install', install_entrypoint_text)
         self.assertIn('install:', compose_text)
         self.assertIn('/app/docker/entrypoint-install.sh', compose_text)
         self.assertIn('openhands-agent-data:/data', compose_text)
+        self.assertIn('docker.openhands.dev/openhands/openhands:1.5', compose_text)
+        self.assertIn(
+            'AGENT_SERVER_IMAGE_REPOSITORY: ${OPENHANDS_AGENT_SERVER_IMAGE_REPOSITORY:-ghcr.io/openhands/agent-server}',
+            compose_text,
+        )
+        self.assertIn(
+            'AGENT_SERVER_IMAGE_TAG: ${OPENHANDS_AGENT_SERVER_IMAGE_TAG:-1.12.0-python}',
+            compose_text,
+        )
         self.assertIn('create_db: true', config_text)
         self.assertIn('repositories:', config_text)
         self.assertIn('YOUTRACK_ISSUE_STATES', config_text)

@@ -285,7 +285,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--output', default='.env')
     parser.add_argument(
         '--compose-override-output',
-        default='.docker-compose.selected-repos.yml',
+        default='.docker-compose.selected-repos.yaml',
     )
     args = parser.parse_args(argv)
 
