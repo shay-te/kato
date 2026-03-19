@@ -1,6 +1,6 @@
 # OpenHands Ticket Agent
 
-This repository is structured as a [`core-lib`](https://shay-te.github.io/core-lib/) application and follows the documented `core-lib` package layout.
+Welcome to the OpenHands Ticket Agent! This repository is structured as a [`core-lib`](https://shay-te.github.io/core-lib/) application and follows the documented `core-lib` package layout.
 
 ## Why Core-Lib
 
