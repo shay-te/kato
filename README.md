@@ -475,3 +475,22 @@ python3 -m unittest discover -s tests -p 'test_notification_service.py'
 - Authentication/signature verification for webhooks.
 - Final adaptation to the exact OpenHands API and your issue-platform fields.
 - No end-to-end integration test exercises a live issue-platform -> OpenHands -> pull-request provider flow yet.
+
+## Environment Variables Configuration
+
+We use a `.env` file to manage configuration instead of hardcoding values in `docker-compose.yaml`. To set up your environment:
+
+1. Copy the example environment file:
+```bash
+cp .env.example .env
+```
+
+2. Configure your `.env` file with your actual values:
+```bash
+# Edit .env file with your specific configurations for:
+# - Issue platform credentials (YouTrack, Jira, GitHub, GitLab, Bitbucket)
+# - Database settings
+# - OpenHands configuration
+# - LLM settings (including AWS credentials for Bedrock models if needed)
+# - Sandbox volumes mapping
+```
