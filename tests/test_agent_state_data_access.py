@@ -8,7 +8,7 @@ import bootstrap  # noqa: F401
 from openhands_agent.data_layers.data_access.agent_state_data_access import (
     AgentStateDataAccess,
 )
-from openhands_agent.fields import PullRequestFields, StatusFields
+from openhands_agent.fields import ImplementationFields, PullRequestFields, StatusFields
 
 
 class AgentStateDataAccessTests(unittest.TestCase):
@@ -47,6 +47,7 @@ class AgentStateDataAccessTests(unittest.TestCase):
                 '17',
                 'client',
                 'feature/proj-1/client',
+                'conversation-1',
             )
 
             self.assertTrue(data_access.is_task_processed('PROJ-1'))
@@ -62,6 +63,7 @@ class AgentStateDataAccessTests(unittest.TestCase):
                     {
                         PullRequestFields.REPOSITORY_ID: 'client',
                         'branch_name': 'feature/proj-1/client',
+                        ImplementationFields.SESSION_ID: 'conversation-1',
                     }
                 ],
             )
@@ -72,6 +74,34 @@ class AgentStateDataAccessTests(unittest.TestCase):
                         PullRequestFields.ID: '17',
                         PullRequestFields.REPOSITORY_ID: 'client',
                         'branch_name': 'feature/proj-1/client',
+                        ImplementationFields.SESSION_ID: 'conversation-1',
+                    }
+                ],
+            )
+
+    def test_updates_existing_pull_request_context_with_session_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            data_access = AgentStateDataAccess(str(Path(tmp_dir) / 'state.json'))
+            data_access.validate()
+            data_access.remember_pull_request_context(
+                '17',
+                'client',
+                'feature/proj-1/client',
+            )
+            data_access.remember_pull_request_context(
+                '17',
+                'client',
+                'feature/proj-1/client',
+                'conversation-1',
+            )
+
+            self.assertEqual(
+                data_access.get_pull_request_contexts('17'),
+                [
+                    {
+                        PullRequestFields.REPOSITORY_ID: 'client',
+                        'branch_name': 'feature/proj-1/client',
+                        ImplementationFields.SESSION_ID: 'conversation-1',
                     }
                 ],
             )

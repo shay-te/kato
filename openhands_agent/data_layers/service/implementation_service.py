@@ -16,9 +16,13 @@ class ImplementationService(Service):
     def validate_connection(self) -> None:
         self._client.validate_connection()
 
-    def implement_task(self, task: Task) -> dict[str, str | bool]:
+    def implement_task(
+        self,
+        task: Task,
+        session_id: str = '',
+    ) -> dict[str, str | bool]:
         self.logger.info('delegating implementation for task %s', task.id)
-        return self._client.implement_task(task)
+        return self._client.implement_task(task, session_id)
 
     def review_comment_from_payload(self, payload: dict) -> ReviewComment:
         try:
@@ -39,13 +43,18 @@ class ImplementationService(Service):
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(f'invalid review comment payload: {exc}') from exc
 
-    def fix_review_comment(self, comment: ReviewComment, branch_name: str) -> dict[str, str | bool]:
+    def fix_review_comment(
+        self,
+        comment: ReviewComment,
+        branch_name: str,
+        session_id: str = '',
+    ) -> dict[str, str | bool]:
         self.logger.info(
             'delegating review fix for pull request %s comment %s',
             comment.pull_request_id,
             comment.comment_id,
         )
-        return self._client.fix_review_comment(comment, branch_name)
+        return self._client.fix_review_comment(comment, branch_name, session_id)
 
     @staticmethod
     def _normalize_comment_context(all_comments) -> list[dict[str, str]]:
@@ -65,11 +74,12 @@ class ImplementationService(Service):
                 continue
             if not isinstance(item, dict):
                 continue
-            normalized_comments.append(
-                {
-                    ReviewCommentFields.COMMENT_ID: str(item.get(ReviewCommentFields.COMMENT_ID, '')),
-                    ReviewCommentFields.AUTHOR: str(item.get(ReviewCommentFields.AUTHOR, '')),
-                    ReviewCommentFields.BODY: str(item.get(ReviewCommentFields.BODY, '')),
-                }
-            )
+            normalized_comment = {
+                ReviewCommentFields.COMMENT_ID: str(item.get(ReviewCommentFields.COMMENT_ID, '')),
+                ReviewCommentFields.AUTHOR: str(item.get(ReviewCommentFields.AUTHOR, '')),
+                ReviewCommentFields.BODY: str(item.get(ReviewCommentFields.BODY, '')),
+            }
+            if not any(normalized_comment.values()):
+                continue
+            normalized_comments.append(normalized_comment)
         return normalized_comments

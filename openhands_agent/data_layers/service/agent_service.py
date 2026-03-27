@@ -208,9 +208,14 @@ class AgentService(Service):
             raise ValueError(f'unknown pull request id: {comment.pull_request_id}')
         branch_name = context[Task.branch_name.key]
         repository_id = context[PullRequestFields.REPOSITORY_ID]
+        session_id = str(context.get(ImplementationFields.SESSION_ID, '') or '').strip()
         setattr(comment, PullRequestFields.REPOSITORY_ID, repository_id)
 
-        execution = self._implementation_service.fix_review_comment(comment, branch_name) or {}
+        execution = self._implementation_service.fix_review_comment(
+            comment,
+            branch_name,
+            session_id,
+        ) or {}
         if not execution.get(ImplementationFields.SUCCESS, False):
             raise RuntimeError(f'failed to address comment {comment.comment_id}')
         self._mark_review_comment_processed(
@@ -242,6 +247,7 @@ class AgentService(Service):
         pull_requests: list[dict[str, str]] = []
         failed_repositories: list[str] = []
         description = str(execution.get(Task.summary.key) or '')
+        session_id = str(execution.get(ImplementationFields.SESSION_ID, '') or '').strip()
 
         for repository in getattr(task, 'repositories', []) or []:
             branch_name = task.repository_branches[repository.id]
@@ -252,7 +258,7 @@ class AgentService(Service):
                     source_branch=branch_name,
                     description=description,
                 )
-                self._remember_pull_request_context(pull_request, branch_name)
+                self._remember_pull_request_context(pull_request, branch_name, session_id)
                 pull_requests.append(pull_request)
                 self.logger.info(
                     'published review branch %s for task %s in repository %s',
@@ -274,14 +280,17 @@ class AgentService(Service):
         self,
         pull_request: dict[str, str],
         branch_name: str,
+        session_id: str = '',
     ) -> None:
         pull_request_id = pull_request[PullRequestFields.ID]
-        self._pull_request_context_map.setdefault(pull_request_id, []).append(
-            {
-                PullRequestFields.REPOSITORY_ID: pull_request[PullRequestFields.REPOSITORY_ID],
-                Task.branch_name.key: branch_name,
-            }
-        )
+        context = {
+            PullRequestFields.REPOSITORY_ID: pull_request[PullRequestFields.REPOSITORY_ID],
+            Task.branch_name.key: branch_name,
+        }
+        normalized_session_id = str(session_id or '').strip()
+        if normalized_session_id:
+            context[ImplementationFields.SESSION_ID] = normalized_session_id
+        self._pull_request_context_map.setdefault(pull_request_id, []).append(context)
         if self._state_data_access is None:
             return
         try:
@@ -289,6 +298,7 @@ class AgentService(Service):
                 pull_request_id,
                 pull_request[PullRequestFields.REPOSITORY_ID],
                 branch_name,
+                normalized_session_id,
             )
         except Exception:
             self.logger.exception(

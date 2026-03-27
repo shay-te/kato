@@ -21,14 +21,23 @@ class OpenHandsClient(RetryingClientBase):
         response = self._get_with_retry('/api/sessions')
         response.raise_for_status()
 
-    def implement_task(self, task: Task) -> dict[str, str | bool]:
+    def implement_task(
+        self,
+        task: Task,
+        session_id: str = '',
+    ) -> dict[str, str | bool]:
         self.logger.info('requesting implementation for task %s', task.id)
+        request_body = {'prompt': self._build_implementation_prompt(task)}
+        normalized_session_id = str(session_id or '').strip()
+        if normalized_session_id:
+            request_body[ImplementationFields.SESSION_ID] = normalized_session_id
         response = self._post_with_retry(
             '/api/sessions',
-            json={'prompt': self._build_implementation_prompt(task)},
+            json=request_body,
         )
         response.raise_for_status()
         payload = self._normalized_payload(response)
+        returned_session_id = self._payload_session_id(payload) or normalized_session_id
         result = {
             Task.branch_name.key: task.branch_name,
             Task.summary.key: payload.get(Task.summary.key, ''),
@@ -38,6 +47,8 @@ class OpenHandsClient(RetryingClientBase):
             ),
             ImplementationFields.SUCCESS: self._success_flag(payload),
         }
+        if returned_session_id:
+            result[ImplementationFields.SESSION_ID] = returned_session_id
         self.logger.info(
             'implementation finished for task %s with success=%s',
             task.id,
@@ -64,18 +75,28 @@ class OpenHandsClient(RetryingClientBase):
         )
         return result
 
-    def fix_review_comment(self, comment: ReviewComment, branch_name: str) -> dict[str, str | bool]:
+    def fix_review_comment(
+        self,
+        comment: ReviewComment,
+        branch_name: str,
+        session_id: str = '',
+    ) -> dict[str, str | bool]:
         self.logger.info(
             'requesting review fix for pull request %s comment %s',
             comment.pull_request_id,
             comment.comment_id,
         )
+        request_body = {'prompt': self._build_review_prompt(comment, branch_name)}
+        normalized_session_id = str(session_id or '').strip()
+        if normalized_session_id:
+            request_body[ImplementationFields.SESSION_ID] = normalized_session_id
         response = self._post_with_retry(
             '/api/sessions',
-            json={'prompt': self._build_review_prompt(comment, branch_name)},
+            json=request_body,
         )
         response.raise_for_status()
         payload = self._normalized_payload(response)
+        returned_session_id = self._payload_session_id(payload) or normalized_session_id
         result = {
             Task.branch_name.key: branch_name,
             Task.summary.key: payload.get(Task.summary.key, ''),
@@ -85,6 +106,8 @@ class OpenHandsClient(RetryingClientBase):
             ),
             ImplementationFields.SUCCESS: self._success_flag(payload),
         }
+        if returned_session_id:
+            result[ImplementationFields.SESSION_ID] = returned_session_id
         self.logger.info(
             'review fix finished for pull request %s comment %s with success=%s',
             comment.pull_request_id,
@@ -158,6 +181,14 @@ class OpenHandsClient(RetryingClientBase):
         if isinstance(value, str):
             return value.strip().lower() in {'1', 'true', 'yes', 'on'}
         return bool(value)
+
+    @staticmethod
+    def _payload_session_id(payload: dict) -> str:
+        for key in (ImplementationFields.SESSION_ID, 'conversation_id'):
+            value = str(payload.get(key, '') or '').strip()
+            if value:
+                return value
+        return ''
 
     @staticmethod
     def _review_comment_context_text(comment: ReviewComment) -> str:

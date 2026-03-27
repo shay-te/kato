@@ -8,7 +8,7 @@ from openhands_agent.data_layers.data.review_comment import ReviewComment
 from openhands_agent.data_layers.service.implementation_service import (
     ImplementationService,
 )
-from openhands_agent.fields import ReviewCommentFields
+from openhands_agent.fields import ImplementationFields, ReviewCommentFields
 from utils import build_task
 
 
@@ -30,8 +30,8 @@ class ImplementationServiceTests(unittest.TestCase):
             }
         )
 
-        service.implement_task(task)
-        service.fix_review_comment(comment, 'feature/proj-1')
+        service.implement_task(task, 'conversation-1')
+        service.fix_review_comment(comment, 'feature/proj-1', 'conversation-1')
 
         service.logger.info.assert_any_call('delegating implementation for task %s', 'PROJ-1')
         service.logger.info.assert_any_call(
@@ -39,10 +39,11 @@ class ImplementationServiceTests(unittest.TestCase):
             '17',
             '99',
         )
-        client.implement_task.assert_called_once_with(task)
+        client.implement_task.assert_called_once_with(task, 'conversation-1')
         client.fix_review_comment.assert_called_once_with(
             comment,
             'feature/proj-1',
+            'conversation-1',
         )
 
     def test_review_comment_from_payload_builds_entity(self) -> None:

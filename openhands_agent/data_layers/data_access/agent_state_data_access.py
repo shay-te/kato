@@ -10,7 +10,7 @@ from pathlib import Path
 from core_lib.data_layers.data_access.data_access import DataAccess
 
 from openhands_agent.data_layers.data.task import Task
-from openhands_agent.fields import PullRequestFields, StatusFields
+from openhands_agent.fields import ImplementationFields, PullRequestFields, StatusFields
 
 
 class AgentStateDataAccess(DataAccess):
@@ -49,6 +49,7 @@ class AgentStateDataAccess(DataAccess):
         pull_request_id: str,
         repository_id: str,
         branch_name: str,
+        session_id: str = '',
     ) -> None:
         def mutate(state: dict) -> None:
             contexts = state['pull_request_contexts'].setdefault(str(pull_request_id), [])
@@ -56,8 +57,22 @@ class AgentStateDataAccess(DataAccess):
                 PullRequestFields.REPOSITORY_ID: str(repository_id),
                 Task.branch_name.key: str(branch_name),
             }
-            if record not in contexts:
-                contexts.append(record)
+            normalized_session_id = str(session_id or '').strip()
+            if normalized_session_id:
+                record[ImplementationFields.SESSION_ID] = normalized_session_id
+            for existing_context in contexts:
+                if not isinstance(existing_context, dict):
+                    continue
+                if (
+                    str(existing_context.get(PullRequestFields.REPOSITORY_ID, '') or '').strip()
+                    == record[PullRequestFields.REPOSITORY_ID]
+                    and str(existing_context.get(Task.branch_name.key, '') or '').strip()
+                    == record[Task.branch_name.key]
+                ):
+                    if normalized_session_id:
+                        existing_context[ImplementationFields.SESSION_ID] = normalized_session_id
+                    return
+            contexts.append(record)
 
         self._update_state(mutate)
 
@@ -73,13 +88,15 @@ class AgentStateDataAccess(DataAccess):
                 continue
             repository_id = str(context.get(PullRequestFields.REPOSITORY_ID, '') or '').strip()
             branch_name = str(context.get(Task.branch_name.key, '') or '').strip()
+            session_id = str(context.get(ImplementationFields.SESSION_ID, '') or '').strip()
             if repository_id and branch_name:
-                normalized_contexts.append(
-                    {
-                        PullRequestFields.REPOSITORY_ID: repository_id,
-                        Task.branch_name.key: branch_name,
-                    }
-                )
+                normalized_context = {
+                    PullRequestFields.REPOSITORY_ID: repository_id,
+                    Task.branch_name.key: branch_name,
+                }
+                if session_id:
+                    normalized_context[ImplementationFields.SESSION_ID] = session_id
+                normalized_contexts.append(normalized_context)
         return normalized_contexts
 
     def _update_state(self, mutate) -> None:
@@ -175,14 +192,16 @@ class AgentStateDataAccess(DataAccess):
                     continue
                 repository_id = str(context.get(PullRequestFields.REPOSITORY_ID, '') or '').strip()
                 branch_name = str(context.get(Task.branch_name.key, '') or '').strip()
+                session_id = str(context.get(ImplementationFields.SESSION_ID, '') or '').strip()
                 if repository_id and branch_name:
-                    contexts.append(
-                        {
-                            PullRequestFields.ID: str(pull_request_id),
-                            PullRequestFields.REPOSITORY_ID: repository_id,
-                            Task.branch_name.key: branch_name,
-                        }
-                    )
+                    normalized_context = {
+                        PullRequestFields.ID: str(pull_request_id),
+                        PullRequestFields.REPOSITORY_ID: repository_id,
+                        Task.branch_name.key: branch_name,
+                    }
+                    if session_id:
+                        normalized_context[ImplementationFields.SESSION_ID] = session_id
+                    contexts.append(normalized_context)
         return contexts
 
     def is_review_comment_processed(

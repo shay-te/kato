@@ -95,6 +95,34 @@ class OpenHandsClientTests(unittest.TestCase):
             True,
         )
 
+    def test_implement_task_posts_existing_session_id(self) -> None:
+        client = OpenHandsClient('https://openhands.example', 'oh-token')
+        response = mock_response(json_data={ImplementationFields.SUCCESS: True})
+
+        with patch.object(client, '_post', return_value=response) as mock_post:
+            result = implement_task_with_defaults(client, session_id='conversation-1')
+
+        self.assertTrue(result[ImplementationFields.SUCCESS])
+        self.assertEqual(result[ImplementationFields.SESSION_ID], 'conversation-1')
+        self.assertEqual(
+            mock_post.call_args.kwargs['json'][ImplementationFields.SESSION_ID],
+            'conversation-1',
+        )
+
+    def test_implement_task_uses_session_id_returned_by_openhands(self) -> None:
+        client = OpenHandsClient('https://openhands.example', 'oh-token')
+        response = mock_response(
+            json_data={
+                ImplementationFields.SUCCESS: True,
+                ImplementationFields.SESSION_ID: 'conversation-1',
+            }
+        )
+
+        with patch.object(client, '_post', return_value=response):
+            result = implement_task_with_defaults(client)
+
+        self.assertEqual(result[ImplementationFields.SESSION_ID], 'conversation-1')
+
     def test_test_task_posts_testing_prompt(self) -> None:
         client = OpenHandsClient('https://openhands.example', 'oh-token')
         client.logger = Mock()
@@ -161,6 +189,20 @@ class OpenHandsClientTests(unittest.TestCase):
             '17',
             '99',
             True,
+        )
+
+    def test_fix_review_comment_posts_existing_session_id(self) -> None:
+        client = OpenHandsClient('https://openhands.example', 'oh-token')
+        response = mock_response(json_data={ImplementationFields.SUCCESS: True})
+
+        with patch.object(client, '_post', return_value=response) as mock_post:
+            result = fix_review_comment_with_defaults(client, session_id='conversation-1')
+
+        self.assertTrue(result[ImplementationFields.SUCCESS])
+        self.assertEqual(result[ImplementationFields.SESSION_ID], 'conversation-1')
+        self.assertEqual(
+            mock_post.call_args.kwargs['json'][ImplementationFields.SESSION_ID],
+            'conversation-1',
         )
 
     def test_fix_review_comment_prompt_includes_prior_comment_context(self) -> None:

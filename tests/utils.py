@@ -310,8 +310,12 @@ def create_pull_request_with_defaults(
     )
 
 
-def implement_task_with_defaults(client, task: Task | None = None):
-    return client.implement_task(task or build_task())
+def implement_task_with_defaults(
+    client,
+    task: Task | None = None,
+    session_id: str = '',
+):
+    return client.implement_task(task or build_task(), session_id)
 
 
 def test_task_with_defaults(client, task: Task | None = None):
@@ -322,8 +326,9 @@ def fix_review_comment_with_defaults(
     client,
     comment: ReviewComment | None = None,
     branch_name: str = 'feature/proj-1',
+    session_id: str = '',
 ):
-    return client.fix_review_comment(comment or build_review_comment(), branch_name)
+    return client.fix_review_comment(comment or build_review_comment(), branch_name, session_id)
 
 
 def get_assigned_tasks_with_defaults(

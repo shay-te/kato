@@ -20,6 +20,7 @@ class ReviewCommentFields:
 
 class ImplementationFields:
     COMMIT_MESSAGE = 'commit_message'
+    SESSION_ID = 'session_id'
     SUCCESS = 'success'
 
 

@@ -161,6 +161,18 @@ def _validate(mode: str, env: dict[str, str]) -> list[str]:
     return errors
 
 
+def validate_environment(
+    mode: str = 'all',
+    env: dict[str, str] | None = None,
+    env_file: str | None = None,
+) -> None:
+    """Validate environment settings and raise on invalid configuration."""
+    effective_env = dict(env) if env is not None else _build_env(env_file)
+    errors = _validate(mode, effective_env)
+    if errors:
+        raise ValueError('\n'.join(errors))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description='Validate openhands-agent environment.')
     parser.add_argument(

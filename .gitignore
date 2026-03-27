@@ -9,3 +9,6 @@ __pycache__/
 openhands_agent_state.json
 
 docker_data
+
+
+docker-composebackup.txt

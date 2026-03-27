@@ -40,3 +40,27 @@ This repository uses OpenHands to implement YouTrack tasks and fix review commen
 - Reuse existing utilities instead of duplicating logic.
 - Log failures clearly when a flow continues after an error.
 - Before opening a pull request, make sure the implementation prompt instructions were followed, especially around tests.
+
+## Code Style
+
+### Philosophy
+
+This codebase favors:
+
+- clarity over cleverness
+- explicit structure over magic
+- minimal output over verbosity
+- small reusable helpers over duplication
+
+The goal is to keep the code:
+
+- easy to read
+- easy to modify
+- predictable during execution
+
+### Avoid Duplication
+
+- If logic or values appear more than once, extract them.
+- Extract repeated paths, hosts, filenames, and project names into constants.
+- Extract repeated workflow steps such as git, scp, and path building into helpers.
+- Prefer small reusable helpers over copy-pasted branches of similar code.

@@ -25,6 +25,7 @@ from openhands_agent.data_layers.data.task import Task
 from openhands_agent.data_layers.data.review_comment import ReviewComment
 from openhands_agent.client.openhands_client import OpenHandsClient
 from openhands_agent.fields import (
+    ImplementationFields,
     PullRequestFields,
     ReviewCommentFields,
     StatusFields,
@@ -44,6 +45,8 @@ class TestAgentEndToEndIntegration(unittest.TestCase):
         self.mock_repository_service = Mock(spec=RepositoryService)
         self.mock_notification_service = Mock(spec=NotificationService)
         self.mock_state_data_access = Mock(spec=AgentStateDataAccess)
+        self.mock_state_data_access.is_task_processed.return_value = False
+        self.mock_state_data_access.get_processed_task.return_value = {}
         
     def test_complete_workflow_with_valid_task(self):
         """Test complete workflow from task ingestion to PR creation."""
@@ -57,6 +60,7 @@ class TestAgentEndToEndIntegration(unittest.TestCase):
         
         # Mock the OpenHands implementation service
         mock_pr_result = {
+            ImplementationFields.SUCCESS: True,
             PullRequestFields.REPOSITORY_ID: 'test-repo',
             PullRequestFields.ID: 'feature/test-task',
             PullRequestFields.TITLE: 'Test PR Title',
@@ -64,9 +68,15 @@ class TestAgentEndToEndIntegration(unittest.TestCase):
             PullRequestFields.SOURCE_BRANCH: 'feature/test-task',
             PullRequestFields.DESTINATION_BRANCH: 'main',
             PullRequestFields.DESCRIPTION: 'Test PR description',
+            Task.summary.key: 'Implemented task changes',
         }
         
         self.mock_implementation_service.implement_task.return_value = mock_pr_result
+        self.mock_testing_service.test_task.return_value = {
+            ImplementationFields.SUCCESS: True,
+            Task.summary.key: 'Tests passed',
+        }
+        self.mock_repository_service.build_branch_name.return_value = 'feature/test-task'
         
         # Mock repository operations
         self.mock_repository_service.create_pull_request.return_value = mock_pr_result
@@ -174,11 +184,15 @@ class TestAgentEndToEndIntegration(unittest.TestCase):
         
         # Simulate what would be used in docker-compose context
         test_env = {
-            'OPENHANDS_LLM_MODEL': 'anthropic.claude-haiku-4-5-20251001-v1:0',
-            'AWS_ACCESS_KEY_ID': 'test-key-id',
-            'AWS_SECRET_ACCESS_KEY': 'test-secret-key',
+            'OPENHANDS_LLM_MODEL': 'openai/gpt-4o-mini',
+            'OPENHANDS_LLM_API_KEY': 'test-llm-key',
             'OPENHANDS_BASE_URL': 'http://openhands:3000',
-            'OPENHANDS_API_KEY': 'test-api-key'
+            'OPENHANDS_API_KEY': 'test-api-key',
+            'REPOSITORY_ROOT_PATH': '/tmp/repos',
+            'YOUTRACK_BASE_URL': 'https://example.youtrack.cloud',
+            'YOUTRACK_TOKEN': 'test-youtrack-token',
+            'YOUTRACK_PROJECT': 'TEST',
+            'YOUTRACK_ASSIGNEE': 'developer',
         }
         
         # Test that validation works with environment-based configuration

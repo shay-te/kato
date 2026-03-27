@@ -8,7 +8,7 @@ This addresses critical missing tests for:
 """
 import os
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from openhands_agent.validate_env import validate_environment
 
@@ -32,15 +32,16 @@ class TestDockerConfigValidation(unittest.TestCase):
         os.environ['YOUTRACK_BASE_URL'] = 'https://example.youtrack.cloud'
         os.environ['YOUTRACK_TOKEN'] = 'test-token'
         os.environ['YOUTRACK_PROJECT'] = 'TEST'
+        os.environ['YOUTRACK_ASSIGNEE'] = 'developer'
         os.environ['OPENHANDS_AGENT_ISSUE_PLATFORM'] = 'youtrack'
         os.environ['OPENHANDS_AGENT_TICKET_SYSTEM'] = 'youtrack'
         os.environ['OPENHANDS_API_KEY'] = 'test-key'
+        os.environ['OPENHANDS_BASE_URL'] = 'http://openhands:3000'
         os.environ['REPOSITORY_ROOT_PATH'] = '/test/path'
         
         # This should not raise any exceptions
         try:
-            # This validates environment but doesn't return anything
-            validate_environment()  
+            validate_environment(mode='agent')
             # If we reach here, there are no raised exceptions
             self.assertTrue(True, "Environment validation should pass")
         except Exception as e:
@@ -54,7 +55,7 @@ class TestDockerConfigValidation(unittest.TestCase):
         
         # Should raise ValueError since required fields are missing
         with self.assertRaises(ValueError):
-            validate_environment()
+            validate_environment(mode='agent')
 
     @patch.dict(os.environ, {
         'OPENHANDS_LLM_MODEL': 'anthropic.claude-haiku-4-5-20251001-v1:0',
@@ -94,7 +95,7 @@ class TestDockerConfigValidation(unittest.TestCase):
         """Test that bedrock-style LLM configurations work correctly."""
         # With proper AWS credentials, should be valid for bedrock models
         try:
-            validate_environment()
+            validate_environment(mode='openhands')
             # Should not raise any exceptions for valid bedrock configuration
             self.assertTrue(True)
         except Exception as e:

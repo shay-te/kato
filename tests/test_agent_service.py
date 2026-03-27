@@ -40,6 +40,7 @@ class AgentServiceTests(unittest.TestCase):
             implement_task=Mock(
                 return_value={
                     ImplementationFields.SUCCESS: True,
+                    ImplementationFields.SESSION_ID: 'conversation-1',
                     'summary': 'Implemented task across repos',
                 }
             ),
@@ -229,12 +230,14 @@ class AgentServiceTests(unittest.TestCase):
                     {
                         PullRequestFields.REPOSITORY_ID: 'client',
                         'branch_name': 'feature/proj-1/client',
+                        ImplementationFields.SESSION_ID: 'conversation-1',
                     }
                 ],
                 '18': [
                     {
                         PullRequestFields.REPOSITORY_ID: 'backend',
                         'branch_name': 'feature/proj-1/backend',
+                        ImplementationFields.SESSION_ID: 'conversation-1',
                     }
                 ],
             },
@@ -397,6 +400,7 @@ class AgentServiceTests(unittest.TestCase):
             {
                 PullRequestFields.REPOSITORY_ID: 'client',
                 'branch_name': 'feature/proj-1/client',
+                ImplementationFields.SESSION_ID: 'conversation-1',
             }
         ]
 
@@ -413,6 +417,10 @@ class AgentServiceTests(unittest.TestCase):
         )
         comment_arg = self.openhands_client.fix_review_comment.call_args.args[0]
         self.assertEqual(getattr(comment_arg, PullRequestFields.REPOSITORY_ID), 'client')
+        self.assertEqual(
+            self.openhands_client.fix_review_comment.call_args.args[2],
+            'conversation-1',
+        )
 
     def test_process_review_comment_marks_comment_processed(self) -> None:
         state_data_access = types.SimpleNamespace(
@@ -459,6 +467,7 @@ class AgentServiceTests(unittest.TestCase):
                     {
                         PullRequestFields.REPOSITORY_ID: 'client',
                         'branch_name': 'feature/proj-1/client',
+                        ImplementationFields.SESSION_ID: 'conversation-1',
                     }
                 ]
             ),
