@@ -68,20 +68,24 @@ def build_test_cfg() -> types.SimpleNamespace:
             ),
             data=types.SimpleNamespace(
                 sqlalchemy=types.SimpleNamespace(
-                    log_queries=False,
-                    create_db=True,
-                    session=types.SimpleNamespace(
-                        pool_recycle=3600,
-                        pool_pre_ping=False,
-                    ),
-                    url=types.SimpleNamespace(
-                        protocol='sqlite',
-                        username='',
-                        password='',
-                        host='',
-                        port='',
-                        path='',
-                        file=':memory:',
+                    _instance_key_='sqlalchemy_connection',
+                    _target_='core_lib.connection.sql_alchemy_connection_factory.SqlAlchemyConnectionFactory',
+                    config=types.SimpleNamespace(
+                        log_queries=False,
+                        create_db=True,
+                        session=types.SimpleNamespace(
+                            pool_recycle=3600,
+                            pool_pre_ping=False,
+                        ),
+                        url=types.SimpleNamespace(
+                            protocol='sqlite',
+                            username='',
+                            password='',
+                            host='',
+                            port='',
+                            path='',
+                            file=':memory:',
+                        ),
                     ),
                 ),
             ),

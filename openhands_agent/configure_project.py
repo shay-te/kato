@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
+import re
 
 from openhands_agent.repository_discovery import (
     discover_git_repositories,
@@ -27,6 +28,7 @@ except (ImportError, ModuleNotFoundError):
 
 
 ISSUE_PLATFORMS = ['youtrack', 'jira', 'github', 'gitlab', 'bitbucket']
+UNQUOTED_ENV_VALUE_PATTERN = re.compile(r'^[A-Za-z0-9_./:@%+=,\-~]*$')
 ISSUE_PLATFORM_DETAILS = {
     'youtrack': {
         'label': 'YouTrack',
@@ -266,7 +268,7 @@ def render_env_text(template_text: str, values: dict[str, str]) -> str:
         key, _ = line.split('=', 1)
         normalized_key = key.strip()
         if normalized_key in values:
-            lines.append(f'{normalized_key}={values[normalized_key]}')
+            lines.append(f'{normalized_key}={_format_env_value(values[normalized_key])}')
             seen_keys.add(normalized_key)
         else:
             lines.append(line)
@@ -274,9 +276,18 @@ def render_env_text(template_text: str, values: dict[str, str]) -> str:
     for key in sorted(values):
         if key in seen_keys:
             continue
-        lines.append(f'{key}={values[key]}')
+        lines.append(f'{key}={_format_env_value(values[key])}')
 
     return '\n'.join(lines) + '\n'
+
+
+def _format_env_value(value: object) -> str:
+    text = str(value)
+    if text == '':
+        return ''
+    if UNQUOTED_ENV_VALUE_PATTERN.fullmatch(text):
+        return text
+    return "'" + text.replace("'", "'\"'\"'") + "'"
 
 
 def main(argv: list[str] | None = None) -> int:

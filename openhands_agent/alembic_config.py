@@ -18,7 +18,7 @@ def _to_mapping(data) -> dict:
 
 
 def _build_sqlalchemy_url(cfg: DictConfig) -> str:
-    return build_url(**_to_mapping(cfg.core_lib.data.sqlalchemy.url))
+    return build_url(**_to_mapping(cfg.core_lib.data.sqlalchemy.config.url))
 
 
 def build_alembic_config(cfg: DictConfig) -> Config:

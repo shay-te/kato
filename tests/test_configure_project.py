@@ -218,8 +218,24 @@ class ConfigureProjectTests(unittest.TestCase):
         )
 
         self.assertIn('OPENHANDS_AGENT_ISSUE_PLATFORM=jira', rendered)
-        self.assertIn('YOUTRACK_ISSUE_STATES=Open,Ready for Dev', rendered)
-        self.assertIn('JIRA_ISSUE_STATES=To Do,Open', rendered)
+        self.assertIn("YOUTRACK_ISSUE_STATES='Open,Ready for Dev'", rendered)
+        self.assertIn("JIRA_ISSUE_STATES='To Do,Open'", rendered)
+
+    def test_render_env_text_quotes_values_with_spaces(self) -> None:
+        rendered = configure_project.render_env_text(
+            'YOUTRACK_REVIEW_STATE=In Review\n'
+            'OPENHANDS_AGENT_COMPLETION_EMAIL_SENDER_NAME=OpenHands Agent\n',
+            {
+                'YOUTRACK_REVIEW_STATE': 'To Verify',
+                'OPENHANDS_AGENT_COMPLETION_EMAIL_SENDER_NAME': 'OpenHands Agent',
+            },
+        )
+
+        self.assertIn("YOUTRACK_REVIEW_STATE='To Verify'", rendered)
+        self.assertIn(
+            "OPENHANDS_AGENT_COMPLETION_EMAIL_SENDER_NAME='OpenHands Agent'",
+            rendered,
+        )
 
     def test_main_writes_env_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

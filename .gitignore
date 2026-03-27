@@ -6,9 +6,10 @@ __pycache__/
 *.pyc
 .env
 .venv/
+outputs/
 openhands_agent_state.json
 
 docker_data
-
+openhands_agent.db
 
 docker-composebackup.txt

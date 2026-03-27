@@ -33,6 +33,8 @@ This repository uses OpenHands to implement YouTrack tasks and fix review commen
 - Do not use destructive git commands.
 - Preserve configuration compatibility unless the task explicitly changes it.
 - Keep logging clear on any swallowed exception or degraded path.
+- Do not add fallback code that hides missing required packages; required runtime dependencies should fail fast instead of being silently skipped or patched around.
+- Do not add fallback config-shape handling for required settings; access the expected config directly and let invalid config fail fast.
 
 ## Output
 
