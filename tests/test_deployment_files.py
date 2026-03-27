@@ -43,6 +43,26 @@ class DeploymentFilesTests(unittest.TestCase):
             compose_text,
         )
         self.assertIn(
+            'YOUTRACK_ISSUE_STATES: ${YOUTRACK_ISSUE_STATES:-Todo,Open}',
+            compose_text,
+        )
+        self.assertIn(
+            'JIRA_ISSUE_STATES: ${JIRA_ISSUE_STATES:-To Do,Open}',
+            compose_text,
+        )
+        self.assertIn(
+            'GITHUB_ISSUES_ISSUE_STATES: ${GITHUB_ISSUES_ISSUE_STATES:-open}',
+            compose_text,
+        )
+        self.assertIn(
+            'GITLAB_ISSUES_ISSUE_STATES: ${GITLAB_ISSUES_ISSUE_STATES:-opened}',
+            compose_text,
+        )
+        self.assertIn(
+            'BITBUCKET_ISSUES_ISSUE_STATES: ${BITBUCKET_ISSUES_ISSUE_STATES:-new,open}',
+            compose_text,
+        )
+        self.assertIn(
             'OPENHANDS_AGENT_COMPLETION_EMAIL_ENABLED: ${OPENHANDS_AGENT_COMPLETION_EMAIL_ENABLED:-false}',
             compose_text,
         )
