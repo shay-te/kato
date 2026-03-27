@@ -156,9 +156,10 @@ class RepositoryService(Service):
         root_path = str(getattr(repository_source, 'repository_root_path', '') or '').strip()
         if not root_path:
             return []
+        ignored_folders = self._ignored_repository_folders(repository_source)
 
         repositories: list[object] = []
-        for discovered_repository in discover_git_repositories(root_path):
+        for discovered_repository in discover_git_repositories(root_path, ignored_folders):
             local_path = str(discovered_repository.local_path).strip()
             folder_name = os.path.basename(local_path)
             repo_slug = str(discovered_repository.repo_slug or folder_name).strip()
@@ -177,6 +178,23 @@ class RepositoryService(Service):
                 )
             )
         return repositories
+
+    @staticmethod
+    def _ignored_repository_folders(repository_source) -> list[str]:
+        ignored_folders = getattr(repository_source, 'ignored_repository_folders', [])
+        if isinstance(ignored_folders, str):
+            return [
+                folder.strip()
+                for folder in ignored_folders.split(',')
+                if folder.strip()
+            ]
+        if not ignored_folders:
+            return []
+        return [
+            str(folder).strip()
+            for folder in ignored_folders
+            if str(folder).strip()
+        ]
 
     def _repository_matches(self, searchable_text: str, repository) -> bool:
         return any(

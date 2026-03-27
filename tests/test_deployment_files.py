@@ -62,6 +62,7 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('OPENHANDS_AGENT_ISSUE_PLATFORM=', env_example_text)
         self.assertIn('OPENHANDS_AGENT_TICKET_SYSTEM=', env_example_text)
         self.assertIn('REPOSITORY_ROOT_PATH=', env_example_text)
+        self.assertIn('OPENHANDS_AGENT_IGNORED_REPOSITORY_FOLDERS=', env_example_text)
         self.assertIn('OPENHANDS_SANDBOX_VOLUMES=', env_example_text)
         self.assertIn('OPENHANDS_AGENT_DB_PROTOCOL=', env_example_text)
         self.assertIn('OPENHANDS_AGENT_DB_PATH=', env_example_text)

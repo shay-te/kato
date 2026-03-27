@@ -109,6 +109,31 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual([repository.id for repository in repositories], ['backend-service'])
         self.assertEqual(repositories[0].repo_slug, 'backend')
 
+    def test_discovers_repositories_from_root_ignoring_configured_folders(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            projects_root = Path(temp_dir)
+            dev_repo = projects_root / 'ob-love-admin-client'
+            ignored_repo = projects_root / 'ob-love-admin-client-new'
+            self._create_git_repository(
+                dev_repo,
+                'git@bitbucket.org:acme/ob-love-admin-client.git',
+            )
+            self._create_git_repository(
+                ignored_repo,
+                'git@bitbucket.org:acme/ob-love-admin-client.git',
+            )
+
+            service = RepositoryService(
+                types.SimpleNamespace(
+                    repositories=[],
+                    repository_root_path=str(projects_root),
+                    ignored_repository_folders='ob-love-admin-client-new',
+                ),
+                3,
+            )
+
+        self.assertEqual([repository.id for repository in service.repositories], ['ob-love-admin-client'])
+
     def test_raises_when_no_repository_matches_task_text(self) -> None:
         service = RepositoryService(self.cfg.openhands_agent.repositories, 3)
         task = build_task(description='Update mobile application')

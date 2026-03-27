@@ -138,6 +138,7 @@ BITBUCKET_ISSUES_REPO_SLUG=
 BITBUCKET_ISSUES_ASSIGNEE=
 BITBUCKET_ISSUES_ISSUE_STATES=new,open
 REPOSITORY_ROOT_PATH=./projects
+OPENHANDS_AGENT_IGNORED_REPOSITORY_FOLDERS=
 OPENHANDS_BASE_URL=http://localhost:3000
 OPENHANDS_API_KEY=...
 OPENHANDS_AGENT_MAX_RETRIES=5
@@ -162,6 +163,7 @@ Supported values are `youtrack`, `jira`, `github`, `gitlab`, and `bitbucket`.
 `OPENHANDS_AGENT_TICKET_SYSTEM` is still accepted as a backward-compatible alias.
 
 Repository metadata is discovered from each repository's `.git` remote under `REPOSITORY_ROOT_PATH`.
+Use `OPENHANDS_AGENT_IGNORED_REPOSITORY_FOLDERS` to exclude specific folder names from auto-discovery when the root contains clones that should never be used by the agent. Provide multiple folder names as a comma-separated list, for example `OPENHANDS_AGENT_IGNORED_REPOSITORY_FOLDERS=repo-build,repo-mirror`.
 The agent publishes branches with local `git push`, so repository access is expected to come from your machine's existing git auth configuration.
 If you need explicit aliases or repository metadata overrides, add entries under `openhands_agent.repositories` in `openhands_agent/config/openhands_agent_core_lib.yaml`.
 `OPENHANDS_SANDBOX_VOLUMES` lists the exact checked-out repository folders that OpenHands may mount into its runtime containers. `make configure` populates it from the folders you select so Docker runs stay scoped to only those repositories.

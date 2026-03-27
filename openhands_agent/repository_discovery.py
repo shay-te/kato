@@ -26,11 +26,19 @@ class DiscoveredRepository:
     repo_slug: str
 
 
-def discover_git_repositories(projects_root: str) -> list[DiscoveredRepository]:
+def discover_git_repositories(
+    projects_root: str,
+    ignored_folders=None,
+) -> list[DiscoveredRepository]:
     root_path = Path(projects_root).expanduser()
     if not root_path.exists() or not root_path.is_dir():
         return []
 
+    ignored_folder_names = {
+        str(folder).strip().lower()
+        for folder in (ignored_folders or [])
+        if str(folder).strip()
+    }
     repositories: list[DiscoveredRepository] = []
     for current_root, dir_names, file_names in os.walk(root_path):
         has_git_metadata = '.git' in dir_names or '.git' in file_names
@@ -38,6 +46,7 @@ def discover_git_repositories(projects_root: str) -> list[DiscoveredRepository]:
             directory
             for directory in dir_names
             if directory not in DISCOVERY_SKIP_DIRS
+            and directory.lower() not in ignored_folder_names
         ]
         if not has_git_metadata:
             continue
