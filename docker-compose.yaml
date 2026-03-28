@@ -115,6 +115,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    entrypoint: ["/app/docker/entrypoint-run.sh"]
     depends_on:
       openhands:
         condition: service_started
