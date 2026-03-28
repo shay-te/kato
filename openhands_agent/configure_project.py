@@ -31,7 +31,6 @@ except (ImportError, ModuleNotFoundError):
 ISSUE_PLATFORMS = ['youtrack', 'jira', 'github', 'gitlab', 'bitbucket']
 UNQUOTED_ENV_VALUE_PATTERN = re.compile(r'^[A-Za-z0-9_./:@%+=,\-~]*$')
 logger = logging.getLogger(__name__)
-OPENHANDS_WORKSPACE_PROJECT_PATH = '/workspace/project'
 ISSUE_PLATFORM_DETAILS = {
     'youtrack': {
         'label': 'YouTrack',
@@ -298,15 +297,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description='Interactively create the openhands-agent .env file.')
     parser.add_argument('--template', default='.env.example')
     parser.add_argument('--output', default='.env')
-    parser.add_argument(
-        '--compose-override-output',
-        default='.docker-compose.selected-repos.yaml',
-    )
     args = parser.parse_args(argv)
 
     template_path = Path(args.template)
     output_path = Path(args.output)
-    compose_override_path = Path(args.compose_override_output)
 
     template_env = _read_env_file(str(template_path))
     current_env = template_env.copy()
@@ -324,18 +318,10 @@ def main(argv: list[str] | None = None) -> int:
     values.update(build_configuration_values(current_env))
     rendered = render_env_text(template_path.read_text(encoding='utf-8'), values)
     output_path.write_text(rendered, encoding='utf-8')
-    selected_paths = _selected_repository_paths(values)
-    if selected_paths:
-        compose_override_path.write_text(
-            render_selected_repository_compose_override(selected_paths),
-            encoding='utf-8',
-        )
 
     errors = validate_agent_env(values)
     errors.extend(validate_openhands_env(values))
     logger.info('Wrote configuration to %s', output_path)
-    if selected_paths:
-        logger.info('Wrote Docker Compose repository mounts to %s', compose_override_path)
     if errors:
         logger.info('The file was written, but a few required values still need attention:')
         for error in errors:
@@ -424,16 +410,12 @@ def _prompt_repository(defaults: dict[str, str]) -> dict[str, str]:
         if discovered_values is not None:
             return discovered_values
 
-    values = _prompt_repository_fields(defaults)
-    values['OPENHANDS_SANDBOX_VOLUMES'] = _build_sandbox_volumes(
-        [values['REPOSITORY_ROOT_PATH']]
-    )
-    return values
+    return _prompt_repository_fields(defaults)
 
 
 def _prompt_repository_fields(defaults: dict[str, str]) -> dict[str, str]:
     repository_root_path = _normalize_repository_path(
-        _default_str(defaults, 'REPOSITORY_ROOT_PATH', 'REPOSITORY_LOCAL_PATH', fallback='.')
+        _default_str(defaults, 'REPOSITORY_ROOT_PATH', fallback='.')
     )
     repository_root_path = _normalize_repository_path(
         input_str(
@@ -468,7 +450,6 @@ def _prompt_discovered_repository(
     discovered_defaults = dict(defaults)
     discovered_defaults['REPOSITORY_ROOT_PATH'] = projects_root
     values = _prompt_repository_fields(discovered_defaults)
-    values['OPENHANDS_SANDBOX_VOLUMES'] = _build_sandbox_volumes([projects_root])
     return values
 
 
@@ -661,15 +642,7 @@ def _default_projects_root(values: dict[str, str]) -> str:
     root_path = _default_str(values, 'REPOSITORY_ROOT_PATH')
     if root_path:
         return _normalize_repository_path(root_path)
-
-    local_path = _default_str(values, 'REPOSITORY_LOCAL_PATH')
-    if not local_path:
-        return str(Path.cwd())
-
-    normalized_path = Path(local_path).expanduser()
-    if not normalized_path.is_absolute():
-        normalized_path = (Path.cwd() / normalized_path).resolve()
-    return str(normalized_path.parent if normalized_path.name else normalized_path)
+    return str(Path.cwd())
 
 
 def _prompt_repository_numbers(
@@ -722,77 +695,6 @@ _read_git_remote_url = read_git_remote_url
 def _normalize_repository_path(raw_path: str) -> str:
     path = Path(str(raw_path).strip()).expanduser()
     return str(path.resolve())
-
-
-def _selected_repository_paths(values: dict[str, str]) -> list[str]:
-    raw_mounts = _default_str(values, 'OPENHANDS_SANDBOX_VOLUMES')
-    if raw_mounts:
-        selected_paths: list[str] = []
-        seen_paths: set[str] = set()
-        for mount_spec in raw_mounts.split(','):
-            candidate = mount_spec.strip()
-            if not candidate:
-                continue
-            host_path = candidate.split(':', 1)[0].strip()
-            if host_path and host_path not in seen_paths:
-                selected_paths.append(host_path)
-                seen_paths.add(host_path)
-        if selected_paths:
-            return selected_paths
-
-    root_path = _default_str(values, 'REPOSITORY_ROOT_PATH')
-    if root_path:
-        return [_normalize_repository_path(root_path)]
-
-    local_path = _default_str(values, 'REPOSITORY_LOCAL_PATH')
-    if not local_path:
-        return []
-    return [_normalize_repository_path(local_path)]
-
-
-def _build_sandbox_volumes(paths: list[str]) -> str:
-    unique_paths: list[str] = []
-    seen_paths: set[str] = set()
-    for path in paths:
-        normalized_path = _normalize_repository_path(path)
-        if normalized_path in seen_paths:
-            continue
-        unique_paths.append(normalized_path)
-        seen_paths.add(normalized_path)
-    current_project_path = _normalize_repository_path(Path.cwd())
-    mount_specs: list[str] = []
-    for path in unique_paths:
-        target_path = (
-            OPENHANDS_WORKSPACE_PROJECT_PATH
-            if path == current_project_path
-            else path
-        )
-        mount_specs.append(f'{path}:{target_path}:rw')
-    return ','.join(mount_specs)
-
-
-def render_selected_repository_compose_override(paths: list[str]) -> str:
-    unique_paths: list[str] = []
-    seen_paths: set[str] = set()
-    for path in paths:
-        normalized_path = _normalize_repository_path(path)
-        if normalized_path in seen_paths:
-            continue
-        unique_paths.append(normalized_path)
-        seen_paths.add(normalized_path)
-
-    lines = [
-        'services:',
-        '  openhands-agent:',
-        '    volumes:',
-    ]
-    for path in unique_paths:
-        lines.append(f"      - '{_yaml_quote(f'{path}:{path}:ro')}'")
-    return '\n'.join(lines) + '\n'
-
-
-def _yaml_quote(value: str) -> str:
-    return value.replace("'", "''")
 
 
 if __name__ == '__main__':

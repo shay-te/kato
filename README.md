@@ -166,7 +166,7 @@ Repository metadata is discovered from each repository's `.git` remote under `RE
 Use `OPENHANDS_AGENT_IGNORED_REPOSITORY_FOLDERS` to exclude specific folder names from auto-discovery when the root contains clones that should never be used by the agent. Provide multiple folder names as a comma-separated list, for example `OPENHANDS_AGENT_IGNORED_REPOSITORY_FOLDERS=repo-build,repo-mirror`.
 The agent publishes branches with local `git push`, so repository access is expected to come from your machine's existing git auth configuration.
 If you need explicit aliases or repository metadata overrides, add entries under `openhands_agent.repositories` in `openhands_agent/config/openhands_agent_core_lib.yaml`.
-`OPENHANDS_SANDBOX_VOLUMES` lists the exact checked-out repository folders that OpenHands may mount into its runtime containers. `make configure` populates it from the folders you select so Docker runs stay scoped to only those repositories.
+Docker Compose derives the OpenHands runtime sandbox mount from `REPOSITORY_ROOT_PATH`, so the normal setup only needs that one repository path setting.
 
 If `destination_branch` is empty, the agent infers the repository default branch from the local git checkout. That is convenient for local development, but it also means runtime behavior depends on the checkout state. For production-style runs, set `destination_branch` explicitly for every repository so pull requests cannot target the wrong branch because of a stale or unusual local clone.
 
@@ -261,10 +261,9 @@ What is automated now:
 - `make configure`
   - asks which issue platform holds your tasks
   - asks which platform hosts your code
-  - can scan a projects folder for git repositories and select which folders should be available to the agent
+  - can scan a projects folder for git repositories
   - asks which issue states and review state should be used
   - writes `.env` for the root repository path and OpenHands setup
-  - writes `.docker-compose.selected-repos.yaml` so the agent container only mounts the selected repository folders
 - `make doctor`
   - validates agent and OpenHands env vars
   - exits non-zero if required values are missing, so it can be used in CI or pre-flight scripts
@@ -418,7 +417,7 @@ The compose file uses the current official OpenHands container image pattern fro
 - https://github.com/OpenHands/OpenHands
 
 Before running `docker compose up --build`, make sure `.env` contains the selected issue-platform settings, repository settings, OpenHands settings, retry settings, and optional email settings you want Docker Compose to pass through.
-`make configure` also writes `.docker-compose.selected-repos.yaml`; `make compose-up` automatically includes it so the agent container only sees the repository folders you selected, while OpenHands runtime containers get the matching `OPENHANDS_SANDBOX_VOLUMES` scope.
+Docker Compose uses `REPOSITORY_ROOT_PATH` as the host source path and mounts it into both the agent container and the OpenHands sandbox at `/workspace/project`, so Docker runs use the same in-container workspace path consistently.
 For the default SQLite setup, the compose file stores the database under `data/` in the agent container working directory, backed by a named Docker volume shared by the `install` and `openhands-agent` containers. If you use Postgres or another external database, override `OPENHANDS_AGENT_DB_PATH` and the related DB env vars in `.env`.
 
 If you use `.env`, Docker Compose will load it automatically, so you can keep both the agent config and the OpenHands LLM config in one place and avoid manual setup in the OpenHands UI for the env-supported options.

@@ -30,6 +30,9 @@ This repository uses OpenHands to implement YouTrack tasks and fix review commen
 - Tests in this repository must run against the real installed packages and should fail fast if those packages are missing.
 - Never reintroduce `tests/bootstrap.py`-style import patching, `sys.modules` injection, or fake package facades for required dependencies.
 - If a test only passes with a shim, fix the environment or update the test to use the real package API instead of recreating the package in tests.
+- Do not mock third-party libraries or `core-lib` behavior when the real installed package can be used directly in the test.
+- Do not add mocks just to force a preferred exception type or API shape if the real library behavior is acceptable.
+- Prefer lightweight real objects and real library calls over `Mock()` or `SimpleNamespace()` when the dependency is already cheap and deterministic.
 
 ## Safety
 
@@ -39,6 +42,8 @@ This repository uses OpenHands to implement YouTrack tasks and fix review commen
 - Keep logging clear on any swallowed exception or degraded path.
 - Do not add fallback code that hides missing required packages; required runtime dependencies should fail fast instead of being silently skipped or patched around.
 - Do not add fallback config-shape handling for required settings; access the expected config directly and let invalid config fail fast.
+- Do not add thin wrappers around upstream library methods unless they provide real domain behavior for this app.
+- Do not translate upstream exceptions into local ones unless the boundary needs a deliberate application-level contract.
 
 ## Output
 

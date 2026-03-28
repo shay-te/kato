@@ -31,7 +31,10 @@ class DeploymentFilesTests(unittest.TestCase):
             'AWS_BEARER_TOKEN_BEDROCK: ${AWS_BEARER_TOKEN_BEDROCK:-}',
             compose_text,
         )
-        self.assertIn('SANDBOX_VOLUMES: ${OPENHANDS_SANDBOX_VOLUMES:-}', compose_text)
+        self.assertIn(
+            'SANDBOX_VOLUMES: ${REPOSITORY_ROOT_PATH:-.}:/workspace/project:rw',
+            compose_text,
+        )
         self.assertIn('OH_WEB_URL: ${OPENHANDS_WEB_URL:-}', compose_text)
         self.assertIn('OH_PERSISTENCE_DIR: /.openhands', compose_text)
         self.assertIn(
@@ -77,7 +80,7 @@ class DeploymentFilesTests(unittest.TestCase):
         )
         self.assertIn('OH_AGENT_SERVER_ENV: >-', compose_text)
         self.assertIn(
-            '"OH_SANDBOX_VOLUMES":"${OPENHANDS_SANDBOX_VOLUMES:-}"',
+            '"OH_SANDBOX_VOLUMES":"${REPOSITORY_ROOT_PATH:-.}:/workspace/project:rw"',
             compose_text,
         )
         self.assertIn(
@@ -93,7 +96,6 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('OPENHANDS_AGENT_TICKET_SYSTEM=', env_example_text)
         self.assertIn('REPOSITORY_ROOT_PATH=', env_example_text)
         self.assertIn('OPENHANDS_AGENT_IGNORED_REPOSITORY_FOLDERS=', env_example_text)
-        self.assertIn('OPENHANDS_SANDBOX_VOLUMES=', env_example_text)
         self.assertIn('OPENHANDS_AGENT_DB_PROTOCOL=', env_example_text)
         self.assertIn('OPENHANDS_AGENT_DB_PATH=', env_example_text)
         self.assertIn('OPENHANDS_AGENT_DB_FILE=', env_example_text)
@@ -161,14 +163,17 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('doctor:', makefile_text)
         self.assertIn('install:', makefile_text)
         self.assertIn('run:', makefile_text)
-        self.assertIn('.docker-compose.selected-repos.yaml', makefile_text)
+        self.assertNotIn('.docker-compose.selected-repos.yaml', makefile_text)
         self.assertIn('python -m openhands_agent.install', install_entrypoint_text)
         self.assertIn('install:', compose_text)
         self.assertIn('/app/docker/entrypoint-install.sh', compose_text)
         self.assertIn('/app/docker/entrypoint-run.sh', compose_text)
         self.assertIn('openhands-agent-data:/app/data', compose_text)
-        self.assertIn('${REPOSITORY_ROOT_PATH:-.}:${REPOSITORY_ROOT_PATH:-.}:ro', compose_text)
+        self.assertIn('${REPOSITORY_ROOT_PATH:-.}:/workspace/project', compose_text)
+        self.assertIn('REPOSITORY_ROOT_PATH: /workspace/project', compose_text)
+        self.assertIn('${REPOSITORY_ROOT_PATH:-.}:/workspace/project:ro', compose_text)
         self.assertIn('docker.openhands.dev/openhands/openhands:1.5', compose_text)
+        self.assertNotIn('/Users/shaytessler/Desktop/dev/openhands-agent:/workspace/project', compose_text)
         dockerfile_text = (REPO_ROOT / 'Dockerfile').read_text(encoding='utf-8')
         self.assertIn('COPY . .', dockerfile_text)
         self.assertNotIn('COPY pyproject.toml ./', dockerfile_text)

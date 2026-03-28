@@ -59,16 +59,16 @@ class TaskDataAccessTests(unittest.TestCase):
             ),
         )
 
-        with self.assertRaisesRegex(ValueError, 'issue_id'):
+        with self.assertRaisesRegex(PermissionError, 'issue_id'):
             data_access.add_pull_request_comment(['PROJ-1'], 'https://bitbucket/pr/1')
 
-        with self.assertRaisesRegex(ValueError, 'assignee'):
+        with self.assertRaisesRegex(PermissionError, 'assignee'):
             data_access.get_assigned_tasks(assignee=17)
 
-        with self.assertRaisesRegex(ValueError, 'states'):
+        with self.assertRaisesRegex(PermissionError, 'states'):
             data_access.get_assigned_tasks(states='Open')
 
-        with self.assertRaisesRegex(ValueError, 'issue_id'):
+        with self.assertRaisesRegex(PermissionError, 'issue_id'):
             data_access.move_task_to_review(['PROJ-1'])
 
     def test_uses_legacy_issue_state_and_default_review_config(self) -> None:
@@ -170,21 +170,21 @@ class PullRequestDataAccessTests(unittest.TestCase):
             ),
         )
 
-        with self.assertRaisesRegex(ValueError, 'title'):
+        with self.assertRaisesRegex(PermissionError, 'title'):
             data_access.create_pull_request(
                 title=['PROJ-1: Fix bug'],
                 source_branch='feature/proj-1',
                 description='Ready for review',
             )
 
-        with self.assertRaisesRegex(ValueError, 'source_branch'):
+        with self.assertRaisesRegex(PermissionError, 'source_branch'):
             data_access.create_pull_request(
                 title='PROJ-1: Fix bug',
                 source_branch=['feature/proj-1'],
                 description='Ready for review',
             )
 
-        with self.assertRaisesRegex(ValueError, 'description'):
+        with self.assertRaisesRegex(PermissionError, 'description'):
             data_access.create_pull_request(
                 title='PROJ-1: Fix bug',
                 source_branch='feature/proj-1',

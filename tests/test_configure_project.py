@@ -62,10 +62,8 @@ class ConfigureProjectTests(unittest.TestCase):
         self.assertEqual(values['OPENHANDS_AGENT_ISSUE_PLATFORM'], 'youtrack')
         self.assertEqual(values['OPENHANDS_AGENT_TICKET_SYSTEM'], 'youtrack')
         self.assertEqual(values['YOUTRACK_ISSUE_STATES'], 'Open,Ready for Dev')
-        self.assertIn(
-            f"{Path('./client').resolve()}:{Path('./client').resolve()}:rw",
-            values['OPENHANDS_SANDBOX_VOLUMES'],
-        )
+        self.assertEqual(values['REPOSITORY_ROOT_PATH'], str(Path('./client').resolve()))
+        self.assertNotIn('OPENHANDS_SANDBOX_VOLUMES', values)
         self.assertEqual(values['OPENHANDS_LLM_API_KEY'], 'llm-key')
         self.assertEqual(validate_agent_env(values), [])
         self.assertEqual(validate_openhands_env(values), [])
@@ -135,20 +133,7 @@ class ConfigureProjectTests(unittest.TestCase):
                 values = configure_project._prompt_repository({})
 
             self.assertEqual(values['REPOSITORY_ROOT_PATH'], str(projects_root.resolve()))
-            self.assertEqual(
-                values['OPENHANDS_SANDBOX_VOLUMES'],
-                f'{projects_root.resolve()}:{projects_root.resolve()}:rw',
-            )
-
-    def test_build_sandbox_volumes_maps_current_project_to_workspace_project(self) -> None:
-        current_project_path = str(Path.cwd().resolve())
-
-        result = configure_project._build_sandbox_volumes([current_project_path])
-
-        self.assertEqual(
-            result,
-            f'{current_project_path}:/workspace/project:rw',
-        )
+            self.assertNotIn('OPENHANDS_SANDBOX_VOLUMES', values)
 
     def test_prompt_repository_raises_when_scanned_folder_has_no_git_repositories(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -203,20 +188,6 @@ class ConfigureProjectTests(unittest.TestCase):
 
             self.assertEqual(result, 'git@github.com:acme/task-core-lib.git')
 
-    def test_render_selected_repository_compose_override_mounts_selected_paths_read_only(self) -> None:
-        rendered = configure_project.render_selected_repository_compose_override(
-            ['/tmp/client', '/tmp/backend']
-        )
-
-        self.assertIn(
-            f"'{Path('/tmp/client').resolve()}:{Path('/tmp/client').resolve()}:ro'",
-            rendered,
-        )
-        self.assertIn(
-            f"'{Path('/tmp/backend').resolve()}:{Path('/tmp/backend').resolve()}:ro'",
-            rendered,
-        )
-
     def test_render_env_text_replaces_existing_keys(self) -> None:
         rendered = configure_project.render_env_text(
             '# heading\nOPENHANDS_AGENT_ISSUE_PLATFORM=youtrack\nYOUTRACK_ISSUE_STATES=Todo,Open\n',
@@ -252,7 +223,6 @@ class ConfigureProjectTests(unittest.TestCase):
             temp_path = Path(temp_dir)
             template_path = temp_path / '.env.example'
             output_path = temp_path / '.env'
-            compose_override_path = temp_path / '.docker-compose.selected-repos.yaml'
             template_path.write_text(
                 'OPENHANDS_AGENT_ISSUE_PLATFORM=youtrack\n'
                 'OPENHANDS_AGENT_TICKET_SYSTEM=youtrack\n'
@@ -315,8 +285,6 @@ class ConfigureProjectTests(unittest.TestCase):
                         str(template_path),
                         '--output',
                         str(output_path),
-                        '--compose-override-output',
-                        str(compose_override_path),
                     ]
                 )
 
@@ -325,15 +293,12 @@ class ConfigureProjectTests(unittest.TestCase):
             self.assertEqual(written_env['OPENHANDS_AGENT_ISSUE_PLATFORM'], 'youtrack')
             self.assertEqual(written_env['YOUTRACK_ISSUE_STATES'], 'Todo,Open')
             self.assertEqual(written_env['OPENHANDS_LLM_API_KEY'], 'llm-key')
-            self.assertTrue(compose_override_path.exists())
-            self.assertIn(':ro', compose_override_path.read_text(encoding='utf-8'))
 
     def test_main_returns_zero_when_configuration_is_still_invalid(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             template_path = temp_path / '.env.example'
             output_path = temp_path / '.env'
-            compose_override_path = temp_path / '.docker-compose.selected-repos.yaml'
             template_path.write_text(
                 'OPENHANDS_AGENT_ISSUE_PLATFORM=youtrack\n'
                 'OPENHANDS_AGENT_TICKET_SYSTEM=youtrack\n'
@@ -396,8 +361,6 @@ class ConfigureProjectTests(unittest.TestCase):
                         str(template_path),
                         '--output',
                         str(output_path),
-                        '--compose-override-output',
-                        str(compose_override_path),
                     ]
                 )
 

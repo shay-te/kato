@@ -5,7 +5,6 @@ from core_lib.rule_validator.rule_validator import RuleValidator, ValueRuleValid
 
 from openhands_agent.client.ticket_client_base import TicketClientBase
 from openhands_agent.data_layers.data.task import Task
-from openhands_agent.data_layers.data_access.rule_validation import validate_payload
 
 
 assigned_task_rule_validator = RuleValidator(
@@ -49,8 +48,7 @@ class TaskDataAccess(DataAccess):
         assignee: str | None = None,
         states: list[str] | None = None,
     ) -> list[Task]:
-        validate_payload(
-            assigned_task_rule_validator,
+        assigned_task_rule_validator.validate_dict(
             {
                 'assignee': assignee,
                 'states': states,
@@ -63,8 +61,7 @@ class TaskDataAccess(DataAccess):
         )
 
     def add_comment(self, issue_id: str, comment: str) -> None:
-        validate_payload(
-            pull_request_comment_rule_validator,
+        pull_request_comment_rule_validator.validate_dict(
             {
                 'issue_id': issue_id,
                 'comment': comment,
@@ -76,8 +73,7 @@ class TaskDataAccess(DataAccess):
         self.add_comment(issue_id, f'Pull request created: {pull_request_url}')
 
     def move_task_to_review(self, issue_id: str) -> None:
-        validate_payload(
-            move_to_review_rule_validator,
+        move_to_review_rule_validator.validate_dict(
             {
                 'issue_id': issue_id,
             }
