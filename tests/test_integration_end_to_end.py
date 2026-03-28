@@ -12,7 +12,6 @@ import tempfile
 import os
 from pathlib import Path
 
-import bootstrap  # noqa: F401
 
 from openhands_agent.data_layers.service.agent_service import AgentService
 from openhands_agent.data_layers.service.implementation_service import ImplementationService

@@ -121,7 +121,15 @@ class OpenHandsClient(RetryingClientBase):
         return (
             f'Implement task {task.id}: {task.summary}\n\n'
             f'{task.description}\n\n'
-            f'{repository_scope}'
+            f'{repository_scope}\n\n'
+            'When you finish, return the response summary as the pull request description.\n'
+            'List every changed file and, under each file name, add a short explanation of what changed.\n'
+            'Use this format:\n'
+            'Files changed:\n'
+            '- path/to/file.ext\n'
+            '  Short explanation.\n'
+            '- another/file.ext\n'
+            '  Short explanation.'
         )
 
     def _build_testing_prompt(self, task: Task) -> str:

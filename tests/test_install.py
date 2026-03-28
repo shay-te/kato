@@ -2,7 +2,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import bootstrap  # noqa: F401
 
 from openhands_agent.alembic_config import build_alembic_config
 from openhands_agent.install import main

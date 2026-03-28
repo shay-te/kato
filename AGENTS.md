@@ -26,6 +26,10 @@ This repository uses OpenHands to implement YouTrack tasks and fix review commen
 - If tests fail, fix the code or the tests and rerun them until they pass.
 - Add edge-case coverage for malformed payloads, retries, timeouts, and degraded downstream behavior when relevant.
 - In tests, prefer existing entities and shared test helpers over ad hoc objects.
+- Do not add test bootstrap shims or fake package injectors to work around missing required dependencies.
+- Tests in this repository must run against the real installed packages and should fail fast if those packages are missing.
+- Never reintroduce `tests/bootstrap.py`-style import patching, `sys.modules` injection, or fake package facades for required dependencies.
+- If a test only passes with a shim, fix the environment or update the test to use the real package API instead of recreating the package in tests.
 
 ## Safety
 

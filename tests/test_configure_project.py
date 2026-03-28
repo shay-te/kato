@@ -140,6 +140,16 @@ class ConfigureProjectTests(unittest.TestCase):
                 f'{projects_root.resolve()}:{projects_root.resolve()}:rw',
             )
 
+    def test_build_sandbox_volumes_maps_current_project_to_workspace_project(self) -> None:
+        current_project_path = str(Path.cwd().resolve())
+
+        result = configure_project._build_sandbox_volumes([current_project_path])
+
+        self.assertEqual(
+            result,
+            f'{current_project_path}:/workspace/project:rw',
+        )
+
     def test_prompt_repository_raises_when_scanned_folder_has_no_git_repositories(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             with self._patch_prompts(

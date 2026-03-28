@@ -5,6 +5,11 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
+COPY pyproject.toml ./
+COPY scripts/install-python-deps.sh /app/scripts/install-python-deps.sh
+
+RUN sh /app/scripts/install-python-deps.sh python deps-only
+
 COPY . .
 
 RUN sh /app/scripts/install-python-deps.sh python && \

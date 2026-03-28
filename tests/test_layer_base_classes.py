@@ -1,6 +1,5 @@
 import unittest
 
-import bootstrap  # noqa: F401
 
 from core_lib.data_layers.data_access.data_access import DataAccess
 from core_lib.data_layers.service.service import Service

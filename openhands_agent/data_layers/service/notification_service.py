@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 import json
 import logging
 from importlib import resources
@@ -105,7 +106,7 @@ class NotificationService(Service):
     def _normalized_recipients(recipients) -> list[str]:
         if isinstance(recipients, str):
             return [recipients] if recipients else []
-        if not isinstance(recipients, (list, tuple, set)):
+        if not isinstance(recipients, (list, tuple, set, Sequence)):
             return []
         return [str(recipient) for recipient in recipients if recipient]
 

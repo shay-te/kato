@@ -1,7 +1,6 @@
 import unittest
 from unittest.mock import patch
 
-import bootstrap  # noqa: F401
 
 from openhands_agent.client.ticket_client_factory import build_ticket_client
 from utils import build_test_cfg

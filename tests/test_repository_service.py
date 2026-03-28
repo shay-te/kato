@@ -4,7 +4,6 @@ import types
 import unittest
 from unittest.mock import Mock, patch
 
-import bootstrap  # noqa: F401
 
 from openhands_agent.data_layers.service.repository_service import RepositoryService
 from openhands_agent.fields import PullRequestFields

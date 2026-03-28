@@ -4,6 +4,7 @@ from core_lib.data_layers.data_access.data_access import DataAccess
 from core_lib.rule_validator.rule_validator import RuleValidator, ValueRuleValidator
 
 from openhands_agent.client.pull_request_client_base import PullRequestClientBase
+from openhands_agent.data_layers.data_access.rule_validation import validate_payload
 from openhands_agent.fields import PullRequestFields
 
 
@@ -21,7 +22,6 @@ pull_request_comment_rule_validator = RuleValidator(
         ValueRuleValidator(PullRequestFields.ID, str),
     ]
 )
-
 
 class PullRequestDataAccess(DataAccess):
     def __init__(self, config: DictConfig, client: PullRequestClientBase) -> None:
@@ -45,7 +45,8 @@ class PullRequestDataAccess(DataAccess):
         destination_branch: str | None = None,
         description: str = '',
     ) -> dict[str, str]:
-        pull_request_rule_validator.validate(
+        validate_payload(
+            pull_request_rule_validator,
             {
                 PullRequestFields.TITLE: title,
                 PullRequestFields.SOURCE_BRANCH: source_branch,
@@ -63,7 +64,8 @@ class PullRequestDataAccess(DataAccess):
         )
 
     def list_pull_request_comments(self, pull_request_id: str) -> list[dict[str, str]]:
-        pull_request_comment_rule_validator.validate(
+        validate_payload(
+            pull_request_comment_rule_validator,
             {
                 PullRequestFields.ID: pull_request_id,
             }

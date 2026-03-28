@@ -3,7 +3,6 @@ import types
 import unittest
 from unittest.mock import Mock
 
-import bootstrap  # noqa: F401
 
 from openhands_agent.jobs.process_assigned_tasks import ProcessAssignedTasksJob
 from openhands_agent.openhands_agent_core_lib import OpenHandsAgentCoreLib

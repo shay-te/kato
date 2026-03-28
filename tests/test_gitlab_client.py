@@ -1,7 +1,6 @@
 import unittest
 from unittest.mock import patch
 
-import bootstrap  # noqa: F401
 
 from openhands_agent.client.gitlab_client import GitLabClient
 from openhands_agent.fields import PullRequestFields

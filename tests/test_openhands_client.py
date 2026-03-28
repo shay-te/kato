@@ -1,7 +1,6 @@
 import unittest
 from unittest.mock import Mock, patch
 
-import bootstrap  # noqa: F401
 
 from openhands_agent.client.openhands_client import OpenHandsClient
 from openhands_agent.fields import ImplementationFields, ReviewCommentFields
@@ -43,6 +42,11 @@ class OpenHandsClientTests(unittest.TestCase):
 
         self.assertNotIn('Before creating the pull request:', prompt)
         self.assertNotIn('Act as a separate testing agent.', prompt)
+        self.assertIn(
+            'return the response summary as the pull request description',
+            prompt,
+        )
+        self.assertIn('Files changed:', prompt)
 
     def test_testing_prompt_describes_separate_testing_agent(self) -> None:
         client = OpenHandsClient('https://openhands.example', 'oh-token')
@@ -88,6 +92,8 @@ class OpenHandsClientTests(unittest.TestCase):
         self.assertNotIn('timeout', kwargs)
         self.assertIn('Implement task PROJ-1: Fix bug', kwargs['json']['prompt'])
         self.assertNotIn('Before creating the pull request:', kwargs['json']['prompt'])
+        self.assertIn('Files changed:', kwargs['json']['prompt'])
+        self.assertIn('Short explanation.', kwargs['json']['prompt'])
         client.logger.info.assert_any_call('requesting implementation for task %s', 'PROJ-1')
         client.logger.info.assert_any_call(
             'implementation finished for task %s with success=%s',

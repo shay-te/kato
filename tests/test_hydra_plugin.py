@@ -1,6 +1,5 @@
 import unittest
 
-import bootstrap  # noqa: F401
 
 from hydra.core.config_search_path import ConfigSearchPath
 from hydra_plugins.openhands_agent.openhands_agent_searchpath import (
@@ -14,6 +13,12 @@ class _SearchPath(ConfigSearchPath):
 
     def append(self, provider: str, path: str) -> None:
         self.calls.append((provider, path))
+
+    def prepend(self, provider: str, path: str) -> None:
+        self.calls.insert(0, (provider, path))
+
+    def get_path(self):
+        return list(self.calls)
 
 
 class HydraPluginTests(unittest.TestCase):

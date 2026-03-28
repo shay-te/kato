@@ -1,6 +1,5 @@
 import unittest
 from unittest.mock import Mock, patch
-import bootstrap  # noqa: F401
 
 from openhands_agent.openhands_agent_core_lib import OpenHandsAgentCoreLib
 from utils import build_test_cfg

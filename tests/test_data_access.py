@@ -1,8 +1,7 @@
 import types
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
-import bootstrap  # noqa: F401
 
 from openhands_agent.data_layers.data_access.pull_request_data_access import (
     PullRequestDataAccess,
@@ -51,19 +50,26 @@ class TaskDataAccessTests(unittest.TestCase):
             review_state='In Review',
             issue_states=["Todo", "Open"],
         )
-        data_access = TaskDataAccess(config, types.SimpleNamespace())
+        data_access = TaskDataAccess(
+            config,
+            types.SimpleNamespace(
+                add_comment=Mock(),
+                get_assigned_tasks=Mock(),
+                move_issue_to_state=Mock(),
+            ),
+        )
 
-        with self.assertRaisesRegex(ValueError, 'issue_id must be'):
-            data_access.add_pull_request_comment(17, 'https://bitbucket/pr/1')
+        with self.assertRaisesRegex(ValueError, 'issue_id'):
+            data_access.add_pull_request_comment(['PROJ-1'], 'https://bitbucket/pr/1')
 
-        with self.assertRaisesRegex(ValueError, 'assignee must be'):
+        with self.assertRaisesRegex(ValueError, 'assignee'):
             data_access.get_assigned_tasks(assignee=17)
 
-        with self.assertRaisesRegex(ValueError, 'states must be'):
+        with self.assertRaisesRegex(ValueError, 'states'):
             data_access.get_assigned_tasks(states='Open')
 
-        with self.assertRaisesRegex(ValueError, 'issue_id must be'):
-            data_access.move_task_to_review(17)
+        with self.assertRaisesRegex(ValueError, 'issue_id'):
+            data_access.move_task_to_review(['PROJ-1'])
 
     def test_uses_legacy_issue_state_and_default_review_config(self) -> None:
         config = types.SimpleNamespace(
@@ -157,27 +163,32 @@ class PullRequestDataAccessTests(unittest.TestCase):
             repo_slug="repo",
             destination_branch="main",
         )
-        data_access = PullRequestDataAccess(config, types.SimpleNamespace())
+        data_access = PullRequestDataAccess(
+            config,
+            types.SimpleNamespace(
+                create_pull_request=Mock(),
+            ),
+        )
 
-        with self.assertRaisesRegex(ValueError, 'title must be'):
+        with self.assertRaisesRegex(ValueError, 'title'):
             data_access.create_pull_request(
-                title=17,
+                title=['PROJ-1: Fix bug'],
                 source_branch='feature/proj-1',
                 description='Ready for review',
             )
 
-        with self.assertRaisesRegex(ValueError, 'source_branch must be'):
+        with self.assertRaisesRegex(ValueError, 'source_branch'):
             data_access.create_pull_request(
                 title='PROJ-1: Fix bug',
-                source_branch=None,
+                source_branch=['feature/proj-1'],
                 description='Ready for review',
             )
 
-        with self.assertRaisesRegex(ValueError, 'description must be'):
+        with self.assertRaisesRegex(ValueError, 'description'):
             data_access.create_pull_request(
                 title='PROJ-1: Fix bug',
                 source_branch='feature/proj-1',
-                description=None,
+                description=['Ready for review'],
             )
 
     def test_prefers_runtime_destination_branch_override(self) -> None:

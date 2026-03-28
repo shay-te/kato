@@ -8,3 +8,5 @@ __pycache__
 .pytest_cache
 tests
 .DS_Store
+docker_data
+openhands_agent_state.json

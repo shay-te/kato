@@ -5,6 +5,7 @@ from core_lib.rule_validator.rule_validator import RuleValidator, ValueRuleValid
 
 from openhands_agent.client.ticket_client_base import TicketClientBase
 from openhands_agent.data_layers.data.task import Task
+from openhands_agent.data_layers.data_access.rule_validation import validate_payload
 
 
 assigned_task_rule_validator = RuleValidator(
@@ -27,7 +28,6 @@ move_to_review_rule_validator = RuleValidator(
     ]
 )
 
-
 class TaskDataAccess(DataAccess):
     def __init__(self, config: DictConfig, client: TicketClientBase) -> None:
         self._config = config
@@ -49,7 +49,8 @@ class TaskDataAccess(DataAccess):
         assignee: str | None = None,
         states: list[str] | None = None,
     ) -> list[Task]:
-        assigned_task_rule_validator.validate(
+        validate_payload(
+            assigned_task_rule_validator,
             {
                 'assignee': assignee,
                 'states': states,
@@ -62,7 +63,8 @@ class TaskDataAccess(DataAccess):
         )
 
     def add_comment(self, issue_id: str, comment: str) -> None:
-        pull_request_comment_rule_validator.validate(
+        validate_payload(
+            pull_request_comment_rule_validator,
             {
                 'issue_id': issue_id,
                 'comment': comment,
@@ -74,7 +76,8 @@ class TaskDataAccess(DataAccess):
         self.add_comment(issue_id, f'Pull request created: {pull_request_url}')
 
     def move_task_to_review(self, issue_id: str) -> None:
-        move_to_review_rule_validator.validate(
+        validate_payload(
+            move_to_review_rule_validator,
             {
                 'issue_id': issue_id,
             }

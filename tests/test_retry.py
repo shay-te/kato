@@ -1,7 +1,6 @@
 import unittest
 from unittest.mock import Mock, patch
 
-import bootstrap  # noqa: F401
 
 from openhands_agent.client.retry_utils import (
     _retry_delay_seconds,

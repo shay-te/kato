@@ -1,9 +1,9 @@
-import types
 import threading
 import unittest
 from unittest.mock import Mock
 
 from core_lib.core_lib import CoreLib
+from omegaconf import DictConfig, OmegaConf
 
 from openhands_agent.data_layers.data.review_comment import ReviewComment
 from openhands_agent.data_layers.data.task import Task
@@ -36,180 +36,181 @@ def assert_client_headers_and_timeout(
     test_case.assertEqual(client.timeout, timeout)
 
 
-def build_test_cfg() -> types.SimpleNamespace:
-    repositories = [
-        types.SimpleNamespace(
-            id='client',
-            display_name='Client',
-            local_path='.',
-            provider_base_url='https://bitbucket.example',
-            token='bb-token',
-            owner='workspace',
-            repo_slug='repo',
-            destination_branch='',
-            aliases=['client', 'frontend'],
-        ),
-        types.SimpleNamespace(
-            id='backend',
-            display_name='Backend',
-            local_path='.',
-            provider_base_url='https://github.example/api/v3',
-            token='gh-token',
-            owner='workspace',
-            repo_slug='backend',
-            destination_branch='main',
-            aliases=['backend', 'api'],
-        ),
-    ]
-    return types.SimpleNamespace(
-        core_lib=types.SimpleNamespace(
-            app=types.SimpleNamespace(
-                name='openhands-agent',
-            ),
-            data=types.SimpleNamespace(
-                sqlalchemy=types.SimpleNamespace(
-                    _instance_key_='sqlalchemy_connection',
-                    _target_='core_lib.connection.sql_alchemy_connection_factory.SqlAlchemyConnectionFactory',
-                    config=types.SimpleNamespace(
-                        log_queries=False,
-                        create_db=True,
-                        session=types.SimpleNamespace(
-                            pool_recycle=3600,
-                            pool_pre_ping=False,
-                        ),
-                        url=types.SimpleNamespace(
-                            protocol='sqlite',
-                            username='',
-                            password='',
-                            host='',
-                            port='',
-                            path='',
-                            file=':memory:',
-                        ),
-                    ),
-                ),
-            ),
-            alembic=types.SimpleNamespace(
-                version_table='alembic_version',
-                script_location='data_layers/data/db/migrations',
-                render_as_batch=True,
-            ),
-            email_core_lib=types.SimpleNamespace(
-                client=types.SimpleNamespace(
-                    _target_='email_core_lib.client.send_in_blue_client.SendInBlueClient',
-                    api_key='send-in-blue-key',
-                    slack_email_error_url='',
-                )
-            )
-        ),
-        openhands_agent=types.SimpleNamespace(
-            issue_platform='youtrack',
-            ticket_system='youtrack',
-            retry=types.SimpleNamespace(
-                max_retries=5,
-            ),
-            state=types.SimpleNamespace(
-                file_path='openhands_agent_state.json',
-            ),
-            failure_email=types.SimpleNamespace(
-                enabled=True,
-                template_id='42',
-                body_template='failure_email.txt',
-                recipients=['ops@example.com', 'dev@example.com'],
-                sender=types.SimpleNamespace(
-                    name='OpenHands Agent',
-                    email='noreply@example.com',
-                ),
-            ),
-            completion_email=types.SimpleNamespace(
-                enabled=True,
-                template_id='77',
-                body_template='completion_email.txt',
-                recipients=['reviewers@example.com', 'teamlead@example.com'],
-                sender=types.SimpleNamespace(
-                    name='OpenHands Agent',
-                    email='noreply@example.com',
-                ),
-            ),
-            youtrack=types.SimpleNamespace(
-                name='youtrack-config',
-                provider_name='youtrack',
-                base_url='https://youtrack.example',
-                token='yt-token',
-                project='PROJ',
-                assignee='me',
-                review_state_field='State',
-                review_state='In Review',
-                issue_states=['Todo', 'Open'],
-            ),
-            jira=types.SimpleNamespace(
-                name='jira-config',
-                provider_name='jira',
-                base_url='https://jira.example',
-                token='jira-token',
-                email='dev@example.com',
-                project='PROJ',
-                assignee='developer',
-                review_state_field='status',
-                review_state='In Review',
-                issue_states=['To Do', 'Open'],
-            ),
-            github_issues=types.SimpleNamespace(
-                name='github-issues-config',
-                provider_name='github',
-                base_url='https://api.github.com',
-                token='gh-issues-token',
-                owner='workspace',
-                repo='issues-repo',
-                project='issues-repo',
-                assignee='octocat',
-                review_state_field='labels',
-                review_state='In Review',
-                issue_states=['open'],
-            ),
-            gitlab_issues=types.SimpleNamespace(
-                name='gitlab-issues-config',
-                provider_name='gitlab',
-                base_url='https://gitlab.example/api/v4',
-                token='gitlab-issues-token',
-                project='group/issues-repo',
-                assignee='developer',
-                review_state_field='labels',
-                review_state='In Review',
-                issue_states=['opened'],
-            ),
-            bitbucket_issues=types.SimpleNamespace(
-                name='bitbucket-issues-config',
-                provider_name='bitbucket',
-                base_url='https://api.bitbucket.org/2.0',
-                token='bb-issues-token',
-                workspace='workspace',
-                repo_slug='issues-repo',
-                project='issues-repo',
-                assignee='reviewer',
-                review_state_field='state',
-                review_state='resolved',
-                issue_states=['new', 'open'],
-            ),
-            openhands=types.SimpleNamespace(
-                name='openhands-config',
-                base_url='https://openhands.example',
-                api_key='oh-token',
-            ),
-            repository=types.SimpleNamespace(
-                name='repository-config',
-                base_url='https://bitbucket.example',
-                token='bb-token',
-                owner='workspace',
-                repo_slug='repo',
-                destination_branch='main',
-            ),
-            repositories=repositories,
-        )
+def build_test_cfg() -> DictConfig:
+    return OmegaConf.create(
+        {
+            'core_lib': {
+                'app': {
+                    'name': 'openhands-agent',
+                },
+                'data': {
+                    'sqlalchemy': {
+                        '_instance_key_': 'sqlalchemy_connection',
+                        '_target_': 'core_lib.connection.sql_alchemy_connection_factory.SqlAlchemyConnectionFactory',
+                        'config': {
+                            'log_queries': False,
+                            'create_db': True,
+                            'session': {
+                                'pool_recycle': 3600,
+                                'pool_pre_ping': False,
+                            },
+                            'url': {
+                                'protocol': 'sqlite',
+                                'username': '',
+                                'password': '',
+                                'host': '',
+                                'port': '',
+                                'path': '',
+                                'file': ':memory:',
+                            },
+                        },
+                    },
+                },
+                'alembic': {
+                    'version_table': 'alembic_version',
+                    'script_location': 'data_layers/data/db/migrations',
+                    'render_as_batch': True,
+                },
+                'email_core_lib': {
+                    'client': {
+                        '_target_': 'email_core_lib.client.send_in_blue_client.SendInBlueClient',
+                        'api_key': 'send-in-blue-key',
+                        'slack_email_error_url': '',
+                    },
+                },
+            },
+            'openhands_agent': {
+                'issue_platform': 'youtrack',
+                'ticket_system': 'youtrack',
+                'retry': {
+                    'max_retries': 5,
+                },
+                'state': {
+                    'file_path': 'openhands_agent_state.json',
+                },
+                'failure_email': {
+                    'enabled': True,
+                    'template_id': '42',
+                    'body_template': 'failure_email.txt',
+                    'recipients': ['ops@example.com', 'dev@example.com'],
+                    'sender': {
+                        'name': 'OpenHands Agent',
+                        'email': 'noreply@example.com',
+                    },
+                },
+                'completion_email': {
+                    'enabled': True,
+                    'template_id': '77',
+                    'body_template': 'completion_email.txt',
+                    'recipients': ['reviewers@example.com', 'teamlead@example.com'],
+                    'sender': {
+                        'name': 'OpenHands Agent',
+                        'email': 'noreply@example.com',
+                    },
+                },
+                'youtrack': {
+                    'name': 'youtrack-config',
+                    'provider_name': 'youtrack',
+                    'base_url': 'https://youtrack.example',
+                    'token': 'yt-token',
+                    'project': 'PROJ',
+                    'assignee': 'me',
+                    'review_state_field': 'State',
+                    'review_state': 'In Review',
+                    'issue_states': ['Todo', 'Open'],
+                },
+                'jira': {
+                    'name': 'jira-config',
+                    'provider_name': 'jira',
+                    'base_url': 'https://jira.example',
+                    'token': 'jira-token',
+                    'email': 'dev@example.com',
+                    'project': 'PROJ',
+                    'assignee': 'developer',
+                    'review_state_field': 'status',
+                    'review_state': 'In Review',
+                    'issue_states': ['To Do', 'Open'],
+                },
+                'github_issues': {
+                    'name': 'github-issues-config',
+                    'provider_name': 'github',
+                    'base_url': 'https://api.github.com',
+                    'token': 'gh-issues-token',
+                    'owner': 'workspace',
+                    'repo': 'issues-repo',
+                    'project': 'issues-repo',
+                    'assignee': 'octocat',
+                    'review_state_field': 'labels',
+                    'review_state': 'In Review',
+                    'issue_states': ['open'],
+                },
+                'gitlab_issues': {
+                    'name': 'gitlab-issues-config',
+                    'provider_name': 'gitlab',
+                    'base_url': 'https://gitlab.example/api/v4',
+                    'token': 'gitlab-issues-token',
+                    'project': 'group/issues-repo',
+                    'assignee': 'developer',
+                    'review_state_field': 'labels',
+                    'review_state': 'In Review',
+                    'issue_states': ['opened'],
+                },
+                'bitbucket_issues': {
+                    'name': 'bitbucket-issues-config',
+                    'provider_name': 'bitbucket',
+                    'base_url': 'https://api.bitbucket.org/2.0',
+                    'token': 'bb-issues-token',
+                    'workspace': 'workspace',
+                    'repo_slug': 'issues-repo',
+                    'project': 'issues-repo',
+                    'assignee': 'reviewer',
+                    'review_state_field': 'state',
+                    'review_state': 'resolved',
+                    'issue_states': ['new', 'open'],
+                },
+                'openhands': {
+                    'name': 'openhands-config',
+                    'base_url': 'https://openhands.example',
+                    'api_key': 'oh-token',
+                },
+                'repository': {
+                    'name': 'repository-config',
+                    'base_url': 'https://bitbucket.example',
+                    'token': 'bb-token',
+                    'owner': 'workspace',
+                    'repo_slug': 'repo',
+                    'destination_branch': 'main',
+                },
+                'repositories': [
+                    {
+                        'id': 'client',
+                        'display_name': 'Client',
+                        'local_path': '.',
+                        'provider_base_url': 'https://bitbucket.example',
+                        'token': 'bb-token',
+                        'owner': 'workspace',
+                        'repo_slug': 'repo',
+                        'destination_branch': '',
+                        'aliases': ['client', 'frontend'],
+                    },
+                    {
+                        'id': 'backend',
+                        'display_name': 'Backend',
+                        'local_path': '.',
+                        'provider_base_url': 'https://github.example/api/v3',
+                        'token': 'gh-token',
+                        'owner': 'workspace',
+                        'repo_slug': 'backend',
+                        'destination_branch': 'main',
+                        'aliases': ['backend', 'api'],
+                    },
+                ],
+            },
+        }
     )
 
 
-def load_config():
+def load_config() -> DictConfig:
     if not OblInstance.config:
         OblInstance.config = build_test_cfg()
     return OblInstance.config

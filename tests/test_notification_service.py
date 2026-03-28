@@ -1,12 +1,10 @@
 import unittest
 from unittest.mock import Mock, patch
 
-import bootstrap  # noqa: F401
 
 from openhands_agent.data_layers.service.notification_service import NotificationService
 from openhands_agent.fields import EmailFields, PullRequestFields
 from utils import build_task, build_test_cfg
-import types
 
 
 class NotificationServiceTests(unittest.TestCase):
@@ -164,7 +162,7 @@ class NotificationServiceTests(unittest.TestCase):
         self.email_core_lib.send.assert_not_called()
 
     def test_notify_failure_uses_empty_sender_fields_when_sender_is_partial(self) -> None:
-        self.cfg.openhands_agent.failure_email.sender = types.SimpleNamespace(name='OpenHands Agent')
+        self.cfg.openhands_agent.failure_email.sender = {'name': 'OpenHands Agent'}
         service = NotificationService(
             app_name=self.cfg.core_lib.app.name,
             email_core_lib=self.email_core_lib,

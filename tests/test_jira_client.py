@@ -1,7 +1,6 @@
 import unittest
 from unittest.mock import patch
 
-import bootstrap  # noqa: F401
 
 from openhands_agent.client.jira_client import JiraClient
 from openhands_agent.data_layers.data.task import Task

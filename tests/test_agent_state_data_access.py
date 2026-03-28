@@ -3,7 +3,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import bootstrap  # noqa: F401
 
 from openhands_agent.data_layers.data_access.agent_state_data_access import (
     AgentStateDataAccess,

@@ -1,7 +1,6 @@
 import unittest
 from unittest.mock import patch
 
-import bootstrap  # noqa: F401
 
 from openhands_agent.client.github_issues_client import GitHubIssuesClient
 from openhands_agent.data_layers.data.task import Task

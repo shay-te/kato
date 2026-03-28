@@ -1,6 +1,5 @@
 import unittest
 
-import bootstrap  # noqa: F401
 
 from openhands_agent.client.bitbucket_client import BitbucketClient
 from openhands_agent.client.github_client import GitHubClient

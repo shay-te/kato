@@ -2,7 +2,6 @@ import types
 import unittest
 from unittest.mock import Mock
 
-import bootstrap  # noqa: F401
 
 from openhands_agent.data_layers.service.testing_service import TestingService
 from utils import build_task

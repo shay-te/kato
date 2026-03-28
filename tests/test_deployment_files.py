@@ -152,6 +152,7 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('.venv/bin/python -m unittest discover -s tests', bootstrap_text)
         self.assertIn('hydra-core>=1.3.2', install_deps_text)
         self.assertIn('core-lib>=0.2.0', install_deps_text)
+        self.assertIn('deps-only', install_deps_text)
         self.assertNotIn('openhands_agent.validate_env --mode agent', run_local_text)
         self.assertIn('openhands_agent.install', run_local_text)
         self.assertIn('bootstrap:', makefile_text)
@@ -167,6 +168,11 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('openhands-agent-data:/app/data', compose_text)
         self.assertIn('${REPOSITORY_ROOT_PATH:-.}:${REPOSITORY_ROOT_PATH:-.}:ro', compose_text)
         self.assertIn('docker.openhands.dev/openhands/openhands:1.5', compose_text)
+        self.assertIn('COPY pyproject.toml ./', (REPO_ROOT / 'Dockerfile').read_text(encoding='utf-8'))
+        self.assertIn(
+            'RUN sh /app/scripts/install-python-deps.sh python deps-only',
+            (REPO_ROOT / 'Dockerfile').read_text(encoding='utf-8'),
+        )
         self.assertIn(
             'AGENT_SERVER_IMAGE_REPOSITORY: ${OPENHANDS_AGENT_SERVER_IMAGE_REPOSITORY:-ghcr.io/openhands/agent-server}',
             compose_text,

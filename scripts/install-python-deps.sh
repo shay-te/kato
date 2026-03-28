@@ -21,6 +21,10 @@ INSTALL_MODE="${2:-standard}"
   "omegaconf>=2.3.0" \
   "pydantic>=2.11.0"
 
+if [ "$INSTALL_MODE" = "deps-only" ]; then
+  exit 0
+fi
+
 if [ "$INSTALL_MODE" = "editable" ]; then
   exec "$PYTHON_BIN" -m pip install --no-cache-dir --no-deps -e .
 fi

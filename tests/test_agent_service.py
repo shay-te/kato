@@ -2,7 +2,6 @@ import types
 import unittest
 from unittest.mock import Mock, patch
 
-import bootstrap  # noqa: F401
 
 from openhands_agent.data_layers.data.review_comment import ReviewComment
 from openhands_agent.data_layers.data_access.task_data_access import TaskDataAccess
@@ -24,6 +23,13 @@ from utils import build_review_comment_payload, build_task, build_test_cfg
 
 class AgentServiceTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.pr_description = (
+            'Files changed:\n'
+            '- client/app.ts\n'
+            '  Updated the client flow for the task.\n'
+            '- backend/api.py\n'
+            '  Added the backend support for the task.'
+        )
         self.cfg = build_test_cfg()
         self.client_repo = self.cfg.openhands_agent.repositories[0]
         self.backend_repo = self.cfg.openhands_agent.repositories[1]
@@ -41,7 +47,7 @@ class AgentServiceTests(unittest.TestCase):
                 return_value={
                     ImplementationFields.SUCCESS: True,
                     ImplementationFields.SESSION_ID: 'conversation-1',
-                    'summary': 'Implemented task across repos',
+                    'summary': self.pr_description,
                 }
             ),
             test_task=Mock(
@@ -243,13 +249,13 @@ class AgentServiceTests(unittest.TestCase):
             self.client_repo,
             title='PROJ-1: Fix bug',
             source_branch='feature/proj-1/client',
-            description='Implemented task across repos',
+            description=self.pr_description,
         )
         self.repository_service.create_pull_request.assert_any_call(
             self.backend_repo,
             title='PROJ-1: Fix bug',
             source_branch='feature/proj-1/backend',
-            description='Implemented task across repos',
+            description=self.pr_description,
         )
         self.task_client.add_comment.assert_called_once()
         comment_text = self.task_client.add_comment.call_args.args[1]

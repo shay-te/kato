@@ -31,6 +31,7 @@ except (ImportError, ModuleNotFoundError):
 ISSUE_PLATFORMS = ['youtrack', 'jira', 'github', 'gitlab', 'bitbucket']
 UNQUOTED_ENV_VALUE_PATTERN = re.compile(r'^[A-Za-z0-9_./:@%+=,\-~]*$')
 logger = logging.getLogger(__name__)
+OPENHANDS_WORKSPACE_PROJECT_PATH = '/workspace/project'
 ISSUE_PLATFORM_DETAILS = {
     'youtrack': {
         'label': 'YouTrack',
@@ -758,7 +759,16 @@ def _build_sandbox_volumes(paths: list[str]) -> str:
             continue
         unique_paths.append(normalized_path)
         seen_paths.add(normalized_path)
-    return ','.join(f'{path}:{path}:rw' for path in unique_paths)
+    current_project_path = _normalize_repository_path(Path.cwd())
+    mount_specs: list[str] = []
+    for path in unique_paths:
+        target_path = (
+            OPENHANDS_WORKSPACE_PROJECT_PATH
+            if path == current_project_path
+            else path
+        )
+        mount_specs.append(f'{path}:{target_path}:rw')
+    return ','.join(mount_specs)
 
 
 def render_selected_repository_compose_override(paths: list[str]) -> str:
