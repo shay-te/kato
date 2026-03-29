@@ -172,7 +172,7 @@ class TaskDataAccessTests(unittest.TestCase):
         client.get_assigned_tasks.assert_called_once_with(
             project='PROJ',
             assignee='me',
-            states=['To Do', 'In Progress'],
+            states=['To Do'],
         )
         self.assertEqual(
             client.move_issue_to_state.call_args_list,
@@ -206,6 +206,29 @@ class TaskDataAccessTests(unittest.TestCase):
             'PROJ-1',
             'status',
             'Open',
+        )
+
+    def test_filters_review_and_progress_states_from_issue_queue(self) -> None:
+        config = types.SimpleNamespace(
+            base_url="https://youtrack.example",
+            token="yt-token",
+            project="PROJ",
+            assignee="me",
+            issue_states=["Open", "In Progress", "To Verify", "Open"],
+            progress_state_field='State',
+            progress_state='In Progress',
+            review_state_field='State',
+            review_state='To Verify',
+        )
+        client = Mock()
+
+        data_access = TaskDataAccess(config, client)
+        data_access.get_assigned_tasks()
+
+        client.get_assigned_tasks.assert_called_once_with(
+            project='PROJ',
+            assignee='me',
+            states=['Open'],
         )
 
 

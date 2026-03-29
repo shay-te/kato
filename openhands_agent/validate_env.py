@@ -95,6 +95,7 @@ def validate_agent_env(env: dict[str, str]) -> list[str]:
             errors.append(f'completion email is enabled but {key} is missing')
 
     errors.extend(_validate_repository_provider_env(env))
+    errors.extend(_validate_issue_state_queue_env(env, issue_platform))
 
     return errors
 
@@ -162,6 +163,45 @@ def _validate_repository_provider_env(env: dict[str, str]) -> list[str]:
             f'missing required repository provider env var: {key}'
         )
     return errors
+
+
+def _validate_issue_state_queue_env(env: dict[str, str], issue_platform: str) -> list[str]:
+    platform_prefix = {
+        'youtrack': 'YOUTRACK',
+        'jira': 'JIRA',
+        'github': 'GITHUB_ISSUES',
+        'gitlab': 'GITLAB_ISSUES',
+        'bitbucket': 'BITBUCKET_ISSUES',
+    }.get(issue_platform)
+    if not platform_prefix:
+        return []
+
+    issue_states = _split_env_states(env.get(f'{platform_prefix}_ISSUE_STATES', ''))
+    progress_state = str(env.get(f'{platform_prefix}_PROGRESS_STATE', '') or '').strip()
+    review_state = str(env.get(f'{platform_prefix}_REVIEW_STATE', '') or '').strip()
+    invalid_states = []
+    for state_name, label in ((progress_state, 'progress'), (review_state, 'review')):
+        normalized_state = _normalized_state_token(state_name)
+        if normalized_state and normalized_state in {
+            _normalized_state_token(value) for value in issue_states
+        }:
+            invalid_states.append(f'{label} state "{state_name}"')
+
+    if not invalid_states:
+        return []
+
+    return [
+        f'{platform_prefix}_ISSUE_STATES must not include '
+        + ' or '.join(invalid_states)
+    ]
+
+
+def _split_env_states(value: str | None) -> list[str]:
+    return [state.strip() for state in str(value or '').split(',') if state.strip()]
+
+
+def _normalized_state_token(value: str) -> str:
+    return ''.join(character for character in str(value or '').lower() if character.isalnum())
 
 
 def validate_openhands_env(env: dict[str, str]) -> list[str]:

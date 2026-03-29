@@ -253,7 +253,7 @@ class ConfigureProjectTests(unittest.TestCase):
                 'OPENHANDS_API_KEY=local\n'
                 'OH_SECRET_KEY=\n'
                 'OPENHANDS_AGENT_MAX_RETRIES=5\n'
-                'OPENHANDS_AGENT_STATE_FILE=openhands_agent_state.json\n'
+                'OPENHANDS_AGENT_STATE_FILE=data/openhands_agent_state.json\n'
                 'OPENHANDS_LLM_MODEL=\n'
                 'OPENHANDS_LLM_API_KEY=\n'
                 'OPENHANDS_LLM_BASE_URL=\n'
@@ -289,7 +289,7 @@ class ConfigureProjectTests(unittest.TestCase):
                 'OpenHands API key': 'local',
                 'OpenHands secret key': 'openhands-secret',
                 'Maximum retries for external API calls': 5,
-                'State file path': 'openhands_agent_state.json',
+                'State file path': 'data/openhands_agent_state.json',
                 'OpenHands LLM model': 'openai/gpt-4o',
                 'OpenHands LLM API key': 'llm-key',
                 'OpenHands LLM base URL': 'https://api.openai.com/v1',
@@ -312,6 +312,10 @@ class ConfigureProjectTests(unittest.TestCase):
             self.assertEqual(written_env['OPENHANDS_AGENT_ISSUE_PLATFORM'], 'youtrack')
             self.assertEqual(written_env['YOUTRACK_ISSUE_STATES'], 'Todo,Open')
             self.assertEqual(written_env['OH_SECRET_KEY'], 'openhands-secret')
+            self.assertEqual(
+                written_env['OPENHANDS_AGENT_STATE_FILE'],
+                'data/openhands_agent_state.json',
+            )
             self.assertEqual(written_env['OPENHANDS_LLM_API_KEY'], 'llm-key')
 
     def test_main_returns_zero_when_configuration_is_still_invalid(self) -> None:
@@ -336,7 +340,7 @@ class ConfigureProjectTests(unittest.TestCase):
                 'OPENHANDS_API_KEY=local\n'
                 'OH_SECRET_KEY=\n'
                 'OPENHANDS_AGENT_MAX_RETRIES=5\n'
-                'OPENHANDS_AGENT_STATE_FILE=openhands_agent_state.json\n'
+                'OPENHANDS_AGENT_STATE_FILE=data/openhands_agent_state.json\n'
                 'OPENHANDS_LLM_MODEL=\n'
                 'OPENHANDS_LLM_API_KEY=\n'
                 'OPENHANDS_LLM_BASE_URL=\n'
@@ -372,7 +376,7 @@ class ConfigureProjectTests(unittest.TestCase):
                 'OpenHands API key': 'local',
                 'OpenHands secret key': 'openhands-secret',
                 'Maximum retries for external API calls': 5,
-                'State file path': 'openhands_agent_state.json',
+                'State file path': 'data/openhands_agent_state.json',
                 'OpenHands LLM model': '',
                 'OpenHands LLM API key': '',
                 'OpenHands LLM base URL': '',

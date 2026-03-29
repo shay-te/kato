@@ -414,6 +414,40 @@ class AgentServiceTests(unittest.TestCase):
         self.task_client.move_issue_to_state.assert_not_called()
         self.email_core_lib.send.assert_not_called()
 
+    def test_process_assigned_task_skips_when_prior_completion_comment_is_still_active(self) -> None:
+        task = build_task(
+            description='Update client and backend APIs',
+            comments=[
+                {
+                    TaskCommentFields.AUTHOR: 'shay',
+                    TaskCommentFields.BODY: (
+                        'OpenHands completed task PROJ-1: Fix the auth flow.'
+                    ),
+                },
+                {
+                    TaskCommentFields.AUTHOR: 'reviewer',
+                    TaskCommentFields.BODY: 'Looks good.',
+                },
+            ],
+        )
+
+        results = self.service.process_assigned_task(task)
+
+        self.assertEqual(
+            results,
+            {
+                'id': 'PROJ-1',
+                StatusFields.STATUS: StatusFields.SKIPPED,
+                PullRequestFields.PULL_REQUESTS: [],
+                PullRequestFields.FAILED_REPOSITORIES: [],
+            },
+        )
+        self.repository_service.resolve_task_repositories.assert_not_called()
+        self.openhands_client.implement_task.assert_not_called()
+        self.task_client.add_comment.assert_not_called()
+        self.task_client.move_issue_to_state.assert_not_called()
+        self.email_core_lib.send.assert_not_called()
+
     def test_process_assigned_task_retries_after_later_retry_instruction(self) -> None:
         task = build_task(
             description='Update client and backend APIs',
@@ -422,6 +456,32 @@ class AgentServiceTests(unittest.TestCase):
                     TaskCommentFields.AUTHOR: 'shay',
                     TaskCommentFields.BODY: (
                         'OpenHands agent could not safely process this task: timeout'
+                    ),
+                },
+                {
+                    TaskCommentFields.AUTHOR: 'reviewer',
+                    TaskCommentFields.BODY: 'OpenHands: retry approved for this task.',
+                },
+            ],
+        )
+
+        results = self.service.process_assigned_task(task)
+
+        self.assertEqual(results[StatusFields.STATUS], StatusFields.READY_FOR_REVIEW)
+        self.repository_service.resolve_task_repositories.assert_called_once_with(task)
+        self.repository_service.prepare_task_repositories.assert_called_once_with(
+            [self.client_repo, self.backend_repo]
+        )
+        self.openhands_client.implement_task.assert_called_once_with(task, '')
+
+    def test_process_assigned_task_retries_after_later_retry_instruction_following_completion_comment(self) -> None:
+        task = build_task(
+            description='Update client and backend APIs',
+            comments=[
+                {
+                    TaskCommentFields.AUTHOR: 'shay',
+                    TaskCommentFields.BODY: (
+                        'OpenHands completed task PROJ-1: Fix the auth flow.'
                     ),
                 },
                 {

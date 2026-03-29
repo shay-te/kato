@@ -192,6 +192,27 @@ class ValidateEnvTests(unittest.TestCase):
 
         self.assertIn('missing required agent env var: GITHUB_API_TOKEN', errors)
 
+    def test_validate_agent_env_rejects_progress_and_review_states_in_issue_queue(self) -> None:
+        errors = self._validate_agent_env(
+            {
+                'YOUTRACK_BASE_URL': 'https://youtrack.example',
+                'YOUTRACK_TOKEN': 'yt-token',
+                'YOUTRACK_PROJECT': 'PROJ',
+                'YOUTRACK_ASSIGNEE': 'developer',
+                'YOUTRACK_PROGRESS_STATE': 'In Progress',
+                'YOUTRACK_REVIEW_STATE': 'To Verify',
+                'YOUTRACK_ISSUE_STATES': 'Open,In Progress,To Verify',
+                'REPOSITORY_ROOT_PATH': '.',
+                'OPENHANDS_BASE_URL': 'http://localhost:3000',
+                'OPENHANDS_API_KEY': 'local',
+            }
+        )
+
+        self.assertIn(
+            'YOUTRACK_ISSUE_STATES must not include progress state "In Progress" or review state "To Verify"',
+            errors,
+        )
+
     def test_validate_agent_env_requires_gitlab_api_token(self) -> None:
         errors = self._validate_agent_env(
             {

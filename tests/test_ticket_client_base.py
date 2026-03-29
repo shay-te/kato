@@ -19,6 +19,11 @@ class TicketClientBaseTests(unittest.TestCase):
         )
         self.assertTrue(
             TicketClientBase._is_agent_operational_comment(
+                'OpenHands addressed review comment 99 on pull request 17.'
+            )
+        )
+        self.assertTrue(
+            TicketClientBase._is_agent_operational_comment(
                 'OpenHands agent stopped working on this task: gateway timeout'
             )
         )
@@ -123,6 +128,41 @@ class TicketClientBaseTests(unittest.TestCase):
             comment,
             'OpenHands agent stopped working on this task: branch conflict',
         )
+
+    def test_active_execution_blocking_comment_tracks_completion_comment(self) -> None:
+        comment = TicketClientBase.active_execution_blocking_comment(
+            [
+                {
+                    TaskCommentFields.AUTHOR: 'shay',
+                    TaskCommentFields.BODY: (
+                        'OpenHands completed task PROJ-1: Fix the auth flow.'
+                    ),
+                }
+            ]
+        )
+
+        self.assertEqual(
+            comment,
+            'OpenHands completed task PROJ-1: Fix the auth flow.',
+        )
+
+    def test_active_execution_blocking_comment_clears_completion_after_explicit_retry_instruction(self) -> None:
+        comment = TicketClientBase.active_execution_blocking_comment(
+            [
+                {
+                    TaskCommentFields.AUTHOR: 'shay',
+                    TaskCommentFields.BODY: (
+                        'OpenHands completed task PROJ-1: Fix the auth flow.'
+                    ),
+                },
+                {
+                    TaskCommentFields.AUTHOR: 'reviewer',
+                    TaskCommentFields.BODY: 'OpenHands: retry approved for this task.',
+                },
+            ]
+        )
+
+        self.assertEqual(comment, '')
 
     def test_active_retry_blocking_comment_ignores_operational_comments_as_override(self) -> None:
         comment = TicketClientBase.active_retry_blocking_comment(

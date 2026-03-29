@@ -160,6 +160,9 @@ class RepositoryServiceTests(unittest.TestCase):
                 Mock(returncode=0, stdout='refs/remotes/origin/master\n', stderr=''),
                 Mock(returncode=0, stdout='master\n', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),
+                Mock(returncode=0, stdout='master\n', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),
             ],
         ):
             prepared_repositories = service.prepare_task_repositories([repository])
@@ -184,6 +187,9 @@ class RepositoryServiceTests(unittest.TestCase):
                 Mock(returncode=0, stdout='', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
                 Mock(returncode=0, stdout='main\n', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),
+                Mock(returncode=0, stdout='main\n', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),
             ],
         ) as mock_run:
             prepared_repositories = service.prepare_task_repositories([self.backend_repo])
@@ -196,6 +202,43 @@ class RepositoryServiceTests(unittest.TestCase):
                 ['git', '-C', '.', 'status', '--porcelain'],
                 ['git', '-C', '.', 'checkout', 'main'],
                 ['git', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                ['git', '-C', '.', 'pull', '--ff-only', 'origin', 'main'],
+                ['git', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                ['git', '-C', '.', 'status', '--porcelain'],
+            ],
+        )
+
+    def test_prepare_task_repositories_pulls_latest_destination_branch_before_next_task(self) -> None:
+        service = RepositoryService(self.cfg.openhands_agent.repositories, 3)
+
+        with patch(
+            'openhands_agent.data_layers.service.repository_service.shutil.which',
+            return_value='/usr/bin/git',
+        ), patch(
+            'openhands_agent.data_layers.service.repository_service.os.path.isdir',
+            return_value=True,
+        ), patch(
+            'openhands_agent.data_layers.service.repository_service.RepositoryService._validate_destination_branch_tracking_state',
+        ), patch(
+            'openhands_agent.data_layers.service.repository_service.subprocess.run',
+            side_effect=[
+                Mock(returncode=0, stdout='main\n', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),
+                Mock(returncode=0, stdout='main\n', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),
+            ],
+        ) as mock_run:
+            service.prepare_task_repositories([self.backend_repo])
+
+        self.assertEqual(
+            [call.args[0] for call in mock_run.call_args_list],
+            [
+                ['git', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                ['git', '-C', '.', 'status', '--porcelain'],
+                ['git', '-C', '.', 'pull', '--ff-only', 'origin', 'main'],
+                ['git', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                ['git', '-C', '.', 'status', '--porcelain'],
             ],
         )
 
@@ -287,6 +330,9 @@ class RepositoryServiceTests(unittest.TestCase):
                 Mock(returncode=0, stdout='', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
                 Mock(returncode=0, stdout='0 3\n', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),
+                Mock(returncode=0, stdout='main\n', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),
             ],
         ):
             prepared_repositories = service.prepare_task_repositories([self.backend_repo])
@@ -324,6 +370,9 @@ class RepositoryServiceTests(unittest.TestCase):
                 'openhands_agent.data_layers.service.repository_service.subprocess.run',
                 side_effect=[
                     Mock(returncode=0, stdout='refs/remotes/origin/main\n', stderr=''),
+                    Mock(returncode=0, stdout='main\n', stderr=''),
+                    Mock(returncode=0, stdout='', stderr=''),
+                    Mock(returncode=0, stdout='', stderr=''),
                     Mock(returncode=0, stdout='main\n', stderr=''),
                     Mock(returncode=0, stdout='', stderr=''),
                 ],
@@ -576,6 +625,9 @@ class RepositoryServiceTests(unittest.TestCase):
             Mock(returncode=0, stdout='', stderr=''),
             Mock(returncode=0, stdout='', stderr=''),
             Mock(returncode=0, stdout='main\n', stderr=''),
+            Mock(returncode=0, stdout='', stderr=''),
+            Mock(returncode=0, stdout='main\n', stderr=''),
+            Mock(returncode=0, stdout='', stderr=''),
         ]
 
         with patch(
@@ -617,6 +669,9 @@ class RepositoryServiceTests(unittest.TestCase):
                 ['git', '-C', '.', 'status', '--porcelain'],
                 ['git', '-C', '.', 'checkout', 'main'],
                 ['git', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                ['git', '-C', '.', 'pull', '--ff-only', 'origin', 'main'],
+                ['git', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                ['git', '-C', '.', 'status', '--porcelain'],
             ],
         )
         mock_push_branch.assert_called_once_with('.', 'feature/proj-1/backend')
@@ -632,6 +687,9 @@ class RepositoryServiceTests(unittest.TestCase):
             Mock(returncode=0, stdout='', stderr=''),
             Mock(returncode=0, stdout='', stderr=''),
             Mock(returncode=0, stdout='main\n', stderr=''),
+            Mock(returncode=0, stdout='', stderr=''),
+            Mock(returncode=0, stdout='main\n', stderr=''),
+            Mock(returncode=0, stdout='', stderr=''),
         ]
 
         with patch(

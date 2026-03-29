@@ -514,7 +514,7 @@ def _prompt_openhands(
         ),
         'OPENHANDS_AGENT_STATE_FILE': input_str(
             'State file path',
-            default=_default_str(defaults, 'OPENHANDS_AGENT_STATE_FILE', fallback='openhands_agent_state.json'),
+            default=_default_str(defaults, 'OPENHANDS_AGENT_STATE_FILE', fallback='data/openhands_agent_state.json'),
         ),
         'OPENHANDS_LLM_MODEL': input_str(
             'OpenHands LLM model',

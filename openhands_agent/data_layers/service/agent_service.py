@@ -20,6 +20,7 @@ from openhands_agent.data_layers.service.notification_service import Notificatio
 from openhands_agent.data_layers.service.repository_service import RepositoryService
 from openhands_agent.data_layers.service.testing_service import TestingService
 
+
 class AgentService(Service):
     def __init__(
         self,
@@ -124,26 +125,20 @@ class AgentService(Service):
     def process_assigned_task(self, task: Task) -> dict | None:
         if self._is_task_processed(task.id):
             self.logger.info('skipping already processed task %s', task.id)
-            return {
-                Task.id.key: task.id,
-                StatusFields.STATUS: StatusFields.SKIPPED,
-                PullRequestFields.PULL_REQUESTS: self._processed_task_pull_requests(task.id),
-                PullRequestFields.FAILED_REPOSITORIES: [],
-            }
+            return self._skip_task_result(
+                task.id,
+                self._processed_task_pull_requests(task.id),
+            )
 
-        blocking_comment = self._active_retry_blocking_comment(task)
+        blocking_comment = self._active_execution_blocking_comment(task)
         if blocking_comment:
             self.logger.info(
-                'skipping task %s because a prior OpenHands failure comment is still active: %s',
+                'skipping task %s because a prior OpenHands %s comment is still active: %s',
                 task.id,
+                self._blocking_comment_kind(blocking_comment),
                 blocking_comment,
             )
-            return {
-                Task.id.key: task.id,
-                StatusFields.STATUS: StatusFields.SKIPPED,
-                PullRequestFields.PULL_REQUESTS: [],
-                PullRequestFields.FAILED_REPOSITORIES: [],
-            }
+            return self._skip_task_result(task.id)
 
         self._log_task_step(task.id, 'starting mission: %s', str(task.summary or '').strip() or task.id)
         try:
@@ -179,18 +174,12 @@ class AgentService(Service):
             self._handle_task_definition_failure(task)
             return None
 
-        repository_branches = {
-            repository.id: self._repository_service.build_branch_name(task, repository)
-            for repository in repositories
-        }
+        repository_branches = self._attach_task_repository_context(task, repositories)
         self._log_task_step(
             task.id,
             'planned working branches: %s',
             self._repository_branch_text(repository_branches),
         )
-        task.branch_name = next(iter(repository_branches.values()))
-        setattr(task, 'repositories', repositories)
-        setattr(task, 'repository_branches', repository_branches)
         try:
             self._move_task_to_in_progress(task.id, strict=True)
         except Exception as exc:
@@ -390,6 +379,10 @@ class AgentService(Service):
             comment.pull_request_id,
             comment.comment_id,
         )
+        self._comment_review_fix_completed(
+            comment,
+            repository_id,
+        )
 
         return {
             StatusFields.STATUS: StatusFields.UPDATED,
@@ -565,15 +558,13 @@ class AgentService(Service):
         *,
         move_to_open: bool = False,
     ) -> None:
-        try:
-            self._log_task_step(task.id, 'recording failure comment: %s', comment)
-            self._task_data_access.add_comment(
-                task.id,
-                comment,
-            )
-            self._log_task_step(task.id, 'added failure comment')
-        except Exception:
-            self.logger.exception('failed to add failure comment for task %s', task.id)
+        self._log_task_step(task.id, 'recording failure comment: %s', comment)
+        self._add_task_comment(
+            task.id,
+            comment,
+            after_step='added failure comment',
+            failure_log_message='failed to add failure comment for task %s',
+        )
         if move_to_open:
             self._move_task_to_open(task.id)
         try:
@@ -586,47 +577,52 @@ class AgentService(Service):
             self.logger.exception('failed to send failure notification for task %s', task.id)
 
     def _handle_repository_detection_failure(self, task: Task, error: Exception) -> None:
-        try:
-            self._log_task_step(task.id, 'recording repository detection skip comment')
-            self._task_data_access.add_comment(
-                task.id,
-                'OpenHands agent skipped this task because it could not detect which repository '
-                f'to use from the task content: {error}. '
-                'Please mention the repository name or alias in the task summary or description.',
-            )
-            self._log_task_step(task.id, 'added repository detection skip comment')
-        except Exception:
-            self.logger.exception(
-                'failed to add repository detection comment for task %s',
-                task.id,
-            )
+        self._log_task_step(task.id, 'recording repository detection skip comment')
+        self._add_task_comment(
+            task.id,
+            'OpenHands agent skipped this task because it could not detect which repository '
+            f'to use from the task content: {error}. '
+            'Please mention the repository name or alias in the task summary or description.',
+            after_step='added repository detection skip comment',
+            failure_log_message='failed to add repository detection comment for task %s',
+        )
 
     def _handle_task_definition_failure(self, task: Task) -> None:
-        try:
-            self._log_task_step(task.id, 'recording task-definition skip comment')
-            self._task_data_access.add_comment(
-                task.id,
-                'OpenHands agent skipped this task because the task definition is too thin '
-                'to work from safely. Please add a clearer description or issue comment '
-                'describing the expected change.',
-            )
-            self._log_task_step(task.id, 'added task-definition skip comment')
-        except Exception:
-            self.logger.exception(
-                'failed to add task definition comment for task %s',
-                task.id,
-            )
+        self._log_task_step(task.id, 'recording task-definition skip comment')
+        self._add_task_comment(
+            task.id,
+            'OpenHands agent skipped this task because the task definition is too thin '
+            'to work from safely. Please add a clearer description or issue comment '
+            'describing the expected change.',
+            after_step='added task-definition skip comment',
+            failure_log_message='failed to add task definition comment for task %s',
+        )
 
     def _comment_task_started(self, task: Task) -> None:
-        try:
-            self._log_task_step(task.id, 'adding started comment')
-            self._task_data_access.add_comment(
-                task.id,
-                self._task_started_comment(task),
-            )
-            self._log_task_step(task.id, 'added started comment')
-        except Exception:
-            self.logger.exception('failed to add started comment for task %s', task.id)
+        self._log_task_step(task.id, 'adding started comment')
+        self._add_task_comment(
+            task.id,
+            self._task_started_comment(task),
+            after_step='added started comment',
+            failure_log_message='failed to add started comment for task %s',
+        )
+
+    def _comment_review_fix_completed(
+        self,
+        comment: ReviewComment,
+        repository_id: str,
+    ) -> None:
+        task_id = self._task_id_for_pull_request(comment.pull_request_id, repository_id)
+        if not task_id:
+            return
+        self._add_task_comment(
+            task_id,
+            self._review_comment_fixed_comment(comment),
+            failure_log_message=(
+                'failed to add review-fix comment for task %s after pull request '
+                f'{comment.pull_request_id} comment {comment.comment_id}'
+            ),
+        )
 
     def _move_task_to_in_progress(self, task_id: str, strict: bool = False) -> bool:
         try:
@@ -663,7 +659,11 @@ class AgentService(Service):
     @staticmethod
     def _task_started_comment(task: Task) -> str:
         repositories = getattr(task, 'repositories', []) or []
-        repository_ids = [str(repository.id).strip() for repository in repositories if str(repository.id).strip()]
+        repository_ids = [
+            str(repository.id).strip()
+            for repository in repositories
+            if str(repository.id).strip()
+        ]
         if not repository_ids:
             return 'OpenHands agent started working on this task.'
         if len(repository_ids) == 1:
@@ -737,17 +737,68 @@ class AgentService(Service):
         session_id = str(payload.get(ImplementationFields.SESSION_ID, '') or '').strip()
         return f' (session {session_id})' if session_id else ''
 
+    @staticmethod
+    def _skip_task_result(
+        task_id: str,
+        pull_requests: list[dict[str, str]] | None = None,
+    ) -> dict[str, object]:
+        return {
+            Task.id.key: task_id,
+            StatusFields.STATUS: StatusFields.SKIPPED,
+            PullRequestFields.PULL_REQUESTS: pull_requests or [],
+            PullRequestFields.FAILED_REPOSITORIES: [],
+        }
+
+    @staticmethod
+    def _blocking_comment_kind(blocking_comment: str) -> str:
+        if TicketClientBase.is_completion_comment(blocking_comment):
+            return 'completion'
+        return 'failure'
+
+    def _attach_task_repository_context(
+        self,
+        task: Task,
+        repositories: list[object],
+    ) -> dict[str, str]:
+        repository_branches = {
+            repository.id: self._repository_service.build_branch_name(task, repository)
+            for repository in repositories
+        }
+        task.branch_name = next(iter(repository_branches.values()), '')
+        setattr(task, 'repositories', repositories)
+        setattr(task, 'repository_branches', repository_branches)
+        return repository_branches
+
+    def _add_task_comment(
+        self,
+        task_id: str,
+        comment: str,
+        *,
+        after_step: str = '',
+        failure_log_message: str,
+    ) -> bool:
+        try:
+            self._task_data_access.add_comment(task_id, comment)
+            if after_step:
+                self._log_task_step(task_id, after_step)
+            return True
+        except Exception:
+            self.logger.exception(failure_log_message, task_id)
+            return False
+
     def _is_task_processed(self, task_id: str) -> bool:
         if str(task_id) in self._processed_task_map:
             return True
         if self._state_data_access is None:
             return False
+        if not hasattr(self._state_data_access, 'is_task_processed'):
+            return False
         return self._state_data_access.is_task_processed(task_id)
 
     @staticmethod
-    def _active_retry_blocking_comment(task: Task) -> str:
+    def _active_execution_blocking_comment(task: Task) -> str:
         comments = getattr(task, TaskCommentFields.ALL_COMMENTS, [])
-        return TicketClientBase.active_retry_blocking_comment(comments)
+        return TicketClientBase.active_execution_blocking_comment(comments)
 
     def _processed_task_pull_requests(self, task_id: str) -> list[dict[str, str]]:
         if str(task_id) in self._processed_task_map:
@@ -756,6 +807,8 @@ class AgentService(Service):
             if isinstance(pull_requests, list):
                 return pull_requests
         if self._state_data_access is None:
+            return []
+        if not hasattr(self._state_data_access, 'get_processed_task'):
             return []
         processed_task = self._state_data_access.get_processed_task(task_id)
         pull_requests = processed_task.get(PullRequestFields.PULL_REQUESTS, [])
@@ -922,3 +975,39 @@ class AgentService(Service):
                 'Failed repositories: ' + ', '.join(failed_repositories)
             )
         return '\n'.join(lines)
+
+    def _task_id_for_pull_request(
+        self,
+        pull_request_id: str,
+        repository_id: str,
+    ) -> str:
+        try:
+            for task in self._task_data_access.get_review_tasks():
+                for pull_request in self._processed_task_pull_requests(task.id):
+                    if not isinstance(pull_request, dict):
+                        continue
+                    tracked_pull_request_id = str(
+                        pull_request.get(PullRequestFields.ID, '') or ''
+                    ).strip()
+                    tracked_repository_id = str(
+                        pull_request.get(PullRequestFields.REPOSITORY_ID, '') or ''
+                    ).strip()
+                    if (
+                        tracked_pull_request_id == str(pull_request_id).strip()
+                        and tracked_repository_id == str(repository_id).strip()
+                    ):
+                        return str(task.id)
+        except Exception:
+            self.logger.exception(
+                'failed to look up task for pull request %s in repository %s',
+                pull_request_id,
+                repository_id,
+            )
+        return ''
+
+    @staticmethod
+    def _review_comment_fixed_comment(comment: ReviewComment) -> str:
+        return (
+            'OpenHands addressed review comment '
+            f'{comment.comment_id} on pull request {comment.pull_request_id}.'
+        )

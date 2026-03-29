@@ -36,7 +36,7 @@ openhands_agent:
   retry:
     max_retries: ${oc.decode:${oc.env:OPENHANDS_AGENT_MAX_RETRIES,"3"}}
   state:
-    file_path: ${oc.env:OPENHANDS_AGENT_STATE_FILE,"openhands_agent_state.json"}
+    file_path: ${oc.env:OPENHANDS_AGENT_STATE_FILE,"data/openhands_agent_state.json"}
   failure_email:
     enabled: ${oc.decode:${oc.env:OPENHANDS_AGENT_FAILURE_EMAIL_ENABLED,"false"}}
     template_id: ${oc.env:OPENHANDS_AGENT_FAILURE_EMAIL_TEMPLATE_ID,0}

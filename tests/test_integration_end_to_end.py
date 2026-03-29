@@ -29,8 +29,52 @@ from openhands_agent.fields import (
     PullRequestFields,
     ReviewCommentFields,
     StatusFields,
+    TaskCommentFields,
 )
-from utils import build_task
+from utils import build_review_comment, build_task, build_test_cfg
+
+
+class InMemoryTicketClient:
+    provider_name = 'youtrack'
+
+    def __init__(self, task_id: str, summary: str, description: str, initial_state: str) -> None:
+        self._task_id = task_id
+        self._summary = summary
+        self._description = description
+        self._state = initial_state
+        self._comments: list[dict[str, str]] = []
+        self.state_transitions: list[tuple[str, str, str]] = []
+
+    @property
+    def comments(self) -> list[dict[str, str]]:
+        return list(self._comments)
+
+    def validate_connection(self, project: str, assignee: str, states: list[str]) -> None:
+        return None
+
+    def get_assigned_tasks(self, project: str, assignee: str, states: list[str]):
+        if self._state not in states:
+            return []
+        return [
+            build_task(
+                task_id=self._task_id,
+                summary=self._summary,
+                description=self._description,
+                comments=self.comments,
+            )
+        ]
+
+    def add_comment(self, issue_id: str, comment: str) -> None:
+        self._comments.append(
+            {
+                TaskCommentFields.AUTHOR: 'openhands-agent',
+                TaskCommentFields.BODY: comment,
+            }
+        )
+
+    def move_issue_to_state(self, issue_id: str, field_name: str, state_name: str) -> None:
+        self.state_transitions.append((issue_id, field_name, state_name))
+        self._state = state_name
 
 
 class TestAgentEndToEndIntegration(unittest.TestCase):
@@ -50,6 +94,146 @@ class TestAgentEndToEndIntegration(unittest.TestCase):
         self.mock_repository_service.prepare_task_repositories.side_effect = (
             lambda repositories: repositories
         )
+
+    def test_full_task_and_review_comment_flow_does_not_repeat_processed_review_comment(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cfg = build_test_cfg()
+            cfg.openhands_agent.youtrack.issue_states = ['Open']
+            ticket_client = InMemoryTicketClient(
+                task_id='PROJ-1',
+                summary='Fix checkout flow in test-repo',
+                description='Update test-repo checkout flow and add regression coverage.',
+                initial_state='Open',
+            )
+            task_data_access = TaskDataAccess(cfg.openhands_agent.youtrack, ticket_client)
+            state_data_access = AgentStateDataAccess(str(Path(tmp_dir) / 'state.json'))
+            state_data_access.validate()
+
+            repository = types.SimpleNamespace(
+                id='test-repo',
+                display_name='Test Repository',
+                local_path='/tmp/test-repo',
+                destination_branch='main',
+            )
+            review_comment = build_review_comment(
+                pull_request_id='17',
+                comment_id='99',
+                author='reviewer',
+                body='Please rename this variable.',
+                resolution_target_id='thread-99',
+                resolution_target_type='thread',
+                resolvable=True,
+            )
+
+            openhands_client = types.SimpleNamespace(
+                validate_connection=Mock(),
+                implement_task=Mock(
+                    return_value={
+                        ImplementationFields.SUCCESS: True,
+                        ImplementationFields.SESSION_ID: 'conversation-1',
+                        ImplementationFields.COMMIT_MESSAGE: 'Implement PROJ-1',
+                        Task.summary.key: 'Implemented checkout flow',
+                    }
+                ),
+                test_task=Mock(
+                    return_value={
+                        ImplementationFields.SUCCESS: True,
+                        ImplementationFields.COMMIT_MESSAGE: 'Finalize PROJ-1',
+                        Task.summary.key: 'Testing passed',
+                    }
+                ),
+                fix_review_comment=Mock(
+                    return_value={
+                        ImplementationFields.SUCCESS: True,
+                        ImplementationFields.COMMIT_MESSAGE: 'Address review comments',
+                    }
+                ),
+            )
+            repository_service = Mock(spec=RepositoryService)
+            repository_service.resolve_task_repositories.return_value = [repository]
+            repository_service.prepare_task_repositories.side_effect = lambda repositories: repositories
+            repository_service.build_branch_name.return_value = 'PROJ-1'
+            repository_service.create_pull_request.return_value = {
+                PullRequestFields.REPOSITORY_ID: 'test-repo',
+                PullRequestFields.ID: '17',
+                PullRequestFields.TITLE: 'PROJ-1: Fix checkout flow in test-repo',
+                PullRequestFields.URL: 'https://example.com/pr/17',
+                PullRequestFields.SOURCE_BRANCH: 'PROJ-1',
+                PullRequestFields.DESTINATION_BRANCH: 'main',
+            }
+            repository_service.get_repository.return_value = repository
+            repository_service.list_pull_request_comments.return_value = [review_comment]
+            repository_service.publish_review_fix = Mock()
+            repository_service.resolve_review_comment = Mock()
+
+            notification_service = Mock(spec=NotificationService)
+            agent_service = AgentService(
+                task_data_access=task_data_access,
+                implementation_service=ImplementationService(openhands_client),
+                testing_service=TestingService(openhands_client),
+                repository_service=repository_service,
+                notification_service=notification_service,
+                state_data_access=state_data_access,
+            )
+
+            open_tasks = task_data_access.get_assigned_tasks()
+            self.assertEqual(len(open_tasks), 1)
+
+            task_result = agent_service.process_assigned_task(open_tasks[0])
+
+            self.assertEqual(task_result[StatusFields.STATUS], StatusFields.READY_FOR_REVIEW)
+            self.assertEqual(
+                ticket_client.state_transitions,
+                [
+                    ('PROJ-1', 'State', 'In Progress'),
+                    ('PROJ-1', 'State', 'To Verify'),
+                ],
+            )
+            self.assertEqual(len(ticket_client.comments), 2)
+            self.assertIn(
+                'OpenHands agent started working on this task in repository test-repo.',
+                ticket_client.comments[0][TaskCommentFields.BODY],
+            )
+            self.assertIn(
+                'OpenHands completed task PROJ-1: Fix checkout flow in test-repo.',
+                ticket_client.comments[1][TaskCommentFields.BODY],
+            )
+            self.assertTrue(state_data_access.is_task_processed('PROJ-1'))
+
+            new_comments = agent_service.get_new_pull_request_comments()
+
+            self.assertEqual(len(new_comments), 1)
+            self.assertEqual(new_comments[0].comment_id, '99')
+            self.assertEqual(
+                getattr(new_comments[0], PullRequestFields.REPOSITORY_ID),
+                'test-repo',
+            )
+
+            review_result = agent_service.process_review_comment(new_comments[0])
+
+            self.assertEqual(review_result[StatusFields.STATUS], StatusFields.UPDATED)
+            repository_service.publish_review_fix.assert_called_once_with(
+                repository,
+                'PROJ-1',
+                'Address review comments',
+            )
+            repository_service.resolve_review_comment.assert_called_once_with(
+                repository,
+                new_comments[0],
+            )
+            self.assertTrue(
+                state_data_access.is_review_comment_processed('test-repo', '17', '99')
+            )
+            self.assertEqual(len(ticket_client.comments), 3)
+            self.assertEqual(
+                ticket_client.comments[2][TaskCommentFields.BODY],
+                'OpenHands addressed review comment 99 on pull request 17.',
+            )
+
+            repeated_comments = agent_service.get_new_pull_request_comments()
+
+            self.assertEqual(repeated_comments, [])
+            self.assertEqual(repository_service.list_pull_request_comments.call_count, 2)
         
     def test_complete_workflow_with_valid_task(self):
         """Test complete workflow from task ingestion to PR creation."""

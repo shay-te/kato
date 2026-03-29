@@ -104,12 +104,38 @@ class TaskDataAccess(DataAccess):
         self._client.move_issue_to_state(issue_id, field_name, state_name)
 
     def _configured_issue_states(self) -> list[str]:
+        configured_states = self._raw_configured_issue_states()
+        filtered_states = self._exclude_non_queue_states(configured_states)
+        return filtered_states or configured_states
+
+    def _raw_configured_issue_states(self) -> list[str]:
         if hasattr(self._config, 'issue_states'):
             issue_states = self._config.issue_states
             if isinstance(issue_states, str):
                 return [state.strip() for state in issue_states.split(',') if state.strip()]
             return [str(state).strip() for state in issue_states if str(state).strip()]
         return [self._config.issue_state]
+
+    def _exclude_non_queue_states(self, states: list[str]) -> list[str]:
+        non_queue_tokens = {
+            self._normalized_state_token(self._configured_progress_state()),
+            self._normalized_state_token(self._configured_review_state()),
+        }
+        filtered_states: list[str] = []
+        seen_tokens: set[str] = set()
+        for state in states:
+            normalized_state = self._normalized_state_token(state)
+            if not normalized_state or normalized_state in non_queue_tokens:
+                continue
+            if normalized_state in seen_tokens:
+                continue
+            seen_tokens.add(normalized_state)
+            filtered_states.append(state)
+        return filtered_states
+
+    @staticmethod
+    def _normalized_state_token(value: str) -> str:
+        return ''.join(character for character in str(value or '').lower() if character.isalnum())
 
     def _configured_progress_state_field(self) -> str:
         return getattr(

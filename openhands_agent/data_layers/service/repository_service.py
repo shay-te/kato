@@ -37,9 +37,7 @@ class RepositoryService(Service):
         self._validate_inventory()
         self._validate_git_executable()
         for repository in self._repositories:
-            self._validate_local_path(repository)
-            self._validate_git_remote_auth(repository)
-            self._prepare_pull_request_api(repository)
+            self._prepare_repository_access(repository)
 
     def resolve_task_repositories(self, task: Task) -> list[object]:
         searchable_text = f'{task.summary}\n{task.description}'.lower()
@@ -54,18 +52,10 @@ class RepositoryService(Service):
 
     def prepare_task_repositories(self, repositories: list[object]) -> list[object]:
         self._validate_git_executable()
-        prepared_repositories: list[object] = []
-        for repository in repositories:
-            self._validate_local_path(repository)
-            self._validate_git_remote_auth(repository)
-            self._prepare_pull_request_api(repository)
-            setattr(repository, 'destination_branch', self.destination_branch(repository))
-            self._prepare_workspace_for_task(
-                repository.local_path,
-                repository.destination_branch,
-            )
-            prepared_repositories.append(repository)
-        return prepared_repositories
+        return [
+            self._prepare_task_repository(repository)
+            for repository in repositories
+        ]
 
     def get_repository(self, repository_id: str):
         for repository in self._repositories:
@@ -340,6 +330,20 @@ class RepositoryService(Service):
         normalized = str(remote_url or '').strip().lower()
         return normalized.startswith('ssh://') or bool(re.match(r'^[^@]+@[^:]+:.+', normalized))
 
+    def _prepare_repository_access(self, repository) -> None:
+        self._validate_local_path(repository)
+        self._validate_git_remote_auth(repository)
+        self._prepare_pull_request_api(repository)
+
+    def _prepare_task_repository(self, repository):
+        self._prepare_repository_access(repository)
+        setattr(repository, 'destination_branch', self.destination_branch(repository))
+        self._prepare_workspace_for_task(
+            repository.local_path,
+            repository.destination_branch,
+        )
+        return repository
+
     def _prepare_pull_request_api(self, repository) -> None:
         provider = str(getattr(repository, 'provider', '') or '').strip().lower()
         provider_base_url = str(
@@ -481,12 +485,33 @@ class RepositoryService(Service):
         destination_branch: str,
     ) -> None:
         current_branch = self._current_branch(local_path)
+        self._ensure_clean_worktree(local_path, current_branch)
+        current_branch = self._ensure_destination_branch_checked_out(
+            local_path,
+            destination_branch,
+            current_branch,
+        )
+        self._validate_destination_branch_tracking_state(local_path, destination_branch)
+        self._pull_destination_branch(local_path, destination_branch)
+        current_branch = self._current_branch(local_path)
+        self._assert_current_branch(local_path, destination_branch, current_branch)
+        self._ensure_clean_worktree(local_path, current_branch)
+
+    def _ensure_clean_worktree(self, local_path: str, current_branch: str = '') -> None:
         status_output = self._working_tree_status(local_path)
-        if status_output:
-            raise RuntimeError(
-                f'repository at {local_path} has uncommitted changes on branch '
-                f'{current_branch or "<unknown>"}; refusing to start a new task'
-            )
+        if not status_output:
+            return
+        raise RuntimeError(
+            f'repository at {local_path} has uncommitted changes on branch '
+            f'{current_branch or "<unknown>"}; refusing to start a new task'
+        )
+
+    def _ensure_destination_branch_checked_out(
+        self,
+        local_path: str,
+        destination_branch: str,
+        current_branch: str,
+    ) -> str:
         if current_branch and current_branch != destination_branch:
             self._run_git(
                 local_path,
@@ -494,12 +519,21 @@ class RepositoryService(Service):
                 f'failed to switch repository at {local_path} to {destination_branch}',
             )
             current_branch = self._current_branch(local_path)
-        if current_branch != destination_branch:
-            raise RuntimeError(
-                f'repository at {local_path} is on branch '
-                f'{current_branch or "<unknown>"} instead of {destination_branch}'
-            )
-        self._validate_destination_branch_tracking_state(local_path, destination_branch)
+        self._assert_current_branch(local_path, destination_branch, current_branch)
+        return current_branch
+
+    @staticmethod
+    def _assert_current_branch(
+        local_path: str,
+        destination_branch: str,
+        current_branch: str,
+    ) -> None:
+        if current_branch == destination_branch:
+            return
+        raise RuntimeError(
+            f'repository at {local_path} is on branch '
+            f'{current_branch or "<unknown>"} instead of {destination_branch}'
+        )
 
     def _validate_destination_branch_tracking_state(
         self,
@@ -601,6 +635,13 @@ class RepositoryService(Service):
             local_path,
             ['push', '-u', 'origin', branch_name],
             f'failed to push branch {branch_name}',
+        )
+
+    def _pull_destination_branch(self, local_path: str, destination_branch: str) -> None:
+        self._run_git(
+            local_path,
+            ['pull', '--ff-only', 'origin', destination_branch],
+            f'failed to pull latest {destination_branch} for repository at {local_path}',
         )
 
     def _review_url(self, repository, source_branch: str, destination_branch: str) -> str:
