@@ -153,6 +153,8 @@ class RepositoryServiceTests(unittest.TestCase):
             'openhands_agent.data_layers.service.repository_service.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
+            'openhands_agent.data_layers.service.repository_service.RepositoryService._validate_destination_branch_tracking_state',
+        ), patch(
             'openhands_agent.data_layers.service.repository_service.subprocess.run',
             side_effect=[
                 Mock(returncode=0, stdout='refs/remotes/origin/master\n', stderr=''),
@@ -173,6 +175,8 @@ class RepositoryServiceTests(unittest.TestCase):
         ), patch(
             'openhands_agent.data_layers.service.repository_service.os.path.isdir',
             return_value=True,
+        ), patch(
+            'openhands_agent.data_layers.service.repository_service.RepositoryService._validate_destination_branch_tracking_state',
         ), patch(
             'openhands_agent.data_layers.service.repository_service.subprocess.run',
             side_effect=[
@@ -242,6 +246,53 @@ class RepositoryServiceTests(unittest.TestCase):
             ):
                 service.prepare_task_repositories([self.backend_repo])
 
+    def test_prepare_task_repositories_rejects_destination_branch_with_local_only_commits(self) -> None:
+        service = RepositoryService(self.cfg.openhands_agent.repositories, 3)
+
+        with patch(
+            'openhands_agent.data_layers.service.repository_service.shutil.which',
+            return_value='/usr/bin/git',
+        ), patch(
+            'openhands_agent.data_layers.service.repository_service.os.path.isdir',
+            return_value=True,
+        ), patch(
+            'openhands_agent.data_layers.service.repository_service.subprocess.run',
+            side_effect=[
+                Mock(returncode=0, stdout='main\n', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),
+                Mock(returncode=0, stdout='2 0\n', stderr=''),
+            ],
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                'destination branch main at \\. has 2 local commit\\(s\\) not on origin/main; '
+                'refusing to start a new task',
+            ):
+                service.prepare_task_repositories([self.backend_repo])
+
+    def test_prepare_task_repositories_allows_destination_branch_behind_remote(self) -> None:
+        service = RepositoryService(self.cfg.openhands_agent.repositories, 3)
+
+        with patch(
+            'openhands_agent.data_layers.service.repository_service.shutil.which',
+            return_value='/usr/bin/git',
+        ), patch(
+            'openhands_agent.data_layers.service.repository_service.os.path.isdir',
+            return_value=True,
+        ), patch(
+            'openhands_agent.data_layers.service.repository_service.subprocess.run',
+            side_effect=[
+                Mock(returncode=0, stdout='main\n', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),
+                Mock(returncode=0, stdout='0 3\n', stderr=''),
+            ],
+        ):
+            prepared_repositories = service.prepare_task_repositories([self.backend_repo])
+
+        self.assertEqual(prepared_repositories[0].destination_branch, 'main')
+
     def test_prepare_task_repositories_enriches_discovered_repository_with_provider_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             projects_root = Path(temp_dir)
@@ -267,6 +318,8 @@ class RepositoryServiceTests(unittest.TestCase):
             with patch(
                 'openhands_agent.data_layers.service.repository_service.shutil.which',
                 return_value='/usr/bin/git',
+            ), patch(
+                'openhands_agent.data_layers.service.repository_service.RepositoryService._validate_destination_branch_tracking_state',
             ), patch(
                 'openhands_agent.data_layers.service.repository_service.subprocess.run',
                 side_effect=[
@@ -532,6 +585,8 @@ class RepositoryServiceTests(unittest.TestCase):
             'openhands_agent.data_layers.service.repository_service.os.path.isdir',
             return_value=True,
         ), patch(
+            'openhands_agent.data_layers.service.repository_service.RepositoryService._validate_destination_branch_tracking_state',
+        ), patch(
             'openhands_agent.data_layers.service.repository_service.RepositoryService._push_branch',
         ) as mock_push_branch, patch(
             'openhands_agent.data_layers.service.repository_service.RepositoryService._pull_request_data_access',
@@ -585,6 +640,8 @@ class RepositoryServiceTests(unittest.TestCase):
         ), patch(
             'openhands_agent.data_layers.service.repository_service.os.path.isdir',
             return_value=True,
+        ), patch(
+            'openhands_agent.data_layers.service.repository_service.RepositoryService._validate_destination_branch_tracking_state',
         ), patch(
             'openhands_agent.data_layers.service.repository_service.subprocess.run',
             side_effect=subprocess_results,

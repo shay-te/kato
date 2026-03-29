@@ -60,6 +60,12 @@ class TaskDataAccess(DataAccess):
             states=states or self._configured_issue_states(),
         )
 
+    def get_review_tasks(self, assignee: str | None = None) -> list[Task]:
+        return self.get_assigned_tasks(
+            assignee=assignee,
+            states=[self._configured_review_state()],
+        )
+
     def add_comment(self, issue_id: str, comment: str) -> None:
         pull_request_comment_rule_validator.validate_dict(
             {

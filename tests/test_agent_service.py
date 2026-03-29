@@ -909,6 +909,16 @@ class AgentServiceTests(unittest.TestCase):
 
     def test_get_new_pull_request_comments_returns_unprocessed_comments_with_context(self) -> None:
         state_data_access = types.SimpleNamespace(
+            get_processed_task=Mock(
+                return_value={
+                    PullRequestFields.PULL_REQUESTS: [
+                        {
+                            PullRequestFields.ID: '17',
+                            PullRequestFields.REPOSITORY_ID: 'client',
+                        }
+                    ]
+                }
+            ),
             list_pull_request_contexts=Mock(
                 return_value=[
                     {
@@ -942,6 +952,7 @@ class AgentServiceTests(unittest.TestCase):
             self.notification_service,
             state_data_access=state_data_access,
         )
+        self.task_client.get_assigned_tasks.return_value = [build_task(task_id='PROJ-1')]
 
         comments = service.get_new_pull_request_comments()
 
@@ -963,3 +974,101 @@ class AgentServiceTests(unittest.TestCase):
                 },
             ],
         )
+        self.task_client.get_assigned_tasks.assert_called_once_with(
+            project='PROJ',
+            assignee='me',
+            states=['To Verify'],
+        )
+        self.repository_service.list_pull_request_comments.assert_called_once_with(
+            self.client_repo,
+            '17',
+        )
+
+    def test_get_new_pull_request_comments_only_polls_pull_requests_for_review_tasks(self) -> None:
+        state_data_access = types.SimpleNamespace(
+            get_processed_task=Mock(
+                side_effect=lambda task_id: {
+                    'PROJ-1': {
+                        PullRequestFields.PULL_REQUESTS: [
+                            {
+                                PullRequestFields.ID: '17',
+                                PullRequestFields.REPOSITORY_ID: 'client',
+                            }
+                        ]
+                    },
+                    'PROJ-2': {
+                        PullRequestFields.PULL_REQUESTS: [
+                            {
+                                PullRequestFields.ID: '18',
+                                PullRequestFields.REPOSITORY_ID: 'backend',
+                            }
+                        ]
+                    },
+                }.get(task_id, {})
+            ),
+            list_pull_request_contexts=Mock(
+                return_value=[
+                    {
+                        PullRequestFields.ID: '17',
+                        PullRequestFields.REPOSITORY_ID: 'client',
+                        'branch_name': 'feature/proj-1/client',
+                    },
+                    {
+                        PullRequestFields.ID: '18',
+                        PullRequestFields.REPOSITORY_ID: 'backend',
+                        'branch_name': 'feature/proj-2/backend',
+                    },
+                ]
+            ),
+            is_review_comment_processed=Mock(return_value=False),
+        )
+        self.task_client.get_assigned_tasks.return_value = [build_task(task_id='PROJ-1')]
+        self.repository_service.list_pull_request_comments.return_value = []
+        service = AgentService(
+            self.task_data_access,
+            self.implementation_service,
+            self.testing_service,
+            self.repository_service,
+            self.notification_service,
+            state_data_access=state_data_access,
+        )
+
+        comments = service.get_new_pull_request_comments()
+
+        self.assertEqual(comments, [])
+        self.repository_service.get_repository.assert_called_once_with('client')
+        self.repository_service.list_pull_request_comments.assert_called_once_with(
+            self.client_repo,
+            '17',
+        )
+
+    def test_get_new_pull_request_comments_uses_in_memory_processed_tasks_without_state_storage(self) -> None:
+        self.service._pull_request_context_map['17'] = [
+            {
+                PullRequestFields.REPOSITORY_ID: 'client',
+                'branch_name': 'feature/proj-1/client',
+            }
+        ]
+        self.service._mark_task_processed(
+            'PROJ-1',
+            [
+                {
+                    PullRequestFields.ID: '17',
+                    PullRequestFields.REPOSITORY_ID: 'client',
+                }
+            ],
+        )
+        self.task_client.get_assigned_tasks.return_value = [build_task(task_id='PROJ-1')]
+        self.repository_service.list_pull_request_comments.return_value = [
+            ReviewComment(
+                pull_request_id='17',
+                comment_id='98',
+                author='reviewer',
+                body='Please add a test.',
+            )
+        ]
+
+        comments = self.service.get_new_pull_request_comments()
+
+        self.assertEqual(len(comments), 1)
+        self.assertEqual(comments[0].comment_id, '98')

@@ -42,6 +42,7 @@ class AgentService(Service):
         self._notification_service = notification_service
         self._state_data_access = state_data_access
         self._pull_request_context_map: dict[str, list[dict[str, str]]] = {}
+        self._processed_task_map: dict[str, dict[str, object]] = {}
         if self._state_data_access is None:
             self.logger.warning(
                 'state_data_access is not configured; processed tasks and pull request comment '
@@ -278,10 +279,19 @@ class AgentService(Service):
 
     def get_new_pull_request_comments(self) -> list[ReviewComment]:
         new_comments: list[ReviewComment] = []
+        try:
+            review_pull_request_keys = self._review_pull_request_keys()
+        except Exception:
+            self.logger.exception('failed to determine review-state pull requests to poll')
+            return new_comments
+        if not review_pull_request_keys:
+            return new_comments
 
         for context in self._tracked_pull_request_contexts():
             repository_id = context[PullRequestFields.REPOSITORY_ID]
             pull_request_id = context[PullRequestFields.ID]
+            if (pull_request_id, repository_id) not in review_pull_request_keys:
+                continue
             try:
                 repository = self._repository_service.get_repository(repository_id)
                 comments = self._repository_service.list_pull_request_comments(
@@ -692,6 +702,8 @@ class AgentService(Service):
         return f' (session {session_id})' if session_id else ''
 
     def _is_task_processed(self, task_id: str) -> bool:
+        if str(task_id) in self._processed_task_map:
+            return True
         if self._state_data_access is None:
             return False
         return self._state_data_access.is_task_processed(task_id)
@@ -702,6 +714,11 @@ class AgentService(Service):
         return TicketClientBase.active_retry_blocking_comment(comments)
 
     def _processed_task_pull_requests(self, task_id: str) -> list[dict[str, str]]:
+        if str(task_id) in self._processed_task_map:
+            in_memory_task = self._processed_task_map[str(task_id)]
+            pull_requests = in_memory_task.get(PullRequestFields.PULL_REQUESTS, [])
+            if isinstance(pull_requests, list):
+                return pull_requests
         if self._state_data_access is None:
             return []
         processed_task = self._state_data_access.get_processed_task(task_id)
@@ -709,12 +726,34 @@ class AgentService(Service):
         return pull_requests if isinstance(pull_requests, list) else []
 
     def _mark_task_processed(self, task_id: str, pull_requests: list[dict[str, str]]) -> None:
+        self._processed_task_map[str(task_id)] = {
+            StatusFields.STATUS: StatusFields.READY_FOR_REVIEW,
+            PullRequestFields.PULL_REQUESTS: [
+                dict(pull_request)
+                for pull_request in pull_requests
+                if isinstance(pull_request, dict)
+            ],
+        }
         if self._state_data_access is None:
             return
         try:
             self._state_data_access.mark_task_processed(task_id, pull_requests)
         except Exception:
             self.logger.exception('failed to persist processed task state for task %s', task_id)
+
+    def _review_pull_request_keys(self) -> set[tuple[str, str]]:
+        review_pull_request_keys: set[tuple[str, str]] = set()
+        for task in self._task_data_access.get_review_tasks():
+            for pull_request in self._processed_task_pull_requests(task.id):
+                if not isinstance(pull_request, dict):
+                    continue
+                pull_request_id = str(pull_request.get(PullRequestFields.ID, '') or '').strip()
+                repository_id = str(
+                    pull_request.get(PullRequestFields.REPOSITORY_ID, '') or ''
+                ).strip()
+                if pull_request_id and repository_id:
+                    review_pull_request_keys.add((pull_request_id, repository_id))
+        return review_pull_request_keys
 
     def _load_persisted_pull_request_contexts(
         self,

@@ -444,6 +444,27 @@ class RepositoryService(Service):
                 f'repository at {local_path} is on branch '
                 f'{current_branch or "<unknown>"} instead of {destination_branch}'
             )
+        self._validate_destination_branch_tracking_state(local_path, destination_branch)
+
+    def _validate_destination_branch_tracking_state(
+        self,
+        local_path: str,
+        destination_branch: str,
+    ) -> None:
+        remote_reference = f'origin/{destination_branch}'
+        if not self._git_reference_exists(local_path, remote_reference):
+            return
+        ahead_count, _ = self._left_right_commit_counts(
+            local_path,
+            destination_branch,
+            remote_reference,
+        )
+        if ahead_count > 0:
+            raise RuntimeError(
+                f'destination branch {destination_branch} at {local_path} has '
+                f'{ahead_count} local commit(s) not on {remote_reference}; '
+                'refusing to start a new task'
+            )
 
     def _comparison_reference(self, local_path: str, destination_branch: str) -> str:
         for reference in (destination_branch, f'origin/{destination_branch}'):
@@ -475,6 +496,31 @@ class RepositoryService(Service):
             check=False,
         )
         return result.returncode == 0
+
+    def _left_right_commit_counts(
+        self,
+        local_path: str,
+        left_reference: str,
+        right_reference: str,
+    ) -> tuple[int, int]:
+        counts_text = self._git_stdout(
+            local_path,
+            ['rev-list', '--left-right', '--count', f'{left_reference}...{right_reference}'],
+            f'failed to compare {left_reference} against {right_reference}',
+        )
+        parts = counts_text.split()
+        if len(parts) != 2:
+            raise RuntimeError(
+                f'failed to parse commit counts for {left_reference}...{right_reference}: '
+                f'{counts_text or "<empty>"}'
+            )
+        try:
+            return int(parts[0]), int(parts[1])
+        except ValueError as exc:
+            raise RuntimeError(
+                f'failed to parse commit counts for {left_reference}...{right_reference}: '
+                f'{counts_text or "<empty>"}'
+            ) from exc
 
     def _git_stdout(self, local_path: str, args: list[str], failure_message: str) -> str:
         result = self._run_git(local_path, args, failure_message)

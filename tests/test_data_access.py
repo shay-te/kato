@@ -57,6 +57,27 @@ class TaskDataAccessTests(unittest.TestCase):
             ],
         )
 
+    def test_get_review_tasks_uses_review_state_only(self) -> None:
+        config = types.SimpleNamespace(
+            base_url="https://youtrack.example",
+            token="yt-token",
+            project="PROJ",
+            assignee="me",
+            review_state='To Verify',
+            review_state_field='State',
+            issue_states=["Todo", "Open"],
+        )
+        client = Mock()
+
+        data_access = TaskDataAccess(config, client)
+        data_access.get_review_tasks()
+
+        client.get_assigned_tasks.assert_called_once_with(
+            project='PROJ',
+            assignee='me',
+            states=['To Verify'],
+        )
+
     def test_validates_runtime_values(self) -> None:
         config = types.SimpleNamespace(
             base_url="https://youtrack.example",
