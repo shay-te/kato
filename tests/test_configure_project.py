@@ -67,7 +67,7 @@ class ConfigureProjectTests(unittest.TestCase):
         self.assertEqual(values['REPOSITORY_ROOT_PATH'], str(Path('./client').resolve()))
         self.assertNotIn('OPENHANDS_SANDBOX_VOLUMES', values)
         self.assertEqual(values['OPENHANDS_LLM_API_KEY'], 'llm-key')
-        self.assertEqual(validate_agent_env(values), [])
+        self.assertEqual(self._validate_agent_env(values), [])
         self.assertEqual(validate_openhands_env(values), [])
 
     def test_build_configuration_values_for_jira_and_bedrock(self) -> None:
@@ -110,7 +110,7 @@ class ConfigureProjectTests(unittest.TestCase):
         self.assertEqual(values['AWS_BEARER_TOKEN_BEDROCK'], 'bedrock-token')
         self.assertEqual(values['OPENHANDS_LLM_API_KEY'], '')
         self.assertEqual(values['OPENHANDS_AGENT_FAILURE_EMAIL_ENABLED'], 'true')
-        self.assertEqual(validate_agent_env(values), [])
+        self.assertEqual(self._validate_agent_env(values), [])
         self.assertEqual(validate_openhands_env(values), [])
 
     def test_prompt_repository_discovers_checked_out_repositories(self) -> None:
@@ -221,6 +221,11 @@ class ConfigureProjectTests(unittest.TestCase):
             "OPENHANDS_AGENT_COMPLETION_EMAIL_SENDER_NAME='OpenHands Agent'",
             rendered,
         )
+
+    @staticmethod
+    def _validate_agent_env(values: dict[str, str]) -> list[str]:
+        with patch('openhands_agent.validate_env.discover_git_repositories', return_value=[]):
+            return validate_agent_env(values)
 
     def test_main_writes_env_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

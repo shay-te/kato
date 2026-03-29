@@ -5,8 +5,18 @@ import logging
 import os
 from pathlib import Path
 
+from openhands_agent.repository_discovery import discover_git_repositories
+
 
 TRUE_VALUES = {'1', 'true', 'yes', 'on'}
+GITHUB_TOKEN_KEYS = ('GITHUB_API_TOKEN',)
+GITLAB_TOKEN_KEYS = ('GITLAB_API_TOKEN',)
+BITBUCKET_TOKEN_KEYS = ('BITBUCKET_API_TOKEN',)
+PROVIDER_TOKEN_ENV_KEYS = {
+    'github': GITHUB_TOKEN_KEYS,
+    'gitlab': GITLAB_TOKEN_KEYS,
+    'bitbucket': BITBUCKET_TOKEN_KEYS,
+}
 logger = logging.getLogger(__name__)
 
 
@@ -42,6 +52,10 @@ def _missing(env: dict[str, str], keys: list[str]) -> list[str]:
     return [key for key in keys if not str(env.get(key, '')).strip()]
 
 
+def _has_any(env: dict[str, str], keys: tuple[str, ...] | list[str]) -> bool:
+    return any(str(env.get(key, '')).strip() for key in keys)
+
+
 def validate_agent_env(env: dict[str, str]) -> list[str]:
     errors = []
     issue_platform = str(
@@ -54,6 +68,9 @@ def validate_agent_env(env: dict[str, str]) -> list[str]:
     required = _required_agent_keys(issue_platform)
     for key in _missing(env, required):
         errors.append(f'missing required agent env var: {key}')
+    provider_token_keys = PROVIDER_TOKEN_ENV_KEYS.get(issue_platform)
+    if provider_token_keys and not _has_any(env, provider_token_keys):
+        errors.append(f'missing required agent env var: {provider_token_keys[0]}')
 
     if _is_enabled(env.get('OPENHANDS_AGENT_FAILURE_EMAIL_ENABLED')):
         for key in _missing(
@@ -77,6 +94,8 @@ def validate_agent_env(env: dict[str, str]) -> list[str]:
         ):
             errors.append(f'completion email is enabled but {key} is missing')
 
+    errors.extend(_validate_repository_provider_env(env))
+
     return errors
 
 
@@ -97,7 +116,6 @@ def _required_agent_keys(issue_platform: str) -> list[str]:
     if issue_platform == 'github':
         return [
             'GITHUB_ISSUES_BASE_URL',
-            'GITHUB_ISSUES_TOKEN',
             'GITHUB_ISSUES_OWNER',
             'GITHUB_ISSUES_REPO',
             'GITHUB_ISSUES_ASSIGNEE',
@@ -106,7 +124,6 @@ def _required_agent_keys(issue_platform: str) -> list[str]:
     if issue_platform == 'gitlab':
         return [
             'GITLAB_ISSUES_BASE_URL',
-            'GITLAB_ISSUES_TOKEN',
             'GITLAB_ISSUES_PROJECT',
             'GITLAB_ISSUES_ASSIGNEE',
             *shared_required,
@@ -114,7 +131,6 @@ def _required_agent_keys(issue_platform: str) -> list[str]:
     if issue_platform == 'bitbucket':
         return [
             'BITBUCKET_ISSUES_BASE_URL',
-            'BITBUCKET_ISSUES_TOKEN',
             'BITBUCKET_ISSUES_WORKSPACE',
             'BITBUCKET_ISSUES_REPO_SLUG',
             'BITBUCKET_ISSUES_ASSIGNEE',
@@ -127,6 +143,25 @@ def _required_agent_keys(issue_platform: str) -> list[str]:
         'YOUTRACK_ASSIGNEE',
         *shared_required,
     ]
+
+
+def _validate_repository_provider_env(env: dict[str, str]) -> list[str]:
+    repository_root_path = str(env.get('REPOSITORY_ROOT_PATH', '')).strip()
+    if not repository_root_path or not Path(repository_root_path).exists():
+        return []
+
+    errors: list[str] = []
+    missing_keys: set[str] = set()
+    for repository in discover_git_repositories(repository_root_path):
+        provider = str(getattr(repository, 'provider', '') or '').strip().lower()
+        token_keys = PROVIDER_TOKEN_ENV_KEYS.get(provider, ())
+        if token_keys and not _has_any(env, token_keys):
+            missing_keys.add(token_keys[0])
+    for key in sorted(missing_keys):
+        errors.append(
+            f'missing required repository provider env var: {key}'
+        )
+    return errors
 
 
 def validate_openhands_env(env: dict[str, str]) -> list[str]:

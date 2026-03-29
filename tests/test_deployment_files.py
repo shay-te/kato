@@ -104,6 +104,9 @@ class DeploymentFilesTests(unittest.TestCase):
             'BITBUCKET_ISSUES_PROGRESS_STATE: ${BITBUCKET_ISSUES_PROGRESS_STATE:-open}',
             compose_text,
         )
+        self.assertIn('GITHUB_API_TOKEN: ${GITHUB_API_TOKEN:-}', compose_text)
+        self.assertIn('GITLAB_API_TOKEN: ${GITLAB_API_TOKEN:-}', compose_text)
+        self.assertIn('BITBUCKET_API_TOKEN: ${BITBUCKET_API_TOKEN:-}', compose_text)
         self.assertIn(
             'OPENHANDS_AGENT_COMPLETION_EMAIL_ENABLED: ${OPENHANDS_AGENT_COMPLETION_EMAIL_ENABLED:-false}',
             compose_text,
@@ -149,12 +152,15 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('JIRA_PROGRESS_STATE=', env_example_text)
         self.assertIn('JIRA_ISSUE_STATES=', env_example_text)
         self.assertIn('GITHUB_ISSUES_BASE_URL=', env_example_text)
+        self.assertIn('GITHUB_API_TOKEN=', env_example_text)
         self.assertIn('GITHUB_ISSUES_PROGRESS_STATE=', env_example_text)
         self.assertIn('GITHUB_ISSUES_ISSUE_STATES=', env_example_text)
         self.assertIn('GITLAB_ISSUES_BASE_URL=', env_example_text)
+        self.assertIn('GITLAB_API_TOKEN=', env_example_text)
         self.assertIn('GITLAB_ISSUES_PROGRESS_STATE=', env_example_text)
         self.assertIn('GITLAB_ISSUES_ISSUE_STATES=', env_example_text)
         self.assertIn('BITBUCKET_ISSUES_BASE_URL=', env_example_text)
+        self.assertIn('BITBUCKET_API_TOKEN=', env_example_text)
         self.assertIn('BITBUCKET_ISSUES_PROGRESS_STATE=', env_example_text)
         self.assertIn('BITBUCKET_ISSUES_ISSUE_STATES=', env_example_text)
         self.assertIn('OPENHANDS_BASE_URL=', env_example_text)

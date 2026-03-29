@@ -78,7 +78,7 @@ openhands_agent:
     issue_states: ${oc.env:JIRA_ISSUE_STATES,"To Do,Open"}
   github_issues:
     base_url: ${oc.env:GITHUB_ISSUES_BASE_URL,"https://api.github.com"}
-    token: ${oc.env:GITHUB_ISSUES_TOKEN,""}
+    token: ${oc.env:GITHUB_API_TOKEN,""}
     owner: ${oc.env:GITHUB_ISSUES_OWNER,""}
     repo: ${oc.env:GITHUB_ISSUES_REPO,""}
     project: ${oc.env:GITHUB_ISSUES_REPO,""}
@@ -90,7 +90,7 @@ openhands_agent:
     issue_states: ${oc.env:GITHUB_ISSUES_ISSUE_STATES,"open"}
   gitlab_issues:
     base_url: ${oc.env:GITLAB_ISSUES_BASE_URL,"https://gitlab.com/api/v4"}
-    token: ${oc.env:GITLAB_ISSUES_TOKEN,""}
+    token: ${oc.env:GITLAB_API_TOKEN,""}
     project: ${oc.env:GITLAB_ISSUES_PROJECT,""}
     assignee: ${oc.env:GITLAB_ISSUES_ASSIGNEE,""}
     progress_state_field: ${oc.env:GITLAB_ISSUES_PROGRESS_STATE_FIELD,"labels"}
@@ -100,7 +100,7 @@ openhands_agent:
     issue_states: ${oc.env:GITLAB_ISSUES_ISSUE_STATES,"opened"}
   bitbucket_issues:
     base_url: ${oc.env:BITBUCKET_ISSUES_BASE_URL,"https://api.bitbucket.org/2.0"}
-    token: ${oc.env:BITBUCKET_ISSUES_TOKEN,""}
+    token: ${oc.env:BITBUCKET_API_TOKEN,""}
     workspace: ${oc.env:BITBUCKET_ISSUES_WORKSPACE,""}
     repo_slug: ${oc.env:BITBUCKET_ISSUES_REPO_SLUG,""}
     project: ${oc.env:BITBUCKET_ISSUES_REPO_SLUG,""}

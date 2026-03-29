@@ -641,9 +641,9 @@ class RepositoryService(Service):
     @staticmethod
     def _missing_pull_request_token_message(repository_id: str, provider: str) -> str:
         env_key = {
-            'github': 'GITHUB_ISSUES_TOKEN',
-            'gitlab': 'GITLAB_ISSUES_TOKEN',
-            'bitbucket': 'BITBUCKET_ISSUES_TOKEN',
+            'github': 'GITHUB_API_TOKEN',
+            'gitlab': 'GITLAB_API_TOKEN',
+            'bitbucket': 'BITBUCKET_API_TOKEN',
         }.get(provider, '<provider-token>')
         return (
             f'missing pull request API token for repository {repository_id}; '

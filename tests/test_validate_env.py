@@ -1,4 +1,7 @@
 import unittest
+from pathlib import Path
+import tempfile
+from unittest.mock import patch
 
 from openhands_agent.validate_env import (
     validate_agent_env,
@@ -8,7 +11,7 @@ from openhands_agent.validate_env import (
 
 class ValidateEnvTests(unittest.TestCase):
     def test_validate_agent_env_accepts_complete_configuration(self) -> None:
-        errors = validate_agent_env(
+        errors = self._validate_agent_env(
             {
                 'YOUTRACK_BASE_URL': 'https://youtrack.example',
                 'YOUTRACK_TOKEN': 'yt-token',
@@ -23,7 +26,7 @@ class ValidateEnvTests(unittest.TestCase):
         self.assertEqual(errors, [])
 
     def test_validate_agent_env_requires_email_fields_when_enabled(self) -> None:
-        errors = validate_agent_env(
+        errors = self._validate_agent_env(
             {
                 'YOUTRACK_BASE_URL': 'https://youtrack.example',
                 'YOUTRACK_TOKEN': 'yt-token',
@@ -46,7 +49,7 @@ class ValidateEnvTests(unittest.TestCase):
         )
 
     def test_validate_agent_env_requires_youtrack_assignee(self) -> None:
-        errors = validate_agent_env(
+        errors = self._validate_agent_env(
             {
                 'YOUTRACK_BASE_URL': 'https://youtrack.example',
                 'YOUTRACK_TOKEN': 'yt-token',
@@ -60,7 +63,7 @@ class ValidateEnvTests(unittest.TestCase):
         self.assertIn('missing required agent env var: YOUTRACK_ASSIGNEE', errors)
 
     def test_validate_agent_env_accepts_jira_configuration(self) -> None:
-        errors = validate_agent_env(
+        errors = self._validate_agent_env(
             {
                 'OPENHANDS_AGENT_ISSUE_PLATFORM': 'jira',
                 'JIRA_BASE_URL': 'https://jira.example',
@@ -76,11 +79,11 @@ class ValidateEnvTests(unittest.TestCase):
         self.assertEqual(errors, [])
 
     def test_validate_agent_env_accepts_github_issues_configuration(self) -> None:
-        errors = validate_agent_env(
+        errors = self._validate_agent_env(
             {
                 'OPENHANDS_AGENT_ISSUE_PLATFORM': 'github',
                 'GITHUB_ISSUES_BASE_URL': 'https://api.github.com',
-                'GITHUB_ISSUES_TOKEN': 'gh-token',
+                'GITHUB_API_TOKEN': 'gh-token',
                 'GITHUB_ISSUES_OWNER': 'workspace',
                 'GITHUB_ISSUES_REPO': 'repo',
                 'GITHUB_ISSUES_ASSIGNEE': 'octocat',
@@ -93,11 +96,11 @@ class ValidateEnvTests(unittest.TestCase):
         self.assertEqual(errors, [])
 
     def test_validate_agent_env_accepts_gitlab_issues_configuration(self) -> None:
-        errors = validate_agent_env(
+        errors = self._validate_agent_env(
             {
                 'OPENHANDS_AGENT_ISSUE_PLATFORM': 'gitlab',
                 'GITLAB_ISSUES_BASE_URL': 'https://gitlab.example/api/v4',
-                'GITLAB_ISSUES_TOKEN': 'gl-token',
+                'GITLAB_API_TOKEN': 'gl-token',
                 'GITLAB_ISSUES_PROJECT': 'group/repo',
                 'GITLAB_ISSUES_ASSIGNEE': 'developer',
                 'REPOSITORY_ROOT_PATH': '.',
@@ -109,11 +112,11 @@ class ValidateEnvTests(unittest.TestCase):
         self.assertEqual(errors, [])
 
     def test_validate_agent_env_accepts_bitbucket_issues_configuration(self) -> None:
-        errors = validate_agent_env(
+        errors = self._validate_agent_env(
             {
                 'OPENHANDS_AGENT_ISSUE_PLATFORM': 'bitbucket',
                 'BITBUCKET_ISSUES_BASE_URL': 'https://api.bitbucket.org/2.0',
-                'BITBUCKET_ISSUES_TOKEN': 'bb-token',
+                'BITBUCKET_API_TOKEN': 'bb-token',
                 'BITBUCKET_ISSUES_WORKSPACE': 'workspace',
                 'BITBUCKET_ISSUES_REPO_SLUG': 'repo',
                 'BITBUCKET_ISSUES_ASSIGNEE': 'reviewer',
@@ -125,8 +128,87 @@ class ValidateEnvTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
 
+    def test_validate_agent_env_requires_provider_token_for_discovered_bitbucket_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_path = Path(temp_dir) / 'project'
+            self._create_git_repository(
+                repo_path,
+                'git@bitbucket.org:workspace/project.git',
+            )
+
+            errors = validate_agent_env(
+                {
+                    'YOUTRACK_BASE_URL': 'https://youtrack.example',
+                    'YOUTRACK_TOKEN': 'yt-token',
+                    'YOUTRACK_PROJECT': 'PROJ',
+                    'YOUTRACK_ASSIGNEE': 'developer',
+                    'REPOSITORY_ROOT_PATH': str(repo_path),
+                    'OPENHANDS_BASE_URL': 'http://localhost:3000',
+                    'OPENHANDS_API_KEY': 'local',
+                }
+            )
+
+        self.assertIn(
+            'missing required repository provider env var: BITBUCKET_API_TOKEN',
+            errors,
+        )
+
+    def test_validate_agent_env_accepts_provider_token_for_discovered_bitbucket_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_path = Path(temp_dir) / 'project'
+            self._create_git_repository(
+                repo_path,
+                'git@bitbucket.org:workspace/project.git',
+            )
+
+            errors = validate_agent_env(
+                {
+                    'YOUTRACK_BASE_URL': 'https://youtrack.example',
+                    'YOUTRACK_TOKEN': 'yt-token',
+                    'YOUTRACK_PROJECT': 'PROJ',
+                    'YOUTRACK_ASSIGNEE': 'developer',
+                    'REPOSITORY_ROOT_PATH': str(repo_path),
+                    'OPENHANDS_BASE_URL': 'http://localhost:3000',
+                    'OPENHANDS_API_KEY': 'local',
+                    'BITBUCKET_API_TOKEN': 'bb-token',
+                }
+            )
+
+        self.assertEqual(errors, [])
+
+    def test_validate_agent_env_requires_github_api_token(self) -> None:
+        errors = self._validate_agent_env(
+            {
+                'OPENHANDS_AGENT_ISSUE_PLATFORM': 'github',
+                'GITHUB_ISSUES_BASE_URL': 'https://api.github.com',
+                'GITHUB_ISSUES_OWNER': 'workspace',
+                'GITHUB_ISSUES_REPO': 'repo',
+                'GITHUB_ISSUES_ASSIGNEE': 'octocat',
+                'REPOSITORY_ROOT_PATH': '.',
+                'OPENHANDS_BASE_URL': 'http://localhost:3000',
+                'OPENHANDS_API_KEY': 'local',
+            }
+        )
+
+        self.assertIn('missing required agent env var: GITHUB_API_TOKEN', errors)
+
+    def test_validate_agent_env_requires_gitlab_api_token(self) -> None:
+        errors = self._validate_agent_env(
+            {
+                'OPENHANDS_AGENT_ISSUE_PLATFORM': 'gitlab',
+                'GITLAB_ISSUES_BASE_URL': 'https://gitlab.example/api/v4',
+                'GITLAB_ISSUES_PROJECT': 'group/repo',
+                'GITLAB_ISSUES_ASSIGNEE': 'developer',
+                'REPOSITORY_ROOT_PATH': '.',
+                'OPENHANDS_BASE_URL': 'http://localhost:3000',
+                'OPENHANDS_API_KEY': 'local',
+            }
+        )
+
+        self.assertIn('missing required agent env var: GITLAB_API_TOKEN', errors)
+
     def test_validate_agent_env_rejects_unknown_issue_platform(self) -> None:
-        errors = validate_agent_env({'OPENHANDS_AGENT_ISSUE_PLATFORM': 'linear'})
+        errors = self._validate_agent_env({'OPENHANDS_AGENT_ISSUE_PLATFORM': 'linear'})
 
         self.assertIn('unsupported issue platform: linear', errors)
 
@@ -176,3 +258,20 @@ class ValidateEnvTests(unittest.TestCase):
                 'AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY + AWS_REGION_NAME'
             ],
         )
+
+    @staticmethod
+    def _create_git_repository(path: Path, remote_url: str) -> None:
+        git_dir = path / '.git'
+        git_dir.mkdir(parents=True)
+        (git_dir / 'config').write_text(
+            '[core]\n'
+            '\trepositoryformatversion = 0\n'
+            '[remote "origin"]\n'
+            f'\turl = {remote_url}\n',
+            encoding='utf-8',
+        )
+
+    @staticmethod
+    def _validate_agent_env(env: dict[str, str]) -> list[str]:
+        with patch('openhands_agent.validate_env.discover_git_repositories', return_value=[]):
+            return validate_agent_env(env)

@@ -76,7 +76,7 @@ ISSUE_PLATFORM_DETAILS = {
     'github': {
         'label': 'GitHub Issues',
         'base_url_key': 'GITHUB_ISSUES_BASE_URL',
-        'token_key': 'GITHUB_ISSUES_TOKEN',
+        'token_key': 'GITHUB_API_TOKEN',
         'owner_key': 'GITHUB_ISSUES_OWNER',
         'owner_label': 'repository owner or organization',
         'repo_key': 'GITHUB_ISSUES_REPO',
@@ -98,7 +98,7 @@ ISSUE_PLATFORM_DETAILS = {
     'gitlab': {
         'label': 'GitLab Issues',
         'base_url_key': 'GITLAB_ISSUES_BASE_URL',
-        'token_key': 'GITLAB_ISSUES_TOKEN',
+        'token_key': 'GITLAB_API_TOKEN',
         'project_key': 'GITLAB_ISSUES_PROJECT',
         'project_label': 'project path or numeric id',
         'assignee_key': 'GITLAB_ISSUES_ASSIGNEE',
@@ -118,7 +118,7 @@ ISSUE_PLATFORM_DETAILS = {
     'bitbucket': {
         'label': 'Bitbucket Issues',
         'base_url_key': 'BITBUCKET_ISSUES_BASE_URL',
-        'token_key': 'BITBUCKET_ISSUES_TOKEN',
+        'token_key': 'BITBUCKET_API_TOKEN',
         'workspace_key': 'BITBUCKET_ISSUES_WORKSPACE',
         'workspace_label': 'workspace',
         'repo_slug_key': 'BITBUCKET_ISSUES_REPO_SLUG',
