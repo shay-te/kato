@@ -697,6 +697,75 @@ class RepositoryServiceTests(unittest.TestCase):
             ):
                 service.validate_connections()
 
+    def test_validate_connections_requires_ssh_auth_sock_for_ssh_remote(self) -> None:
+        repository = types.SimpleNamespace(
+            id='client',
+            display_name='Client',
+            local_path='.',
+            provider='bitbucket',
+            provider_base_url='https://api.bitbucket.org/2.0',
+            token='token',
+            owner='workspace',
+            repo_slug='repo',
+            remote_url='git@bitbucket.org:workspace/repo.git',
+            destination_branch='main',
+            aliases=['frontend'],
+        )
+        service = RepositoryService([repository], 3)
+
+        with patch.dict(
+            'openhands_agent.data_layers.service.repository_service.os.environ',
+            {},
+            clear=True,
+        ), patch(
+            'openhands_agent.data_layers.service.repository_service.shutil.which',
+            return_value='/usr/bin/git',
+        ), patch(
+            'openhands_agent.data_layers.service.repository_service.os.path.isdir',
+            return_value=True,
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                'repository client uses an SSH git remote but SSH_AUTH_SOCK is not configured',
+            ):
+                service.validate_connections()
+
+    def test_validate_connections_requires_existing_ssh_auth_sock_path_for_ssh_remote(self) -> None:
+        repository = types.SimpleNamespace(
+            id='client',
+            display_name='Client',
+            local_path='.',
+            provider='bitbucket',
+            provider_base_url='https://api.bitbucket.org/2.0',
+            token='token',
+            owner='workspace',
+            repo_slug='repo',
+            remote_url='git@bitbucket.org:workspace/repo.git',
+            destination_branch='main',
+            aliases=['frontend'],
+        )
+        service = RepositoryService([repository], 3)
+
+        with patch.dict(
+            'openhands_agent.data_layers.service.repository_service.os.environ',
+            {'SSH_AUTH_SOCK': '/ssh-agent'},
+            clear=True,
+        ), patch(
+            'openhands_agent.data_layers.service.repository_service.shutil.which',
+            return_value='/usr/bin/git',
+        ), patch(
+            'openhands_agent.data_layers.service.repository_service.os.path.isdir',
+            return_value=True,
+        ), patch(
+            'openhands_agent.data_layers.service.repository_service.os.path.exists',
+            return_value=False,
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                'repository client uses an SSH git remote but SSH_AUTH_SOCK does not exist: /ssh-agent',
+            ):
+                service.validate_connections()
+
     def test_prepare_task_repositories_requires_git_executable(self) -> None:
         service = RepositoryService(self.cfg.openhands_agent.repositories, 3)
 

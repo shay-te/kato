@@ -38,6 +38,7 @@ class RepositoryService(Service):
         self._validate_git_executable()
         for repository in self._repositories:
             self._validate_local_path(repository)
+            self._validate_git_remote_auth(repository)
             self._prepare_pull_request_api(repository)
 
     def resolve_task_repositories(self, task: Task) -> list[object]:
@@ -56,6 +57,7 @@ class RepositoryService(Service):
         prepared_repositories: list[object] = []
         for repository in repositories:
             self._validate_local_path(repository)
+            self._validate_git_remote_auth(repository)
             self._prepare_pull_request_api(repository)
             setattr(repository, 'destination_branch', self.destination_branch(repository))
             self._prepare_workspace_for_task(
@@ -315,6 +317,28 @@ class RepositoryService(Service):
             raise ValueError(
                 f'missing local repository path for {repository.id}: {local_path or "<empty>"}'
             )
+
+    @staticmethod
+    def _validate_git_remote_auth(repository) -> None:
+        remote_url = str(getattr(repository, 'remote_url', '') or '').strip()
+        if not RepositoryService._uses_ssh_remote(remote_url):
+            return
+
+        ssh_auth_sock = str(os.getenv('SSH_AUTH_SOCK', '') or '').strip()
+        if not ssh_auth_sock:
+            raise ValueError(
+                f'repository {repository.id} uses an SSH git remote but SSH_AUTH_SOCK is not configured'
+            )
+        if not os.path.exists(ssh_auth_sock):
+            raise ValueError(
+                f'repository {repository.id} uses an SSH git remote but SSH_AUTH_SOCK does not exist: '
+                f'{ssh_auth_sock}'
+            )
+
+    @staticmethod
+    def _uses_ssh_remote(remote_url: str) -> bool:
+        normalized = str(remote_url or '').strip().lower()
+        return normalized.startswith('ssh://') or bool(re.match(r'^[^@]+@[^:]+:.+', normalized))
 
     def _prepare_pull_request_api(self, repository) -> None:
         provider = str(getattr(repository, 'provider', '') or '').strip().lower()

@@ -83,6 +83,7 @@ x-openhands-agent-env: &openhands-agent-env
   LLM_API_KEY: ${OPENHANDS_LLM_API_KEY:-}
   LLM_BASE_URL: ${OPENHANDS_LLM_BASE_URL:-}
   AWS_BEARER_TOKEN_BEDROCK: ${AWS_BEARER_TOKEN_BEDROCK:-}
+  SSH_AUTH_SOCK: /ssh-agent
   OH_WEB_URL: ${OPENHANDS_WEB_URL:-}
   OH_PERSISTENCE_DIR: /.openhands
   AGENT_SERVER_IMAGE_REPOSITORY: ${OPENHANDS_AGENT_SERVER_IMAGE_REPOSITORY:-ghcr.io/openhands/agent-server}
@@ -106,15 +107,17 @@ services:
       AWS_DEFAULT_REGION: ${AWS_REGION_NAME:-}
       AWS_REGION: ${AWS_REGION_NAME:-}
       AWS_BEARER_TOKEN_BEDROCK: ${AWS_BEARER_TOKEN_BEDROCK:-}
-      SANDBOX_VOLUMES: ${REPOSITORY_ROOT_PATH:-.}:/workspace/project:rw
+      SSH_AUTH_SOCK: /ssh-agent
+      SANDBOX_VOLUMES: ${REPOSITORY_ROOT_PATH:-.}:/workspace/project:rw,${OPENHANDS_SSH_AUTH_SOCK_HOST_PATH:-/run/host-services/ssh-auth.sock}:/ssh-agent:ro
       OH_AGENT_SERVER_ENV: >-
-        {"LLM_MODEL":"${OPENHANDS_LLM_MODEL:-}","LLM_API_KEY":"${OPENHANDS_LLM_API_KEY:-}","LLM_BASE_URL":"${OPENHANDS_LLM_BASE_URL:-}","AWS_ACCESS_KEY_ID":"${AWS_ACCESS_KEY_ID:-}","AWS_SECRET_ACCESS_KEY":"${AWS_SECRET_ACCESS_KEY:-}","AWS_REGION_NAME":"${AWS_REGION_NAME:-}","AWS_DEFAULT_REGION":"${AWS_REGION_NAME:-}","AWS_REGION":"${AWS_REGION_NAME:-}","LLM_AWS_ACCESS_KEY_ID":"${AWS_ACCESS_KEY_ID:-}","LLM_AWS_SECRET_ACCESS_KEY":"${AWS_SECRET_ACCESS_KEY:-}","LLM_AWS_REGION_NAME":"${AWS_REGION_NAME:-}","AWS_BEARER_TOKEN_BEDROCK":"${AWS_BEARER_TOKEN_BEDROCK:-}","OH_SANDBOX_VOLUMES":"${REPOSITORY_ROOT_PATH:-.}:/workspace/project:rw"}
+        {"LLM_MODEL":"${OPENHANDS_LLM_MODEL:-}","LLM_API_KEY":"${OPENHANDS_LLM_API_KEY:-}","LLM_BASE_URL":"${OPENHANDS_LLM_BASE_URL:-}","AWS_ACCESS_KEY_ID":"${AWS_ACCESS_KEY_ID:-}","AWS_SECRET_ACCESS_KEY":"${AWS_SECRET_ACCESS_KEY:-}","AWS_REGION_NAME":"${AWS_REGION_NAME:-}","AWS_DEFAULT_REGION":"${AWS_REGION_NAME:-}","AWS_REGION":"${AWS_REGION_NAME:-}","LLM_AWS_ACCESS_KEY_ID":"${AWS_ACCESS_KEY_ID:-}","LLM_AWS_SECRET_ACCESS_KEY":"${AWS_SECRET_ACCESS_KEY:-}","LLM_AWS_REGION_NAME":"${AWS_REGION_NAME:-}","AWS_BEARER_TOKEN_BEDROCK":"${AWS_BEARER_TOKEN_BEDROCK:-}","SSH_AUTH_SOCK":"/ssh-agent","OH_SANDBOX_VOLUMES":"${REPOSITORY_ROOT_PATH:-.}:/workspace/project:rw,${OPENHANDS_SSH_AUTH_SOCK_HOST_PATH:-/run/host-services/ssh-auth.sock}:/ssh-agent:ro"}
       OH_PERSISTENCE_DIR: /data
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./docker_data/openhands:/data
       - ./docker_data/openhands_state:/.openhands
       - ${REPOSITORY_ROOT_PATH:-.}:/workspace/project
+      - ${OPENHANDS_SSH_AUTH_SOCK_HOST_PATH:-/run/host-services/ssh-auth.sock}:/ssh-agent:ro
     ports:
       - "${OPENHANDS_PORT:-3000}:3000"
     extra_hosts:
@@ -146,6 +149,7 @@ services:
     volumes:
       - openhands-agent-data:/app/data
       - ${REPOSITORY_ROOT_PATH:-.}:/workspace/project:ro
+      - ${OPENHANDS_SSH_AUTH_SOCK_HOST_PATH:-/run/host-services/ssh-auth.sock}:/ssh-agent:ro
 
 volumes:
   openhands-agent-data:

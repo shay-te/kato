@@ -47,9 +47,10 @@ class DeploymentFilesTests(unittest.TestCase):
             compose_text,
         )
         self.assertIn(
-            'SANDBOX_VOLUMES: ${REPOSITORY_ROOT_PATH:-.}:/workspace/project:rw',
+            'SANDBOX_VOLUMES: ${REPOSITORY_ROOT_PATH:-.}:/workspace/project:rw,${OPENHANDS_SSH_AUTH_SOCK_HOST_PATH:-/run/host-services/ssh-auth.sock}:/ssh-agent:ro',
             compose_text,
         )
+        self.assertIn('SSH_AUTH_SOCK: /ssh-agent', compose_text)
         self.assertIn('OH_WEB_URL: ${OPENHANDS_WEB_URL:-}', compose_text)
         self.assertIn('OH_PERSISTENCE_DIR: /.openhands', compose_text)
         self.assertIn(
@@ -130,7 +131,11 @@ class DeploymentFilesTests(unittest.TestCase):
         )
         self.assertIn('OH_AGENT_SERVER_ENV: >-', compose_text)
         self.assertIn(
-            '"OH_SANDBOX_VOLUMES":"${REPOSITORY_ROOT_PATH:-.}:/workspace/project:rw"',
+            '"SSH_AUTH_SOCK":"/ssh-agent"',
+            compose_text,
+        )
+        self.assertIn(
+            '"OH_SANDBOX_VOLUMES":"${REPOSITORY_ROOT_PATH:-.}:/workspace/project:rw,${OPENHANDS_SSH_AUTH_SOCK_HOST_PATH:-/run/host-services/ssh-auth.sock}:/ssh-agent:ro"',
             compose_text,
         )
         self.assertIn(
@@ -171,6 +176,7 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('OPENHANDS_AGENT_STATE_FILE=', env_example_text)
         self.assertIn('OPENHANDS_AGENT_LOG_LEVEL=', env_example_text)
         self.assertIn('OPENHANDS_AGENT_WORKFLOW_LOG_LEVEL=', env_example_text)
+        self.assertIn('OPENHANDS_SSH_AUTH_SOCK_HOST_PATH=', env_example_text)
         self.assertIn('OPENHANDS_LLM_MODEL=', env_example_text)
         self.assertIn('OPENHANDS_LLM_API_KEY=', env_example_text)
         self.assertIn('OPENHANDS_LLM_BASE_URL=', env_example_text)
