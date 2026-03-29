@@ -21,7 +21,7 @@ class LoggingUtilsTests(unittest.TestCase):
     def test_configure_logger_uses_configured_agent_log_level(self) -> None:
         with patch.dict(
             os.environ,
-            {'OPENHANDS_AGENT_LOG_LEVEL': 'ERROR'},
+            {'OPENHANDS_AGENT_LOG_LEVEL': 'error'},
             clear=False,
         ), patch('openhands_agent.logging_utils.logging.basicConfig') as mock_basic_config:
             logging_utils.configure_logger('openhands-agent')

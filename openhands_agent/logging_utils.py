@@ -7,7 +7,7 @@ _DEFAULT_LOG_LEVEL = logging.WARNING
 
 
 def _configured_log_level() -> int:
-    configured_name = str(os.getenv('OPENHANDS_AGENT_LOG_LEVEL', 'WARNING') or '').strip().upper()
+    configured_name = str(os.getenv('OPENHANDS_AGENT_LOG_LEVEL', 'warning') or '').strip().upper()
     return getattr(logging, configured_name, _DEFAULT_LOG_LEVEL)
 
 

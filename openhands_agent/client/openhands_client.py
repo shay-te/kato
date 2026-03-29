@@ -62,7 +62,7 @@ class OpenHandsClient(RetryingClientBase):
         self.logger.info('requesting implementation for task %s', task.id)
         payload = self._run_prompt(
             prompt=self._build_implementation_prompt(task),
-            title=f'{task.id}: {task.summary}',
+            title=self._task_conversation_title(task),
             session_id=session_id,
         )
         returned_session_id = self._payload_session_id(payload)
@@ -88,7 +88,7 @@ class OpenHandsClient(RetryingClientBase):
         self.logger.info('requesting testing validation for task %s', task.id)
         payload = self._run_prompt(
             prompt=self._build_testing_prompt(task),
-            title=f'Test {task.id}: {task.summary}',
+            title=self._task_conversation_title(task, suffix=' [testing]'),
         )
         result = {
             Task.summary.key: payload.get(Task.summary.key, ''),
@@ -139,6 +139,15 @@ class OpenHandsClient(RetryingClientBase):
             result[ImplementationFields.SUCCESS],
         )
         return result
+
+    @staticmethod
+    def _task_conversation_title(task: Task, suffix: str = '') -> str:
+        task_id = str(task.id or '').strip()
+        summary = str(task.summary or '').strip()
+        base_title = ' '.join(part for part in (task_id, summary) if part).strip()
+        if not base_title:
+            base_title = 'OpenHands task'
+        return f'{base_title}{suffix}'
 
     def _build_implementation_prompt(self, task: Task) -> str:
         repository_scope = self._repository_scope_text(task)
@@ -201,8 +210,8 @@ class OpenHandsClient(RetryingClientBase):
                 f'first try to pull the latest changes from {destination_text} without '
                 'interactive auth prompts. If remote access is blocked, continue from the '
                 'current local checkout and mention that limitation in your finish message. '
-                f'Then create and work on a new branch named {branch_name}, and open the pull '
-                f'request into {destination_text}.'
+                f'Then create and work on a new branch named {branch_name}. Do not create the '
+                'pull request yourself; the orchestration layer will publish it after tests pass.'
             )
         lines = '\n'.join(repository_lines)
         return f'Only modify these repositories:\n{lines}'
@@ -228,8 +237,14 @@ class OpenHandsClient(RetryingClientBase):
         return (
             'Tool guardrails:\n'
             '- Prefer shell commands like rg, sed -n, and cat for quick file reads.\n'
+            '- Prefer shell-based reads before editing so you know the exact surrounding text.\n'
             '- If you use the file_editor tool, always include its required command field.\n'
-            '- Never call file_editor with only path, summary, or security_risk.'
+            '- For text replacement, use file_editor with command "str_replace" plus path, old_str, and new_str.\n'
+            '- For file reads through file_editor, use command "view".\n'
+            '- For insertions through file_editor, use command "insert".\n'
+            '- Never call file_editor with only path, summary, security_risk, old_str, or new_str.\n'
+            '- Never use create_pr or any pull-request or merge-request creation tool.\n'
+            '- Do not call GitHub, GitLab, or Bitbucket APIs to publish a pull request yourself.'
         )
 
     @staticmethod

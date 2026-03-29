@@ -160,6 +160,74 @@ class RepositoryServiceTests(unittest.TestCase):
 
         self.assertEqual(prepared_repositories[0].destination_branch, 'master')
 
+    def test_prepare_task_repositories_enriches_discovered_repository_with_provider_defaults(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            projects_root = Path(temp_dir)
+            repo_path = projects_root / 'ob-love-admin-client'
+            self._create_git_repository(
+                repo_path,
+                'git@bitbucket.org:shacoshe/ob-love-admin-client.git',
+            )
+            service = RepositoryService(
+                types.SimpleNamespace(
+                    repositories=[],
+                    repository_root_path=str(projects_root),
+                    github_issues=types.SimpleNamespace(base_url='', token=''),
+                    gitlab_issues=types.SimpleNamespace(base_url='', token=''),
+                    bitbucket_issues=types.SimpleNamespace(
+                        base_url='https://api.bitbucket.org/2.0',
+                        token='bb-token',
+                    ),
+                ),
+                3,
+            )
+
+            with patch(
+                'openhands_agent.data_layers.service.repository_service.shutil.which',
+                return_value='/usr/bin/git',
+            ), patch(
+                'openhands_agent.data_layers.service.repository_service.subprocess.run',
+                return_value=Mock(returncode=0, stdout='refs/remotes/origin/main\n'),
+            ):
+                prepared_repositories = service.prepare_task_repositories([service.repositories[0]])
+
+        prepared_repository = prepared_repositories[0]
+        self.assertEqual(prepared_repository.provider_base_url, 'https://api.bitbucket.org/2.0')
+        self.assertEqual(prepared_repository.token, 'bb-token')
+        self.assertEqual(prepared_repository.destination_branch, 'main')
+
+    def test_prepare_task_repositories_raises_when_pull_request_api_token_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            projects_root = Path(temp_dir)
+            repo_path = projects_root / 'ob-love-admin-client'
+            self._create_git_repository(
+                repo_path,
+                'git@bitbucket.org:shacoshe/ob-love-admin-client.git',
+            )
+            service = RepositoryService(
+                types.SimpleNamespace(
+                    repositories=[],
+                    repository_root_path=str(projects_root),
+                    github_issues=types.SimpleNamespace(base_url='', token=''),
+                    gitlab_issues=types.SimpleNamespace(base_url='', token=''),
+                    bitbucket_issues=types.SimpleNamespace(
+                        base_url='https://api.bitbucket.org/2.0',
+                        token='',
+                    ),
+                ),
+                3,
+            )
+
+            with patch(
+                'openhands_agent.data_layers.service.repository_service.shutil.which',
+                return_value='/usr/bin/git',
+            ):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    'missing pull request API token for repository ob-love-admin-client',
+                ):
+                    service.prepare_task_repositories([service.repositories[0]])
+
 
     def test_does_not_match_repository_alias_inside_hyphenated_word(self) -> None:
         service = RepositoryService(self.cfg.openhands_agent.repositories, 3)
@@ -230,8 +298,14 @@ class RepositoryServiceTests(unittest.TestCase):
 
         self.assertEqual(branch_name, 'UNA-222')
 
-    def test_create_pull_request_includes_repository_id_and_inferred_branch(self) -> None:
+    def test_create_pull_request_uses_provider_api_and_includes_repository_metadata(self) -> None:
         repository = self.cfg.openhands_agent.repositories[0]
+        data_access = Mock()
+        data_access.create_pull_request.return_value = {
+            PullRequestFields.ID: '17',
+            PullRequestFields.TITLE: 'PROJ-1: Fix bug',
+            PullRequestFields.URL: 'https://bitbucket.org/workspace/repo/pull-requests/17',
+        }
 
         with patch(
             'openhands_agent.data_layers.service.repository_service.shutil.which',
@@ -242,6 +316,9 @@ class RepositoryServiceTests(unittest.TestCase):
         ), patch(
             'openhands_agent.data_layers.service.repository_service.RepositoryService._push_branch',
         ) as mock_push_branch, patch(
+            'openhands_agent.data_layers.service.repository_service.RepositoryService._pull_request_data_access',
+            return_value=data_access,
+        ), patch(
             'openhands_agent.data_layers.service.repository_service.subprocess.run',
             return_value=Mock(returncode=0, stdout='refs/remotes/origin/master\n'),
         ):
@@ -254,9 +331,18 @@ class RepositoryServiceTests(unittest.TestCase):
             )
 
         self.assertEqual(result[PullRequestFields.REPOSITORY_ID], 'client')
-        self.assertEqual(result[PullRequestFields.ID], 'feature/proj-1/client')
+        self.assertEqual(result[PullRequestFields.ID], '17')
         self.assertEqual(result[PullRequestFields.DESTINATION_BRANCH], 'master')
-        self.assertIn('/pull-requests/new?', result[PullRequestFields.URL])
+        self.assertEqual(
+            result[PullRequestFields.URL],
+            'https://bitbucket.org/workspace/repo/pull-requests/17',
+        )
+        data_access.create_pull_request.assert_called_once_with(
+            title='PROJ-1: Fix bug',
+            source_branch='feature/proj-1/client',
+            destination_branch='master',
+            description='Ready',
+        )
         mock_push_branch.assert_called_once_with('.', 'feature/proj-1/client')
 
     def test_validate_connections_checks_local_paths(self) -> None:
@@ -316,9 +402,32 @@ class RepositoryServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'at least one repository must be configured'):
             service.validate_connections()
 
-    def test_list_pull_request_comments_returns_empty_without_provider_api(self) -> None:
+    def test_list_pull_request_comments_uses_provider_api_when_configured(self) -> None:
         repository = self.cfg.openhands_agent.repositories[0]
+        data_access = Mock()
+        data_access.list_pull_request_comments.return_value = ['comment']
         service = RepositoryService(self.cfg.openhands_agent.repositories, 3)
+
+        with patch(
+            'openhands_agent.data_layers.service.repository_service.RepositoryService._pull_request_data_access',
+            return_value=data_access,
+        ):
+            comments = service.list_pull_request_comments(repository, '17')
+
+        self.assertEqual(comments, ['comment'])
+        data_access.list_pull_request_comments.assert_called_once_with('17')
+
+    def test_list_pull_request_comments_returns_empty_without_provider_api(self) -> None:
+        repository = types.SimpleNamespace(
+            id='client',
+            display_name='Client',
+            local_path='.',
+            remote_url='git@bitbucket.org:workspace/repo.git',
+            provider='bitbucket',
+            owner='workspace',
+            repo_slug='repo',
+        )
+        service = RepositoryService([], 3)
 
         comments = service.list_pull_request_comments(repository, '17')
 

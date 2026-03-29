@@ -4,11 +4,15 @@ import re
 import shutil
 import subprocess
 from types import SimpleNamespace
+from urllib.parse import urlparse
 
 from core_lib.data_layers.service.service import Service
+from omegaconf import OmegaConf
 
+from openhands_agent.client.pull_request_client_factory import build_pull_request_client
+from openhands_agent.data_layers.data_access.pull_request_data_access import PullRequestDataAccess
 from openhands_agent.data_layers.data.task import Task
-from openhands_agent.fields import PullRequestFields
+from openhands_agent.fields import PullRequestFields, RepositoryFields
 from openhands_agent.repository_discovery import (
     discover_git_repositories,
     display_name_from_repo_slug,
@@ -22,6 +26,7 @@ class RepositoryService(Service):
     def __init__(self, repositories_config, max_retries: int) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
         self._max_retries = max_retries
+        self._provider_api_defaults = self._provider_api_defaults_from_source(repositories_config)
         self._repositories = self._load_repositories(repositories_config)
 
     @property
@@ -33,6 +38,7 @@ class RepositoryService(Service):
         self._validate_git_executable()
         for repository in self._repositories:
             self._validate_local_path(repository)
+            self._prepare_pull_request_api(repository)
 
     def resolve_task_repositories(self, task: Task) -> list[object]:
         searchable_text = f'{task.summary}\n{task.description}'.lower()
@@ -50,6 +56,7 @@ class RepositoryService(Service):
         prepared_repositories: list[object] = []
         for repository in repositories:
             self._validate_local_path(repository)
+            self._prepare_pull_request_api(repository)
             setattr(repository, 'destination_branch', self.destination_branch(repository))
             prepared_repositories.append(repository)
         return prepared_repositories
@@ -71,13 +78,25 @@ class RepositoryService(Service):
         description: str = '',
     ) -> dict[str, str]:
         self._validate_local_path(repository)
+        self._prepare_pull_request_api(repository)
         destination_branch = self.destination_branch(repository)
         self._push_branch(repository.local_path, source_branch)
+        pull_request = self._pull_request_data_access(repository).create_pull_request(
+            title=title,
+            source_branch=source_branch,
+            destination_branch=destination_branch,
+            description=description,
+        )
         return {
             PullRequestFields.REPOSITORY_ID: repository.id,
-            PullRequestFields.ID: source_branch,
-            PullRequestFields.TITLE: title,
-            PullRequestFields.URL: self._review_url(repository, source_branch, destination_branch),
+            PullRequestFields.ID: str(pull_request.get(PullRequestFields.ID, '') or ''),
+            PullRequestFields.TITLE: str(
+                pull_request.get(PullRequestFields.TITLE, '') or title
+            ),
+            PullRequestFields.URL: str(
+                pull_request.get(PullRequestFields.URL, '')
+                or self._review_url(repository, source_branch, destination_branch)
+            ),
             PullRequestFields.SOURCE_BRANCH: source_branch,
             PullRequestFields.DESTINATION_BRANCH: destination_branch,
             PullRequestFields.DESCRIPTION: description,
@@ -88,12 +107,18 @@ class RepositoryService(Service):
         repository,
         pull_request_id: str,
     ) -> list[dict[str, str]]:
-        self.logger.info(
-            'skipping pull request comment polling for repository %s; '
-            'review comments now require direct payload handling',
-            repository.id,
+        try:
+            self._prepare_pull_request_api(repository)
+        except Exception as exc:
+            self.logger.info(
+                'skipping pull request comment polling for repository %s: %s',
+                repository.id,
+                exc,
+            )
+            return []
+        return self._pull_request_data_access(repository).list_pull_request_comments(
+            pull_request_id
         )
-        return []
 
     def destination_branch(self, repository) -> str:
         configured_branch = str(getattr(repository, 'destination_branch', '') or '').strip()
@@ -150,6 +175,23 @@ class RepositoryService(Service):
                 return discovered_repositories
             return []
         return self._normalized_repositories(repository_source)
+
+    @staticmethod
+    def _provider_api_defaults_from_source(repository_source) -> dict[str, dict[str, str]]:
+        def provider_values(attribute: str) -> dict[str, str]:
+            provider_cfg = getattr(repository_source, attribute, None)
+            return {
+                RepositoryFields.PROVIDER_BASE_URL: str(
+                    getattr(provider_cfg, 'base_url', '') or ''
+                ).strip(),
+                'token': str(getattr(provider_cfg, 'token', '') or '').strip(),
+            }
+
+        return {
+            'github': provider_values('github_issues'),
+            'gitlab': provider_values('gitlab_issues'),
+            'bitbucket': provider_values('bitbucket_issues'),
+        }
 
     @staticmethod
     def _looks_like_repository_settings(repository_source) -> bool:
@@ -243,6 +285,72 @@ class RepositoryService(Service):
                 f'missing local repository path for {repository.id}: {local_path or "<empty>"}'
             )
 
+    def _prepare_pull_request_api(self, repository) -> None:
+        provider = str(getattr(repository, 'provider', '') or '').strip().lower()
+        provider_base_url = str(
+            getattr(repository, RepositoryFields.PROVIDER_BASE_URL, '') or ''
+        ).strip()
+        token = str(getattr(repository, 'token', '') or '').strip()
+
+        if not provider:
+            provider = self._provider_from_base_url(provider_base_url)
+        if not provider:
+            provider = self._provider_from_remote_url(
+                str(getattr(repository, 'remote_url', '') or '').strip()
+            )
+        if not provider:
+            raise ValueError(
+                f'unable to determine pull request provider for repository {repository.id}'
+            )
+
+        defaults = self._provider_api_defaults.get(provider, {})
+        provider_base_url = provider_base_url or str(
+            defaults.get(RepositoryFields.PROVIDER_BASE_URL, '') or ''
+        ).strip()
+        token = token or str(defaults.get('token', '') or '').strip()
+
+        if not provider_base_url:
+            provider_base_url = self._default_provider_base_url(
+                provider,
+                str(getattr(repository, 'remote_url', '') or '').strip(),
+            )
+        if not provider_base_url:
+            raise ValueError(
+                f'missing pull request API base URL for repository {repository.id}'
+            )
+        if not token:
+            raise ValueError(
+                self._missing_pull_request_token_message(repository.id, provider)
+            )
+
+        setattr(repository, 'provider', provider)
+        setattr(repository, RepositoryFields.PROVIDER_BASE_URL, provider_base_url)
+        setattr(repository, 'token', token)
+
+    def _pull_request_data_access(self, repository) -> PullRequestDataAccess:
+        provider_base_url = str(
+            getattr(repository, RepositoryFields.PROVIDER_BASE_URL, '') or ''
+        ).strip()
+        owner = str(getattr(repository, RepositoryFields.OWNER, '') or '').strip()
+        repo_slug = str(getattr(repository, RepositoryFields.REPO_SLUG, '') or '').strip()
+        token = str(getattr(repository, 'token', '') or '').strip()
+        destination_branch = str(getattr(repository, RepositoryFields.DESTINATION_BRANCH, '') or '').strip()
+        if not provider_base_url or not owner or not repo_slug or not token:
+            raise ValueError(
+                f'incomplete pull request configuration for repository {repository.id}'
+            )
+        config = OmegaConf.create(
+            {
+                'base_url': provider_base_url,
+                'token': token,
+                'owner': owner,
+                'repo_slug': repo_slug,
+                RepositoryFields.DESTINATION_BRANCH: destination_branch,
+            }
+        )
+        client = build_pull_request_client(config, self._max_retries)
+        return PullRequestDataAccess(config, client)
+
     @staticmethod
     def _validate_git_executable() -> None:
         if shutil.which('git'):
@@ -326,6 +434,45 @@ class RepositoryService(Service):
         if 'gitlab' in normalized:
             return 'gitlab'
         return ''
+
+    @staticmethod
+    def _provider_from_remote_url(remote_url: str) -> str:
+        normalized = remote_url.lower()
+        if 'bitbucket' in normalized:
+            return 'bitbucket'
+        if 'github' in normalized:
+            return 'github'
+        if 'gitlab' in normalized:
+            return 'gitlab'
+        return ''
+
+    @staticmethod
+    def _default_provider_base_url(provider: str, remote_url: str) -> str:
+        web_base_url = remote_web_base_url(remote_url)
+        if not web_base_url:
+            return ''
+        host = str(urlparse(web_base_url).hostname or '').lower()
+        if provider == 'github':
+            if host == 'github.com':
+                return 'https://api.github.com'
+            return f'{web_base_url}/api/v3'
+        if provider == 'gitlab':
+            return f'{web_base_url}/api/v4'
+        if provider == 'bitbucket' and host == 'bitbucket.org':
+            return 'https://api.bitbucket.org/2.0'
+        return ''
+
+    @staticmethod
+    def _missing_pull_request_token_message(repository_id: str, provider: str) -> str:
+        env_key = {
+            'github': 'GITHUB_ISSUES_TOKEN',
+            'gitlab': 'GITLAB_ISSUES_TOKEN',
+            'bitbucket': 'BITBUCKET_ISSUES_TOKEN',
+        }.get(provider, '<provider-token>')
+        return (
+            f'missing pull request API token for repository {repository_id}; '
+            f'set {env_key} or configure repository token explicitly'
+        )
 
     @staticmethod
     def _infer_default_branch(local_path: str) -> str:

@@ -109,7 +109,7 @@ class DeploymentFilesTests(unittest.TestCase):
             compose_text,
         )
         self.assertIn(
-            'OPENHANDS_AGENT_LOG_LEVEL: ${OPENHANDS_AGENT_LOG_LEVEL:-WARNING}',
+            'OPENHANDS_AGENT_LOG_LEVEL: ${OPENHANDS_AGENT_LOG_LEVEL:-warning}',
             compose_text,
         )
         self.assertIn('REPOSITORY_ROOT_PATH: ${REPOSITORY_ROOT_PATH:-.}', compose_text)
@@ -246,6 +246,15 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn(
             'AGENT_SERVER_IMAGE_TAG: ${OPENHANDS_AGENT_SERVER_IMAGE_TAG:-1.12.0-python}',
             compose_text,
+        )
+        openhands_section = compose_text.split('  install:')[0]
+        self.assertIn(
+            'AGENT_SERVER_IMAGE_REPOSITORY: ${OPENHANDS_AGENT_SERVER_IMAGE_REPOSITORY:-ghcr.io/openhands/agent-server}',
+            openhands_section,
+        )
+        self.assertIn(
+            'AGENT_SERVER_IMAGE_TAG: ${OPENHANDS_AGENT_SERVER_IMAGE_TAG:-1.12.0-python}',
+            openhands_section,
         )
         self.assertIn('create_db: true', config_text)
         self.assertIn('repositories:', config_text)

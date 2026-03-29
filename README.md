@@ -165,6 +165,7 @@ Supported values are `youtrack`, `jira`, `github`, `gitlab`, and `bitbucket`.
 Repository metadata is discovered from each repository's `.git` remote under `REPOSITORY_ROOT_PATH`.
 Use `OPENHANDS_AGENT_IGNORED_REPOSITORY_FOLDERS` to exclude specific folder names from auto-discovery when the root contains clones that should never be used by the agent. Provide multiple folder names as a comma-separated list, for example `OPENHANDS_AGENT_IGNORED_REPOSITORY_FOLDERS=repo-build,repo-mirror`.
 The agent publishes branches with local `git push`, so repository access is expected to come from your machine's existing git auth configuration.
+Actual pull request or merge request creation uses the repository provider API. For discovered repositories, the agent reuses the provider env vars from `GITHUB_ISSUES_*`, `GITLAB_ISSUES_*`, or `BITBUCKET_ISSUES_*` for API auth, even when the issue platform is different. For example, a YouTrack + Bitbucket setup still needs `BITBUCKET_ISSUES_TOKEN` so the agent can create the Bitbucket pull request after pushing the branch.
 If you need explicit aliases or repository metadata overrides, add entries under `openhands_agent.repositories` in `openhands_agent/config/openhands_agent_core_lib.yaml`.
 Docker Compose derives the OpenHands runtime sandbox mount from `REPOSITORY_ROOT_PATH`, so the normal setup only needs that one repository path setting.
 

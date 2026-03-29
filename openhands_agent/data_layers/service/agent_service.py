@@ -384,7 +384,7 @@ class AgentService(Service):
                 self._remember_pull_request_context(pull_request, branch_name, session_id)
                 pull_requests.append(pull_request)
                 self.logger.info(
-                    'published review branch %s for task %s in repository %s',
+                    'created pull request %s for task %s in repository %s',
                     pull_request[PullRequestFields.ID],
                     task.id,
                     repository.id,
@@ -397,7 +397,7 @@ class AgentService(Service):
                 )
             except Exception:
                 self.logger.exception(
-                    'failed to publish review branch for task %s in repository %s',
+                    'failed to create pull request for task %s in repository %s',
                     task.id,
                     repository.id,
                 )

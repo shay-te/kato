@@ -149,7 +149,13 @@ class OpenHandsClientTests(unittest.TestCase):
         self.assertIn('Files changed:', prompt)
         self.assertIn('pull the latest changes from the repository default branch', prompt)
         self.assertIn('Prefer shell commands like rg, sed -n, and cat', prompt)
+        self.assertIn('Prefer shell-based reads before editing', prompt)
         self.assertIn('always include its required command field', prompt)
+        self.assertIn('command "str_replace"', prompt)
+        self.assertIn('command "view"', prompt)
+        self.assertIn('command "insert"', prompt)
+        self.assertIn('Never use create_pr', prompt)
+        self.assertIn('Do not call GitHub, GitLab, or Bitbucket APIs', prompt)
 
     def test_repository_scope_instructions_pull_base_branch_then_create_task_branch(self) -> None:
         client = OpenHandsClient('https://openhands.example', 'oh-token')
@@ -172,7 +178,7 @@ class OpenHandsClientTests(unittest.TestCase):
         self.assertIn('without interactive auth prompts', prompt)
         self.assertIn('continue from the current local checkout', prompt)
         self.assertIn('create and work on a new branch named UNA-222', prompt)
-        self.assertIn('open the pull request into main', prompt)
+        self.assertIn('Do not create the pull request yourself', prompt)
 
     def test_testing_prompt_describes_separate_testing_agent(self) -> None:
         client = OpenHandsClient('https://openhands.example', 'oh-token')
@@ -184,6 +190,8 @@ class OpenHandsClientTests(unittest.TestCase):
         self.assertIn('Do not create a pull request.', prompt)
         self.assertIn('When you finish, use the finish tool.', prompt)
         self.assertIn('always include its required command field', prompt)
+        self.assertIn('command "str_replace"', prompt)
+        self.assertIn('Never use create_pr', prompt)
 
     def test_implement_task_uses_v1_conversation_flow(self) -> None:
         client = OpenHandsClient('https://openhands.example', 'oh-token')
@@ -253,7 +261,7 @@ class OpenHandsClientTests(unittest.TestCase):
         assert_client_headers_and_timeout(self, client, 'oh-token', 300)
         self.assertEqual(mock_post.call_args.args, ('/api/v1/app-conversations',))
         request_body = mock_post.call_args.kwargs['json']
-        self.assertEqual(request_body['title'], 'PROJ-1: Fix bug')
+        self.assertEqual(request_body['title'], 'PROJ-1 Fix bug')
         self.assertEqual(request_body['initial_message']['role'], 'user')
         self.assertIn(
             'Implement task PROJ-1: Fix bug',
@@ -277,6 +285,21 @@ class OpenHandsClientTests(unittest.TestCase):
             'implementation finished for task %s with success=%s',
             'PROJ-1',
             True,
+        )
+
+    def test_task_conversation_title_uses_task_code_and_summary(self) -> None:
+        client = OpenHandsClient('https://openhands.example', 'oh-token')
+
+        self.assertEqual(
+            client._task_conversation_title(build_task(task_id='UNA-2405', summary='do xyz')),
+            'UNA-2405 do xyz',
+        )
+        self.assertEqual(
+            client._task_conversation_title(
+                build_task(task_id='UNA-2405', summary='do xyz'),
+                suffix=' [testing]',
+            ),
+            'UNA-2405 do xyz [testing]',
         )
 
     def test_wait_for_conversation_result_uses_configured_poll_limit_in_timeout(self) -> None:
