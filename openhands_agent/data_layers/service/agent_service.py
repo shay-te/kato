@@ -13,6 +13,7 @@ from openhands_agent.fields import (
     PullRequestFields,
     ReviewCommentFields,
     StatusFields,
+    TaskFields,
     TaskCommentFields,
 )
 from openhands_agent.data_layers.service.implementation_service import ImplementationService
@@ -235,11 +236,16 @@ class AgentService(Service):
                 'adding review summary comment for %s',
                 self._pull_request_repositories_text(pull_requests),
             )
-            self._task_data_access.add_comment(
-                task.id,
-                self._pull_request_summary_comment(task, pull_requests, failed_repositories),
-            )
-            self._log_task_step(task.id, 'added review summary comment')
+            if not self._comment_task_completed(
+                task,
+                pull_requests,
+                failed_repositories,
+            ):
+                self._handle_started_task_failure(
+                    task,
+                    RuntimeError('failed to add completion comment'),
+                )
+                return None
         if failed_repositories:
             self._handle_started_task_failure(
                 task,
@@ -255,7 +261,11 @@ class AgentService(Service):
                 PullRequestFields.FAILED_REPOSITORIES: failed_repositories,
             }
 
-        self._move_task_to_review(task.id)
+        try:
+            self._move_task_to_review(task.id, strict=True)
+        except Exception as exc:
+            self._handle_started_task_failure(task, exc)
+            return None
         self._mark_task_processed(task.id, pull_requests)
         self._notify_task_ready_for_review(task, pull_requests)
         self._log_task_step(task.id, 'workflow completed successfully')
@@ -334,12 +344,16 @@ class AgentService(Service):
         branch_name = context[Task.branch_name.key]
         repository_id = context[PullRequestFields.REPOSITORY_ID]
         session_id = str(context.get(ImplementationFields.SESSION_ID, '') or '').strip()
+        task_id = str(context.get(TaskFields.ID, '') or '').strip()
+        task_summary = str(context.get(TaskFields.SUMMARY, '') or '').strip()
         setattr(comment, PullRequestFields.REPOSITORY_ID, repository_id)
 
         execution = self._implementation_service.fix_review_comment(
             comment,
             branch_name,
             session_id,
+            task_id=task_id,
+            task_summary=task_summary,
         ) or {}
         if not execution.get(ImplementationFields.SUCCESS, False):
             raise RuntimeError(f'failed to address comment {comment.comment_id}')
@@ -429,7 +443,13 @@ class AgentService(Service):
                     description=description,
                     commit_message=commit_message,
                 )
-                self._remember_pull_request_context(pull_request, branch_name, session_id)
+                self._remember_pull_request_context(
+                    pull_request,
+                    branch_name,
+                    session_id,
+                    str(task.id or ''),
+                    str(task.summary or ''),
+                )
                 pull_requests.append(pull_request)
                 self.logger.info(
                     'created pull request %s for task %s in repository %s',
@@ -458,6 +478,8 @@ class AgentService(Service):
         pull_request: dict[str, str],
         branch_name: str,
         session_id: str = '',
+        task_id: str = '',
+        task_summary: str = '',
     ) -> None:
         pull_request_id = pull_request[PullRequestFields.ID]
         context = {
@@ -465,8 +487,14 @@ class AgentService(Service):
             Task.branch_name.key: branch_name,
         }
         normalized_session_id = str(session_id or '').strip()
+        normalized_task_id = str(task_id or '').strip()
+        normalized_task_summary = str(task_summary or '').strip()
         if normalized_session_id:
             context[ImplementationFields.SESSION_ID] = normalized_session_id
+        if normalized_task_id:
+            context[TaskFields.ID] = normalized_task_id
+        if normalized_task_summary:
+            context[TaskFields.SUMMARY] = normalized_task_summary
         self._pull_request_context_map.setdefault(pull_request_id, []).append(context)
         if self._state_data_access is None:
             return
@@ -476,6 +504,8 @@ class AgentService(Service):
                 pull_request[PullRequestFields.REPOSITORY_ID],
                 branch_name,
                 normalized_session_id,
+                normalized_task_id,
+                normalized_task_summary,
             )
         except Exception:
             self.logger.exception(
@@ -607,6 +637,19 @@ class AgentService(Service):
             failure_log_message='failed to add started comment for task %s',
         )
 
+    def _comment_task_completed(
+        self,
+        task: Task,
+        pull_requests: list[dict[str, str]],
+        failed_repositories: list[str],
+    ) -> bool:
+        return self._add_task_comment(
+            task.id,
+            self._pull_request_summary_comment(task, pull_requests, failed_repositories),
+            after_step='added review summary comment',
+            failure_log_message='failed to add review summary comment for task %s',
+        )
+
     def _comment_review_fix_completed(
         self,
         comment: ReviewComment,
@@ -646,7 +689,7 @@ class AgentService(Service):
             self.logger.exception('failed to move task %s back to open', task_id)
             return False
 
-    def _move_task_to_review(self, task_id: str) -> bool:
+    def _move_task_to_review(self, task_id: str, strict: bool = False) -> bool:
         try:
             self._log_task_step(task_id, 'moving issue to review')
             self._task_data_access.move_task_to_review(task_id)
@@ -654,6 +697,8 @@ class AgentService(Service):
             return True
         except Exception:
             self.logger.exception('failed to move task %s to review', task_id)
+            if strict:
+                raise
             return False
 
     @staticmethod

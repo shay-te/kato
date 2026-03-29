@@ -123,6 +123,8 @@ class OpenHandsClient(RetryingClientBase):
         comment: ReviewComment,
         branch_name: str,
         session_id: str = '',
+        task_id: str = '',
+        task_summary: str = '',
     ) -> dict[str, str | bool]:
         self.logger.info(
             'requesting review fix for pull request %s comment %s',
@@ -131,7 +133,11 @@ class OpenHandsClient(RetryingClientBase):
         )
         payload = self._run_prompt(
             prompt=self._build_review_prompt(comment, branch_name),
-            title=f'Fix review comment {comment.comment_id}',
+            title=self._review_conversation_title(
+                comment,
+                task_id=task_id,
+                task_summary=task_summary,
+            ),
             session_id=session_id,
         )
         returned_session_id = self._payload_session_id(payload)
@@ -154,14 +160,41 @@ class OpenHandsClient(RetryingClientBase):
         )
         return result
 
+    @classmethod
+    def _task_conversation_title(cls, task: Task, suffix: str = '') -> str:
+        return cls._conversation_title_from_values(
+            task_id=str(task.id or ''),
+            task_summary=str(task.summary or ''),
+            suffix=suffix,
+        )
+
+    @classmethod
+    def _review_conversation_title(
+        cls,
+        comment: ReviewComment,
+        task_id: str = '',
+        task_summary: str = '',
+    ) -> str:
+        title_parts = cls._conversation_title_parts(task_id, task_summary)
+        if title_parts:
+            return f'{" ".join(title_parts)} [review]'
+        return f'Fix review comment {comment.comment_id}'
+
     @staticmethod
-    def _task_conversation_title(task: Task, suffix: str = '') -> str:
-        task_id = str(task.id or '').strip()
-        task_summary = ' '.join(str(task.summary or '').strip().split())
-        title_parts = [part for part in (task_id, task_summary) if part]
-        base_title = ' '.join(title_parts)
-        if not base_title:
-            base_title = 'OpenHands task'
+    def _conversation_title_parts(task_id: str, task_summary: str) -> list[str]:
+        normalized_task_id = str(task_id or '').strip()
+        normalized_task_summary = ' '.join(str(task_summary or '').strip().split())
+        return [part for part in (normalized_task_id, normalized_task_summary) if part]
+
+    @classmethod
+    def _conversation_title_from_values(
+        cls,
+        task_id: str = '',
+        task_summary: str = '',
+        suffix: str = '',
+    ) -> str:
+        title_parts = cls._conversation_title_parts(task_id, task_summary)
+        base_title = ' '.join(title_parts) if title_parts else 'OpenHands task'
         return f'{base_title}{suffix}'
 
     def _build_implementation_prompt(self, task: Task) -> str:

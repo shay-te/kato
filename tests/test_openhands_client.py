@@ -613,6 +613,10 @@ class OpenHandsClientTests(unittest.TestCase):
             'Do not report success until all intended changes are committed',
             mock_run_prompt.call_args.kwargs['prompt'],
         )
+        self.assertEqual(
+            mock_run_prompt.call_args.kwargs['title'],
+            'Fix review comment 99',
+        )
         client.logger.info.assert_any_call(
             'requesting review fix for pull request %s comment %s',
             '17',
@@ -623,6 +627,85 @@ class OpenHandsClientTests(unittest.TestCase):
             '17',
             '99',
             True,
+        )
+
+    def test_fix_review_comment_uses_task_based_conversation_title_when_available(self) -> None:
+        client = OpenHandsClient('https://openhands.example', 'oh-token')
+
+        with patch.object(
+            client,
+            '_run_prompt',
+            return_value={
+                'summary': 'Updated branch',
+                ImplementationFields.COMMIT_MESSAGE: 'Address review comments',
+                ImplementationFields.SUCCESS: True,
+                ImplementationFields.SESSION_ID: 'conversation-3',
+            },
+        ) as mock_run_prompt:
+            fix_review_comment_with_defaults(
+                client,
+                task_id='PROJ-1',
+                task_summary='Fix bug',
+            )
+
+        self.assertEqual(
+            mock_run_prompt.call_args.kwargs['title'],
+            'PROJ-1 Fix bug [review]',
+        )
+
+    def test_fix_review_comment_uses_parent_conversation_id_for_uuid_session(self) -> None:
+        client = OpenHandsClient('https://openhands.example', 'oh-token')
+        valid_session_id = '570ac918-7d72-42b1-b8fa-c4d06ca6f5f0'
+
+        with patch.object(
+            client,
+            '_post',
+            return_value=mock_response(json_data={'id': 'start-1', 'status': 'WORKING'}),
+        ) as mock_post, patch.object(
+            client,
+            '_get',
+            side_effect=[
+                mock_response(
+                    json_data=[
+                        {
+                            'id': 'start-1',
+                            'status': 'READY',
+                            'app_conversation_id': 'conversation-1',
+                        }
+                    ]
+                ),
+                mock_response(
+                    json_data=[
+                        {
+                            'id': 'conversation-1',
+                            'execution_status': 'finished',
+                        }
+                    ]
+                ),
+                mock_response(
+                    json_data={
+                        'items': [
+                            {
+                                'kind': 'MessageEvent',
+                                'source': 'agent',
+                                'llm_message': {
+                                    'role': 'assistant',
+                                    'content': [
+                                        {'text': '{"success": true, "summary": "ok"}'}
+                                    ],
+                                },
+                            }
+                        ]
+                    }
+                ),
+            ],
+        ):
+            result = fix_review_comment_with_defaults(client, session_id=valid_session_id)
+
+        self.assertEqual(result[ImplementationFields.SESSION_ID], 'conversation-1')
+        self.assertEqual(
+            mock_post.call_args.kwargs['json']['parent_conversation_id'],
+            '570ac9187d7242b1b8fac4d06ca6f5f0',
         )
 
     def test_fix_review_comment_prompt_includes_prior_comment_context(self) -> None:

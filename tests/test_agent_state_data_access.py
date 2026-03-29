@@ -7,7 +7,12 @@ from pathlib import Path
 from openhands_agent.data_layers.data_access.agent_state_data_access import (
     AgentStateDataAccess,
 )
-from openhands_agent.fields import ImplementationFields, PullRequestFields, StatusFields
+from openhands_agent.fields import (
+    ImplementationFields,
+    PullRequestFields,
+    StatusFields,
+    TaskFields,
+)
 
 
 class AgentStateDataAccessTests(unittest.TestCase):
@@ -47,6 +52,8 @@ class AgentStateDataAccessTests(unittest.TestCase):
                 'client',
                 'feature/proj-1/client',
                 'conversation-1',
+                'PROJ-1',
+                'Fix bug',
             )
 
             self.assertTrue(data_access.is_task_processed('PROJ-1'))
@@ -63,6 +70,8 @@ class AgentStateDataAccessTests(unittest.TestCase):
                         PullRequestFields.REPOSITORY_ID: 'client',
                         'branch_name': 'feature/proj-1/client',
                         ImplementationFields.SESSION_ID: 'conversation-1',
+                        TaskFields.ID: 'PROJ-1',
+                        TaskFields.SUMMARY: 'Fix bug',
                     }
                 ],
             )
@@ -74,6 +83,8 @@ class AgentStateDataAccessTests(unittest.TestCase):
                         PullRequestFields.REPOSITORY_ID: 'client',
                         'branch_name': 'feature/proj-1/client',
                         ImplementationFields.SESSION_ID: 'conversation-1',
+                        TaskFields.ID: 'PROJ-1',
+                        TaskFields.SUMMARY: 'Fix bug',
                     }
                 ],
             )
@@ -92,6 +103,8 @@ class AgentStateDataAccessTests(unittest.TestCase):
                 'client',
                 'feature/proj-1/client',
                 'conversation-1',
+                'PROJ-1',
+                'Fix bug',
             )
 
             self.assertEqual(
@@ -101,6 +114,8 @@ class AgentStateDataAccessTests(unittest.TestCase):
                         PullRequestFields.REPOSITORY_ID: 'client',
                         'branch_name': 'feature/proj-1/client',
                         ImplementationFields.SESSION_ID: 'conversation-1',
+                        TaskFields.ID: 'PROJ-1',
+                        TaskFields.SUMMARY: 'Fix bug',
                     }
                 ],
             )

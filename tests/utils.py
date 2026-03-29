@@ -357,8 +357,16 @@ def fix_review_comment_with_defaults(
     comment: ReviewComment | None = None,
     branch_name: str = 'feature/proj-1',
     session_id: str = '',
+    task_id: str = '',
+    task_summary: str = '',
 ):
-    return client.fix_review_comment(comment or build_review_comment(), branch_name, session_id)
+    return client.fix_review_comment(
+        comment or build_review_comment(),
+        branch_name,
+        session_id,
+        task_id=task_id,
+        task_summary=task_summary,
+    )
 
 
 def get_assigned_tasks_with_defaults(

@@ -42,6 +42,11 @@ class StatusFields:
     TESTING_FAILED = 'testing_failed'
 
 
+class TaskFields:
+    ID = 'task_id'
+    SUMMARY = 'task_summary'
+
+
 class EmailFields:
     EMAIL = 'email'
     SUBJECT = 'subject'

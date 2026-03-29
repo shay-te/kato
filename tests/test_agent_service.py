@@ -16,6 +16,7 @@ from openhands_agent.fields import (
     PullRequestFields,
     ReviewCommentFields,
     StatusFields,
+    TaskFields,
     TaskCommentFields,
 )
 from openhands_agent.data_layers.service.testing_service import TestingService
@@ -295,6 +296,8 @@ class AgentServiceTests(unittest.TestCase):
                         PullRequestFields.REPOSITORY_ID: 'client',
                         'branch_name': 'feature/proj-1/client',
                         ImplementationFields.SESSION_ID: 'conversation-1',
+                        TaskFields.ID: 'PROJ-1',
+                        TaskFields.SUMMARY: 'Fix bug',
                     }
                 ],
                 '18': [
@@ -302,6 +305,8 @@ class AgentServiceTests(unittest.TestCase):
                         PullRequestFields.REPOSITORY_ID: 'backend',
                         'branch_name': 'feature/proj-1/backend',
                         ImplementationFields.SESSION_ID: 'conversation-1',
+                        TaskFields.ID: 'PROJ-1',
+                        TaskFields.SUMMARY: 'Fix bug',
                     }
                 ],
             },
@@ -766,10 +771,11 @@ class AgentServiceTests(unittest.TestCase):
             'PROJ-1',
         )
 
-    def test_process_assigned_task_continues_when_move_to_review_fails(self) -> None:
-        self.task_client.move_issue_to_state.side_effect = [
+    def test_process_assigned_task_reopens_when_completion_comment_fails(self) -> None:
+        self.task_client.add_comment.side_effect = [
             None,
-            RuntimeError('state update failed'),
+            RuntimeError('comment write failed'),
+            None,
         ]
         self.service.logger = Mock()
         task = self.task_data_access.get_assigned_tasks()[0]
@@ -777,7 +783,69 @@ class AgentServiceTests(unittest.TestCase):
         with patch.object(self.service, 'logger', self.service.logger):
             results = self.service.process_assigned_task(task)
 
-        self.assertEqual(results[StatusFields.STATUS], StatusFields.READY_FOR_REVIEW)
+        self.assertIsNone(results)
+        self.assertEqual(
+            self.task_client.move_issue_to_state.call_args_list,
+            [
+                unittest.mock.call('PROJ-1', 'State', 'In Progress'),
+                unittest.mock.call('PROJ-1', 'State', 'Todo'),
+            ],
+        )
+        self.assertEqual(self.task_client.add_comment.call_count, 3)
+        self.assertIn(
+            'started working on this task',
+            self.task_client.add_comment.call_args_list[0].args[1],
+        )
+        self.assertIn(
+            'stopped working on this task',
+            self.task_client.add_comment.call_args_list[2].args[1],
+        )
+        self.assertIn(
+            'failed to add completion comment',
+            self.task_client.add_comment.call_args_list[2].args[1],
+        )
+        self.assertEqual(self.service._processed_task_map, {})
+        self.assertEqual(self.email_core_lib.send.call_count, 2)
+        self.service.logger.exception.assert_called_once_with(
+            'failed to add review summary comment for task %s',
+            'PROJ-1',
+        )
+
+    def test_process_assigned_task_reopens_when_move_to_review_fails(self) -> None:
+        self.task_client.move_issue_to_state.side_effect = [
+            None,
+            RuntimeError('state update failed'),
+            None,
+        ]
+        self.service.logger = Mock()
+        task = self.task_data_access.get_assigned_tasks()[0]
+
+        with patch.object(self.service, 'logger', self.service.logger):
+            results = self.service.process_assigned_task(task)
+
+        self.assertIsNone(results)
+        self.assertEqual(
+            self.task_client.move_issue_to_state.call_args_list,
+            [
+                unittest.mock.call('PROJ-1', 'State', 'In Progress'),
+                unittest.mock.call('PROJ-1', 'State', 'To Verify'),
+                unittest.mock.call('PROJ-1', 'State', 'Todo'),
+            ],
+        )
+        self.assertEqual(self.task_client.add_comment.call_count, 3)
+        self.assertIn(
+            'OpenHands completed task PROJ-1: Fix bug.',
+            self.task_client.add_comment.call_args_list[1].args[1],
+        )
+        self.assertIn(
+            'stopped working on this task',
+            self.task_client.add_comment.call_args_list[2].args[1],
+        )
+        self.assertIn(
+            'state update failed',
+            self.task_client.add_comment.call_args_list[2].args[1],
+        )
+        self.assertEqual(self.service._processed_task_map, {})
         self.assertEqual(self.email_core_lib.send.call_count, 2)
         self.service.logger.exception.assert_called_once_with(
             'failed to move task %s to review',
@@ -838,6 +906,8 @@ class AgentServiceTests(unittest.TestCase):
                 PullRequestFields.REPOSITORY_ID: 'client',
                 'branch_name': 'feature/proj-1/client',
                 ImplementationFields.SESSION_ID: 'conversation-1',
+                TaskFields.ID: 'PROJ-1',
+                TaskFields.SUMMARY: 'Fix bug',
             }
         ]
 
@@ -857,6 +927,13 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(
             self.openhands_client.fix_review_comment.call_args.args[2],
             'conversation-1',
+        )
+        self.assertEqual(
+            self.openhands_client.fix_review_comment.call_args.kwargs,
+            {
+                'task_id': 'PROJ-1',
+                'task_summary': 'Fix bug',
+            },
         )
 
     def test_process_review_comment_marks_comment_processed(self) -> None:
@@ -977,6 +1054,8 @@ class AgentServiceTests(unittest.TestCase):
                         PullRequestFields.REPOSITORY_ID: 'client',
                         'branch_name': 'feature/proj-1/client',
                         ImplementationFields.SESSION_ID: 'conversation-1',
+                        TaskFields.ID: 'PROJ-1',
+                        TaskFields.SUMMARY: 'Fix bug',
                     }
                 ]
             ),
@@ -995,6 +1074,13 @@ class AgentServiceTests(unittest.TestCase):
 
         self.assertEqual(result[PullRequestFields.REPOSITORY_ID], 'client')
         state_data_access.get_pull_request_contexts.assert_called_once_with('17')
+        self.assertEqual(
+            self.openhands_client.fix_review_comment.call_args.kwargs,
+            {
+                'task_id': 'PROJ-1',
+                'task_summary': 'Fix bug',
+            },
+        )
 
     def test_handle_pull_request_comment_rejects_ambiguous_pull_request(self) -> None:
         self.service._pull_request_context_map['17'] = [
