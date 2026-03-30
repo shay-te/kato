@@ -21,6 +21,11 @@ from openhands_agent.repository_discovery import (
     repository_id_from_name,
     review_url_for_remote,
 )
+from openhands_agent.text_utils import (
+    normalized_lower_text,
+    normalized_text,
+    text_from_attr,
+)
 
 
 class RepositoryService(Service):
@@ -74,7 +79,7 @@ class RepositoryService(Service):
     ) -> list[object]:
         self._validate_git_executable()
         for repository in repositories:
-            branch_name = str(repository_branches.get(repository.id, '') or '').strip()
+            branch_name = normalized_text(repository_branches.get(repository.id, ''))
             if not branch_name:
                 raise ValueError(
                     f'missing task branch name for repository {repository.id}'
@@ -89,7 +94,7 @@ class RepositoryService(Service):
         raise ValueError(f'unknown repository id: {repository_id}')
 
     def build_branch_name(self, task: Task, repository) -> str:
-        return str(task.id or '').strip()
+        return normalized_text(task.id)
 
     def create_pull_request(
         self,
@@ -102,7 +107,7 @@ class RepositoryService(Service):
         self._validate_local_path(repository)
         self._prepare_pull_request_api(repository)
         destination_branch = self.destination_branch(repository)
-        final_commit_message = str(commit_message or '').strip() or f'Implement {source_branch}'
+        final_commit_message = normalized_text(commit_message) or f'Implement {source_branch}'
         self._publish_branch_updates(
             repository.local_path,
             source_branch,
@@ -139,7 +144,7 @@ class RepositoryService(Service):
     ) -> None:
         self._validate_local_path(repository)
         destination_branch = self.destination_branch(repository)
-        final_commit_message = str(commit_message or '').strip() or 'Address review comments'
+        final_commit_message = normalized_text(commit_message) or 'Address review comments'
         self._publish_branch_updates(
             repository.local_path,
             branch_name,
@@ -171,7 +176,7 @@ class RepositoryService(Service):
         self._pull_request_data_access(repository).resolve_review_comment(comment)
 
     def destination_branch(self, repository) -> str:
-        configured_branch = str(getattr(repository, 'destination_branch', '') or '').strip()
+        configured_branch = text_from_attr(repository, 'destination_branch')
         if configured_branch:
             return configured_branch
         self._validate_local_path(repository)
@@ -231,10 +236,8 @@ class RepositoryService(Service):
         def provider_values(attribute: str) -> dict[str, str]:
             provider_cfg = getattr(repository_source, attribute, None)
             return {
-                RepositoryFields.PROVIDER_BASE_URL: str(
-                    getattr(provider_cfg, 'base_url', '') or ''
-                ).strip(),
-                'token': str(getattr(provider_cfg, 'token', '') or '').strip(),
+                RepositoryFields.PROVIDER_BASE_URL: text_from_attr(provider_cfg, 'base_url'),
+                'token': text_from_attr(provider_cfg, 'token'),
             }
 
         return {
@@ -256,16 +259,16 @@ class RepositoryService(Service):
         )
 
     def _discover_repositories_from_root(self, repository_source) -> list[object]:
-        root_path = str(getattr(repository_source, 'repository_root_path', '') or '').strip()
+        root_path = text_from_attr(repository_source, 'repository_root_path')
         if not root_path:
             return []
         ignored_folders = self._ignored_repository_folders(repository_source)
 
         repositories: list[object] = []
         for discovered_repository in discover_git_repositories(root_path, ignored_folders):
-            local_path = str(discovered_repository.local_path).strip()
+            local_path = normalized_text(discovered_repository.local_path)
             folder_name = os.path.basename(local_path)
-            repo_slug = str(discovered_repository.repo_slug or folder_name).strip()
+            repo_slug = normalized_text(discovered_repository.repo_slug or folder_name)
             repository_name = self._discovered_repository_name(folder_name, repo_slug)
             aliases = [folder_name, repo_slug]
             repositories.append(
@@ -273,9 +276,9 @@ class RepositoryService(Service):
                     id=repository_id_from_name(repository_name),
                     display_name=display_name_from_repo_slug(repository_name),
                     local_path=local_path,
-                    provider=str(discovered_repository.provider or '').strip(),
-                    remote_url=str(discovered_repository.remote_url or '').strip(),
-                    owner=str(discovered_repository.owner or '').strip(),
+                    provider=normalized_text(discovered_repository.provider),
+                    remote_url=normalized_text(discovered_repository.remote_url),
+                    owner=normalized_text(discovered_repository.owner),
                     repo_slug=repo_slug,
                     aliases=[alias for alias in aliases if alias],
                 )
@@ -284,8 +287,8 @@ class RepositoryService(Service):
 
     @classmethod
     def _discovered_repository_name(cls, folder_name: str, repo_slug: str) -> str:
-        normalized_folder_name = str(folder_name or '').strip()
-        normalized_repo_slug = str(repo_slug or '').strip()
+        normalized_folder_name = normalized_text(folder_name)
+        normalized_repo_slug = normalized_text(repo_slug)
         if normalized_repo_slug and (
             not normalized_folder_name
             or normalized_folder_name.lower() in cls._GENERIC_DISCOVERED_FOLDER_NAMES
@@ -298,16 +301,16 @@ class RepositoryService(Service):
         ignored_folders = getattr(repository_source, 'ignored_repository_folders', [])
         if isinstance(ignored_folders, str):
             return [
-                folder.strip()
+                normalized_text(folder)
                 for folder in ignored_folders.split(',')
-                if folder.strip()
+                if normalized_text(folder)
             ]
         if not ignored_folders:
             return []
         return [
-            str(folder).strip()
+            normalized_text(folder)
             for folder in ignored_folders
-            if str(folder).strip()
+            if normalized_text(folder)
         ]
 
     def _repository_matches(self, searchable_text: str, repository) -> bool:
@@ -325,22 +328,22 @@ class RepositoryService(Service):
 
     @staticmethod
     def _repository_aliases(repository) -> list[str]:
-        local_path_alias = os.path.basename(str(getattr(repository, 'local_path', '') or '').strip())
+        local_path_alias = os.path.basename(text_from_attr(repository, 'local_path'))
         if local_path_alias in {'', '.'}:
             local_path_alias = ''
         aliases = [
-            str(getattr(repository, 'id', '') or '').strip().lower(),
-            str(getattr(repository, 'display_name', '') or '').strip().lower(),
-            str(getattr(repository, 'repo_slug', '') or '').strip().lower(),
+            normalized_lower_text(text_from_attr(repository, 'id')),
+            normalized_lower_text(text_from_attr(repository, 'display_name')),
+            normalized_lower_text(text_from_attr(repository, 'repo_slug')),
             local_path_alias.lower(),
         ]
         for alias in getattr(repository, 'aliases', []) or []:
-            aliases.append(str(alias).strip().lower())
+            aliases.append(normalized_lower_text(alias))
         return [alias for alias in aliases if alias]
 
     @staticmethod
     def _validate_local_path(repository) -> None:
-        local_path = str(getattr(repository, 'local_path', '') or '').strip()
+        local_path = text_from_attr(repository, 'local_path')
         if not local_path or not os.path.isdir(local_path):
             raise ValueError(
                 f'missing local repository path for {repository.id}: {local_path or "<empty>"}'
@@ -348,11 +351,11 @@ class RepositoryService(Service):
 
     @staticmethod
     def _validate_git_remote_auth(repository) -> None:
-        remote_url = str(getattr(repository, 'remote_url', '') or '').strip()
+        remote_url = text_from_attr(repository, 'remote_url')
         if not RepositoryService._uses_ssh_remote(remote_url):
             return
 
-        ssh_auth_sock = str(os.getenv('SSH_AUTH_SOCK', '') or '').strip()
+        ssh_auth_sock = normalized_text(os.getenv('SSH_AUTH_SOCK', ''))
         if not ssh_auth_sock:
             raise ValueError(
                 f'repository {repository.id} uses an SSH git remote but SSH_AUTH_SOCK is not configured'
@@ -365,7 +368,7 @@ class RepositoryService(Service):
 
     @staticmethod
     def _uses_ssh_remote(remote_url: str) -> bool:
-        normalized = str(remote_url or '').strip().lower()
+        normalized = normalized_lower_text(remote_url)
         return normalized.startswith('ssh://') or bool(re.match(r'^[^@]+@[^:]+:.+', normalized))
 
     def _prepare_repository_access(self, repository) -> None:
@@ -385,9 +388,10 @@ class RepositoryService(Service):
 
     def _prepare_task_branch(self, repository, branch_name: str):
         self._validate_local_path(repository)
-        destination_branch = str(
-            getattr(repository, 'destination_branch', '') or ''
-        ).strip() or self.destination_branch(repository)
+        destination_branch = text_from_attr(
+            repository,
+            'destination_branch',
+        ) or self.destination_branch(repository)
         setattr(repository, 'destination_branch', destination_branch)
         self._prepare_workspace_for_branch(
             repository.local_path,
@@ -397,17 +401,15 @@ class RepositoryService(Service):
         return repository
 
     def _prepare_pull_request_api(self, repository) -> None:
-        provider = str(getattr(repository, 'provider', '') or '').strip().lower()
-        provider_base_url = str(
-            getattr(repository, RepositoryFields.PROVIDER_BASE_URL, '') or ''
-        ).strip()
-        token = str(getattr(repository, 'token', '') or '').strip()
+        provider = normalized_lower_text(text_from_attr(repository, 'provider'))
+        provider_base_url = text_from_attr(repository, RepositoryFields.PROVIDER_BASE_URL)
+        token = text_from_attr(repository, 'token')
 
         if not provider:
             provider = self._provider_from_base_url(provider_base_url)
         if not provider:
             provider = self._provider_from_remote_url(
-                str(getattr(repository, 'remote_url', '') or '').strip()
+                text_from_attr(repository, 'remote_url')
             )
         if not provider:
             raise ValueError(
@@ -415,15 +417,15 @@ class RepositoryService(Service):
             )
 
         defaults = self._provider_api_defaults.get(provider, {})
-        provider_base_url = provider_base_url or str(
-            defaults.get(RepositoryFields.PROVIDER_BASE_URL, '') or ''
-        ).strip()
-        token = token or str(defaults.get('token', '') or '').strip()
+        provider_base_url = provider_base_url or normalized_text(
+            defaults.get(RepositoryFields.PROVIDER_BASE_URL, '')
+        )
+        token = token or normalized_text(defaults.get('token', ''))
 
         if not provider_base_url:
             provider_base_url = self._default_provider_base_url(
                 provider,
-                str(getattr(repository, 'remote_url', '') or '').strip(),
+                text_from_attr(repository, 'remote_url'),
             )
         if not provider_base_url:
             raise ValueError(
@@ -439,13 +441,11 @@ class RepositoryService(Service):
         setattr(repository, 'token', token)
 
     def _pull_request_data_access(self, repository) -> PullRequestDataAccess:
-        provider_base_url = str(
-            getattr(repository, RepositoryFields.PROVIDER_BASE_URL, '') or ''
-        ).strip()
-        owner = str(getattr(repository, RepositoryFields.OWNER, '') or '').strip()
-        repo_slug = str(getattr(repository, RepositoryFields.REPO_SLUG, '') or '').strip()
-        token = str(getattr(repository, 'token', '') or '').strip()
-        destination_branch = str(getattr(repository, RepositoryFields.DESTINATION_BRANCH, '') or '').strip()
+        provider_base_url = text_from_attr(repository, RepositoryFields.PROVIDER_BASE_URL)
+        owner = text_from_attr(repository, RepositoryFields.OWNER)
+        repo_slug = text_from_attr(repository, RepositoryFields.REPO_SLUG)
+        token = text_from_attr(repository, 'token')
+        destination_branch = text_from_attr(repository, RepositoryFields.DESTINATION_BRANCH)
         if not provider_base_url or not owner or not repo_slug or not token:
             raise ValueError(
                 f'incomplete pull request configuration for repository {repository.id}'
@@ -784,10 +784,10 @@ class RepositoryService(Service):
     def _git_http_auth_header(cls, repository) -> str:
         if repository is None:
             return ''
-        remote_url = str(getattr(repository, 'remote_url', '') or '').strip()
+        remote_url = text_from_attr(repository, 'remote_url')
         if not cls._uses_http_remote(remote_url):
             return ''
-        token = str(getattr(repository, 'token', '') or '').strip()
+        token = text_from_attr(repository, 'token')
         if not token:
             return ''
         username = cls._git_http_username(repository, remote_url)
@@ -803,7 +803,7 @@ class RepositoryService(Service):
         parsed = urlparse(remote_url)
         if parsed.username:
             return parsed.username
-        provider = str(getattr(repository, 'provider', '') or '').strip().lower()
+        provider = normalized_lower_text(text_from_attr(repository, 'provider'))
         return {
             'github': 'x-access-token',
             'gitlab': 'oauth2',
@@ -812,14 +812,14 @@ class RepositoryService(Service):
 
     @staticmethod
     def _uses_http_remote(remote_url: str) -> bool:
-        normalized = str(remote_url or '').strip().lower()
+        normalized = normalized_lower_text(remote_url)
         return normalized.startswith('https://') or normalized.startswith('http://')
 
     def _review_url(self, repository, source_branch: str, destination_branch: str) -> str:
-        remote_url = str(getattr(repository, 'remote_url', '') or '').strip()
-        provider = str(getattr(repository, 'provider', '') or '').strip()
-        owner = str(getattr(repository, 'owner', '') or '').strip()
-        repo_slug = str(getattr(repository, 'repo_slug', '') or '').strip()
+        remote_url = text_from_attr(repository, 'remote_url')
+        provider = text_from_attr(repository, 'provider')
+        owner = text_from_attr(repository, 'owner')
+        repo_slug = text_from_attr(repository, 'repo_slug')
 
         if remote_url and provider and owner and repo_slug:
             return review_url_for_remote(
@@ -835,7 +835,7 @@ class RepositoryService(Service):
         if not web_base_url or not owner or not repo_slug:
             return ''
         provider = provider or self._provider_from_base_url(
-            str(getattr(repository, 'provider_base_url', '') or '').strip()
+            text_from_attr(repository, 'provider_base_url')
         )
         if provider:
             return review_url_for_remote(
@@ -851,10 +851,10 @@ class RepositoryService(Service):
 
     @staticmethod
     def _fallback_web_base_url(repository) -> str:
-        remote_url = str(getattr(repository, 'remote_url', '') or '').strip()
+        remote_url = text_from_attr(repository, 'remote_url')
         if remote_url:
             return remote_web_base_url(remote_url)
-        provider_base_url = str(getattr(repository, 'provider_base_url', '') or '').strip()
+        provider_base_url = text_from_attr(repository, 'provider_base_url')
         if not provider_base_url:
             return ''
         if 'api.bitbucket.org' in provider_base_url:

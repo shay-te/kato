@@ -4,6 +4,7 @@ from urllib.parse import quote
 from openhands_agent.client.pull_request_client_base import PullRequestClientBase
 from openhands_agent.data_layers.data.review_comment import ReviewComment
 from openhands_agent.fields import PullRequestFields, ReviewCommentFields
+from openhands_agent.text_utils import normalized_text, text_from_attr, text_from_mapping
 
 
 class GitLabClient(PullRequestClientBase):
@@ -54,15 +55,13 @@ class GitLabClient(PullRequestClientBase):
         repo_slug: str,
         comment: ReviewComment,
     ) -> None:
-        discussion_id = str(
-            getattr(comment, ReviewCommentFields.RESOLUTION_TARGET_ID, '') or ''
-        ).strip()
+        discussion_id = text_from_attr(comment, ReviewCommentFields.RESOLUTION_TARGET_ID)
         if not discussion_id:
             discussion_id = self._discussion_id_for_comment(
                 repo_owner,
                 repo_slug,
-                str(comment.pull_request_id or ''),
-                str(comment.comment_id or ''),
+                normalized_text(comment.pull_request_id),
+                normalized_text(comment.comment_id),
             )
         if not discussion_id:
             raise ValueError(
@@ -78,18 +77,16 @@ class GitLabClient(PullRequestClientBase):
     def _project_path(repo_owner: str, repo_slug: str) -> str:
         return quote(f'{repo_owner}/{repo_slug}', safe='')
 
-    @staticmethod
-    def _normalize_pr(payload: dict[str, Any]) -> dict[str, str]:
-        if not isinstance(payload, dict) or 'iid' not in payload:
-            raise ValueError('invalid pull request response payload')
-        return {
-            PullRequestFields.ID: str(payload['iid']),
-            PullRequestFields.TITLE: str(payload.get(PullRequestFields.TITLE, '')),
-            PullRequestFields.URL: str(payload.get('web_url', '')),
-        }
+    @classmethod
+    def _normalize_pr(cls, payload: dict[str, Any]) -> dict[str, str]:
+        return cls._normalized_pull_request(
+            payload,
+            id_key='iid',
+            url=payload.get('web_url', '') if isinstance(payload, dict) else '',
+        )
 
-    @staticmethod
-    def _normalize_comments(payload: Any, pull_request_id: str) -> list[ReviewComment]:
+    @classmethod
+    def _normalize_comments(cls, payload: Any, pull_request_id: str) -> list[ReviewComment]:
         if not isinstance(payload, list):
             return []
 
@@ -97,21 +94,20 @@ class GitLabClient(PullRequestClientBase):
         for discussion in payload:
             if not isinstance(discussion, dict) or discussion.get('resolved'):
                 continue
-            discussion_id = str(discussion.get('id', '') or '').strip()
+            discussion_id = text_from_mapping(discussion, 'id')
             notes = discussion.get('notes', []) if isinstance(discussion.get('notes', []), list) else []
             for item in notes:
                 if not isinstance(item, dict) or item.get('system'):
                     continue
                 author = item.get('author') if isinstance(item.get('author'), dict) else {}
-                comment = ReviewComment(
-                    pull_request_id=str(pull_request_id),
-                    comment_id=str(item.get('id', '')),
-                    author=str(author.get('username') or author.get('name') or ''),
-                    body=str(item.get('body', '')),
+                comment = cls._review_comment_from_values(
+                    pull_request_id=pull_request_id,
+                    comment_id=item.get('id', ''),
+                    author=author.get('username') or author.get('name') or '',
+                    body=item.get('body', ''),
+                    resolution_target_id=discussion_id,
+                    resolution_target_type='discussion',
                 )
-                setattr(comment, ReviewCommentFields.RESOLUTION_TARGET_ID, discussion_id)
-                setattr(comment, ReviewCommentFields.RESOLUTION_TARGET_TYPE, 'discussion')
-                setattr(comment, ReviewCommentFields.RESOLVABLE, bool(discussion_id))
                 comments.append(comment)
         return [comment for comment in comments if comment.comment_id]
 
@@ -136,15 +132,15 @@ class GitLabClient(PullRequestClientBase):
         pull_request_id: str,
         comment_id: str,
     ) -> str:
-        target_comment_id = str(comment_id or '').strip()
+        target_comment_id = normalized_text(comment_id)
         for discussion in self._discussion_payload(repo_owner, repo_slug, pull_request_id):
             if not isinstance(discussion, dict):
                 continue
             notes = discussion.get('notes', []) if isinstance(discussion.get('notes', []), list) else []
             if any(
-                str(note.get('id', '') or '').strip() == target_comment_id
+                text_from_mapping(note, 'id') == target_comment_id
                 for note in notes
                 if isinstance(note, dict)
             ):
-                return str(discussion.get('id', '') or '').strip()
+                return text_from_mapping(discussion, 'id')
         return ''

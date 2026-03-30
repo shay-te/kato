@@ -5,6 +5,7 @@ from openhands_agent.client.pull_request_client_base import PullRequestClientBas
 from openhands_agent.client.retry_utils import run_with_retry
 from openhands_agent.data_layers.data.review_comment import ReviewComment
 from openhands_agent.fields import PullRequestFields, ReviewCommentFields
+from openhands_agent.text_utils import normalized_text, text_from_attr, text_from_mapping
 
 
 class GitHubClient(PullRequestClientBase):
@@ -85,15 +86,13 @@ mutation($threadId: ID!) {
         repo_slug: str,
         comment: ReviewComment,
     ) -> None:
-        thread_id = str(
-            getattr(comment, ReviewCommentFields.RESOLUTION_TARGET_ID, '') or ''
-        ).strip()
+        thread_id = text_from_attr(comment, ReviewCommentFields.RESOLUTION_TARGET_ID)
         if not thread_id:
             thread_id = self._thread_id_for_comment(
                 repo_owner,
                 repo_slug,
-                str(comment.pull_request_id or ''),
-                str(comment.comment_id or ''),
+                normalized_text(comment.pull_request_id),
+                normalized_text(comment.comment_id),
             )
         if not thread_id:
             raise ValueError(
@@ -104,18 +103,16 @@ mutation($threadId: ID!) {
             {'threadId': thread_id},
         )
 
-    @staticmethod
-    def _normalize_pr(payload: dict[str, Any]) -> dict[str, str]:
-        if not isinstance(payload, dict) or 'number' not in payload:
-            raise ValueError('invalid pull request response payload')
-        return {
-            PullRequestFields.ID: str(payload['number']),
-            PullRequestFields.TITLE: str(payload.get(PullRequestFields.TITLE, '')),
-            PullRequestFields.URL: str(payload.get('html_url', '')),
-        }
+    @classmethod
+    def _normalize_pr(cls, payload: dict[str, Any]) -> dict[str, str]:
+        return cls._normalized_pull_request(
+            payload,
+            id_key='number',
+            url=payload.get('html_url', '') if isinstance(payload, dict) else '',
+        )
 
-    @staticmethod
-    def _normalize_comments(payload: Any, pull_request_id: str) -> list[ReviewComment]:
+    @classmethod
+    def _normalize_comments(cls, payload: Any, pull_request_id: str) -> list[ReviewComment]:
         if not isinstance(payload, list):
             return []
 
@@ -123,22 +120,21 @@ mutation($threadId: ID!) {
         for thread in payload:
             if not isinstance(thread, dict) or thread.get('isResolved'):
                 continue
-            thread_id = str(thread.get('id', '') or '').strip()
+            thread_id = text_from_mapping(thread, 'id')
             comments_payload = thread.get('comments') if isinstance(thread.get('comments'), dict) else {}
             nodes = comments_payload.get('nodes', []) if isinstance(comments_payload.get('nodes', []), list) else []
             for item in nodes:
                 if not isinstance(item, dict):
                     continue
                 author = item.get('author') if isinstance(item.get('author'), dict) else {}
-                comment = ReviewComment(
-                    pull_request_id=str(pull_request_id),
-                    comment_id=str(item.get('databaseId', '')),
-                    author=str(author.get('login', '')),
-                    body=str(item.get('body', '')),
+                comment = cls._review_comment_from_values(
+                    pull_request_id=pull_request_id,
+                    comment_id=item.get('databaseId', ''),
+                    author=author.get('login', ''),
+                    body=item.get('body', ''),
+                    resolution_target_id=thread_id,
+                    resolution_target_type='thread',
                 )
-                setattr(comment, ReviewCommentFields.RESOLUTION_TARGET_ID, thread_id)
-                setattr(comment, ReviewCommentFields.RESOLUTION_TARGET_TYPE, 'thread')
-                setattr(comment, ReviewCommentFields.RESOLVABLE, bool(thread_id))
                 comments.append(comment)
         return [comment for comment in comments if comment.comment_id]
 
@@ -149,7 +145,7 @@ mutation($threadId: ID!) {
         pull_request_id: str,
     ) -> list[dict[str, Any]]:
         try:
-            pull_request_number = int(str(pull_request_id or '').strip())
+            pull_request_number = int(normalized_text(pull_request_id))
         except ValueError as exc:
             raise ValueError(f'invalid GitHub pull request id: {pull_request_id}') from exc
         payload = self._graphql_with_retry(
@@ -173,18 +169,18 @@ mutation($threadId: ID!) {
         pull_request_id: str,
         comment_id: str,
     ) -> str:
-        target_comment_id = str(comment_id or '').strip()
+        target_comment_id = normalized_text(comment_id)
         for thread in self._review_thread_nodes(repo_owner, repo_slug, pull_request_id):
             if not isinstance(thread, dict):
                 continue
             comments_payload = thread.get('comments') if isinstance(thread.get('comments'), dict) else {}
             nodes = comments_payload.get('nodes', []) if isinstance(comments_payload.get('nodes', []), list) else []
             if any(
-                str(item.get('databaseId', '') or '').strip() == target_comment_id
+                text_from_mapping(item, 'databaseId') == target_comment_id
                 for item in nodes
                 if isinstance(item, dict)
             ):
-                return str(thread.get('id', '') or '').strip()
+                return text_from_mapping(thread, 'id')
         return ''
 
     def _graphql_with_retry(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
@@ -204,7 +200,7 @@ mutation($threadId: ID!) {
         errors = payload.get('errors', [])
         if isinstance(errors, list) and errors:
             messages = [
-                str(error.get('message', '') or '').strip()
+                text_from_mapping(error, 'message')
                 for error in errors
                 if isinstance(error, dict)
             ]

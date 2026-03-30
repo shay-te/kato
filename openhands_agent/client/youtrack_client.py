@@ -10,6 +10,11 @@ from openhands_agent.fields import (
     YouTrackCommentFields,
     YouTrackCustomFieldFields,
 )
+from openhands_agent.text_utils import (
+    alphanumeric_lower_text,
+    normalized_text,
+    text_from_mapping,
+)
 
 class YouTrackClient(TicketClientBase):
     EVENT_FIELDS = 'id,presentation,$type'
@@ -99,10 +104,10 @@ class YouTrackClient(TicketClientBase):
             field_name,
             fields=self.DETAILED_CUSTOM_FIELD_FIELDS,
         )
-        field_id = str(field.get(YouTrackCustomFieldFields.ID) or '').strip()
+        field_id = text_from_mapping(field, YouTrackCustomFieldFields.ID)
         if not field_id:
             raise ValueError(f'missing issue field id for: {field_name}')
-        field_type = str(field.get(YouTrackCustomFieldFields.TYPE) or '').strip()
+        field_type = text_from_mapping(field, YouTrackCustomFieldFields.TYPE)
         if not field_type:
             raise ValueError(f'missing issue field type for: {field_name}')
         if self._field_value_name(field) == state_name:
@@ -206,8 +211,8 @@ class YouTrackClient(TicketClientBase):
         field: dict[str, Any],
         state_name: str,
     ) -> dict[str, Any]:
-        field_id = str(field.get(YouTrackCustomFieldFields.ID) or '').strip()
-        field_name = str(field.get(YouTrackCustomFieldFields.NAME) or '').strip() or '<unknown>'
+        field_id = text_from_mapping(field, YouTrackCustomFieldFields.ID)
+        field_name = text_from_mapping(field, YouTrackCustomFieldFields.NAME) or '<unknown>'
         event = self._matching_state_machine_event(field, state_name)
         if event is None:
             raise ValueError(
@@ -236,8 +241,8 @@ class YouTrackClient(TicketClientBase):
         for event in field.get('possibleEvents') or []:
             if not isinstance(event, dict):
                 continue
-            event_id = str(event.get(YouTrackCustomFieldFields.ID) or '').strip()
-            presentation = str(event.get('presentation') or '').strip()
+            event_id = text_from_mapping(event, YouTrackCustomFieldFields.ID)
+            presentation = text_from_mapping(event, 'presentation')
             if (
                 cls._normalized_state_token(presentation) != desired_token
                 and cls._normalized_state_token(event_id) != desired_token
@@ -256,12 +261,12 @@ class YouTrackClient(TicketClientBase):
     def _field_value_name(field: dict[str, Any]) -> str:
         value = field.get('value')
         if isinstance(value, dict):
-            return str(value.get(YouTrackCustomFieldFields.NAME) or '').strip()
+            return text_from_mapping(value, YouTrackCustomFieldFields.NAME)
         return ''
 
     @staticmethod
     def _normalized_state_token(value: str) -> str:
-        return ''.join(character for character in str(value or '').lower() if character.isalnum())
+        return alphanumeric_lower_text(value)
 
     def _get_issue_comments(self, issue_id: str) -> list[dict[str, Any]]:
         return self._get_issue_items(
@@ -303,7 +308,7 @@ class YouTrackClient(TicketClientBase):
         comment_entries: list[dict[str, str]],
         attachments: list[dict[str, Any]],
     ) -> str:
-        base_description = str(description or '').strip()
+        base_description = normalized_text(description)
         sections = [base_description or 'No description provided.']
         self._append_comment_section(sections, comment_entries)
 
@@ -332,7 +337,7 @@ class YouTrackClient(TicketClientBase):
         for comment in comments:
             if not isinstance(comment, dict):
                 continue
-            text = str(comment.get(YouTrackCommentFields.TEXT) or '').strip()
+            text = text_from_mapping(comment, YouTrackCommentFields.TEXT)
             if not text:
                 continue
             entries.append(

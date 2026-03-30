@@ -6,6 +6,12 @@ import os
 from pathlib import Path
 
 from openhands_agent.repository_discovery import discover_git_repositories
+from openhands_agent.text_utils import (
+    alphanumeric_lower_text,
+    normalized_lower_text,
+    normalized_text,
+    text_from_attr,
+)
 
 
 TRUE_VALUES = {'1', 'true', 'yes', 'on'}
@@ -45,15 +51,15 @@ def _build_env(env_file: str | None) -> dict[str, str]:
 
 
 def _is_enabled(value: str | None) -> bool:
-    return str(value or '').strip().lower() in TRUE_VALUES
+    return normalized_lower_text(value) in TRUE_VALUES
 
 
 def _missing(env: dict[str, str], keys: list[str]) -> list[str]:
-    return [key for key in keys if not str(env.get(key, '')).strip()]
+    return [key for key in keys if not normalized_text(env.get(key, ''))]
 
 
 def _has_any(env: dict[str, str], keys: tuple[str, ...] | list[str]) -> bool:
-    return any(str(env.get(key, '')).strip() for key in keys)
+    return any(normalized_text(env.get(key, '')) for key in keys)
 
 
 def validate_agent_env(env: dict[str, str]) -> list[str]:
@@ -147,14 +153,14 @@ def _required_agent_keys(issue_platform: str) -> list[str]:
 
 
 def _validate_repository_provider_env(env: dict[str, str]) -> list[str]:
-    repository_root_path = str(env.get('REPOSITORY_ROOT_PATH', '')).strip()
+    repository_root_path = normalized_text(env.get('REPOSITORY_ROOT_PATH', ''))
     if not repository_root_path or not Path(repository_root_path).exists():
         return []
 
     errors: list[str] = []
     missing_keys: set[str] = set()
     for repository in discover_git_repositories(repository_root_path):
-        provider = str(getattr(repository, 'provider', '') or '').strip().lower()
+        provider = normalized_lower_text(text_from_attr(repository, 'provider'))
         token_keys = PROVIDER_TOKEN_ENV_KEYS.get(provider, ())
         if token_keys and not _has_any(env, token_keys):
             missing_keys.add(token_keys[0])
@@ -177,8 +183,8 @@ def _validate_issue_state_queue_env(env: dict[str, str], issue_platform: str) ->
         return []
 
     issue_states = _split_env_states(env.get(f'{platform_prefix}_ISSUE_STATES', ''))
-    progress_state = str(env.get(f'{platform_prefix}_PROGRESS_STATE', '') or '').strip()
-    review_state = str(env.get(f'{platform_prefix}_REVIEW_STATE', '') or '').strip()
+    progress_state = normalized_text(env.get(f'{platform_prefix}_PROGRESS_STATE', ''))
+    review_state = normalized_text(env.get(f'{platform_prefix}_REVIEW_STATE', ''))
     invalid_states = []
     for state_name, label in ((progress_state, 'progress'), (review_state, 'review')):
         normalized_state = _normalized_state_token(state_name)
@@ -197,25 +203,25 @@ def _validate_issue_state_queue_env(env: dict[str, str], issue_platform: str) ->
 
 
 def _split_env_states(value: str | None) -> list[str]:
-    return [state.strip() for state in str(value or '').split(',') if state.strip()]
+    return [normalized_text(state) for state in str(value or '').split(',') if normalized_text(state)]
 
 
 def _normalized_state_token(value: str) -> str:
-    return ''.join(character for character in str(value or '').lower() if character.isalnum())
+    return alphanumeric_lower_text(value)
 
 
 def validate_openhands_env(env: dict[str, str]) -> list[str]:
     errors = []
-    if not str(env.get('OH_SECRET_KEY', '')).strip():
+    if not normalized_text(env.get('OH_SECRET_KEY', '')):
         errors.append('missing required OpenHands env var: OH_SECRET_KEY')
 
-    model = str(env.get('OPENHANDS_LLM_MODEL', '')).strip()
+    model = normalized_text(env.get('OPENHANDS_LLM_MODEL', ''))
     if not model:
         errors.append('missing required OpenHands env var: OPENHANDS_LLM_MODEL')
         return errors
 
     if model.startswith('bedrock/'):
-        has_bearer = bool(str(env.get('AWS_BEARER_TOKEN_BEDROCK', '')).strip())
+        has_bearer = bool(normalized_text(env.get('AWS_BEARER_TOKEN_BEDROCK', '')))
         has_access_key_flow = not _missing(
             env,
             ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION_NAME'],

@@ -1,5 +1,10 @@
 from openhands_agent.client.retrying_client_base import RetryingClientBase
 from openhands_agent.fields import TaskCommentFields
+from openhands_agent.text_utils import (
+    condensed_lower_text,
+    normalized_text,
+    text_from_mapping,
+)
 
 
 class TicketClientBase(RetryingClientBase):
@@ -59,7 +64,7 @@ class TicketClientBase(RetryingClientBase):
         description: object,
         comments: list[dict[str, str]],
     ) -> str:
-        sections = [str(description or '').strip() or 'No description provided.']
+        sections = [normalized_text(description) or 'No description provided.']
         cls._append_comment_section(sections, comments)
         return cls._join_task_description_sections(sections)
 
@@ -81,10 +86,10 @@ class TicketClientBase(RetryingClientBase):
         for comment in comments:
             if not isinstance(comment, dict):
                 continue
-            body = str(comment.get(TaskCommentFields.BODY, '') or '').strip()
+            body = text_from_mapping(comment, TaskCommentFields.BODY)
             if not body or cls._is_agent_operational_comment(body):
                 continue
-            author = str(comment.get(TaskCommentFields.AUTHOR, '') or 'unknown').strip() or 'unknown'
+            author = text_from_mapping(comment, TaskCommentFields.AUTHOR, 'unknown') or 'unknown'
             lines.append(f'- {author}: {body}')
         return lines
 
@@ -94,8 +99,8 @@ class TicketClientBase(RetryingClientBase):
 
     @classmethod
     def _is_agent_operational_comment(cls, text: str) -> bool:
-        normalized_text = str(text or '').strip()
-        return any(normalized_text.startswith(prefix) for prefix in cls.AGENT_COMMENT_PREFIXES)
+        normalized_comment = normalized_text(text)
+        return any(normalized_comment.startswith(prefix) for prefix in cls.AGENT_COMMENT_PREFIXES)
 
     @classmethod
     def active_execution_blocking_comment(cls, comments: list[dict[str, str]] | None) -> str:
@@ -121,7 +126,7 @@ class TicketClientBase(RetryingClientBase):
         for comment in comments or []:
             if not isinstance(comment, dict):
                 continue
-            text = str(comment.get(TaskCommentFields.BODY, '') or '').strip()
+            text = text_from_mapping(comment, TaskCommentFields.BODY)
             if not text:
                 continue
             if cls._matches_prefixes(text, blocking_prefixes):
@@ -143,15 +148,15 @@ class TicketClientBase(RetryingClientBase):
     def _is_retry_override_comment(cls, text: str) -> bool:
         if cls._is_agent_operational_comment(text):
             return False
-        normalized_text = ' '.join(str(text or '').strip().lower().split())
-        if not normalized_text:
+        normalized_comment = condensed_lower_text(text)
+        if not normalized_comment:
             return False
         return any(
-            normalized_text.startswith(prefix)
+            normalized_comment.startswith(prefix)
             for prefix in cls.RETRY_OVERRIDE_COMMAND_PREFIXES
         )
 
     @staticmethod
     def _matches_prefixes(text: str, prefixes: tuple[str, ...]) -> bool:
-        normalized_text = str(text or '').strip()
-        return any(normalized_text.startswith(prefix) for prefix in prefixes)
+        normalized_value = normalized_text(text)
+        return any(normalized_value.startswith(prefix) for prefix in prefixes)

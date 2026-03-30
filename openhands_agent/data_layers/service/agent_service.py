@@ -5,6 +5,7 @@ from core_lib.data_layers.service.service import Service
 from openhands_agent.client.ticket_client_base import TicketClientBase
 from openhands_agent.error_handling import run_best_effort
 from openhands_agent.logging_utils import configure_logger
+from openhands_agent.pull_request_context import build_pull_request_context
 from openhands_agent.client.retry_utils import is_retryable_exception
 from openhands_agent.data_layers.data.review_comment import ReviewComment
 from openhands_agent.data_layers.data.task import Task
@@ -21,6 +22,7 @@ from openhands_agent.data_layers.service.implementation_service import Implement
 from openhands_agent.data_layers.service.notification_service import NotificationService
 from openhands_agent.data_layers.service.repository_service import RepositoryService
 from openhands_agent.data_layers.service.testing_service import TestingService
+from openhands_agent.text_utils import normalized_text, text_from_attr, text_from_mapping
 
 
 class AgentService(Service):
@@ -486,15 +488,15 @@ class AgentService(Service):
             comment.comment_id,
             comment.pull_request_id,
         )
-        repository_id = str(getattr(comment, PullRequestFields.REPOSITORY_ID, '') or '').strip()
+        repository_id = text_from_attr(comment, PullRequestFields.REPOSITORY_ID)
         context = self._pull_request_context(comment.pull_request_id, repository_id)
         if context is None:
             raise ValueError(f'unknown pull request id: {comment.pull_request_id}')
         branch_name = context[Task.branch_name.key]
         repository_id = context[PullRequestFields.REPOSITORY_ID]
-        session_id = str(context.get(ImplementationFields.SESSION_ID, '') or '').strip()
-        task_id = str(context.get(TaskFields.ID, '') or '').strip()
-        task_summary = str(context.get(TaskFields.SUMMARY, '') or '').strip()
+        session_id = text_from_mapping(context, ImplementationFields.SESSION_ID)
+        task_id = text_from_mapping(context, TaskFields.ID)
+        task_summary = text_from_mapping(context, TaskFields.SUMMARY)
         setattr(comment, PullRequestFields.REPOSITORY_ID, repository_id)
         repository = self._repository_service.get_repository(repository_id)
         self._repository_service.prepare_task_branches(
@@ -574,7 +576,7 @@ class AgentService(Service):
         pull_requests: list[dict[str, str]] = []
         failed_repositories: list[str] = []
         description = str(execution.get(Task.summary.key) or '')
-        session_id = str(execution.get(ImplementationFields.SESSION_ID, '') or '').strip()
+        session_id = text_from_mapping(execution, ImplementationFields.SESSION_ID)
         commit_message = str(
             execution.get(ImplementationFields.COMMIT_MESSAGE, '') or ''
         ).strip() or f'Implement {task.id}'
@@ -635,19 +637,13 @@ class AgentService(Service):
         task_summary: str = '',
     ) -> None:
         pull_request_id = pull_request[PullRequestFields.ID]
-        context = {
-            PullRequestFields.REPOSITORY_ID: pull_request[PullRequestFields.REPOSITORY_ID],
-            Task.branch_name.key: branch_name,
-        }
-        normalized_session_id = str(session_id or '').strip()
-        normalized_task_id = str(task_id or '').strip()
-        normalized_task_summary = str(task_summary or '').strip()
-        if normalized_session_id:
-            context[ImplementationFields.SESSION_ID] = normalized_session_id
-        if normalized_task_id:
-            context[TaskFields.ID] = normalized_task_id
-        if normalized_task_summary:
-            context[TaskFields.SUMMARY] = normalized_task_summary
+        context = build_pull_request_context(
+            pull_request[PullRequestFields.REPOSITORY_ID],
+            branch_name,
+            session_id,
+            task_id,
+            task_summary,
+        )
         self._pull_request_context_map.setdefault(pull_request_id, []).append(context)
         if self._state_data_access is None:
             return
@@ -656,9 +652,9 @@ class AgentService(Service):
                 pull_request_id,
                 pull_request[PullRequestFields.REPOSITORY_ID],
                 branch_name,
-                normalized_session_id,
-                normalized_task_id,
-                normalized_task_summary,
+                context.get(ImplementationFields.SESSION_ID, ''),
+                context.get(TaskFields.ID, ''),
+                context.get(TaskFields.SUMMARY, ''),
             )
         except Exception:
             self.logger.exception(
@@ -888,10 +884,10 @@ class AgentService(Service):
 
     @staticmethod
     def _has_actionable_task_definition(task: Task) -> bool:
-        description = str(task.description or '').strip()
+        description = normalized_text(task.description)
         if description and description.lower() != 'no description provided.':
             return True
-        summary = str(task.summary or '').strip()
+        summary = normalized_text(task.summary)
         return len(summary) >= 24 or len(summary.split()) >= 4
 
     def _log_task_step(self, task_id: str, message: str, *args) -> None:
@@ -900,9 +896,9 @@ class AgentService(Service):
     @staticmethod
     def _repository_ids_text(repositories: list[object]) -> str:
         repository_ids = [
-            str(getattr(repository, 'id', '') or '').strip()
+            text_from_attr(repository, 'id')
             for repository in repositories
-            if str(getattr(repository, 'id', '') or '').strip()
+            if text_from_attr(repository, 'id')
         ]
         return ', '.join(repository_ids) if repository_ids else '<none>'
 
@@ -910,8 +906,8 @@ class AgentService(Service):
     def _repository_destination_text(repositories: list[object]) -> str:
         entries = []
         for repository in repositories:
-            repository_id = str(getattr(repository, 'id', '') or '').strip()
-            destination_branch = str(getattr(repository, 'destination_branch', '') or '').strip()
+            repository_id = text_from_attr(repository, 'id')
+            destination_branch = text_from_attr(repository, 'destination_branch')
             if not repository_id:
                 continue
             entries.append(f'{repository_id}->{destination_branch or "default"}')
@@ -931,7 +927,7 @@ class AgentService(Service):
         if not isinstance(pull_requests, list):
             return '<none>'
         repository_ids = [
-            str(pull_request.get(PullRequestFields.REPOSITORY_ID, '') or '').strip()
+            text_from_mapping(pull_request, PullRequestFields.REPOSITORY_ID)
             for pull_request in pull_requests
             if isinstance(pull_request, dict)
         ]
@@ -940,7 +936,7 @@ class AgentService(Service):
 
     @staticmethod
     def _session_suffix(payload: dict[str, str | bool]) -> str:
-        session_id = str(payload.get(ImplementationFields.SESSION_ID, '') or '').strip()
+        session_id = text_from_mapping(payload, ImplementationFields.SESSION_ID)
         return f' (session {session_id})' if session_id else ''
 
     @staticmethod

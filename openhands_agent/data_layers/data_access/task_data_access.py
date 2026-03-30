@@ -5,6 +5,7 @@ from core_lib.rule_validator.rule_validator import RuleValidator, ValueRuleValid
 
 from openhands_agent.client.ticket_client_base import TicketClientBase
 from openhands_agent.data_layers.data.task import Task
+from openhands_agent.text_utils import alphanumeric_lower_text, normalized_text
 
 
 assigned_task_rule_validator = RuleValidator(
@@ -135,7 +136,7 @@ class TaskDataAccess(DataAccess):
 
     @staticmethod
     def _normalized_state_token(value: str) -> str:
-        return ''.join(character for character in str(value or '').lower() if character.isalnum())
+        return alphanumeric_lower_text(value)
 
     def _configured_progress_state_field(self) -> str:
         return getattr(
@@ -161,7 +162,7 @@ class TaskDataAccess(DataAccess):
         )
 
     def _configured_open_state(self) -> str:
-        explicit_open_state = str(getattr(self._config, 'open_state', '') or '').strip()
+        explicit_open_state = normalized_text(getattr(self._config, 'open_state', ''))
         if explicit_open_state:
             return explicit_open_state
         configured_issue_states = self._configured_issue_states()

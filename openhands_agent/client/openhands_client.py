@@ -10,6 +10,13 @@ from openhands_agent.fields import (
     PullRequestFields,
     ReviewCommentFields,
 )
+from openhands_agent.text_utils import (
+    condensed_text,
+    normalized_lower_text,
+    normalized_text,
+    text_from_attr,
+    text_from_mapping,
+)
 
 
 class OpenHandsClient(RetryingClientBase):
@@ -105,7 +112,7 @@ class OpenHandsClient(RetryingClientBase):
             Task.summary.key: payload.get(Task.summary.key, ''),
             ImplementationFields.SUCCESS: self._success_flag(payload),
         }
-        commit_message = str(payload.get(ImplementationFields.COMMIT_MESSAGE, '') or '').strip()
+        commit_message = text_from_mapping(payload, ImplementationFields.COMMIT_MESSAGE)
         if commit_message:
             result[ImplementationFields.COMMIT_MESSAGE] = commit_message
         returned_session_id = self._payload_session_id(payload)
@@ -182,8 +189,8 @@ class OpenHandsClient(RetryingClientBase):
 
     @staticmethod
     def _conversation_title_parts(task_id: str, task_summary: str) -> list[str]:
-        normalized_task_id = str(task_id or '').strip()
-        normalized_task_summary = ' '.join(str(task_summary or '').strip().split())
+        normalized_task_id = normalized_text(task_id)
+        normalized_task_summary = condensed_text(task_summary)
         return [part for part in (normalized_task_id, normalized_task_summary) if part]
 
     @classmethod
@@ -254,7 +261,7 @@ class OpenHandsClient(RetryingClientBase):
         repository_lines = []
         for repository in repositories:
             branch_name = repository_branches.get(repository.id, task.branch_name)
-            destination_branch = str(getattr(repository, 'destination_branch', '') or '').strip()
+            destination_branch = text_from_attr(repository, 'destination_branch')
             destination_text = (
                 destination_branch if destination_branch else 'the repository default branch'
             )
@@ -342,7 +349,7 @@ class OpenHandsClient(RetryingClientBase):
     @staticmethod
     def _payload_session_id(payload: dict) -> str:
         for key in (ImplementationFields.SESSION_ID, 'conversation_id'):
-            value = str(payload.get(key, '') or '').strip()
+            value = text_from_mapping(payload, key)
             if value:
                 return value
         return ''
@@ -366,12 +373,12 @@ class OpenHandsClient(RetryingClientBase):
         response.raise_for_status()
 
     def _settings_update_payload(self) -> dict[str, str]:
-        llm_model = str(self._llm_settings.get('llm_model', '') or '').strip()
+        llm_model = text_from_mapping(self._llm_settings, 'llm_model')
         if not llm_model:
             return {}
 
         payload = {'llm_model': llm_model}
-        llm_base_url = str(self._llm_settings.get('llm_base_url', '') or '').strip()
+        llm_base_url = text_from_mapping(self._llm_settings, 'llm_base_url')
         if llm_base_url:
             payload['llm_base_url'] = llm_base_url
         return payload
@@ -397,20 +404,20 @@ class OpenHandsClient(RetryingClientBase):
         return self._wait_for_started_conversation_id(start_task)
 
     def _wait_for_started_conversation_id(self, start_task: dict) -> str:
-        start_task_id = str(start_task.get('id', '') or '').strip()
+        start_task_id = text_from_mapping(start_task, 'id')
         if not start_task_id:
             raise ValueError('openhands start task response did not include an id')
 
         for attempt in range(self._max_poll_attempts):
             task_info = self._get_start_task(start_task_id)
-            status = str(task_info.get('status', '') or '').strip().upper()
+            status = text_from_mapping(task_info, 'status').upper()
             if status == self._START_TASK_READY:
-                conversation_id = str(task_info.get('app_conversation_id', '') or '').strip()
+                conversation_id = text_from_mapping(task_info, 'app_conversation_id')
                 if conversation_id:
                     return conversation_id
                 raise ValueError('openhands start task became ready without a conversation id')
             if status == self._START_TASK_ERROR:
-                detail = str(task_info.get('detail', '') or '').strip()
+                detail = text_from_mapping(task_info, 'detail')
                 raise RuntimeError(detail or 'openhands failed to start a conversation')
             self._sleep_before_next_poll(attempt)
 
@@ -438,7 +445,9 @@ class OpenHandsClient(RetryingClientBase):
         highlight_logging_enabled = True
         for attempt in range(self._max_poll_attempts):
             conversation = self._get_conversation(conversation_id)
-            execution_status = str(conversation.get('execution_status', '') or '').strip().lower()
+            execution_status = normalized_lower_text(
+                text_from_mapping(conversation, 'execution_status')
+            )
             if execution_status in self._FAILED_EXECUTION_STATUSES:
                 raise RuntimeError(f'openhands conversation failed with status: {execution_status}')
             if execution_status not in self._ACTIVE_EXECUTION_STATUSES:
@@ -522,18 +531,18 @@ class OpenHandsClient(RetryingClientBase):
     def _event_highlight_key(self, event: object) -> str:
         if not isinstance(event, dict):
             return str(event)
-        event_id = str(event.get('id', '') or '').strip()
+        event_id = text_from_mapping(event, 'id')
         if event_id:
             return event_id
         parts = [
-            str(event.get('kind', '') or '').strip(),
-            str(event.get('source', '') or '').strip(),
-            str(event.get('tool_name', '') or '').strip(),
+            text_from_mapping(event, 'kind'),
+            text_from_mapping(event, 'source'),
+            text_from_mapping(event, 'tool_name'),
             self._assistant_message_text(event),
         ]
         tool_call = event.get('tool_call', {})
         if isinstance(tool_call, dict):
-            parts.append(str(tool_call.get('arguments', '') or '').strip())
+            parts.append(text_from_mapping(tool_call, 'arguments'))
         return '|'.join(parts)
 
     @classmethod
@@ -547,12 +556,12 @@ class OpenHandsClient(RetryingClientBase):
 
     @classmethod
     def _action_event_highlight_text(cls, event: dict) -> str:
-        if str(event.get('kind', '') or '').strip() != 'ActionEvent':
+        if text_from_mapping(event, 'kind') != 'ActionEvent':
             return ''
-        if str(event.get('source', '') or '').strip() != 'agent':
+        if text_from_mapping(event, 'source') != 'agent':
             return ''
 
-        tool_name = str(event.get('tool_name', '') or '').strip()
+        tool_name = text_from_mapping(event, 'tool_name')
         if not tool_name or tool_name == 'finish':
             return ''
 
@@ -564,8 +573,8 @@ class OpenHandsClient(RetryingClientBase):
             return 'ran a shell command'
 
         if tool_name == 'file_editor':
-            file_command = str(arguments.get('command', '') or '').strip()
-            path = str(arguments.get('path', '') or '').strip()
+            file_command = text_from_mapping(arguments, 'command')
+            path = text_from_mapping(arguments, 'path')
             if file_command in {'str_replace', 'insert'} and path:
                 return f'edited {path} with {file_command}'
             if file_command == 'view' and path:
@@ -574,7 +583,7 @@ class OpenHandsClient(RetryingClientBase):
                 return f'used file_editor on {path}'
             return 'used file_editor'
 
-        path = str(arguments.get('path', '') or '').strip()
+        path = text_from_mapping(arguments, 'path')
         if path:
             return f'used {tool_name} on {path}'
         return f'used {tool_name}'
@@ -595,7 +604,7 @@ class OpenHandsClient(RetryingClientBase):
         tool_call = event.get('tool_call', {})
         if not isinstance(tool_call, dict):
             return {}
-        arguments_text = str(tool_call.get('arguments', '') or '').strip()
+        arguments_text = text_from_mapping(tool_call, 'arguments')
         if not arguments_text:
             return {}
         try:
@@ -609,14 +618,14 @@ class OpenHandsClient(RetryingClientBase):
     @staticmethod
     def _shell_command(arguments: dict[str, object]) -> str:
         for key in ('command', 'cmd'):
-            value = str(arguments.get(key, '') or '').strip()
+            value = text_from_mapping(arguments, key)
             if value:
                 return value
         return ''
 
     @staticmethod
     def _truncate(text: str, limit: int = 160) -> str:
-        normalized = ' '.join(str(text or '').split())
+        normalized = condensed_text(text)
         if len(normalized) <= limit:
             return normalized
         return f'{normalized[: limit - 3].rstrip()}...'
@@ -635,17 +644,17 @@ class OpenHandsClient(RetryingClientBase):
     def _finish_action_payload(event: object) -> dict[str, str | bool] | None:
         if not isinstance(event, dict):
             return None
-        if str(event.get('kind', '') or '').strip() != 'ActionEvent':
+        if text_from_mapping(event, 'kind') != 'ActionEvent':
             return None
-        if str(event.get('source', '') or '').strip() != 'agent':
+        if text_from_mapping(event, 'source') != 'agent':
             return None
-        if str(event.get('tool_name', '') or '').strip() != 'finish':
+        if text_from_mapping(event, 'tool_name') != 'finish':
             return None
 
         parsed_arguments: dict[str, str | bool] = {}
         tool_call = event.get('tool_call', {})
         if isinstance(tool_call, dict):
-            arguments = str(tool_call.get('arguments', '') or '').strip()
+            arguments = text_from_mapping(tool_call, 'arguments')
             if arguments:
                 try:
                     payload = json.loads(arguments)
@@ -658,18 +667,18 @@ class OpenHandsClient(RetryingClientBase):
         if not isinstance(action, dict):
             action = {}
 
-        summary = str(
+        summary = normalized_text(
             parsed_arguments.get(Task.summary.key)
             or parsed_arguments.get('summary')
             or action.get('summary')
             or event.get('summary')
             or ''
-        ).strip()
-        message = str(
+        )
+        message = normalized_text(
             parsed_arguments.get('message')
             or action.get('message')
             or ''
-        ).strip()
+        )
 
         if not summary and not message:
             return None
@@ -680,7 +689,7 @@ class OpenHandsClient(RetryingClientBase):
             else True,
             Task.summary.key: summary or message,
         }
-        commit_message = str(parsed_arguments.get(ImplementationFields.COMMIT_MESSAGE, '') or '').strip()
+        commit_message = text_from_mapping(parsed_arguments, ImplementationFields.COMMIT_MESSAGE)
         if commit_message:
             result[ImplementationFields.COMMIT_MESSAGE] = commit_message
         return result
@@ -689,20 +698,20 @@ class OpenHandsClient(RetryingClientBase):
     def _assistant_message_text(event: object) -> str:
         if not isinstance(event, dict):
             return ''
-        if str(event.get('kind', '') or '').strip() != 'MessageEvent':
+        if text_from_mapping(event, 'kind') != 'MessageEvent':
             return ''
-        if str(event.get('source', '') or '').strip() != 'agent':
+        if text_from_mapping(event, 'source') != 'agent':
             return ''
         llm_message = event.get('llm_message', {})
         if not isinstance(llm_message, dict):
             return ''
-        if str(llm_message.get('role', '') or '').strip() != 'assistant':
+        if text_from_mapping(llm_message, 'role') != 'assistant':
             return ''
         content = llm_message.get('content', [])
         if not isinstance(content, list):
             return ''
         texts = [
-            str(item.get('text', '') or '').strip()
+            text_from_mapping(item, 'text')
             for item in content
             if isinstance(item, dict)
         ]
@@ -710,7 +719,7 @@ class OpenHandsClient(RetryingClientBase):
 
     @staticmethod
     def _parse_result_json(message_text: str) -> dict[str, str | bool] | None:
-        text = str(message_text or '').strip()
+        text = normalized_text(message_text)
         if not text:
             return None
 
@@ -739,7 +748,7 @@ class OpenHandsClient(RetryingClientBase):
 
     @staticmethod
     def _normalized_uuid(value: str) -> str:
-        normalized_value = str(value or '').strip()
+        normalized_value = normalized_text(value)
         if not normalized_value:
             return ''
         try:

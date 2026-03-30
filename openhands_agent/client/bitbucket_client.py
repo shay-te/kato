@@ -3,6 +3,7 @@ from typing import Any
 from openhands_agent.client.pull_request_client_base import PullRequestClientBase
 from openhands_agent.data_layers.data.review_comment import ReviewComment
 from openhands_agent.fields import PullRequestFields, ReviewCommentFields
+from openhands_agent.text_utils import normalized_text, text_from_attr
 
 
 class BitbucketClient(PullRequestClientBase):
@@ -55,9 +56,10 @@ class BitbucketClient(PullRequestClientBase):
         repo_slug: str,
         comment: ReviewComment,
     ) -> None:
-        resolution_target_id = str(
-            getattr(comment, ReviewCommentFields.RESOLUTION_TARGET_ID, '') or comment.comment_id or ''
-        ).strip()
+        resolution_target_id = text_from_attr(
+            comment,
+            ReviewCommentFields.RESOLUTION_TARGET_ID,
+        ) or normalized_text(comment.comment_id)
         if not resolution_target_id:
             raise ValueError('bitbucket review comment id is required to resolve the thread')
         response = self._post_with_retry(
@@ -81,24 +83,22 @@ class BitbucketClient(PullRequestClientBase):
             payload['destination'] = {'branch': {'name': destination_branch}}
         return payload
 
-    @staticmethod
-    def _normalize_pr(payload: dict[str, Any]) -> dict[str, str]:
-        if not isinstance(payload, dict) or PullRequestFields.ID not in payload:
-            raise ValueError('invalid pull request response payload')
-        links = payload.get('links')
+    @classmethod
+    def _normalize_pr(cls, payload: dict[str, Any]) -> dict[str, str]:
+        links = payload.get('links') if isinstance(payload, dict) else {}
         if not isinstance(links, dict):
             links = {}
         html_link = links.get('html')
         if not isinstance(html_link, dict):
             html_link = {}
-        return {
-            PullRequestFields.ID: str(payload[PullRequestFields.ID]),
-            PullRequestFields.TITLE: str(payload.get(PullRequestFields.TITLE, '')),
-            PullRequestFields.URL: str(html_link.get('href', '')),
-        }
+        return cls._normalized_pull_request(
+            payload,
+            id_key=PullRequestFields.ID,
+            url=html_link.get('href', ''),
+        )
 
-    @staticmethod
-    def _normalize_comments(payload: dict[str, Any], pull_request_id: str) -> list[ReviewComment]:
+    @classmethod
+    def _normalize_comments(cls, payload: dict[str, Any], pull_request_id: str) -> list[ReviewComment]:
         values = payload.get('values', []) if isinstance(payload, dict) else []
         if not isinstance(values, list):
             return []
@@ -114,15 +114,16 @@ class BitbucketClient(PullRequestClientBase):
             author = item.get('user') if isinstance(item.get('user'), dict) else {}
             display_name = author.get('display_name', '')
             nickname = author.get('nickname', '')
-            comment = ReviewComment(
-                pull_request_id=str(pull_request_id),
-                comment_id=str(item.get('id', '')),
-                author=str(display_name or nickname or ''),
-                body=str(content.get('raw', '')),
+            resolution_target_id = normalized_text(
+                parent.get('id', '') or item.get('id', '')
             )
-            resolution_target_id = str(parent.get('id', '') or item.get('id', '') or '').strip()
-            setattr(comment, ReviewCommentFields.RESOLUTION_TARGET_ID, resolution_target_id)
-            setattr(comment, ReviewCommentFields.RESOLUTION_TARGET_TYPE, 'comment')
-            setattr(comment, ReviewCommentFields.RESOLVABLE, bool(resolution_target_id))
+            comment = cls._review_comment_from_values(
+                pull_request_id=pull_request_id,
+                comment_id=item.get('id', ''),
+                author=display_name or nickname or '',
+                body=content.get('raw', ''),
+                resolution_target_id=resolution_target_id,
+                resolution_target_type='comment',
+            )
             comments.append(comment)
         return [comment for comment in comments if comment.comment_id]

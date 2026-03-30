@@ -11,10 +11,13 @@ from core_lib.data_layers.data_access.data_access import DataAccess
 
 from openhands_agent.data_layers.data.task import Task
 from openhands_agent.fields import (
-    ImplementationFields,
     PullRequestFields,
     StatusFields,
-    TaskFields,
+)
+from openhands_agent.pull_request_context import (
+    build_pull_request_context,
+    normalize_pull_request_context,
+    pull_request_context_key,
 )
 
 
@@ -60,34 +63,17 @@ class AgentStateDataAccess(DataAccess):
     ) -> None:
         def mutate(state: dict) -> None:
             contexts = state['pull_request_contexts'].setdefault(str(pull_request_id), [])
-            record = {
-                PullRequestFields.REPOSITORY_ID: str(repository_id),
-                Task.branch_name.key: str(branch_name),
-            }
-            normalized_session_id = str(session_id or '').strip()
-            normalized_task_id = str(task_id or '').strip()
-            normalized_task_summary = str(task_summary or '').strip()
-            if normalized_session_id:
-                record[ImplementationFields.SESSION_ID] = normalized_session_id
-            if normalized_task_id:
-                record[TaskFields.ID] = normalized_task_id
-            if normalized_task_summary:
-                record[TaskFields.SUMMARY] = normalized_task_summary
+            record = build_pull_request_context(
+                repository_id,
+                branch_name,
+                session_id,
+                task_id,
+                task_summary,
+            )
+            record_key = pull_request_context_key(record)
             for existing_context in contexts:
-                if not isinstance(existing_context, dict):
-                    continue
-                if (
-                    str(existing_context.get(PullRequestFields.REPOSITORY_ID, '') or '').strip()
-                    == record[PullRequestFields.REPOSITORY_ID]
-                    and str(existing_context.get(Task.branch_name.key, '') or '').strip()
-                    == record[Task.branch_name.key]
-                ):
-                    if normalized_session_id:
-                        existing_context[ImplementationFields.SESSION_ID] = normalized_session_id
-                    if normalized_task_id:
-                        existing_context[TaskFields.ID] = normalized_task_id
-                    if normalized_task_summary:
-                        existing_context[TaskFields.SUMMARY] = normalized_task_summary
+                if pull_request_context_key(existing_context) == record_key:
+                    existing_context.update(record)
                     return
             contexts.append(record)
 
@@ -101,24 +87,8 @@ class AgentStateDataAccess(DataAccess):
 
         normalized_contexts: list[dict[str, str]] = []
         for context in contexts:
-            if not isinstance(context, dict):
-                continue
-            repository_id = str(context.get(PullRequestFields.REPOSITORY_ID, '') or '').strip()
-            branch_name = str(context.get(Task.branch_name.key, '') or '').strip()
-            session_id = str(context.get(ImplementationFields.SESSION_ID, '') or '').strip()
-            task_id = str(context.get(TaskFields.ID, '') or '').strip()
-            task_summary = str(context.get(TaskFields.SUMMARY, '') or '').strip()
-            if repository_id and branch_name:
-                normalized_context = {
-                    PullRequestFields.REPOSITORY_ID: repository_id,
-                    Task.branch_name.key: branch_name,
-                }
-                if session_id:
-                    normalized_context[ImplementationFields.SESSION_ID] = session_id
-                if task_id:
-                    normalized_context[TaskFields.ID] = task_id
-                if task_summary:
-                    normalized_context[TaskFields.SUMMARY] = task_summary
+            normalized_context = normalize_pull_request_context(context)
+            if normalized_context is not None:
                 normalized_contexts.append(normalized_context)
         return normalized_contexts
 
@@ -211,25 +181,11 @@ class AgentStateDataAccess(DataAccess):
             if not isinstance(pull_request_contexts, list):
                 continue
             for context in pull_request_contexts:
-                if not isinstance(context, dict):
-                    continue
-                repository_id = str(context.get(PullRequestFields.REPOSITORY_ID, '') or '').strip()
-                branch_name = str(context.get(Task.branch_name.key, '') or '').strip()
-                session_id = str(context.get(ImplementationFields.SESSION_ID, '') or '').strip()
-                task_id = str(context.get(TaskFields.ID, '') or '').strip()
-                task_summary = str(context.get(TaskFields.SUMMARY, '') or '').strip()
-                if repository_id and branch_name:
-                    normalized_context = {
-                        PullRequestFields.ID: str(pull_request_id),
-                        PullRequestFields.REPOSITORY_ID: repository_id,
-                        Task.branch_name.key: branch_name,
-                    }
-                    if session_id:
-                        normalized_context[ImplementationFields.SESSION_ID] = session_id
-                    if task_id:
-                        normalized_context[TaskFields.ID] = task_id
-                    if task_summary:
-                        normalized_context[TaskFields.SUMMARY] = task_summary
+                normalized_context = normalize_pull_request_context(
+                    context,
+                    pull_request_id=str(pull_request_id),
+                )
+                if normalized_context is not None:
                     contexts.append(normalized_context)
         return contexts
 
