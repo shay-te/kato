@@ -95,3 +95,5 @@ The goal is to keep the code:
 - Extract repeated paths, hosts, filenames, and project names into constants.
 - Extract repeated workflow steps such as git, scp, and path building into helpers.
 - Prefer small reusable helpers over copy-pasted branches of similar code.
+- When service-layer orchestration repeats the same control-flow, error handling, or logging pattern, extract a small private helper in that service before introducing a broader shared abstraction.
+- When deduplicating code, preserve the existing behavior, task-state transitions, log messages, and test-visible outputs unless the task explicitly requires changing them.
