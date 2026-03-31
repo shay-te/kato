@@ -17,6 +17,7 @@ from openhands_agent.data_layers.service.implementation_service import (
 )
 from openhands_agent.data_layers.service.notification_service import NotificationService
 from openhands_agent.data_layers.service.repository_service import RepositoryService
+from openhands_agent.data_layers.service.task_service import TaskService
 from openhands_agent.data_layers.service.testing_service import TestingService
 
 
@@ -35,6 +36,7 @@ class LayerBaseClassTests(unittest.TestCase):
             ImplementationService,
             NotificationService,
             RepositoryService,
+            TaskService,
             TestingService,
         ):
             self.assertTrue(issubclass(cls, Service))

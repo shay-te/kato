@@ -16,6 +16,13 @@ TRANSIENT_EXCEPTION_NAMES = {
 logger = logging.getLogger(__name__)
 
 
+def retry_count(value: object, default: int = 1) -> int:
+    try:
+        return max(1, int(value))
+    except (TypeError, ValueError):
+        return max(1, int(default))
+
+
 def is_retryable_exception(exc: Exception) -> bool:
     return exc.__class__.__name__ in TRANSIENT_EXCEPTION_NAMES or isinstance(
         exc,

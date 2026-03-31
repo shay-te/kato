@@ -7,12 +7,13 @@ from openhands_agent.data_layers.data_access.pull_request_data_access import (
     PullRequestDataAccess,
 )
 from openhands_agent.data_layers.data_access.task_data_access import TaskDataAccess
+from openhands_agent.data_layers.service.task_service import TaskService
 from openhands_agent.fields import ReviewCommentFields
 from utils import build_review_comment
 
 
 class TaskDataAccessTests(unittest.TestCase):
-    def test_uses_base_url_only_for_client_and_passes_runtime_values(self) -> None:
+    def test_uses_project_and_runtime_values_for_client_calls(self) -> None:
         config = types.SimpleNamespace(
             base_url="https://youtrack.example",
             token="yt-token",
@@ -23,12 +24,90 @@ class TaskDataAccessTests(unittest.TestCase):
         client = Mock()
 
         data_access = TaskDataAccess(config, client)
-        data_access.get_assigned_tasks()
-        data_access.move_task_to_in_progress('PROJ-1')
-        data_access.add_pull_request_comment('PROJ-1', 'https://bitbucket/pr/1')
-        data_access.move_task_to_review('PROJ-1')
-        data_access.move_task_to_open('PROJ-1')
+        data_access.validate_connection('me', ['Todo', 'Open'])
+        data_access.get_assigned_tasks('me', ['Todo', 'Open'])
+        data_access.add_comment('PROJ-1', 'Pull request created: https://bitbucket/pr/1')
+        data_access.move_task_to_state('PROJ-1', 'State', 'In Progress')
 
+        client.validate_connection.assert_called_once_with(
+            project='PROJ',
+            assignee='me',
+            states=['Todo', 'Open'],
+        )
+
+        client.get_assigned_tasks.assert_called_once_with(
+            project='PROJ',
+            assignee='me',
+            states=['Todo', 'Open'],
+        )
+        client.add_comment.assert_called_once_with(
+            'PROJ-1',
+            'Pull request created: https://bitbucket/pr/1',
+        )
+        client.move_issue_to_state.assert_called_once_with(
+            'PROJ-1',
+            'State',
+            'In Progress',
+        )
+
+    def test_validates_runtime_values(self) -> None:
+        config = types.SimpleNamespace(
+            base_url="https://youtrack.example",
+            token="yt-token",
+            project="PROJ",
+            assignee="me",
+            issue_states=["Todo", "Open"],
+        )
+        data_access = TaskDataAccess(
+            config,
+            types.SimpleNamespace(
+                validate_connection=Mock(),
+                add_comment=Mock(),
+                get_assigned_tasks=Mock(),
+                move_issue_to_state=Mock(),
+            ),
+        )
+
+        with self.assertRaisesRegex(PermissionError, 'assignee'):
+            data_access.validate_connection(17, ['Open'])
+
+        with self.assertRaisesRegex(PermissionError, 'issue_id'):
+            data_access.add_comment(['PROJ-1'], 'https://bitbucket/pr/1')
+
+        with self.assertRaisesRegex(PermissionError, 'assignee'):
+            data_access.get_assigned_tasks(assignee=17, states=['Open'])
+
+        with self.assertRaisesRegex(PermissionError, 'states'):
+            data_access.get_assigned_tasks(assignee='me', states='Open')
+
+        with self.assertRaisesRegex(PermissionError, 'issue_id'):
+            data_access.move_task_to_state(['PROJ-1'], 'State', 'Open')
+
+
+class TaskServiceTests(unittest.TestCase):
+    def test_uses_configured_queue_states_and_state_transitions(self) -> None:
+        config = types.SimpleNamespace(
+            base_url="https://youtrack.example",
+            token="yt-token",
+            project="PROJ",
+            assignee="me",
+            issue_states=["Todo", "Open"],
+        )
+        client = Mock()
+
+        task_service = TaskService(config, TaskDataAccess(config, client))
+        task_service.validate_connection()
+        task_service.get_assigned_tasks()
+        task_service.move_task_to_in_progress('PROJ-1')
+        task_service.add_pull_request_comment('PROJ-1', 'https://bitbucket/pr/1')
+        task_service.move_task_to_review('PROJ-1')
+        task_service.move_task_to_open('PROJ-1')
+
+        client.validate_connection.assert_called_once_with(
+            project='PROJ',
+            assignee='me',
+            states=['Todo', 'Open'],
+        )
         client.get_assigned_tasks.assert_called_once_with(
             project='PROJ',
             assignee='me',
@@ -41,21 +120,9 @@ class TaskDataAccessTests(unittest.TestCase):
         self.assertEqual(
             client.move_issue_to_state.call_args_list,
             [
-                unittest.mock.call(
-                    'PROJ-1',
-                    'State',
-                    'In Progress',
-                ),
-                unittest.mock.call(
-                    'PROJ-1',
-                    'State',
-                    'In Review',
-                ),
-                unittest.mock.call(
-                    'PROJ-1',
-                    'State',
-                    'Todo',
-                ),
+                unittest.mock.call('PROJ-1', 'State', 'In Progress'),
+                unittest.mock.call('PROJ-1', 'State', 'In Review'),
+                unittest.mock.call('PROJ-1', 'State', 'Todo'),
             ],
         )
 
@@ -71,53 +138,14 @@ class TaskDataAccessTests(unittest.TestCase):
         )
         client = Mock()
 
-        data_access = TaskDataAccess(config, client)
-        data_access.get_review_tasks()
+        task_service = TaskService(config, TaskDataAccess(config, client))
+        task_service.get_review_tasks()
 
         client.get_assigned_tasks.assert_called_once_with(
             project='PROJ',
             assignee='me',
             states=['To Verify'],
         )
-
-    def test_validates_runtime_values(self) -> None:
-        config = types.SimpleNamespace(
-            base_url="https://youtrack.example",
-            token="yt-token",
-            project="PROJ",
-            assignee="me",
-            progress_state_field='State',
-            progress_state='In Progress',
-            review_state_field='State',
-            review_state='To Verify',
-            issue_states=["Todo", "Open"],
-        )
-        data_access = TaskDataAccess(
-            config,
-            types.SimpleNamespace(
-                add_comment=Mock(),
-                get_assigned_tasks=Mock(),
-                move_issue_to_state=Mock(),
-            ),
-        )
-
-        with self.assertRaisesRegex(PermissionError, 'issue_id'):
-            data_access.add_pull_request_comment(['PROJ-1'], 'https://bitbucket/pr/1')
-
-        with self.assertRaisesRegex(PermissionError, 'assignee'):
-            data_access.get_assigned_tasks(assignee=17)
-
-        with self.assertRaisesRegex(PermissionError, 'states'):
-            data_access.get_assigned_tasks(states='Open')
-
-        with self.assertRaisesRegex(PermissionError, 'issue_id'):
-            data_access.move_task_to_review(['PROJ-1'])
-
-        with self.assertRaisesRegex(PermissionError, 'issue_id'):
-            data_access.move_task_to_in_progress(['PROJ-1'])
-
-        with self.assertRaisesRegex(PermissionError, 'issue_id'):
-            data_access.move_task_to_open(['PROJ-1'])
 
     def test_uses_legacy_issue_state_and_default_review_config(self) -> None:
         config = types.SimpleNamespace(
@@ -129,11 +157,11 @@ class TaskDataAccessTests(unittest.TestCase):
         )
         client = Mock()
 
-        data_access = TaskDataAccess(config, client)
-        data_access.get_assigned_tasks()
-        data_access.move_task_to_in_progress('PROJ-1')
-        data_access.move_task_to_review('PROJ-1')
-        data_access.move_task_to_open('PROJ-1')
+        task_service = TaskService(config, TaskDataAccess(config, client))
+        task_service.get_assigned_tasks()
+        task_service.move_task_to_in_progress('PROJ-1')
+        task_service.move_task_to_review('PROJ-1')
+        task_service.move_task_to_open('PROJ-1')
 
         client.get_assigned_tasks.assert_called_once_with(
             project='PROJ',
@@ -163,11 +191,11 @@ class TaskDataAccessTests(unittest.TestCase):
         )
         client = Mock()
 
-        data_access = TaskDataAccess(config, client)
-        data_access.get_assigned_tasks()
-        data_access.move_task_to_in_progress('PROJ-1')
-        data_access.move_task_to_review('PROJ-1')
-        data_access.move_task_to_open('PROJ-1')
+        task_service = TaskService(config, TaskDataAccess(config, client))
+        task_service.get_assigned_tasks()
+        task_service.move_task_to_in_progress('PROJ-1')
+        task_service.move_task_to_review('PROJ-1')
+        task_service.move_task_to_open('PROJ-1')
 
         client.get_assigned_tasks.assert_called_once_with(
             project='PROJ',
@@ -199,8 +227,8 @@ class TaskDataAccessTests(unittest.TestCase):
         )
         client = Mock()
 
-        data_access = TaskDataAccess(config, client)
-        data_access.move_task_to_open('PROJ-1')
+        task_service = TaskService(config, TaskDataAccess(config, client))
+        task_service.move_task_to_open('PROJ-1')
 
         client.move_issue_to_state.assert_called_once_with(
             'PROJ-1',
@@ -222,8 +250,8 @@ class TaskDataAccessTests(unittest.TestCase):
         )
         client = Mock()
 
-        data_access = TaskDataAccess(config, client)
-        data_access.get_assigned_tasks()
+        task_service = TaskService(config, TaskDataAccess(config, client))
+        task_service.get_assigned_tasks()
 
         client.get_assigned_tasks.assert_called_once_with(
             project='PROJ',
@@ -251,6 +279,7 @@ class PullRequestDataAccessTests(unittest.TestCase):
         data_access.create_pull_request(
             title='PROJ-1: Fix bug',
             source_branch='feature/proj-1',
+            destination_branch='main',
             description='Ready for review',
         )
 
@@ -282,6 +311,7 @@ class PullRequestDataAccessTests(unittest.TestCase):
             data_access.create_pull_request(
                 title=['PROJ-1: Fix bug'],
                 source_branch='feature/proj-1',
+                destination_branch='main',
                 description='Ready for review',
             )
 
@@ -289,6 +319,15 @@ class PullRequestDataAccessTests(unittest.TestCase):
             data_access.create_pull_request(
                 title='PROJ-1: Fix bug',
                 source_branch=['feature/proj-1'],
+                destination_branch='main',
+                description='Ready for review',
+            )
+
+        with self.assertRaisesRegex(PermissionError, 'destination_branch'):
+            data_access.create_pull_request(
+                title='PROJ-1: Fix bug',
+                source_branch='feature/proj-1',
+                destination_branch=['main'],
                 description='Ready for review',
             )
 
@@ -296,6 +335,7 @@ class PullRequestDataAccessTests(unittest.TestCase):
             data_access.create_pull_request(
                 title='PROJ-1: Fix bug',
                 source_branch='feature/proj-1',
+                destination_branch='main',
                 description=['Ready for review'],
             )
 

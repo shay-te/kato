@@ -10,6 +10,7 @@ from openhands_agent.data_layers.service.implementation_service import (
     ImplementationService,
 )
 from openhands_agent.data_layers.service.notification_service import NotificationService
+from openhands_agent.data_layers.service.task_service import TaskService
 from openhands_agent.fields import (
     EmailFields,
     ImplementationFields,
@@ -42,7 +43,10 @@ class AgentServiceTests(unittest.TestCase):
             move_issue_to_state=Mock(),
         )
         self.task_client = task_client
-        self.task_data_access = TaskDataAccess(self.cfg.openhands_agent.youtrack, task_client)
+        self.task_data_access = TaskService(
+            self.cfg.openhands_agent.youtrack,
+            TaskDataAccess(self.cfg.openhands_agent.youtrack, task_client),
+        )
         self.openhands_client = types.SimpleNamespace(
             validate_connection=Mock(),
             implement_task=Mock(

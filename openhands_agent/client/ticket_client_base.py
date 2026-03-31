@@ -1,7 +1,16 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Any
+from urllib.parse import urlparse
+
+from openhands_agent.client.retry_utils import run_with_retry
 from openhands_agent.client.retrying_client_base import RetryingClientBase
+from openhands_agent.data_layers.data.task import Task
 from openhands_agent.fields import TaskCommentFields
 from openhands_agent.text_utils import (
     condensed_lower_text,
+    normalized_lower_text,
     normalized_text,
     text_from_mapping,
 )
@@ -9,6 +18,11 @@ from openhands_agent.text_utils import (
 
 class TicketClientBase(RetryingClientBase):
     provider_name = 'issue_platform'
+    _TEXT_ATTACHMENT_MIME_TYPES = {
+        'application/json',
+        'application/xml',
+        'application/yaml',
+    }
     AGENT_COMPLETION_COMMENT_PREFIX = 'OpenHands completed task '
     PRE_START_BLOCKING_PREFIXES = (
         'OpenHands agent could not safely process this task:',
@@ -96,6 +110,225 @@ class TicketClientBase(RetryingClientBase):
     @staticmethod
     def _join_task_description_sections(sections: list[str]) -> str:
         return '\n\n'.join(section for section in sections if section)
+
+    def _build_task_description_with_attachment_sections(
+        self,
+        description: object,
+        comment_entries: list[dict[str, str]],
+        *,
+        text_attachment_lines: list[str],
+        screenshot_lines: list[str],
+    ) -> str:
+        sections = [normalized_text(description) or 'No description provided.']
+        self._append_comment_section(sections, comment_entries)
+        self._append_description_section(
+            sections,
+            self.UNTRUSTED_TEXT_ATTACHMENTS_SECTION_TITLE,
+            text_attachment_lines,
+            separator='\n\n',
+        )
+        self._append_description_section(
+            sections,
+            self.UNTRUSTED_SCREENSHOT_ATTACHMENTS_SECTION_TITLE,
+            screenshot_lines,
+        )
+        return self._join_task_description_sections(sections)
+
+    def _format_text_attachment_lines(
+        self,
+        attachments: list[dict[str, Any]],
+        *,
+        is_text_attachment: Callable[[dict[str, Any]], bool],
+        read_text_attachment: Callable[[dict[str, Any]], str | None],
+        attachment_name: Callable[[dict[str, Any]], str],
+    ) -> list[str]:
+        lines: list[str] = []
+        for attachment in attachments:
+            if not isinstance(attachment, dict) or not is_text_attachment(attachment):
+                continue
+            name = attachment_name(attachment)
+            content = read_text_attachment(attachment)
+            if content is None:
+                lines.append(self._attachment_download_failure_text(name))
+                continue
+            if content:
+                lines.append(f'Attachment {name}:\n{content}')
+        return lines
+
+    @staticmethod
+    def _append_description_section(
+        sections: list[str],
+        title: str,
+        lines: list[str],
+        *,
+        separator: str = '\n',
+    ) -> None:
+        if not lines:
+            return
+        sections.append(f'{title}:\n' + separator.join(lines))
+
+    @staticmethod
+    def _json_items(
+        response,
+        *,
+        items_key: str = '',
+    ) -> list[dict[str, Any]]:
+        payload = response.json() or ({} if items_key else [])
+        if items_key:
+            if not isinstance(payload, dict):
+                return []
+            payload = payload.get(items_key, [])
+        return list(payload) if isinstance(payload, list) else []
+
+    def _build_task(
+        self,
+        *,
+        issue_id: object,
+        summary: object,
+        description: object,
+        comment_entries: list[dict[str, str]],
+        branch_name: object = '',
+    ) -> Task:
+        task = Task(
+            id=normalized_text(issue_id),
+            summary=normalized_text(summary),
+            description=normalized_text(description),
+            branch_name=normalized_text(branch_name)
+            or f'feature/{normalized_lower_text(issue_id)}',
+        )
+        self._set_task_comments(task, comment_entries)
+        return task
+
+    def _normalize_issue_tasks(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        to_task: Callable[[dict[str, Any]], Task],
+        include: Callable[[dict[str, Any]], bool] | None = None,
+    ) -> list[Task]:
+        tasks: list[Task] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if include and not include(item):
+                continue
+            try:
+                tasks.append(to_task(item))
+            except (KeyError, TypeError, ValueError):
+                self.logger.exception(
+                    'failed to normalize %s issue payload',
+                    self.provider_name,
+                )
+        return tasks
+
+    def _best_effort_issue_items(
+        self,
+        issue_id: str,
+        item_label: str,
+        operation: Callable[[], list[dict[str, Any]]],
+    ) -> list[dict[str, Any]]:
+        try:
+            return operation()
+        except Exception:
+            self.logger.exception('failed to fetch %s for issue %s', item_label, issue_id)
+            return []
+
+    def _best_effort_issue_response_items(
+        self,
+        issue_id: str,
+        *,
+        item_label: str,
+        path: str,
+        params: dict[str, Any] | None = None,
+        items_key: str = '',
+    ) -> list[dict[str, Any]]:
+        return self._best_effort_issue_items(
+            issue_id,
+            item_label,
+            lambda: self._response_items(path, params=params, items_key=items_key),
+        )
+
+    def _response_items(
+        self,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        items_key: str = '',
+    ) -> list[dict[str, Any]]:
+        response = self._get_with_retry(path, params=params)
+        response.raise_for_status()
+        return self._json_items(response, items_key=items_key)
+
+    @staticmethod
+    def _task_comment_entry(
+        author: object,
+        body: object,
+    ) -> dict[str, str] | None:
+        normalized_body = normalized_text(body)
+        if not normalized_body:
+            return None
+        return {
+            TaskCommentFields.AUTHOR: normalized_text(author) or 'unknown',
+            TaskCommentFields.BODY: normalized_body,
+        }
+
+    def _get_attachment_with_retry(self, url: str):
+        parsed_url = urlparse(url)
+        if parsed_url.scheme and parsed_url.netloc:
+            return run_with_retry(
+                lambda: self.session.get(url, **self.process_kwargs()),
+                self.max_retries,
+            )
+        return self._get_with_retry(url)
+
+    @classmethod
+    def _is_text_attachment_mime_type(cls, mime_type: object) -> bool:
+        normalized_mime_type = normalized_text(mime_type)
+        return normalized_mime_type.startswith('text/') or (
+            normalized_mime_type in cls._TEXT_ATTACHMENT_MIME_TYPES
+        )
+
+    def _download_text_attachment(
+        self,
+        url: object,
+        *,
+        attachment_name: str,
+        max_chars: int,
+        charset: str = 'utf-8',
+        log_label: str = 'text attachment',
+    ) -> str | None:
+        normalized_url = normalized_text(url)
+        if not normalized_url:
+            return ''
+        try:
+            response = self._get_attachment_with_retry(normalized_url)
+            response.raise_for_status()
+            content = getattr(response, 'text', '')
+            if isinstance(content, str) and content:
+                return content[:max_chars]
+            raw_content = getattr(response, 'content', b'')
+            if not raw_content:
+                return ''
+            return raw_content.decode(charset, errors='replace')[:max_chars]
+        except Exception:
+            self.logger.exception('failed to read %s %s', log_label, attachment_name)
+            return None
+
+    @staticmethod
+    def _attachment_download_failure_text(attachment_name: str) -> str:
+        return f'Attachment {attachment_name} could not be downloaded.'
+
+    @staticmethod
+    def _normalized_allowed_states(states: list[str]) -> set[str]:
+        return {
+            normalized_lower_text(state)
+            for state in states
+            if normalized_text(state)
+        }
+
+    @staticmethod
+    def _matches_allowed_state(state: object, allowed_states: set[str]) -> bool:
+        return not allowed_states or normalized_lower_text(state) in allowed_states
 
     @classmethod
     def _is_agent_operational_comment(cls, text: str) -> bool:

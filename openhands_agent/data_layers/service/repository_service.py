@@ -104,16 +104,12 @@ class RepositoryService(Service):
         description: str = '',
         commit_message: str = '',
     ) -> dict[str, str]:
-        self._validate_local_path(repository)
         self._prepare_pull_request_api(repository)
-        destination_branch = self.destination_branch(repository)
-        final_commit_message = normalized_text(commit_message) or f'Implement {source_branch}'
-        self._publish_branch_updates(
-            repository.local_path,
-            source_branch,
-            destination_branch,
-            final_commit_message,
+        destination_branch = self._publish_repository_branch(
             repository,
+            source_branch,
+            commit_message=commit_message,
+            default_commit_message=f'Implement {source_branch}',
         )
         pull_request = self._pull_request_data_access(repository).create_pull_request(
             title=title,
@@ -142,15 +138,11 @@ class RepositoryService(Service):
         branch_name: str,
         commit_message: str = '',
     ) -> None:
-        self._validate_local_path(repository)
-        destination_branch = self.destination_branch(repository)
-        final_commit_message = normalized_text(commit_message) or 'Address review comments'
-        self._publish_branch_updates(
-            repository.local_path,
-            branch_name,
-            destination_branch,
-            final_commit_message,
+        self._publish_repository_branch(
             repository,
+            branch_name,
+            commit_message=commit_message,
+            default_commit_message='Address review comments',
         )
 
     def list_pull_request_comments(
@@ -401,44 +393,104 @@ class RepositoryService(Service):
         return repository
 
     def _prepare_pull_request_api(self, repository) -> None:
+        provider = self._resolved_pull_request_provider(repository)
+        provider_base_url, token = self._resolved_pull_request_api_values(
+            repository,
+            provider,
+        )
+        self._validate_pull_request_api_values(
+            repository.id,
+            provider,
+            provider_base_url,
+            token,
+        )
+        self._apply_pull_request_api_values(
+            repository,
+            provider,
+            provider_base_url,
+            token,
+        )
+
+    def _resolved_pull_request_provider(self, repository) -> str:
         provider = normalized_lower_text(text_from_attr(repository, 'provider'))
+        if provider:
+            return provider
+        provider_base_url = text_from_attr(repository, RepositoryFields.PROVIDER_BASE_URL)
+        provider = self._provider_from_base_url(provider_base_url)
+        if provider:
+            return provider
+        provider = self._provider_from_remote_url(text_from_attr(repository, 'remote_url'))
+        if provider:
+            return provider
+        raise ValueError(
+            f'unable to determine pull request provider for repository {repository.id}'
+        )
+
+    def _resolved_pull_request_api_values(
+        self,
+        repository,
+        provider: str,
+    ) -> tuple[str, str]:
+        defaults = self._provider_api_defaults.get(provider, {})
         provider_base_url = text_from_attr(repository, RepositoryFields.PROVIDER_BASE_URL)
         token = text_from_attr(repository, 'token')
-
-        if not provider:
-            provider = self._provider_from_base_url(provider_base_url)
-        if not provider:
-            provider = self._provider_from_remote_url(
-                text_from_attr(repository, 'remote_url')
-            )
-        if not provider:
-            raise ValueError(
-                f'unable to determine pull request provider for repository {repository.id}'
-            )
-
-        defaults = self._provider_api_defaults.get(provider, {})
         provider_base_url = provider_base_url or normalized_text(
             defaults.get(RepositoryFields.PROVIDER_BASE_URL, '')
         )
         token = token or normalized_text(defaults.get('token', ''))
+        if provider_base_url:
+            return provider_base_url, token
+        return self._default_provider_base_url(
+            provider,
+            text_from_attr(repository, 'remote_url'),
+        ), token
 
-        if not provider_base_url:
-            provider_base_url = self._default_provider_base_url(
-                provider,
-                text_from_attr(repository, 'remote_url'),
-            )
+    def _validate_pull_request_api_values(
+        self,
+        repository_id: str,
+        provider: str,
+        provider_base_url: str,
+        token: str,
+    ) -> None:
         if not provider_base_url:
             raise ValueError(
-                f'missing pull request API base URL for repository {repository.id}'
+                f'missing pull request API base URL for repository {repository_id}'
             )
-        if not token:
-            raise ValueError(
-                self._missing_pull_request_token_message(repository.id, provider)
-            )
+        if token:
+            return
+        raise ValueError(
+            self._missing_pull_request_token_message(repository_id, provider)
+        )
 
+    @staticmethod
+    def _apply_pull_request_api_values(
+        repository,
+        provider: str,
+        provider_base_url: str,
+        token: str,
+    ) -> None:
         setattr(repository, 'provider', provider)
         setattr(repository, RepositoryFields.PROVIDER_BASE_URL, provider_base_url)
         setattr(repository, 'token', token)
+
+    def _publish_repository_branch(
+        self,
+        repository,
+        branch_name: str,
+        *,
+        commit_message: str,
+        default_commit_message: str,
+    ) -> str:
+        self._validate_local_path(repository)
+        destination_branch = self.destination_branch(repository)
+        self._publish_branch_updates(
+            repository.local_path,
+            branch_name,
+            destination_branch,
+            normalized_text(commit_message) or default_commit_message,
+            repository,
+        )
+        return destination_branch
 
     def _pull_request_data_access(self, repository) -> PullRequestDataAccess:
         provider_base_url = text_from_attr(repository, RepositoryFields.PROVIDER_BASE_URL)
@@ -475,43 +527,74 @@ class RepositoryService(Service):
         destination_branch: str,
         commit_message: str,
     ) -> None:
+        self._assert_branch_checked_out(local_path, branch_name)
+        self._commit_branch_changes_if_needed(local_path, branch_name, commit_message)
+        self._ensure_branch_is_publishable(
+            local_path,
+            branch_name,
+            destination_branch,
+        )
+
+    def _assert_branch_checked_out(self, local_path: str, branch_name: str) -> None:
         current_branch = self._current_branch(local_path)
-        if current_branch != branch_name:
-            raise RuntimeError(
-                f'expected repository at {local_path} to be on branch {branch_name}, '
-                f'but found {current_branch or "<unknown>"}'
-            )
+        if current_branch == branch_name:
+            return
+        raise RuntimeError(
+            f'expected repository at {local_path} to be on branch {branch_name}, '
+            f'but found {current_branch or "<unknown>"}'
+        )
 
-        status_output = self._working_tree_status(local_path)
-        if status_output:
-            self._run_git(
-                local_path,
-                ['add', '-A'],
-                f'failed to stage changes for branch {branch_name}',
-            )
-            self._run_git(
-                local_path,
-                ['commit', '-m', commit_message],
-                f'failed to commit changes for branch {branch_name}',
-            )
+    def _commit_branch_changes_if_needed(
+        self,
+        local_path: str,
+        branch_name: str,
+        commit_message: str,
+    ) -> None:
+        if not self._working_tree_status(local_path):
+            return
+        self._run_git(
+            local_path,
+            ['add', '-A'],
+            f'failed to stage changes for branch {branch_name}',
+        )
+        self._run_git(
+            local_path,
+            ['commit', '-m', commit_message],
+            f'failed to commit changes for branch {branch_name}',
+        )
 
+    def _ensure_branch_is_publishable(
+        self,
+        local_path: str,
+        branch_name: str,
+        destination_branch: str,
+    ) -> None:
         comparison_ref = self._comparison_reference(local_path, destination_branch)
+        ahead_count = self._ahead_count(local_path, comparison_ref, branch_name)
+        if ahead_count >= 1:
+            return
+        raise RuntimeError(
+            f'branch {branch_name} has no committed changes ahead of {comparison_ref}'
+        )
+
+    def _ahead_count(
+        self,
+        local_path: str,
+        comparison_ref: str,
+        branch_name: str,
+    ) -> int:
         ahead_count_text = self._git_stdout(
             local_path,
             ['rev-list', '--count', f'{comparison_ref}..{branch_name}'],
             f'failed to compare branch {branch_name} against {comparison_ref}',
         )
         try:
-            ahead_count = int(ahead_count_text or '0')
+            return int(ahead_count_text or '0')
         except ValueError as exc:
             raise RuntimeError(
                 f'failed to parse ahead count for branch {branch_name}: '
                 f'{ahead_count_text or "<empty>"}'
             ) from exc
-        if ahead_count < 1:
-            raise RuntimeError(
-                f'branch {branch_name} has no committed changes ahead of {comparison_ref}'
-            )
 
     def _publish_branch_updates(
         self,
@@ -603,6 +686,22 @@ class RepositoryService(Service):
     ) -> str:
         if current_branch == branch_name:
             return current_branch
+        restored_branch = self._checkout_existing_task_branch(local_path, branch_name)
+        if restored_branch:
+            return restored_branch
+        current_branch = self._ensure_destination_branch_checked_out(
+            local_path,
+            destination_branch,
+            current_branch,
+        )
+        self._create_task_branch(local_path, branch_name, destination_branch)
+        return self._current_branch(local_path)
+
+    def _checkout_existing_task_branch(
+        self,
+        local_path: str,
+        branch_name: str,
+    ) -> str:
         local_branch_ref = f'refs/heads/{branch_name}'
         remote_branch_ref = f'refs/remotes/origin/{branch_name}'
         if self._git_reference_exists(local_path, local_branch_ref):
@@ -612,24 +711,26 @@ class RepositoryService(Service):
                 f'failed to switch repository at {local_path} to {branch_name}',
             )
             return self._current_branch(local_path)
-        if self._git_reference_exists(local_path, remote_branch_ref):
-            self._run_git(
-                local_path,
-                ['checkout', '-b', branch_name, f'origin/{branch_name}'],
-                f'failed to restore branch {branch_name} from origin/{branch_name}',
-            )
-            return self._current_branch(local_path)
-        current_branch = self._ensure_destination_branch_checked_out(
+        if not self._git_reference_exists(local_path, remote_branch_ref):
+            return ''
+        self._run_git(
             local_path,
-            destination_branch,
-            current_branch,
+            ['checkout', '-b', branch_name, f'origin/{branch_name}'],
+            f'failed to restore branch {branch_name} from origin/{branch_name}',
         )
+        return self._current_branch(local_path)
+
+    def _create_task_branch(
+        self,
+        local_path: str,
+        branch_name: str,
+        destination_branch: str,
+    ) -> None:
         self._run_git(
             local_path,
             ['checkout', '-b', branch_name],
             f'failed to create branch {branch_name} from {destination_branch}',
         )
-        return self._current_branch(local_path)
 
     @staticmethod
     def _assert_current_branch(

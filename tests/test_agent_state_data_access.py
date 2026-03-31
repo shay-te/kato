@@ -37,15 +37,18 @@ class AgentStateDataAccessTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             data_access = AgentStateDataAccess(str(Path(tmp_dir) / 'state.json'))
             data_access.validate()
-            data_access.mark_task_processed(
+            data_access.save_processed_task(
                 'PROJ-1',
-                [
-                    {
-                        PullRequestFields.REPOSITORY_ID: 'client',
-                        PullRequestFields.ID: '17',
-                        PullRequestFields.URL: 'https://example/pr/17',
-                    }
-                ],
+                {
+                    StatusFields.STATUS: StatusFields.READY_FOR_REVIEW,
+                    PullRequestFields.PULL_REQUESTS: [
+                        {
+                            PullRequestFields.REPOSITORY_ID: 'client',
+                            PullRequestFields.ID: '17',
+                            PullRequestFields.URL: 'https://example/pr/17',
+                        }
+                    ],
+                },
             )
             data_access.remember_pull_request_context(
                 '17',

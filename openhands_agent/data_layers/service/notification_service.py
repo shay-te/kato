@@ -39,17 +39,11 @@ class NotificationService(Service):
             EmailFields.ERROR: str(error),
             EmailFields.CONTEXT: json.dumps(context or {}, default=str),
         }
-        return self._send_configured_email(
+        return self._send_templated_email(
             self._failure_email_cfg,
-            {
-                EmailFields.SUBJECT: f'{self._app_name} failure: {operation}',
-                **template_params,
-                EmailFields.MESSAGE: self._render_template(
-                    self._failure_email_cfg,
-                    'failure_email.txt',
-                    template_params,
-                ),
-            },
+            subject=f'{self._app_name} failure: {operation}',
+            default_template_name='failure_email.txt',
+            template_params=template_params,
         )
 
     def notify_task_ready_for_review(
@@ -66,17 +60,11 @@ class NotificationService(Service):
             EmailFields.PULL_REQUEST_TITLE: first_pull_request.get(PullRequestFields.TITLE, ''),
             EmailFields.PULL_REQUEST_SUMMARY: self._pull_request_summary(normalized_pull_requests),
         }
-        return self._send_configured_email(
+        return self._send_templated_email(
             self._completion_email_cfg,
-            {
-                EmailFields.SUBJECT: f'Task ready for review: {task.id}',
-                **template_params,
-                EmailFields.MESSAGE: self._render_template(
-                    self._completion_email_cfg,
-                    'completion_email.txt',
-                    template_params,
-                ),
-            },
+            subject=f'Task ready for review: {task.id}',
+            default_template_name='completion_email.txt',
+            template_params=template_params,
         )
 
     def _send_configured_email(self, email_cfg, params: dict[str, str]) -> bool:
@@ -105,6 +93,27 @@ class NotificationService(Service):
             if send_result:
                 sent = True
         return sent
+
+    def _send_templated_email(
+        self,
+        email_cfg,
+        *,
+        subject: str,
+        default_template_name: str,
+        template_params: dict[str, str],
+    ) -> bool:
+        return self._send_configured_email(
+            email_cfg,
+            {
+                EmailFields.SUBJECT: subject,
+                **template_params,
+                EmailFields.MESSAGE: self._render_template(
+                    email_cfg,
+                    default_template_name,
+                    template_params,
+                ),
+            },
+        )
 
     @staticmethod
     def _normalized_recipients(recipients) -> list[str]:

@@ -616,31 +616,52 @@ class OpenHandsClient(RetryingClientBase):
 
     @staticmethod
     def _finish_action_payload(event: object) -> dict[str, str | bool] | None:
-        if not isinstance(event, dict):
+        if not OpenHandsClient._is_finish_action_event(event):
             return None
-        if text_from_mapping(event, 'kind') != 'ActionEvent':
+        parsed_arguments = OpenHandsClient._finish_action_arguments(event)
+        summary, message = OpenHandsClient._finish_action_summary(
+            event,
+            parsed_arguments,
+        )
+        if not summary and not message:
             return None
-        if text_from_mapping(event, 'source') != 'agent':
-            return None
-        if text_from_mapping(event, 'tool_name') != 'finish':
-            return None
+        return build_openhands_result(
+            parsed_arguments,
+            summary_fallback=summary or message,
+            default_success=True,
+        )
 
-        parsed_arguments: dict[str, str | bool] = {}
+    @staticmethod
+    def _is_finish_action_event(event: object) -> bool:
+        return (
+            isinstance(event, dict)
+            and text_from_mapping(event, 'kind') == 'ActionEvent'
+            and text_from_mapping(event, 'source') == 'agent'
+            and text_from_mapping(event, 'tool_name') == 'finish'
+        )
+
+    @staticmethod
+    def _finish_action_arguments(event: dict) -> dict[str, str | bool]:
         tool_call = event.get('tool_call', {})
-        if isinstance(tool_call, dict):
-            arguments = text_from_mapping(tool_call, 'arguments')
-            if arguments:
-                try:
-                    payload = json.loads(arguments)
-                except json.JSONDecodeError:
-                    payload = None
-                if isinstance(payload, dict):
-                    parsed_arguments = payload
+        if not isinstance(tool_call, dict):
+            return {}
+        arguments = text_from_mapping(tool_call, 'arguments')
+        if not arguments:
+            return {}
+        try:
+            payload = json.loads(arguments)
+        except json.JSONDecodeError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
 
+    @staticmethod
+    def _finish_action_summary(
+        event: dict,
+        parsed_arguments: dict[str, str | bool],
+    ) -> tuple[str, str]:
         action = event.get('action', {})
         if not isinstance(action, dict):
             action = {}
-
         summary = normalized_text(
             parsed_arguments.get(Task.summary.key)
             or parsed_arguments.get('summary')
@@ -653,15 +674,7 @@ class OpenHandsClient(RetryingClientBase):
             or action.get('message')
             or ''
         )
-
-        if not summary and not message:
-            return None
-
-        return build_openhands_result(
-            parsed_arguments,
-            summary_fallback=summary or message,
-            default_success=True,
-        )
+        return summary, message
 
     @staticmethod
     def _assistant_message_text(event: object) -> str:

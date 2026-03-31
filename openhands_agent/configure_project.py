@@ -316,42 +316,65 @@ def _format_env_value(value: object) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format='%(message)s')
-    parser = argparse.ArgumentParser(description='Interactively create the openhands-agent .env file.')
-    parser.add_argument('--template', default='.env.example')
-    parser.add_argument('--output', default='.env')
-    args = parser.parse_args(argv)
-
+    args = _parse_main_args(argv)
     template_path = Path(args.template)
     output_path = Path(args.output)
-
-    template_env = _read_env_file(str(template_path))
-    current_env = template_env.copy()
-    if output_path.exists():
-        current_env.update(_read_env_file(str(output_path)))
-
-    if output_path.exists() and not input_yes_no(
-        f'{output_path} already exists. Overwrite it',
-        default=True,
-    ):
+    current_env = _current_configuration_values(template_path, output_path)
+    if _configuration_cancelled(output_path):
         logger.info('Configuration cancelled.')
         return 1
+    return _write_configuration_file(template_path, output_path, current_env)
 
+
+def _parse_main_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description='Interactively create the openhands-agent .env file.'
+    )
+    parser.add_argument('--template', default='.env.example')
+    parser.add_argument('--output', default='.env')
+    return parser.parse_args(argv)
+
+
+def _current_configuration_values(
+    template_path: Path,
+    output_path: Path,
+) -> dict[str, str]:
+    current_env = _read_env_file(str(template_path))
+    if output_path.exists():
+        current_env.update(_read_env_file(str(output_path)))
+    return current_env
+
+
+def _configuration_cancelled(output_path: Path) -> bool:
+    return output_path.exists() and not input_yes_no(
+        f'{output_path} already exists. Overwrite it',
+        default=True,
+    )
+
+
+def _write_configuration_file(
+    template_path: Path,
+    output_path: Path,
+    current_env: dict[str, str],
+) -> int:
     values = current_env.copy()
     values.update(build_configuration_values(current_env))
     rendered = render_env_text(template_path.read_text(encoding='utf-8'), values)
     output_path.write_text(rendered, encoding='utf-8')
+    logger.info('Wrote configuration to %s', output_path)
+    return _report_configuration_validation(values)
 
+
+def _report_configuration_validation(values: dict[str, str]) -> int:
     errors = validate_agent_env(values)
     errors.extend(validate_openhands_env(values))
-    logger.info('Wrote configuration to %s', output_path)
-    if errors:
-        logger.info('The file was written, but a few required values still need attention:')
-        for error in errors:
-            logger.info('- %s', error)
-        logger.info('Run make doctor after filling the remaining values.')
+    if not errors:
+        logger.info('Configuration looks valid. Next: make doctor && make run')
         return 0
-
-    logger.info('Configuration looks valid. Next: make doctor && make run')
+    logger.info('The file was written, but a few required values still need attention:')
+    for error in errors:
+        logger.info('- %s', error)
+    logger.info('Run make doctor after filling the remaining values.')
     return 0
 
 
@@ -360,83 +383,120 @@ def _prompt_issue_platform(
     issue_platform: str,
 ) -> dict[str, str]:
     details = ISSUE_PLATFORM_DETAILS[issue_platform]
-    values: dict[str, str] = {
-        details['base_url_key']: input_str(
-            f"{details['label']} base URL",
-            default=_default_str(defaults, details['base_url_key'], fallback=details['default_base_url']),
-        ),
-        details['token_key']: input_str(
-            f"{details['label']} token",
-            default=_default_str(defaults, details['token_key']),
-        ),
-        details['assignee_key']: input_str(
-            f"{details['label']} {details['assignee_label']}",
-            default=_default_str(defaults, details['assignee_key']),
-        ),
-        details['progress_state_field_key']: input_str(
-            f"{details['label']} in-progress state field",
-            default=_default_str(
-                defaults,
-                details['progress_state_field_key'],
-                fallback=details['default_progress_field'],
-            ),
-        ),
-        details['progress_state_key']: input_str(
-            f"{details['label']} in-progress state value",
-            default=_default_str(
-                defaults,
-                details['progress_state_key'],
-                fallback=details['default_progress_state'],
-            ),
-        ),
-        details['review_state_field_key']: input_str(
-            f"{details['label']} review state field",
-            default=_default_str(defaults, details['review_state_field_key'], fallback=details['default_review_field']),
-        ),
-        details['review_state_key']: input_str(
-            f"{details['label']} review state value",
-            default=_default_str(defaults, details['review_state_key'], fallback=details['default_review_state']),
-        ),
-        details['issue_states_key']: ','.join(
-            input_list(
-                f"{details['label']} issue states to process",
-                default=_default_list(defaults, details['issue_states_key'], details['default_issue_states']),
-            )
-        ),
-    }
+    values = _prompt_issue_platform_core_values(defaults, details)
+    values.update(_prompt_issue_platform_optional_values(defaults, details))
+    return values
 
-    if 'project_key' in details:
-        values[details['project_key']] = input_str(
-            f"{details['label']} {details['project_label']}",
-            default=_default_str(defaults, details['project_key']),
+
+def _prompt_issue_platform_core_values(
+    defaults: dict[str, str],
+    details: dict[str, object],
+) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for key_name, prompt, fallback_key in _issue_platform_core_prompt_specs(details):
+        values[str(details[key_name])] = _prompt_issue_platform_text_value(
+            defaults,
+            details,
+            key_name=key_name,
+            prompt=prompt,
+            fallback_key=fallback_key,
         )
-    if 'owner_key' in details:
-        values[details['owner_key']] = input_str(
-            f"{details['label']} {details['owner_label']}",
-            default=_default_str(defaults, details['owner_key']),
+    values[str(details['issue_states_key'])] = _prompt_issue_platform_state_values(
+        defaults,
+        details,
+    )
+    return values
+
+
+def _issue_platform_core_prompt_specs(
+    details: dict[str, object],
+) -> list[tuple[str, str, str | None]]:
+    label = str(details['label'])
+    return [
+        ('base_url_key', f'{label} base URL', 'default_base_url'),
+        ('token_key', f'{label} token', None),
+        ('assignee_key', f"{label} {details['assignee_label']}", None),
+        (
+            'progress_state_field_key',
+            f'{label} in-progress state field',
+            'default_progress_field',
+        ),
+        (
+            'progress_state_key',
+            f'{label} in-progress state value',
+            'default_progress_state',
+        ),
+        (
+            'review_state_field_key',
+            f'{label} review state field',
+            'default_review_field',
+        ),
+        ('review_state_key', f'{label} review state value', 'default_review_state'),
+    ]
+
+
+def _prompt_issue_platform_optional_values(
+    defaults: dict[str, str],
+    details: dict[str, object],
+) -> dict[str, str]:
+    label = str(details['label'])
+    values: dict[str, str] = {}
+    optional_prompts = [
+        ('project_key', 'project_label', False),
+        ('owner_key', 'owner_label', False),
+        ('repo_key', 'repo_label', False),
+        ('workspace_key', 'workspace_label', False),
+        ('repo_slug_key', 'repo_slug_label', False),
+        ('email_key', None, True),
+    ]
+    for key_name, label_key, allow_empty in optional_prompts:
+        env_key = str(details.get(key_name, '') or '')
+        if not env_key:
+            continue
+        prompt = (
+            f'{label} user email for basic auth'
+            if key_name == 'email_key'
+            else f"{label} {details[label_key]}"
         )
-    if 'repo_key' in details:
-        values[details['repo_key']] = input_str(
-            f"{details['label']} {details['repo_label']}",
-            default=_default_str(defaults, details['repo_key']),
-        )
-    if 'workspace_key' in details:
-        values[details['workspace_key']] = input_str(
-            f"{details['label']} {details['workspace_label']}",
-            default=_default_str(defaults, details['workspace_key']),
-        )
-    if 'repo_slug_key' in details:
-        values[details['repo_slug_key']] = input_str(
-            f"{details['label']} {details['repo_slug_label']}",
-            default=_default_str(defaults, details['repo_slug_key']),
-        )
-    if 'email_key' in details:
-        values[details['email_key']] = input_str(
-            f"{details['label']} user email for basic auth",
-            default=_default_str(defaults, details['email_key']),
-            allow_empty=True,
+        values[env_key] = input_str(
+            prompt,
+            default=_default_str(defaults, env_key),
+            allow_empty=allow_empty,
         )
     return values
+
+
+def _prompt_issue_platform_text_value(
+    defaults: dict[str, str],
+    details: dict[str, object],
+    *,
+    key_name: str,
+    prompt: str,
+    fallback_key: str | None = None,
+    allow_empty: bool = False,
+) -> str:
+    env_key = str(details[key_name])
+    fallback = str(details.get(fallback_key, '') or '') if fallback_key else ''
+    return input_str(
+        prompt,
+        default=_default_str(defaults, env_key, fallback=fallback),
+        allow_empty=allow_empty,
+    )
+
+
+def _prompt_issue_platform_state_values(
+    defaults: dict[str, str],
+    details: dict[str, object],
+) -> str:
+    states = input_list(
+        f"{details['label']} issue states to process",
+        default=_default_list(
+            defaults,
+            str(details['issue_states_key']),
+            list(details['default_issue_states']),
+        ),
+    )
+    return ','.join(states)
 
 
 def _prompt_repository(defaults: dict[str, str]) -> dict[str, str]:
@@ -685,7 +745,6 @@ def _blank_bedrock_auth_values() -> dict[str, str]:
 def _prompt_notifications(
     defaults: dict[str, str],
 ) -> dict[str, str]:
-    values: dict[str, str] = {}
     failure_enabled = input_yes_no(
         'Enable failure notification emails',
         default=_default_bool(defaults, 'OPENHANDS_AGENT_FAILURE_EMAIL_ENABLED'),
@@ -694,23 +753,13 @@ def _prompt_notifications(
         'Enable completion notification emails',
         default=_default_bool(defaults, 'OPENHANDS_AGENT_COMPLETION_EMAIL_ENABLED'),
     )
-
-    values['OPENHANDS_AGENT_FAILURE_EMAIL_ENABLED'] = _bool_to_env(failure_enabled)
-    values['OPENHANDS_AGENT_COMPLETION_EMAIL_ENABLED'] = _bool_to_env(completion_enabled)
-    values['EMAIL_CORE_LIB_SEND_IN_BLUE_API_KEY'] = _default_str(defaults, 'EMAIL_CORE_LIB_SEND_IN_BLUE_API_KEY')
-    values['SLACK_WEBHOOK_URL_ERRORS_EMAIL'] = _default_str(defaults, 'SLACK_WEBHOOK_URL_ERRORS_EMAIL')
-
-    if failure_enabled or completion_enabled:
-        values['EMAIL_CORE_LIB_SEND_IN_BLUE_API_KEY'] = input_str(
-            'Email provider API key',
-            default=_default_str(defaults, 'EMAIL_CORE_LIB_SEND_IN_BLUE_API_KEY'),
+    values = _notification_toggle_values(failure_enabled, completion_enabled)
+    values.update(
+        _notification_provider_values(
+            defaults,
+            enabled=failure_enabled or completion_enabled,
         )
-        values['SLACK_WEBHOOK_URL_ERRORS_EMAIL'] = input_str(
-            'Slack webhook URL for email errors',
-            default=_default_str(defaults, 'SLACK_WEBHOOK_URL_ERRORS_EMAIL'),
-            allow_empty=True,
-        )
-
+    )
     values.update(
         _prompt_notification_block(
             defaults,
@@ -726,6 +775,45 @@ def _prompt_notifications(
             prefix='OPENHANDS_AGENT_COMPLETION_EMAIL',
             label='completion',
         )
+    )
+    return values
+
+
+def _notification_toggle_values(
+    failure_enabled: bool,
+    completion_enabled: bool,
+) -> dict[str, str]:
+    return {
+        'OPENHANDS_AGENT_FAILURE_EMAIL_ENABLED': _bool_to_env(failure_enabled),
+        'OPENHANDS_AGENT_COMPLETION_EMAIL_ENABLED': _bool_to_env(completion_enabled),
+    }
+
+
+def _notification_provider_values(
+    defaults: dict[str, str],
+    *,
+    enabled: bool,
+) -> dict[str, str]:
+    values = {
+        'EMAIL_CORE_LIB_SEND_IN_BLUE_API_KEY': _default_str(
+            defaults,
+            'EMAIL_CORE_LIB_SEND_IN_BLUE_API_KEY',
+        ),
+        'SLACK_WEBHOOK_URL_ERRORS_EMAIL': _default_str(
+            defaults,
+            'SLACK_WEBHOOK_URL_ERRORS_EMAIL',
+        ),
+    }
+    if not enabled:
+        return values
+    values['EMAIL_CORE_LIB_SEND_IN_BLUE_API_KEY'] = input_str(
+        'Email provider API key',
+        default=values['EMAIL_CORE_LIB_SEND_IN_BLUE_API_KEY'],
+    )
+    values['SLACK_WEBHOOK_URL_ERRORS_EMAIL'] = input_str(
+        'Slack webhook URL for email errors',
+        default=values['SLACK_WEBHOOK_URL_ERRORS_EMAIL'],
+        allow_empty=True,
     )
     return values
 

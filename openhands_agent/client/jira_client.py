@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import urlparse
 
 from openhands_agent.client.retry_utils import run_with_retry
 from openhands_agent.client.ticket_client_base import TicketClientBase
@@ -11,7 +10,6 @@ from openhands_agent.fields import (
     JiraCommentFields,
     JiraIssueFields,
     JiraTransitionFields,
-    TaskCommentFields,
 )
 
 
@@ -59,18 +57,10 @@ class JiraClient(TicketClientBase):
             },
         )
         response.raise_for_status()
-        payload = response.json() or {}
-        issues = payload.get('issues', []) if isinstance(payload, dict) else []
-        tasks: list[Task] = []
-        for item in issues:
-            if not isinstance(item, dict):
-                continue
-            try:
-                tasks.append(self._to_task(item))
-            except (KeyError, TypeError, ValueError):
-                self.logger.exception('failed to normalize jira issue payload')
-                continue
-        return tasks
+        return self._normalize_issue_tasks(
+            self._json_items(response, items_key='issues'),
+            to_task=self._to_task,
+        )
 
     def add_comment(self, issue_id: str, comment: str) -> None:
         response = self._post_with_retry(
@@ -125,18 +115,16 @@ class JiraClient(TicketClientBase):
             fields = {}
         comment_entries = self._task_comment_entries(self._issue_comments(fields))
         attachments = self._issue_attachments(fields)
-        task = Task(
-            id=issue_id,
-            summary=str(fields.get(JiraIssueFields.SUMMARY, '') or ''),
+        return self._build_task(
+            issue_id=issue_id,
+            summary=fields.get(JiraIssueFields.SUMMARY),
             description=self._build_task_description(
                 self._adf_to_text(fields.get(JiraIssueFields.DESCRIPTION)),
                 comment_entries,
                 attachments,
             ),
-            branch_name=f'feature/{issue_id.lower()}',
+            comment_entries=comment_entries,
         )
-        self._set_task_comments(task, comment_entries)
-        return task
 
     @staticmethod
     def _build_assigned_tasks_query(project: str, assignee: str, states: list[str]) -> str:
@@ -165,24 +153,12 @@ class JiraClient(TicketClientBase):
         comment_entries: list[dict[str, str]],
         attachments: list[dict[str, Any]],
     ) -> str:
-        sections = [description.strip() or 'No description provided.']
-        self._append_comment_section(sections, comment_entries)
-
-        text_attachment_lines = self._format_text_attachments(attachments)
-        if text_attachment_lines:
-            sections.append(
-                f'{self.UNTRUSTED_TEXT_ATTACHMENTS_SECTION_TITLE}:\n'
-                + '\n\n'.join(text_attachment_lines)
-            )
-
-        screenshot_lines = self._format_screenshot_attachments(attachments)
-        if screenshot_lines:
-            sections.append(
-                f'{self.UNTRUSTED_SCREENSHOT_ATTACHMENTS_SECTION_TITLE}:\n'
-                + '\n'.join(screenshot_lines)
-            )
-
-        return self._join_task_description_sections(sections)
+        return self._build_task_description_with_attachment_sections(
+            description,
+            comment_entries,
+            text_attachment_lines=self._format_text_attachments(attachments),
+            screenshot_lines=self._format_screenshot_attachments(attachments),
+        )
 
     def _task_comment_entries(
         self,
@@ -193,33 +169,24 @@ class JiraClient(TicketClientBase):
             if not isinstance(comment, dict):
                 continue
             body = self._adf_to_text(comment.get(JiraCommentFields.BODY))
-            if not body:
-                continue
             author = comment.get(JiraCommentFields.AUTHOR, {})
             if not isinstance(author, dict):
                 author = {}
-            entries.append(
-                {
-                    TaskCommentFields.AUTHOR: str(
-                        author.get(JiraCommentFields.DISPLAY_NAME, '') or 'unknown'
-                    ).strip(),
-                    TaskCommentFields.BODY: body,
-                }
+            entry = self._task_comment_entry(
+                author.get(JiraCommentFields.DISPLAY_NAME),
+                body,
             )
+            if entry:
+                entries.append(entry)
         return entries
 
     def _format_text_attachments(self, attachments: list[dict[str, Any]]) -> list[str]:
-        lines: list[str] = []
-        for attachment in attachments:
-            if not isinstance(attachment, dict) or not self._is_text_attachment(attachment):
-                continue
-            content = self._read_text_attachment(attachment)
-            if content is None:
-                lines.append(self._attachment_download_failure_message(attachment))
-                continue
-            if content:
-                lines.append(f'Attachment {self._attachment_name(attachment)}:\n{content}')
-        return lines
+        return self._format_text_attachment_lines(
+            attachments,
+            is_text_attachment=self._is_text_attachment,
+            read_text_attachment=self._read_text_attachment,
+            attachment_name=self._attachment_name,
+        )
 
     def _format_screenshot_attachments(self, attachments: list[dict[str, Any]]) -> list[str]:
         lines: list[str] = []
@@ -237,50 +204,22 @@ class JiraClient(TicketClientBase):
         return lines
 
     def _read_text_attachment(self, attachment: dict[str, Any]) -> str | None:
-        url = str(attachment.get(JiraAttachmentFields.CONTENT, '') or '').strip()
-        if not url:
-            return ''
+        return self._download_text_attachment(
+            attachment.get(JiraAttachmentFields.CONTENT),
+            attachment_name=self._attachment_name(attachment),
+            max_chars=self.MAX_TEXT_ATTACHMENT_CHARS,
+            log_label='jira text attachment',
+        )
 
-        try:
-            response = self._get_attachment_with_retry(url)
-            response.raise_for_status()
-            content = getattr(response, 'text', '')
-            if isinstance(content, str) and content:
-                return content[: self.MAX_TEXT_ATTACHMENT_CHARS]
-            raw_content = getattr(response, 'content', b'')
-            if not raw_content:
-                return ''
-            content = raw_content.decode('utf-8', errors='replace')
-            return content[: self.MAX_TEXT_ATTACHMENT_CHARS]
-        except Exception:
-            self.logger.exception('failed to read jira text attachment %s', self._attachment_name(attachment))
-            return None
-
-    def _get_attachment_with_retry(self, url: str):
-        parsed_url = urlparse(url)
-        if parsed_url.scheme and parsed_url.netloc:
-            return run_with_retry(
-                lambda: self.session.get(url, **self.process_kwargs()),
-                self.max_retries,
-            )
-        return self._get_with_retry(url)
-
-    @staticmethod
-    def _is_text_attachment(attachment: dict[str, Any]) -> bool:
-        mime_type = str(attachment.get(JiraAttachmentFields.MIME_TYPE, '') or '')
-        return mime_type.startswith('text/') or mime_type in {
-            'application/json',
-            'application/xml',
-            'application/yaml',
-        }
+    @classmethod
+    def _is_text_attachment(cls, attachment: dict[str, Any]) -> bool:
+        return cls._is_text_attachment_mime_type(
+            attachment.get(JiraAttachmentFields.MIME_TYPE, '')
+        )
 
     @staticmethod
     def _attachment_name(attachment: dict[str, Any]) -> str:
         return str(attachment.get(JiraAttachmentFields.FILENAME, 'unknown'))
-
-    @classmethod
-    def _attachment_download_failure_message(cls, attachment: dict[str, Any]) -> str:
-        return f'Attachment {cls._attachment_name(attachment)} could not be downloaded.'
 
     @classmethod
     def _adf_to_text(cls, value: Any) -> str:

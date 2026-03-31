@@ -308,6 +308,25 @@ class ValidateEnvTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
 
+    def test_validate_openhands_env_rejects_incomplete_bedrock_testing_auth(self) -> None:
+        errors = validate_openhands_env(
+            {
+                'OH_SECRET_KEY': 'secret-key',
+                'OPENHANDS_LLM_MODEL': 'openai/gpt-4o',
+                'OPENHANDS_LLM_API_KEY': 'llm-key',
+                'OPENHANDS_TESTING_CONTAINER_ENABLED': 'true',
+                'OPENHANDS_TESTING_BASE_URL': 'http://localhost:3001',
+                'OPENHANDS_TESTING_LLM_MODEL': 'bedrock/anthropic.claude-3-sonnet-20240229-v1:0',
+                'AWS_ACCESS_KEY_ID': 'key',
+            }
+        )
+
+        self.assertIn(
+            'bedrock model requires AWS_BEARER_TOKEN_BEDROCK or '
+            'AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY + AWS_REGION_NAME',
+            errors,
+        )
+
     def test_validate_openhands_env_requires_secret_key(self) -> None:
         errors = validate_openhands_env(
             {

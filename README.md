@@ -77,6 +77,66 @@ tests/
     config.yaml
 ```
 
+## How It Works
+
+This project follows the `core-lib` layering on purpose:
+
+- `OpenHandsAgentCoreLib` wires the app once at startup, builds the clients, data-access objects, and services, and validates the external connections before work starts.
+- `client/` contains provider-specific API code for issue platforms, repository providers, and OpenHands.
+- `data_layers/data_access/` stays focused on boundary work such as ticket updates, pull-request API calls, and persisted agent state.
+- `data_layers/service/` owns the business workflow. This is where task selection, state transitions, repository preparation, OpenHands runs, publishing, notifications, and review-comment handling live.
+
+That separation matters because the main service flow should read like the actual workflow:
+
+1. Load the assigned tasks from the configured issue platform.
+2. Skip tasks that were already processed.
+3. Resolve the repositories mentioned by the task and make sure each local checkout is safe to use.
+4. Move the task to the in-progress state and add a started comment.
+5. Ask OpenHands to implement the task.
+6. Re-prepare the task branches and run the testing validation step.
+7. Publish branch updates and open one pull request per affected repository.
+8. Add the pull-request summary back to the task, move the task to the review state, persist the processed state, and send the completion notification.
+
+Tasks are processed sequentially, one after the other, so repository state from one task does not leak into the next one.
+
+### Task Workflow
+
+For each eligible task, the service does these checks and steps:
+
+1. Read the full task context, including issue comments and any supported text attachments.
+2. Infer the affected repositories from the task summary and description.
+3. Validate that every repository is available locally, on the expected destination branch, and in a clean state before starting new work.
+4. Build the task branch name for each repository and prepare those branches locally.
+5. Run the implementation prompt through the main OpenHands client.
+6. Run the testing prompt through the testing OpenHands client.
+7. Commit and push the branch updates, then create pull requests or merge requests through the repository provider API.
+8. Remember the pull-request context so later review comments can be mapped back to the correct repository, branch, task, and OpenHands session.
+
+If any repository cannot be published, the successful pull requests are kept, the task is not moved to the review state, and the failure is reported clearly instead of being hidden.
+
+### Review Comment Workflow
+
+After task processing, the agent checks tracked review pull requests for unseen comments:
+
+1. Look only at pull requests that belong to tasks already moved into the review state.
+2. Load the saved pull-request context for the repository, branch, task, and OpenHands session.
+3. Prepare the same working branch again.
+4. Ask OpenHands to address the review comment in the context of the full comment thread.
+5. Publish the branch update back to the same pull request branch.
+6. Resolve the review comment when the provider supports it.
+7. Persist the processed comment id so the same review comment is not handled twice after later polls or restarts.
+
+### Testing OpenHands Routing
+
+Implementation always uses the main OpenHands server from `OPENHANDS_BASE_URL`.
+
+Testing uses:
+
+- the dedicated testing server from `OPENHANDS_TESTING_BASE_URL` when `OPENHANDS_TESTING_CONTAINER_ENABLED=true`
+- the main `OPENHANDS_BASE_URL` when `OPENHANDS_TESTING_CONTAINER_ENABLED=false`
+
+When the testing container is enabled, `make compose-up` starts Docker Compose with the `testing` profile so the extra `openhands-testing` service is available. When it is disabled, no dedicated testing server is started and the agent keeps testing on the main OpenHands instance.
+
 ## Required Environment
 
 For the shortest local setup path, use the interactive configurator:

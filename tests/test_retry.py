@@ -6,6 +6,7 @@ from openhands_agent.client.retry_utils import (
     _retry_delay_seconds,
     is_retryable_exception,
     is_retryable_response,
+    retry_count,
     run_with_retry,
 )
 
@@ -19,6 +20,15 @@ class PermanentFailure(Exception):
 
 
 class RetryTests(unittest.TestCase):
+    def test_retry_count_enforces_minimum_one(self) -> None:
+        self.assertEqual(retry_count(5), 5)
+        self.assertEqual(retry_count(0), 1)
+        self.assertEqual(retry_count(-3), 1)
+
+    def test_retry_count_falls_back_to_default_for_invalid_values(self) -> None:
+        self.assertEqual(retry_count('bad', default=4), 4)
+        self.assertEqual(retry_count(None, default=0), 1)
+
     def test_is_retryable_exception_accepts_known_timeout_names(self) -> None:
         self.assertTrue(is_retryable_exception(ConnectTimeout('timeout')))
         self.assertTrue(is_retryable_exception(TimeoutError('timeout')))

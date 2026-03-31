@@ -12,7 +12,7 @@ pull_request_rule_validator = RuleValidator(
     [
         ValueRuleValidator(PullRequestFields.TITLE, str),
         ValueRuleValidator(PullRequestFields.SOURCE_BRANCH, str),
-        ValueRuleValidator(PullRequestFields.DESTINATION_BRANCH, (str, type(None))),
+        ValueRuleValidator(PullRequestFields.DESTINATION_BRANCH, str),
         ValueRuleValidator(PullRequestFields.DESCRIPTION, str),
     ]
 )
@@ -41,15 +41,14 @@ class PullRequestDataAccess(DataAccess):
 
     def validate_connection(self) -> None:
         self._client.validate_connection(
-            repo_owner=self._config.owner,
-            repo_slug=self._config.repo_slug,
+            **self._repository_kwargs(),
         )
 
     def create_pull_request(
         self,
         title: str,
         source_branch: str,
-        destination_branch: str | None = None,
+        destination_branch: str,
         description: str = '',
     ) -> dict[str, str]:
         pull_request_rule_validator.validate_dict(
@@ -63,9 +62,8 @@ class PullRequestDataAccess(DataAccess):
         return self._client.create_pull_request(
             title=title,
             source_branch=source_branch,
-            repo_owner=self._config.owner,
-            repo_slug=self._config.repo_slug,
-            destination_branch=destination_branch or self._config.destination_branch,
+            **self._repository_kwargs(),
+            destination_branch=destination_branch,
             description=description,
         )
 
@@ -76,8 +74,7 @@ class PullRequestDataAccess(DataAccess):
             }
         )
         return self._client.list_pull_request_comments(
-            repo_owner=self._config.owner,
-            repo_slug=self._config.repo_slug,
+            **self._repository_kwargs(),
             pull_request_id=pull_request_id,
         )
 
@@ -89,7 +86,12 @@ class PullRequestDataAccess(DataAccess):
             }
         )
         self._client.resolve_review_comment(
-            repo_owner=self._config.owner,
-            repo_slug=self._config.repo_slug,
+            **self._repository_kwargs(),
             comment=comment,
         )
+
+    def _repository_kwargs(self) -> dict[str, str]:
+        return {
+            'repo_owner': self._config.owner,
+            'repo_slug': self._config.repo_slug,
+        }

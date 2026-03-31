@@ -18,6 +18,7 @@ from openhands_agent.data_layers.service.agent_service import AgentService
 from openhands_agent.data_layers.service.implementation_service import ImplementationService
 from openhands_agent.data_layers.service.repository_service import RepositoryService
 from openhands_agent.data_layers.service.notification_service import NotificationService
+from openhands_agent.data_layers.service.task_service import TaskService
 from openhands_agent.data_layers.service.testing_service import TestingService
 from openhands_agent.data_layers.data_access.agent_state_data_access import AgentStateDataAccess
 from openhands_agent.data_layers.data_access.task_data_access import TaskDataAccess
@@ -83,7 +84,9 @@ class TestAgentEndToEndIntegration(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures for integration testing."""
         # Create mock services with proper stubs
-        self.mock_task_data_access = Mock(spec=TaskDataAccess)
+        self.mock_task_data_access = Mock(spec=TaskService)
+        self.mock_task_data_access.provider_name = 'youtrack'
+        self.mock_task_data_access.max_retries = 3
         self.mock_implementation_service = Mock(spec=ImplementationService)
         self.mock_testing_service = Mock(spec=TestingService)
         self.mock_repository_service = Mock(spec=RepositoryService)
@@ -106,6 +109,7 @@ class TestAgentEndToEndIntegration(unittest.TestCase):
                 initial_state='Open',
             )
             task_data_access = TaskDataAccess(cfg.openhands_agent.youtrack, ticket_client)
+            task_service = TaskService(cfg.openhands_agent.youtrack, task_data_access)
             state_data_access = AgentStateDataAccess(str(Path(tmp_dir) / 'state.json'))
             state_data_access.validate()
 
@@ -168,7 +172,7 @@ class TestAgentEndToEndIntegration(unittest.TestCase):
 
             notification_service = Mock(spec=NotificationService)
             agent_service = AgentService(
-                task_data_access=task_data_access,
+                task_service=task_service,
                 implementation_service=ImplementationService(openhands_client),
                 testing_service=TestingService(openhands_client),
                 repository_service=repository_service,
@@ -176,7 +180,7 @@ class TestAgentEndToEndIntegration(unittest.TestCase):
                 state_data_access=state_data_access,
             )
 
-            open_tasks = task_data_access.get_assigned_tasks()
+            open_tasks = task_service.get_assigned_tasks()
             self.assertEqual(len(open_tasks), 1)
 
             task_result = agent_service.process_assigned_task(open_tasks[0])
@@ -274,7 +278,7 @@ class TestAgentEndToEndIntegration(unittest.TestCase):
         
         # Initialize the complete agent service with mocked dependencies
         agent_service = AgentService(
-            task_data_access=self.mock_task_data_access,
+            task_service=self.mock_task_data_access,
             implementation_service=self.mock_implementation_service,
             testing_service=self.mock_testing_service,
             repository_service=self.mock_repository_service,
@@ -349,7 +353,7 @@ class TestAgentEndToEndIntegration(unittest.TestCase):
         
         # Test that error propagation works correctly  
         agent_service = AgentService(
-            task_data_access=self.mock_task_data_access,
+            task_service=self.mock_task_data_access,
             implementation_service=self.mock_implementation_service,
             testing_service=self.mock_testing_service,
             repository_service=self.mock_repository_service,

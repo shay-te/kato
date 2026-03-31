@@ -1,11 +1,8 @@
 from typing import Any
-from urllib.parse import urlparse
 
-from openhands_agent.client.retry_utils import run_with_retry
 from openhands_agent.client.ticket_client_base import TicketClientBase
 from openhands_agent.data_layers.data.task import Task
 from openhands_agent.fields import (
-    TaskCommentFields,
     YouTrackAttachmentFields,
     YouTrackCommentFields,
     YouTrackCustomFieldFields,
@@ -16,7 +13,9 @@ from openhands_agent.text_utils import (
     text_from_mapping,
 )
 
+
 class YouTrackClient(TicketClientBase):
+    provider_name = 'youtrack'
     EVENT_FIELDS = 'id,presentation,$type'
     FIELD_VALUE_FIELDS = 'id,name,$type'
     COMMENT_FIELDS = ','.join(
@@ -79,14 +78,10 @@ class YouTrackClient(TicketClientBase):
             params={'query': query, 'fields': 'idReadable,summary,description', '$top': 100},
         )
         response.raise_for_status()
-        tasks: list[Task] = []
-        for item in self._json_list(response):
-            try:
-                tasks.append(self._to_task(item))
-            except (KeyError, TypeError, ValueError):
-                self.logger.exception('failed to normalize youtrack issue payload')
-                continue
-        return tasks
+        return self._normalize_issue_tasks(
+            self._json_items(response),
+            to_task=self._to_task,
+        )
 
     def add_comment(self, issue_id: str, comment: str) -> None:
         response = self._post_with_retry(
@@ -99,6 +94,22 @@ class YouTrackClient(TicketClientBase):
         self.add_comment(issue_id, f'Pull request created: {pull_request_url}')
 
     def move_issue_to_state(self, issue_id: str, field_name: str, state_name: str) -> None:
+        field = self._issue_state_field(issue_id, field_name)
+        if self._field_value_name(field) == state_name:
+            return
+        updated_field = self._updated_issue_state_field(
+            issue_id,
+            field_name,
+            state_name,
+            field,
+        )
+        self._assert_issue_state(issue_id, field_name, state_name, updated_field)
+
+    def _issue_state_field(
+        self,
+        issue_id: str,
+        field_name: str,
+    ) -> dict[str, Any]:
         field = self._get_issue_custom_field(
             issue_id,
             field_name,
@@ -110,55 +121,65 @@ class YouTrackClient(TicketClientBase):
         field_type = text_from_mapping(field, YouTrackCustomFieldFields.TYPE)
         if not field_type:
             raise ValueError(f'missing issue field type for: {field_name}')
-        if self._field_value_name(field) == state_name:
-            return
+        return field
 
+    def _updated_issue_state_field(
+        self,
+        issue_id: str,
+        field_name: str,
+        state_name: str,
+        field: dict[str, Any],
+    ) -> dict[str, Any]:
+        field_id = text_from_mapping(field, YouTrackCustomFieldFields.ID)
+        field_type = text_from_mapping(field, YouTrackCustomFieldFields.TYPE)
         if field_type == self.STATE_MACHINE_CUSTOM_FIELD_TYPE:
-            updated_field = self._move_issue_state_machine_field(
-                issue_id,
-                field,
-                state_name,
-            )
-        else:
-            updated_field = self._move_issue_value_field(
-                issue_id,
-                field_id,
-                field_name,
-                field_type,
-                state_name,
-            )
+            return self._move_issue_state_machine_field(issue_id, field, state_name)
+        return self._move_issue_value_field(
+            issue_id,
+            field_id,
+            field_name,
+            field_type,
+            state_name,
+        )
 
+    def _assert_issue_state(
+        self,
+        issue_id: str,
+        field_name: str,
+        state_name: str,
+        updated_field: dict[str, Any],
+    ) -> None:
         updated_state_name = self._field_value_name(updated_field)
-        if updated_state_name != state_name:
-            verified_field = self._get_issue_custom_field(
-                issue_id,
-                field_name,
-                fields=self.DETAILED_CUSTOM_FIELD_FIELDS,
-            )
-            verified_state_name = self._field_value_name(verified_field)
-            if verified_state_name != state_name:
-                current_state = verified_state_name or updated_state_name or '<unknown>'
-                raise ValueError(
-                    f'issue {issue_id} field {field_name} did not move to state '
-                    f'{state_name}; current state is {current_state}'
-                )
+        if updated_state_name == state_name:
+            return
+        verified_field = self._get_issue_custom_field(
+            issue_id,
+            field_name,
+            fields=self.DETAILED_CUSTOM_FIELD_FIELDS,
+        )
+        verified_state_name = self._field_value_name(verified_field)
+        if verified_state_name == state_name:
+            return
+        current_state = verified_state_name or updated_state_name or '<unknown>'
+        raise ValueError(
+            f'issue {issue_id} field {field_name} did not move to state '
+            f'{state_name}; current state is {current_state}'
+        )
 
     def _to_task(self, payload: dict[str, Any]) -> Task:
         issue_id = payload['idReadable']
         comment_entries = self._task_comment_entries(self._get_issue_comments(issue_id))
         attachments = self._get_issue_attachments(issue_id)
-        task = Task(
-            id=issue_id,
-            summary=str(payload.get(Task.summary.key, '') or ''),
+        return self._build_task(
+            issue_id=issue_id,
+            summary=payload.get(Task.summary.key),
             description=self._build_task_description(
                 payload.get(Task.description.key),
                 comment_entries,
                 attachments,
             ),
-            branch_name=f'feature/{issue_id.lower()}',
+            comment_entries=comment_entries,
         )
-        self._set_task_comments(task, comment_entries)
-        return task
 
     @staticmethod
     def _build_assigned_tasks_query(project: str, assignee: str, states: list[str]) -> str:
@@ -178,7 +199,7 @@ class YouTrackClient(TicketClientBase):
             params={'fields': fields or self.CUSTOM_FIELD_FIELDS},
         )
         response.raise_for_status()
-        for field in self._json_list(response):
+        for field in self._json_items(response):
             if isinstance(field, dict) and field.get(YouTrackCustomFieldFields.NAME) == field_name:
                 return field
         raise ValueError(f'unknown issue field: {field_name}')
@@ -291,16 +312,12 @@ class YouTrackClient(TicketClientBase):
         fields: str,
         item_label: str,
     ) -> list[dict[str, Any]]:
-        try:
-            response = self._get_with_retry(
-                f'/api/issues/{issue_id}/{suffix}',
-                params={'fields': fields, '$top': 100},
-            )
-            response.raise_for_status()
-            return self._json_list(response)
-        except Exception:
-            self.logger.exception('failed to fetch %s for issue %s', item_label, issue_id)
-            return []
+        return self._best_effort_issue_response_items(
+            issue_id,
+            item_label=item_label,
+            path=f'/api/issues/{issue_id}/{suffix}',
+            params={'fields': fields, '$top': 100},
+        )
 
     def _build_task_description(
         self,
@@ -308,25 +325,12 @@ class YouTrackClient(TicketClientBase):
         comment_entries: list[dict[str, str]],
         attachments: list[dict[str, Any]],
     ) -> str:
-        base_description = normalized_text(description)
-        sections = [base_description or 'No description provided.']
-        self._append_comment_section(sections, comment_entries)
-
-        text_attachment_lines = self._format_text_attachments(attachments)
-        if text_attachment_lines:
-            sections.append(
-                f'{self.UNTRUSTED_TEXT_ATTACHMENTS_SECTION_TITLE}:\n'
-                + '\n\n'.join(text_attachment_lines)
-            )
-
-        screenshot_lines = self._format_screenshot_attachments(attachments)
-        if screenshot_lines:
-            sections.append(
-                f'{self.UNTRUSTED_SCREENSHOT_ATTACHMENTS_SECTION_TITLE}:\n'
-                + '\n'.join(screenshot_lines)
-            )
-
-        return self._join_task_description_sections(sections)
+        return self._build_task_description_with_attachment_sections(
+            description,
+            comment_entries,
+            text_attachment_lines=self._format_text_attachments(attachments),
+            screenshot_lines=self._format_screenshot_attachments(attachments),
+        )
 
     @classmethod
     def _task_comment_entries(
@@ -338,31 +342,18 @@ class YouTrackClient(TicketClientBase):
             if not isinstance(comment, dict):
                 continue
             text = text_from_mapping(comment, YouTrackCommentFields.TEXT)
-            if not text:
-                continue
-            entries.append(
-                {
-                    TaskCommentFields.AUTHOR: cls._comment_author_name(comment),
-                    TaskCommentFields.BODY: text,
-                }
-            )
+            entry = cls._task_comment_entry(cls._comment_author_name(comment), text)
+            if entry:
+                entries.append(entry)
         return entries
 
     def _format_text_attachments(self, attachments: list[dict[str, Any]]) -> list[str]:
-        lines: list[str] = []
-        for attachment in attachments:
-            if not isinstance(attachment, dict):
-                continue
-            if not self._is_text_attachment(attachment):
-                continue
-            content = self._read_text_attachment(attachment)
-            if content is None:
-                lines.append(self._attachment_download_failure_message(attachment))
-                continue
-            if not content:
-                continue
-            lines.append(f'Attachment {self._attachment_name(attachment)}:\n{content}')
-        return lines
+        return self._format_text_attachment_lines(
+            attachments,
+            is_text_attachment=self._is_text_attachment,
+            read_text_attachment=self._read_text_attachment,
+            attachment_name=self._attachment_name,
+        )
 
     @staticmethod
     def _format_screenshot_attachments(attachments: list[dict[str, Any]]) -> list[str]:
@@ -379,53 +370,18 @@ class YouTrackClient(TicketClientBase):
         return lines
 
     def _read_text_attachment(self, attachment: dict[str, Any]) -> str | None:
-        url = attachment.get(YouTrackAttachmentFields.URL)
-        if not url:
-            return ''
+        return self._download_text_attachment(
+            attachment.get(YouTrackAttachmentFields.URL),
+            attachment_name=self._attachment_name(attachment),
+            max_chars=self.MAX_TEXT_ATTACHMENT_CHARS,
+            charset=str(attachment.get(YouTrackAttachmentFields.CHARSET) or 'utf-8'),
+        )
 
-        try:
-            response = self._get_attachment_with_retry(str(url))
-            response.raise_for_status()
-            content = getattr(response, 'text', '')
-            if isinstance(content, str) and content:
-                return self._truncate_attachment_content(content)
-
-            raw_content = getattr(response, 'content', b'')
-            if not raw_content:
-                return ''
-
-            charset = attachment.get(YouTrackAttachmentFields.CHARSET) or 'utf-8'
-            content = raw_content.decode(charset, errors='replace')
-            return self._truncate_attachment_content(content)
-        except Exception:
-            self.logger.exception(
-                'failed to read text attachment %s',
-                self._attachment_name(attachment),
-            )
-            return None
-
-    def _get_attachment_with_retry(self, url: str):
-        parsed_url = urlparse(url)
-        if parsed_url.scheme and parsed_url.netloc:
-            return run_with_retry(
-                lambda: self.session.get(url, **self.process_kwargs()),
-                self.max_retries,
-            )
-        return self._get_with_retry(url)
-
-    @staticmethod
-    def _is_text_attachment(attachment: dict[str, Any]) -> bool:
-        mime_type = attachment.get(YouTrackAttachmentFields.MIME_TYPE) or ''
-        return mime_type.startswith('text/') or mime_type in {
-            'application/json',
-            'application/xml',
-            'application/yaml',
-        }
-
-    @staticmethod
-    def _json_list(response) -> list[dict[str, Any]]:
-        payload = response.json() or []
-        return list(payload) if isinstance(payload, list) else []
+    @classmethod
+    def _is_text_attachment(cls, attachment: dict[str, Any]) -> bool:
+        return cls._is_text_attachment_mime_type(
+            attachment.get(YouTrackAttachmentFields.MIME_TYPE) or ''
+        )
 
     @staticmethod
     def _comment_author_name(comment: dict[str, Any]) -> str:
@@ -441,10 +397,3 @@ class YouTrackClient(TicketClientBase):
     @staticmethod
     def _attachment_name(attachment: dict[str, Any]) -> str:
         return str(attachment.get(YouTrackAttachmentFields.NAME, 'unknown'))
-
-    @classmethod
-    def _attachment_download_failure_message(cls, attachment: dict[str, Any]) -> str:
-        return f'Attachment {cls._attachment_name(attachment)} could not be downloaded.'
-
-    def _truncate_attachment_content(self, content: str) -> str:
-        return content[: self.MAX_TEXT_ATTACHMENT_CHARS]

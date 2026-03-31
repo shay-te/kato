@@ -21,6 +21,7 @@ class TestUna2427(unittest.TestCase):
              patch('openhands_agent.openhands_agent_core_lib.AgentStateDataAccess'), \
              patch('openhands_agent.openhands_agent_core_lib.RepositoryService'), \
              patch('openhands_agent.openhands_agent_core_lib.TaskDataAccess'), \
+             patch('openhands_agent.openhands_agent_core_lib.TaskService'), \
              patch('openhands_agent.openhands_agent_core_lib.ImplementationService'), \
              patch('openhands_agent.openhands_agent_core_lib.TestingService'), \
              patch('openhands_agent.openhands_agent_core_lib.NotificationService'), \
@@ -44,6 +45,7 @@ class TestUna2427(unittest.TestCase):
              patch('openhands_agent.openhands_agent_core_lib.AgentStateDataAccess'), \
              patch('openhands_agent.openhands_agent_core_lib.RepositoryService'), \
              patch('openhands_agent.openhands_agent_core_lib.TaskDataAccess'), \
+             patch('openhands_agent.openhands_agent_core_lib.TaskService'), \
              patch('openhands_agent.openhands_agent_core_lib.ImplementationService'), \
              patch('openhands_agent.openhands_agent_core_lib.TestingService'), \
              patch('openhands_agent.openhands_agent_core_lib.NotificationService'), \

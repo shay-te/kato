@@ -24,6 +24,60 @@ PROVIDER_TOKEN_ENV_KEYS = {
     'gitlab': GITLAB_TOKEN_KEYS,
     'bitbucket': BITBUCKET_TOKEN_KEYS,
 }
+SHARED_REQUIRED_AGENT_KEYS = (
+    'REPOSITORY_ROOT_PATH',
+    'OPENHANDS_BASE_URL',
+    'OPENHANDS_API_KEY',
+)
+REQUIRED_AGENT_KEYS_BY_PLATFORM = {
+    'youtrack': (
+        'YOUTRACK_BASE_URL',
+        'YOUTRACK_TOKEN',
+        'YOUTRACK_PROJECT',
+        'YOUTRACK_ASSIGNEE',
+    ),
+    'jira': (
+        'JIRA_BASE_URL',
+        'JIRA_TOKEN',
+        'JIRA_PROJECT',
+        'JIRA_ASSIGNEE',
+    ),
+    'github': (
+        'GITHUB_ISSUES_BASE_URL',
+        'GITHUB_ISSUES_OWNER',
+        'GITHUB_ISSUES_REPO',
+        'GITHUB_ISSUES_ASSIGNEE',
+    ),
+    'gitlab': (
+        'GITLAB_ISSUES_BASE_URL',
+        'GITLAB_ISSUES_PROJECT',
+        'GITLAB_ISSUES_ASSIGNEE',
+    ),
+    'bitbucket': (
+        'BITBUCKET_ISSUES_BASE_URL',
+        'BITBUCKET_ISSUES_WORKSPACE',
+        'BITBUCKET_ISSUES_REPO_SLUG',
+        'BITBUCKET_ISSUES_ASSIGNEE',
+    ),
+}
+EMAIL_REQUIREMENTS = {
+    'OPENHANDS_AGENT_FAILURE_EMAIL_ENABLED': (
+        'failure',
+        [
+            'OPENHANDS_AGENT_FAILURE_EMAIL_TEMPLATE_ID',
+            'OPENHANDS_AGENT_FAILURE_EMAIL_TO',
+            'OPENHANDS_AGENT_FAILURE_EMAIL_SENDER_EMAIL',
+        ],
+    ),
+    'OPENHANDS_AGENT_COMPLETION_EMAIL_ENABLED': (
+        'completion',
+        [
+            'OPENHANDS_AGENT_COMPLETION_EMAIL_TEMPLATE_ID',
+            'OPENHANDS_AGENT_COMPLETION_EMAIL_TO',
+            'OPENHANDS_AGENT_COMPLETION_EMAIL_SENDER_EMAIL',
+        ],
+    ),
+}
 logger = logging.getLogger(__name__)
 
 
@@ -65,92 +119,59 @@ def _has_any(env: dict[str, str], keys: tuple[str, ...] | list[str]) -> bool:
 
 def validate_agent_env(env: dict[str, str]) -> list[str]:
     errors = []
-    issue_platform = str(
-        env.get('OPENHANDS_AGENT_ISSUE_PLATFORM')
-        or env.get('OPENHANDS_AGENT_TICKET_SYSTEM')
-        or 'youtrack'
-    ).strip().lower()
-    if issue_platform not in {'youtrack', 'jira', 'github', 'gitlab', 'bitbucket'}:
-        errors.append(f'unsupported issue platform: {issue_platform}')
-    required = _required_agent_keys(issue_platform)
-    for key in _missing(env, required):
-        errors.append(f'missing required agent env var: {key}')
-    provider_token_keys = PROVIDER_TOKEN_ENV_KEYS.get(issue_platform)
-    if provider_token_keys and not _has_any(env, provider_token_keys):
-        errors.append(f'missing required agent env var: {provider_token_keys[0]}')
-
-    if _is_enabled(env.get('OPENHANDS_AGENT_FAILURE_EMAIL_ENABLED')):
-        for key in _missing(
-            env,
-            [
-                'OPENHANDS_AGENT_FAILURE_EMAIL_TEMPLATE_ID',
-                'OPENHANDS_AGENT_FAILURE_EMAIL_TO',
-                'OPENHANDS_AGENT_FAILURE_EMAIL_SENDER_EMAIL',
-            ],
-        ):
-            errors.append(f'failure email is enabled but {key} is missing')
-
-    if _is_enabled(env.get('OPENHANDS_AGENT_COMPLETION_EMAIL_ENABLED')):
-        for key in _missing(
-            env,
-            [
-                'OPENHANDS_AGENT_COMPLETION_EMAIL_TEMPLATE_ID',
-                'OPENHANDS_AGENT_COMPLETION_EMAIL_TO',
-                'OPENHANDS_AGENT_COMPLETION_EMAIL_SENDER_EMAIL',
-            ],
-        ):
-            errors.append(f'completion email is enabled but {key} is missing')
-
+    issue_platform = _configured_issue_platform(env)
+    errors.extend(_validate_issue_platform(issue_platform))
+    errors.extend(_validate_required_agent_keys(env, issue_platform))
+    errors.extend(_validate_agent_email_env(env))
     errors.extend(_validate_repository_provider_env(env))
     errors.extend(_validate_issue_state_queue_env(env, issue_platform))
-
     return errors
 
 
 def _required_agent_keys(issue_platform: str) -> list[str]:
-    shared_required = [
-        'REPOSITORY_ROOT_PATH',
-        'OPENHANDS_BASE_URL',
-        'OPENHANDS_API_KEY',
+    platform_keys = REQUIRED_AGENT_KEYS_BY_PLATFORM.get(
+        issue_platform,
+        REQUIRED_AGENT_KEYS_BY_PLATFORM['youtrack'],
+    )
+    return [*platform_keys, *SHARED_REQUIRED_AGENT_KEYS]
+
+
+def _configured_issue_platform(env: dict[str, str]) -> str:
+    return str(
+        env.get('OPENHANDS_AGENT_ISSUE_PLATFORM')
+        or env.get('OPENHANDS_AGENT_TICKET_SYSTEM')
+        or 'youtrack'
+    ).strip().lower()
+
+
+def _validate_issue_platform(issue_platform: str) -> list[str]:
+    if issue_platform in REQUIRED_AGENT_KEYS_BY_PLATFORM:
+        return []
+    return [f'unsupported issue platform: {issue_platform}']
+
+
+def _validate_required_agent_keys(
+    env: dict[str, str],
+    issue_platform: str,
+) -> list[str]:
+    errors = [
+        f'missing required agent env var: {key}'
+        for key in _missing(env, _required_agent_keys(issue_platform))
     ]
-    if issue_platform == 'jira':
-        return [
-            'JIRA_BASE_URL',
-            'JIRA_TOKEN',
-            'JIRA_PROJECT',
-            'JIRA_ASSIGNEE',
-            *shared_required,
-        ]
-    if issue_platform == 'github':
-        return [
-            'GITHUB_ISSUES_BASE_URL',
-            'GITHUB_ISSUES_OWNER',
-            'GITHUB_ISSUES_REPO',
-            'GITHUB_ISSUES_ASSIGNEE',
-            *shared_required,
-        ]
-    if issue_platform == 'gitlab':
-        return [
-            'GITLAB_ISSUES_BASE_URL',
-            'GITLAB_ISSUES_PROJECT',
-            'GITLAB_ISSUES_ASSIGNEE',
-            *shared_required,
-        ]
-    if issue_platform == 'bitbucket':
-        return [
-            'BITBUCKET_ISSUES_BASE_URL',
-            'BITBUCKET_ISSUES_WORKSPACE',
-            'BITBUCKET_ISSUES_REPO_SLUG',
-            'BITBUCKET_ISSUES_ASSIGNEE',
-            *shared_required,
-        ]
-    return [
-        'YOUTRACK_BASE_URL',
-        'YOUTRACK_TOKEN',
-        'YOUTRACK_PROJECT',
-        'YOUTRACK_ASSIGNEE',
-        *shared_required,
-    ]
+    provider_token_keys = PROVIDER_TOKEN_ENV_KEYS.get(issue_platform)
+    if provider_token_keys and not _has_any(env, provider_token_keys):
+        errors.append(f'missing required agent env var: {provider_token_keys[0]}')
+    return errors
+
+
+def _validate_agent_email_env(env: dict[str, str]) -> list[str]:
+    errors: list[str] = []
+    for enabled_key, (label, required_keys) in EMAIL_REQUIREMENTS.items():
+        if not _is_enabled(env.get(enabled_key)):
+            continue
+        for key in _missing(env, required_keys):
+            errors.append(f'{label} email is enabled but {key} is missing')
+    return errors
 
 
 def _validate_repository_provider_env(env: dict[str, str]) -> list[str]:

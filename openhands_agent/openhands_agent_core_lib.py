@@ -17,6 +17,7 @@ from openhands_agent.data_layers.service.implementation_service import (
 )
 from openhands_agent.data_layers.service.notification_service import NotificationService
 from openhands_agent.data_layers.service.repository_service import RepositoryService
+from openhands_agent.data_layers.service.task_service import TaskService
 from openhands_agent.data_layers.service.testing_service import TestingService
 from openhands_agent.alembic_config import build_alembic_config
 from openhands_agent.logging_utils import configure_logger
@@ -90,8 +91,9 @@ class OpenHandsAgentCoreLib(CoreLib):
                 testing=True,
             )
         )
+        task_data_access = TaskDataAccess(ticket_cfg, ticket_client)
         return AgentService(
-            task_data_access=TaskDataAccess(ticket_cfg, ticket_client),
+            task_service=TaskService(ticket_cfg, task_data_access),
             implementation_service=implementation_service,
             testing_service=testing_service,
             repository_service=RepositoryService(open_cfg, retry_cfg.max_retries),

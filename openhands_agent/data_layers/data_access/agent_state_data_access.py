@@ -9,10 +9,8 @@ from pathlib import Path
 
 from core_lib.data_layers.data_access.data_access import DataAccess
 
-from openhands_agent.data_layers.data.task import Task
 from openhands_agent.fields import (
     PullRequestFields,
-    StatusFields,
 )
 from openhands_agent.pull_request_context import (
     build_pull_request_context,
@@ -42,13 +40,14 @@ class AgentStateDataAccess(DataAccess):
         processed_task = state['processed_tasks'].get(str(task_id), {})
         return dict(processed_task) if isinstance(processed_task, dict) else {}
 
-    def mark_task_processed(self, task_id: str, pull_requests: list[dict[str, str]]) -> None:
+    def save_processed_task(self, task_id: str, processed_task: dict) -> None:
         def mutate(state: dict) -> None:
-            state['processed_tasks'][str(task_id)] = {
-                StatusFields.STATUS: StatusFields.READY_FOR_REVIEW,
-                PullRequestFields.PULL_REQUESTS: self._serialize_pull_requests(pull_requests),
-                'updated_at': datetime.now(timezone.utc).isoformat(),
-            }
+            payload = dict(processed_task) if isinstance(processed_task, dict) else {}
+            payload[PullRequestFields.PULL_REQUESTS] = self._serialize_pull_requests(
+                payload.get(PullRequestFields.PULL_REQUESTS, [])
+            )
+            payload['updated_at'] = datetime.now(timezone.utc).isoformat()
+            state['processed_tasks'][str(task_id)] = payload
 
         self._update_state(mutate)
 
