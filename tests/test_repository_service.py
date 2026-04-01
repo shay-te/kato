@@ -923,6 +923,11 @@ class RepositoryServiceTests(unittest.TestCase):
             'openhands_agent.data_layers.service.repository_service.os.path.isdir',
             return_value=True,
         ), patch(
+            'openhands_agent.data_layers.service.repository_service.os.path.exists',
+            return_value=True,
+        ), patch(
+            'openhands_agent.data_layers.service.repository_service.os.remove',
+        ) as mock_remove, patch(
             'openhands_agent.data_layers.service.repository_service.RepositoryService._validate_destination_branch_tracking_state',
         ), patch(
             'openhands_agent.data_layers.service.repository_service.RepositoryService._push_branch',
