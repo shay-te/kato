@@ -41,7 +41,31 @@ class DeploymentFilesTests(unittest.TestCase):
             'OPENHANDS_SKIP_TESTING: ${OPENHANDS_SKIP_TESTING:-false}',
             compose_text,
         )
+        self.assertIn(
+            'LOG_ALL_EVENTS: ${OPENHANDS_CONTAINER_LOG_ALL_EVENTS}',
+            compose_text,
+        )
+        self.assertIn(
+            'LLM_MODEL: ${OPENHANDS_LLM_MODEL:-}',
+            compose_text,
+        )
+        self.assertIn('AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}', compose_text)
+        self.assertIn('AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}', compose_text)
+        self.assertIn('AWS_REGION_NAME: ${AWS_REGION_NAME:-}', compose_text)
+        self.assertIn('LLM_AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}', compose_text)
+        self.assertIn(
+            'LLM_AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}',
+            compose_text,
+        )
+        self.assertIn('LLM_AWS_REGION_NAME: ${AWS_REGION_NAME:-}', compose_text)
+        self.assertIn('AWS_DEFAULT_REGION: ${AWS_REGION_NAME:-}', compose_text)
         self.assertIn('OPENHANDS_TESTING_BASE_URL: http://openhands-testing:3000', compose_text)
+        self.assertNotIn('LOG_ALL_EVENTS: "true"', compose_text)
+        self.assertNotIn('OPENHANDS_CONTAINER_LLM_MODEL', compose_text)
+        self.assertNotIn('OPENHANDS_CONTAINER_AWS_ACCESS_KEY_ID', compose_text)
+        self.assertNotIn('OPENHANDS_CONTAINER_AWS_SECRET_ACCESS_KEY', compose_text)
+        self.assertNotIn('OPENHANDS_CONTAINER_AWS_REGION_NAME', compose_text)
+        self.assertNotIn('OPENHANDS_CONTAINER_AWS_DEFAULT_REGION', compose_text)
         self.assertIn(
             'OPENHANDS_TESTING_LLM_MODEL: ${OPENHANDS_TESTING_LLM_MODEL:-}',
             compose_text,
@@ -221,6 +245,12 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('OPENHANDS_TESTING_CONTAINER_ENABLED=', env_example_text)
         self.assertIn('OPENHANDS_TESTING_BASE_URL=', env_example_text)
         self.assertIn('OPENHANDS_TESTING_PORT=', env_example_text)
+        self.assertIn('OPENHANDS_CONTAINER_LOG_ALL_EVENTS=', env_example_text)
+        self.assertNotIn('OPENHANDS_CONTAINER_LLM_MODEL=', env_example_text)
+        self.assertNotIn('OPENHANDS_CONTAINER_AWS_ACCESS_KEY_ID=', env_example_text)
+        self.assertNotIn('OPENHANDS_CONTAINER_AWS_SECRET_ACCESS_KEY=', env_example_text)
+        self.assertNotIn('OPENHANDS_CONTAINER_AWS_REGION_NAME=', env_example_text)
+        self.assertNotIn('OPENHANDS_CONTAINER_AWS_DEFAULT_REGION=', env_example_text)
         self.assertIn('OPENHANDS_AGENT_LOG_LEVEL=', env_example_text)
         self.assertIn('OPENHANDS_AGENT_WORKFLOW_LOG_LEVEL=', env_example_text)
         self.assertIn('OPENHANDS_SSH_AUTH_SOCK_HOST_PATH=', env_example_text)

@@ -245,6 +245,7 @@ The list below mirrors `.env.example`.
 | `OPENHANDS_TESTING_CONTAINER_ENABLED` | Enables the optional dedicated testing OpenHands container. |
 | `OPENHANDS_TESTING_BASE_URL` | Base URL for the dedicated testing OpenHands server. |
 | `OPENHANDS_TESTING_PORT` | Host port used for the optional testing container. |
+| `OPENHANDS_CONTAINER_LOG_ALL_EVENTS` | Enables all OpenHands event logging inside the `openhands` container. |
 | `OPENHANDS_AGENT_MAX_RETRIES` | Retry count for external API calls. |
 | `OPENHANDS_AGENT_LOG_LEVEL` | Log level for the agent app process. |
 | `OPENHANDS_AGENT_WORKFLOW_LOG_LEVEL` | Log level for workflow-specific logs. |
@@ -260,6 +261,8 @@ The list below mirrors `.env.example`.
 | `OPENHANDS_AGENT_COMPLETION_EMAIL_SENDER_EMAIL` | Sender email for completion notification emails. |
 | `EMAIL_CORE_LIB_SEND_IN_BLUE_API_KEY` | SendInBlue API key used by `email-core-lib`. |
 | `SLACK_WEBHOOK_URL_ERRORS_EMAIL` | Slack webhook used by `email-core-lib` error reporting. |
+
+The `openhands` container reuses the shared `OPENHANDS_LLM_MODEL` and standard `AWS_*` variables from the same `.env` file. `OPENHANDS_CONTAINER_LOG_ALL_EVENTS` is the only container-specific override kept for that service.
 
 ### OpenHands Container
 
@@ -507,7 +510,7 @@ Before running `docker compose up --build`, make sure `.env` contains the select
 Docker Compose uses `REPOSITORY_ROOT_PATH` as the host source path and mounts it into both the agent container and the OpenHands sandbox at `/workspace/project`, so Docker runs use the same in-container workspace path consistently. The agent mount must stay writable because the agent itself performs git preflight, branch checkout, and fast-forward pulls there before delegating implementation work.
 For the default SQLite setup, the compose file stores the database under `data/` in the agent container working directory, backed by a named Docker volume shared by the `install` and `openhands-agent` containers. If you use Postgres or another external database, override `OPENHANDS_AGENT_DB_PATH` and the related DB env vars in `.env`.
 
-If you use `.env`, Docker Compose will load it automatically, so you can keep both the agent config and the OpenHands LLM config in one place and avoid manual setup in the OpenHands UI for the env-supported options.
+If you use `.env`, Docker Compose will load it automatically, so you can keep both the agent config and the OpenHands LLM config in one place and avoid manual setup in the OpenHands UI for the env-supported options. The `openhands` service also reads its logging and model defaults from the same file.
 The OpenHands container always stores its internal state at `/.openhands`; `OPENHANDS_STATE_DIR` only controls which host folder is mounted there, so prefer an absolute host path when overriding it.
 
 OpenHands behavioral rules are also supported from this repo through [`AGENTS.md`](AGENTS.md). That lets you keep coding/testing instructions in the project instead of configuring them manually in OpenHands.
