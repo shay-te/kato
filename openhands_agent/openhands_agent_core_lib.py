@@ -133,6 +133,8 @@ class OpenHandsAgentCoreLib(CoreLib):
             ),
             poll_interval_seconds=cls._openhands_poll_interval_seconds(openhands_cfg),
             max_poll_attempts=cls._openhands_max_poll_attempts(openhands_cfg),
+            model_smoke_test_enabled=not testing
+            and bool(getattr(openhands_cfg, 'model_smoke_test_enabled', True)),
         )
 
     @staticmethod

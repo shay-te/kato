@@ -986,7 +986,10 @@ class RepositoryService(Service):
         parsed = urlparse(remote_url)
         provider = normalized_lower_text(text_from_attr(repository, 'provider'))
         if provider == 'bitbucket':
-            return 'x-token-auth'
+            owner = text_from_attr(repository, 'owner')
+            if owner:
+                return owner
+            return parsed.username or 'x-token-auth'
         if parsed.username:
             return parsed.username
         return {

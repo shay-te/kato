@@ -135,6 +135,7 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
                 },
                 'poll_interval_seconds': 2.0,
                 'max_poll_attempts': 900,
+                'model_smoke_test_enabled': True,
             },
         )
         self.assertEqual(
@@ -154,6 +155,7 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
                 },
                 'poll_interval_seconds': 2.0,
                 'max_poll_attempts': 900,
+                'model_smoke_test_enabled': False,
             },
         )
         mock_repository_service_cls.assert_called_once_with(

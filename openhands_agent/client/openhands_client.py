@@ -25,6 +25,11 @@ class OpenHandsClient(RetryingClientBase):
     _SETTINGS_PATH = '/api/settings'
     _START_TASKS_PATH = '/api/v1/app-conversations/start-tasks'
     _EVENTS_PATH_TEMPLATE = '/api/v1/conversation/{conversation_id}/events/search'
+    _MODEL_SMOKE_TEST_TITLE = 'OpenHands model validation'
+    _MODEL_SMOKE_TEST_PROMPT = (
+        'Reply with exactly hi and use the finish tool immediately. '
+        'Do not inspect files or run shell commands.'
+    )
     _START_TASK_READY = 'READY'
     _START_TASK_ERROR = 'ERROR'
     _ACTIVE_EXECUTION_STATUSES = {
@@ -62,17 +67,20 @@ class OpenHandsClient(RetryingClientBase):
         llm_settings: dict[str, str] | None = None,
         poll_interval_seconds: float = _DEFAULT_POLL_INTERVAL_SECONDS,
         max_poll_attempts: int = _DEFAULT_MAX_POLL_ATTEMPTS,
+        model_smoke_test_enabled: bool = False,
     ) -> None:
         super().__init__(base_url, api_key, timeout=300, max_retries=max_retries)
         self._session_api_key = api_key
         self._llm_settings = dict(llm_settings or {})
         self._poll_interval_seconds = max(0.1, float(poll_interval_seconds or 0))
         self._max_poll_attempts = max(1, int(max_poll_attempts or 0))
+        self._model_smoke_test_enabled = bool(model_smoke_test_enabled)
 
     def validate_connection(self) -> None:
         response = self._get_with_retry(f'{self._APP_CONVERSATIONS_PATH}/count')
         response.raise_for_status()
         self._sync_runtime_settings()
+        self._validate_model_smoke_test()
 
     def implement_task(
         self,
@@ -348,6 +356,25 @@ class OpenHandsClient(RetryingClientBase):
             return
         response = self._post_with_retry(self._SETTINGS_PATH, json=payload)
         response.raise_for_status()
+
+    def _validate_model_smoke_test(self) -> None:
+        if not self._model_smoke_test_enabled:
+            return
+        llm_model = text_from_mapping(self._llm_settings, 'llm_model')
+        if not llm_model:
+            return
+
+        self.logger.info('running OpenHands model smoke test')
+        result = self._run_prompt_result(
+            prompt=self._MODEL_SMOKE_TEST_PROMPT,
+            title=self._MODEL_SMOKE_TEST_TITLE,
+        )
+        if not result.get(ImplementationFields.SUCCESS, False):
+            summary = condensed_text(text_from_mapping(result, 'summary'))
+            detail = f': {summary}' if summary else ''
+            raise RuntimeError(
+                f'OpenHands model validation returned a failure result{detail}'
+            )
 
     def _settings_update_payload(self) -> dict[str, str]:
         llm_model = text_from_mapping(self._llm_settings, 'llm_model')

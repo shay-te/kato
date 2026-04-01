@@ -30,6 +30,10 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('LLM_BASE_URL: ${OPENHANDS_LLM_BASE_URL:-}', compose_text)
         self.assertIn('OPENHANDS_LLM_BASE_URL: ${OPENHANDS_LLM_BASE_URL:-}', compose_text)
         self.assertIn(
+            'OPENHANDS_MODEL_SMOKE_TEST_ENABLED: ${OPENHANDS_MODEL_SMOKE_TEST_ENABLED:-true}',
+            compose_text,
+        )
+        self.assertIn(
             'OPENHANDS_TESTING_CONTAINER_ENABLED: ${OPENHANDS_TESTING_CONTAINER_ENABLED:-false}',
             compose_text,
         )
@@ -52,6 +56,14 @@ class DeploymentFilesTests(unittest.TestCase):
         )
         self.assertIn(
             'OPENHANDS_MAX_POLL_ATTEMPTS: ${OPENHANDS_MAX_POLL_ATTEMPTS:-900}',
+            compose_text,
+        )
+        self.assertIn(
+            'OPENHANDS_TASK_SCAN_STARTUP_DELAY_SECONDS: ${OPENHANDS_TASK_SCAN_STARTUP_DELAY_SECONDS:-30}',
+            compose_text,
+        )
+        self.assertIn(
+            'OPENHANDS_TASK_SCAN_INTERVAL_SECONDS: ${OPENHANDS_TASK_SCAN_INTERVAL_SECONDS:-60}',
             compose_text,
         )
         self.assertIn('OH_SECRET_KEY: ${OH_SECRET_KEY:-}', compose_text)
@@ -210,11 +222,14 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('OPENHANDS_LLM_MODEL=', env_example_text)
         self.assertIn('OPENHANDS_LLM_API_KEY=', env_example_text)
         self.assertIn('OPENHANDS_LLM_BASE_URL=', env_example_text)
+        self.assertIn('OPENHANDS_MODEL_SMOKE_TEST_ENABLED=', env_example_text)
         self.assertIn('OPENHANDS_TESTING_LLM_MODEL=', env_example_text)
         self.assertIn('OPENHANDS_TESTING_LLM_API_KEY=', env_example_text)
         self.assertIn('OPENHANDS_TESTING_LLM_BASE_URL=', env_example_text)
         self.assertIn('OPENHANDS_POLL_INTERVAL_SECONDS=', env_example_text)
         self.assertIn('OPENHANDS_MAX_POLL_ATTEMPTS=', env_example_text)
+        self.assertIn('OPENHANDS_TASK_SCAN_STARTUP_DELAY_SECONDS=', env_example_text)
+        self.assertIn('OPENHANDS_TASK_SCAN_INTERVAL_SECONDS=', env_example_text)
         self.assertIn('OPENHANDS_LOG_LEVEL=', env_example_text)
         self.assertIn('OH_SECRET_KEY=', env_example_text)
         self.assertIn('EMAIL_CORE_LIB_SEND_IN_BLUE_API_KEY=', env_example_text)

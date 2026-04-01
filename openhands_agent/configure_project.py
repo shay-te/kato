@@ -594,6 +594,24 @@ def _prompt_openhands_core_values(
             )
         ),
         'OPENHANDS_TESTING_CONTAINER_ENABLED': _bool_to_env(testing_container_enabled),
+        'OPENHANDS_TASK_SCAN_STARTUP_DELAY_SECONDS': _default_str(
+            defaults,
+            'OPENHANDS_TASK_SCAN_STARTUP_DELAY_SECONDS',
+            fallback='30',
+        ),
+        'OPENHANDS_TASK_SCAN_INTERVAL_SECONDS': _default_str(
+            defaults,
+            'OPENHANDS_TASK_SCAN_INTERVAL_SECONDS',
+            fallback='60',
+        ),
+        'OPENHANDS_MODEL_SMOKE_TEST_ENABLED': _bool_to_env(
+            _default_str(
+                defaults,
+                'OPENHANDS_MODEL_SMOKE_TEST_ENABLED',
+                fallback='true',
+            ).lower()
+            in {'1', 'true', 'yes', 'on'}
+        ),
     }
 
 

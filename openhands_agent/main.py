@@ -1,8 +1,9 @@
+import time
+
 import hydra
 from omegaconf import DictConfig
 
-from openhands_agent.error_handling import log_and_notify_failure
-from openhands_agent.jobs.process_assigned_tasks import collect_processing_results
+from openhands_agent.jobs.process_assigned_tasks import ProcessAssignedTasksJob
 from openhands_agent.logging_utils import configure_logger
 from openhands_agent.openhands_agent_instance import OpenHandsAgentInstance
 
@@ -24,22 +25,55 @@ def main(cfg: DictConfig) -> int:
     app = OpenHandsAgentInstance.get()
     app.logger = getattr(app, 'logger', None) or logger
     app.logger.info('starting openhands agent')
-    try:
-        results = collect_processing_results(app.service)
-    except Exception as exc:
-        log_and_notify_failure(
-            logger=app.logger,
-            notification_service=app.service.notification_service,
-            operation_name='process_assigned_task',
-            error=exc,
-            failure_log_message='failed to process assigned task',
-            notification_failure_log_message=(
-                'failed to send failure notification for process_assigned_task'
-            ),
-        )
-        raise
-    app.logger.info('processed %s items', len(results))
+    startup_delay_seconds, scan_interval_seconds = _task_scan_settings(cfg)
+    _run_task_scan_loop(
+        app,
+        startup_delay_seconds=startup_delay_seconds,
+        scan_interval_seconds=scan_interval_seconds,
+    )
     return 0
+
+
+def _task_scan_settings(cfg: DictConfig) -> tuple[float, float]:
+    task_scan_cfg = cfg.openhands_agent.get('task_scan', {}) or {}
+    return (
+        float(task_scan_cfg.get('startup_delay_seconds', 30.0)),
+        float(task_scan_cfg.get('scan_interval_seconds', 60.0)),
+    )
+
+
+def _run_task_scan_loop(
+    app,
+    *,
+    startup_delay_seconds: float,
+    scan_interval_seconds: float,
+    sleep_fn=time.sleep,
+    max_cycles: int | None = None,
+) -> None:
+    job = ProcessAssignedTasksJob()
+    job.initialized(app)
+    if startup_delay_seconds > 0:
+        app.logger.info(
+            'waiting %s seconds for OpenHands to warm up before scanning tasks',
+            startup_delay_seconds,
+        )
+        sleep_fn(startup_delay_seconds)
+
+    cycles = 0
+    while True:
+        try:
+            job.run()
+        except Exception:
+            app.logger.warning(
+                'task scan failed; retrying in %s seconds',
+                scan_interval_seconds,
+            )
+
+        cycles += 1
+        if max_cycles is not None and cycles >= max_cycles:
+            return
+        if scan_interval_seconds > 0:
+            sleep_fn(scan_interval_seconds)
 
 
 if __name__ == '__main__':

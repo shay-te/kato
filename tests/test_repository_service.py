@@ -957,7 +957,7 @@ class RepositoryServiceTests(unittest.TestCase):
                 3,
             )
             expected_header = 'Authorization: Basic ' + base64.b64encode(
-                b'x-token-auth:bb-token'
+                b'workspace:bb-token'
             ).decode('ascii')
 
             with patch(
@@ -1013,7 +1013,7 @@ class RepositoryServiceTests(unittest.TestCase):
                 3,
             )
             expected_header = 'Authorization: Basic ' + base64.b64encode(
-                b'x-token-auth:bb-token'
+                b'workspace:bb-token'
             ).decode('ascii')
 
             with patch(
@@ -1062,13 +1062,28 @@ class RepositoryServiceTests(unittest.TestCase):
             ['0', '0'],
         )
 
+    def test_git_http_auth_header_falls_back_to_x_token_auth_for_bitbucket_without_owner(self) -> None:
+        repository = types.SimpleNamespace(
+            provider='bitbucket',
+            owner='',
+            remote_url='https://bitbucket.org/workspace/project.git',
+            token='bb-token',
+        )
+
+        header = RepositoryService._git_http_auth_header(repository)
+
+        expected_header = 'Authorization: Basic ' + base64.b64encode(
+            b'x-token-auth:bb-token'
+        ).decode('ascii')
+        self.assertEqual(header, expected_header)
+
     def test_validate_connections_stops_when_git_permissions_are_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             projects_root = Path(temp_dir)
             repo_path = projects_root / 'project'
             self._create_git_repository(
                 repo_path,
-                'https://shacoshe@bitbucket.org/workspace/project.git',
+                'https://x-token-auth@bitbucket.org/workspace/project.git',
             )
             service = RepositoryService(
                 types.SimpleNamespace(
@@ -1094,13 +1109,13 @@ class RepositoryServiceTests(unittest.TestCase):
                     stdout='',
                     stderr=(
                         "fatal: could not read Password for "
-                        "'https://shacoshe@bitbucket.org': terminal prompts disabled"
+                        "'https://x-token-auth@bitbucket.org': terminal prompts disabled"
                     ),
                 ),
             ):
                 with self.assertRaisesRegex(
                     RuntimeError,
-                    r"\[Error\] .*/project missing git permissions\. cannot work\. fatal: could not read Password for 'https://shacoshe@bitbucket.org': terminal prompts disabled",
+                    r"\[Error\] .*/project missing git permissions\. cannot work\. fatal: could not read Password for 'https://x-token-auth@bitbucket.org': terminal prompts disabled",
                 ):
                     service.validate_connections()
 
@@ -1209,7 +1224,7 @@ class RepositoryServiceTests(unittest.TestCase):
         )
         service = RepositoryService([], 3)
         expected_header = 'Authorization: Basic ' + base64.b64encode(
-            b'x-token-auth:bb-token'
+            b'shay:bb-token'
         ).decode('ascii')
 
         with patch(

@@ -1,9 +1,9 @@
 import types
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 
-from openhands_agent.main import main
+from openhands_agent.main import _run_task_scan_loop, main
 from utils import build_test_cfg
 
 
@@ -12,94 +12,83 @@ class MainTests(unittest.TestCase):
         self.cfg = build_test_cfg()
 
     def test_main_returns_zero_on_success(self) -> None:
-        app = types.SimpleNamespace(
-            logger=Mock(),
-            service=types.SimpleNamespace(
-                get_assigned_tasks=Mock(return_value=['task-1']),
-                process_assigned_task=Mock(return_value={'id': '17'}),
-                get_new_pull_request_comments=Mock(return_value=['comment-1']),
-                process_review_comment=Mock(return_value={'status': 'updated'}),
-            ),
-        )
+        app = types.SimpleNamespace(logger=Mock())
 
         with patch('openhands_agent.main.OpenHandsAgentInstance.init') as mock_init, patch(
             'openhands_agent.main.OpenHandsAgentInstance.get',
             return_value=app,
-        ):
+        ), patch('openhands_agent.main._run_task_scan_loop') as mock_run_loop:
             result = main(self.cfg)
 
         self.assertEqual(result, 0)
         mock_init.assert_called_once_with(self.cfg)
-        app.service.get_assigned_tasks.assert_called_once_with()
-        app.service.process_assigned_task.assert_called_once_with('task-1')
-        app.service.get_new_pull_request_comments.assert_called_once_with()
-        app.service.process_review_comment.assert_called_once_with('comment-1')
+        mock_run_loop.assert_called_once_with(
+            app,
+            startup_delay_seconds=30.0,
+            scan_interval_seconds=60.0,
+        )
         app.logger.info.assert_any_call('starting openhands agent')
-
-    def test_main_sends_failure_notification_before_reraising(self) -> None:
-        notification_service = types.SimpleNamespace(notify_failure=Mock())
-        app = types.SimpleNamespace(
-            logger=Mock(),
-            service=types.SimpleNamespace(
-                get_assigned_tasks=Mock(side_effect=RuntimeError('service down')),
-                get_new_pull_request_comments=Mock(return_value=[]),
-                notification_service=notification_service,
-            ),
-        )
-
-        with patch('openhands_agent.main.OpenHandsAgentInstance.init'), patch(
-            'openhands_agent.main.OpenHandsAgentInstance.get',
-            return_value=app,
-        ):
-            with self.assertRaisesRegex(RuntimeError, 'service down'):
-                main(self.cfg)
-
-        notification_service.notify_failure.assert_called_once()
-        app.logger.exception.assert_called_once_with('failed to process assigned task')
-
-    def test_main_preserves_original_error_when_failure_notification_breaks(self) -> None:
-        notification_service = types.SimpleNamespace(
-            notify_failure=Mock(side_effect=RuntimeError('mailer down'))
-        )
-        app = types.SimpleNamespace(
-            logger=Mock(),
-            service=types.SimpleNamespace(
-                get_assigned_tasks=Mock(side_effect=RuntimeError('service down')),
-                get_new_pull_request_comments=Mock(return_value=[]),
-                notification_service=notification_service,
-            ),
-        )
-
-        with patch('openhands_agent.main.OpenHandsAgentInstance.init'), patch(
-            'openhands_agent.main.OpenHandsAgentInstance.get',
-            return_value=app,
-        ):
-            with self.assertRaisesRegex(RuntimeError, 'service down'):
-                main(self.cfg)
-
-        self.assertEqual(app.logger.exception.call_count, 2)
 
     def test_main_configures_logger_when_app_logger_is_missing(self) -> None:
         configured_logger = Mock()
-        app = types.SimpleNamespace(
-            logger=None,
-            service=types.SimpleNamespace(
-                get_assigned_tasks=Mock(return_value=[]),
-                process_assigned_task=Mock(),
-                get_new_pull_request_comments=Mock(return_value=[]),
-                process_review_comment=Mock(),
-            ),
-        )
+        app = types.SimpleNamespace(logger=None)
 
         with patch('openhands_agent.main.configure_logger', return_value=configured_logger), patch(
             'openhands_agent.main.OpenHandsAgentInstance.init'
         ), patch(
             'openhands_agent.main.OpenHandsAgentInstance.get',
             return_value=app,
-        ):
+        ), patch('openhands_agent.main._run_task_scan_loop'):
             main(self.cfg)
 
         self.assertIs(app.logger, configured_logger)
+
+    def test_run_task_scan_loop_waits_before_first_scan_and_sleeps_between_cycles(self) -> None:
+        app = types.SimpleNamespace(logger=Mock())
+        job = Mock()
+        job.run.side_effect = [None, None]
+
+        with patch('openhands_agent.main.ProcessAssignedTasksJob', return_value=job) as mock_job_cls, patch(
+            'openhands_agent.main.time.sleep'
+        ) as mock_sleep:
+            _run_task_scan_loop(
+                app,
+                startup_delay_seconds=30.0,
+                scan_interval_seconds=60.0,
+                sleep_fn=mock_sleep,
+                max_cycles=2,
+            )
+
+        mock_job_cls.assert_called_once_with()
+        job.initialized.assert_called_once_with(app)
+        self.assertEqual(job.run.call_count, 2)
+        mock_sleep.assert_has_calls([call(30.0), call(60.0)])
+        app.logger.info.assert_any_call(
+            'waiting %s seconds for OpenHands to warm up before scanning tasks',
+            30.0,
+        )
+
+    def test_run_task_scan_loop_continues_after_failure(self) -> None:
+        app = types.SimpleNamespace(logger=Mock())
+        job = Mock()
+        job.run.side_effect = [RuntimeError('service down'), None]
+
+        with patch('openhands_agent.main.ProcessAssignedTasksJob', return_value=job), patch(
+            'openhands_agent.main.time.sleep'
+        ) as mock_sleep:
+            _run_task_scan_loop(
+                app,
+                startup_delay_seconds=0.0,
+                scan_interval_seconds=60.0,
+                sleep_fn=mock_sleep,
+                max_cycles=2,
+            )
+
+        self.assertEqual(job.run.call_count, 2)
+        app.logger.warning.assert_called_once_with(
+            'task scan failed; retrying in %s seconds',
+            60.0,
+        )
 
     def test_main_returns_one_without_traceback_when_startup_validation_fails(self) -> None:
         configured_logger = Mock()

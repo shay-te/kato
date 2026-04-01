@@ -96,6 +96,47 @@ class OpenHandsClientTests(unittest.TestCase):
         )
         settings_response.raise_for_status.assert_called_once_with()
 
+    def test_validate_connection_runs_model_smoke_test_when_enabled(self) -> None:
+        client = OpenHandsClient(
+            'https://openhands.example',
+            'oh-token',
+            llm_settings={
+                'llm_model': 'openai/gpt-4o',
+            },
+            model_smoke_test_enabled=True,
+        )
+        count_response = mock_response(json_data=1)
+        settings_response = mock_response()
+
+        with patch.object(client, '_get', return_value=count_response) as mock_get, patch.object(
+            client,
+            '_post',
+            return_value=settings_response,
+        ) as mock_post, patch.object(
+            client,
+            '_run_prompt_result',
+            return_value={
+                'success': True,
+                'summary': 'hi',
+            },
+        ) as mock_run_prompt_result:
+            client.validate_connection()
+
+        mock_get.assert_called_once_with('/api/v1/app-conversations/count')
+        mock_post.assert_called_once_with(
+            '/api/settings',
+            json={
+                'llm_model': 'openai/gpt-4o',
+            },
+        )
+        settings_response.raise_for_status.assert_called_once_with()
+        mock_run_prompt_result.assert_called_once()
+        self.assertIn('Reply with exactly hi', mock_run_prompt_result.call_args.kwargs['prompt'])
+        self.assertEqual(
+            mock_run_prompt_result.call_args.kwargs['title'],
+            'OpenHands model validation',
+        )
+
     def test_validate_connection_syncs_base_url_without_persisting_api_key(self) -> None:
         client = OpenHandsClient(
             'https://openhands.example',
