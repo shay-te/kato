@@ -5,12 +5,12 @@ import logging
 import os
 from pathlib import Path
 
-from openhands_agent.openhands_config_utils import (
+from openhands_agent.helpers.openhands_config_utils import (
     is_bedrock_model,
     is_openrouter_model,
 )
-from openhands_agent.repository_discovery import discover_git_repositories
-from openhands_agent.text_utils import (
+from openhands_agent.helpers.repository_discovery_utils import discover_git_repositories
+from openhands_agent.helpers.text_utils import (
     alphanumeric_lower_text,
     normalized_lower_text,
     normalized_text,

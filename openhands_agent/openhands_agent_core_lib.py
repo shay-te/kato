@@ -15,8 +15,8 @@ from openhands_agent.data_layers.service.notification_service import Notificatio
 from openhands_agent.data_layers.service.repository_service import RepositoryService
 from openhands_agent.data_layers.service.task_service import TaskService
 from openhands_agent.data_layers.service.testing_service import TestingService
-from openhands_agent.logging_utils import configure_logger
-from openhands_agent.openhands_config_utils import (
+from openhands_agent.helpers.logging_utils import configure_logger
+from openhands_agent.helpers.openhands_config_utils import (
     resolved_openhands_base_url,
     resolved_openhands_llm_settings,
     skip_testing_enabled,

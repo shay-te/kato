@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 
 from openhands_agent.data_layers.data.task import Task
-from openhands_agent.fields import ImplementationFields
-from openhands_agent.text_utils import normalized_text, text_from_attr, text_from_mapping
+from openhands_agent.data_layers.data.fields import ImplementationFields
+from openhands_agent.helpers.text_utils import normalized_text, text_from_attr, text_from_mapping
 
 
 @dataclass

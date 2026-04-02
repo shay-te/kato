@@ -2,8 +2,8 @@ import json
 
 from core_lib.jobs.job import Job
 
-from openhands_agent.error_handling import log_and_notify_failure
-from openhands_agent.logging_utils import configure_logger
+from openhands_agent.helpers.error_handling_utils import log_and_notify_failure
+from openhands_agent.helpers.logging_utils import configure_logger
 from openhands_agent.openhands_agent_core_lib import OpenHandsAgentCoreLib
 
 

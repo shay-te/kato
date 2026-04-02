@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 
-from openhands_agent.client.retry_utils import (
+from openhands_agent.helpers.retry_utils import (
     _retry_delay_seconds,
     is_retryable_exception,
     is_retryable_response,
@@ -48,7 +48,7 @@ class RetryTests(unittest.TestCase):
     def test_run_with_retry_sleeps_before_retrying_exceptions(self) -> None:
         operation = Mock(side_effect=[ConnectTimeout('timeout'), 'ok'])
 
-        with patch('openhands_agent.client.retry_utils.time.sleep') as mock_sleep:
+        with patch('openhands_agent.helpers.retry_utils.time.sleep') as mock_sleep:
             result = run_with_retry(operation, 2)
 
         self.assertEqual(result, 'ok')
@@ -57,7 +57,7 @@ class RetryTests(unittest.TestCase):
     def test_run_with_retry_raises_after_exhausting_all_retries(self) -> None:
         operation = Mock(side_effect=ConnectTimeout('always fails'))
 
-        with patch('openhands_agent.client.retry_utils.time.sleep') as mock_sleep:
+        with patch('openhands_agent.helpers.retry_utils.time.sleep') as mock_sleep:
             with self.assertRaises(ConnectTimeout):
                 run_with_retry(operation, 3)
 

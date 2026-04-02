@@ -3,8 +3,8 @@ from urllib.parse import quote
 
 from openhands_agent.client.pull_request_client_base import PullRequestClientBase
 from openhands_agent.data_layers.data.review_comment import ReviewComment
-from openhands_agent.fields import PullRequestFields, ReviewCommentFields
-from openhands_agent.text_utils import normalized_text, text_from_attr, text_from_mapping
+from openhands_agent.data_layers.data.fields import PullRequestFields, ReviewCommentFields
+from openhands_agent.helpers.text_utils import normalized_text, text_from_attr, text_from_mapping
 
 
 class GitLabClient(PullRequestClientBase):

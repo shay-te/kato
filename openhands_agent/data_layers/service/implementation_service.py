@@ -1,11 +1,11 @@
 from core_lib.data_layers.service.service import Service
 
 from openhands_agent.client.openhands_client import OpenHandsClient
-from openhands_agent.client.retry_utils import retry_count
+from openhands_agent.helpers.retry_utils import retry_count
 from openhands_agent.data_layers.data.review_comment import ReviewComment
 from openhands_agent.data_layers.data.task import Task
-from openhands_agent.fields import PullRequestFields, ReviewCommentFields
-from openhands_agent.logging_utils import configure_logger
+from openhands_agent.data_layers.data.fields import PullRequestFields, ReviewCommentFields
+from openhands_agent.helpers.logging_utils import configure_logger
 
 
 class ImplementationService(Service):

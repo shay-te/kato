@@ -3,7 +3,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from openhands_agent import logging_utils
+from openhands_agent.helpers import logging_utils
 
 
 class LoggingUtilsTests(unittest.TestCase):

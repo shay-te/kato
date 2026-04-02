@@ -4,11 +4,11 @@ from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlparse
 
-from openhands_agent.client.retry_utils import run_with_retry
+from openhands_agent.helpers.retry_utils import run_with_retry
 from openhands_agent.client.retrying_client_base import RetryingClientBase
 from openhands_agent.data_layers.data.task import Task
-from openhands_agent.fields import TaskCommentFields
-from openhands_agent.text_utils import (
+from openhands_agent.data_layers.data.fields import TaskCommentFields
+from openhands_agent.helpers.text_utils import (
     condensed_lower_text,
     normalized_lower_text,
     normalized_text,

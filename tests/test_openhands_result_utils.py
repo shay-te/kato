@@ -1,7 +1,7 @@
 import unittest
 
-from openhands_agent.fields import ImplementationFields
-from openhands_agent.openhands_result_utils import (
+from openhands_agent.data_layers.data.fields import ImplementationFields
+from openhands_agent.helpers.openhands_result_utils import (
     build_openhands_result,
     openhands_session_id,
     openhands_success_flag,

@@ -1,6 +1,6 @@
 import unittest
 
-from openhands_agent.openhands_config_utils import (
+from openhands_agent.helpers.openhands_config_utils import (
     is_bedrock_model,
     is_openrouter_model,
     resolved_openhands_base_url,

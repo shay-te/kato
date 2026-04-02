@@ -1,4 +1,4 @@
-from openhands_agent.data_layers.data.record_field import RecordField
+from openhands_agent.helpers.record_field_utils import RecordField
 
 
 class ReviewComment:

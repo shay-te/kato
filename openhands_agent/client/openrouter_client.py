@@ -1,5 +1,5 @@
 from openhands_agent.client.retrying_client_base import RetryingClientBase
-from openhands_agent.text_utils import normalized_text
+from openhands_agent.helpers.text_utils import normalized_text
 
 
 class OpenRouterClient(RetryingClientBase):

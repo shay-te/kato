@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from openhands_agent.client.github_issues_client import GitHubIssuesClient
 from openhands_agent.data_layers.data.task import Task
-from openhands_agent.fields import GitHubCommentFields, GitHubIssueFields, TaskCommentFields
+from openhands_agent.data_layers.data.fields import GitHubCommentFields, GitHubIssueFields, TaskCommentFields
 from utils import mock_response
 
 

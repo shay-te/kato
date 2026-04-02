@@ -7,14 +7,14 @@ from openhands_agent.client.openrouter_client import OpenRouterClient
 from openhands_agent.client.retrying_client_base import RetryingClientBase
 from openhands_agent.data_layers.data.review_comment import ReviewComment
 from openhands_agent.data_layers.data.task import Task
-from openhands_agent.fields import (
+from openhands_agent.data_layers.data.fields import (
     ImplementationFields,
     PullRequestFields,
     ReviewCommentFields,
 )
-from openhands_agent.openhands_result_utils import build_openhands_result
-from openhands_agent.openhands_config_utils import is_openrouter_model
-from openhands_agent.text_utils import (
+from openhands_agent.helpers.openhands_result_utils import build_openhands_result
+from openhands_agent.helpers.openhands_config_utils import is_openrouter_model
+from openhands_agent.helpers.text_utils import (
     condensed_text,
     normalized_lower_text,
     normalized_text,

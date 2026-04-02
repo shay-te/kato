@@ -3,8 +3,8 @@ from typing import Any
 from openhands_agent.client.bitbucket_auth import bitbucket_basic_auth_header
 from openhands_agent.client.pull_request_client_base import PullRequestClientBase
 from openhands_agent.data_layers.data.review_comment import ReviewComment
-from openhands_agent.fields import PullRequestFields, ReviewCommentFields
-from openhands_agent.text_utils import normalized_text, text_from_attr
+from openhands_agent.data_layers.data.fields import PullRequestFields, ReviewCommentFields
+from openhands_agent.helpers.text_utils import normalized_text, text_from_attr
 
 
 class BitbucketClient(PullRequestClientBase):

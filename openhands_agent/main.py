@@ -4,7 +4,7 @@ import hydra
 from omegaconf import DictConfig
 
 from openhands_agent.jobs.process_assigned_tasks import ProcessAssignedTasksJob
-from openhands_agent.logging_utils import configure_logger
+from openhands_agent.helpers.logging_utils import configure_logger
 from openhands_agent.openhands_agent_instance import OpenHandsAgentInstance
 
 

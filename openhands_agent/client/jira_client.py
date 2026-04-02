@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from openhands_agent.client.retry_utils import run_with_retry
+from openhands_agent.helpers.retry_utils import run_with_retry
 from openhands_agent.client.ticket_client_base import TicketClientBase
 from openhands_agent.data_layers.data.task import Task
-from openhands_agent.fields import (
+from openhands_agent.data_layers.data.fields import (
     JiraAttachmentFields,
     JiraCommentFields,
     JiraIssueFields,

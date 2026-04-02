@@ -7,11 +7,11 @@ from pathlib import Path
 import re
 import secrets
 
-from openhands_agent.openhands_config_utils import (
+from openhands_agent.helpers.openhands_config_utils import (
     is_bedrock_model,
     is_openrouter_model,
 )
-from openhands_agent.repository_discovery import (
+from openhands_agent.helpers.repository_discovery_utils import (
     discover_git_repositories,
     read_git_remote_url,
 )

@@ -7,7 +7,7 @@ from openhands_agent.data_layers.data.review_comment import ReviewComment
 from openhands_agent.data_layers.service.implementation_service import (
     ImplementationService,
 )
-from openhands_agent.fields import ImplementationFields, ReviewCommentFields
+from openhands_agent.data_layers.data.fields import ImplementationFields, ReviewCommentFields
 from utils import build_task
 
 

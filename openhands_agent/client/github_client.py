@@ -2,10 +2,10 @@ from typing import Any
 from urllib.parse import urlparse
 
 from openhands_agent.client.pull_request_client_base import PullRequestClientBase
-from openhands_agent.client.retry_utils import run_with_retry
+from openhands_agent.helpers.retry_utils import run_with_retry
 from openhands_agent.data_layers.data.review_comment import ReviewComment
-from openhands_agent.fields import PullRequestFields, ReviewCommentFields
-from openhands_agent.text_utils import normalized_text, text_from_attr, text_from_mapping
+from openhands_agent.data_layers.data.fields import PullRequestFields, ReviewCommentFields
+from openhands_agent.helpers.text_utils import normalized_text, text_from_attr, text_from_mapping
 
 
 class GitHubClient(PullRequestClientBase):

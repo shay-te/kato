@@ -5,7 +5,7 @@ from core_lib.rule_validator.rule_validator import RuleValidator, ValueRuleValid
 
 from openhands_agent.client.pull_request_client_base import PullRequestClientBase
 from openhands_agent.data_layers.data.review_comment import ReviewComment
-from openhands_agent.fields import PullRequestFields, ReviewCommentFields
+from openhands_agent.data_layers.data.fields import PullRequestFields, ReviewCommentFields
 
 
 pull_request_rule_validator = RuleValidator(

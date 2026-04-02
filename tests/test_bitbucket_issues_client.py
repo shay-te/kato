@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from openhands_agent.client.bitbucket_issues_client import BitbucketIssuesClient
 from openhands_agent.data_layers.data.task import Task
-from openhands_agent.fields import TaskCommentFields
+from openhands_agent.data_layers.data.fields import TaskCommentFields
 from utils import assert_client_basic_auth_and_timeout, mock_response
 
 

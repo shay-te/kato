@@ -4,7 +4,7 @@ import os
 from unittest.mock import Mock, call, patch
 
 from openhands_agent.client.openhands_client import OpenHandsClient
-from openhands_agent.fields import ImplementationFields, ReviewCommentFields
+from openhands_agent.data_layers.data.fields import ImplementationFields, ReviewCommentFields
 from utils import (
     ClientTimeout,
     assert_client_headers_and_timeout,

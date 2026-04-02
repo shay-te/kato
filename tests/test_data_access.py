@@ -8,7 +8,7 @@ from openhands_agent.data_layers.data_access.pull_request_data_access import (
 )
 from openhands_agent.data_layers.data_access.task_data_access import TaskDataAccess
 from openhands_agent.data_layers.service.task_service import TaskService
-from openhands_agent.fields import ReviewCommentFields
+from openhands_agent.data_layers.data.fields import ReviewCommentFields
 from utils import build_review_comment
 
 

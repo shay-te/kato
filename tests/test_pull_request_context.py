@@ -1,12 +1,12 @@
 import unittest
 
 
-from openhands_agent.fields import (
+from openhands_agent.data_layers.data.fields import (
     ImplementationFields,
     PullRequestFields,
     TaskFields,
 )
-from openhands_agent.pull_request_context import (
+from openhands_agent.helpers.pull_request_context_utils import (
     build_pull_request_context,
     pull_request_context_key,
 )

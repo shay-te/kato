@@ -12,16 +12,16 @@ from openhands_agent.client.bitbucket_auth import basic_auth_header
 from openhands_agent.client.pull_request_client_factory import build_pull_request_client
 from openhands_agent.data_layers.data_access.pull_request_data_access import PullRequestDataAccess
 from openhands_agent.data_layers.data.task import Task
-from openhands_agent.fields import PullRequestFields, RepositoryFields
-from openhands_agent.logging_utils import configure_logger
-from openhands_agent.repository_discovery import (
+from openhands_agent.data_layers.data.fields import PullRequestFields, RepositoryFields
+from openhands_agent.helpers.logging_utils import configure_logger
+from openhands_agent.helpers.repository_discovery_utils import (
     discover_git_repositories,
     display_name_from_repo_slug,
     remote_web_base_url,
     repository_id_from_name,
     review_url_for_remote,
 )
-from openhands_agent.text_utils import (
+from openhands_agent.helpers.text_utils import (
     normalized_lower_text,
     normalized_text,
     text_from_attr,

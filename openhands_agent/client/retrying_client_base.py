@@ -1,7 +1,7 @@
 from core_lib.client.client_base import ClientBase
 
-from openhands_agent.logging_utils import configure_logger
-from openhands_agent.client.retry_utils import run_with_retry
+from openhands_agent.helpers.logging_utils import configure_logger
+from openhands_agent.helpers.retry_utils import run_with_retry
 
 
 class RetryingClientBase(ClientBase):

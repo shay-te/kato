@@ -3,7 +3,7 @@ from unittest.mock import Mock, patch
 
 
 from openhands_agent.data_layers.service.notification_service import NotificationService
-from openhands_agent.fields import EmailFields, PullRequestFields
+from openhands_agent.data_layers.data.fields import EmailFields, PullRequestFields
 from utils import build_task, build_test_cfg
 
 

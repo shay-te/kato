@@ -3,7 +3,7 @@ from omegaconf import DictConfig
 from core_lib.data_layers.data_access.data_access import DataAccess
 from core_lib.rule_validator.rule_validator import RuleValidator, ValueRuleValidator
 
-from openhands_agent.client.retry_utils import retry_count
+from openhands_agent.helpers.retry_utils import retry_count
 from openhands_agent.client.ticket_client_base import TicketClientBase
 from openhands_agent.data_layers.data.task import Task
 

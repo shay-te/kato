@@ -1,6 +1,6 @@
 from openhands_agent.data_layers.data.task import Task
-from openhands_agent.fields import PullRequestFields
-from openhands_agent.text_utils import text_from_mapping
+from openhands_agent.data_layers.data.fields import PullRequestFields
+from openhands_agent.helpers.text_utils import text_from_mapping
 
 
 def pull_request_repositories_text(pull_requests) -> str:

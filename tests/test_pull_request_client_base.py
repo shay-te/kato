@@ -5,7 +5,7 @@ from openhands_agent.client.bitbucket_client import BitbucketClient
 from openhands_agent.client.github_client import GitHubClient
 from openhands_agent.client.gitlab_client import GitLabClient
 from openhands_agent.client.pull_request_client_base import PullRequestClientBase
-from openhands_agent.fields import PullRequestFields, ReviewCommentFields
+from openhands_agent.data_layers.data.fields import PullRequestFields, ReviewCommentFields
 
 
 class PullRequestClientBaseTests(unittest.TestCase):

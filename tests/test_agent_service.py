@@ -11,7 +11,7 @@ from openhands_agent.data_layers.service.implementation_service import (
 )
 from openhands_agent.data_layers.service.notification_service import NotificationService
 from openhands_agent.data_layers.service.task_service import TaskService
-from openhands_agent.fields import (
+from openhands_agent.data_layers.data.fields import (
     EmailFields,
     ImplementationFields,
     PullRequestFields,

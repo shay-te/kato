@@ -4,7 +4,7 @@ from core_lib.data_layers.service.service import Service
 
 from openhands_agent.data_layers.data.task import Task
 from openhands_agent.data_layers.data_access.task_data_access import TaskDataAccess
-from openhands_agent.text_utils import alphanumeric_lower_text, normalized_text
+from openhands_agent.helpers.text_utils import alphanumeric_lower_text, normalized_text
 
 
 class TaskService(Service):

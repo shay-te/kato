@@ -3,11 +3,11 @@ from typing import Any
 from openhands_agent.client.bitbucket_auth import bitbucket_basic_auth_header
 from openhands_agent.client.ticket_client_base import TicketClientBase
 from openhands_agent.data_layers.data.task import Task
-from openhands_agent.fields import (
+from openhands_agent.data_layers.data.fields import (
     BitbucketIssueCommentFields,
     BitbucketIssueFields,
 )
-from openhands_agent.text_utils import normalized_text
+from openhands_agent.helpers.text_utils import normalized_text
 
 
 class BitbucketIssuesClient(TicketClientBase):

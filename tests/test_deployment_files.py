@@ -262,7 +262,10 @@ class DeploymentFilesTests(unittest.TestCase):
         readme_text = (REPO_ROOT / 'README.md').read_text(encoding='utf-8')
 
         self.assertIn('Keep orchestration logic in services.', agents_text)
-        self.assertIn('Prefer constants from `fields.py` over free-text field names.', agents_text)
+        self.assertIn(
+            'Prefer constants from `openhands_agent/data_layers/data/fields.py` over free-text field names.',
+            agents_text,
+        )
         self.assertIn('Write tests for new behavior when possible.', agents_text)
         self.assertIn('Run the relevant tests before opening a pull request.', agents_text)
         self.assertIn(
@@ -271,6 +274,21 @@ class DeploymentFilesTests(unittest.TestCase):
         )
         self.assertNotIn('/Users/shaytessler/', readme_text)
         self.assertIn('make configure', readme_text)
+        self.assertFalse((REPO_ROOT / 'openhands_agent' / 'fields.py').exists())
+        self.assertFalse((REPO_ROOT / 'openhands_agent' / 'error_handling.py').exists())
+
+    def test_helper_modules_use_utils_suffix(self) -> None:
+        helpers_dir = REPO_ROOT / 'openhands_agent' / 'helpers'
+
+        helper_modules = [
+            path
+            for path in helpers_dir.glob('*.py')
+            if path.name != '__init__.py'
+        ]
+        non_utils_modules = [
+            path.name for path in helper_modules if not path.name.endswith('_utils.py')
+        ]
+        self.assertEqual(non_utils_modules, [])
 
     def test_repo_includes_bootstrap_automation_files(self) -> None:
         bootstrap_text = (REPO_ROOT / 'scripts' / 'bootstrap.sh').read_text(encoding='utf-8')
@@ -398,4 +416,17 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn(
             'shellcheck scripts/bootstrap.sh scripts/install-python-deps.sh scripts/run-local.sh docker/entrypoint-run.sh docker/entrypoint-install.sh',
             workflow_text,
+        )
+
+    def test_repo_does_not_use_all_export_shims(self) -> None:
+        forbidden_locations = []
+        for path in (REPO_ROOT / 'openhands_agent').rglob('*.py'):
+            text = path.read_text(encoding='utf-8')
+            if '__all__ =' in text:
+                forbidden_locations.append(str(path.relative_to(REPO_ROOT)))
+
+        self.assertEqual(
+            forbidden_locations,
+            [],
+            msg='remove __all__ export shims from: ' + ', '.join(forbidden_locations),
         )

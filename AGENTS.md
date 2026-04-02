@@ -7,8 +7,10 @@ This repository uses OpenHands to implement YouTrack tasks and fix review commen
 - Keep orchestration logic in services.
 - Keep external API calls inside clients and data-access layers.
 - Do not add pass-through helper methods on `OpenHandsAgentCoreLib` when the service can be used directly.
-- Prefer constants from `fields.py` over free-text field names.
+- Prefer constants from `openhands_agent/data_layers/data/fields.py` over free-text field names.
 - Reuse existing utilities before introducing duplicate helper logic.
+- Do not create compatibility shim modules, barrel exports, or `__all__` re-export files; import from the real module directly.
+- Put shared utility modules under `openhands_agent/helpers/` instead of scattering them across service or root packages, and name them with the `_utils.py` suffix.
 
 ## Required Behavior
 

@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from openhands_agent.client.youtrack_client import YouTrackClient
 from openhands_agent.data_layers.data.task import Task
-from openhands_agent.fields import (
+from openhands_agent.data_layers.data.fields import (
     TaskCommentFields,
     YouTrackAttachmentFields,
     YouTrackCommentFields,

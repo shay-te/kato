@@ -2,14 +2,14 @@ from dataclasses import dataclass
 
 from openhands_agent.data_layers.data.review_comment import ReviewComment
 from openhands_agent.data_layers.data.task import Task
-from openhands_agent.fields import (
+from openhands_agent.data_layers.data.fields import (
     ImplementationFields,
     PullRequestFields,
     ReviewCommentFields,
     StatusFields,
     TaskFields,
 )
-from openhands_agent.text_utils import text_from_mapping
+from openhands_agent.helpers.text_utils import text_from_mapping
 
 
 @dataclass(frozen=True)

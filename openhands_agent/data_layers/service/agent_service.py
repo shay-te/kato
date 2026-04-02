@@ -3,19 +3,27 @@ from collections.abc import Callable
 from core_lib.data_layers.service.service import Service
 
 from openhands_agent.client.ticket_client_base import TicketClientBase
-from openhands_agent.data_layers.service.validation import (
-    RepositoryConnectionsValidator,
-    StartupDependencyValidator,
+from openhands_agent.data_layers.service.validation.branch_publishability import (
     TaskBranchPublishabilityValidator,
+)
+from openhands_agent.data_layers.service.validation.branch_push import (
     TaskBranchPushValidator,
+)
+from openhands_agent.data_layers.service.validation.model_access import (
     TaskModelAccessValidator,
 )
-from openhands_agent.error_handling import run_best_effort
-from openhands_agent.logging_utils import configure_logger
-from openhands_agent.pull_request_context import build_pull_request_context
+from openhands_agent.data_layers.service.validation.repository_connections import (
+    RepositoryConnectionsValidator,
+)
+from openhands_agent.data_layers.service.validation.startup_dependency_validator import (
+    StartupDependencyValidator,
+)
+from openhands_agent.helpers.error_handling_utils import run_best_effort
+from openhands_agent.helpers.logging_utils import configure_logger
+from openhands_agent.helpers.pull_request_context_utils import build_pull_request_context
 from openhands_agent.data_layers.data.review_comment import ReviewComment
 from openhands_agent.data_layers.data.task import Task
-from openhands_agent.fields import (
+from openhands_agent.data_layers.data.fields import (
     ImplementationFields,
     PullRequestFields,
     ReviewCommentFields,
@@ -24,11 +32,11 @@ from openhands_agent.fields import (
     TaskCommentFields,
 )
 from openhands_agent.data_layers.service.implementation_service import ImplementationService
-from openhands_agent.data_layers.service.pull_request_utils import (
+from openhands_agent.helpers.pull_request_utils import (
     pull_request_repositories_text,
     pull_request_summary_comment,
 )
-from openhands_agent.data_layers.service.review_comment_utils import (
+from openhands_agent.helpers.review_comment_utils import (
     ReviewFixContext,
     comment_context_entry,
     review_comment_fixed_comment,
@@ -36,7 +44,7 @@ from openhands_agent.data_layers.service.review_comment_utils import (
     review_fix_context_from_mapping,
     review_fix_result,
 )
-from openhands_agent.data_layers.service.task_context_utils import (
+from openhands_agent.helpers.task_context_utils import (
     PreparedTaskContext,
     repository_branch_text,
     repository_destination_text,
@@ -49,7 +57,7 @@ from openhands_agent.data_layers.service.notification_service import Notificatio
 from openhands_agent.data_layers.service.repository_service import RepositoryService
 from openhands_agent.data_layers.service.task_service import TaskService
 from openhands_agent.data_layers.service.testing_service import TestingService
-from openhands_agent.text_utils import text_from_attr, text_from_mapping
+from openhands_agent.helpers.text_utils import text_from_attr, text_from_mapping
 
 
 class AgentService(Service):

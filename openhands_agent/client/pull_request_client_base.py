@@ -2,8 +2,8 @@ from abc import ABC, abstractmethod
 
 from openhands_agent.client.retrying_client_base import RetryingClientBase
 from openhands_agent.data_layers.data.review_comment import ReviewComment
-from openhands_agent.fields import PullRequestFields, ReviewCommentFields
-from openhands_agent.text_utils import normalized_text
+from openhands_agent.data_layers.data.fields import PullRequestFields, ReviewCommentFields
+from openhands_agent.helpers.text_utils import normalized_text
 
 
 class PullRequestClientBase(RetryingClientBase, ABC):

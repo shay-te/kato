@@ -6,9 +6,9 @@ from string import Template
 from core_lib.data_layers.service.service import Service
 
 from openhands_agent.data_layers.data.task import Task
-from openhands_agent.error_handling import run_best_effort
-from openhands_agent.fields import EmailFields, PullRequestFields
-from openhands_agent.logging_utils import configure_logger
+from openhands_agent.helpers.error_handling_utils import run_best_effort
+from openhands_agent.data_layers.data.fields import EmailFields, PullRequestFields
+from openhands_agent.helpers.logging_utils import configure_logger
 
 
 class NotificationService(Service):

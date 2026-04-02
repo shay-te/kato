@@ -5,7 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from openhands_agent.client.retry_utils import is_retryable_exception
+from openhands_agent.helpers.retry_utils import is_retryable_exception
 from openhands_agent.data_layers.service.validation.base import ValidationBase
 
 if TYPE_CHECKING:

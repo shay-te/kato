@@ -8,7 +8,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from openhands_agent.data_layers.data.review_comment import ReviewComment
 from openhands_agent.data_layers.data.task import Task
-from openhands_agent.fields import ReviewCommentFields, TaskCommentFields
+from openhands_agent.data_layers.data.fields import ReviewCommentFields, TaskCommentFields
 from openhands_agent.openhands_agent_core_lib import OpenHandsAgentCoreLib
 
 

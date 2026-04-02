@@ -3,7 +3,7 @@ from urllib.parse import quote
 
 from openhands_agent.client.ticket_client_base import TicketClientBase
 from openhands_agent.data_layers.data.task import Task
-from openhands_agent.fields import GitLabCommentFields, GitLabIssueFields
+from openhands_agent.data_layers.data.fields import GitLabCommentFields, GitLabIssueFields
 
 
 class GitLabIssuesClient(TicketClientBase):

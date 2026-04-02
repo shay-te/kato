@@ -2,7 +2,7 @@ from typing import Any
 
 from openhands_agent.client.ticket_client_base import TicketClientBase
 from openhands_agent.data_layers.data.task import Task
-from openhands_agent.fields import GitHubCommentFields, GitHubIssueFields
+from openhands_agent.data_layers.data.fields import GitHubCommentFields, GitHubIssueFields
 
 
 class GitHubIssuesClient(TicketClientBase):

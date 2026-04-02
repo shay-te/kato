@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 
 
 from openhands_agent.data_layers.service.repository_service import RepositoryService
-from openhands_agent.fields import PullRequestFields, ReviewCommentFields
+from openhands_agent.data_layers.data.fields import PullRequestFields, ReviewCommentFields
 from utils import build_review_comment, build_task, build_test_cfg
 
 

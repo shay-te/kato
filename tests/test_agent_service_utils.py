@@ -1,21 +1,25 @@
 import types
 import unittest
 
-from openhands_agent.data_layers.service.agent_service_utils import (
+from openhands_agent.helpers.pull_request_utils import (
     pull_request_repositories_text,
     pull_request_summary_comment,
-    repository_branch_text,
-    repository_destination_text,
-    repository_ids_text,
+)
+from openhands_agent.helpers.review_comment_utils import (
     review_fix_context_from_mapping,
     review_fix_result,
     review_comment_fixed_comment,
     review_comment_resolution_key,
+)
+from openhands_agent.helpers.task_context_utils import (
+    repository_branch_text,
+    repository_destination_text,
+    repository_ids_text,
     session_suffix,
     task_has_actionable_definition,
     task_started_comment,
 )
-from openhands_agent.fields import (
+from openhands_agent.data_layers.data.fields import (
     ImplementationFields,
     PullRequestFields,
     ReviewCommentFields,

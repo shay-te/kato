@@ -2,7 +2,7 @@ import unittest
 
 from openhands_agent.client.ticket_client_base import TicketClientBase
 from openhands_agent.data_layers.data.task import Task
-from openhands_agent.fields import TaskCommentFields
+from openhands_agent.data_layers.data.fields import TaskCommentFields
 
 
 class TicketClientBaseTests(unittest.TestCase):

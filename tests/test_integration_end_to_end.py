@@ -24,7 +24,7 @@ from openhands_agent.data_layers.data_access.task_data_access import TaskDataAcc
 from openhands_agent.data_layers.data.task import Task
 from openhands_agent.data_layers.data.review_comment import ReviewComment
 from openhands_agent.client.openhands_client import OpenHandsClient
-from openhands_agent.fields import (
+from openhands_agent.data_layers.data.fields import (
     ImplementationFields,
     PullRequestFields,
     ReviewCommentFields,
