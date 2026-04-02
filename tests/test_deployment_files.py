@@ -52,20 +52,22 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}', compose_text)
         self.assertIn('AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}', compose_text)
         self.assertIn('AWS_REGION_NAME: ${AWS_REGION_NAME:-}', compose_text)
+        self.assertIn('AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}', compose_text)
         self.assertIn('LLM_AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}', compose_text)
-        self.assertIn(
-            'LLM_AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}',
-            compose_text,
-        )
+        self.assertIn('LLM_AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}', compose_text)
         self.assertIn('LLM_AWS_REGION_NAME: ${AWS_REGION_NAME:-}', compose_text)
+        self.assertIn('LLM_AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}', compose_text)
         self.assertIn('AWS_DEFAULT_REGION: ${AWS_REGION_NAME:-}', compose_text)
         self.assertIn('OPENHANDS_TESTING_BASE_URL: http://openhands-testing:3000', compose_text)
         self.assertNotIn('LOG_ALL_EVENTS: "true"', compose_text)
-        self.assertNotIn('OPENHANDS_CONTAINER_LLM_MODEL', compose_text)
-        self.assertNotIn('OPENHANDS_CONTAINER_AWS_ACCESS_KEY_ID', compose_text)
-        self.assertNotIn('OPENHANDS_CONTAINER_AWS_SECRET_ACCESS_KEY', compose_text)
-        self.assertNotIn('OPENHANDS_CONTAINER_AWS_REGION_NAME', compose_text)
-        self.assertNotIn('OPENHANDS_CONTAINER_AWS_DEFAULT_REGION', compose_text)
+        self.assertIn(
+            '"AWS_SESSION_TOKEN":"${AWS_SESSION_TOKEN:-}"',
+            compose_text,
+        )
+        self.assertIn(
+            '"LLM_AWS_SESSION_TOKEN":"${AWS_SESSION_TOKEN:-}"',
+            compose_text,
+        )
         self.assertIn(
             'OPENHANDS_TESTING_LLM_MODEL: ${OPENHANDS_TESTING_LLM_MODEL:-}',
             compose_text,
@@ -199,7 +201,43 @@ class DeploymentFilesTests(unittest.TestCase):
             compose_text,
         )
         self.assertIn(
+            '"LLM_API_KEY":"${AWS_ACCESS_KEY_ID:-}/${AWS_SECRET_ACCESS_KEY:-}/${AWS_REGION_NAME:-}"',
+            compose_text,
+        )
+        self.assertIn(
+            '"AWS_ACCESS_KEY_ID":"${AWS_ACCESS_KEY_ID:-}"',
+            compose_text,
+        )
+        self.assertIn(
+            '"AWS_SECRET_ACCESS_KEY":"${AWS_SECRET_ACCESS_KEY:-}"',
+            compose_text,
+        )
+        self.assertIn(
+            '"AWS_DEFAULT_REGION":"${AWS_REGION_NAME:-}"',
+            compose_text,
+        )
+        self.assertIn(
+            '"AWS_REGION":"${AWS_REGION_NAME:-}"',
+            compose_text,
+        )
+        self.assertIn(
+            '"AWS_SESSION_TOKEN":"${AWS_SESSION_TOKEN:-}"',
+            compose_text,
+        )
+        self.assertIn(
             '"LLM_AWS_ACCESS_KEY_ID":"${AWS_ACCESS_KEY_ID:-}"',
+            compose_text,
+        )
+        self.assertIn(
+            '"LLM_AWS_SECRET_ACCESS_KEY":"${AWS_SECRET_ACCESS_KEY:-}"',
+            compose_text,
+        )
+        self.assertIn(
+            '"LLM_AWS_REGION_NAME":"${AWS_REGION_NAME:-}"',
+            compose_text,
+        )
+        self.assertIn(
+            '"LLM_AWS_SESSION_TOKEN":"${AWS_SESSION_TOKEN:-}"',
             compose_text,
         )
         self.assertIn('OH_PERSISTENCE_DIR: /data', compose_text)
@@ -211,6 +249,12 @@ class DeploymentFilesTests(unittest.TestCase):
             '- ${REPOSITORY_ROOT_PATH:-.}:/workspace/project:ro',
             compose_text,
         )
+        self.assertNotIn('OPENHANDS_CONTAINER_LLM_MODEL', compose_text)
+        self.assertNotIn('OPENHANDS_CONTAINER_AWS_ACCESS_KEY_ID', compose_text)
+        self.assertNotIn('OPENHANDS_CONTAINER_AWS_SECRET_ACCESS_KEY', compose_text)
+        self.assertNotIn('OPENHANDS_CONTAINER_AWS_REGION_NAME', compose_text)
+        self.assertNotIn('OPENHANDS_CONTAINER_AWS_SESSION_TOKEN', compose_text)
+        self.assertNotIn('OPENHANDS_CONTAINER_AWS_DEFAULT_REGION', compose_text)
 
     def test_env_example_includes_openhands_llm_variables(self) -> None:
         env_example_text = (REPO_ROOT / '.env.example').read_text(encoding='utf-8')
@@ -250,6 +294,7 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertNotIn('OPENHANDS_CONTAINER_AWS_ACCESS_KEY_ID=', env_example_text)
         self.assertNotIn('OPENHANDS_CONTAINER_AWS_SECRET_ACCESS_KEY=', env_example_text)
         self.assertNotIn('OPENHANDS_CONTAINER_AWS_REGION_NAME=', env_example_text)
+        self.assertNotIn('OPENHANDS_CONTAINER_AWS_SESSION_TOKEN=', env_example_text)
         self.assertNotIn('OPENHANDS_CONTAINER_AWS_DEFAULT_REGION=', env_example_text)
         self.assertIn('OPENHANDS_AGENT_LOG_LEVEL=', env_example_text)
         self.assertIn('OPENHANDS_AGENT_WORKFLOW_LOG_LEVEL=', env_example_text)
@@ -270,6 +315,7 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('EMAIL_CORE_LIB_SEND_IN_BLUE_API_KEY=', env_example_text)
         self.assertNotIn('EMIL_CORE_LIB_SEND_IN_BLUE_API_KEY=', env_example_text)
         self.assertIn('AWS_ACCESS_KEY_ID=', env_example_text)
+        self.assertIn('AWS_SESSION_TOKEN=', env_example_text)
         self.assertIn('AWS_BEARER_TOKEN_BEDROCK=', env_example_text)
 
     def test_agents_file_exists_for_openhands_rules(self) -> None:

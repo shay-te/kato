@@ -187,8 +187,7 @@ class OpenHandsClientTests(unittest.TestCase):
         self.assertNotIn('Act as a separate testing agent.', prompt)
         self.assertIn('When you finish, use the finish tool.', prompt)
         self.assertIn('Do not pass extra finish-tool arguments', prompt)
-        self.assertIn('put the final commit message in commit_message', prompt)
-        self.assertIn('Do not report success until all intended changes are committed', prompt)
+        self.assertIn('Do not report success until all intended changes are saved in the repository worktree', prompt)
         self.assertIn('If no dedicated tests are defined for this task', prompt)
         self.assertIn(
             'Do not create validation_report.md; if the task completes successfully and you have a validation report',
@@ -227,8 +226,7 @@ class OpenHandsClientTests(unittest.TestCase):
 
         self.assertIn('Only modify these repositories:', prompt)
         self.assertIn('the orchestration layer already prepared branch UNA-222 from main', prompt)
-        self.assertIn('Stay on the current branch and do not run git checkout, git switch, git branch, git pull, or git push', prompt)
-        self.assertIn('stage and commit every intended change on that task branch', prompt)
+        self.assertIn('Stay on the current branch and do not run git checkout, git switch, git branch, git pull, git push, or git commit', prompt)
         self.assertIn('Do not create the pull request yourself', prompt)
 
     def test_testing_prompt_describes_separate_testing_agent(self) -> None:
@@ -240,8 +238,7 @@ class OpenHandsClientTests(unittest.TestCase):
         self.assertIn('Write additional tests when needed', prompt)
         self.assertIn('Do not create a pull request.', prompt)
         self.assertIn('When you finish, use the finish tool.', prompt)
-        self.assertIn('put the final commit message in commit_message', prompt)
-        self.assertIn('Do not report success until all intended changes are committed', prompt)
+        self.assertIn('Do not report success until all intended changes are saved in the repository worktree', prompt)
         self.assertIn('If no dedicated tests are defined or available', prompt)
         self.assertIn(
             'Do not create validation_report.md; if the task completes successfully and you have a validation report',
@@ -664,11 +661,7 @@ class OpenHandsClientTests(unittest.TestCase):
         )
         self.assertIn('always include its required command field', mock_run_prompt.call_args.kwargs['prompt'])
         self.assertIn(
-            'put the final commit message in commit_message',
-            mock_run_prompt.call_args.kwargs['prompt'],
-        )
-        self.assertIn(
-            'Do not report success until all intended changes are committed',
+            'Do not report success until all intended changes are saved in the repository worktree',
             mock_run_prompt.call_args.kwargs['prompt'],
         )
         self.assertEqual(

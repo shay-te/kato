@@ -84,7 +84,7 @@ class TaskService(Service):
     def _configured_issue_states(self) -> list[str]:
         configured_states = self._raw_configured_issue_states()
         filtered_states = self._exclude_non_queue_states(configured_states)
-        return filtered_states or configured_states
+        return filtered_states
 
     def _raw_configured_issue_states(self) -> list[str]:
         if hasattr(self._config, 'issue_states'):

@@ -72,6 +72,9 @@ class AgentServiceTests(unittest.TestCase):
             resolve_task_repositories=Mock(return_value=[self.client_repo, self.backend_repo]),
             prepare_task_repositories=Mock(side_effect=lambda repositories: repositories),
             prepare_task_branches=Mock(side_effect=lambda repositories, repository_branches: repositories),
+            validate_task_branches_are_publishable=Mock(
+                side_effect=lambda repositories, repository_branches: repositories
+            ),
             restore_task_repositories=Mock(),
             get_repository=Mock(side_effect=lambda repository_id: {
                 'client': self.client_repo,
@@ -264,13 +267,6 @@ class AgentServiceTests(unittest.TestCase):
                         'backend': 'feature/proj-1/backend',
                     },
                 ),
-                unittest.mock.call(
-                    [self.client_repo, self.backend_repo],
-                    {
-                        'client': 'feature/proj-1/client',
-                        'backend': 'feature/proj-1/backend',
-                    },
-                ),
             ],
         )
         self.repository_service.create_pull_request.assert_any_call(
@@ -337,7 +333,7 @@ class AgentServiceTests(unittest.TestCase):
             'client, backend',
         )
 
-    def test_process_assigned_task_uses_testing_commit_message_for_publish(self) -> None:
+    def test_process_assigned_task_uses_orchestration_commit_message_for_publish(self) -> None:
         task = self.task_data_access.get_assigned_tasks()[0]
         self.openhands_client.test_task.return_value = {
             ImplementationFields.SUCCESS: True,
@@ -353,7 +349,7 @@ class AgentServiceTests(unittest.TestCase):
             title='PROJ-1: Fix bug',
             source_branch='feature/proj-1/client',
             description=self.pr_description,
-            commit_message='Finalize PROJ-1 after testing',
+            commit_message='Implement PROJ-1',
         )
         self.assertIn(
             'Validation report: no dedicated tests were defined.',
@@ -389,13 +385,9 @@ class AgentServiceTests(unittest.TestCase):
 
     def test_process_assigned_task_reopens_when_task_branch_validation_fails_before_testing(self) -> None:
         task = self.task_data_access.get_assigned_tasks()[0]
-        self.repository_service.prepare_task_branches.side_effect = [
-            [self.client_repo, self.backend_repo],
-            RuntimeError(
-                'destination branch master at /workspace/project has 1 local commit(s) '
-                'not on origin/master; refusing to start a new task'
-            ),
-        ]
+        self.repository_service.validate_task_branches_are_publishable.side_effect = RuntimeError(
+            'branch feature/proj-1/client has no task changes ahead of master'
+        )
 
         results = self.service.process_assigned_task(task)
 
@@ -417,7 +409,7 @@ class AgentServiceTests(unittest.TestCase):
             self.task_client.add_comment.call_args_list[1].args[1],
         )
         self.assertIn(
-            'destination branch master at /workspace/project has 1 local commit(s)',
+            'branch feature/proj-1/client has no task changes ahead of master',
             self.task_client.add_comment.call_args_list[1].args[1],
         )
         self.openhands_client.test_task.assert_not_called()
@@ -558,7 +550,7 @@ class AgentServiceTests(unittest.TestCase):
         self.repository_service.prepare_task_repositories.assert_called_once_with(
             [self.client_repo, self.backend_repo]
         )
-        self.assertEqual(self.repository_service.prepare_task_branches.call_count, 2)
+        self.assertEqual(self.repository_service.prepare_task_branches.call_count, 1)
         self.openhands_client.implement_task.assert_called_once_with(task)
 
     def test_process_assigned_task_skips_when_prior_pre_start_failure_still_blocks_preflight(self) -> None:
@@ -707,7 +699,8 @@ class AgentServiceTests(unittest.TestCase):
             self.task_client.add_comment.call_args_list[1].args[1],
         )
         self.repository_service.restore_task_repositories.assert_called_once_with(
-            [self.client_repo, self.backend_repo]
+            [self.client_repo, self.backend_repo],
+            force=True,
         )
         self.assertEqual(self.email_core_lib.send.call_count, 2)
         self.service.logger.warning.assert_called_once_with(
@@ -730,7 +723,8 @@ class AgentServiceTests(unittest.TestCase):
             [self.client_repo, self.backend_repo]
         )
         self.repository_service.restore_task_repositories.assert_called_once_with(
-            [self.client_repo, self.backend_repo]
+            [self.client_repo, self.backend_repo],
+            force=True,
         )
         self.task_client.add_comment.assert_called_once()
         self.assertIn(

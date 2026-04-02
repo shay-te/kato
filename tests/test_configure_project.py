@@ -119,6 +119,8 @@ class ConfigureProjectTests(unittest.TestCase):
         self.assertEqual(values['JIRA_ISSUE_STATES'], 'To Do,Selected for Development')
         self.assertEqual(values['AWS_BEARER_TOKEN_BEDROCK'], 'bedrock-token')
         self.assertEqual(values['OPENHANDS_LLM_API_KEY'], '')
+        self.assertEqual(values['AWS_SESSION_TOKEN'], '')
+        self.assertEqual(values['OPENHANDS_CONTAINER_LOG_ALL_EVENTS'], 'true')
         self.assertEqual(values['OPENHANDS_SKIP_TESTING'], 'false')
         self.assertEqual(values['OPENHANDS_TESTING_CONTAINER_ENABLED'], 'false')
         self.assertEqual(values['OPENHANDS_MODEL_SMOKE_TEST_ENABLED'], 'true')
@@ -126,6 +128,49 @@ class ConfigureProjectTests(unittest.TestCase):
         self.assertEqual(values['OPENHANDS_TASK_SCAN_INTERVAL_SECONDS'], '60')
         self.assertEqual(values['OPENHANDS_AGENT_FAILURE_EMAIL_ENABLED'], 'true')
         self.assertEqual(values['OH_SECRET_KEY'], 'openhands-secret')
+        self.assertEqual(self._validate_agent_env(values), [])
+        self.assertEqual(validate_openhands_env(values), [])
+
+    def test_build_configuration_values_for_bedrock_access_keys_includes_session_token(self) -> None:
+        with self._patch_prompts(
+            {
+                'Where are your tasks tracked': 'youtrack',
+                'YouTrack base URL': 'https://youtrack.example',
+                'YouTrack token': 'yt-token',
+                'YouTrack assignee login': 'developer',
+                'YouTrack project key': 'PROJ',
+                'YouTrack in-progress state field': 'State',
+                'YouTrack in-progress state value': 'In Progress',
+                'YouTrack review state field': 'State',
+                'YouTrack review state value': 'In Review',
+                'YouTrack issue states to process': ['Open'],
+                'Scan a projects folder for checked-out repositories': False,
+                'Projects root folder containing checked-out repositories': '.',
+                'OpenHands base URL': 'http://localhost:3000',
+                'OpenHands API key': 'local',
+                'OpenHands secret key': 'openhands-secret',
+                'Maximum retries for external API calls': 5,
+                'OpenHands LLM model': 'bedrock/anthropic.claude-3-sonnet-20240229-v1:0',
+                'How should OpenHands authenticate to Bedrock': 'access_keys',
+                'AWS access key id': 'aws-key',
+                'AWS secret access key': 'aws-secret',
+                'AWS region name': 'us-west-2',
+                'AWS session token (optional)': 'aws-session-token',
+                'Skip testing before publishing pull requests': False,
+                'Use a dedicated OpenHands testing container': False,
+                'Enable failure notification emails': False,
+                'Enable completion notification emails': False,
+            }
+        ):
+            values = configure_project.build_configuration_values({})
+
+        self.assertEqual(values['AWS_ACCESS_KEY_ID'], 'aws-key')
+        self.assertEqual(values['AWS_SECRET_ACCESS_KEY'], 'aws-secret')
+        self.assertEqual(values['AWS_REGION_NAME'], 'us-west-2')
+        self.assertEqual(values['AWS_SESSION_TOKEN'], 'aws-session-token')
+        self.assertEqual(values['AWS_BEARER_TOKEN_BEDROCK'], '')
+        self.assertEqual(values['OPENHANDS_LLM_API_KEY'], '')
+        self.assertEqual(values['OPENHANDS_CONTAINER_LOG_ALL_EVENTS'], 'true')
         self.assertEqual(self._validate_agent_env(values), [])
         self.assertEqual(validate_openhands_env(values), [])
 
@@ -172,6 +217,7 @@ class ConfigureProjectTests(unittest.TestCase):
         self.assertEqual(values['OPENHANDS_MODEL_SMOKE_TEST_ENABLED'], 'true')
         self.assertEqual(values['OPENHANDS_TASK_SCAN_STARTUP_DELAY_SECONDS'], '30')
         self.assertEqual(values['OPENHANDS_TASK_SCAN_INTERVAL_SECONDS'], '60')
+        self.assertEqual(values['OPENHANDS_CONTAINER_LOG_ALL_EVENTS'], 'true')
         self.assertEqual(validate_openhands_env(values), [])
 
     def test_prompt_repository_discovers_checked_out_repositories(self) -> None:
@@ -319,6 +365,12 @@ class ConfigureProjectTests(unittest.TestCase):
                 'OPENHANDS_TESTING_LLM_MODEL=\n'
                 'OPENHANDS_TESTING_LLM_API_KEY=\n'
                 'OPENHANDS_TESTING_LLM_BASE_URL=\n'
+                'OPENHANDS_CONTAINER_LOG_ALL_EVENTS=true\n'
+                'AWS_ACCESS_KEY_ID=\n'
+                'AWS_SECRET_ACCESS_KEY=\n'
+                'AWS_REGION_NAME=\n'
+                'AWS_SESSION_TOKEN=\n'
+                'AWS_BEARER_TOKEN_BEDROCK=\n'
                 'OPENHANDS_AGENT_FAILURE_EMAIL_ENABLED=false\n'
                 'OPENHANDS_AGENT_FAILURE_EMAIL_TEMPLATE_ID=0\n'
                 'OPENHANDS_AGENT_FAILURE_EMAIL_TO=\n'
@@ -378,6 +430,7 @@ class ConfigureProjectTests(unittest.TestCase):
             self.assertEqual(written_env['OPENHANDS_LLM_API_KEY'], 'llm-key')
             self.assertEqual(written_env['OPENHANDS_SKIP_TESTING'], 'false')
             self.assertEqual(written_env['OPENHANDS_TESTING_CONTAINER_ENABLED'], 'false')
+            self.assertEqual(written_env['OPENHANDS_CONTAINER_LOG_ALL_EVENTS'], 'true')
 
     def test_main_returns_zero_when_configuration_is_still_invalid(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -410,6 +463,12 @@ class ConfigureProjectTests(unittest.TestCase):
                 'OPENHANDS_TESTING_LLM_MODEL=\n'
                 'OPENHANDS_TESTING_LLM_API_KEY=\n'
                 'OPENHANDS_TESTING_LLM_BASE_URL=\n'
+                'OPENHANDS_CONTAINER_LOG_ALL_EVENTS=true\n'
+                'AWS_ACCESS_KEY_ID=\n'
+                'AWS_SECRET_ACCESS_KEY=\n'
+                'AWS_REGION_NAME=\n'
+                'AWS_SESSION_TOKEN=\n'
+                'AWS_BEARER_TOKEN_BEDROCK=\n'
                 'OPENHANDS_AGENT_FAILURE_EMAIL_ENABLED=false\n'
                 'OPENHANDS_AGENT_FAILURE_EMAIL_TEMPLATE_ID=0\n'
                 'OPENHANDS_AGENT_FAILURE_EMAIL_TO=\n'

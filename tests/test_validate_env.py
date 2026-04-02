@@ -358,6 +358,7 @@ class ValidateEnvTests(unittest.TestCase):
                 'AWS_ACCESS_KEY_ID': 'key',
                 'AWS_SECRET_ACCESS_KEY': 'secret',
                 'AWS_REGION_NAME': 'us-west-2',
+                'AWS_SESSION_TOKEN': 'session-token',
             }
         )
 

@@ -560,6 +560,14 @@ def _prompt_openhands(
     )
     values = _prompt_openhands_core_values(defaults, testing_container_enabled)
     values.update(_prompt_primary_openhands_llm(defaults))
+    values['OPENHANDS_CONTAINER_LOG_ALL_EVENTS'] = _bool_to_env(
+        _default_str(
+            defaults,
+            'OPENHANDS_CONTAINER_LOG_ALL_EVENTS',
+            fallback='true',
+        ).lower()
+        in {'1', 'true', 'yes', 'on'}
+    )
     values.update(
         _prompt_testing_openhands(
             defaults,
@@ -740,6 +748,11 @@ def _prompt_bedrock_auth(defaults: dict[str, str]) -> dict[str, str]:
                 'AWS region name',
                 default=_default_str(defaults, 'AWS_REGION_NAME', fallback='us-west-2'),
             ),
+            'AWS_SESSION_TOKEN': input_str(
+                'AWS session token (optional)',
+                default=_default_str(defaults, 'AWS_SESSION_TOKEN'),
+                allow_empty=True,
+            ),
             'AWS_BEARER_TOKEN_BEDROCK': '',
         }
     return {
@@ -750,6 +763,7 @@ def _prompt_bedrock_auth(defaults: dict[str, str]) -> dict[str, str]:
         'AWS_ACCESS_KEY_ID': '',
         'AWS_SECRET_ACCESS_KEY': '',
         'AWS_REGION_NAME': '',
+        'AWS_SESSION_TOKEN': '',
     }
 
 
@@ -758,6 +772,7 @@ def _blank_bedrock_auth_values() -> dict[str, str]:
         'AWS_ACCESS_KEY_ID': '',
         'AWS_SECRET_ACCESS_KEY': '',
         'AWS_REGION_NAME': '',
+        'AWS_SESSION_TOKEN': '',
         'AWS_BEARER_TOKEN_BEDROCK': '',
     }
 

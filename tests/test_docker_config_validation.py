@@ -62,7 +62,8 @@ class TestDockerConfigValidation(unittest.TestCase):
         'OPENHANDS_LLM_MODEL': 'anthropic.claude-haiku-4-5-20251001-v1:0',
         'AWS_ACCESS_KEY_ID': 'test-key-id',
         'AWS_SECRET_ACCESS_KEY': 'test-secret-key',
-        'AWS_REGION_NAME': 'us-east-1'
+        'AWS_REGION_NAME': 'us-east-1',
+        'AWS_SESSION_TOKEN': 'test-session-token',
     })
     def test_docker_compose_style_environment_variables(self):
         """Test configuration handling similar to what might be seen in docker-compose files."""
@@ -74,6 +75,7 @@ class TestDockerConfigValidation(unittest.TestCase):
         self.assertEqual(os.environ.get('AWS_ACCESS_KEY_ID'), 'test-key-id') 
         self.assertEqual(os.environ.get('AWS_SECRET_ACCESS_KEY'), 'test-secret-key')
         self.assertEqual(os.environ.get('AWS_REGION_NAME'), 'us-east-1')
+        self.assertEqual(os.environ.get('AWS_SESSION_TOKEN'), 'test-session-token')
 
     def test_empty_vs_unset_environment_variables(self):
         """Test handling of empty string versus unset environment variables."""
@@ -91,6 +93,7 @@ class TestDockerConfigValidation(unittest.TestCase):
         'AWS_ACCESS_KEY_ID': 'AKIAIOSFODNN7EXAMPLE',
         'AWS_SECRET_ACCESS_KEY': 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
         'AWS_REGION_NAME': 'us-west-2',
+        'AWS_SESSION_TOKEN': 'token',
         'OPENHANDS_LLM_MODEL': 'bedrock/anthropic.claude-3-sonnet-20240229-v1:0'
     })
     def test_bedrock_llm_configuration_validation(self):

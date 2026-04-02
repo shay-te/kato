@@ -298,7 +298,7 @@ class RepositoryServiceTests(unittest.TestCase):
             ],
         )
 
-    def test_restore_task_repositories_skips_dirty_repository(self) -> None:
+    def test_restore_task_repositories_forces_dirty_repository_back_to_destination_branch(self) -> None:
         repository = types.SimpleNamespace(
             id='client',
             local_path='.',
@@ -317,9 +317,10 @@ class RepositoryServiceTests(unittest.TestCase):
             side_effect=[
                 Mock(returncode=0, stdout='feature/proj-1/client\n', stderr=''),
                 Mock(returncode=0, stdout=' M app.py\n', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),
             ],
         ) as mock_run:
-            restored_repositories = service.restore_task_repositories([repository])
+            restored_repositories = service.restore_task_repositories([repository], force=True)
 
         self.assertEqual(restored_repositories, [repository])
         self.assertEqual(
@@ -327,6 +328,7 @@ class RepositoryServiceTests(unittest.TestCase):
             [
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
+                ['git', '-c', 'safe.directory=.', '-C', '.', 'checkout', '-f', 'master'],
             ],
         )
 
@@ -784,17 +786,29 @@ class RepositoryServiceTests(unittest.TestCase):
     def test_create_pull_request_creates_pr_before_restoring_workspace(self) -> None:
         repository = self.backend_repo
         data_access = Mock()
-        data_access.create_pull_request.return_value = {
+        pull_request_payload = {
             PullRequestFields.ID: '17',
             PullRequestFields.TITLE: 'PROJ-1: Fix bug',
             PullRequestFields.URL: 'https://github.example/pull/17',
         }
+        call_order: list[str] = []
 
         def assert_workspace_restored_after_pr(local_path: str, destination_branch: str, repository_arg) -> None:
             self.assertEqual(data_access.create_pull_request.call_count, 1)
             self.assertEqual(local_path, '.')
             self.assertEqual(destination_branch, 'main')
             self.assertIs(repository_arg, repository)
+            call_order.append('restore')
+
+        def record_push(local_path: str, branch_name: str, repository_arg) -> None:
+            call_order.append('push')
+            self.assertEqual(local_path, '.')
+            self.assertEqual(branch_name, 'feature/proj-1/backend')
+            self.assertIs(repository_arg, repository)
+
+        def record_create_pull_request(**kwargs):
+            call_order.append('create_pull_request')
+            return pull_request_payload
 
         with patch(
             'openhands_agent.data_layers.service.repository_service.shutil.which',
@@ -809,10 +823,12 @@ class RepositoryServiceTests(unittest.TestCase):
             side_effect=assert_workspace_restored_after_pr,
         ) as mock_prepare_workspace, patch(
             'openhands_agent.data_layers.service.repository_service.RepositoryService._push_branch',
+            side_effect=record_push,
         ) as mock_push_branch, patch(
             'openhands_agent.data_layers.service.repository_service.RepositoryService._pull_request_data_access',
             return_value=data_access,
         ):
+            data_access.create_pull_request.side_effect = record_create_pull_request
             service = RepositoryService(self.cfg.openhands_agent.repositories, 3)
             service.create_pull_request(
                 repository,
@@ -835,6 +851,10 @@ class RepositoryServiceTests(unittest.TestCase):
             source_branch='feature/proj-1/backend',
             destination_branch='main',
             description='Ready',
+        )
+        self.assertEqual(
+            call_order,
+            ['push', 'create_pull_request', 'restore'],
         )
 
     def test_create_pull_request_returns_to_destination_branch_even_when_push_fails(self) -> None:
@@ -1056,7 +1076,7 @@ class RepositoryServiceTests(unittest.TestCase):
             service = RepositoryService(self.cfg.openhands_agent.repositories, 3)
             with self.assertRaisesRegex(
                 RuntimeError,
-                'branch feature/proj-1/backend has no committed changes ahead of main',
+                'branch feature/proj-1/backend has no task changes ahead of main',
             ):
                 service.create_pull_request(
                     repository,
@@ -1065,6 +1085,60 @@ class RepositoryServiceTests(unittest.TestCase):
                     description='Ready',
                     commit_message='Implement PROJ-1',
                 )
+
+    def test_validate_task_branches_are_publishable_rejects_branch_without_committed_changes(self) -> None:
+        repository = self.backend_repo
+
+        with patch(
+            'openhands_agent.data_layers.service.repository_service.shutil.which',
+            return_value='/usr/bin/git',
+        ), patch.object(
+            RepositoryService,
+            '_working_tree_status',
+            return_value='',
+        ), patch.object(
+            RepositoryService,
+            '_comparison_reference',
+            return_value='main',
+        ), patch.object(
+            RepositoryService,
+            '_ahead_count',
+            return_value=0,
+        ):
+            service = RepositoryService(self.cfg.openhands_agent.repositories, 3)
+            with self.assertRaisesRegex(
+                RuntimeError,
+                'branch feature/proj-1/backend has no task changes ahead of main',
+            ):
+                service.validate_task_branches_are_publishable(
+                    [repository],
+                    {'backend': 'feature/proj-1/backend'},
+                )
+
+    def test_validate_task_branches_are_publishable_accepts_dirty_worktree_changes(self) -> None:
+        repository = self.backend_repo
+
+        with patch(
+            'openhands_agent.data_layers.service.repository_service.shutil.which',
+            return_value='/usr/bin/git',
+        ), patch(
+            'openhands_agent.data_layers.service.repository_service.subprocess.run',
+            return_value=Mock(returncode=0, stdout=' M src/file.py\n', stderr=''),
+        ) as mock_run:
+            service = RepositoryService(self.cfg.openhands_agent.repositories, 3)
+            result = service.validate_task_branches_are_publishable(
+                [repository],
+                {'backend': 'feature/proj-1/backend'},
+            )
+
+        self.assertEqual(result, [repository])
+        mock_run.assert_called_once_with(
+            ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=unittest.mock.ANY,
+        )
 
     def test_validate_connections_checks_local_paths(self) -> None:
         with patch(

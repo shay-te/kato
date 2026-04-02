@@ -249,6 +249,10 @@ The list below mirrors `.env.example`.
 | `OPENHANDS_AGENT_MAX_RETRIES` | Retry count for external API calls. |
 | `OPENHANDS_AGENT_LOG_LEVEL` | Log level for the agent app process. |
 | `OPENHANDS_AGENT_WORKFLOW_LOG_LEVEL` | Log level for workflow-specific logs. |
+| `OPENHANDS_POLL_INTERVAL_SECONDS` | Delay between OpenHands conversation polling attempts. |
+| `OPENHANDS_MAX_POLL_ATTEMPTS` | Maximum number of times the agent waits for an OpenHands conversation result. |
+| `OPENHANDS_TASK_SCAN_STARTUP_DELAY_SECONDS` | Delay before the agent starts scanning for tasks after startup. |
+| `OPENHANDS_TASK_SCAN_INTERVAL_SECONDS` | Delay between task scan cycles. |
 | `OPENHANDS_AGENT_FAILURE_EMAIL_ENABLED` | Enables failure notification emails. |
 | `OPENHANDS_AGENT_FAILURE_EMAIL_TEMPLATE_ID` | Template id used for failure notification emails. |
 | `OPENHANDS_AGENT_FAILURE_EMAIL_TO` | Recipient address for failure notification emails. |
@@ -262,7 +266,7 @@ The list below mirrors `.env.example`.
 | `EMAIL_CORE_LIB_SEND_IN_BLUE_API_KEY` | SendInBlue API key used by `email-core-lib`. |
 | `SLACK_WEBHOOK_URL_ERRORS_EMAIL` | Slack webhook used by `email-core-lib` error reporting. |
 
-The `openhands` container reuses the shared `OPENHANDS_LLM_MODEL` and standard `AWS_*` variables from the same `.env` file. `OPENHANDS_CONTAINER_LOG_ALL_EVENTS` is the only container-specific override kept for that service.
+The `openhands` container reuses the same `OPENHANDS_LLM_*` and `AWS_*` values from the shared `.env` file, so the Bedrock configuration is defined once. `OPENHANDS_CONTAINER_LOG_ALL_EVENTS` is the only service-specific override for that container.
 
 ### OpenHands Container
 
@@ -298,6 +302,7 @@ The `openhands` container reuses the shared `OPENHANDS_LLM_MODEL` and standard `
 | `AWS_ACCESS_KEY_ID` | AWS access key for Bedrock-backed models or AWS auth in Docker. |
 | `AWS_SECRET_ACCESS_KEY` | AWS secret key for Bedrock-backed models or AWS auth in Docker. |
 | `AWS_REGION_NAME` | AWS region used for Bedrock-backed models or AWS auth in Docker. |
+| `AWS_SESSION_TOKEN` | Optional AWS session token for temporary Bedrock credentials. |
 | `AWS_BEARER_TOKEN_BEDROCK` | Bedrock bearer token alternative to AWS access keys. |
 
 For Bedrock specifically, you can use either standard AWS credentials or a Bedrock bearer token.
@@ -318,6 +323,53 @@ The Hydra config is registered through [`hydra_plugins/openhands_agent/openhands
 ```bash
 python -m openhands_agent.main openhands_agent.retry.max_retries=7
 ```
+
+### Open Source Notes
+
+This project is meant to be usable by other teams, so a few things are worth calling out up front:
+
+- `make configure` is the easiest way to create a first `.env`, and `.env.example` is the canonical template.
+- Never commit real secrets. Keep `.env` local, and only use `.env.example` for documentation and defaults.
+- The workflow is split on purpose:
+  - OpenHands edits files in the task branch.
+  - orchestration handles commit, push, pull request creation, and branch restoration.
+- Testing behavior is controlled by separate flags:
+  - `OPENHANDS_SKIP_TESTING=true` skips the validation conversation entirely.
+  - `OPENHANDS_TESTING_CONTAINER_ENABLED=true` enables the dedicated testing OpenHands container.
+  - `OPENHANDS_MODEL_SMOKE_TEST_ENABLED=false` only disables the startup smoke test.
+- If you change `.env`, recreate the containers so Docker Compose reloads the new values.
+- Bedrock-backed models may need `AWS_SESSION_TOKEN` in addition to the AWS access key and secret when temporary credentials are used.
+- SSH git remotes require `SSH_AUTH_SOCK` to be mounted correctly.
+- `clean.sh` is destructive and is intended for local cleanup only.
+
+### Troubleshooting
+
+If something does not work as expected, the most common checks are:
+
+1. Run `docker compose config` and confirm the rendered values match the working configuration.
+2. Recreate the containers after changing `.env`.
+3. Confirm the repository workspace is on the destination branch after a failure or after cleanup.
+4. Check whether the active issue platform and repository provider are both configured in `.env`.
+5. Verify that the OpenHands model credentials match the provider you selected.
+
+Common failure modes:
+
+- Bedrock authentication errors usually mean the AWS key, secret, region, or session token is wrong or stale.
+- Branch-publish failures usually mean the task branch never got a committed change or the repo could not be restored cleanly.
+- Dirty worktree errors mean the task branch still has uncommitted edits and the workspace needs cleanup before the next run.
+- Missing git permissions usually mean the host repository path or SSH auth socket is not mounted the way the container expects.
+
+### Supported Providers
+
+The agent currently supports these issue trackers:
+
+- YouTrack
+- Jira
+- GitHub Issues
+- GitLab Issues
+- Bitbucket Issues
+
+The repository provider is inferred from the configured repository metadata, and the same task can span multiple repositories if the task text matches them.
 
 ## How To Use
 

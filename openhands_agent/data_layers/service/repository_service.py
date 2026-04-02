@@ -73,10 +73,15 @@ class RepositoryService(Service):
             for repository in repositories
         ]
 
-    def restore_task_repositories(self, repositories: list[object]) -> list[object]:
+    def restore_task_repositories(
+        self,
+        repositories: list[object],
+        *,
+        force: bool = False,
+    ) -> list[object]:
         self._validate_git_executable()
         for repository in repositories:
-            self._restore_task_repository(repository)
+            self._restore_task_repository(repository, force=force)
         return repositories
 
     def prepare_task_branches(
@@ -92,6 +97,26 @@ class RepositoryService(Service):
                     f'missing task branch name for repository {repository.id}'
                 )
             self._prepare_task_branch(repository, branch_name)
+        return repositories
+
+    def validate_task_branches_are_publishable(
+        self,
+        repositories: list[object],
+        repository_branches: dict[str, str],
+    ) -> list[object]:
+        self._validate_git_executable()
+        for repository in repositories:
+            branch_name = normalized_text(repository_branches.get(repository.id, ''))
+            if not branch_name:
+                raise ValueError(
+                    f'missing task branch name for repository {repository.id}'
+                )
+            destination_branch = self.destination_branch(repository)
+            self._ensure_branch_has_task_changes(
+                repository.local_path,
+                branch_name,
+                destination_branch,
+            )
         return repositories
 
     def get_repository(self, repository_id: str):
@@ -415,25 +440,37 @@ class RepositoryService(Service):
         )
         return repository
 
-    def _restore_task_repository(self, repository) -> None:
+    def _restore_task_repository(self, repository, force: bool = False) -> None:
         self._validate_local_path(repository)
         destination_branch = text_from_attr(repository, 'destination_branch') or self.destination_branch(
             repository
         )
         current_branch = self._current_branch(repository.local_path)
-        if current_branch == destination_branch:
+        dirty_worktree = bool(self._working_tree_status(repository.local_path))
+        if current_branch == destination_branch and not dirty_worktree:
             return
-        if self._working_tree_status(repository.local_path):
+        if dirty_worktree and not force:
             self.logger.warning(
                 'skipping repository restore for %s because the worktree is dirty on branch %s',
                 repository.id,
                 current_branch or '<unknown>',
             )
             return
+        if dirty_worktree and force:
+            self.logger.warning(
+                'forcing repository restore for %s to branch %s despite dirty worktree on branch %s',
+                repository.id,
+                destination_branch,
+                current_branch or '<unknown>',
+            )
         try:
+            checkout_args = ['checkout']
+            if dirty_worktree:
+                checkout_args.append('-f')
+            checkout_args.append(destination_branch)
             self._run_git(
                 repository.local_path,
-                ['checkout', destination_branch],
+                checkout_args,
                 f'failed to restore repository at {repository.local_path} to {destination_branch}',
                 repository,
             )
@@ -679,8 +716,18 @@ class RepositoryService(Service):
         if ahead_count >= 1:
             return
         raise RuntimeError(
-            f'branch {branch_name} has no committed changes ahead of {comparison_ref}'
+            f'branch {branch_name} has no task changes ahead of {comparison_ref}'
         )
+
+    def _ensure_branch_has_task_changes(
+        self,
+        local_path: str,
+        branch_name: str,
+        destination_branch: str,
+    ) -> None:
+        if self._working_tree_status(local_path):
+            return
+        self._ensure_branch_is_publishable(local_path, branch_name, destination_branch)
 
     def _ahead_count(
         self,

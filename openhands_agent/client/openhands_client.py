@@ -197,9 +197,8 @@ class OpenHandsClient(RetryingClientBase):
             'When you finish, use the finish tool.\n'
             '- Put the text that should become the pull request description in summary.\n'
             '- Put any extra implementation details in message.\n'
-            '- If you created or updated commits, put the final commit message in commit_message.\n'
-            '- Do not report success until all intended changes are committed on the task branch.\n'
-            '- If no dedicated tests are defined for this task, do not invent new ones; just finish after committing the change.\n'
+            '- Do not report success until all intended changes are saved in the repository worktree.\n'
+            '- If no dedicated tests are defined for this task, do not invent new ones; just finish after saving the change.\n'
             '- Do not create validation_report.md; if the task completes successfully and you have a validation report, put it in message so the orchestration layer can add it to the task comment.\n'
             '- Do not pass extra finish-tool arguments beyond the supported fields.\n\n'
             'The summary must list every changed file and, under each file name, add a short explanation of what changed.\n'
@@ -225,9 +224,8 @@ class OpenHandsClient(RetryingClientBase):
             'When you finish, use the finish tool.\n'
             '- Put the text that should become the testing report in summary.\n'
             '- Put any extra testing details in message.\n'
-            '- If you created or updated commits, put the final commit message in commit_message.\n'
-            '- Do not report success until all intended changes are committed on the task branch.\n'
-            '- If no dedicated tests are defined or available, do not invent new ones; just report that no testing was defined and finish after committing the change.\n'
+            '- Do not report success until all intended changes are saved in the repository worktree.\n'
+            '- If no dedicated tests are defined or available, do not invent new ones; just report that no testing was defined and finish after saving the change.\n'
             '- Do not create validation_report.md; if the task completes successfully and you have a validation report, put it in message so the orchestration layer can add it to the task comment.\n'
             '- Do not pass extra finish-tool arguments beyond the supported fields.\n'
         )
@@ -242,7 +240,7 @@ class OpenHandsClient(RetryingClientBase):
                 'default branch without interactive auth prompts. If remote access is blocked, '
                 'continue from the current local checkout and mention that limitation in your '
                 f'finish message. Then create and work on a new branch named {task.branch_name}. '
-                'Before you use finish, stage and commit every intended change on that task branch.'
+                'Before you use finish, save every intended change in the repository worktree.'
             )
 
         repository_lines = []
@@ -256,9 +254,9 @@ class OpenHandsClient(RetryingClientBase):
                 f'- {repository.id} at {repository.local_path}: '
                 f'the orchestration layer already prepared branch {branch_name} from '
                 f'{destination_text}. Stay on the current branch and do not run git checkout, git switch, '
-                'git branch, git pull, or git push; the orchestration layer owns branch movement and publishing. '
-                'Do not create the pull request yourself; the orchestration layer will publish it after implementation is ready. '
-                'Before you use finish, stage and commit every intended change on that task branch.'
+                'git branch, git pull, git push, or git commit; the orchestration layer owns branch movement, '
+                'commit creation, and publishing. Do not create the pull request yourself; the orchestration layer '
+                'will publish it after implementation is ready.'
             )
         lines = '\n'.join(repository_lines)
         return f'Only modify these repositories:\n{lines}'
@@ -276,8 +274,7 @@ class OpenHandsClient(RetryingClientBase):
             'When you finish, use the finish tool.\n'
             '- Put a short description of what changed in summary.\n'
             '- Put any extra details in message.\n'
-            '- If you created or updated commits, put the final commit message in commit_message.\n'
-            '- Do not report success until all intended changes are committed on the branch.\n'
+            '- Do not report success until all intended changes are saved in the repository worktree.\n'
             '- Do not pass extra finish-tool arguments beyond the supported fields.\n'
         )
 

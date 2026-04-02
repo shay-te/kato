@@ -177,6 +177,26 @@ class TaskServiceTests(unittest.TestCase):
             ],
         )
 
+    def test_excludes_review_state_from_legacy_issue_state_queue(self) -> None:
+        config = types.SimpleNamespace(
+            base_url="https://youtrack.example",
+            token="yt-token",
+            project="PROJ",
+            assignee="me",
+            issue_state='To Verify',
+            review_state='To Verify',
+        )
+        client = Mock()
+
+        task_service = TaskService(config, TaskDataAccess(config, client))
+        task_service.get_assigned_tasks()
+
+        client.get_assigned_tasks.assert_called_once_with(
+            project='PROJ',
+            assignee='me',
+            states=[],
+        )
+
     def test_uses_explicit_review_config_and_parses_string_issue_states(self) -> None:
         config = types.SimpleNamespace(
             base_url="https://jira.example",

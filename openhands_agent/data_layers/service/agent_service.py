@@ -280,7 +280,7 @@ class AgentService(Service):
             execution.pop(ImplementationFields.MESSAGE, None)
             self._log_task_step(task.id, 'testing validation skipped by configuration')
             return True, None
-        if not self._prepare_task_branches_for_testing(task, prepared_task):
+        if not self._validate_task_branches_are_publishable(task, prepared_task):
             return False, None
         testing = self._request_testing_validation(task)
         if testing is None:
@@ -288,29 +288,29 @@ class AgentService(Service):
         if not self._testing_succeeded(testing):
             self._handle_testing_failure(task, testing)
             return False, self._testing_failed_result(task.id)
-        self._apply_testing_commit_message(execution, testing)
+        self._apply_testing_message(execution, testing)
         self._log_task_step(task.id, 'testing validation passed')
         return True, None
 
-    def _prepare_task_branches_for_testing(
+    def _validate_task_branches_are_publishable(
         self,
         task: Task,
         prepared_task: PreparedTaskContext,
     ) -> bool:
-        self._log_task_step(task.id, 're-validating task branches before testing')
+        self._log_task_step(task.id, 'checking task branches before testing')
         try:
-            self._repository_service.prepare_task_branches(
+            self._repository_service.validate_task_branches_are_publishable(
                 prepared_task.repositories,
                 prepared_task.repository_branches,
             )
         except Exception as exc:
             self.logger.exception(
-                'failed to prepare task branches for testing validation for task %s',
+                'failed to validate task branches before testing validation for task %s',
                 task.id,
             )
             self._handle_started_task_failure(task, exc)
             return False
-        self._log_task_step(task.id, 'task branches ready for testing')
+        self._log_task_step(task.id, 'task branches contain changes')
         return True
 
     def _request_testing_validation(
@@ -335,15 +335,10 @@ class AgentService(Service):
         }
 
     @staticmethod
-    def _apply_testing_commit_message(
+    def _apply_testing_message(
         execution: dict[str, str | bool],
         testing: dict[str, str | bool],
     ) -> None:
-        testing_commit_message = str(
-            testing.get(ImplementationFields.COMMIT_MESSAGE, '') or ''
-        ).strip()
-        if testing_commit_message:
-            execution[ImplementationFields.COMMIT_MESSAGE] = testing_commit_message
         testing_message = str(
             testing.get(ImplementationFields.MESSAGE, '') or ''
         ).strip()
@@ -747,10 +742,7 @@ class AgentService(Service):
 
     @staticmethod
     def _review_fix_commit_message(execution: dict[str, str | bool]) -> str:
-        return (
-            str(execution.get(ImplementationFields.COMMIT_MESSAGE, '') or '').strip()
-            or 'Address review comments'
-        )
+        return 'Address review comments'
 
     @staticmethod
     def _implementation_succeeded(execution: dict[str, str | bool]) -> bool:
@@ -790,10 +782,7 @@ class AgentService(Service):
         task: Task,
         execution: dict[str, str | bool],
     ) -> str:
-        return (
-            str(execution.get(ImplementationFields.COMMIT_MESSAGE, '') or '').strip()
-            or f'Implement {task.id}'
-        )
+        return f'Implement {task.id}'
 
     @staticmethod
     def _task_validation_report(execution: dict[str, str | bool]) -> str:
@@ -1020,7 +1009,10 @@ class AgentService(Service):
             return
         self._log_task_step(task.id, 'restoring repository branches after task rejection')
         try:
-            self._repository_service.restore_task_repositories(repositories)
+            self._repository_service.restore_task_repositories(
+                repositories,
+                force=True,
+            )
         except Exception:
             self.logger.exception('failed to restore repositories for task %s', task.id)
 
