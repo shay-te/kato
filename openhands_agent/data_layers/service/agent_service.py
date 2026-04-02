@@ -108,8 +108,6 @@ class AgentService(Service):
         )
         self._task_model_access_validator = task_model_access_validator or TaskModelAccessValidator(
             self._implementation_service,
-            self._testing_service,
-            self._skip_testing,
         )
         self._task_branch_push_validator = (
             task_branch_push_validator or TaskBranchPushValidator(self._repository_service)
@@ -375,14 +373,12 @@ class AgentService(Service):
             'adding review summary comment for %s',
             pull_request_repositories_text(pull_requests),
         )
-        validation_report = ''
-        if not failed_repositories:
-            validation_report = self._task_validation_report(execution)
+        execution_report = self._task_execution_report(execution)
         if self._comment_task_completed(
             task,
             pull_requests,
             failed_repositories,
-            validation_report,
+            execution_report,
         ):
             return
 
@@ -634,8 +630,17 @@ class AgentService(Service):
         return f'Implement {task.id}'
 
     @staticmethod
-    def _task_validation_report(execution: dict[str, str | bool]) -> str:
-        return str(execution.get(ImplementationFields.MESSAGE, '') or '').strip()
+    def _task_execution_report(execution: dict[str, str | bool]) -> str:
+        report_lines: list[str] = []
+        implementation_summary = str(execution.get(Task.summary.key, '') or '').strip()
+        if implementation_summary:
+            report_lines.append('Implementation summary:')
+            report_lines.append(implementation_summary)
+        validation_report = str(execution.get(ImplementationFields.MESSAGE, '') or '').strip()
+        if validation_report:
+            report_lines.append('Validation report:')
+            report_lines.append(validation_report)
+        return '\n'.join(report_lines)
 
     def _create_pull_request_for_repository(
         self,
@@ -895,7 +900,7 @@ class AgentService(Service):
         task: Task,
         pull_requests: list[dict[str, str]],
         failed_repositories: list[str],
-        validation_report: str = '',
+        execution_report: str = '',
     ) -> bool:
         return self._add_task_comment(
             task.id,
@@ -903,7 +908,7 @@ class AgentService(Service):
                 task,
                 pull_requests,
                 failed_repositories,
-                validation_report,
+                execution_report,
             ),
             after_step='added review summary comment',
             failure_log_message='failed to add review summary comment for task %s',

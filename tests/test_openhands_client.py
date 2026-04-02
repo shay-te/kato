@@ -165,6 +165,35 @@ class OpenHandsClientTests(unittest.TestCase):
             'OpenHands model validation',
         )
 
+    def test_validate_model_access_smoke_test_runs_only_once_per_client(self) -> None:
+        client = OpenHandsClient(
+            'https://openhands.example',
+            'oh-token',
+            llm_settings={
+                'llm_model': 'openai/gpt-4o',
+            },
+            model_smoke_test_enabled=True,
+        )
+        count_response = mock_response(json_data=1)
+        settings_response = mock_response()
+
+        with patch.object(client, '_get', return_value=count_response), patch.object(
+            client,
+            '_post',
+            return_value=settings_response,
+        ), patch.object(
+            client,
+            '_run_prompt_result',
+            return_value={
+                'success': True,
+                'summary': 'hi',
+            },
+        ) as mock_run_prompt_result:
+            client.validate_connection()
+            client.validate_model_access()
+
+        self.assertEqual(mock_run_prompt_result.call_count, 1)
+
     def test_validate_model_access_checks_openrouter_model_availability(self) -> None:
         client = OpenHandsClient(
             'https://openhands.example',

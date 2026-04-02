@@ -796,6 +796,10 @@ class RepositoryService(Service):
             ['commit', '-m', commit_message],
             f'failed to commit changes for branch {branch_name}',
         )
+        self._ensure_clean_worktree(
+            local_path,
+            branch_name,
+        )
 
     def _ensure_branch_is_publishable(
         self,

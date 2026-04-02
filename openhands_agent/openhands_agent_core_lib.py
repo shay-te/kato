@@ -116,8 +116,6 @@ class OpenHandsAgentCoreLib(CoreLib):
         )
         task_model_access_validator = TaskModelAccessValidator(
             implementation_service,
-            testing_service,
-            skip_testing_enabled(open_cfg.openhands),
         )
         task_branch_push_validator = TaskBranchPushValidator(repository_service)
         task_branch_publishability_validator = TaskBranchPublishabilityValidator(

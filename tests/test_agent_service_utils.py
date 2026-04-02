@@ -183,8 +183,11 @@ class AgentServiceUtilsTests(unittest.TestCase):
             task,
             [],
             [],
-            'Validation report: no tests were defined.',
+            'Implementation summary:\n- client/app.ts\n  Updated the client flow.\n\nValidation report:\nNo tests were defined.',
         )
 
+        self.assertIn('Execution report:', summary)
+        self.assertIn('Implementation summary:', summary)
+        self.assertIn('Updated the client flow.', summary)
         self.assertIn('Validation report:', summary)
-        self.assertIn('Validation report: no tests were defined.', summary)
+        self.assertIn('No tests were defined.', summary)

@@ -79,6 +79,7 @@ class OpenHandsClient(RetryingClientBase):
         self._poll_interval_seconds = max(0.1, float(poll_interval_seconds or 0))
         self._max_poll_attempts = max(1, int(max_poll_attempts or 0))
         self._model_smoke_test_enabled = bool(model_smoke_test_enabled)
+        self._model_access_smoke_test_ran = False
 
     def validate_connection(self) -> None:
         response = self._get_with_retry(f'{self._APP_CONVERSATIONS_PATH}/count')
@@ -92,7 +93,7 @@ class OpenHandsClient(RetryingClientBase):
             return
         if is_openrouter_model(llm_model):
             self._validate_openrouter_connection(llm_model)
-        self._run_model_access_validation()
+        self._validate_model_access_smoke_test()
 
     def implement_task(
         self,
@@ -408,7 +409,13 @@ class OpenHandsClient(RetryingClientBase):
     def _validate_model_smoke_test(self) -> None:
         if not self._model_smoke_test_enabled:
             return
+        self._validate_model_access_smoke_test()
+
+    def _validate_model_access_smoke_test(self) -> None:
+        if self._model_access_smoke_test_ran:
+            return
         self._run_model_access_validation()
+        self._model_access_smoke_test_ran = True
 
     def _run_model_access_validation(self) -> None:
         llm_model = text_from_mapping(self._llm_settings, 'llm_model')
