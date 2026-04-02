@@ -344,14 +344,13 @@ class AgentService(Service):
             prepared_task,
             execution,
         )
-        if not self._comment_pull_request_summary(
+        self._comment_pull_request_summary(
             task,
             prepared_task,
             pull_requests,
             failed_repositories,
             execution,
-        ):
-            return None
+        )
         if failed_repositories:
             return self._partial_publish_result(
                 task,
@@ -368,9 +367,9 @@ class AgentService(Service):
         pull_requests: list[dict[str, str]],
         failed_repositories: list[str],
         execution: dict[str, str | bool],
-    ) -> bool:
+    ) -> None:
         if not pull_requests:
-            return True
+            return
         self._log_task_step(
             task.id,
             'adding review summary comment for %s',
@@ -385,13 +384,7 @@ class AgentService(Service):
             failed_repositories,
             validation_report,
         ):
-            return True
-        self._handle_started_task_failure(
-            task,
-            RuntimeError('failed to add completion comment'),
-            prepared_task=prepared_task,
-        )
-        return False
+            return
 
     def _partial_publish_result(
         self,

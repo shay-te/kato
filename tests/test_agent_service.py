@@ -1048,11 +1048,10 @@ class AgentServiceTests(unittest.TestCase):
             'PROJ-1',
         )
 
-    def test_process_assigned_task_reopens_when_completion_comment_fails(self) -> None:
+    def test_process_assigned_task_moves_to_review_when_completion_comment_fails(self) -> None:
         self.task_client.add_comment.side_effect = [
             None,
             RuntimeError('comment write failed'),
-            None,
         ]
         self.service.logger = Mock()
         task = self.task_data_access.get_assigned_tasks()[0]
@@ -1060,28 +1059,45 @@ class AgentServiceTests(unittest.TestCase):
         with patch.object(self.service, 'logger', self.service.logger):
             results = self.service.process_assigned_task(task)
 
-        self.assertIsNone(results)
+        self.assertEqual(results[StatusFields.STATUS], StatusFields.READY_FOR_REVIEW)
         self.assertEqual(
             self.task_client.move_issue_to_state.call_args_list,
             [
                 unittest.mock.call('PROJ-1', 'State', 'In Progress'),
-                unittest.mock.call('PROJ-1', 'State', 'Todo'),
+                unittest.mock.call('PROJ-1', 'State', 'To Verify'),
             ],
         )
-        self.assertEqual(self.task_client.add_comment.call_count, 3)
+        self.assertEqual(self.task_client.add_comment.call_count, 2)
         self.assertIn(
             'started working on this task',
             self.task_client.add_comment.call_args_list[0].args[1],
         )
-        self.assertIn(
-            'stopped working on this task',
-            self.task_client.add_comment.call_args_list[2].args[1],
+        self.assertEqual(
+            self.service._state_registry.processed_task_map,
+            {
+                'PROJ-1': {
+                    StatusFields.STATUS: StatusFields.READY_FOR_REVIEW,
+                    PullRequestFields.PULL_REQUESTS: [
+                        {
+                            PullRequestFields.REPOSITORY_ID: 'client',
+                            PullRequestFields.ID: '17',
+                            PullRequestFields.TITLE: 'PROJ-1: Fix bug',
+                            PullRequestFields.URL: 'https://bitbucket/pr/17',
+                            PullRequestFields.SOURCE_BRANCH: 'feature/proj-1/client',
+                            PullRequestFields.DESTINATION_BRANCH: 'master',
+                        },
+                        {
+                            PullRequestFields.REPOSITORY_ID: 'backend',
+                            PullRequestFields.ID: '18',
+                            PullRequestFields.TITLE: 'PROJ-1: Fix bug',
+                            PullRequestFields.URL: 'https://github/pr/18',
+                            PullRequestFields.SOURCE_BRANCH: 'feature/proj-1/backend',
+                            PullRequestFields.DESTINATION_BRANCH: 'main',
+                        },
+                    ],
+                }
+            },
         )
-        self.assertIn(
-            'failed to add completion comment',
-            self.task_client.add_comment.call_args_list[2].args[1],
-        )
-        self.assertEqual(self.service._state_registry.processed_task_map, {})
         self.assertEqual(self.email_core_lib.send.call_count, 2)
         self.service.logger.exception.assert_called_once_with(
             'failed to add review summary comment for task %s',
