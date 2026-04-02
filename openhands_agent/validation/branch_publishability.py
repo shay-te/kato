@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from openhands_agent.data_layers.service.validation.base import ValidationBase
+from openhands_agent.validation.base import ValidationBase
 
 if TYPE_CHECKING:
     from openhands_agent.data_layers.service.repository_service import RepositoryService

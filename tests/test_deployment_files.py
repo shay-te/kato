@@ -276,6 +276,9 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('make configure', readme_text)
         self.assertFalse((REPO_ROOT / 'openhands_agent' / 'fields.py').exists())
         self.assertFalse((REPO_ROOT / 'openhands_agent' / 'error_handling.py').exists())
+        self.assertFalse(
+            any((REPO_ROOT / 'openhands_agent' / 'data_layers' / 'service' / 'validation').glob('*.py'))
+        )
 
     def test_helper_modules_use_utils_suffix(self) -> None:
         helpers_dir = REPO_ROOT / 'openhands_agent' / 'helpers'
@@ -289,6 +292,21 @@ class DeploymentFilesTests(unittest.TestCase):
             path.name for path in helper_modules if not path.name.endswith('_utils.py')
         ]
         self.assertEqual(non_utils_modules, [])
+
+    def test_validation_modules_live_in_top_level_validation_package(self) -> None:
+        validation_dir = REPO_ROOT / 'openhands_agent' / 'validation'
+
+        validation_modules = [
+            path.name
+            for path in validation_dir.glob('*.py')
+            if path.name != '__init__.py'
+        ]
+        self.assertIn('base.py', validation_modules)
+        self.assertIn('branch_publishability.py', validation_modules)
+        self.assertIn('branch_push.py', validation_modules)
+        self.assertIn('model_access.py', validation_modules)
+        self.assertIn('repository_connections.py', validation_modules)
+        self.assertIn('startup_dependency_validator.py', validation_modules)
 
     def test_repo_includes_bootstrap_automation_files(self) -> None:
         bootstrap_text = (REPO_ROOT / 'scripts' / 'bootstrap.sh').read_text(encoding='utf-8')

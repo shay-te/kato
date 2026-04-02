@@ -11,6 +11,7 @@ This repository uses OpenHands to implement YouTrack tasks and fix review commen
 - Reuse existing utilities before introducing duplicate helper logic.
 - Do not create compatibility shim modules, barrel exports, or `__all__` re-export files; import from the real module directly.
 - Put shared utility modules under `openhands_agent/helpers/` instead of scattering them across service or root packages, and name them with the `_utils.py` suffix.
+- Put validation rules under `openhands_agent/validation/` instead of `data_layers/service/validation/`.
 
 ## Required Behavior
 

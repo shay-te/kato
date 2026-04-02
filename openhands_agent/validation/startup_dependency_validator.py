@@ -5,12 +5,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from openhands_agent.validation.base import ValidationBase
 from openhands_agent.helpers.retry_utils import is_retryable_exception
-from openhands_agent.data_layers.service.validation.base import ValidationBase
 
 if TYPE_CHECKING:
     from openhands_agent.data_layers.service.implementation_service import ImplementationService
-    from openhands_agent.data_layers.service.validation.repository_connections import (
+    from openhands_agent.validation.repository_connections import (
         RepositoryConnectionsValidator,
     )
     from openhands_agent.data_layers.service.task_service import TaskService

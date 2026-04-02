@@ -1,19 +1,19 @@
 import unittest
 
-from openhands_agent.data_layers.service.validation.base import ValidationBase
-from openhands_agent.data_layers.service.validation.branch_publishability import (
+from openhands_agent.validation.base import ValidationBase
+from openhands_agent.validation.branch_publishability import (
     TaskBranchPublishabilityValidator,
 )
-from openhands_agent.data_layers.service.validation.branch_push import (
+from openhands_agent.validation.branch_push import (
     TaskBranchPushValidator,
 )
-from openhands_agent.data_layers.service.validation.model_access import (
+from openhands_agent.validation.model_access import (
     TaskModelAccessValidator,
 )
-from openhands_agent.data_layers.service.validation.repository_connections import (
+from openhands_agent.validation.repository_connections import (
     RepositoryConnectionsValidator,
 )
-from openhands_agent.data_layers.service.validation.startup_dependency_validator import (
+from openhands_agent.validation.startup_dependency_validator import (
     StartupDependencyValidator,
 )
 

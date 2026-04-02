@@ -3,19 +3,19 @@ from collections.abc import Callable
 from core_lib.data_layers.service.service import Service
 
 from openhands_agent.client.ticket_client_base import TicketClientBase
-from openhands_agent.data_layers.service.validation.branch_publishability import (
+from openhands_agent.validation.branch_publishability import (
     TaskBranchPublishabilityValidator,
 )
-from openhands_agent.data_layers.service.validation.branch_push import (
+from openhands_agent.validation.branch_push import (
     TaskBranchPushValidator,
 )
-from openhands_agent.data_layers.service.validation.model_access import (
+from openhands_agent.validation.model_access import (
     TaskModelAccessValidator,
 )
-from openhands_agent.data_layers.service.validation.repository_connections import (
+from openhands_agent.validation.repository_connections import (
     RepositoryConnectionsValidator,
 )
-from openhands_agent.data_layers.service.validation.startup_dependency_validator import (
+from openhands_agent.validation.startup_dependency_validator import (
     StartupDependencyValidator,
 )
 from openhands_agent.helpers.error_handling_utils import run_best_effort

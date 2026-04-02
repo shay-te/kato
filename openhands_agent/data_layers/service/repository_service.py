@@ -49,7 +49,7 @@ class RepositoryService(Service):
         return list(self._repositories)
 
     def validate_connections(self) -> None:
-        from openhands_agent.data_layers.service.validation.repository_connections import (
+        from openhands_agent.validation.repository_connections import (
             RepositoryConnectionsValidator,
         )
 
@@ -104,7 +104,7 @@ class RepositoryService(Service):
         repositories: list[object],
         repository_branches: dict[str, str],
     ) -> list[object]:
-        from openhands_agent.data_layers.service.validation.branch_publishability import (
+        from openhands_agent.validation.branch_publishability import (
             TaskBranchPublishabilityValidator,
         )
 
@@ -119,7 +119,7 @@ class RepositoryService(Service):
         repositories: list[object],
         repository_branches: dict[str, str],
     ) -> list[object]:
-        from openhands_agent.data_layers.service.validation.branch_push import (
+        from openhands_agent.validation.branch_push import (
             TaskBranchPushValidator,
         )
 
