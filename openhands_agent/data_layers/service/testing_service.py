@@ -18,6 +18,9 @@ class TestingService(Service):
     def validate_connection(self) -> None:
         self._client.validate_connection()
 
+    def validate_model_access(self) -> None:
+        self._client.validate_model_access()
+
     def test_task(self, task: Task) -> dict[str, str | bool]:
         self.logger.info('delegating testing validation for task %s', task.id)
         return self._client.test_task(task)

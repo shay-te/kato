@@ -49,6 +49,7 @@ class AgentServiceTests(unittest.TestCase):
         )
         self.openhands_client = types.SimpleNamespace(
             validate_connection=Mock(),
+            validate_model_access=Mock(),
             implement_task=Mock(
                 return_value={
                     ImplementationFields.SUCCESS: True,
@@ -68,13 +69,17 @@ class AgentServiceTests(unittest.TestCase):
         self.implementation_service = ImplementationService(self.openhands_client)
         self.testing_service = TestingService(self.openhands_client)
         self.repository_service = types.SimpleNamespace(
-            validate_connections=Mock(),
+            repositories=[self.client_repo, self.backend_repo],
+            _validate_inventory=Mock(),
+            _validate_git_executable=Mock(),
+            _prepare_repository_access=Mock(),
+            _validate_repository_git_access=Mock(),
             resolve_task_repositories=Mock(return_value=[self.client_repo, self.backend_repo]),
             prepare_task_repositories=Mock(side_effect=lambda repositories: repositories),
             prepare_task_branches=Mock(side_effect=lambda repositories, repository_branches: repositories),
-            validate_task_branches_are_publishable=Mock(
-                side_effect=lambda repositories, repository_branches: repositories
-            ),
+            destination_branch=Mock(return_value='master'),
+            _ensure_branch_is_pushable=Mock(),
+            _ensure_branch_has_task_changes=Mock(),
             restore_task_repositories=Mock(),
             get_repository=Mock(side_effect=lambda repository_id: {
                 'client': self.client_repo,
@@ -151,13 +156,18 @@ class AgentServiceTests(unittest.TestCase):
 
         self.service.validate_connections()
 
+        self.repository_service._validate_inventory.assert_called_once_with()
+        self.repository_service._validate_git_executable.assert_called_once_with()
+        self.repository_service._prepare_repository_access.assert_any_call(self.client_repo)
+        self.repository_service._prepare_repository_access.assert_any_call(self.backend_repo)
+        self.repository_service._validate_repository_git_access.assert_any_call(self.client_repo)
+        self.repository_service._validate_repository_git_access.assert_any_call(self.backend_repo)
         self.task_client.validate_connection.assert_called_once_with(
             project='PROJ',
             assignee='me',
             states=['Todo', 'Open'],
         )
         self.assertEqual(self.openhands_client.validate_connection.call_count, 2)
-        self.repository_service.validate_connections.assert_called_once_with()
 
     def test_validate_connections_raises_with_service_stack_traces(self) -> None:
         self.task_client.validate_connection = Mock(side_effect=RuntimeError('youtrack down'))
@@ -194,11 +204,29 @@ class AgentServiceTests(unittest.TestCase):
             str(exc_context.exception),
         )
 
+    def test_process_assigned_task_stops_when_model_access_validation_fails(self) -> None:
+        self.service.logger = Mock()
+        self.openhands_client.validate_model_access = Mock(
+            side_effect=RuntimeError('openrouter is unavailable')
+        )
+        task = self.task_data_access.get_assigned_tasks()[0]
+
+        results = self.service.process_assigned_task(task)
+
+        self.assertIsNone(results)
+        self.repository_service.resolve_task_repositories.assert_not_called()
+        self.repository_service.prepare_task_repositories.assert_not_called()
+        self.repository_service.prepare_task_branches.assert_not_called()
+        self.task_client.move_issue_to_state.assert_not_called()
+        self.task_client.add_comment.assert_called()
+        self.openhands_client.implement_task.assert_not_called()
+        self.openhands_client.test_task.assert_not_called()
+
     def test_validate_connections_reports_repository_inventory_errors_gracefully(self) -> None:
         self.task_client.validate_connection = Mock()
         self.openhands_client.validate_connection = Mock()
-        self.repository_service.validate_connections = Mock(
-            side_effect=ValueError('at least one repository must be configured')
+        self.repository_service._validate_inventory.side_effect = ValueError(
+            'at least one repository must be configured'
         )
         self.service.logger = Mock()
 
@@ -213,12 +241,14 @@ class AgentServiceTests(unittest.TestCase):
     def test_validate_connections_stops_after_repository_validation_failure(self) -> None:
         self.task_client.validate_connection = Mock()
         self.openhands_client.validate_connection = Mock()
-        self.repository_service.validate_connections = Mock(side_effect=RuntimeError('[Error] /workspace/project missing git permissions. cannot work.'))
+        self.repository_service._validate_inventory.side_effect = RuntimeError(
+            '[Error] /workspace/project missing git permissions. cannot work.'
+        )
 
         with self.assertRaisesRegex(RuntimeError, r'\[Error\] /workspace/project missing git permissions\. cannot work\.') as exc_context:
             self.service.validate_connections()
 
-        self.repository_service.validate_connections.assert_called_once_with()
+        self.repository_service._validate_inventory.assert_called_once_with()
         self.task_client.validate_connection.assert_not_called()
         self.openhands_client.validate_connection.assert_not_called()
         self.assertEqual(str(exc_context.exception), '[Error] /workspace/project missing git permissions. cannot work.')
@@ -385,7 +415,7 @@ class AgentServiceTests(unittest.TestCase):
 
     def test_process_assigned_task_reopens_when_task_branch_validation_fails_before_testing(self) -> None:
         task = self.task_data_access.get_assigned_tasks()[0]
-        self.repository_service.validate_task_branches_are_publishable.side_effect = RuntimeError(
+        self.repository_service._ensure_branch_has_task_changes.side_effect = RuntimeError(
             'branch feature/proj-1/client has no task changes ahead of master'
         )
 
@@ -731,6 +761,36 @@ class AgentServiceTests(unittest.TestCase):
             'OpenHands agent could not safely process this task: failed to prepare task branches',
             self.task_client.add_comment.call_args.args[1],
         )
+
+    def test_process_assigned_task_restores_repositories_when_git_push_validation_fails_before_implementation(self) -> None:
+        self.repository_service._ensure_branch_is_pushable.side_effect = RuntimeError(
+            'failed to push branch PROJ-1'
+        )
+        task = self.task_data_access.get_assigned_tasks()[0]
+
+        results = self.service.process_assigned_task(task)
+
+        self.assertIsNone(results)
+        self.repository_service.resolve_task_repositories.assert_called_once_with(task)
+        self.repository_service.prepare_task_repositories.assert_called_once_with(
+            [self.client_repo, self.backend_repo]
+        )
+        self.repository_service.prepare_task_branches.assert_called_once()
+        self.repository_service.restore_task_repositories.assert_called_once_with(
+            [self.client_repo, self.backend_repo],
+            force=True,
+        )
+        self.task_client.add_comment.assert_called_once()
+        self.assertIn(
+            'OpenHands agent stopped working on this task: failed to push branch PROJ-1',
+            self.task_client.add_comment.call_args.args[1],
+        )
+        self.assertEqual(
+            self.task_client.move_issue_to_state.call_args_list,
+            [unittest.mock.call('PROJ-1', 'State', 'Todo')],
+        )
+        self.openhands_client.implement_task.assert_not_called()
+        self.openhands_client.test_task.assert_not_called()
 
     def test_process_assigned_task_handles_ambiguous_or_missing_repository_scope(self) -> None:
         self.repository_service.resolve_task_repositories.side_effect = ValueError('no configured repository matched task PROJ-1')

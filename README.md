@@ -290,11 +290,11 @@ The `openhands` container reuses the same `OPENHANDS_LLM_*` and `AWS_*` values f
 | --- | --- |
 | `OPENHANDS_LLM_MODEL` | Primary OpenHands model name. |
 | `OPENHANDS_LLM_API_KEY` | API key for the primary OpenHands model. |
-| `OPENHANDS_LLM_BASE_URL` | Optional custom base URL for the primary OpenHands model. |
-| `OPENHANDS_MODEL_SMOKE_TEST_ENABLED` | Runs a small model smoke test during connection validation. |
+| `OPENHANDS_LLM_BASE_URL` | Optional custom base URL for the primary OpenHands model. OpenRouter typically uses `https://openrouter.ai/api/v1`. |
+| `OPENHANDS_MODEL_SMOKE_TEST_ENABLED` | Runs an extra startup model smoke test during connection validation. |
 | `OPENHANDS_TESTING_LLM_MODEL` | Model name used by the dedicated testing OpenHands server. |
 | `OPENHANDS_TESTING_LLM_API_KEY` | API key used by the dedicated testing OpenHands server. |
-| `OPENHANDS_TESTING_LLM_BASE_URL` | Base URL used by the dedicated testing OpenHands server. |
+| `OPENHANDS_TESTING_LLM_BASE_URL` | Base URL used by the dedicated testing OpenHands server. OpenRouter testing models should use `https://openrouter.ai/api/v1`. |
 | `OPENHANDS_LLM_API_VERSION` | Optional API version passed through to the OpenHands LLM config. |
 | `OPENHANDS_LLM_NUM_RETRIES` | Optional LLM retry count passed through to OpenHands. |
 | `OPENHANDS_LLM_TIMEOUT` | Optional LLM timeout passed through to OpenHands. |
@@ -335,6 +335,7 @@ This project is meant to be usable by other teams, so a few things are worth cal
 - The workflow is split on purpose:
   - OpenHands edits files in the task branch.
   - orchestration handles commit, push, pull request creation, and branch restoration.
+- Before task work starts, the agent runs a model-access preflight for the configured OpenHands model(s), so invalid Bedrock or OpenRouter credentials fail fast before implementation begins.
 - Testing behavior is controlled by separate flags:
   - `OPENHANDS_SKIP_TESTING=true` skips the validation conversation entirely.
   - `OPENHANDS_TESTING_CONTAINER_ENABLED=true` enables the dedicated testing OpenHands container.

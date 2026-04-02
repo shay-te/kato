@@ -5,7 +5,10 @@ import logging
 import os
 from pathlib import Path
 
-from openhands_agent.openhands_config_utils import is_bedrock_model
+from openhands_agent.openhands_config_utils import (
+    is_bedrock_model,
+    is_openrouter_model,
+)
 from openhands_agent.repository_discovery import discover_git_repositories
 from openhands_agent.text_utils import (
     alphanumeric_lower_text,
@@ -242,7 +245,14 @@ def validate_openhands_env(env: dict[str, str]) -> list[str]:
         errors.append('missing required OpenHands env var: OPENHANDS_LLM_MODEL')
         return errors
 
-    errors.extend(_validate_openhands_model_auth(env, model, 'OPENHANDS_LLM_API_KEY'))
+    errors.extend(
+        _validate_openhands_model_auth(
+            env,
+            model,
+            'OPENHANDS_LLM_API_KEY',
+            'OPENHANDS_LLM_BASE_URL',
+        )
+    )
     errors.extend(_validate_openhands_testing_container_env(env))
     return errors
 
@@ -270,6 +280,7 @@ def _validate_openhands_testing_container_env(env: dict[str, str]) -> list[str]:
                 env,
                 testing_model,
                 'OPENHANDS_TESTING_LLM_API_KEY',
+                'OPENHANDS_TESTING_LLM_BASE_URL',
             )
         )
     return errors
@@ -279,6 +290,7 @@ def _validate_openhands_model_auth(
     env: dict[str, str],
     model: str,
     api_key_key: str,
+    base_url_key: str = '',
 ) -> list[str]:
     if is_bedrock_model(model):
         has_bearer = bool(normalized_text(env.get('AWS_BEARER_TOKEN_BEDROCK', '')))
@@ -293,7 +305,12 @@ def _validate_openhands_model_auth(
             ]
         return []
 
-    return [f'{model} requires {key}' for key in _missing(env, [api_key_key])]
+    errors = [f'{model} requires {key}' for key in _missing(env, [api_key_key])]
+    if is_openrouter_model(model) and base_url_key:
+        errors.extend(
+            [f'{model} requires {key}' for key in _missing(env, [base_url_key])]
+        )
+    return errors
 
 
 def _validate(mode: str, env: dict[str, str]) -> list[str]:

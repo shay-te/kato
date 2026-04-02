@@ -49,11 +49,11 @@ class RepositoryService(Service):
         return list(self._repositories)
 
     def validate_connections(self) -> None:
-        self._validate_inventory()
-        self._validate_git_executable()
-        for repository in self._repositories:
-            self._prepare_repository_access(repository)
-            self._validate_repository_git_access(repository)
+        from openhands_agent.data_layers.service.validation.repository_connections import (
+            RepositoryConnectionsValidator,
+        )
+
+        RepositoryConnectionsValidator(self).validate()
 
     def resolve_task_repositories(self, task: Task) -> list[object]:
         searchable_text = f'{task.summary}\n{task.description}'.lower()
@@ -104,19 +104,29 @@ class RepositoryService(Service):
         repositories: list[object],
         repository_branches: dict[str, str],
     ) -> list[object]:
-        self._validate_git_executable()
-        for repository in repositories:
-            branch_name = normalized_text(repository_branches.get(repository.id, ''))
-            if not branch_name:
-                raise ValueError(
-                    f'missing task branch name for repository {repository.id}'
-                )
-            destination_branch = self.destination_branch(repository)
-            self._ensure_branch_has_task_changes(
-                repository.local_path,
-                branch_name,
-                destination_branch,
-            )
+        from openhands_agent.data_layers.service.validation.branch_publishability import (
+            TaskBranchPublishabilityValidator,
+        )
+
+        TaskBranchPublishabilityValidator(self).validate(
+            repositories,
+            repository_branches,
+        )
+        return repositories
+
+    def validate_task_branches_are_pushable(
+        self,
+        repositories: list[object],
+        repository_branches: dict[str, str],
+    ) -> list[object]:
+        from openhands_agent.data_layers.service.validation.branch_push import (
+            TaskBranchPushValidator,
+        )
+
+        TaskBranchPushValidator(self).validate(
+            repositories,
+            repository_branches,
+        )
         return repositories
 
     def get_repository(self, repository_id: str):
@@ -429,6 +439,31 @@ class RepositoryService(Service):
                 ) from None
             raise RuntimeError(
                 f'[Error] {local_path} git validation failed. {error_detail}'
+            ) from None
+
+    def _ensure_branch_is_pushable(
+        self,
+        local_path: str,
+        branch_name: str,
+        repository=None,
+    ) -> None:
+        try:
+            self._push_branch(local_path, branch_name, repository, dry_run=True)
+        except RuntimeError as exc:
+            error_text = str(exc)
+            error_detail = error_text.split(': ', 1)[1] if ': ' in error_text else error_text
+            if (
+                'could not read Password' in error_text
+                or 'terminal prompts disabled' in error_text
+                or 'Authentication failed' in error_text
+                or 'credentials lack one or more required privilege scopes' in error_text
+            ):
+                raise RuntimeError(
+                    f'[Error] {local_path} missing git push permissions. cannot work. '
+                    f'{error_detail}'
+                ) from None
+            raise RuntimeError(
+                f'[Error] {local_path} git push validation failed. {error_detail}'
             ) from None
 
     def _prepare_task_repository(self, repository):
@@ -1047,10 +1082,21 @@ class RepositoryService(Service):
             f'{result.stderr.strip() or result.stdout.strip() or "git command failed"}'
         )
 
-    def _push_branch(self, local_path: str, branch_name: str, repository=None) -> None:
+    def _push_branch(
+        self,
+        local_path: str,
+        branch_name: str,
+        repository=None,
+        *,
+        dry_run: bool = False,
+    ) -> None:
+        push_args = ['push']
+        if dry_run:
+            push_args.append('--dry-run')
+        push_args.extend(['-u', 'origin', branch_name])
         self._run_git(
             local_path,
-            ['push', '-u', 'origin', branch_name],
+            push_args,
             f'failed to push branch {branch_name}',
             repository,
         )

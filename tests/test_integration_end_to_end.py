@@ -124,6 +124,7 @@ class TestAgentEndToEndIntegration(unittest.TestCase):
 
         openhands_client = types.SimpleNamespace(
             validate_connection=Mock(),
+            validate_model_access=Mock(),
             implement_task=Mock(
                 return_value={
                     ImplementationFields.SUCCESS: True,

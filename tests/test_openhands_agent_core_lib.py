@@ -42,6 +42,7 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
 
         repository = cfg.openhands_agent.repositories[0]
         repository_service = Mock()
+        repository_service.repositories = [repository]
         repository_service.resolve_task_repositories.return_value = [repository]
         repository_service.prepare_task_repositories.side_effect = lambda repositories: repositories
         repository_service.prepare_task_branches.side_effect = (

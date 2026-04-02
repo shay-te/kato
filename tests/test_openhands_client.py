@@ -1,5 +1,6 @@
 import unittest
 import types
+import os
 from unittest.mock import Mock, call, patch
 
 from openhands_agent.client.openhands_client import OpenHandsClient
@@ -137,6 +138,63 @@ class OpenHandsClientTests(unittest.TestCase):
             'OpenHands model validation',
         )
 
+    def test_validate_model_access_runs_even_when_startup_smoke_test_is_disabled(self) -> None:
+        client = OpenHandsClient(
+            'https://openhands.example',
+            'oh-token',
+            llm_settings={
+                'llm_model': 'openai/gpt-4o',
+            },
+            model_smoke_test_enabled=False,
+        )
+
+        with patch.object(
+            client,
+            '_run_prompt_result',
+            return_value={
+                'success': True,
+                'summary': 'hi',
+            },
+        ) as mock_run_prompt_result:
+            client.validate_model_access()
+
+        mock_run_prompt_result.assert_called_once()
+        self.assertIn('Reply with exactly hi', mock_run_prompt_result.call_args.kwargs['prompt'])
+        self.assertEqual(
+            mock_run_prompt_result.call_args.kwargs['title'],
+            'OpenHands model validation',
+        )
+
+    def test_validate_model_access_checks_openrouter_model_availability(self) -> None:
+        client = OpenHandsClient(
+            'https://openhands.example',
+            'oh-token',
+            llm_settings={
+                'llm_model': 'openrouter/openai/gpt-4o-mini',
+                'llm_base_url': 'https://openrouter.ai/api/v1',
+            },
+            model_smoke_test_enabled=False,
+        )
+
+        with patch(
+            'openhands_agent.client.openhands_client.OpenRouterClient.validate_model_available'
+        ) as mock_validate_model, patch.dict(
+            os.environ,
+            {'LLM_API_KEY': 'or-key'},
+            clear=False,
+        ), patch.object(
+            client,
+            '_run_prompt_result',
+            return_value={
+                'success': True,
+                'summary': 'hi',
+            },
+        ) as mock_run_prompt_result:
+            client.validate_model_access()
+
+        mock_validate_model.assert_called_once_with('openrouter/openai/gpt-4o-mini')
+        mock_run_prompt_result.assert_called_once()
+
     def test_validate_connection_syncs_base_url_without_persisting_api_key(self) -> None:
         client = OpenHandsClient(
             'https://openhands.example',
@@ -188,6 +246,9 @@ class OpenHandsClientTests(unittest.TestCase):
         self.assertIn('When you finish, use the finish tool.', prompt)
         self.assertIn('Do not pass extra finish-tool arguments', prompt)
         self.assertIn('Do not report success until all intended changes are saved in the repository worktree', prompt)
+        self.assertIn('Make the smallest possible change needed to satisfy the task.', prompt)
+        self.assertIn('Prefer editing only the exact lines or blocks that need to change.', prompt)
+        self.assertIn('Do not change indentation, formatting, or unrelated lines when a narrow edit is enough.', prompt)
         self.assertIn('Do not run npm run build, yarn build, pnpm build, or any equivalent production build command unless the task explicitly requires it.', prompt)
         self.assertIn('Do not commit or stage generated build artifacts such as build, dist, out, coverage, or target directories.', prompt)
         self.assertIn('If no dedicated tests are defined for this task', prompt)
@@ -241,6 +302,9 @@ class OpenHandsClientTests(unittest.TestCase):
         self.assertIn('Do not create a pull request.', prompt)
         self.assertIn('When you finish, use the finish tool.', prompt)
         self.assertIn('Do not report success until all intended changes are saved in the repository worktree', prompt)
+        self.assertIn('Make the smallest possible change needed for the validation work.', prompt)
+        self.assertIn('Prefer editing only the exact lines or blocks that need to change.', prompt)
+        self.assertIn('Do not change indentation, formatting, or unrelated lines when a narrow edit is enough.', prompt)
         self.assertIn('Do not run npm run build, yarn build, pnpm build, or any equivalent production build command unless the task explicitly requires it.', prompt)
         self.assertIn('Do not commit or stage generated build artifacts such as build, dist, out, coverage, or target directories.', prompt)
         self.assertIn('If no dedicated tests are defined or available', prompt)
@@ -788,6 +852,9 @@ class OpenHandsClientTests(unittest.TestCase):
         self.assertIn('Review comment context:', prompt)
         self.assertIn('- reviewer: Please add a test.', prompt)
         self.assertIn('When you finish, use the finish tool.', prompt)
+        self.assertIn('Make the smallest possible change needed to address the review comment.', prompt)
+        self.assertIn('Prefer editing only the exact lines or blocks that need to change.', prompt)
+        self.assertIn('Do not change indentation, formatting, or unrelated lines when a narrow edit is enough.', prompt)
 
     def test_event_highlight_text_describes_shell_action(self) -> None:
         highlight = OpenHandsClient._event_highlight_text(

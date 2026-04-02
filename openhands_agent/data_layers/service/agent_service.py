@@ -1,13 +1,18 @@
-import traceback
 from collections.abc import Callable
 
 from core_lib.data_layers.service.service import Service
 
 from openhands_agent.client.ticket_client_base import TicketClientBase
+from openhands_agent.data_layers.service.validation import (
+    RepositoryConnectionsValidator,
+    StartupDependencyValidator,
+    TaskBranchPublishabilityValidator,
+    TaskBranchPushValidator,
+    TaskModelAccessValidator,
+)
 from openhands_agent.error_handling import run_best_effort
 from openhands_agent.logging_utils import configure_logger
 from openhands_agent.pull_request_context import build_pull_request_context
-from openhands_agent.client.retry_utils import is_retryable_exception
 from openhands_agent.data_layers.data.review_comment import ReviewComment
 from openhands_agent.data_layers.data.task import Task
 from openhands_agent.fields import (
@@ -19,19 +24,23 @@ from openhands_agent.fields import (
     TaskCommentFields,
 )
 from openhands_agent.data_layers.service.implementation_service import ImplementationService
-from openhands_agent.data_layers.service.agent_service_utils import (
-    PreparedTaskContext,
-    ReviewFixContext,
-    comment_context_entry,
+from openhands_agent.data_layers.service.pull_request_utils import (
     pull_request_repositories_text,
     pull_request_summary_comment,
+)
+from openhands_agent.data_layers.service.review_comment_utils import (
+    ReviewFixContext,
+    comment_context_entry,
+    review_comment_fixed_comment,
+    review_comment_resolution_key,
+    review_fix_context_from_mapping,
+    review_fix_result,
+)
+from openhands_agent.data_layers.service.task_context_utils import (
+    PreparedTaskContext,
     repository_branch_text,
     repository_destination_text,
     repository_ids_text,
-    review_fix_context_from_mapping,
-    review_fix_result,
-    review_comment_fixed_comment,
-    review_comment_resolution_key,
     session_suffix,
     task_has_actionable_definition,
     task_started_comment,
@@ -64,6 +73,25 @@ class AgentService(Service):
         self._repository_service = repository_service
         self._notification_service = notification_service
         self._skip_testing = bool(skip_testing)
+        self._repository_connections_validator = RepositoryConnectionsValidator(
+            self._repository_service
+        )
+        self._startup_validator = StartupDependencyValidator(
+            self._repository_connections_validator,
+            self._task_service,
+            self._implementation_service,
+            self._testing_service,
+            self._skip_testing,
+        )
+        self._task_model_access_validator = TaskModelAccessValidator(
+            self._implementation_service,
+            self._testing_service,
+            self._skip_testing,
+        )
+        self._task_branch_push_validator = TaskBranchPushValidator(self._repository_service)
+        self._task_branch_publishability_validator = TaskBranchPublishabilityValidator(
+            self._repository_service
+        )
         self._pull_request_context_map: dict[str, list[dict[str, str]]] = {}
         self._processed_task_map: dict[str, dict[str, object]] = {}
         self._processed_review_comment_map: dict[tuple[str, str], set[str]] = {}
@@ -73,97 +101,7 @@ class AgentService(Service):
         return self._notification_service
 
     def validate_connections(self) -> None:
-        try:
-            self._repository_service.validate_connections()
-            self.logger.info('validated repositories connection')
-        except Exception as exc:
-            self.logger.error('failed to validate repositories connection: %s', exc)
-            raise RuntimeError(str(exc)) from None
-
-        summaries: list[str] = []
-        details: list[str] = []
-        for service_name, validate, max_retries in self._connection_validations():
-            self._collect_validation_result(
-                service_name,
-                validate,
-                max_retries,
-                summaries,
-                details,
-            )
-
-        if details:
-            raise RuntimeError(
-                'startup dependency validation failed:\n\n'
-                + '\n'.join(f'- {summary}' for summary in summaries)
-                + '\n\nDetails:\n\n'
-                + '\n\n'.join(details)
-            )
-
-    def _connection_validations(self) -> list[tuple[str, Callable[[], None], int]]:
-        validations = [
-            (
-                self._task_service.provider_name,
-                self._task_service.validate_connection,
-                self._task_service.max_retries,
-            ),
-            (
-                'openhands',
-                self._implementation_service.validate_connection,
-                self._implementation_service.max_retries,
-            ),
-        ]
-        if not self._skip_testing:
-            validations.append(
-                (
-                    'openhands_testing',
-                    self._testing_service.validate_connection,
-                    self._testing_service.max_retries,
-                )
-            )
-        return validations
-
-    def _collect_validation_result(
-        self,
-        service_name: str,
-        validate: Callable[[], None],
-        max_retries: int,
-        summaries: list[str],
-        details: list[str],
-    ) -> None:
-        try:
-            validate()
-            self.logger.info('validated %s connection', service_name)
-        except Exception as exc:
-            if service_name == 'repositories':
-                self.logger.error(
-                    'failed to validate %s connection: %s',
-                    service_name,
-                    exc,
-                )
-                summaries.append(
-                    self._validation_failure_summary(service_name, exc, max_retries)
-                )
-                details.append(f'[{service_name}] {exc}')
-                return
-
-            self.logger.exception('failed to validate %s connection', service_name)
-            summaries.append(
-                self._validation_failure_summary(service_name, exc, max_retries)
-            )
-            details.append(f'[{service_name}]\n{traceback.format_exc().rstrip()}')
-
-    @staticmethod
-    def _validation_failure_summary(
-        service_name: str,
-        exc: Exception,
-        max_retries: int,
-    ) -> str:
-        if is_retryable_exception(exc):
-            return (
-                f'unable to connect to {service_name} '
-                f'(tried {max(1, max_retries)} times)'
-            )
-        return f'unable to validate {service_name}: {exc}'
+        self._startup_validator.validate(self.logger)
 
     def get_assigned_tasks(self) -> list[Task]:
         return self._task_service.get_assigned_tasks()
@@ -172,6 +110,13 @@ class AgentService(Service):
         processed_result = self._processed_task_result(task.id)
         if processed_result is not None:
             return processed_result
+
+        try:
+            self._task_model_access_validator.validate(task)
+        except Exception as exc:
+            self._handle_task_failure(task, exc)
+            return None
+        self._log_task_step(task.id, 'OpenHands model access validated')
 
         prepared_task = self._prepare_task_execution_context(task)
         if prepared_task is None or isinstance(prepared_task, dict):
@@ -280,8 +225,19 @@ class AgentService(Service):
             execution.pop(ImplementationFields.MESSAGE, None)
             self._log_task_step(task.id, 'testing validation skipped by configuration')
             return True, None
-        if not self._validate_task_branches_are_publishable(task, prepared_task):
+        try:
+            self._task_branch_publishability_validator.validate(
+                prepared_task.repositories,
+                prepared_task.repository_branches,
+            )
+        except Exception as exc:
+            self.logger.exception(
+                'failed to validate task branches before testing for task %s',
+                task.id,
+            )
+            self._handle_started_task_failure(task, exc)
             return False, None
+        self._log_task_step(task.id, 'task branches contain changes')
         testing = self._request_testing_validation(task)
         if testing is None:
             return False, None
@@ -291,27 +247,6 @@ class AgentService(Service):
         self._apply_testing_message(execution, testing)
         self._log_task_step(task.id, 'testing validation passed')
         return True, None
-
-    def _validate_task_branches_are_publishable(
-        self,
-        task: Task,
-        prepared_task: PreparedTaskContext,
-    ) -> bool:
-        self._log_task_step(task.id, 'checking task branches before testing')
-        try:
-            self._repository_service.validate_task_branches_are_publishable(
-                prepared_task.repositories,
-                prepared_task.repository_branches,
-            )
-        except Exception as exc:
-            self.logger.exception(
-                'failed to validate task branches before testing validation for task %s',
-                task.id,
-            )
-            self._handle_started_task_failure(task, exc)
-            return False
-        self._log_task_step(task.id, 'task branches contain changes')
-        return True
 
     def _request_testing_validation(
         self,
@@ -467,6 +402,19 @@ class AgentService(Service):
         ):
             return None
         self._log_task_step(task.id, 'prepared task branches')
+        try:
+            self._task_branch_push_validator.validate(
+                prepared_task.repositories,
+                prepared_task.repository_branches,
+            )
+        except Exception as exc:
+            self.logger.exception(
+                'failed to validate task branch push access for task %s',
+                task.id,
+            )
+            self._handle_started_task_failure(task, exc)
+            return None
+        self._log_task_step(task.id, 'task branches can be pushed')
         return prepared_task
 
     def _resolve_task_repositories(

@@ -11,6 +11,10 @@ def is_bedrock_model(model: str) -> bool:
     return normalized_openhands_text(model).startswith('bedrock/')
 
 
+def is_openrouter_model(model: str) -> bool:
+    return normalized_openhands_text(model).startswith('openrouter/')
+
+
 def testing_container_enabled(openhands_cfg: DictConfig) -> bool:
     return bool(getattr(openhands_cfg, 'testing_container_enabled', False))
 

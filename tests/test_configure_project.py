@@ -78,6 +78,42 @@ class ConfigureProjectTests(unittest.TestCase):
         self.assertEqual(self._validate_agent_env(values), [])
         self.assertEqual(validate_openhands_env(values), [])
 
+    def test_build_configuration_values_for_openrouter_model(self) -> None:
+        with self._patch_prompts(
+            {
+                'Where are your tasks tracked': 'youtrack',
+                'YouTrack base URL': 'https://youtrack.example',
+                'YouTrack token': 'yt-token',
+                'YouTrack assignee login': 'developer',
+                'YouTrack project key': 'PROJ',
+                'YouTrack in-progress state field': 'State',
+                'YouTrack in-progress state value': 'In Progress',
+                'YouTrack review state field': 'State',
+                'YouTrack review state value': 'In Review',
+                'YouTrack issue states to process': ['Open'],
+                'Scan a projects folder for checked-out repositories': False,
+                'Projects root folder containing checked-out repositories': '.',
+                'OpenHands base URL': 'http://localhost:3000',
+                'OpenHands API key': 'local',
+                'OpenHands secret key': 'openhands-secret',
+                'Maximum retries for external API calls': 5,
+                'OpenHands LLM model': 'openrouter/openai/gpt-4o-mini',
+                'OpenHands LLM API key': 'router-key',
+                'OpenHands LLM base URL': 'https://openrouter.ai/api/v1',
+                'Skip testing before publishing pull requests': False,
+                'Use a dedicated OpenHands testing container': False,
+                'Enable failure notification emails': False,
+                'Enable completion notification emails': False,
+            }
+        ):
+            values = configure_project.build_configuration_values({})
+
+        self.assertEqual(values['OPENHANDS_LLM_MODEL'], 'openrouter/openai/gpt-4o-mini')
+        self.assertEqual(values['OPENHANDS_LLM_API_KEY'], 'router-key')
+        self.assertEqual(values['OPENHANDS_LLM_BASE_URL'], 'https://openrouter.ai/api/v1')
+        self.assertEqual(self._validate_agent_env(values), [])
+        self.assertEqual(validate_openhands_env(values), [])
+
     def test_build_configuration_values_for_jira_and_bedrock(self) -> None:
         with self._patch_prompts(
             {

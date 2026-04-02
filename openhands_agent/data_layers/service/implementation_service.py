@@ -20,6 +20,9 @@ class ImplementationService(Service):
     def validate_connection(self) -> None:
         self._client.validate_connection()
 
+    def validate_model_access(self) -> None:
+        self._client.validate_model_access()
+
     def implement_task(
         self,
         task: Task,

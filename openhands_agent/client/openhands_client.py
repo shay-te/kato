@@ -1,7 +1,9 @@
+import os
 import json
 import time
 from uuid import UUID
 
+from openhands_agent.client.openrouter_client import OpenRouterClient
 from openhands_agent.client.retrying_client_base import RetryingClientBase
 from openhands_agent.data_layers.data.review_comment import ReviewComment
 from openhands_agent.data_layers.data.task import Task
@@ -11,6 +13,7 @@ from openhands_agent.fields import (
     ReviewCommentFields,
 )
 from openhands_agent.openhands_result_utils import build_openhands_result
+from openhands_agent.openhands_config_utils import is_openrouter_model
 from openhands_agent.text_utils import (
     condensed_text,
     normalized_lower_text,
@@ -81,6 +84,14 @@ class OpenHandsClient(RetryingClientBase):
         response.raise_for_status()
         self._sync_runtime_settings()
         self._validate_model_smoke_test()
+
+    def validate_model_access(self) -> None:
+        llm_model = text_from_mapping(self._llm_settings, 'llm_model')
+        if not llm_model:
+            return
+        if is_openrouter_model(llm_model):
+            self._validate_openrouter_connection(llm_model)
+        self._run_model_access_validation()
 
     def implement_task(
         self,
@@ -197,6 +208,9 @@ class OpenHandsClient(RetryingClientBase):
             'When you finish, use the finish tool.\n'
             '- Put the text that should become the pull request description in summary.\n'
             '- Put any extra implementation details in message.\n'
+            '- Make the smallest possible change needed to satisfy the task.\n'
+            '- Prefer editing only the exact lines or blocks that need to change.\n'
+            '- Do not change indentation, formatting, or unrelated lines when a narrow edit is enough.\n'
             '- Do not run npm run build, yarn build, pnpm build, or any equivalent production build command unless the task explicitly requires it.\n'
             '- Do not commit or stage generated build artifacts such as build, dist, out, coverage, or target directories.\n'
             '- Do not report success until all intended changes are saved in the repository worktree.\n'
@@ -222,6 +236,9 @@ class OpenHandsClient(RetryingClientBase):
             'Act as a separate testing agent.\n'
             'Write additional tests when needed, challenge the new code with edge cases, '
             'run the relevant tests, and fix any test failures you can resolve safely.\n'
+            'Make the smallest possible change needed for the validation work.\n'
+            'Prefer editing only the exact lines or blocks that need to change.\n'
+            'Do not change indentation, formatting, or unrelated lines when a narrow edit is enough.\n'
             'Do not run npm run build, yarn build, pnpm build, or any equivalent production build command unless the task explicitly requires it.\n'
             'Do not commit or stage generated build artifacts such as build, dist, out, coverage, or target directories.\n'
             'Do not create a pull request.\n'
@@ -278,6 +295,9 @@ class OpenHandsClient(RetryingClientBase):
             'When you finish, use the finish tool.\n'
             '- Put a short description of what changed in summary.\n'
             '- Put any extra details in message.\n'
+            '- Make the smallest possible change needed to address the review comment.\n'
+            '- Prefer editing only the exact lines or blocks that need to change.\n'
+            '- Do not change indentation, formatting, or unrelated lines when a narrow edit is enough.\n'
             '- Do not report success until all intended changes are saved in the repository worktree.\n'
             '- Do not pass extra finish-tool arguments beyond the supported fields.\n'
         )
@@ -367,11 +387,14 @@ class OpenHandsClient(RetryingClientBase):
     def _validate_model_smoke_test(self) -> None:
         if not self._model_smoke_test_enabled:
             return
+        self._run_model_access_validation()
+
+    def _run_model_access_validation(self) -> None:
         llm_model = text_from_mapping(self._llm_settings, 'llm_model')
         if not llm_model:
             return
 
-        self.logger.info('running OpenHands model smoke test')
+        self.logger.info('running OpenHands model access validation')
         result = self._run_prompt_result(
             prompt=self._MODEL_SMOKE_TEST_PROMPT,
             title=self._MODEL_SMOKE_TEST_TITLE,
@@ -382,6 +405,21 @@ class OpenHandsClient(RetryingClientBase):
             raise RuntimeError(
                 f'OpenHands model validation returned a failure result{detail}'
             )
+
+    def _validate_openrouter_connection(self, llm_model: str) -> None:
+        api_key = self._openrouter_api_key()
+        if not api_key:
+            raise RuntimeError('OpenRouter model validation requires LLM_API_KEY')
+        base_url = text_from_mapping(self._llm_settings, 'llm_base_url')
+        client = OpenRouterClient(base_url, api_key, self.max_retries)
+        client.validate_model_available(llm_model)
+
+    @staticmethod
+    def _openrouter_api_key() -> str:
+        return (
+            normalized_text(os.environ.get('LLM_API_KEY', ''))
+            or normalized_text(os.environ.get('OPENHANDS_LLM_API_KEY', ''))
+        )
 
     def _settings_update_payload(self) -> dict[str, str]:
         llm_model = text_from_mapping(self._llm_settings, 'llm_model')

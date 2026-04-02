@@ -1140,6 +1140,68 @@ class RepositoryServiceTests(unittest.TestCase):
             env=unittest.mock.ANY,
         )
 
+    def test_validate_task_branches_are_pushable_dry_runs_branch_publish(self) -> None:
+        repository = self.backend_repo
+
+        with patch(
+            'openhands_agent.data_layers.service.repository_service.shutil.which',
+            return_value='/usr/bin/git',
+        ), patch(
+            'openhands_agent.data_layers.service.repository_service.subprocess.run',
+            return_value=Mock(returncode=0, stdout='', stderr=''),
+        ) as mock_run:
+            service = RepositoryService(self.cfg.openhands_agent.repositories, 3)
+            result = service.validate_task_branches_are_pushable(
+                [repository],
+                {'backend': 'feature/proj-1/backend'},
+            )
+
+        self.assertEqual(result, [repository])
+        self.assertEqual(
+            mock_run.call_args.args[0],
+            [
+                'git',
+                '-c',
+                'safe.directory=.',
+                '-C',
+                '.',
+                'push',
+                '--dry-run',
+                '-u',
+                'origin',
+                'feature/proj-1/backend',
+            ],
+        )
+        self.assertEqual(mock_run.call_args.kwargs['env']['GIT_TERMINAL_PROMPT'], '0')
+
+    def test_validate_task_branches_are_pushable_rejects_missing_git_push_permissions(self) -> None:
+        repository = self.backend_repo
+
+        with patch(
+            'openhands_agent.data_layers.service.repository_service.shutil.which',
+            return_value='/usr/bin/git',
+        ), patch(
+            'openhands_agent.data_layers.service.repository_service.subprocess.run',
+            return_value=Mock(
+                returncode=128,
+                stdout='',
+                stderr=(
+                    'remote: Your credentials lack one or more required privilege scopes.\n'
+                    "fatal: unable to access 'https://bitbucket.org/workspace/project.git/': "
+                    'The requested URL returned error: 403'
+                ),
+            ),
+        ):
+            service = RepositoryService(self.cfg.openhands_agent.repositories, 3)
+            with self.assertRaisesRegex(
+                RuntimeError,
+                r"\[Error\].*missing git push permissions\. cannot work\.\s+remote: Your credentials lack one or more required privilege scopes\.",
+            ):
+                service.validate_task_branches_are_pushable(
+                    [repository],
+                    {'backend': 'feature/proj-1/backend'},
+                )
+
     def test_validate_connections_checks_local_paths(self) -> None:
         with patch(
             'openhands_agent.data_layers.service.repository_service.shutil.which',

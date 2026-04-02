@@ -89,6 +89,12 @@ The goal is to keep the code:
 - easy to modify
 - predictable during execution
 
+### Naming Conventions
+
+- Keep each dedicated module and its primary class aligned in name.
+- Use `snake_case.py` for the file name and `CamelCase` for the class name.
+- For example, a `StartupDependencyValidator` class should live in `startup_dependency_validator.py`, not a differently named utility file.
+
 ### Avoid Duplication
 
 - If logic or values appear more than once, extract them.

@@ -7,7 +7,10 @@ from pathlib import Path
 import re
 import secrets
 
-from openhands_agent.openhands_config_utils import is_bedrock_model
+from openhands_agent.openhands_config_utils import (
+    is_bedrock_model,
+    is_openrouter_model,
+)
 from openhands_agent.repository_discovery import (
     discover_git_repositories,
     read_git_remote_url,
@@ -33,6 +36,7 @@ except (ImportError, ModuleNotFoundError):
 ISSUE_PLATFORMS = ['youtrack', 'jira', 'github', 'gitlab', 'bitbucket']
 UNQUOTED_ENV_VALUE_PATTERN = re.compile(r'^[A-Za-z0-9_./:@%+=,\-~]*$')
 logger = logging.getLogger(__name__)
+OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1'
 ISSUE_PLATFORM_DETAILS = {
     'youtrack': {
         'label': 'YouTrack',
@@ -720,6 +724,9 @@ def _prompt_openhands_llm_values(
         values[api_key_key] = ''
         values[base_url_key] = ''
         return values
+
+    if is_openrouter_model(model):
+        base_url_fallback = OPENROUTER_BASE_URL
 
     values[api_key_key] = input_str(
         api_key_prompt,

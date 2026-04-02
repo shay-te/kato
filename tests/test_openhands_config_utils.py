@@ -2,6 +2,7 @@ import unittest
 
 from openhands_agent.openhands_config_utils import (
     is_bedrock_model,
+    is_openrouter_model,
     resolved_openhands_base_url,
     resolved_openhands_llm_settings,
 )
@@ -14,6 +15,12 @@ class OpenHandsConfigUtilsTests(unittest.TestCase):
             is_bedrock_model('  bedrock/anthropic.claude-3-sonnet-20240229-v1:0  ')
         )
         self.assertFalse(is_bedrock_model('openai/gpt-4o'))
+
+    def test_is_openrouter_model_ignores_surrounding_whitespace(self) -> None:
+        self.assertTrue(
+            is_openrouter_model('  openrouter/openai/gpt-4o-mini  ')
+        )
+        self.assertFalse(is_openrouter_model('openai/gpt-4o'))
 
     def test_resolved_openhands_values_use_main_settings_when_testing_disabled(self) -> None:
         cfg = build_test_cfg().openhands_agent.openhands

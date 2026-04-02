@@ -245,6 +245,20 @@ class ValidateEnvTests(unittest.TestCase):
 
         self.assertEqual(errors, ['openai/gpt-4o requires OPENHANDS_LLM_API_KEY'])
 
+    def test_validate_openhands_env_requires_base_url_for_openrouter_models(self) -> None:
+        errors = validate_openhands_env(
+            {
+                'OH_SECRET_KEY': 'secret-key',
+                'OPENHANDS_LLM_MODEL': 'openrouter/openai/gpt-4o-mini',
+                'OPENHANDS_LLM_API_KEY': 'router-key',
+            }
+        )
+
+        self.assertEqual(
+            errors,
+            ['openrouter/openai/gpt-4o-mini requires OPENHANDS_LLM_BASE_URL'],
+        )
+
     def test_validate_openhands_env_skips_testing_container_validation_when_testing_is_disabled(self) -> None:
         errors = validate_openhands_env(
             {
@@ -361,6 +375,18 @@ class ValidateEnvTests(unittest.TestCase):
                 'AWS_SECRET_ACCESS_KEY': 'secret',
                 'AWS_REGION_NAME': 'us-west-2',
                 'AWS_SESSION_TOKEN': 'session-token',
+            }
+        )
+
+        self.assertEqual(errors, [])
+
+    def test_validate_openhands_env_accepts_openrouter_model_with_base_url(self) -> None:
+        errors = validate_openhands_env(
+            {
+                'OH_SECRET_KEY': 'secret-key',
+                'OPENHANDS_LLM_MODEL': 'openrouter/openai/gpt-4o-mini',
+                'OPENHANDS_LLM_API_KEY': 'router-key',
+                'OPENHANDS_LLM_BASE_URL': 'https://openrouter.ai/api/v1',
             }
         )
 
