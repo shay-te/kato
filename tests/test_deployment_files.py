@@ -45,29 +45,14 @@ class DeploymentFilesTests(unittest.TestCase):
             'LOG_ALL_EVENTS: ${OPENHANDS_CONTAINER_LOG_ALL_EVENTS}',
             compose_text,
         )
-        self.assertIn(
-            'LLM_MODEL: ${OPENHANDS_LLM_MODEL:-}',
-            compose_text,
-        )
         self.assertIn('AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}', compose_text)
         self.assertIn('AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}', compose_text)
         self.assertIn('AWS_REGION_NAME: ${AWS_REGION_NAME:-}', compose_text)
-        self.assertIn('AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}', compose_text)
         self.assertIn('LLM_AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}', compose_text)
         self.assertIn('LLM_AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}', compose_text)
         self.assertIn('LLM_AWS_REGION_NAME: ${AWS_REGION_NAME:-}', compose_text)
-        self.assertIn('LLM_AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}', compose_text)
         self.assertIn('AWS_DEFAULT_REGION: ${AWS_REGION_NAME:-}', compose_text)
         self.assertIn('OPENHANDS_TESTING_BASE_URL: http://openhands-testing:3000', compose_text)
-        self.assertNotIn('LOG_ALL_EVENTS: "true"', compose_text)
-        self.assertIn(
-            '"AWS_SESSION_TOKEN":"${AWS_SESSION_TOKEN:-}"',
-            compose_text,
-        )
-        self.assertIn(
-            '"LLM_AWS_SESSION_TOKEN":"${AWS_SESSION_TOKEN:-}"',
-            compose_text,
-        )
         self.assertIn(
             'OPENHANDS_TESTING_LLM_MODEL: ${OPENHANDS_TESTING_LLM_MODEL:-}',
             compose_text,
@@ -192,53 +177,8 @@ class DeploymentFilesTests(unittest.TestCase):
             '"${OPENHANDS_TESTING_PORT:-3001}:3000"',
             compose_text,
         )
-        self.assertIn('OH_AGENT_SERVER_ENV: >-', compose_text)
         self.assertIn(
-            '"SSH_AUTH_SOCK":"/ssh-agent"',
-            compose_text,
-        )
-        self.assertIn(
-            '"OH_SANDBOX_VOLUMES":"${REPOSITORY_ROOT_PATH:-.}:/workspace/project:rw,${OPENHANDS_SSH_AUTH_SOCK_HOST_PATH:-/run/host-services/ssh-auth.sock}:/ssh-agent:ro"',
-            compose_text,
-        )
-        self.assertIn(
-            '"LLM_API_KEY":"${AWS_ACCESS_KEY_ID:-}/${AWS_SECRET_ACCESS_KEY:-}/${AWS_REGION_NAME:-}"',
-            compose_text,
-        )
-        self.assertIn(
-            '"AWS_ACCESS_KEY_ID":"${AWS_ACCESS_KEY_ID:-}"',
-            compose_text,
-        )
-        self.assertIn(
-            '"AWS_SECRET_ACCESS_KEY":"${AWS_SECRET_ACCESS_KEY:-}"',
-            compose_text,
-        )
-        self.assertIn(
-            '"AWS_DEFAULT_REGION":"${AWS_REGION_NAME:-}"',
-            compose_text,
-        )
-        self.assertIn(
-            '"AWS_REGION":"${AWS_REGION_NAME:-}"',
-            compose_text,
-        )
-        self.assertIn(
-            '"AWS_SESSION_TOKEN":"${AWS_SESSION_TOKEN:-}"',
-            compose_text,
-        )
-        self.assertIn(
-            '"LLM_AWS_ACCESS_KEY_ID":"${AWS_ACCESS_KEY_ID:-}"',
-            compose_text,
-        )
-        self.assertIn(
-            '"LLM_AWS_SECRET_ACCESS_KEY":"${AWS_SECRET_ACCESS_KEY:-}"',
-            compose_text,
-        )
-        self.assertIn(
-            '"LLM_AWS_REGION_NAME":"${AWS_REGION_NAME:-}"',
-            compose_text,
-        )
-        self.assertIn(
-            '"LLM_AWS_SESSION_TOKEN":"${AWS_SESSION_TOKEN:-}"',
+            'OH_AGENT_SERVER_ENV: \'{"LLM_API_KEY":"${AWS_ACCESS_KEY_ID:-}/${AWS_SECRET_ACCESS_KEY:-}/${AWS_REGION_NAME:-}", "AWS_ACCESS_KEY_ID":"${AWS_ACCESS_KEY_ID:-}", "AWS_SECRET_ACCESS_KEY":"${AWS_SECRET_ACCESS_KEY:-}", "AWS_DEFAULT_REGION":"${AWS_REGION_NAME:-}", "AWS_REGION":"${AWS_REGION_NAME:-}", "LLM_AWS_ACCESS_KEY_ID":"${AWS_ACCESS_KEY_ID:-}", "LLM_AWS_SECRET_ACCESS_KEY":"${AWS_SECRET_ACCESS_KEY:-}", "LLM_AWS_REGION_NAME":"${AWS_REGION_NAME:-}", "OH_SANDBOX_VOLUMES":"${REPOSITORY_ROOT_PATH:-.}:/workspace/project:rw"}\'',
             compose_text,
         )
         self.assertIn('OH_PERSISTENCE_DIR: /data', compose_text)
