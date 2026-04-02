@@ -1,9 +1,9 @@
 from collections.abc import Sequence
 import json
 from importlib import resources
-from string import Template
 
 from core_lib.data_layers.service.service import Service
+from jinja2 import Template
 
 from openhands_agent.data_layers.data.task import Task
 from openhands_agent.helpers.error_handling_utils import run_best_effort
@@ -42,7 +42,7 @@ class NotificationService(Service):
         return self._send_templated_email(
             self._failure_email_cfg,
             subject=f'{self._app_name} failure: {operation}',
-            default_template_name='failure_email.txt',
+            default_template_name='failure_email.j2',
             template_params=template_params,
         )
 
@@ -63,7 +63,7 @@ class NotificationService(Service):
         return self._send_templated_email(
             self._completion_email_cfg,
             subject=f'Task ready for review: {task.id}',
-            default_template_name='completion_email.txt',
+            default_template_name='completion_email.j2',
             template_params=template_params,
         )
 
@@ -152,7 +152,7 @@ class NotificationService(Service):
         except (FileNotFoundError, OSError):
             self.logger.exception('failed to load email template %s', template_name)
             return ''
-        return Template(template_text).safe_substitute(template_params).rstrip('\n')
+        return Template(template_text).render(**template_params).rstrip('\n')
 
     @staticmethod
     def _normalized_pull_requests(pull_requests) -> list[dict[str, str]]:

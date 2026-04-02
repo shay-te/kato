@@ -211,7 +211,7 @@ class NotificationServiceTests(unittest.TestCase):
         self.email_core_lib.send.assert_not_called()
 
     def test_notify_failure_uses_empty_message_when_template_file_is_missing(self) -> None:
-        self.cfg.openhands_agent.failure_email.body_template = 'missing.txt'
+        self.cfg.openhands_agent.failure_email.body_template = 'missing.j2'
         service = NotificationService(
             app_name=self.cfg.core_lib.app.name,
             email_core_lib=self.email_core_lib,
@@ -225,7 +225,7 @@ class NotificationServiceTests(unittest.TestCase):
         self.assertEqual(self.email_core_lib.send.call_args.args[1][EmailFields.MESSAGE], '')
 
     def test_notify_failure_logs_when_template_file_is_missing(self) -> None:
-        self.cfg.openhands_agent.failure_email.body_template = 'missing.txt'
+        self.cfg.openhands_agent.failure_email.body_template = 'missing.j2'
         service = NotificationService(
             app_name=self.cfg.core_lib.app.name,
             email_core_lib=self.email_core_lib,
@@ -240,7 +240,7 @@ class NotificationServiceTests(unittest.TestCase):
         service.logger.exception.assert_called_once()
 
     def test_notify_task_ready_for_review_uses_empty_message_when_template_file_is_missing(self) -> None:
-        self.cfg.openhands_agent.completion_email.body_template = 'missing.txt'
+        self.cfg.openhands_agent.completion_email.body_template = 'missing.j2'
         service = NotificationService(
             app_name=self.cfg.core_lib.app.name,
             email_core_lib=self.email_core_lib,

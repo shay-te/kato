@@ -53,8 +53,8 @@ openhands_agent/
     openhands_agent_core_lib.yaml
   templates/
     email/
-      completion_email.txt
-      failure_email.txt
+      completion_email.j2
+      failure_email.j2
   data_layers/
     data/
     data_access/
@@ -239,7 +239,6 @@ The list below mirrors `.env.example`.
 | `OPENHANDS_TESTING_BASE_URL` | Base URL for the dedicated testing OpenHands server. |
 | `OPENHANDS_TESTING_PORT` | Host port used for the optional testing container. |
 | `OPENHANDS_CONTAINER_LOG_ALL_EVENTS` | Enables all OpenHands event logging inside the `openhands` container. |
-| `OPENHANDS_AGENT_MAX_RETRIES` | Retry count for external API calls. |
 | `OPENHANDS_AGENT_LOG_LEVEL` | Log level for the agent app process. |
 | `OPENHANDS_AGENT_WORKFLOW_LOG_LEVEL` | Log level for workflow-specific logs. |
 | `OPENHANDS_POLL_INTERVAL_SECONDS` | Delay between OpenHands conversation polling attempts. |
@@ -310,7 +309,7 @@ The review-state target also comes from the active provider config:
 - Bitbucket Issues uses `openhands_agent.bitbucket_issues.review_state_field` and `openhands_agent.bitbucket_issues.review_state`.
 Processed task state, processed review-comment ids, and pull-request comment context are kept in memory during a run so the agent can skip already-completed work and poll for new review comments without writing local state.
 If email notifications are enabled, install the optional dependency set with `python -m pip install -e ".[notifications]"`.
-The email body text comes from [`completion_email.txt`](openhands_agent/templates/email/completion_email.txt) and [`failure_email.txt`](openhands_agent/templates/email/failure_email.txt), rendered with template variables at runtime.
+The email body text comes from [`completion_email.j2`](openhands_agent/templates/email/completion_email.j2) and [`failure_email.j2`](openhands_agent/templates/email/failure_email.j2), rendered with Jinja2 template variables at runtime.
 The Hydra config is registered through [`hydra_plugins/openhands_agent/openhands_agent_searchpath.py`](hydra_plugins/openhands_agent/openhands_agent_searchpath.py), so standard Hydra overrides work. Example:
 
 ```bash
@@ -468,7 +467,7 @@ pip install -e .
 
 2. Fill `.env` instead of exporting variables one by one. Start from `.env.example` and update the values you need there.
 
-3. Adjust `openhands_agent/config/openhands_agent_core_lib.yaml` only if you need settings beyond what `.env` exposes, such as extra repositories. Issue states, review columns, and review-ready email recipients can now be configured directly in `.env`.
+3. Adjust `openhands_agent/config/openhands_agent_core_lib.yaml` only if you need settings beyond what `.env` exposes, such as extra repositories or retry tuning. Issue states, review columns, and review-ready email recipients can now be configured directly in `.env`.
 
 ```yaml
 openhands_agent:
@@ -479,13 +478,13 @@ openhands_agent:
   failure_email:
     enabled: true
     template_id: "42"
-    body_template: failure_email.txt
+    body_template: failure_email.j2
     recipients:
       - ops@example.com
   completion_email:
     enabled: true
     template_id: "77"
-    body_template: completion_email.txt
+    body_template: completion_email.j2
     recipients:
       - reviewers@example.com
   youtrack:
@@ -588,6 +587,14 @@ pip install -e .
 python3 -m unittest discover -s tests
 ```
 
+The test suite includes:
+
+- mocked unit tests for the orchestration services, especially `agent_service`, `implementation_service`, `repository_service`, and `testing_service`
+- boundary tests for the provider clients and retry helpers
+- small integration-style regressions that exercise the task-to-PR workflow shape without hitting live external systems
+
+CI runs the same suite under `coverage` and prints a coverage summary in the job log.
+
 If you only want to run a single test module, use:
 
 ```bash
@@ -600,13 +607,12 @@ python3 -m unittest discover -s tests -p 'test_notification_service.py'
 - `core-lib`-style `client`, `data_layers/data`, `data_layers/data_access`, and `data_layers/service` packages.
 - Data-access wrappers around issue platforms, OpenHands, and repository provider integrations.
 - A service layer that orchestrates the full task-to-PR flow.
-- A webhook-style handler for pull-request review comments.
+- A review-comment processing loop for pull-request review comments.
 - A job entrypoint for processing assigned tasks plus a `tests/config` Hydra scaffold.
 
 ## Current Limitations
 
 - Real git workspace handling per task.
-- Authentication/signature verification for webhooks.
 - Final adaptation to the exact OpenHands API and your issue-platform fields.
 - No end-to-end integration test exercises a live issue-platform -> OpenHands -> pull-request provider flow yet.
 
@@ -633,7 +639,7 @@ cp .env.example .env
 # Saving costs tips
 
 Use a cheaper main OPENHANDS_LLM_MODEL. This is usually the largest lever.
-Lower OPENHANDS_AGENT_MAX_RETRIES from 5 to 2 or 3 if your setup is stable.
+Lower `openhands_agent.retry.max_retries` from 3 to 2 or 3 if your setup is stable.
 Keep YOUTRACK_ISSUE_STATES tight so only truly ready tasks get processed.
 Batch review feedback into fewer comments, because each review-fix cycle can trigger more OpenHands work.
 Keep task context lean: avoid huge pasted logs, long comment threads, and unnecessary attachments.

@@ -13,11 +13,11 @@ openhands_agent:
   issue_platform: ${oc.env:OPENHANDS_AGENT_ISSUE_PLATFORM,""}
   ticket_system: ${oc.env:OPENHANDS_AGENT_TICKET_SYSTEM,"youtrack"}
   retry:
-    max_retries: ${oc.decode:${oc.env:OPENHANDS_AGENT_MAX_RETRIES,"3"}}
+    max_retries: 3
   failure_email:
     enabled: ${oc.decode:${oc.env:OPENHANDS_AGENT_FAILURE_EMAIL_ENABLED,"false"}}
     template_id: ${oc.env:OPENHANDS_AGENT_FAILURE_EMAIL_TEMPLATE_ID,0}
-    body_template: failure_email.txt
+    body_template: failure_email.j2
     recipients:
       - ${oc.env:OPENHANDS_AGENT_FAILURE_EMAIL_TO,null}
     sender:
@@ -26,7 +26,7 @@ openhands_agent:
   completion_email:
     enabled: ${oc.decode:${oc.env:OPENHANDS_AGENT_COMPLETION_EMAIL_ENABLED,"false"}}
     template_id: ${oc.env:OPENHANDS_AGENT_COMPLETION_EMAIL_TEMPLATE_ID,0}
-    body_template: completion_email.txt
+    body_template: completion_email.j2
     recipients:
       - ${oc.env:OPENHANDS_AGENT_COMPLETION_EMAIL_TO,null}
     sender:

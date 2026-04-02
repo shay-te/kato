@@ -74,7 +74,7 @@ def build_test_cfg() -> DictConfig:
                 'failure_email': {
                     'enabled': True,
                     'template_id': '42',
-                    'body_template': 'failure_email.txt',
+                    'body_template': 'failure_email.j2',
                     'recipients': ['ops@example.com', 'dev@example.com'],
                     'sender': {
                         'name': 'OpenHands Agent',
@@ -84,7 +84,7 @@ def build_test_cfg() -> DictConfig:
                 'completion_email': {
                     'enabled': True,
                     'template_id': '77',
-                    'body_template': 'completion_email.txt',
+                    'body_template': 'completion_email.j2',
                     'recipients': ['reviewers@example.com', 'teamlead@example.com'],
                     'sender': {
                         'name': 'OpenHands Agent',

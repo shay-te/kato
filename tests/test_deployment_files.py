@@ -430,7 +430,8 @@ class DeploymentFilesTests(unittest.TestCase):
             REPO_ROOT / '.github' / 'workflows' / 'ci.yml'
         ).read_text(encoding='utf-8')
 
-        self.assertIn('python -m unittest discover -s tests', workflow_text)
+        self.assertIn('coverage run -m unittest discover -s tests', workflow_text)
+        self.assertIn('coverage report --show-missing', workflow_text)
         self.assertIn(
             'shellcheck scripts/bootstrap.sh scripts/install-python-deps.sh scripts/run-local.sh docker/entrypoint-run.sh docker/entrypoint-install.sh',
             workflow_text,

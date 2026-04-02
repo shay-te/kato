@@ -301,7 +301,7 @@ class TestAgentEndToEndIntegration(unittest.TestCase):
     
     def test_review_comment_processing_integration(self):
         """Test the review comment processing workflow integration."""
-        # Create a sample comment payload that would come from a webhook
+        # Create a sample review comment event payload
         payload = {
             ReviewCommentFields.PULL_REQUEST_ID: "pr-123",
             ReviewCommentFields.COMMENT_ID: "comment-456",

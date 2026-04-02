@@ -1,4 +1,5 @@
 import logging
+import random
 import time
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -72,7 +73,8 @@ def _retry_delay_seconds(attempt: int, response: object | None = None) -> float:
     retry_after = _retry_after_seconds(response)
     if retry_after is not None:
         return retry_after
-    return float(2 ** attempt)
+    base_delay = float(2 ** attempt)
+    return random.uniform(base_delay, base_delay * 2.0)
 
 
 def _retry_after_seconds(response: object | None) -> float | None:

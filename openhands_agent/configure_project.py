@@ -601,12 +601,6 @@ def _prompt_openhands_core_values(
             'OpenHands secret key',
             default=_default_str(defaults, 'OH_SECRET_KEY', fallback=secrets.token_hex(32)),
         ),
-        'OPENHANDS_AGENT_MAX_RETRIES': str(
-            input_int(
-                'Maximum retries for external API calls',
-                default=int(_default_str(defaults, 'OPENHANDS_AGENT_MAX_RETRIES', fallback='5')),
-            )
-        ),
         'OPENHANDS_SKIP_TESTING': _bool_to_env(
             input_bool(
                 'Skip testing before publishing pull requests',

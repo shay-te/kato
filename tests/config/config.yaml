@@ -17,7 +17,7 @@ openhands_agent:
   failure_email:
     enabled: true
     template_id: "42"
-    body_template: failure_email.txt
+    body_template: failure_email.j2
     recipients:
       - ops@example.com
     sender:
@@ -26,7 +26,7 @@ openhands_agent:
   completion_email:
     enabled: true
     template_id: "77"
-    body_template: completion_email.txt
+    body_template: completion_email.j2
     recipients:
       - reviewers@example.com
     sender:

@@ -51,7 +51,6 @@ class ConfigureProjectTests(unittest.TestCase):
                 'OpenHands base URL': 'http://localhost:3000',
                 'OpenHands API key': 'local',
                 'OpenHands secret key': 'openhands-secret',
-                'Maximum retries for external API calls': 5,
                 'OpenHands LLM model': 'openai/gpt-4o',
                 'OpenHands LLM API key': 'llm-key',
                 'OpenHands LLM base URL': 'https://api.openai.com/v1',
@@ -96,7 +95,6 @@ class ConfigureProjectTests(unittest.TestCase):
                 'OpenHands base URL': 'http://localhost:3000',
                 'OpenHands API key': 'local',
                 'OpenHands secret key': 'openhands-secret',
-                'Maximum retries for external API calls': 5,
                 'OpenHands LLM model': 'openrouter/openai/gpt-4o-mini',
                 'OpenHands LLM API key': 'router-key',
                 'OpenHands LLM base URL': 'https://openrouter.ai/api/v1',
@@ -133,7 +131,6 @@ class ConfigureProjectTests(unittest.TestCase):
                 'OpenHands base URL': 'http://localhost:3000',
                 'OpenHands API key': 'local',
                 'OpenHands secret key': 'openhands-secret',
-                'Maximum retries for external API calls': 7,
                 'OpenHands LLM model': 'bedrock/anthropic.claude-3-sonnet-20240229-v1:0',
                 'How should OpenHands authenticate to Bedrock': 'bearer_token',
                 'AWS bearer token for Bedrock': 'bedrock-token',
@@ -187,7 +184,6 @@ class ConfigureProjectTests(unittest.TestCase):
                 'OpenHands base URL': 'http://localhost:3000',
                 'OpenHands API key': 'local',
                 'OpenHands secret key': 'openhands-secret',
-                'Maximum retries for external API calls': 5,
                 'OpenHands LLM model': 'openai/gpt-4o',
                 'OpenHands LLM API key': 'llm-key',
                 'OpenHands LLM base URL': 'https://api.openai.com/v1',
@@ -224,7 +220,6 @@ class ConfigureProjectTests(unittest.TestCase):
                 'OpenHands base URL': 'http://localhost:3000',
                 'OpenHands API key': 'local',
                 'OpenHands secret key': 'openhands-secret',
-                'Maximum retries for external API calls': 5,
                 'OpenHands LLM model': 'bedrock/anthropic.claude-3-sonnet-20240229-v1:0',
                 'How should OpenHands authenticate to Bedrock': 'access_keys',
                 'AWS access key id': 'aws-key',
@@ -267,7 +262,6 @@ class ConfigureProjectTests(unittest.TestCase):
                 'OpenHands base URL': 'http://localhost:3000',
                 'OpenHands API key': 'local',
                 'OpenHands secret key': 'openhands-secret',
-                'Maximum retries for external API calls': 5,
                 'OpenHands LLM model': 'openai/gpt-4o',
                 'OpenHands LLM API key': 'llm-key',
                 'OpenHands LLM base URL': 'https://api.openai.com/v1',
@@ -409,7 +403,6 @@ class ConfigureProjectTests(unittest.TestCase):
                 'OPENHANDS_TESTING_CONTAINER_ENABLED=false\n'
                 'OPENHANDS_TESTING_BASE_URL=http://localhost:3001\n'
                 'OH_SECRET_KEY=\n'
-                'OPENHANDS_AGENT_MAX_RETRIES=5\n'
                 'OPENHANDS_LLM_MODEL=\n'
                 'OPENHANDS_LLM_API_KEY=\n'
                 'OPENHANDS_LLM_BASE_URL=\n'
@@ -453,7 +446,6 @@ class ConfigureProjectTests(unittest.TestCase):
                 'OpenHands base URL': 'http://localhost:3000',
                 'OpenHands API key': 'local',
                 'OpenHands secret key': 'openhands-secret',
-                'Maximum retries for external API calls': 5,
                 'OpenHands LLM model': 'openai/gpt-4o',
                 'OpenHands LLM API key': 'llm-key',
                 'OpenHands LLM base URL': 'https://api.openai.com/v1',
@@ -507,7 +499,6 @@ class ConfigureProjectTests(unittest.TestCase):
                 'OPENHANDS_TESTING_CONTAINER_ENABLED=false\n'
                 'OPENHANDS_TESTING_BASE_URL=http://localhost:3001\n'
                 'OH_SECRET_KEY=\n'
-                'OPENHANDS_AGENT_MAX_RETRIES=5\n'
                 'OPENHANDS_LLM_MODEL=\n'
                 'OPENHANDS_LLM_API_KEY=\n'
                 'OPENHANDS_LLM_BASE_URL=\n'
@@ -551,7 +542,6 @@ class ConfigureProjectTests(unittest.TestCase):
                 'OpenHands base URL': 'http://localhost:3000',
                 'OpenHands API key': 'local',
                 'OpenHands secret key': 'openhands-secret',
-                'Maximum retries for external API calls': 5,
                 'OpenHands LLM model': '',
                 'OpenHands LLM API key': '',
                 'OpenHands LLM base URL': '',
