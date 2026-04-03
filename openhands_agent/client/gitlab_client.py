@@ -49,6 +49,39 @@ class GitLabClient(PullRequestClientBase):
             pull_request_id,
         )
 
+    def find_pull_requests(
+        self,
+        repo_owner: str,
+        repo_slug: str,
+        *,
+        source_branch: str = '',
+        title_prefix: str = '',
+    ) -> list[dict[str, str]]:
+        params = {'state': 'opened', 'per_page': 100}
+        normalized_source_branch = normalized_text(source_branch)
+        if normalized_source_branch:
+            params['source_branch'] = normalized_source_branch
+        response = self._get_with_retry(
+            f'/projects/{self._project_path(repo_owner, repo_slug)}/merge_requests',
+            params=params,
+        )
+        response.raise_for_status()
+        payload = response.json() or []
+        if not isinstance(payload, list):
+            return []
+        normalized_title_prefix = normalized_text(title_prefix)
+        matches: list[dict[str, str]] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            if normalized_source_branch and normalized_text(item.get('source_branch', '')) != normalized_source_branch:
+                continue
+            item_title = normalized_text(item.get(PullRequestFields.TITLE, ''))
+            if normalized_title_prefix and not item_title.startswith(normalized_title_prefix):
+                continue
+            matches.append(self._normalize_pr(item))
+        return matches
+
     def resolve_review_comment(
         self,
         repo_owner: str,
@@ -70,6 +103,31 @@ class GitLabClient(PullRequestClientBase):
         response = self._put_with_retry(
             f'/projects/{self._project_path(repo_owner, repo_slug)}/merge_requests/{comment.pull_request_id}/discussions/{discussion_id}',
             json={'resolved': True},
+        )
+        response.raise_for_status()
+
+    def reply_to_review_comment(
+        self,
+        repo_owner: str,
+        repo_slug: str,
+        comment: ReviewComment,
+        body: str,
+    ) -> None:
+        discussion_id = text_from_attr(comment, ReviewCommentFields.RESOLUTION_TARGET_ID)
+        if not discussion_id:
+            discussion_id = self._discussion_id_for_comment(
+                repo_owner,
+                repo_slug,
+                normalized_text(comment.pull_request_id),
+                normalized_text(comment.comment_id),
+            )
+        if not discussion_id:
+            raise ValueError(
+                f'unable to determine GitLab discussion for comment {comment.comment_id}'
+            )
+        response = self._post_with_retry(
+            f'/projects/{self._project_path(repo_owner, repo_slug)}/merge_requests/{comment.pull_request_id}/discussions/{discussion_id}/notes',
+            json={'body': normalized_text(body)},
         )
         response.raise_for_status()
 

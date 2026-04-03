@@ -109,10 +109,40 @@ class RepositoryPublicationService(Service):
             repository,
         ).list_pull_request_comments(pull_request_id)
 
+    def find_pull_requests(
+        self,
+        repository,
+        *,
+        source_branch: str = '',
+        title_prefix: str = '',
+    ) -> list[dict[str, str]]:
+        try:
+            self._repository_service._prepare_pull_request_api(repository)
+        except Exception as exc:
+            self.logger.info(
+                'skipping pull request lookup for repository %s: %s',
+                repository.id,
+                exc,
+            )
+            return []
+        return self._repository_service._pull_request_data_access(
+            repository,
+        ).find_pull_requests(
+            source_branch=source_branch,
+            title_prefix=title_prefix,
+        )
+
     def resolve_review_comment(self, repository, comment) -> None:
         self._repository_service._prepare_pull_request_api(repository)
         self._repository_service._pull_request_data_access(repository).resolve_review_comment(
             comment
+        )
+
+    def reply_to_review_comment(self, repository, comment, body: str) -> None:
+        self._repository_service._prepare_pull_request_api(repository)
+        self._repository_service._pull_request_data_access(repository).reply_to_review_comment(
+            comment,
+            body,
         )
 
     def _restore_workspace_after_publication(self, repository, destination_branch: str) -> None:

@@ -80,6 +80,41 @@ mutation($threadId: ID!) {
             pull_request_id,
         )
 
+    def find_pull_requests(
+        self,
+        repo_owner: str,
+        repo_slug: str,
+        *,
+        source_branch: str = '',
+        title_prefix: str = '',
+    ) -> list[dict[str, str]]:
+        params = {'state': 'open', 'per_page': 100}
+        normalized_source_branch = normalized_text(source_branch)
+        if normalized_source_branch:
+            params['head'] = f'{repo_owner}:{normalized_source_branch}'
+        response = self._get_with_retry(
+            f'/repos/{repo_owner}/{repo_slug}/pulls',
+            params=params,
+        )
+        response.raise_for_status()
+        payload = response.json() or []
+        if not isinstance(payload, list):
+            return []
+        normalized_title_prefix = normalized_text(title_prefix)
+        matches: list[dict[str, str]] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            if normalized_source_branch:
+                head = item.get('head') if isinstance(item.get('head'), dict) else {}
+                if normalized_text(head.get('ref', '')) != normalized_source_branch:
+                    continue
+            item_title = normalized_text(item.get(PullRequestFields.TITLE, ''))
+            if normalized_title_prefix and not item_title.startswith(normalized_title_prefix):
+                continue
+            matches.append(self._normalize_pr(item))
+        return matches
+
     def resolve_review_comment(
         self,
         repo_owner: str,
@@ -102,6 +137,19 @@ mutation($threadId: ID!) {
             self._RESOLVE_REVIEW_THREAD_MUTATION,
             {'threadId': thread_id},
         )
+
+    def reply_to_review_comment(
+        self,
+        repo_owner: str,
+        repo_slug: str,
+        comment: ReviewComment,
+        body: str,
+    ) -> None:
+        response = self._post_with_retry(
+            f'/repos/{repo_owner}/{repo_slug}/pulls/{comment.pull_request_id}/comments/{comment.comment_id}/replies',
+            json={'body': normalized_text(body)},
+        )
+        response.raise_for_status()
 
     @classmethod
     def _normalize_pr(cls, payload: dict[str, Any]) -> dict[str, str]:

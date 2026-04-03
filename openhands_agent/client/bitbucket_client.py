@@ -6,6 +6,10 @@ from openhands_agent.data_layers.data.review_comment import ReviewComment
 from openhands_agent.data_layers.data.fields import PullRequestFields, ReviewCommentFields
 from openhands_agent.helpers.text_utils import normalized_text, text_from_attr
 
+# Bitbucket rejected pagelen values around 100 in live API checks ("Invalid pagelen"),
+# so keep PR and PR-comment pagination at a smaller safe value.
+BITBUCKET_PAGE_LENGTH = 50
+
 
 class BitbucketClient(PullRequestClientBase):
     provider_name = 'bitbucket'
@@ -56,10 +60,44 @@ class BitbucketClient(PullRequestClientBase):
     ) -> list[ReviewComment]:
         response = self._get_with_retry(
             f'/repositories/{repo_owner}/{repo_slug}/pullrequests/{pull_request_id}/comments',
-            params={'pagelen': 100, 'sort': 'created_on'},
+            params={'pagelen': BITBUCKET_PAGE_LENGTH, 'sort': 'created_on'},
         )
         response.raise_for_status()
         return self._normalize_comments(response.json(), pull_request_id)
+
+    def find_pull_requests(
+        self,
+        repo_owner: str,
+        repo_slug: str,
+        *,
+        source_branch: str = '',
+        title_prefix: str = '',
+    ) -> list[dict[str, str]]:
+        response = self._get_with_retry(
+            f'/repositories/{repo_owner}/{repo_slug}/pullrequests',
+            params={'pagelen': BITBUCKET_PAGE_LENGTH},
+        )
+        response.raise_for_status()
+        payload = response.json() or {}
+        values = payload.get('values', []) if isinstance(payload, dict) else []
+        if not isinstance(values, list):
+            return []
+        normalized_source_branch = normalized_text(source_branch)
+        normalized_title_prefix = normalized_text(title_prefix)
+        matches: list[dict[str, str]] = []
+        for item in values:
+            if not isinstance(item, dict):
+                continue
+            source = item.get('source') if isinstance(item.get('source'), dict) else {}
+            branch = source.get('branch') if isinstance(source.get('branch'), dict) else {}
+            item_source_branch = normalized_text(branch.get('name', ''))
+            if normalized_source_branch and item_source_branch != normalized_source_branch:
+                continue
+            item_title = normalized_text(item.get(PullRequestFields.TITLE, ''))
+            if normalized_title_prefix and not item_title.startswith(normalized_title_prefix):
+                continue
+            matches.append(self._normalize_pr(item))
+        return matches
 
     def resolve_review_comment(
         self,
@@ -75,6 +113,28 @@ class BitbucketClient(PullRequestClientBase):
             raise ValueError('bitbucket review comment id is required to resolve the thread')
         response = self._post_with_retry(
             f'/repositories/{repo_owner}/{repo_slug}/pullrequests/{comment.pull_request_id}/comments/{resolution_target_id}/resolve',
+        )
+        response.raise_for_status()
+
+    def reply_to_review_comment(
+        self,
+        repo_owner: str,
+        repo_slug: str,
+        comment: ReviewComment,
+        body: str,
+    ) -> None:
+        parent_id = text_from_attr(
+            comment,
+            ReviewCommentFields.RESOLUTION_TARGET_ID,
+        ) or normalized_text(comment.comment_id)
+        if not parent_id:
+            raise ValueError('bitbucket review comment id is required to post a reply')
+        response = self._post_with_retry(
+            f'/repositories/{repo_owner}/{repo_slug}/pullrequests/{comment.pull_request_id}/comments',
+            json={
+                'content': {'raw': normalized_text(body)},
+                'parent': {'id': parent_id},
+            },
         )
         response.raise_for_status()
 

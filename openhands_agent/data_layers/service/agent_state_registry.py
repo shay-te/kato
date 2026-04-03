@@ -1,5 +1,8 @@
 from openhands_agent.data_layers.data.fields import PullRequestFields, StatusFields
-from openhands_agent.helpers.pull_request_context_utils import build_pull_request_context
+from openhands_agent.helpers.pull_request_context_utils import (
+    build_pull_request_context,
+    pull_request_context_key,
+)
 from openhands_agent.helpers.text_utils import normalized_text
 
 
@@ -26,7 +29,12 @@ class AgentStateRegistry:
             task_id,
             task_summary,
         )
-        self.pull_request_context_map.setdefault(pull_request_id, []).append(context)
+        existing_contexts = self.pull_request_context_map.setdefault(pull_request_id, [])
+        if pull_request_context_key(context) not in {
+            pull_request_context_key(existing_context)
+            for existing_context in existing_contexts
+        }:
+            existing_contexts.append(context)
         normalized_task_id = str(task_id or '').strip()
         if normalized_task_id:
             self.pull_request_task_map[

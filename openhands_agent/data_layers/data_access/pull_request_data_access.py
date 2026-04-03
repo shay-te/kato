@@ -23,10 +23,25 @@ pull_request_comment_rule_validator = RuleValidator(
     ]
 )
 
+pull_request_lookup_rule_validator = RuleValidator(
+    [
+        ValueRuleValidator(PullRequestFields.SOURCE_BRANCH, (str, type(None))),
+        ValueRuleValidator('title_prefix', (str, type(None))),
+    ]
+)
+
 review_comment_resolution_rule_validator = RuleValidator(
     [
         ValueRuleValidator(ReviewCommentFields.PULL_REQUEST_ID, str),
         ValueRuleValidator(ReviewCommentFields.COMMENT_ID, str),
+    ]
+)
+
+review_comment_reply_rule_validator = RuleValidator(
+    [
+        ValueRuleValidator(ReviewCommentFields.PULL_REQUEST_ID, str),
+        ValueRuleValidator(ReviewCommentFields.COMMENT_ID, str),
+        ValueRuleValidator('body', str),
     ]
 )
 
@@ -78,6 +93,24 @@ class PullRequestDataAccess(DataAccess):
             pull_request_id=pull_request_id,
         )
 
+    def find_pull_requests(
+        self,
+        *,
+        source_branch: str = '',
+        title_prefix: str = '',
+    ) -> list[dict[str, str]]:
+        pull_request_lookup_rule_validator.validate_dict(
+            {
+                PullRequestFields.SOURCE_BRANCH: source_branch,
+                'title_prefix': title_prefix,
+            }
+        )
+        return self._client.find_pull_requests(
+            **self._repository_kwargs(),
+            source_branch=source_branch,
+            title_prefix=title_prefix,
+        )
+
     def resolve_review_comment(self, comment: ReviewComment) -> None:
         review_comment_resolution_rule_validator.validate_dict(
             {
@@ -88,6 +121,20 @@ class PullRequestDataAccess(DataAccess):
         self._client.resolve_review_comment(
             **self._repository_kwargs(),
             comment=comment,
+        )
+
+    def reply_to_review_comment(self, comment: ReviewComment, body: str) -> None:
+        review_comment_reply_rule_validator.validate_dict(
+            {
+                ReviewCommentFields.PULL_REQUEST_ID: comment.pull_request_id,
+                ReviewCommentFields.COMMENT_ID: comment.comment_id,
+                'body': body,
+            }
+        )
+        self._client.reply_to_review_comment(
+            **self._repository_kwargs(),
+            comment=comment,
+            body=body,
         )
 
     def _repository_kwargs(self) -> dict[str, str]:

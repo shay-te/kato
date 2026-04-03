@@ -142,6 +142,48 @@ class GitLabClientTests(unittest.TestCase):
 
         self.assertEqual(comments, [])
 
+    def test_find_pull_requests_filters_open_pull_requests_by_branch_and_title_prefix(self) -> None:
+        client = GitLabClient('https://gitlab.example/api/v4', 'gl-token')
+        response = mock_response(
+            json_data=[
+                {
+                    'iid': 9,
+                    PullRequestFields.TITLE: 'PROJ-1 Fix bug',
+                    'web_url': 'https://gitlab.example/group/repo/-/merge_requests/9',
+                    'source_branch': 'PROJ-1',
+                },
+                {
+                    'iid': 10,
+                    PullRequestFields.TITLE: 'OTHER-1 Fix bug',
+                    'web_url': 'https://gitlab.example/group/repo/-/merge_requests/10',
+                    'source_branch': 'OTHER-1',
+                },
+            ]
+        )
+
+        with patch.object(client, '_get', return_value=response) as mock_get:
+            pull_requests = client.find_pull_requests(
+                'group/subgroup',
+                'repo',
+                source_branch='PROJ-1',
+                title_prefix='PROJ-1 ',
+            )
+
+        self.assertEqual(
+            pull_requests,
+            [
+                {
+                    PullRequestFields.ID: '9',
+                    PullRequestFields.TITLE: 'PROJ-1 Fix bug',
+                    PullRequestFields.URL: 'https://gitlab.example/group/repo/-/merge_requests/9',
+                }
+            ],
+        )
+        mock_get.assert_called_once_with(
+            '/projects/group%2Fsubgroup%2Frepo/merge_requests',
+            params={'state': 'opened', 'per_page': 100, 'source_branch': 'PROJ-1'},
+        )
+
     def test_resolve_review_comment_marks_discussion_resolved(self) -> None:
         client = GitLabClient('https://gitlab.example/api/v4', 'gl-token')
         response = mock_response()
@@ -158,4 +200,27 @@ class GitLabClientTests(unittest.TestCase):
         mock_put.assert_called_once_with(
             '/projects/group%2Fsubgroup%2Frepo/merge_requests/17/discussions/discussion-1',
             json={'resolved': True},
+        )
+
+    def test_reply_to_review_comment_posts_discussion_note(self) -> None:
+        client = GitLabClient('https://gitlab.example/api/v4', 'gl-token')
+        response = mock_response()
+        comment = build_review_comment(
+            resolution_target_id='discussion-1',
+            resolution_target_type='discussion',
+            resolvable=True,
+        )
+
+        with patch.object(client, '_post', return_value=response) as mock_post:
+            client.reply_to_review_comment(
+                'group/subgroup',
+                'repo',
+                comment,
+                'Done. The custom field column now resizes correctly.',
+            )
+
+        response.raise_for_status.assert_called_once_with()
+        mock_post.assert_called_once_with(
+            '/projects/group%2Fsubgroup%2Frepo/merge_requests/17/discussions/discussion-1/notes',
+            json={'body': 'Done. The custom field column now resizes correctly.'},
         )

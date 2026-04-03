@@ -92,8 +92,10 @@ class AgentServiceTests(unittest.TestCase):
                 'client': self.client_repo,
                 'backend': self.backend_repo,
             }[repository_id]),
+            find_pull_requests=Mock(return_value=[]),
             list_pull_request_comments=Mock(return_value=[]),
             publish_review_fix=Mock(),
+            reply_to_review_comment=Mock(),
             resolve_review_comment=Mock(),
             build_branch_name=Mock(
                 side_effect=[
@@ -1378,6 +1380,16 @@ class AgentServiceTests(unittest.TestCase):
             self.service.handle_pull_request_comment(build_review_comment_payload())
 
     def test_get_new_pull_request_comments_returns_unprocessed_comments_with_context(self) -> None:
+        self.repository_service.resolve_task_repositories.return_value = [self.client_repo]
+        self.repository_service.build_branch_name = Mock(return_value='feature/proj-1/client')
+        self.repository_service.find_pull_requests.return_value = [
+            {
+                PullRequestFields.REPOSITORY_ID: 'client',
+                PullRequestFields.ID: '17',
+                PullRequestFields.TITLE: 'PROJ-1 Fix bug',
+                PullRequestFields.URL: 'https://bitbucket/pr/17',
+            }
+        ]
         self.repository_service.list_pull_request_comments.return_value = [
             ReviewComment(
                 pull_request_id='17',
@@ -1400,22 +1412,6 @@ class AgentServiceTests(unittest.TestCase):
             self.repository_service,
             self.notification_service,
         )
-        service._state_registry.mark_task_processed(
-            'PROJ-1',
-            [
-                {
-                    PullRequestFields.ID: '17',
-                    PullRequestFields.REPOSITORY_ID: 'client',
-                }
-            ],
-        )
-        service._state_registry.pull_request_context_map['17'] = [
-            {
-                PullRequestFields.ID: '17',
-                PullRequestFields.REPOSITORY_ID: 'client',
-                'branch_name': 'feature/proj-1/client',
-            }
-        ]
         service._state_registry.mark_review_comment_processed('client', '17', '98')
         self.task_client.get_assigned_tasks.return_value = [build_task(task_id='PROJ-1')]
 
@@ -1446,6 +1442,16 @@ class AgentServiceTests(unittest.TestCase):
         )
 
     def test_get_new_pull_request_comments_deduplicates_same_resolution_target(self) -> None:
+        self.repository_service.resolve_task_repositories.return_value = [self.client_repo]
+        self.repository_service.build_branch_name = Mock(return_value='feature/proj-1/client')
+        self.repository_service.find_pull_requests.return_value = [
+            {
+                PullRequestFields.REPOSITORY_ID: 'client',
+                PullRequestFields.ID: '17',
+                PullRequestFields.TITLE: 'PROJ-1 Fix bug',
+                PullRequestFields.URL: 'https://bitbucket/pr/17',
+            }
+        ]
         first = ReviewComment(
             pull_request_id='17',
             comment_id='98',
@@ -1471,22 +1477,6 @@ class AgentServiceTests(unittest.TestCase):
             self.repository_service,
             self.notification_service,
         )
-        service._state_registry.mark_task_processed(
-            'PROJ-1',
-            [
-                {
-                    PullRequestFields.ID: '17',
-                    PullRequestFields.REPOSITORY_ID: 'client',
-                }
-            ],
-        )
-        service._state_registry.pull_request_context_map['17'] = [
-            {
-                PullRequestFields.ID: '17',
-                PullRequestFields.REPOSITORY_ID: 'client',
-                'branch_name': 'feature/proj-1/client',
-            }
-        ]
         self.task_client.get_assigned_tasks.return_value = [build_task(task_id='PROJ-1')]
 
         comments = service.get_new_pull_request_comments()
@@ -1501,6 +1491,16 @@ class AgentServiceTests(unittest.TestCase):
     def test_get_new_pull_request_comments_only_polls_pull_requests_for_review_tasks(self) -> None:
         self.task_client.get_assigned_tasks.return_value = [build_task(task_id='PROJ-1')]
         self.repository_service.list_pull_request_comments.return_value = []
+        self.repository_service.resolve_task_repositories.return_value = [self.client_repo]
+        self.repository_service.build_branch_name = Mock(return_value='feature/proj-1/client')
+        self.repository_service.find_pull_requests.return_value = [
+            {
+                PullRequestFields.REPOSITORY_ID: 'client',
+                PullRequestFields.ID: '17',
+                PullRequestFields.TITLE: 'PROJ-1 Fix bug',
+                PullRequestFields.URL: 'https://bitbucket/pr/17',
+            }
+        ]
         service = AgentService(
             self.task_data_access,
             self.task_state_service,
@@ -1509,38 +1509,6 @@ class AgentServiceTests(unittest.TestCase):
             self.repository_service,
             self.notification_service,
         )
-        service._state_registry.mark_task_processed(
-            'PROJ-1',
-            [
-                {
-                    PullRequestFields.ID: '17',
-                    PullRequestFields.REPOSITORY_ID: 'client',
-                }
-            ],
-        )
-        service._state_registry.mark_task_processed(
-            'PROJ-2',
-            [
-                {
-                    PullRequestFields.ID: '18',
-                    PullRequestFields.REPOSITORY_ID: 'backend',
-                }
-            ],
-        )
-        service._state_registry.pull_request_context_map['17'] = [
-            {
-                PullRequestFields.ID: '17',
-                PullRequestFields.REPOSITORY_ID: 'client',
-                'branch_name': 'feature/proj-1/client',
-            }
-        ]
-        service._state_registry.pull_request_context_map['18'] = [
-            {
-                PullRequestFields.ID: '18',
-                PullRequestFields.REPOSITORY_ID: 'backend',
-                'branch_name': 'feature/proj-2/backend',
-            }
-        ]
 
         comments = service.get_new_pull_request_comments()
 
@@ -1552,21 +1520,16 @@ class AgentServiceTests(unittest.TestCase):
         )
 
     def test_get_new_pull_request_comments_uses_in_memory_processed_tasks_without_state_storage(self) -> None:
-        self.service._state_registry.pull_request_context_map['17'] = [
+        self.repository_service.resolve_task_repositories.return_value = [self.client_repo]
+        self.repository_service.build_branch_name = Mock(return_value='feature/proj-1/client')
+        self.repository_service.find_pull_requests.return_value = [
             {
                 PullRequestFields.REPOSITORY_ID: 'client',
-                'branch_name': 'feature/proj-1/client',
+                PullRequestFields.ID: '17',
+                PullRequestFields.TITLE: 'PROJ-1 Fix bug',
+                PullRequestFields.URL: 'https://bitbucket/pr/17',
             }
         ]
-        self.service._state_registry.mark_task_processed(
-            'PROJ-1',
-            [
-                {
-                    PullRequestFields.ID: '17',
-                    PullRequestFields.REPOSITORY_ID: 'client',
-                }
-            ],
-        )
         self.task_client.get_assigned_tasks.return_value = [build_task(task_id='PROJ-1')]
         self.repository_service.list_pull_request_comments.return_value = [
             ReviewComment(

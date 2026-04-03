@@ -72,6 +72,7 @@ This repository uses OpenHands to implement YouTrack tasks and fix review commen
 - Log failures clearly when a flow continues after an error.
 - Before opening a pull request, make sure the implementation prompt instructions were followed, especially around tests.
 - Do not present guesses, plans, or likely causes as confirmed facts.
+- Do not rely on stack traces alone when debugging remote integrations. When possible, reproduce the failing remote/API call directly with the real endpoint and auth so the fix is based on the actual response, not only the traceback.
 - In commentary and final responses, clearly separate:
   - what was directly observed in code, logs, or tests
   - what is an inference

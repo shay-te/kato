@@ -346,6 +346,7 @@ class RepositoryServiceTests(unittest.TestCase):
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'checkout', '-f', 'master'],
+                ['git', '-c', 'safe.directory=.', '-C', '.', 'clean', '-fd'],
             ],
         )
 
@@ -378,6 +379,96 @@ class RepositoryServiceTests(unittest.TestCase):
                 'main',
             )
             self.assertEqual(self._git_stdout(repo_path, ['status', '--porcelain']), '')
+
+    def test_restore_task_repositories_forces_dirty_real_git_repository_with_untracked_build_output_back_to_destination_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_path = Path(temp_dir) / 'client'
+            self._create_real_git_repository(repo_path)
+            self._run_git(repo_path, ['checkout', '-b', 'feature/client'])
+            (repo_path / 'README.md').write_text('dirty\n', encoding='utf-8')
+            build_dir = repo_path / 'build'
+            build_dir.mkdir()
+            (build_dir / 'main.js').write_text('compiled\n', encoding='utf-8')
+
+            repository = types.SimpleNamespace(
+                id='client',
+                local_path=str(repo_path),
+                destination_branch='main',
+            )
+            service = RepositoryService([], 3)
+
+            with patch(
+                'openhands_agent.data_layers.service.repository_service.shutil.which',
+                return_value='/usr/bin/git',
+            ):
+                restored_repositories = service.restore_task_repositories(
+                    [repository],
+                    force=True,
+                )
+
+            self.assertEqual(restored_repositories, [repository])
+            self.assertEqual(
+                self._git_stdout(repo_path, ['rev-parse', '--abbrev-ref', 'HEAD']),
+                'main',
+            )
+            self.assertEqual(self._git_stdout(repo_path, ['status', '--porcelain']), '')
+            self.assertFalse(build_dir.exists())
+
+    def test_restore_task_repositories_recovers_from_stale_git_index_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_path = Path(temp_dir) / 'client'
+            self._create_real_git_repository(repo_path)
+            self._run_git(repo_path, ['checkout', '-b', 'feature/client'])
+            (repo_path / 'README.md').write_text('dirty\n', encoding='utf-8')
+            build_dir = repo_path / 'build'
+            build_dir.mkdir()
+            (build_dir / 'main.js').write_text('compiled\n', encoding='utf-8')
+            lock_path = repo_path / '.git' / 'index.lock'
+            lock_path.write_text('stale lock\n', encoding='utf-8')
+
+            repository = types.SimpleNamespace(
+                id='client',
+                local_path=str(repo_path),
+                destination_branch='main',
+            )
+            service = RepositoryService([], 3)
+
+            with patch(
+                'openhands_agent.data_layers.service.repository_service.shutil.which',
+                return_value='/usr/bin/git',
+            ):
+                restored_repositories = service.restore_task_repositories(
+                    [repository],
+                    force=True,
+                )
+
+            self.assertEqual(restored_repositories, [repository])
+            self.assertEqual(
+                self._git_stdout(repo_path, ['rev-parse', '--abbrev-ref', 'HEAD']),
+                'main',
+            )
+            self.assertEqual(self._git_stdout(repo_path, ['status', '--porcelain']), '')
+            self.assertFalse(build_dir.exists())
+            self.assertFalse(lock_path.exists())
+
+    def test_clear_stale_git_index_lock_keeps_lock_when_git_process_is_running(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_path = Path(temp_dir) / 'client'
+            git_dir = repo_path / '.git'
+            git_dir.mkdir(parents=True)
+            lock_path = git_dir / 'index.lock'
+            lock_path.write_text('active lock\n', encoding='utf-8')
+            service = RepositoryService([], 3)
+
+            with patch.object(
+                RepositoryService,
+                '_has_running_git_process',
+                return_value=True,
+            ):
+                cleared = service._clear_stale_git_index_lock(str(repo_path))
+
+            self.assertFalse(cleared)
+            self.assertTrue(lock_path.exists())
 
     def test_prepare_task_branches_creates_new_task_branch_from_destination_branch(self) -> None:
         service = RepositoryService(self.cfg.openhands_agent.repositories, 3)

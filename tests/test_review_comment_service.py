@@ -27,13 +27,22 @@ class ReviewCommentServiceTests(unittest.TestCase):
                 }
             ),
         )
-        self.repository = types.SimpleNamespace(id='client')
+        self.repository = types.SimpleNamespace(
+            id='client',
+            owner='workspace',
+            repo_slug='repo',
+            provider_base_url='https://api.bitbucket.org/2.0',
+        )
         self.repository_service = types.SimpleNamespace(
             get_repository=Mock(return_value=self.repository),
+            resolve_task_repositories=Mock(return_value=[self.repository]),
             prepare_task_branches=Mock(),
             publish_review_fix=Mock(),
+            reply_to_review_comment=Mock(),
             resolve_review_comment=Mock(),
             restore_task_repositories=Mock(),
+            build_branch_name=Mock(return_value='PROJ-1'),
+            find_pull_requests=Mock(return_value=[]),
             list_pull_request_comments=Mock(return_value=[]),
         )
         self.state_registry = AgentStateRegistry()
@@ -51,6 +60,13 @@ class ReviewCommentServiceTests(unittest.TestCase):
             self.service.process_review_comment(comment)
 
     def test_process_review_comment_processes_fix_and_marks_comment_processed(self) -> None:
+        call_order: list[str] = []
+        self.repository_service.reply_to_review_comment.side_effect = (
+            lambda *args, **kwargs: call_order.append('reply')
+        )
+        self.repository_service.resolve_review_comment.side_effect = (
+            lambda *args, **kwargs: call_order.append('resolve')
+        )
         comment = ReviewComment(
             pull_request_id='17',
             comment_id='99',
@@ -88,10 +104,14 @@ class ReviewCommentServiceTests(unittest.TestCase):
             'feature/proj-1/client',
             'Address review comments',
         )
+        self.repository_service.reply_to_review_comment.assert_called_once()
         self.repository_service.resolve_review_comment.assert_called_once_with(
             self.repository,
             comment,
         )
+        self.assertEqual(call_order, ['reply', 'resolve'])
+        reply_body = self.repository_service.reply_to_review_comment.call_args.args[2]
+        self.assertIn('OpenHands addressed this review comment', reply_body)
         self.task_service.add_comment.assert_called_once_with(
             'PROJ-1',
             review_comment_fixed_comment(comment),
@@ -125,24 +145,20 @@ class ReviewCommentServiceTests(unittest.TestCase):
             [self.repository],
             force=True,
         )
+        self.repository_service.reply_to_review_comment.assert_not_called()
         self.repository_service.resolve_review_comment.assert_not_called()
         self.assertFalse(self.state_registry.is_review_comment_processed('client', '17', '99'))
 
-    def test_get_new_pull_request_comments_filters_processed_comments_and_duplicate_targets(self) -> None:
-        self.task_service.get_review_tasks.return_value = [build_task(task_id='PROJ-1')]
-        self.state_registry.mark_task_processed(
-            'PROJ-1',
-            [
-                {
-                    PullRequestFields.ID: '17',
-                    PullRequestFields.REPOSITORY_ID: 'client',
-                }
-            ],
-        )
-        self.state_registry.pull_request_context_map['17'] = [
+    def test_get_new_pull_request_comments_discovers_pull_request_context_for_review_task(self) -> None:
+        self.task_service.get_review_tasks.return_value = [
+            build_task(task_id='PROJ-1', tags=['repo:client'])
+        ]
+        self.repository_service.find_pull_requests.return_value = [
             {
+                PullRequestFields.ID: '17',
                 PullRequestFields.REPOSITORY_ID: 'client',
-                'branch_name': 'feature/proj-1/client',
+                PullRequestFields.TITLE: 'PROJ-1 Fix bug',
+                PullRequestFields.URL: 'https://bitbucket/pr/17',
             }
         ]
         processed = ReviewComment(
@@ -177,8 +193,124 @@ class ReviewCommentServiceTests(unittest.TestCase):
         comments = self.service.get_new_pull_request_comments()
 
         self.assertEqual([comment.comment_id for comment in comments], ['100'])
+        self.repository_service.resolve_task_repositories.assert_called_once()
+        self.repository_service.find_pull_requests.assert_called_once_with(
+            self.repository,
+            source_branch='PROJ-1',
+            title_prefix='PROJ-1 ',
+        )
         self.repository_service.get_repository.assert_called_once_with('client')
         self.repository_service.list_pull_request_comments.assert_called_once_with(
             self.repository,
             '17',
+        )
+        self.assertEqual(
+            self.state_registry.pull_request_context('17', 'client'),
+            {
+                PullRequestFields.REPOSITORY_ID: 'client',
+                'branch_name': 'PROJ-1',
+                'task_id': 'PROJ-1',
+                'task_summary': 'Fix bug',
+            },
+        )
+
+    def test_get_new_pull_request_comments_adds_repository_id_before_remembering_api_discovered_pull_request(self) -> None:
+        self.task_service.get_review_tasks.return_value = [
+            build_task(task_id='PROJ-1', tags=['repo:client'])
+        ]
+        self.repository_service.find_pull_requests.return_value = [
+            {
+                PullRequestFields.ID: '17',
+                PullRequestFields.TITLE: 'PROJ-1 Fix bug',
+                PullRequestFields.URL: 'https://bitbucket/pr/17',
+            }
+        ]
+
+        comments = self.service.get_new_pull_request_comments()
+
+        self.assertEqual(comments, [])
+        self.assertEqual(
+            self.state_registry.pull_request_context('17', 'client'),
+            {
+                PullRequestFields.REPOSITORY_ID: 'client',
+                'branch_name': 'PROJ-1',
+                'task_id': 'PROJ-1',
+                'task_summary': 'Fix bug',
+            },
+        )
+
+    def test_get_new_pull_request_comments_uses_task_pull_request_url_before_api_lookup(self) -> None:
+        self.task_service.get_review_tasks.return_value = [
+            build_task(
+                task_id='PROJ-1',
+                description=(
+                    'Requested change.\n\n'
+                    'Pull request created: '
+                    'https://bitbucket.org/workspace/repo/pull-requests/17'
+                ),
+                tags=['repo:client'],
+            )
+        ]
+        self.repository_service.list_pull_request_comments.return_value = [
+            ReviewComment(
+                pull_request_id='17',
+                comment_id='99',
+                author='reviewer',
+                body='Please rename this variable.',
+            )
+        ]
+
+        comments = self.service.get_new_pull_request_comments()
+
+        self.assertEqual([comment.comment_id for comment in comments], ['99'])
+        self.repository_service.resolve_task_repositories.assert_called_once()
+        self.repository_service.find_pull_requests.assert_not_called()
+        self.repository_service.get_repository.assert_called_once_with('client')
+        self.repository_service.list_pull_request_comments.assert_called_once_with(
+            self.repository,
+            '17',
+        )
+        self.assertEqual(
+            self.state_registry.pull_request_context('17', 'client'),
+            {
+                PullRequestFields.REPOSITORY_ID: 'client',
+                'branch_name': 'PROJ-1',
+                'task_id': 'PROJ-1',
+                'task_summary': 'Fix bug',
+            },
+        )
+
+    def test_get_new_pull_request_comments_uses_task_comment_pull_request_url_before_api_lookup(self) -> None:
+        self.task_service.get_review_tasks.return_value = [
+            build_task(
+                task_id='PROJ-1',
+                description='Requested change.',
+                comments=[
+                    {
+                        'author': 'OpenHands',
+                        'body': (
+                            'Pull request created: '
+                            'https://bitbucket.org/workspace/repo/pull-requests/18'
+                        ),
+                    }
+                ],
+                tags=['repo:client'],
+            )
+        ]
+        self.repository_service.list_pull_request_comments.return_value = [
+            ReviewComment(
+                pull_request_id='18',
+                comment_id='100',
+                author='reviewer',
+                body='Please rename this variable.',
+            )
+        ]
+
+        comments = self.service.get_new_pull_request_comments()
+
+        self.assertEqual([comment.comment_id for comment in comments], ['100'])
+        self.repository_service.find_pull_requests.assert_not_called()
+        self.repository_service.list_pull_request_comments.assert_called_once_with(
+            self.repository,
+            '18',
         )

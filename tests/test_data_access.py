@@ -215,6 +215,33 @@ class PullRequestDataAccessTests(unittest.TestCase):
             pull_request_id='17',
         )
 
+    def test_finds_pull_requests_via_client(self) -> None:
+        config = types.SimpleNamespace(
+            base_url="https://bitbucket.example",
+            token="bb-token",
+            owner="workspace",
+            repo_slug="repo",
+            destination_branch="main",
+        )
+        client = types.SimpleNamespace(
+            provider_name='bitbucket',
+            find_pull_requests=Mock(return_value=['pr']),
+        )
+
+        data_access = PullRequestDataAccess(config, client)
+        pull_requests = data_access.find_pull_requests(
+            source_branch='PROJ-1',
+            title_prefix='PROJ-1 ',
+        )
+
+        self.assertEqual(pull_requests, ['pr'])
+        client.find_pull_requests.assert_called_once_with(
+            repo_owner='workspace',
+            repo_slug='repo',
+            source_branch='PROJ-1',
+            title_prefix='PROJ-1 ',
+        )
+
     def test_resolves_review_comment_via_client(self) -> None:
         config = types.SimpleNamespace(
             base_url="https://bitbucket.example",
@@ -242,6 +269,33 @@ class PullRequestDataAccessTests(unittest.TestCase):
             comment=comment,
         )
 
+    def test_replies_to_review_comment_via_client(self) -> None:
+        config = types.SimpleNamespace(
+            base_url="https://bitbucket.example",
+            token="bb-token",
+            owner="workspace",
+            repo_slug="repo",
+            destination_branch="main",
+        )
+        comment = build_review_comment()
+        client = types.SimpleNamespace(
+            provider_name='bitbucket',
+            reply_to_review_comment=Mock(),
+        )
+
+        data_access = PullRequestDataAccess(config, client)
+        data_access.reply_to_review_comment(
+            comment,
+            'Done. Added the missing branch guard.',
+        )
+
+        client.reply_to_review_comment.assert_called_once_with(
+            repo_owner='workspace',
+            repo_slug='repo',
+            comment=comment,
+            body='Done. Added the missing branch guard.',
+        )
+
     def test_validates_resolve_review_comment_values(self) -> None:
         config = types.SimpleNamespace(
             base_url="https://bitbucket.example",
@@ -261,3 +315,22 @@ class PullRequestDataAccessTests(unittest.TestCase):
 
         with self.assertRaisesRegex(PermissionError, ReviewCommentFields.COMMENT_ID):
             data_access.resolve_review_comment(comment)
+
+    def test_validates_review_comment_reply_values(self) -> None:
+        config = types.SimpleNamespace(
+            base_url="https://bitbucket.example",
+            token="bb-token",
+            owner="workspace",
+            repo_slug="repo",
+            destination_branch="main",
+        )
+        data_access = PullRequestDataAccess(
+            config,
+            types.SimpleNamespace(
+                reply_to_review_comment=Mock(),
+            ),
+        )
+        comment = build_review_comment()
+
+        with self.assertRaisesRegex(PermissionError, 'body'):
+            data_access.reply_to_review_comment(comment, ['not text'])

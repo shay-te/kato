@@ -1,3 +1,6 @@
+import re
+from urllib.parse import urlparse
+
 from core_lib.data_layers.service.service import Service
 
 from openhands_agent.client.ticket_client_base import TicketClientBase
@@ -5,6 +8,7 @@ from openhands_agent.data_layers.data.fields import (
     ImplementationFields,
     PullRequestFields,
     ReviewCommentFields,
+    TaskCommentFields,
 )
 from openhands_agent.data_layers.data.review_comment import ReviewComment
 from openhands_agent.data_layers.service.agent_state_registry import AgentStateRegistry
@@ -17,11 +21,12 @@ from openhands_agent.helpers.review_comment_utils import (
     comment_context_entry,
     review_comment_from_payload,
     review_comment_fixed_comment,
+    review_comment_reply_body,
     review_comment_resolution_key,
     review_fix_context_from_mapping,
     review_fix_result,
 )
-from openhands_agent.helpers.text_utils import text_from_attr
+from openhands_agent.helpers.text_utils import normalized_text, text_from_attr
 
 
 class ReviewCommentService(Service):
@@ -59,8 +64,8 @@ class ReviewCommentService(Service):
         repository = self._repository_service.get_repository(review_context.repository_id)
         try:
             self._prepare_review_fix_branch(repository, review_context)
-            self._run_review_comment_fix(comment, review_context)
-            self._publish_review_comment_fix(comment, repository, review_context)
+            execution = self._run_review_comment_fix(comment, review_context)
+            self._publish_review_comment_fix(comment, repository, review_context, execution)
             self._complete_review_fix(comment, review_context)
             return review_fix_result(comment, review_context)
         except Exception:
@@ -75,14 +80,22 @@ class ReviewCommentService(Service):
     def get_new_pull_request_comments(self) -> list[ReviewComment]:
         new_comments: list[ReviewComment] = []
         try:
-            review_pull_request_keys = self._review_pull_request_keys()
+            review_contexts = self._review_pull_request_contexts()
         except Exception:
             self.logger.exception('failed to determine review-state pull requests to poll')
             return new_comments
-        if not review_pull_request_keys:
+        if not review_contexts:
             return new_comments
 
-        for context in self._state_registry.tracked_pull_request_contexts():
+        review_pull_request_keys = {
+            (
+                context[PullRequestFields.ID],
+                context[PullRequestFields.REPOSITORY_ID],
+            )
+            for context in review_contexts
+        }
+
+        for context in review_contexts:
             new_comments.extend(
                 self._new_pull_request_comments_for_context(
                     context,
@@ -91,6 +104,162 @@ class ReviewCommentService(Service):
             )
 
         return new_comments
+
+    def _review_pull_request_contexts(self) -> list[dict[str, str]]:
+        contexts: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for task in self._task_service.get_review_tasks():
+            try:
+                task_contexts = self._review_task_pull_request_contexts(task)
+            except Exception:
+                self.logger.exception(
+                    'failed to determine review pull requests for task %s',
+                    task.id,
+                )
+                continue
+            for context in task_contexts:
+                key = (
+                    normalized_text(context.get(PullRequestFields.ID, '')),
+                    normalized_text(context.get(PullRequestFields.REPOSITORY_ID, '')),
+                )
+                if not all(key) or key in seen:
+                    continue
+                seen.add(key)
+                contexts.append(context)
+        return contexts
+
+    def _review_task_pull_request_contexts(self, task) -> list[dict[str, str]]:
+        repositories = self._repository_service.resolve_task_repositories(task)
+        contexts: list[dict[str, str]] = []
+        title_prefix = f'{task.id} '
+        for repository in repositories:
+            branch_name = self._repository_service.build_branch_name(task, repository)
+            task_contexts = self._task_pull_request_contexts(
+                task,
+                repository,
+                branch_name,
+            )
+            if task_contexts:
+                contexts.extend(task_contexts)
+                continue
+            pull_requests = self._repository_service.find_pull_requests(
+                repository,
+                source_branch=branch_name,
+                title_prefix=title_prefix,
+            )
+            for pull_request in pull_requests:
+                pull_request_context = dict(pull_request)
+                pull_request_context[PullRequestFields.REPOSITORY_ID] = repository.id
+                self._state_registry.remember_pull_request_context(
+                    pull_request_context,
+                    branch_name,
+                    task_id=str(task.id or ''),
+                    task_summary=str(task.summary or ''),
+                )
+                contexts.append(
+                    {
+                        PullRequestFields.ID: pull_request[PullRequestFields.ID],
+                        PullRequestFields.REPOSITORY_ID: repository.id,
+                        'branch_name': branch_name,
+                    }
+                )
+        return contexts
+
+    def _task_pull_request_contexts(
+        self,
+        task,
+        repository,
+        branch_name: str,
+    ) -> list[dict[str, str]]:
+        contexts: list[dict[str, str]] = []
+        for pull_request_id in self._task_pull_request_ids(task, repository):
+            pull_request = {
+                PullRequestFields.ID: pull_request_id,
+                PullRequestFields.REPOSITORY_ID: repository.id,
+            }
+            self._state_registry.remember_pull_request_context(
+                pull_request,
+                branch_name,
+                task_id=str(task.id or ''),
+                task_summary=str(task.summary or ''),
+            )
+            contexts.append(
+                {
+                    PullRequestFields.ID: pull_request_id,
+                    PullRequestFields.REPOSITORY_ID: repository.id,
+                    'branch_name': branch_name,
+                }
+            )
+        return contexts
+
+    def _task_pull_request_ids(self, task, repository) -> list[str]:
+        ids: list[str] = []
+        seen: set[str] = set()
+        for text in self._task_pull_request_texts(task):
+            for url in self._pull_request_urls(text):
+                pull_request_id = self._repository_pull_request_id_from_url(url, repository)
+                if not pull_request_id or pull_request_id in seen:
+                    continue
+                seen.add(pull_request_id)
+                ids.append(pull_request_id)
+        return ids
+
+    @staticmethod
+    def _task_pull_request_texts(task) -> list[str]:
+        texts: list[str] = [str(getattr(task, 'description', '') or '')]
+        comment_entries = getattr(task, TaskCommentFields.ALL_COMMENTS, [])
+        if isinstance(comment_entries, list):
+            for comment_entry in comment_entries:
+                if not isinstance(comment_entry, dict):
+                    continue
+                texts.append(str(comment_entry.get(TaskCommentFields.BODY, '') or ''))
+        return texts
+
+    @staticmethod
+    def _pull_request_urls(text: str) -> list[str]:
+        return re.findall(r'https?://[^\s)]+', str(text or ''))
+
+    def _repository_pull_request_id_from_url(self, url: str, repository) -> str:
+        parsed = urlparse(str(url or '').strip())
+        path_parts = [part for part in parsed.path.split('/') if part]
+        if len(path_parts) < 3:
+            return ''
+        repository_path = '/'.join(
+            [
+                str(getattr(repository, 'owner', '') or '').strip('/'),
+                str(getattr(repository, 'repo_slug', '') or '').strip('/'),
+            ]
+        ).strip('/')
+        if not repository_path:
+            return ''
+
+        provider_base_url = str(getattr(repository, 'provider_base_url', '') or '').lower()
+        if 'bitbucket' in provider_base_url:
+            if len(path_parts) < 3 or path_parts[-2] != 'pull-requests':
+                return ''
+            candidate_repository_path = '/'.join(path_parts[:-2])
+            return path_parts[-1] if candidate_repository_path == repository_path else ''
+        if 'github' in provider_base_url:
+            if len(path_parts) < 3 or path_parts[-2] != 'pull':
+                return ''
+            candidate_repository_path = '/'.join(path_parts[:-2])
+            return path_parts[-1] if candidate_repository_path == repository_path else ''
+        if 'gitlab' in provider_base_url:
+            if '-/' not in parsed.path:
+                return ''
+            repository_path_part, merge_request_part = parsed.path.split('/-/', 1)
+            if merge_request_part.count('/') < 1:
+                return ''
+            merge_request_parts = [part for part in merge_request_part.split('/') if part]
+            if len(merge_request_parts) < 2 or merge_request_parts[0] != 'merge_requests':
+                return ''
+            candidate_repository_path = repository_path_part.strip('/')
+            return (
+                merge_request_parts[1]
+                if candidate_repository_path == repository_path
+                else ''
+            )
+        return ''
 
     def _new_pull_request_comments_for_context(
         self,
@@ -199,6 +368,7 @@ class ReviewCommentService(Service):
         comment: ReviewComment,
         repository,
         review_context: ReviewFixContext,
+        execution: dict[str, str | bool],
     ) -> None:
         self.logger.info(
             'publishing review fix for pull request %s comment %s on branch %s',
@@ -215,6 +385,21 @@ class ReviewCommentService(Service):
             'published review fix for pull request %s comment %s',
             comment.pull_request_id,
             comment.comment_id,
+        )
+        self.logger.info(
+            'replying to review comment %s on pull request %s',
+            comment.comment_id,
+            comment.pull_request_id,
+        )
+        self._repository_service.reply_to_review_comment(
+            repository,
+            comment,
+            review_comment_reply_body(execution),
+        )
+        self.logger.info(
+            'replied to review comment %s on pull request %s',
+            comment.comment_id,
+            comment.pull_request_id,
         )
         self.logger.info(
             'resolving review comment %s on pull request %s',
@@ -260,20 +445,6 @@ class ReviewCommentService(Service):
                 'failed to restore repository %s after review comment failure',
                 repository.id,
             )
-
-    def _review_pull_request_keys(self) -> set[tuple[str, str]]:
-        review_pull_request_keys: set[tuple[str, str]] = set()
-        for task in self._task_service.get_review_tasks():
-            for pull_request in self._state_registry.processed_task_pull_requests(task.id):
-                if not isinstance(pull_request, dict):
-                    continue
-                pull_request_id = str(pull_request.get(PullRequestFields.ID, '') or '').strip()
-                repository_id = str(
-                    pull_request.get(PullRequestFields.REPOSITORY_ID, '') or ''
-                ).strip()
-                if pull_request_id and repository_id:
-                    review_pull_request_keys.add((pull_request_id, repository_id))
-        return review_pull_request_keys
 
     def _comment_review_fix_completed(
         self,

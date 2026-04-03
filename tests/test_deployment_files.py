@@ -24,6 +24,7 @@ class DeploymentFilesTests(unittest.TestCase):
     def test_docker_compose_centralizes_openhands_llm_configuration(self) -> None:
         compose_text = (REPO_ROOT / 'docker-compose.yaml').read_text(encoding='utf-8')
         makefile_text = (REPO_ROOT / 'Makefile').read_text(encoding='utf-8')
+        env_example_text = (REPO_ROOT / '.env.example').read_text(encoding='utf-8')
 
         self.assertIn('LLM_MODEL: ${OPENHANDS_LLM_MODEL:-}', compose_text)
         self.assertIn('OPENHANDS_LLM_MODEL: ${OPENHANDS_LLM_MODEL:-}', compose_text)
@@ -324,6 +325,7 @@ class DeploymentFilesTests(unittest.TestCase):
         run_local_text = (REPO_ROOT / 'scripts' / 'run-local.sh').read_text(encoding='utf-8')
         makefile_text = (REPO_ROOT / 'Makefile').read_text(encoding='utf-8')
         compose_text = (REPO_ROOT / 'docker-compose.yaml').read_text(encoding='utf-8')
+        env_example_text = (REPO_ROOT / '.env.example').read_text(encoding='utf-8')
         gitignore_text = (REPO_ROOT / '.gitignore').read_text(encoding='utf-8')
         run_entrypoint_text = (
             REPO_ROOT / 'docker' / 'entrypoint-run.sh'
@@ -381,6 +383,8 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('REPOSITORY_ROOT_PATH: /workspace/project', compose_text)
         self.assertIn('${REPOSITORY_ROOT_PATH:-.}:/workspace/project:rw', compose_text)
         self.assertIn('docker.openhands.dev/openhands/openhands:1.5', compose_text)
+        self.assertIn('pull_policy: ${OPENHANDS_PULL_POLICY:-missing}', compose_text)
+        self.assertIn('OPENHANDS_PULL_POLICY=missing', env_example_text)
         self.assertNotIn('/Users/shaytessler/Desktop/dev/openhands-agent:/workspace/project', compose_text)
         self.assertNotIn('./docker_data/openhands:/data', compose_text)
         self.assertNotIn('./docker_data/openhands_state:/.openhands', compose_text)

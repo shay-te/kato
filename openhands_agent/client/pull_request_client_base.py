@@ -79,6 +79,27 @@ class PullRequestClientBase(RetryingClientBase, ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def find_pull_requests(
+        self,
+        repo_owner: str,
+        repo_slug: str,
+        *,
+        source_branch: str = '',
+        title_prefix: str = '',
+    ) -> list[dict[str, str]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def reply_to_review_comment(
+        self,
+        repo_owner: str,
+        repo_slug: str,
+        comment: ReviewComment,
+        body: str,
+    ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
     def resolve_review_comment(
         self,
         repo_owner: str,

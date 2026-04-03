@@ -112,7 +112,7 @@ x-openhands-service-env: &openhands-service-env
 services:
   openhands:
     image: docker.openhands.dev/openhands/openhands:1.5
-    pull_policy: always
+    pull_policy: ${OPENHANDS_PULL_POLICY:-missing}
 
     environment:
       LOG_ALL_EVENTS: ${OPENHANDS_CONTAINER_LOG_ALL_EVENTS}
@@ -144,7 +144,7 @@ services:
   # openhands-testing:
   #   profiles: ["testing"]
   #   image: docker.openhands.dev/openhands/openhands:1.5
-  #   pull_policy: always
+  #   pull_policy: ${OPENHANDS_PULL_POLICY:-missing}
   #   environment:
   #     <<: *openhands-service-env
   #     LLM_MODEL: ${OPENHANDS_TESTING_LLM_MODEL:-}

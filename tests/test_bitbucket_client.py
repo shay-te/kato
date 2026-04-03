@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 
 
-from openhands_agent.client.bitbucket_client import BitbucketClient
+from openhands_agent.client.bitbucket_client import BITBUCKET_PAGE_LENGTH, BitbucketClient
 from openhands_agent.data_layers.data.fields import PullRequestFields, ReviewCommentFields
 from utils import (
     ClientTimeout,
@@ -220,7 +220,7 @@ class BitbucketClientTests(unittest.TestCase):
         )
         mock_get.assert_called_once_with(
             '/repositories/workspace/repo/pullrequests/17/comments',
-            params={'pagelen': 100, 'sort': 'created_on'},
+            params={'pagelen': BITBUCKET_PAGE_LENGTH, 'sort': 'created_on'},
         )
 
     def test_list_pull_request_comments_uses_root_comment_as_resolution_target(self) -> None:
@@ -266,6 +266,50 @@ class BitbucketClientTests(unittest.TestCase):
 
         self.assertEqual(comments, [])
 
+    def test_find_pull_requests_filters_open_pull_requests_by_branch_and_title_prefix(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+        response = mock_response(
+            json_data={
+                'values': [
+                    {
+                        'id': 17,
+                        PullRequestFields.TITLE: 'PROJ-1 Fix bug',
+                        'links': {'html': {'href': 'https://bitbucket/pr/17'}},
+                        'source': {'branch': {'name': 'PROJ-1'}},
+                    },
+                    {
+                        'id': 18,
+                        PullRequestFields.TITLE: 'OTHER-1 Fix bug',
+                        'links': {'html': {'href': 'https://bitbucket/pr/18'}},
+                        'source': {'branch': {'name': 'OTHER-1'}},
+                    },
+                ]
+            }
+        )
+
+        with patch.object(client, '_get', return_value=response) as mock_get:
+            pull_requests = client.find_pull_requests(
+                'workspace',
+                'repo',
+                source_branch='PROJ-1',
+                title_prefix='PROJ-1 ',
+            )
+
+        self.assertEqual(
+            pull_requests,
+            [
+                {
+                    PullRequestFields.ID: '17',
+                    PullRequestFields.TITLE: 'PROJ-1 Fix bug',
+                    PullRequestFields.URL: 'https://bitbucket/pr/17',
+                }
+            ],
+        )
+        mock_get.assert_called_once_with(
+            '/repositories/workspace/repo/pullrequests',
+            params={'pagelen': BITBUCKET_PAGE_LENGTH},
+        )
+
     def test_resolve_review_comment_posts_to_resolution_endpoint(self) -> None:
         client = BitbucketClient('https://bitbucket.example', 'bb-token')
         response = mock_response()
@@ -281,4 +325,30 @@ class BitbucketClientTests(unittest.TestCase):
         response.raise_for_status.assert_called_once_with()
         mock_post.assert_called_once_with(
             '/repositories/workspace/repo/pullrequests/17/comments/99/resolve',
+        )
+
+    def test_reply_to_review_comment_posts_thread_reply(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+        response = mock_response()
+        comment = build_review_comment(
+            resolution_target_id='99',
+            resolution_target_type='comment',
+            resolvable=True,
+        )
+
+        with patch.object(client, '_post', return_value=response) as mock_post:
+            client.reply_to_review_comment(
+                'workspace',
+                'repo',
+                comment,
+                'Done. Added support for creating new options.',
+            )
+
+        response.raise_for_status.assert_called_once_with()
+        mock_post.assert_called_once_with(
+            '/repositories/workspace/repo/pullrequests/17/comments',
+            json={
+                'content': {'raw': 'Done. Added support for creating new options.'},
+                'parent': {'id': '99'},
+            },
         )

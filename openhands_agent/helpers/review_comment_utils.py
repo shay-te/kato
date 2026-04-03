@@ -9,6 +9,7 @@ from openhands_agent.data_layers.data.fields import (
     StatusFields,
     TaskFields,
 )
+from openhands_agent.helpers.task_execution_utils import task_execution_report
 from openhands_agent.helpers.text_utils import text_from_mapping
 
 
@@ -69,6 +70,16 @@ def review_comment_fixed_comment(comment: ReviewComment) -> str:
     return (
         'OpenHands addressed review comment '
         f'{comment.comment_id} on pull request {comment.pull_request_id}.'
+    )
+
+
+def review_comment_reply_body(execution: dict[str, str | bool]) -> str:
+    report = task_execution_report(execution).strip()
+    if not report:
+        return 'OpenHands addressed this review comment and pushed a follow-up update.'
+    return (
+        'OpenHands addressed this review comment and pushed a follow-up update.\n\n'
+        f'{report}'
     )
 
 

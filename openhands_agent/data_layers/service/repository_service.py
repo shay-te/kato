@@ -139,8 +139,24 @@ class RepositoryService(RepositoryInventoryService):
             pull_request_id,
         )
 
+    def find_pull_requests(
+        self,
+        repository,
+        *,
+        source_branch: str = '',
+        title_prefix: str = '',
+    ) -> list[dict[str, str]]:
+        return self._publication_service.find_pull_requests(
+            repository,
+            source_branch=source_branch,
+            title_prefix=title_prefix,
+        )
+
     def resolve_review_comment(self, repository, comment) -> None:
         self._publication_service.resolve_review_comment(repository, comment)
+
+    def reply_to_review_comment(self, repository, comment, body: str) -> None:
+        self._publication_service.reply_to_review_comment(repository, comment, body)
 
     def destination_branch(self, repository) -> str:
         configured_branch = text_from_attr(repository, 'destination_branch')
@@ -223,6 +239,16 @@ class RepositoryService(RepositoryInventoryService):
                 f'failed to restore repository at {repository.local_path} to {destination_branch}',
                 repository,
             )
+            if dirty_worktree and force:
+                self._run_git(
+                    repository.local_path,
+                    ['clean', '-fd'],
+                    (
+                        f'failed to remove untracked files while restoring repository '
+                        f'at {repository.local_path} to {destination_branch}'
+                    ),
+                    repository,
+                )
             self.logger.info(
                 'restored repository at %s to branch %s after task rejection',
                 repository.local_path,
@@ -734,25 +760,81 @@ class RepositoryService(RepositoryInventoryService):
         repository=None,
     ):
         self._validate_git_executable()
+        result = self._run_git_subprocess(local_path, args, repository)
+        if result.returncode == 0:
+            return result
+        failure_detail = result.stderr.strip() or result.stdout.strip() or 'git command failed'
+        if self._is_git_index_lock_error(failure_detail) and self._clear_stale_git_index_lock(
+            local_path
+        ):
+            result = self._run_git_subprocess(local_path, args, repository)
+            if result.returncode == 0:
+                return result
+            failure_detail = result.stderr.strip() or result.stdout.strip() or 'git command failed'
+        raise RuntimeError(
+            f'{failure_message}: {failure_detail}'
+        )
+
+    def _run_git_subprocess(
+        self,
+        local_path: str,
+        args: list[str],
+        repository=None,
+    ):
         command = ['git']
         env = os.environ.copy()
         env['GIT_TERMINAL_PROMPT'] = '0'
         auth_header = self._git_http_auth_header(repository)
         if auth_header:
             command.extend(['-c', f'http.extraHeader={auth_header}'])
-        result = subprocess.run(
+        return subprocess.run(
             [*command, *self._git_safe_directory_args(local_path), '-C', local_path, *args],
             capture_output=True,
             text=True,
             check=False,
             env=env,
         )
-        if result.returncode == 0:
-            return result
-        raise RuntimeError(
-            f'{failure_message}: '
-            f'{result.stderr.strip() or result.stdout.strip() or "git command failed"}'
-        )
+
+    @staticmethod
+    def _is_git_index_lock_error(error_text: str) -> bool:
+        normalized_error_text = normalized_lower_text(error_text)
+        return 'index.lock' in normalized_error_text and 'file exists' in normalized_error_text
+
+    def _clear_stale_git_index_lock(self, local_path: str) -> bool:
+        lock_path = Path(local_path) / '.git' / 'index.lock'
+        if not lock_path.exists():
+            return False
+        if self._has_running_git_process(local_path):
+            self.logger.warning(
+                'leaving git index lock in place at %s because another git process is still running',
+                lock_path,
+            )
+            return False
+        lock_path.unlink()
+        self.logger.warning('removed stale git index lock at %s', lock_path)
+        return True
+
+    @staticmethod
+    def _has_running_git_process(local_path: str) -> bool:
+        try:
+            result = subprocess.run(
+                ['ps', '-eo', 'command='],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            return False
+        if result.returncode != 0:
+            return False
+        repository_arg = f'-C {local_path}'
+        for command_line in result.stdout.splitlines():
+            normalized_command_line = command_line.strip()
+            if not normalized_command_line.startswith('git '):
+                continue
+            if repository_arg in normalized_command_line:
+                return True
+        return False
 
     def _push_branch(
         self,

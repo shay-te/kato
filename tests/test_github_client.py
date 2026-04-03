@@ -159,6 +159,48 @@ class GitHubClientTests(unittest.TestCase):
 
         self.assertEqual(comments, [])
 
+    def test_find_pull_requests_filters_open_pull_requests_by_branch_and_title_prefix(self) -> None:
+        client = GitHubClient('https://api.github.com', 'gh-token')
+        response = mock_response(
+            json_data=[
+                {
+                    'number': 17,
+                    PullRequestFields.TITLE: 'PROJ-1 Fix bug',
+                    'html_url': 'https://github.com/owner/repo/pull/17',
+                    'head': {'ref': 'PROJ-1'},
+                },
+                {
+                    'number': 18,
+                    PullRequestFields.TITLE: 'OTHER-1 Fix bug',
+                    'html_url': 'https://github.com/owner/repo/pull/18',
+                    'head': {'ref': 'OTHER-1'},
+                },
+            ]
+        )
+
+        with patch.object(client, '_get', return_value=response) as mock_get:
+            pull_requests = client.find_pull_requests(
+                'owner',
+                'repo',
+                source_branch='PROJ-1',
+                title_prefix='PROJ-1 ',
+            )
+
+        self.assertEqual(
+            pull_requests,
+            [
+                {
+                    PullRequestFields.ID: '17',
+                    PullRequestFields.TITLE: 'PROJ-1 Fix bug',
+                    PullRequestFields.URL: 'https://github.com/owner/repo/pull/17',
+                }
+            ],
+        )
+        mock_get.assert_called_once_with(
+            '/repos/owner/repo/pulls',
+            params={'state': 'open', 'per_page': 100, 'head': 'owner:PROJ-1'},
+        )
+
     def test_resolve_review_comment_uses_graphql_thread_resolution(self) -> None:
         client = GitHubClient('https://api.github.com', 'gh-token')
         comment = build_review_comment(
@@ -173,6 +215,25 @@ class GitHubClientTests(unittest.TestCase):
         self.assertEqual(
             mock_graphql.call_args.args[1],
             {'threadId': 'thread-1'},
+        )
+
+    def test_reply_to_review_comment_posts_rest_reply(self) -> None:
+        client = GitHubClient('https://api.github.com', 'gh-token')
+        response = mock_response()
+        comment = build_review_comment(comment_id='99')
+
+        with patch.object(client, '_post', return_value=response) as mock_post:
+            client.reply_to_review_comment(
+                'owner',
+                'repo',
+                comment,
+                'Done. Adjusted the resize line handling for RTL.',
+            )
+
+        response.raise_for_status.assert_called_once_with()
+        mock_post.assert_called_once_with(
+            '/repos/owner/repo/pulls/17/comments/99/replies',
+            json={'body': 'Done. Adjusted the resize line handling for RTL.'},
         )
 
     def test_graphql_url_uses_enterprise_endpoint_when_rest_base_uses_api_v3(self) -> None:

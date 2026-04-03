@@ -117,6 +117,25 @@ class AgentStateRegistryTests(unittest.TestCase):
 
         self.assertTrue(self.registry.is_review_comment_processed('client', '17', '99'))
 
+    def test_remember_pull_request_context_deduplicates_same_repository_and_branch(self) -> None:
+        pull_request = {
+            PullRequestFields.REPOSITORY_ID: 'client',
+            PullRequestFields.ID: '17',
+        }
+
+        self.registry.remember_pull_request_context(pull_request, 'PROJ-1')
+        self.registry.remember_pull_request_context(pull_request, 'PROJ-1')
+
+        self.assertEqual(
+            self.registry.pull_request_context_map['17'],
+            [
+                {
+                    PullRequestFields.REPOSITORY_ID: 'client',
+                    'branch_name': 'PROJ-1',
+                }
+            ],
+        )
+
     def test_tracked_pull_request_contexts_deduplicates_identical_entries(self) -> None:
         self.registry.pull_request_context_map['17'] = [
             {
