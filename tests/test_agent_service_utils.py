@@ -2,6 +2,7 @@ import types
 import unittest
 
 from openhands_agent.helpers.pull_request_utils import (
+    pull_request_description,
     pull_request_repositories_text,
     pull_request_summary_comment,
 )
@@ -191,3 +192,25 @@ class AgentServiceUtilsTests(unittest.TestCase):
         self.assertIn('Updated the client flow.', summary)
         self.assertIn('Validation report:', summary)
         self.assertIn('No tests were defined.', summary)
+
+    def test_pull_request_description_is_structured_and_explanatory(self) -> None:
+        task = build_task(
+            task_id='PROJ-1',
+            summary='Fix bug',
+            description='Update the checkout validation flow',
+        )
+        description = pull_request_description(
+            task,
+            {
+                'summary': 'Files changed:\n- client/app.ts\n  Updated the client flow.',
+                'message': 'Validation report: no tests were defined.',
+            },
+        )
+
+        self.assertIn('OpenHands completed task PROJ-1: Fix bug.', description)
+        self.assertIn('Requested change:', description)
+        self.assertIn('Update the checkout validation flow', description)
+        self.assertIn('Implementation summary:', description)
+        self.assertIn('Files changed:', description)
+        self.assertIn('Execution notes:', description)
+        self.assertIn('Validation report: no tests were defined.', description)

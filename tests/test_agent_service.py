@@ -26,6 +26,7 @@ from utils import build_review_comment_payload, build_task, build_test_cfg
 
 class AgentServiceTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.task_description = 'Update client and backend APIs'
         self.pr_description = (
             'Files changed:\n'
             '- client/app.ts\n'
@@ -38,7 +39,7 @@ class AgentServiceTests(unittest.TestCase):
         self.backend_repo = self.cfg.openhands_agent.repositories[1]
         task_client = types.SimpleNamespace(
             provider_name='youtrack',
-            get_assigned_tasks=Mock(return_value=[build_task(description='Update client and backend APIs')]),
+            get_assigned_tasks=Mock(return_value=[build_task(description=self.task_description)]),
             add_comment=Mock(),
             move_issue_to_state=Mock(),
         )
@@ -55,6 +56,7 @@ class AgentServiceTests(unittest.TestCase):
                     ImplementationFields.SUCCESS: True,
                     ImplementationFields.SESSION_ID: 'conversation-1',
                     ImplementationFields.COMMIT_MESSAGE: 'Implement PROJ-1',
+                    ImplementationFields.MESSAGE: 'Implementation notes: updated the client and backend flows.',
                     'summary': self.pr_description,
                 }
             ),
@@ -302,20 +304,18 @@ class AgentServiceTests(unittest.TestCase):
                 ),
             ],
         )
-        self.repository_service.create_pull_request.assert_any_call(
-            self.client_repo,
-            title='PROJ-1: Fix bug',
-            source_branch='feature/proj-1/client',
-            description=self.pr_description,
-            commit_message='Implement PROJ-1',
-        )
-        self.repository_service.create_pull_request.assert_any_call(
-            self.backend_repo,
-            title='PROJ-1: Fix bug',
-            source_branch='feature/proj-1/backend',
-            description=self.pr_description,
-            commit_message='Implement PROJ-1',
-        )
+        client_call = self.repository_service.create_pull_request.call_args_list[0]
+        backend_call = self.repository_service.create_pull_request.call_args_list[1]
+        client_description = client_call.kwargs['description']
+        backend_description = backend_call.kwargs['description']
+        for description in (client_description, backend_description):
+            self.assertIn('OpenHands completed task PROJ-1: Fix bug.', description)
+            self.assertIn('Requested change:', description)
+            self.assertIn('Update client and backend APIs', description)
+            self.assertIn('Implementation summary:', description)
+            self.assertIn('Files changed:', description)
+            self.assertIn('Execution notes:', description)
+            self.assertIn('Implementation notes: updated the client and backend flows.', description)
         self.assertEqual(self.task_client.add_comment.call_count, 2)
         start_comment = self.task_client.add_comment.call_args_list[0].args[1]
         self.assertIn('started working on this task', start_comment)
@@ -377,13 +377,15 @@ class AgentServiceTests(unittest.TestCase):
 
         self.service.process_assigned_task(task)
 
-        self.repository_service.create_pull_request.assert_any_call(
-            self.client_repo,
-            title='PROJ-1: Fix bug',
-            source_branch='feature/proj-1/client',
-            description=self.pr_description,
-            commit_message='Implement PROJ-1',
-        )
+        client_call = self.repository_service.create_pull_request.call_args_list[0]
+        client_description = client_call.kwargs['description']
+        self.assertIn('OpenHands completed task PROJ-1: Fix bug.', client_description)
+        self.assertIn('Requested change:', client_description)
+        self.assertIn('Update client and backend APIs', client_description)
+        self.assertIn('Implementation summary:', client_description)
+        self.assertIn('Files changed:', client_description)
+        self.assertIn('Execution notes:', client_description)
+        self.assertIn('Validation report: no dedicated tests were defined.', client_description)
         self.assertIn(
             'Validation report: no dedicated tests were defined.',
             self.task_client.add_comment.call_args_list[1].args[1],

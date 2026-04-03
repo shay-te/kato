@@ -713,6 +713,7 @@ class RepositoryServiceTests(unittest.TestCase):
             return_value=True,
         ), patch(
             'openhands_agent.data_layers.service.repository_service.RepositoryService._prepare_branch_for_publication',
+            return_value='',
         ) as mock_prepare_branch, patch(
             'openhands_agent.data_layers.service.repository_service.RepositoryService._prepare_workspace_for_task',
         ) as mock_prepare_workspace, patch(
@@ -765,6 +766,7 @@ class RepositoryServiceTests(unittest.TestCase):
             return_value=True,
         ), patch(
             'openhands_agent.data_layers.service.repository_service.RepositoryService._prepare_branch_for_publication',
+            return_value='',
         ), patch(
             'openhands_agent.data_layers.service.repository_service.RepositoryService._prepare_workspace_for_task',
         ) as mock_prepare_workspace, patch(
@@ -820,6 +822,7 @@ class RepositoryServiceTests(unittest.TestCase):
             return_value=True,
         ), patch(
             'openhands_agent.data_layers.service.repository_service.RepositoryService._prepare_branch_for_publication',
+            return_value='',
         ) as mock_prepare_branch, patch(
             'openhands_agent.data_layers.service.repository_service.RepositoryService._prepare_workspace_for_task',
             side_effect=assert_workspace_restored_after_pr,
@@ -870,6 +873,7 @@ class RepositoryServiceTests(unittest.TestCase):
             return_value=True,
         ), patch(
             'openhands_agent.data_layers.service.repository_service.RepositoryService._prepare_branch_for_publication',
+            return_value='',
         ), patch(
             'openhands_agent.data_layers.service.repository_service.RepositoryService._prepare_workspace_for_task',
         ) as mock_prepare_workspace, patch(
@@ -929,6 +933,9 @@ class RepositoryServiceTests(unittest.TestCase):
         ) as mock_remove, patch(
             'openhands_agent.data_layers.service.repository_service.RepositoryService._validate_destination_branch_tracking_state',
         ), patch(
+            'openhands_agent.data_layers.service.repository_service.RepositoryService._validation_report_text',
+            return_value='Validation report:\n- verified the task manually.',
+        ), patch(
             'openhands_agent.data_layers.service.repository_service.RepositoryService._push_branch',
         ) as mock_push_branch, patch(
             'openhands_agent.data_layers.service.repository_service.RepositoryService._pull_request_data_access',
@@ -964,6 +971,12 @@ class RepositoryServiceTests(unittest.TestCase):
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
             ],
+        )
+        data_access.create_pull_request.assert_called_once_with(
+            title='PROJ-1: Fix bug',
+            source_branch='feature/proj-1/backend',
+            destination_branch='main',
+            description='Ready',
         )
         mock_push_branch.assert_called_once_with('.', 'feature/proj-1/backend', repository)
 
@@ -1011,6 +1024,9 @@ class RepositoryServiceTests(unittest.TestCase):
         ) as mock_remove, patch(
             'openhands_agent.data_layers.service.repository_service.RepositoryService._validate_destination_branch_tracking_state',
         ), patch(
+            'openhands_agent.data_layers.service.repository_service.RepositoryService._validation_report_text',
+            return_value='Validation report:\n- verified the task manually.',
+        ), patch(
             'openhands_agent.data_layers.service.repository_service.RepositoryService._push_branch',
         ) as mock_push_branch, patch(
             'openhands_agent.data_layers.service.repository_service.RepositoryService._pull_request_data_access',
@@ -1047,6 +1063,12 @@ class RepositoryServiceTests(unittest.TestCase):
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
             ],
+        )
+        data_access.create_pull_request.assert_called_once_with(
+            title='PROJ-1: Fix bug',
+            source_branch='feature/proj-1/backend',
+            destination_branch='main',
+            description='Validation report:\n- verified the task manually.',
         )
         mock_push_branch.assert_called_once_with('.', 'feature/proj-1/backend', repository)
 
@@ -1107,6 +1129,9 @@ class RepositoryServiceTests(unittest.TestCase):
         ), patch(
             'openhands_agent.data_layers.service.repository_service.RepositoryService._prepare_workspace_for_task',
         ), patch(
+            'openhands_agent.data_layers.service.repository_service.RepositoryService._validation_report_text',
+            return_value='Validation report:\n- verified the task manually.',
+        ), patch(
             'openhands_agent.data_layers.service.repository_service.RepositoryService._push_branch',
         ) as mock_push_branch, patch(
             'openhands_agent.data_layers.service.repository_service.RepositoryService._pull_request_data_access',
@@ -1135,6 +1160,12 @@ class RepositoryServiceTests(unittest.TestCase):
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'commit', '-m', 'Implement PROJ-1'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
             ],
+        )
+        data_access.create_pull_request.assert_called_once_with(
+            title='PROJ-1: Fix bug',
+            source_branch='feature/proj-1/backend',
+            destination_branch='main',
+            description='Validation report:\n- verified the task manually.',
         )
         mock_rmtree.assert_called_once_with('./build')
         mock_remove.assert_called_once_with('./validation_report.md')
@@ -1815,9 +1846,22 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(config.get('api_email'), 'bb-user@example.com')
         self.assertIsNone(config.get('username'))
 
+    def test_validation_report_text_reads_and_trims_file_content(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            report_path = Path(temp_dir) / 'validation_report.md'
+            report_path.write_text('  Validation report:\n- checked the branch.  \n', encoding='utf-8')
+
+            service = RepositoryService(self.cfg.openhands_agent.repositories, 3)
+
+            self.assertEqual(
+                service._validation_report_text(str(report_path)),
+                'Validation report:\n- checked the branch.',
+            )
+
     def test_publish_branch_updates_returns_to_destination_branch_when_push_fails(self) -> None:
         with patch(
             'openhands_agent.data_layers.service.repository_service.RepositoryService._prepare_branch_for_publication',
+            return_value='',
         ), patch(
             'openhands_agent.data_layers.service.repository_service.RepositoryService._push_branch',
             side_effect=RuntimeError('push failed'),

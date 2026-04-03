@@ -282,7 +282,15 @@ class OpenHandsClientTests(unittest.TestCase):
         self.assertIn('Do not commit or stage generated build artifacts such as build, dist, out, coverage, or target directories.', prompt)
         self.assertIn('If no dedicated tests are defined for this task', prompt)
         self.assertIn(
-            'Do not create validation_report.md; if the task completes successfully and you have a validation report',
+            'Create validation_report.md in the repository root when the task succeeds.',
+            prompt,
+        )
+        self.assertIn(
+            'Write the report that the orchestration layer will use as the pull request description.',
+            prompt,
+        )
+        self.assertIn(
+            'Do not commit or stage validation_report.md; the orchestration layer will read and remove it before opening the pull request.',
             prompt,
         )
         self.assertIn('Files changed:', prompt)
@@ -338,7 +346,15 @@ class OpenHandsClientTests(unittest.TestCase):
         self.assertIn('Do not commit or stage generated build artifacts such as build, dist, out, coverage, or target directories.', prompt)
         self.assertIn('If no dedicated tests are defined or available', prompt)
         self.assertIn(
-            'Do not create validation_report.md; if the task completes successfully and you have a validation report',
+            'Create validation_report.md in the repository root when the task succeeds.',
+            prompt,
+        )
+        self.assertIn(
+            'Write the report that the orchestration layer will use as the pull request description.',
+            prompt,
+        )
+        self.assertIn(
+            'Do not commit or stage validation_report.md; the orchestration layer will read and remove it before opening the pull request.',
             prompt,
         )
         self.assertIn('Security guardrails:', prompt)

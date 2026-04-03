@@ -1,5 +1,5 @@
+from openhands_agent.data_layers.data.fields import ImplementationFields, PullRequestFields
 from openhands_agent.data_layers.data.task import Task
-from openhands_agent.data_layers.data.fields import PullRequestFields
 from openhands_agent.helpers.text_utils import text_from_mapping
 
 
@@ -37,4 +37,30 @@ def pull_request_summary_comment(
     if failed_repositories:
         lines.append('')
         lines.append('Failed repositories: ' + ', '.join(failed_repositories))
+    return '\n'.join(lines)
+
+
+def pull_request_description(
+    task: Task,
+    execution: dict[str, str | bool],
+) -> str:
+    lines = [f'OpenHands completed task {task.id}: {task.summary}.']
+    task_description = str(task.description or '').strip()
+    if task_description:
+        lines.append('')
+        lines.append('Requested change:')
+        lines.append(task_description)
+
+    implementation_summary = str(execution.get(Task.summary.key, '') or '').strip()
+    if implementation_summary:
+        lines.append('')
+        lines.append('Implementation summary:')
+        lines.append(implementation_summary)
+
+    execution_notes = str(execution.get(ImplementationFields.MESSAGE, '') or '').strip()
+    if execution_notes:
+        lines.append('')
+        lines.append('Execution notes:')
+        lines.append(execution_notes)
+
     return '\n'.join(lines)

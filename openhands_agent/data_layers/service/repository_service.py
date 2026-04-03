@@ -2,6 +2,7 @@ import os
 import re
 import shutil
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlparse
 
@@ -149,7 +150,7 @@ class RepositoryService(Service):
         self._prepare_pull_request_api(repository)
         destination_branch = self.destination_branch(repository)
         try:
-            self._publish_branch_updates(
+            validation_report_description = self._publish_branch_updates(
                 repository.local_path,
                 source_branch,
                 destination_branch,
@@ -157,11 +158,14 @@ class RepositoryService(Service):
                 repository,
                 restore_workspace=False,
             )
+            pull_request_description = (
+                normalized_text(validation_report_description) or normalized_text(description)
+            )
             pull_request = self._pull_request_data_access(repository).create_pull_request(
                 title=title,
                 source_branch=source_branch,
                 destination_branch=destination_branch,
-                description=description,
+                description=pull_request_description,
             )
             return {
                 PullRequestFields.REPOSITORY_ID: repository.id,
@@ -175,7 +179,7 @@ class RepositoryService(Service):
                 ),
                 PullRequestFields.SOURCE_BRANCH: source_branch,
                 PullRequestFields.DESTINATION_BRANCH: destination_branch,
-                PullRequestFields.DESCRIPTION: description,
+                PullRequestFields.DESCRIPTION: pull_request_description,
             }
         finally:
             self._prepare_workspace_for_task(repository.local_path, destination_branch, repository)
@@ -732,14 +736,19 @@ class RepositoryService(Service):
         branch_name: str,
         destination_branch: str,
         commit_message: str,
-    ) -> None:
+    ) -> str:
         self._assert_branch_checked_out(local_path, branch_name)
-        self._commit_branch_changes_if_needed(local_path, branch_name, commit_message)
+        validation_report_description = self._commit_branch_changes_if_needed(
+            local_path,
+            branch_name,
+            commit_message,
+        )
         self._ensure_branch_is_publishable(
             local_path,
             branch_name,
             destination_branch,
         )
+        return validation_report_description
 
     def _assert_branch_checked_out(self, local_path: str, branch_name: str) -> None:
         current_branch = self._current_branch(local_path)
@@ -755,15 +764,16 @@ class RepositoryService(Service):
         local_path: str,
         branch_name: str,
         commit_message: str,
-    ) -> None:
+    ) -> str:
         status_output = self._working_tree_status(local_path)
         if not status_output:
-            return
+            return ''
         self._run_git(
             local_path,
             ['add', '-A'],
             f'failed to stage changes for branch {branch_name}',
         )
+        validation_report_descriptions: list[str] = []
         for artifact_path in self._generated_artifact_paths_from_status(status_output):
             self._run_git(
                 local_path,
@@ -789,6 +799,11 @@ class RepositoryService(Service):
             )
             # The report is published as a task comment, not as a committed file.
             validation_report_full_path = os.path.join(local_path, validation_report_path)
+            validation_report_description = self._validation_report_text(
+                validation_report_full_path,
+            )
+            if validation_report_description:
+                validation_report_descriptions.append(validation_report_description)
             if os.path.exists(validation_report_full_path):
                 os.remove(validation_report_full_path)
         self._run_git(
@@ -800,6 +815,7 @@ class RepositoryService(Service):
             local_path,
             branch_name,
         )
+        return '\n\n'.join(validation_report_descriptions).strip()
 
     def _ensure_branch_is_publishable(
         self,
@@ -853,9 +869,10 @@ class RepositoryService(Service):
         repository=None,
         *,
         restore_workspace: bool = True,
-    ) -> None:
+    ) -> str:
+        validation_report_description = ''
         try:
-            self._prepare_branch_for_publication(
+            validation_report_description = self._prepare_branch_for_publication(
                 local_path,
                 branch_name,
                 destination_branch,
@@ -865,6 +882,7 @@ class RepositoryService(Service):
         finally:
             if restore_workspace:
                 self._prepare_workspace_for_task(local_path, destination_branch, repository)
+        return validation_report_description
 
     def _prepare_workspace_for_task(
         self,
@@ -1050,6 +1068,12 @@ class RepositoryService(Service):
             if path.endswith('validation_report.md'):
                 validation_report_paths.append(path)
         return validation_report_paths
+
+    @staticmethod
+    def _validation_report_text(validation_report_full_path: str) -> str:
+        if not os.path.exists(validation_report_full_path):
+            return ''
+        return Path(validation_report_full_path).read_text(encoding='utf-8').strip()
 
     @staticmethod
     def _generated_artifact_paths_from_status(status_output: str) -> list[str]:

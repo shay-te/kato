@@ -32,6 +32,7 @@ from openhands_agent.data_layers.data.fields import (
 )
 from openhands_agent.data_layers.service.implementation_service import ImplementationService
 from openhands_agent.helpers.pull_request_utils import (
+    pull_request_description,
     pull_request_repositories_text,
     pull_request_summary_comment,
 )
@@ -603,7 +604,7 @@ class AgentService(Service):
     ) -> tuple[list[dict[str, str]], list[str]]:
         pull_requests: list[dict[str, str]] = []
         failed_repositories: list[str] = []
-        description = str(execution.get(Task.summary.key) or '')
+        description = pull_request_description(task, execution)
         session_id = text_from_mapping(execution, ImplementationFields.SESSION_ID)
         commit_message = self._task_commit_message(task, execution)
         for repository in prepared_task.repositories or []:
