@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 import tempfile
 import types
 import unittest
@@ -348,6 +349,36 @@ class RepositoryServiceTests(unittest.TestCase):
             ],
         )
 
+    def test_restore_task_repositories_forces_dirty_real_git_repository_back_to_destination_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_path = Path(temp_dir) / 'client'
+            self._create_real_git_repository(repo_path)
+            self._run_git(repo_path, ['checkout', '-b', 'feature/client'])
+            (repo_path / 'README.md').write_text('dirty\n', encoding='utf-8')
+
+            repository = types.SimpleNamespace(
+                id='client',
+                local_path=str(repo_path),
+                destination_branch='main',
+            )
+            service = RepositoryService([], 3)
+
+            with patch(
+                'openhands_agent.data_layers.service.repository_service.shutil.which',
+                return_value='/usr/bin/git',
+            ):
+                restored_repositories = service.restore_task_repositories(
+                    [repository],
+                    force=True,
+                )
+
+            self.assertEqual(restored_repositories, [repository])
+            self.assertEqual(
+                self._git_stdout(repo_path, ['rev-parse', '--abbrev-ref', 'HEAD']),
+                'main',
+            )
+            self.assertEqual(self._git_stdout(repo_path, ['status', '--porcelain']), '')
+
     def test_prepare_task_branches_creates_new_task_branch_from_destination_branch(self) -> None:
         service = RepositoryService(self.cfg.openhands_agent.repositories, 3)
 
@@ -509,9 +540,36 @@ class RepositoryServiceTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 RuntimeError,
                 'repository at \\. has uncommitted changes on branch feature/proj-1/backend; '
-                'refusing to start a new task',
+                'refusing to start a new task\\nM app.py',
             ):
                 service.prepare_task_repositories([self.backend_repo])
+
+    def test_prepare_task_repositories_rejects_dirty_real_git_repository_before_next_task(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_path = Path(temp_dir) / 'client'
+            self._create_real_git_repository(repo_path)
+            (repo_path / 'README.md').write_text('dirty\n', encoding='utf-8')
+
+            repository = types.SimpleNamespace(
+                id='client',
+                local_path=str(repo_path),
+                destination_branch='main',
+            )
+            service = RepositoryService([], 3)
+
+            with patch(
+                'openhands_agent.data_layers.service.repository_service.shutil.which',
+                return_value='/usr/bin/git',
+            ), patch.object(
+                RepositoryService,
+                '_prepare_repository_access',
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    r'repository at .* has uncommitted changes on branch main; '
+                    r'refusing to start a new task\nM README\.md',
+                ):
+                    service.prepare_task_repositories([repository])
 
     def test_prepare_task_repositories_rejects_destination_branch_with_local_only_commits(self) -> None:
         service = RepositoryService(self.cfg.openhands_agent.repositories, 3)
@@ -925,6 +983,7 @@ class RepositoryServiceTests(unittest.TestCase):
             Mock(returncode=0, stdout='feature/proj-1/backend\n', stderr=''),
             Mock(returncode=0, stdout=' M app.py\n?? tests/test_app.py\n', stderr=''),
             Mock(returncode=0, stdout='', stderr=''),
+            Mock(returncode=0, stdout='', stderr=''),
             Mock(returncode=0, stdout='[feature/proj-1/backend abc123] Implement PROJ-1\n', stderr=''),
             Mock(returncode=0, stdout='', stderr=''),
             Mock(returncode=0, stdout='main\n', stderr=''),
@@ -983,6 +1042,7 @@ class RepositoryServiceTests(unittest.TestCase):
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'add', '-A'],
+                ['git', '-c', 'safe.directory=.', '-C', '.', 'add', '-A'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'commit', '-m', 'Implement PROJ-1'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--verify', 'main'],
@@ -1020,6 +1080,7 @@ class RepositoryServiceTests(unittest.TestCase):
             ),
             Mock(returncode=0, stdout='', stderr=''),
             Mock(returncode=0, stdout='', stderr=''),
+            Mock(returncode=0, stdout='', stderr=''),
             Mock(returncode=0, stdout='[feature/proj-1/backend abc123] Implement PROJ-1\n', stderr=''),
             Mock(returncode=0, stdout='', stderr=''),
             Mock(returncode=0, stdout='main\n', stderr=''),
@@ -1030,6 +1091,7 @@ class RepositoryServiceTests(unittest.TestCase):
             Mock(returncode=0, stdout='main\n', stderr=''),
             Mock(returncode=0, stdout='', stderr=''),
             Mock(returncode=0, stdout='main\n', stderr=''),
+            Mock(returncode=0, stdout='', stderr=''),
             Mock(returncode=0, stdout='', stderr=''),
         ]
 
@@ -1072,16 +1134,17 @@ class RepositoryServiceTests(unittest.TestCase):
 
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
-            [
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'add', '-A'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'reset', 'HEAD', '--', 'validation_report.md'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'commit', '-m', 'Implement PROJ-1'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--verify', 'main'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-list', '--count', 'main..feature/proj-1/backend'],
-            ],
+                [
+                    ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                    ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
+                    ['git', '-c', 'safe.directory=.', '-C', '.', 'add', '-A'],
+                    ['git', '-c', 'safe.directory=.', '-C', '.', 'reset', 'HEAD', '--', 'validation_report.md'],
+                    ['git', '-c', 'safe.directory=.', '-C', '.', 'add', '-A'],
+                    ['git', '-c', 'safe.directory=.', '-C', '.', 'commit', '-m', 'Implement PROJ-1'],
+                    ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
+                    ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--verify', 'main'],
+                    ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-list', '--count', 'main..feature/proj-1/backend'],
+                ],
         )
         mock_restore_repositories.assert_called_once_with([repository], force=True)
         data_access.create_pull_request.assert_called_once_with(
@@ -1110,6 +1173,7 @@ class RepositoryServiceTests(unittest.TestCase):
             Mock(returncode=0, stdout='', stderr=''),
             Mock(returncode=0, stdout='', stderr=''),
             Mock(returncode=0, stdout='', stderr=''),
+            Mock(returncode=0, stdout='', stderr=''),
             Mock(returncode=0, stdout='[feature/proj-1/backend abc123] Implement PROJ-1\n', stderr=''),
             Mock(returncode=0, stdout='', stderr=''),
             Mock(returncode=0, stdout='main\n', stderr=''),
@@ -1120,6 +1184,7 @@ class RepositoryServiceTests(unittest.TestCase):
             Mock(returncode=0, stdout='main\n', stderr=''),
             Mock(returncode=0, stdout='', stderr=''),
             Mock(returncode=0, stdout='main\n', stderr=''),
+            Mock(returncode=0, stdout='', stderr=''),
             Mock(returncode=0, stdout='', stderr=''),
         ]
 
@@ -1171,16 +1236,17 @@ class RepositoryServiceTests(unittest.TestCase):
 
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
-            [
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'add', '-A'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'reset', 'HEAD', '--', 'build'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'reset', 'HEAD', '--', 'validation_report.md'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'commit', '-m', 'Implement PROJ-1'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
-            ],
-        )
+                [
+                    ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                    ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
+                    ['git', '-c', 'safe.directory=.', '-C', '.', 'add', '-A'],
+                    ['git', '-c', 'safe.directory=.', '-C', '.', 'reset', 'HEAD', '--', 'build'],
+                    ['git', '-c', 'safe.directory=.', '-C', '.', 'reset', 'HEAD', '--', 'validation_report.md'],
+                    ['git', '-c', 'safe.directory=.', '-C', '.', 'add', '-A'],
+                    ['git', '-c', 'safe.directory=.', '-C', '.', 'commit', '-m', 'Implement PROJ-1'],
+                    ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
+                ],
+            )
         mock_restore_repositories.assert_called_once_with([repository], force=True)
         data_access.create_pull_request.assert_called_once_with(
             title='PROJ-1: Fix bug',
@@ -1923,6 +1989,7 @@ class RepositoryServiceTests(unittest.TestCase):
                 [
                     ['add', '-A'],
                     ['reset', 'HEAD', '--', 'validation_report.md'],
+                    ['add', '-A'],
                     ['commit', '-m', 'Implement PROJ-1'],
                 ],
             )
@@ -1980,3 +2047,36 @@ class RepositoryServiceTests(unittest.TestCase):
             f'\turl = {remote_url}\n',
             encoding='utf-8',
         )
+
+    @staticmethod
+    def _create_real_git_repository(path: Path) -> None:
+        path.mkdir(parents=True)
+        RepositoryServiceTests._run_git(path, ['init'])
+        RepositoryServiceTests._run_git(path, ['checkout', '-b', 'main'])
+        RepositoryServiceTests._run_git(path, ['config', 'user.name', 'OpenHands Test'])
+        RepositoryServiceTests._run_git(
+            path,
+            ['config', 'user.email', 'openhands@example.com'],
+        )
+        (path / 'README.md').write_text('initial\n', encoding='utf-8')
+        RepositoryServiceTests._run_git(path, ['add', 'README.md'])
+        RepositoryServiceTests._run_git(path, ['commit', '-m', 'initial commit'])
+
+    @staticmethod
+    def _run_git(path: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ['git', '-C', str(path), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    @staticmethod
+    def _git_stdout(path: Path, args: list[str]) -> str:
+        result = subprocess.run(
+            ['git', '-C', str(path), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip()

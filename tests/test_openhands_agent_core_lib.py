@@ -231,6 +231,48 @@ class OpenHandsAgentCoreLibTests(unittest.TestCase):
         mock_service_cls.return_value.validate_connections.assert_called_once_with()
         self.assertIs(app.service, mock_service_cls.return_value)
 
+    def test_rejects_runtime_source_fingerprint_mismatch(self) -> None:
+        cfg = build_test_cfg()
+        cfg.openhands_agent.source_fingerprint = 'expected-fingerprint'
+
+        with patch(
+            'openhands_agent.openhands_agent_core_lib.runtime_source_fingerprint',
+            return_value='current-fingerprint',
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.EmailCoreLib'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.build_ticket_client'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.OpenHandsClient'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.RepositoryService'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.TaskDataAccess'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.TaskService'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.TaskStateService'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.ImplementationService'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.TestingService'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.NotificationService'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.TaskPreflightService'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.TaskFailureHandler'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.TaskPublisher'
+        ), patch(
+            'openhands_agent.openhands_agent_core_lib.AgentService'
+        ):
+            with self.assertRaises(RuntimeError) as exc:
+                OpenHandsAgentCoreLib(cfg)
+
+        self.assertIn('source fingerprint mismatch', str(exc.exception))
+        self.assertIn('rebuild the OpenHands Agent image before running', str(exc.exception))
+
     def test_uses_testing_container_base_url_and_llm_settings_when_enabled(self) -> None:
         cfg = build_test_cfg()
         cfg.openhands_agent.openhands.testing_container_enabled = True

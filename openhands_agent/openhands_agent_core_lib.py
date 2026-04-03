@@ -24,6 +24,7 @@ from openhands_agent.data_layers.service.task_publisher import TaskPublisher
 from openhands_agent.data_layers.service.task_state_service import TaskStateService
 from openhands_agent.data_layers.service.task_service import TaskService
 from openhands_agent.data_layers.service.testing_service import TestingService
+from openhands_agent.helpers.runtime_identity_utils import runtime_source_fingerprint
 from openhands_agent.validation.branch_publishability import (
     TaskBranchPublishabilityValidator,
 )
@@ -60,6 +61,7 @@ class OpenHandsAgentCoreLib(CoreLib):
         CoreLib.__init__(self)
         self.config = cfg
         self.logger = configure_logger(cfg.core_lib.app.name)
+        self._validate_runtime_source_fingerprint(cfg.openhands_agent)
         self.service = self._build_agent_service(cfg.openhands_agent)
         self.service.validate_connections()
 
@@ -170,6 +172,23 @@ class OpenHandsAgentCoreLib(CoreLib):
             email_core_lib=EmailCoreLib(self.config),
             failure_email_cfg=open_cfg.failure_email,
             completion_email_cfg=open_cfg.completion_email,
+        )
+
+    def _validate_runtime_source_fingerprint(self, open_cfg: DictConfig) -> None:
+        expected_source_fingerprint = str(open_cfg.get('source_fingerprint', '') or '').strip()
+        if not expected_source_fingerprint:
+            return
+
+        current_source_fingerprint = runtime_source_fingerprint()
+        if current_source_fingerprint == expected_source_fingerprint:
+            return
+
+        raise RuntimeError(
+            'startup dependency validation failed: '
+            'OpenHands Agent source fingerprint mismatch: '
+            f'expected {expected_source_fingerprint}, '
+            f'got {current_source_fingerprint}; '
+            'rebuild the OpenHands Agent image before running'
         )
 
     @classmethod

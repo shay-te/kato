@@ -1,5 +1,6 @@
 PYTHON ?= python3
 VENV_PYTHON = .venv/bin/python
+OPENHANDS_AGENT_SOURCE_FINGERPRINT := $(shell $(PYTHON) -m openhands_agent.helpers.runtime_identity_utils --root .)
 
 .PHONY: bootstrap configure doctor doctor-agent doctor-openhands test run compose-up
 
@@ -26,6 +27,7 @@ run:
 
 compose-up:
 	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	export OPENHANDS_AGENT_SOURCE_FINGERPRINT='$(OPENHANDS_AGENT_SOURCE_FINGERPRINT)'; \
 	if [ "$${OPENHANDS_SKIP_TESTING:-false}" != "true" ] && [ "$${OPENHANDS_TESTING_CONTAINER_ENABLED:-false}" = "true" ]; then \
 		docker compose --profile testing up --build --attach openhands-agent; \
 	else \

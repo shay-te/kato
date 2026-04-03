@@ -380,6 +380,11 @@ class RepositoryService(RepositoryInventoryService):
                 os.remove(validation_report_full_path)
         self._run_git(
             local_path,
+            ['add', '-A'],
+            f'failed to restage cleanup changes for branch {branch_name}',
+        )
+        self._run_git(
+            local_path,
             ['commit', '-m', commit_message],
             f'failed to commit changes for branch {branch_name}',
         )
@@ -497,9 +502,17 @@ class RepositoryService(RepositoryInventoryService):
         status_output = self._working_tree_status(local_path)
         if not status_output:
             return
+        status_details = status_output.strip()
+        self.logger.warning(
+            'repository at %s still has uncommitted changes on branch %s:\n%s',
+            local_path,
+            current_branch or '<unknown>',
+            status_details,
+        )
         raise RuntimeError(
             f'repository at {local_path} has uncommitted changes on branch '
-            f'{current_branch or "<unknown>"}; refusing to start a new task'
+            f'{current_branch or "<unknown>"}; refusing to start a new task\n'
+            f'{status_details}'
         )
 
     def _ensure_destination_branch_checked_out(

@@ -91,6 +91,7 @@ openhands_agent:
     issue_states: ${oc.env:BITBUCKET_ISSUES_ISSUE_STATES,"new,open"}
   repository_root_path: ${oc.env:REPOSITORY_ROOT_PATH,""}
   ignored_repository_folders: ${oc.env:OPENHANDS_AGENT_IGNORED_REPOSITORY_FOLDERS,""}
+  source_fingerprint: ${oc.env:OPENHANDS_AGENT_SOURCE_FINGERPRINT,""}
   repositories: []
   openhands:
     base_url: ${oc.env:OPENHANDS_BASE_URL}

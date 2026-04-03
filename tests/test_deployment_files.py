@@ -23,6 +23,7 @@ class DeploymentFilesTests(unittest.TestCase):
 
     def test_docker_compose_centralizes_openhands_llm_configuration(self) -> None:
         compose_text = (REPO_ROOT / 'docker-compose.yaml').read_text(encoding='utf-8')
+        makefile_text = (REPO_ROOT / 'Makefile').read_text(encoding='utf-8')
 
         self.assertIn('LLM_MODEL: ${OPENHANDS_LLM_MODEL:-}', compose_text)
         self.assertIn('OPENHANDS_LLM_MODEL: ${OPENHANDS_LLM_MODEL:-}', compose_text)
@@ -171,6 +172,10 @@ class DeploymentFilesTests(unittest.TestCase):
             'OPENHANDS_AGENT_WORKFLOW_LOG_LEVEL: ${OPENHANDS_AGENT_WORKFLOW_LOG_LEVEL:-info}',
             compose_text,
         )
+        self.assertIn(
+            'OPENHANDS_AGENT_SOURCE_FINGERPRINT: ${OPENHANDS_AGENT_SOURCE_FINGERPRINT:-}',
+            compose_text,
+        )
         self.assertIn('REPOSITORY_ROOT_PATH: ${REPOSITORY_ROOT_PATH:-.}', compose_text)
         self.assertIn('openhands-testing:', compose_text)
         self.assertIn('profiles: ["testing"]', compose_text)
@@ -183,6 +188,10 @@ class DeploymentFilesTests(unittest.TestCase):
             compose_text,
         )
         self.assertIn('OH_PERSISTENCE_DIR: /data', compose_text)
+        self.assertIn(
+            'OPENHANDS_AGENT_SOURCE_FINGERPRINT := $(shell $(PYTHON) -m openhands_agent.helpers.runtime_identity_utils --root .)',
+            makefile_text,
+        )
         self.assertIn(
             '- ${REPOSITORY_ROOT_PATH:-.}:/workspace/project:rw',
             compose_text,
