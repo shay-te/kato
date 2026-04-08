@@ -19,7 +19,6 @@ from kato.helpers.text_utils import (
 
 
 TRUE_VALUES = {'1', 'true', 'yes', 'on'}
-LEGACY_ISSUE_PLATFORM_ENV_KEYS = ('KATO_TICKET_SYSTEM',)
 GITHUB_TOKEN_KEYS = ('GITHUB_API_TOKEN',)
 GITLAB_TOKEN_KEYS = ('GITLAB_API_TOKEN',)
 BITBUCKET_TOKEN_KEYS = ('BITBUCKET_API_TOKEN',)
@@ -128,7 +127,6 @@ def _has_any(env: dict[str, str], keys: tuple[str, ...] | list[str]) -> bool:
 
 def validate_agent_env(env: dict[str, str]) -> list[str]:
     errors = []
-    errors.extend(_validate_legacy_issue_platform_env(env))
     issue_platform = _configured_issue_platform(env)
     errors.extend(_validate_issue_platform(issue_platform))
     errors.extend(_validate_required_agent_keys(env, issue_platform))
@@ -151,14 +149,6 @@ def _configured_issue_platform(env: dict[str, str]) -> str:
         env.get('KATO_ISSUE_PLATFORM')
         or 'youtrack'
     ).strip().lower()
-
-
-def _validate_legacy_issue_platform_env(env: dict[str, str]) -> list[str]:
-    errors = []
-    for key in LEGACY_ISSUE_PLATFORM_ENV_KEYS:
-        if normalized_text(env.get(key, '')):
-            errors.append(f'unsupported legacy env var: {key}; use KATO_ISSUE_PLATFORM')
-    return errors
 
 
 def _validate_issue_platform(issue_platform: str) -> list[str]:

@@ -25,26 +25,6 @@ class ValidateEnvTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
 
-    def test_validate_agent_env_rejects_legacy_ticket_system_variable(self) -> None:
-        errors = self._validate_agent_env(
-            {
-                'KATO_ISSUE_PLATFORM': 'jira',
-                'KATO_TICKET_SYSTEM': 'jira',
-                'JIRA_BASE_URL': 'https://jira.example',
-                'JIRA_TOKEN': 'jira-token',
-                'JIRA_PROJECT': 'PROJ',
-                'JIRA_ASSIGNEE': 'developer',
-                'REPOSITORY_ROOT_PATH': '.',
-                'OPENHANDS_BASE_URL': 'http://localhost:3000',
-                'OPENHANDS_API_KEY': 'local',
-            }
-        )
-
-        self.assertIn(
-            'unsupported legacy env var: KATO_TICKET_SYSTEM; use KATO_ISSUE_PLATFORM',
-            errors,
-        )
-
     def test_validate_agent_env_requires_email_fields_when_enabled(self) -> None:
         errors = self._validate_agent_env(
             {

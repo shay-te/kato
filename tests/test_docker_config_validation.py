@@ -19,7 +19,6 @@ class TestDockerConfigValidation(unittest.TestCase):
         """Set up test fixtures."""
         # Save original environment variables
         self.original_env = dict(os.environ)
-        os.environ.pop('KATO_TICKET_SYSTEM', None)
         
     def tearDown(self):
         """Restore original environment."""

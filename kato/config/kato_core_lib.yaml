@@ -12,7 +12,7 @@ core_lib:
 kato:
   issue_platform: ${oc.env:KATO_ISSUE_PLATFORM,"youtrack"}
   retry:
-    max_retries: 3
+    max_retries: ${oc.decode:${oc.env:KATO_EXTERNAL_API_MAX_RETRIES,"3"}}
   failure_email:
     enabled: ${oc.decode:${oc.env:KATO_FAILURE_EMAIL_ENABLED,"false"}}
     template_id: ${oc.env:KATO_FAILURE_EMAIL_TEMPLATE_ID,0}

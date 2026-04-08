@@ -25,6 +25,9 @@ class DeploymentFilesTests(unittest.TestCase):
         compose_text = (REPO_ROOT / 'docker-compose.yaml').read_text(encoding='utf-8')
         makefile_text = (REPO_ROOT / 'Makefile').read_text(encoding='utf-8')
         env_example_text = (REPO_ROOT / '.env.example').read_text(encoding='utf-8')
+        core_lib_yaml_text = (REPO_ROOT / 'kato/config/kato_core_lib.yaml').read_text(
+            encoding='utf-8'
+        )
 
         self.assertIn('LLM_MODEL: ${OPENHANDS_LLM_MODEL:-}', compose_text)
         self.assertIn('OPENHANDS_LLM_MODEL: ${OPENHANDS_LLM_MODEL:-}', compose_text)
@@ -108,7 +111,6 @@ class DeploymentFilesTests(unittest.TestCase):
             'KATO_ISSUE_PLATFORM: ${KATO_ISSUE_PLATFORM:-youtrack}',
             compose_text,
         )
-        self.assertNotIn('KATO_TICKET_SYSTEM', compose_text)
         self.assertIn(
             'YOUTRACK_ISSUE_STATES: ${YOUTRACK_ISSUE_STATES:-Todo,Open}',
             compose_text,
@@ -171,6 +173,10 @@ class DeploymentFilesTests(unittest.TestCase):
             compose_text,
         )
         self.assertIn(
+            'KATO_EXTERNAL_API_MAX_RETRIES: ${KATO_EXTERNAL_API_MAX_RETRIES:-5}',
+            compose_text,
+        )
+        self.assertIn(
             'KATO_SOURCE_FINGERPRINT: ${KATO_SOURCE_FINGERPRINT:-}',
             compose_text,
         )
@@ -204,14 +210,27 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertNotIn('OPENHANDS_CONTAINER_AWS_REGION_NAME', compose_text)
         self.assertNotIn('OPENHANDS_CONTAINER_AWS_SESSION_TOKEN', compose_text)
         self.assertNotIn('OPENHANDS_CONTAINER_AWS_DEFAULT_REGION', compose_text)
+        self.assertIn(
+            'max_retries: ${oc.decode:${oc.env:KATO_EXTERNAL_API_MAX_RETRIES,"3"}}',
+            core_lib_yaml_text,
+        )
 
     def test_env_example_includes_openhands_llm_variables(self) -> None:
         env_example_text = (REPO_ROOT / '.env.example').read_text(encoding='utf-8')
 
         self.assertIn('KATO_ISSUE_PLATFORM=', env_example_text)
-        self.assertNotIn('KATO_TICKET_SYSTEM', env_example_text)
-        self.assertIn('REPOSITORY_ROOT_PATH=', env_example_text)
+        self.assertIn('KATO_LOG_LEVEL=', env_example_text)
+        self.assertIn('KATO_WORKFLOW_LOG_LEVEL=', env_example_text)
+        self.assertIn('KATO_EXTERNAL_API_MAX_RETRIES=5', env_example_text)
         self.assertIn('KATO_IGNORED_REPOSITORY_FOLDERS=', env_example_text)
+        self.assertIn('KATO_SOURCE_FINGERPRINT=', env_example_text)
+        self.assertIn('KATO_FAILURE_EMAIL_ENABLED=', env_example_text)
+        self.assertIn('KATO_COMPLETION_EMAIL_ENABLED=', env_example_text)
+        self.assertIn('KATO_AGENT_SERVER_IMAGE_REPOSITORY=', env_example_text)
+        self.assertIn('KATO_AGENT_SERVER_IMAGE_TAG=', env_example_text)
+        self.assertLess(env_example_text.index('KATO_ISSUE_PLATFORM='), env_example_text.index('YOUTRACK_BASE_URL='))
+        self.assertLess(env_example_text.index('KATO_AGENT_SERVER_IMAGE_TAG='), env_example_text.index('YOUTRACK_BASE_URL='))
+        self.assertIn('REPOSITORY_ROOT_PATH=', env_example_text)
         self.assertIn('JIRA_BASE_URL=', env_example_text)
         self.assertIn('JIRA_TOKEN=', env_example_text)
         self.assertIn('YOUTRACK_PROGRESS_STATE=', env_example_text)
@@ -244,8 +263,6 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertNotIn('OPENHANDS_CONTAINER_AWS_REGION_NAME=', env_example_text)
         self.assertNotIn('OPENHANDS_CONTAINER_AWS_SESSION_TOKEN=', env_example_text)
         self.assertNotIn('OPENHANDS_CONTAINER_AWS_DEFAULT_REGION=', env_example_text)
-        self.assertIn('KATO_LOG_LEVEL=', env_example_text)
-        self.assertIn('KATO_WORKFLOW_LOG_LEVEL=', env_example_text)
         self.assertIn('OPENHANDS_SSH_AUTH_SOCK_HOST_PATH=', env_example_text)
         self.assertIn('OPENHANDS_LLM_MODEL=', env_example_text)
         self.assertIn('OPENHANDS_LLM_API_KEY=', env_example_text)

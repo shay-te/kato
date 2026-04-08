@@ -34,7 +34,6 @@ except (ImportError, ModuleNotFoundError):
 
 
 ISSUE_PLATFORMS = ['youtrack', 'jira', 'github', 'gitlab', 'bitbucket']
-LEGACY_ENV_KEYS_TO_REMOVE = {'KATO_TICKET_SYSTEM'}
 UNQUOTED_ENV_VALUE_PATTERN = re.compile(r'^[A-Za-z0-9_./:@%+=,\-~]*$')
 logger = logging.getLogger(__name__)
 OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1'
@@ -299,8 +298,6 @@ def render_env_text(template_text: str, values: dict[str, str]) -> str:
             continue
         key, _ = line.split('=', 1)
         normalized_key = key.strip()
-        if normalized_key in LEGACY_ENV_KEYS_TO_REMOVE:
-            continue
         if normalized_key in values:
             lines.append(f'{normalized_key}={_format_env_value(values[normalized_key])}')
             seen_keys.add(normalized_key)

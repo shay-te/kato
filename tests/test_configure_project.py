@@ -63,7 +63,6 @@ class ConfigureProjectTests(unittest.TestCase):
             values = configure_project.build_configuration_values({})
 
         self.assertEqual(values['KATO_ISSUE_PLATFORM'], 'youtrack')
-        self.assertNotIn('KATO_TICKET_SYSTEM', values)
         self.assertEqual(values['YOUTRACK_ISSUE_STATES'], 'Open,Ready for Dev')
         self.assertEqual(values['REPOSITORY_ROOT_PATH'], str(Path('./client').resolve()))
         self.assertNotIn('OPENHANDS_SANDBOX_VOLUMES', values)
@@ -348,7 +347,7 @@ class ConfigureProjectTests(unittest.TestCase):
 
     def test_render_env_text_replaces_existing_keys(self) -> None:
         rendered = configure_project.render_env_text(
-            '# heading\nKATO_ISSUE_PLATFORM=youtrack\nKATO_TICKET_SYSTEM=youtrack\nYOUTRACK_ISSUE_STATES=Todo,Open\n',
+            '# heading\nKATO_ISSUE_PLATFORM=youtrack\nYOUTRACK_ISSUE_STATES=Todo,Open\n',
             {
                 'KATO_ISSUE_PLATFORM': 'jira',
                 'YOUTRACK_ISSUE_STATES': 'Open,Ready for Dev',
@@ -357,7 +356,6 @@ class ConfigureProjectTests(unittest.TestCase):
         )
 
         self.assertIn('KATO_ISSUE_PLATFORM=jira', rendered)
-        self.assertNotIn('KATO_TICKET_SYSTEM', rendered)
         self.assertIn("YOUTRACK_ISSUE_STATES='Open,Ready for Dev'", rendered)
         self.assertIn("JIRA_ISSUE_STATES='To Do,Open'", rendered)
 
@@ -467,7 +465,6 @@ class ConfigureProjectTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             written_env = _read_env_file(str(output_path))
             self.assertEqual(written_env['KATO_ISSUE_PLATFORM'], 'youtrack')
-            self.assertNotIn('KATO_TICKET_SYSTEM', written_env)
             self.assertEqual(written_env['YOUTRACK_ISSUE_STATES'], 'Todo,Open')
             self.assertEqual(written_env['OH_SECRET_KEY'], 'openhands-secret')
             self.assertEqual(written_env['OPENHANDS_LLM_API_KEY'], 'llm-key')

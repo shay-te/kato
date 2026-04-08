@@ -469,7 +469,7 @@ pip install -e .
 
 2. Fill `.env` instead of exporting variables one by one. Start from `.env.example` and update the values you need there.
 
-3. Adjust `kato/config/kato_core_lib.yaml` only if you need settings beyond what `.env` exposes, such as extra repositories or retry tuning. Issue states, review columns, and review-ready email recipients can now be configured directly in `.env`.
+3. Adjust `kato/config/kato_core_lib.yaml` only if you need settings beyond what `.env` exposes, such as extra repositories or retry tuning via `KATO_EXTERNAL_API_MAX_RETRIES`. Issue states, review columns, and review-ready email recipients can now be configured directly in `.env`.
 
 ```yaml
 kato:
