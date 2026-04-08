@@ -19,6 +19,7 @@ class TestDockerConfigValidation(unittest.TestCase):
         """Set up test fixtures."""
         # Save original environment variables
         self.original_env = dict(os.environ)
+        os.environ.pop('KATO_TICKET_SYSTEM', None)
         
     def tearDown(self):
         """Restore original environment."""
@@ -34,7 +35,6 @@ class TestDockerConfigValidation(unittest.TestCase):
         os.environ['YOUTRACK_PROJECT'] = 'TEST'
         os.environ['YOUTRACK_ASSIGNEE'] = 'developer'
         os.environ['KATO_ISSUE_PLATFORM'] = 'youtrack'
-        os.environ['KATO_TICKET_SYSTEM'] = 'youtrack'
         os.environ['OPENHANDS_API_KEY'] = 'test-key'
         os.environ['OPENHANDS_BASE_URL'] = 'http://openhands:3000'
         os.environ['REPOSITORY_ROOT_PATH'] = '/test/path'

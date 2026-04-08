@@ -5,8 +5,8 @@ from kato.client.jira_client import JiraClient
 from kato.client.youtrack_client import YouTrackClient
 
 
-def build_ticket_client(ticket_system: str, config, max_retries: int):
-    normalized = str(ticket_system or 'youtrack').strip().lower()
+def build_ticket_client(issue_platform: str, config, max_retries: int):
+    normalized = str(issue_platform or 'youtrack').strip().lower()
     if normalized == 'youtrack':
         return YouTrackClient(config.base_url, config.token, max_retries)
     if normalized == 'jira':
@@ -40,4 +40,4 @@ def build_ticket_client(ticket_system: str, config, max_retries: int):
             max_retries,
             username=getattr(config, 'username', ''),
         )
-    raise ValueError(f'unsupported issue platform: {ticket_system}')
+    raise ValueError(f'unsupported issue platform: {issue_platform}')

@@ -486,8 +486,7 @@ class KatoCoreLibTests(unittest.TestCase):
 
     def test_builds_jira_ticket_client_when_configured(self) -> None:
         cfg = build_test_cfg()
-        cfg.kato.ticket_system = 'jira'
-        cfg.kato.issue_platform = ''
+        cfg.kato.issue_platform = 'jira'
 
         with patch(
             'kato.kato_core_lib.EmailCoreLib'
@@ -517,40 +516,6 @@ class KatoCoreLibTests(unittest.TestCase):
         mock_build_ticket_client.assert_called_once_with(
             'jira',
             cfg.kato.jira,
-            cfg.kato.retry.max_retries,
-        )
-
-    def test_issue_platform_takes_precedence_over_legacy_ticket_system(self) -> None:
-        cfg = build_test_cfg()
-        cfg.kato.ticket_system = 'youtrack'
-        cfg.kato.issue_platform = 'github'
-
-        with patch(
-            'kato.kato_core_lib.EmailCoreLib'
-        ), patch(
-            'kato.kato_core_lib.build_ticket_client'
-        ) as mock_build_ticket_client, patch(
-            'kato.kato_core_lib.KatoClient'
-        ), patch(
-            'kato.kato_core_lib.RepositoryService'
-        ), patch(
-            'kato.kato_core_lib.TaskDataAccess'
-        ), patch(
-            'kato.kato_core_lib.TaskService'
-        ), patch(
-            'kato.kato_core_lib.ImplementationService'
-        ), patch(
-            'kato.kato_core_lib.TestingService'
-        ), patch(
-            'kato.kato_core_lib.NotificationService'
-        ), patch(
-            'kato.kato_core_lib.AgentService'
-        ):
-            KatoCoreLib(cfg)
-
-        mock_build_ticket_client.assert_called_once_with(
-            'github',
-            cfg.kato.github_issues,
             cfg.kato.retry.max_retries,
         )
 

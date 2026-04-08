@@ -67,7 +67,6 @@ def build_test_cfg() -> DictConfig:
             },
             'kato': {
                 'issue_platform': 'youtrack',
-                'ticket_system': 'youtrack',
                 'retry': {
                     'max_retries': 5,
                 },

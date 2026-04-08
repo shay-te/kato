@@ -96,7 +96,7 @@ class TicketClientFactoryTests(unittest.TestCase):
             username='bb-user',
         )
 
-    def test_rejects_unknown_ticket_system(self) -> None:
+    def test_rejects_unknown_issue_platform(self) -> None:
         cfg = build_test_cfg()
 
         with self.assertRaisesRegex(ValueError, 'unsupported issue platform'):

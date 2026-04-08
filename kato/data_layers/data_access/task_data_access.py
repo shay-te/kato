@@ -35,7 +35,7 @@ class TaskDataAccess(DataAccess):
 
     @property
     def provider_name(self) -> str:
-        return getattr(self._client, 'provider_name', 'ticket_system')
+        return getattr(self._client, 'provider_name', 'issue_platform')
 
     @property
     def max_retries(self) -> int:

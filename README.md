@@ -6,6 +6,12 @@
 
 Welcome to Kato! This repository is structured as a [`core-lib`](https://shay-te.github.io/core-lib/) application and follows the documented `core-lib` package layout.
 
+## Why Kato
+
+The name comes from Kato, the Green Hornet's sidekick, famously played by Bruce Lee. That makes it a fitting name for this project: a helper that works alongside the main mission, stays useful in the background, and helps get important work done.
+
+I love and respect Bruce Lee, and I wanted the name to reflect that admiration.
+
 ## Why Core-Lib
 
 `core-lib` is a strong fit for this project because this agent is not just a script that calls one API. It has to coordinate issue platforms, repository providers, OpenHands, jobs, configuration, persistence, notifications, and testing in one place without collapsing into one large pile of glue code.
@@ -30,7 +36,7 @@ The agent is designed to:
 
 1. Read tasks assigned to it from the configured issue platform.
    Supported issue platforms are YouTrack, Jira, GitHub Issues, GitLab Issues, and Bitbucket Issues.
-   `kato.issue_platform` falls back to `kato.ticket_system`, and then defaults to `youtrack`.
+   `kato.issue_platform` defaults to `youtrack` when unset.
    Only tasks assigned to the configured assignee and currently in one of the configured `issue_states` are eligible.
    When loading a task, the agent also reads issue comments, text attachments, and screenshot attachment metadata so OpenHands gets more complete context.
 2. Read each task definition.
@@ -167,7 +173,7 @@ If you prefer to edit the file manually, start here:
 cp .env.example .env
 ```
 
-Use `KATO_ISSUE_PLATFORM` for new setups. `KATO_TICKET_SYSTEM` is still accepted as a backward-compatible alias.
+Use `KATO_ISSUE_PLATFORM` for all new setups.
 
 ## Environment Reference
 
@@ -178,7 +184,6 @@ The list below mirrors `.env.example`.
 | Variable | What it does |
 | --- | --- |
 | `KATO_ISSUE_PLATFORM` | Selects the active issue platform. Supported values are `youtrack`, `jira`, `github`, `gitlab`, and `bitbucket`. |
-| `KATO_TICKET_SYSTEM` | Backward-compatible alias for `KATO_ISSUE_PLATFORM`. |
 | `YOUTRACK_BASE_URL` | YouTrack API base URL. |
 | `YOUTRACK_TOKEN` | YouTrack API token. |
 | `YOUTRACK_PROJECT` | YouTrack project key used to fetch tasks. |
@@ -304,7 +309,7 @@ The `openhands` container reuses the same `OPENHANDS_LLM_*` and `AWS_*` values f
 
 For Bedrock specifically, you can use either standard AWS credentials or a Bedrock bearer token.
 
-The active issue provider comes from `kato.issue_platform`, which falls back to `kato.ticket_system`, and finally defaults to `youtrack`.
+The active issue provider comes from `kato.issue_platform`, which defaults to `youtrack`.
 Issue states can be configured directly in `.env` with `YOUTRACK_ISSUE_STATES`, `JIRA_ISSUE_STATES`, `GITHUB_ISSUES_ISSUE_STATES`, `GITLAB_ISSUES_ISSUE_STATES`, and `BITBUCKET_ISSUES_ISSUE_STATES`.
 The review-state target also comes from the active provider config:
 - YouTrack uses `kato.youtrack.review_state_field` and `kato.youtrack.review_state`.
@@ -469,7 +474,6 @@ pip install -e .
 ```yaml
 kato:
   issue_platform: youtrack
-  ticket_system: youtrack
   retry:
     max_retries: 5
   failure_email:

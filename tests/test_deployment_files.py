@@ -105,13 +105,10 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('OH_WEB_URL: ${OPENHANDS_WEB_URL:-}', compose_text)
         self.assertIn('OH_PERSISTENCE_DIR: /.openhands', compose_text)
         self.assertIn(
-            'KATO_ISSUE_PLATFORM: ${KATO_ISSUE_PLATFORM:-}',
+            'KATO_ISSUE_PLATFORM: ${KATO_ISSUE_PLATFORM:-youtrack}',
             compose_text,
         )
-        self.assertIn(
-            'KATO_TICKET_SYSTEM: ${KATO_TICKET_SYSTEM:-youtrack}',
-            compose_text,
-        )
+        self.assertNotIn('KATO_TICKET_SYSTEM', compose_text)
         self.assertIn(
             'YOUTRACK_ISSUE_STATES: ${YOUTRACK_ISSUE_STATES:-Todo,Open}',
             compose_text,
@@ -212,7 +209,7 @@ class DeploymentFilesTests(unittest.TestCase):
         env_example_text = (REPO_ROOT / '.env.example').read_text(encoding='utf-8')
 
         self.assertIn('KATO_ISSUE_PLATFORM=', env_example_text)
-        self.assertIn('KATO_TICKET_SYSTEM=', env_example_text)
+        self.assertNotIn('KATO_TICKET_SYSTEM', env_example_text)
         self.assertIn('REPOSITORY_ROOT_PATH=', env_example_text)
         self.assertIn('KATO_IGNORED_REPOSITORY_FOLDERS=', env_example_text)
         self.assertIn('JIRA_BASE_URL=', env_example_text)

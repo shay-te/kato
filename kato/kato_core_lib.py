@@ -155,11 +155,7 @@ class KatoCoreLib(CoreLib):
     def _resolve_ticket_platform_config(
         open_cfg: DictConfig,
     ) -> tuple[str, DictConfig]:
-        issue_platform = str(
-            open_cfg.issue_platform
-            or open_cfg.ticket_system
-            or 'youtrack'
-        ).strip().lower()
+        issue_platform = str(open_cfg.issue_platform or 'youtrack').strip().lower()
         config_name = ISSUE_PLATFORM_CONFIG_NAMES.get(issue_platform)
         ticket_cfg = getattr(open_cfg, config_name, None) if config_name else None
         if ticket_cfg is None:
