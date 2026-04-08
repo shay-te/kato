@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import re
 import shutil
@@ -947,7 +949,7 @@ class RepositoryService(RepositoryInventoryService):
                 capture_output=True,
                 text=True,
                 check=False,
-                timeout=self.GIT_SUBPROCESS_TIMEOUT_SECONDS,
+                timeout=RepositoryService.GIT_SUBPROCESS_TIMEOUT_SECONDS,
             )
         except OSError:
             return False

@@ -275,6 +275,31 @@ class TicketClientBase(RetryingClientBase):
         response.raise_for_status()
         return self._json_items(response, items_key=items_key)
 
+    @classmethod
+    def _build_comment_entries(
+        cls,
+        comments: list[dict[str, Any]],
+        *,
+        extract_body: Callable[[dict[str, Any]], object],
+        extract_author: Callable[[dict[str, Any]], object],
+        skip: Callable[[dict[str, Any]], bool] | None = None,
+    ) -> list[dict[str, str]]:
+        entries: list[dict[str, str]] = []
+        for comment in comments:
+            if not isinstance(comment, dict):
+                continue
+            if skip is not None and skip(comment):
+                continue
+            entry = cls._task_comment_entry(extract_author(comment), extract_body(comment))
+            if entry:
+                entries.append(entry)
+        return entries
+
+    @staticmethod
+    def _safe_dict(mapping: dict[str, Any], key: str) -> dict[str, Any]:
+        value = mapping.get(key)
+        return value if isinstance(value, dict) else {}
+
     @staticmethod
     def _task_comment_entry(
         author: object,

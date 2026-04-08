@@ -18,7 +18,7 @@ class KatoInstanceTests(unittest.TestCase):
 
     def test_init_is_idempotent(self) -> None:
         cfg = build_test_cfg()
-        with patch(
+        with patch('kato.kato_core_lib.EmailCoreLib'), patch(
             'kato.kato_core_lib.AgentService.validate_connections'
         ):
             KatoInstance.init(cfg)

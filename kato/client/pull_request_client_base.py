@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 
 from kato.client.retrying_client_base import RetryingClientBase

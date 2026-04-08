@@ -103,27 +103,17 @@ class BitbucketIssuesClient(TicketClientBase):
             items_key='values',
         )
 
-    @staticmethod
-    def _task_comment_entries(comments: list[dict[str, Any]]) -> list[dict[str, str]]:
-        entries: list[dict[str, str]] = []
-        for comment in comments:
-            if not isinstance(comment, dict):
-                continue
-            content = comment.get(BitbucketIssueCommentFields.CONTENT, {})
-            if not isinstance(content, dict):
-                content = {}
-            body = str(content.get(BitbucketIssueCommentFields.RAW, '') or '').strip()
-            user = comment.get(BitbucketIssueCommentFields.USER, {})
-            if not isinstance(user, dict):
-                user = {}
-            entry = BitbucketIssuesClient._task_comment_entry(
-                user.get(BitbucketIssueCommentFields.DISPLAY_NAME)
-                or user.get(BitbucketIssueCommentFields.NICKNAME),
-                body,
-            )
-            if entry:
-                entries.append(entry)
-        return entries
+    @classmethod
+    def _task_comment_entries(cls, comments: list[dict[str, Any]]) -> list[dict[str, str]]:
+        def extract_body(c: dict) -> str:
+            content = cls._safe_dict(c, BitbucketIssueCommentFields.CONTENT)
+            return str(content.get(BitbucketIssueCommentFields.RAW, '') or '').strip()
+
+        def extract_author(c: dict) -> object:
+            user = cls._safe_dict(c, BitbucketIssueCommentFields.USER)
+            return user.get(BitbucketIssueCommentFields.DISPLAY_NAME) or user.get(BitbucketIssueCommentFields.NICKNAME)
+
+        return cls._build_comment_entries(comments, extract_body=extract_body, extract_author=extract_author)
 
     @staticmethod
     def _matches_assignee(assignee: Any, expected: str) -> bool:

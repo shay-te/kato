@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from core_lib.data_layers.service.service import Service
 
 from kato.client.kato_client import KatoClient

@@ -95,20 +95,10 @@ class GitHubIssuesClient(TicketClientBase):
             params={'per_page': 100},
         )
 
-    @staticmethod
-    def _task_comment_entries(comments: list[dict[str, Any]]) -> list[dict[str, str]]:
-        entries: list[dict[str, str]] = []
-        for comment in comments:
-            if not isinstance(comment, dict):
-                continue
-            body = str(comment.get(GitHubCommentFields.BODY, '') or '').strip()
-            user = comment.get(GitHubCommentFields.USER, {})
-            if not isinstance(user, dict):
-                user = {}
-            entry = GitHubIssuesClient._task_comment_entry(
-                user.get(GitHubCommentFields.LOGIN),
-                body,
-            )
-            if entry:
-                entries.append(entry)
-        return entries
+    @classmethod
+    def _task_comment_entries(cls, comments: list[dict[str, Any]]) -> list[dict[str, str]]:
+        return cls._build_comment_entries(
+            comments,
+            extract_body=lambda c: str(c.get(GitHubCommentFields.BODY, '') or '').strip(),
+            extract_author=lambda c: cls._safe_dict(c, GitHubCommentFields.USER).get(GitHubCommentFields.LOGIN),
+        )

@@ -162,25 +162,12 @@ class JiraClient(TicketClientBase):
             screenshot_lines=self._format_screenshot_attachments(attachments),
         )
 
-    def _task_comment_entries(
-        self,
-        comments: list[dict[str, Any]],
-    ) -> list[dict[str, str]]:
-        entries: list[dict[str, str]] = []
-        for comment in comments:
-            if not isinstance(comment, dict):
-                continue
-            body = self._adf_to_text(comment.get(JiraCommentFields.BODY))
-            author = comment.get(JiraCommentFields.AUTHOR, {})
-            if not isinstance(author, dict):
-                author = {}
-            entry = self._task_comment_entry(
-                author.get(JiraCommentFields.DISPLAY_NAME),
-                body,
-            )
-            if entry:
-                entries.append(entry)
-        return entries
+    def _task_comment_entries(self, comments: list[dict[str, Any]]) -> list[dict[str, str]]:
+        return self._build_comment_entries(
+            comments,
+            extract_body=lambda c: self._adf_to_text(c.get(JiraCommentFields.BODY)),
+            extract_author=lambda c: self._safe_dict(c, JiraCommentFields.AUTHOR).get(JiraCommentFields.DISPLAY_NAME),
+        )
 
     def _format_text_attachments(self, attachments: list[dict[str, Any]]) -> list[str]:
         return self._format_text_attachment_lines(

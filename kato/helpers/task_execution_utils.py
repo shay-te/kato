@@ -9,6 +9,8 @@ from kato.data_layers.data.fields import (
 )
 from kato.data_layers.data.task import Task
 
+__test__ = False
+
 
 def implementation_succeeded(execution: Mapping[str, object]) -> bool:
     return bool(execution.get(ImplementationFields.SUCCESS, False))
@@ -36,6 +38,10 @@ def testing_failed_result(task_id: str) -> dict[str, object]:
         PullRequestFields.PULL_REQUESTS: [],
         PullRequestFields.FAILED_REPOSITORIES: [],
     }
+
+
+testing_succeeded.__test__ = False
+testing_failed_result.__test__ = False
 
 
 def skip_task_result(

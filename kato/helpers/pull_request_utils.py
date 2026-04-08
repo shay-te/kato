@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from kato.data_layers.data.fields import ImplementationFields, PullRequestFields
 from kato.data_layers.data.task import Task
 from kato.helpers.text_utils import text_from_mapping

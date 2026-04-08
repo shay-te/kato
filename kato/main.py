@@ -1,12 +1,37 @@
+from __future__ import annotations
+
 import time
 
 import hydra
 from omegaconf import DictConfig
 
-from kato.jobs.process_assigned_tasks import ProcessAssignedTasksJob
 from kato.helpers.logging_utils import configure_logger
-from kato.kato_instance import KatoInstance
 from kato.validate_env import validate_environment
+
+
+class _ProcessAssignedTasksJobProxy:
+    def __call__(self):
+        from kato.jobs.process_assigned_tasks import ProcessAssignedTasksJob as _ProcessAssignedTasksJob
+
+        return _ProcessAssignedTasksJob()
+
+
+class _KatoInstanceProxy:
+    @staticmethod
+    def init(core_lib_cfg: DictConfig) -> None:
+        from kato.kato_instance import KatoInstance as _KatoInstance
+
+        _KatoInstance.init(core_lib_cfg)
+
+    @staticmethod
+    def get():
+        from kato.kato_instance import KatoInstance as _KatoInstance
+
+        return _KatoInstance.get()
+
+
+ProcessAssignedTasksJob = _ProcessAssignedTasksJobProxy()
+KatoInstance = _KatoInstanceProxy()
 
 
 @hydra.main(

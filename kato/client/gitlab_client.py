@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Any
 from urllib.parse import quote
 
@@ -88,18 +90,7 @@ class GitLabClient(PullRequestClientBase):
         repo_slug: str,
         comment: ReviewComment,
     ) -> None:
-        discussion_id = text_from_attr(comment, ReviewCommentFields.RESOLUTION_TARGET_ID)
-        if not discussion_id:
-            discussion_id = self._discussion_id_for_comment(
-                repo_owner,
-                repo_slug,
-                normalized_text(comment.pull_request_id),
-                normalized_text(comment.comment_id),
-            )
-        if not discussion_id:
-            raise ValueError(
-                f'unable to determine GitLab discussion for comment {comment.comment_id}'
-            )
+        discussion_id = self._require_discussion_id(repo_owner, repo_slug, comment)
         response = self._put_with_retry(
             f'/projects/{self._project_path(repo_owner, repo_slug)}/merge_requests/{comment.pull_request_id}/discussions/{discussion_id}',
             json={'resolved': True},
@@ -113,6 +104,19 @@ class GitLabClient(PullRequestClientBase):
         comment: ReviewComment,
         body: str,
     ) -> None:
+        discussion_id = self._require_discussion_id(repo_owner, repo_slug, comment)
+        response = self._post_with_retry(
+            f'/projects/{self._project_path(repo_owner, repo_slug)}/merge_requests/{comment.pull_request_id}/discussions/{discussion_id}/notes',
+            json={'body': normalized_text(body)},
+        )
+        response.raise_for_status()
+
+    def _require_discussion_id(
+        self,
+        repo_owner: str,
+        repo_slug: str,
+        comment: ReviewComment,
+    ) -> str:
         discussion_id = text_from_attr(comment, ReviewCommentFields.RESOLUTION_TARGET_ID)
         if not discussion_id:
             discussion_id = self._discussion_id_for_comment(
@@ -125,11 +129,7 @@ class GitLabClient(PullRequestClientBase):
             raise ValueError(
                 f'unable to determine GitLab discussion for comment {comment.comment_id}'
             )
-        response = self._post_with_retry(
-            f'/projects/{self._project_path(repo_owner, repo_slug)}/merge_requests/{comment.pull_request_id}/discussions/{discussion_id}/notes',
-            json={'body': normalized_text(body)},
-        )
-        response.raise_for_status()
+        return discussion_id
 
     @staticmethod
     def _project_path(repo_owner: str, repo_slug: str) -> str:

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from kato.data_layers.data.fields import PullRequestFields, StatusFields
 from kato.helpers.pull_request_context_utils import (
     build_pull_request_context,

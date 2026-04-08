@@ -1268,6 +1268,7 @@ class RepositoryServiceTests(unittest.TestCase):
             Mock(returncode=0, stdout='main\n', stderr=''),
             Mock(returncode=0, stdout='', stderr=''),
             Mock(returncode=0, stdout='', stderr=''),
+            Mock(returncode=0, stdout='', stderr=''),
         ]
 
         with patch(
@@ -1334,31 +1335,40 @@ class RepositoryServiceTests(unittest.TestCase):
             PullRequestFields.TITLE: 'PROJ-1: Fix bug',
             PullRequestFields.URL: 'https://github.example/pull/17',
         }
-        subprocess_results = [
-            Mock(returncode=0, stdout='feature/proj-1/backend\n', stderr=''),
-            Mock(
-                returncode=0,
-                stdout=' M app.py\n?? build/main.js\n?? validation_report.md\n',
-                stderr='',
-            ),
-            Mock(returncode=0, stdout='', stderr=''),
-            Mock(returncode=0, stdout='', stderr=''),
-            Mock(returncode=0, stdout='', stderr=''),
-            Mock(returncode=0, stdout='', stderr=''),
-            Mock(returncode=0, stdout='', stderr=''),
-            Mock(returncode=0, stdout='[feature/proj-1/backend abc123] Implement PROJ-1\n', stderr=''),
-            Mock(returncode=0, stdout='', stderr=''),
-            Mock(returncode=0, stdout='main\n', stderr=''),
-            Mock(returncode=0, stdout='1\n', stderr=''),
-            Mock(returncode=0, stdout='feature/proj-1/backend\n', stderr=''),
-            Mock(returncode=0, stdout='', stderr=''),
-            Mock(returncode=0, stdout='', stderr=''),
-            Mock(returncode=0, stdout='main\n', stderr=''),
-            Mock(returncode=0, stdout='', stderr=''),
-            Mock(returncode=0, stdout='main\n', stderr=''),
-            Mock(returncode=0, stdout='', stderr=''),
-            Mock(returncode=0, stdout='', stderr=''),
-        ]
+        status_call_count = {'count': 0}
+
+        def subprocess_side_effect(command, **kwargs):
+            tail = tuple(command[5:])
+            if tail == ('rev-parse', '--abbrev-ref', 'HEAD'):
+                return Mock(returncode=0, stdout='feature/proj-1/backend\n', stderr='')
+            if tail == ('status', '--porcelain'):
+                status_call_count['count'] += 1
+                if status_call_count['count'] == 1:
+                    return Mock(
+                        returncode=0,
+                        stdout=' M app.py\n?? build/main.js\n?? validation_report.md\n',
+                        stderr='',
+                    )
+                return Mock(returncode=0, stdout='', stderr='')
+            if tail in {
+                ('reset', 'HEAD', '--', 'build'),
+                ('clean', '-fd', '--', 'build'),
+                ('reset', 'HEAD', '--', 'validation_report.md'),
+                ('clean', '-fd', '--', 'validation_report.md'),
+                ('add', '-A'),
+            }:
+                return Mock(returncode=0, stdout='', stderr='')
+            if tail == ('commit', '-m', 'Implement PROJ-1'):
+                return Mock(
+                    returncode=0,
+                    stdout='[feature/proj-1/backend abc123] Implement PROJ-1\n',
+                    stderr='',
+                )
+            if tail == ('rev-parse', '--abbrev-ref', 'HEAD'):
+                return Mock(returncode=0, stdout='main\n', stderr='')
+            if tail == ('rev-list', '--count', 'main..feature/proj-1/backend'):
+                return Mock(returncode=0, stdout='1\n', stderr='')
+            return Mock(returncode=0, stdout='', stderr='')
 
         def is_directory(path: str) -> bool:
             return path.endswith('/build') or path.endswith('\\build')
@@ -1385,7 +1395,7 @@ class RepositoryServiceTests(unittest.TestCase):
             return_value=data_access,
         ), patch(
             'kato.data_layers.service.repository_service.subprocess.run',
-            side_effect=subprocess_results,
+            side_effect=subprocess_side_effect,
         ) as mock_run:
             service = RepositoryService(self.cfg.kato.repositories, 3)
             service.create_pull_request(
@@ -1513,6 +1523,7 @@ class RepositoryServiceTests(unittest.TestCase):
             text=True,
             check=False,
             env=unittest.mock.ANY,
+            timeout=RepositoryService.GIT_SUBPROCESS_TIMEOUT_SECONDS,
         )
 
     def test_validate_task_branches_are_pushable_dry_runs_branch_publish(self) -> None:
@@ -1630,8 +1641,6 @@ class RepositoryServiceTests(unittest.TestCase):
             [
                 'git',
                 '-c',
-                f'http.extraHeader={expected_header}',
-                '-c',
                 f'safe.directory={repo_path.resolve()}',
                 '-C',
                 str(repo_path.resolve()),
@@ -1639,6 +1648,12 @@ class RepositoryServiceTests(unittest.TestCase):
                 '--heads',
                 'origin',
             ],
+        )
+        self.assertEqual(mock_run.call_args.kwargs['env']['GIT_CONFIG_COUNT'], '1')
+        self.assertEqual(mock_run.call_args.kwargs['env']['GIT_CONFIG_KEY_0'], 'http.extraHeader')
+        self.assertEqual(
+            mock_run.call_args.kwargs['env']['GIT_CONFIG_VALUE_0'],
+            expected_header,
         )
         self.assertEqual(mock_run.call_args.kwargs['env']['GIT_TERMINAL_PROMPT'], '0')
 
@@ -1692,8 +1707,6 @@ class RepositoryServiceTests(unittest.TestCase):
                 [
                     'git',
                     '-c',
-                    f'http.extraHeader={expected_header}',
-                    '-c',
                     f'safe.directory={backend_repo.resolve()}',
                     '-C',
                     str(backend_repo.resolve()),
@@ -1704,8 +1717,6 @@ class RepositoryServiceTests(unittest.TestCase):
                 [
                     'git',
                     '-c',
-                    f'http.extraHeader={expected_header}',
-                    '-c',
                     f'safe.directory={client_repo.resolve()}',
                     '-C',
                     str(client_repo.resolve()),
@@ -1715,6 +1726,10 @@ class RepositoryServiceTests(unittest.TestCase):
                 ],
             ],
         )
+        for call in mock_run.call_args_list:
+            self.assertEqual(call.kwargs['env']['GIT_CONFIG_COUNT'], '1')
+            self.assertEqual(call.kwargs['env']['GIT_CONFIG_KEY_0'], 'http.extraHeader')
+            self.assertEqual(call.kwargs['env']['GIT_CONFIG_VALUE_0'], expected_header)
         self.assertEqual(
             [call.kwargs['env']['GIT_TERMINAL_PROMPT'] for call in mock_run.call_args_list],
             ['0', '0'],
@@ -1916,8 +1931,6 @@ class RepositoryServiceTests(unittest.TestCase):
             [
                 'git',
                 '-c',
-                f'http.extraHeader={expected_header}',
-                '-c',
                 'safe.directory=.',
                 '-C',
                 '.',
@@ -1926,6 +1939,12 @@ class RepositoryServiceTests(unittest.TestCase):
                 'origin',
                 'main',
             ],
+        )
+        self.assertEqual(mock_run.call_args.kwargs['env']['GIT_CONFIG_COUNT'], '1')
+        self.assertEqual(mock_run.call_args.kwargs['env']['GIT_CONFIG_KEY_0'], 'http.extraHeader')
+        self.assertEqual(
+            mock_run.call_args.kwargs['env']['GIT_CONFIG_VALUE_0'],
+            expected_header,
         )
         self.assertEqual(mock_run.call_args.kwargs['env']['GIT_TERMINAL_PROMPT'], '0')
 
@@ -1956,8 +1975,6 @@ class RepositoryServiceTests(unittest.TestCase):
             [
                 'git',
                 '-c',
-                f'http.extraHeader={expected_header}',
-                '-c',
                 'safe.directory=.',
                 '-C',
                 '.',
@@ -1966,6 +1983,12 @@ class RepositoryServiceTests(unittest.TestCase):
                 'origin',
                 'feature/proj-1/backend',
             ],
+        )
+        self.assertEqual(mock_run.call_args.kwargs['env']['GIT_CONFIG_COUNT'], '1')
+        self.assertEqual(mock_run.call_args.kwargs['env']['GIT_CONFIG_KEY_0'], 'http.extraHeader')
+        self.assertEqual(
+            mock_run.call_args.kwargs['env']['GIT_CONFIG_VALUE_0'],
+            expected_header,
         )
         self.assertEqual(mock_run.call_args.kwargs['env']['GIT_TERMINAL_PROMPT'], '0')
 
@@ -2145,12 +2168,12 @@ class RepositoryServiceTests(unittest.TestCase):
                 validation_report_description,
                 'Validation report:\n- verified the task manually.',
             )
-            self.assertFalse(report_path.exists())
             self.assertEqual(
                 [call.args[1] for call in mock_run_git.call_args_list],
                 [
                     ['add', '-A'],
                     ['reset', 'HEAD', '--', 'validation_report.md'],
+                    ['clean', '-fd', '--', 'validation_report.md'],
                     ['add', '-A'],
                     ['commit', '-m', 'Implement PROJ-1'],
                 ],

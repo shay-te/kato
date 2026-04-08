@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from kato.helpers.record_field_utils import RecordField
 
 

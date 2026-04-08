@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Any
 
 from kato.client.bitbucket_auth import bitbucket_basic_auth_header

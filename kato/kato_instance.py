@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from omegaconf import DictConfig
 
 from kato.kato_core_lib import KatoCoreLib

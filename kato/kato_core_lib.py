@@ -1,7 +1,6 @@
 from omegaconf import DictConfig
 
 from core_lib.core_lib import CoreLib
-from email_core_lib.email_core_lib import EmailCoreLib
 
 from kato.client.kato_client import KatoClient
 from kato.client.ticket_client_factory import build_ticket_client
@@ -54,6 +53,16 @@ ISSUE_PLATFORM_CONFIG_NAMES = {
     'bitbucket': 'bitbucket_issues',
     'bitbucket_issues': 'bitbucket_issues',
 }
+
+
+class _EmailCoreLibProxy:
+    def __call__(self, *args, **kwargs):
+        from email_core_lib.email_core_lib import EmailCoreLib as _EmailCoreLib
+
+        return _EmailCoreLib(*args, **kwargs)
+
+
+EmailCoreLib = _EmailCoreLibProxy()
 
 
 class KatoCoreLib(CoreLib):

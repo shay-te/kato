@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Any
 
 from kato.client.ticket_client_base import TicketClientBase
@@ -352,19 +354,12 @@ class YouTrackClient(TicketClientBase):
         )
 
     @classmethod
-    def _task_comment_entries(
-        cls,
-        comments: list[dict[str, Any]],
-    ) -> list[dict[str, str]]:
-        entries: list[dict[str, str]] = []
-        for comment in comments:
-            if not isinstance(comment, dict):
-                continue
-            text = text_from_mapping(comment, YouTrackCommentFields.TEXT)
-            entry = cls._task_comment_entry(cls._comment_author_name(comment), text)
-            if entry:
-                entries.append(entry)
-        return entries
+    def _task_comment_entries(cls, comments: list[dict[str, Any]]) -> list[dict[str, str]]:
+        return cls._build_comment_entries(
+            comments,
+            extract_body=lambda c: text_from_mapping(c, YouTrackCommentFields.TEXT),
+            extract_author=cls._comment_author_name,
+        )
 
     def _format_text_attachments(self, attachments: list[dict[str, Any]]) -> list[str]:
         return self._format_text_attachment_lines(

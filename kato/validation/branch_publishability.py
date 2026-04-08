@@ -17,15 +17,12 @@ class TaskBranchPublishabilityValidator(ValidationBase):
         repositories: list[object],
         repository_branches: dict[str, str],
     ) -> None:
-        for repository in repositories:
-            branch_name = repository_branches.get(repository.id, '')
-            if not branch_name:
-                raise ValueError(
-                    f'missing task branch name for repository {repository.id}'
-                )
-            destination_branch = self._repository_service.destination_branch(repository)
-            self._repository_service._ensure_branch_has_task_changes(
-                repository.local_path,
-                branch_name,
-                destination_branch,
-            )
+        self._validate_repositories(repositories, repository_branches)
+
+    def _validate_repository(self, repository: object, branch_name: str) -> None:
+        destination_branch = self._repository_service.destination_branch(repository)
+        self._repository_service._ensure_branch_has_task_changes(
+            repository.local_path,
+            branch_name,
+            destination_branch,
+        )

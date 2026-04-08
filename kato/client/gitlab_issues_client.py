@@ -88,21 +88,15 @@ class GitLabIssuesClient(TicketClientBase):
             params={'per_page': 100},
         )
 
-    @staticmethod
-    def _task_comment_entries(comments: list[dict[str, Any]]) -> list[dict[str, str]]:
-        entries: list[dict[str, str]] = []
-        for comment in comments:
-            if not isinstance(comment, dict) or comment.get(GitLabCommentFields.SYSTEM):
-                continue
-            body = str(comment.get(GitLabCommentFields.BODY, '') or '').strip()
-            author = comment.get(GitLabCommentFields.AUTHOR, {})
-            if not isinstance(author, dict):
-                author = {}
-            entry = GitLabIssuesClient._task_comment_entry(
-                author.get(GitLabCommentFields.NAME)
-                or author.get(GitLabCommentFields.USERNAME),
-                body,
-            )
-            if entry:
-                entries.append(entry)
-        return entries
+    @classmethod
+    def _task_comment_entries(cls, comments: list[dict[str, Any]]) -> list[dict[str, str]]:
+        def extract_author(c: dict) -> object:
+            author = cls._safe_dict(c, GitLabCommentFields.AUTHOR)
+            return author.get(GitLabCommentFields.NAME) or author.get(GitLabCommentFields.USERNAME)
+
+        return cls._build_comment_entries(
+            comments,
+            extract_body=lambda c: str(c.get(GitLabCommentFields.BODY, '') or '').strip(),
+            extract_author=extract_author,
+            skip=lambda c: bool(c.get(GitLabCommentFields.SYSTEM)),
+        )

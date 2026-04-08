@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 from kato.data_layers.data.review_comment import ReviewComment

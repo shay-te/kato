@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from base64 import b64encode
 import threading
 import unittest
@@ -9,10 +11,9 @@ from omegaconf import DictConfig, OmegaConf
 from kato.data_layers.data.review_comment import ReviewComment
 from kato.data_layers.data.task import Task
 from kato.data_layers.data.fields import ReviewCommentFields, TaskCommentFields
-from kato.kato_core_lib import KatoCoreLib
-
-
 thread_lock = threading.Lock()
+
+__test__ = False
 
 
 class OblInstance:
@@ -229,8 +230,11 @@ def sync_create_start_core_lib() -> KatoCoreLib:
             [CoreLib.cache_registry.unregister(key) for key in CoreLib.cache_registry.registered()]
             [CoreLib.observer_registry.unregister(key) for key in CoreLib.observer_registry.registered()]
             from unittest.mock import patch
+            from kato.kato_core_lib import KatoCoreLib
 
             with patch(
+                'kato.kato_core_lib.EmailCoreLib'
+            ), patch(
                 'kato.kato_core_lib.AgentService.validate_connections'
             ):
                 OblInstance.instance = KatoCoreLib(load_config())
@@ -349,6 +353,9 @@ def implement_task_with_defaults(
 def test_task_with_defaults(client, task: Task | None = None):
     with patch.object(client, '_patch', return_value=mock_response()):
         return client.test_task(task or build_task())
+
+
+test_task_with_defaults.__test__ = False
 
 
 def fix_review_comment_with_defaults(

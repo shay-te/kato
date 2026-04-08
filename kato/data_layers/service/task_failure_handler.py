@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from core_lib.data_layers.service.service import Service
 
 from kato.data_layers.data.task import Task

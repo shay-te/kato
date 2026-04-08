@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from omegaconf import DictConfig
 
 from core_lib.data_layers.service.service import Service

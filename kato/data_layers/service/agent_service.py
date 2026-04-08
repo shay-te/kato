@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from core_lib.data_layers.service.service import Service
 
 from kato.data_layers.service.agent_state_registry import AgentStateRegistry
