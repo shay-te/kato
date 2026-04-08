@@ -6,6 +6,7 @@ from omegaconf import DictConfig
 from kato.jobs.process_assigned_tasks import ProcessAssignedTasksJob
 from kato.helpers.logging_utils import configure_logger
 from kato.kato_instance import KatoInstance
+from kato.validate_env import validate_environment
 
 
 @hydra.main(
@@ -15,6 +16,11 @@ from kato.kato_instance import KatoInstance
 )
 def main(cfg: DictConfig) -> int:
     logger = configure_logger(cfg.core_lib.app.name)
+    try:
+        validate_environment(mode='all')
+    except ValueError as exc:
+        logger.error('%s', exc)
+        return 1
     try:
         KatoInstance.init(cfg)
     except RuntimeError as exc:

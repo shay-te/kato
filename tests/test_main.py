@@ -14,13 +14,16 @@ class MainTests(unittest.TestCase):
     def test_main_returns_zero_on_success(self) -> None:
         app = types.SimpleNamespace(logger=Mock())
 
-        with patch('kato.main.KatoInstance.init') as mock_init, patch(
+        with patch('kato.main.validate_environment') as mock_validate_environment, patch(
+            'kato.main.KatoInstance.init'
+        ) as mock_init, patch(
             'kato.main.KatoInstance.get',
             return_value=app,
         ), patch('kato.main._run_task_scan_loop') as mock_run_loop:
             result = main(self.cfg)
 
         self.assertEqual(result, 0)
+        mock_validate_environment.assert_called_once_with(mode='all')
         mock_init.assert_called_once_with(self.cfg)
         mock_run_loop.assert_called_once_with(
             app,
@@ -33,7 +36,9 @@ class MainTests(unittest.TestCase):
         configured_logger = Mock()
         app = types.SimpleNamespace(logger=None)
 
-        with patch('kato.main.configure_logger', return_value=configured_logger), patch(
+        with patch('kato.main.validate_environment'), patch(
+            'kato.main.configure_logger', return_value=configured_logger
+        ), patch(
             'kato.main.KatoInstance.init'
         ), patch(
             'kato.main.KatoInstance.get',
@@ -92,15 +97,16 @@ class MainTests(unittest.TestCase):
 
     def test_main_returns_one_without_traceback_when_startup_validation_fails(self) -> None:
         configured_logger = Mock()
-        startup_error = RuntimeError(
-            '[Error] /workspace/project missing git permissions. cannot work.'
-        )
+        env_error = ValueError('unsupported issue platform: linear')
 
         with patch('kato.main.configure_logger', return_value=configured_logger), patch(
+            'kato.main.validate_environment',
+            side_effect=env_error,
+        ), patch(
             'kato.main.KatoInstance.init',
-            side_effect=startup_error,
-        ):
+        ) as mock_init:
             result = main(self.cfg)
 
         self.assertEqual(result, 1)
-        configured_logger.error.assert_called_once_with('%s', startup_error)
+        configured_logger.error.assert_called_once_with('%s', env_error)
+        mock_init.assert_not_called()
