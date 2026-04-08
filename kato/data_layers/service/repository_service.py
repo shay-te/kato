@@ -1058,3 +1058,4 @@ class RepositoryService(RepositoryInventoryService):
         raise ValueError(
             f'unable to determine destination branch for repository at {local_path}'
         )
+
