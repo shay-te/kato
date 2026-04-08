@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./kato.png" alt="Kato" width="220" />
+</p>
+
 # Kato
 
 Welcome to Kato! This repository is structured as a [`core-lib`](https://shay-te.github.io/core-lib/) application and follows the documented `core-lib` package layout.
