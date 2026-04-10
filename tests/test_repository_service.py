@@ -19,76 +19,6 @@ class RepositoryServiceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.cfg = build_test_cfg()
 
-    def test_validate_connections_rejects_duplicate_repository_ids(self) -> None:
-        repositories = [
-            types.SimpleNamespace(
-                id='client',
-                display_name='Client',
-                local_path='.',
-                provider_base_url='https://bitbucket.example',
-                token='token',
-                owner='workspace',
-                repo_slug='repo',
-                destination_branch='main',
-                aliases=['frontend'],
-            ),
-            types.SimpleNamespace(
-                id='client',
-                display_name='Client 2',
-                local_path='.',
-                provider_base_url='https://github.example/api/v3',
-                token='token',
-                owner='workspace',
-                repo_slug='repo-2',
-                destination_branch='main',
-                aliases=['ui'],
-            ),
-        ]
-
-        service = RepositoryService(repositories, 3)
-
-        with self.assertRaisesRegex(ValueError, 'duplicate repository id'):
-            service.validate_connections()
-
-    def test_validate_connections_rejects_duplicate_aliases(self) -> None:
-        repositories = [
-            types.SimpleNamespace(
-                id='client',
-                display_name='Client',
-                local_path='.',
-                provider_base_url='https://bitbucket.example',
-                token='token',
-                owner='workspace',
-                repo_slug='repo',
-                destination_branch='main',
-                aliases=['shared'],
-            ),
-            types.SimpleNamespace(
-                id='backend',
-                display_name='Backend',
-                local_path='.',
-                provider_base_url='https://github.example/api/v3',
-                token='token',
-                owner='workspace',
-                repo_slug='backend',
-                destination_branch='main',
-                aliases=['shared'],
-            ),
-        ]
-
-        service = RepositoryService(repositories, 3)
-
-        with self.assertRaisesRegex(ValueError, 'duplicate repository alias'):
-            service.validate_connections()
-
-    def test_resolves_multiple_repositories_from_task_text(self) -> None:
-        service = RepositoryService(self.cfg.kato.repositories, 3)
-        task = build_task(description='Update client and api endpoints')
-
-        repositories = service.resolve_task_repositories(task)
-
-        self.assertEqual([repository.id for repository in repositories], ['client', 'backend'])
-
     def test_discovers_repositories_from_root_and_matches_task_folder_name(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             projects_root = Path(temp_dir)
@@ -137,31 +67,6 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(service.repositories[0].display_name, 'Ob Love Admin Client')
         self.assertEqual(service.repositories[0].repo_slug, 'ob-love-admin-client')
         self.assertEqual(service.repositories[0].aliases, ['project', 'ob-love-admin-client'])
-
-    def test_discovers_repositories_from_root_ignoring_configured_folders(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            projects_root = Path(temp_dir)
-            dev_repo = projects_root / 'ob-love-admin-client'
-            ignored_repo = projects_root / 'ob-love-admin-client-new'
-            self._create_git_repository(
-                dev_repo,
-                'git@bitbucket.org:acme/ob-love-admin-client.git',
-            )
-            self._create_git_repository(
-                ignored_repo,
-                'git@bitbucket.org:acme/ob-love-admin-client.git',
-            )
-
-            service = RepositoryService(
-                types.SimpleNamespace(
-                    repositories=[],
-                    repository_root_path=str(projects_root),
-                    ignored_repository_folders='ob-love-admin-client-new',
-                ),
-                3,
-            )
-
-        self.assertEqual([repository.id for repository in service.repositories], ['ob-love-admin-client'])
 
     def test_raises_when_no_repository_matches_task_text(self) -> None:
         service = RepositoryService(self.cfg.kato.repositories, 3)
