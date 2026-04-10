@@ -409,19 +409,45 @@ class KatoClient(RetryingClientBase):
         Called on shutdown to ensure no containers are left running after the process exits.
         """
         self.logger.info('stopping all conversations to remove agent-server containers')
-        try:
-            response = self._get_with_retry(self._APP_CONVERSATIONS_PATH)
-            response.raise_for_status()
-            conversations = self._normalized_items_payload(response)
-        except Exception as exc:
-            self.logger.warning(
-                'failed to list conversations for shutdown cleanup: %s', exc
-            )
+        conversations = self._shutdown_conversations()
+        if conversations is None:
             return
         for conversation in conversations:
             conversation_id = text_from_mapping(conversation, 'id')
             if conversation_id:
                 self._delete_conversation(conversation_id)
+        self._wait_for_conversations_to_stop()
+
+    def _shutdown_conversations(self) -> list[dict] | None:
+        try:
+            response = self._get_with_retry(self._APP_CONVERSATIONS_PATH)
+            response.raise_for_status()
+            return self._normalized_items_payload(response)
+        except Exception as exc:
+            self.logger.warning(
+                'failed to list conversations for shutdown cleanup: %s', exc
+            )
+            return None
+
+    def _wait_for_conversations_to_stop(self) -> None:
+        for attempt in range(self._max_poll_attempts):
+            conversations = self._shutdown_conversations()
+            if conversations is None:
+                return
+            if not conversations:
+                return
+            if attempt >= self._max_poll_attempts - 1:
+                break
+            self.logger.info(
+                'waiting for %s OpenHands conversations to stop during shutdown',
+                len(conversations),
+            )
+            time.sleep(self._poll_interval_seconds)
+        self.logger.warning(
+            'conversation cleanup did not finish after %s polls; '
+            'some agent-server containers may need manual cleanup',
+            self._max_poll_attempts,
+        )
 
     def _run_prompt_result(
         self,

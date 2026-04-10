@@ -1517,24 +1517,85 @@ class KatoClientTests(unittest.TestCase):
 
     def test_stop_all_conversations_deletes_every_listed_conversation(self) -> None:
         """stop_all_conversations fetches the conversation list and deletes each one."""
-        client = KatoClient('https://openhands.example', 'oh-token')
+        client = KatoClient(
+            'https://openhands.example',
+            'oh-token',
+            poll_interval_seconds=0,
+            max_poll_attempts=3,
+        )
+        client.logger = Mock()
         delete_mock = Mock(return_value=mock_response())
 
         with patch.object(
             client,
             '_get',
-            return_value=mock_response(
-                json_data=[
-                    {'id': 'conv-1', 'execution_status': 'running'},
-                    {'id': 'conv-2', 'execution_status': 'paused'},
-                ]
-            ),
-        ), patch.object(client, '_delete', delete_mock):
+            side_effect=[
+                mock_response(
+                    json_data=[
+                        {'id': 'conv-1', 'execution_status': 'running'},
+                        {'id': 'conv-2', 'execution_status': 'paused'},
+                    ]
+                ),
+                mock_response(
+                    json_data=[
+                        {'id': 'conv-1', 'execution_status': 'running'},
+                        {'id': 'conv-2', 'execution_status': 'paused'},
+                    ]
+                ),
+                mock_response(json_data=[]),
+            ],
+        ), patch.object(client, '_delete', delete_mock), patch(
+            'kato.client.kato_client.time.sleep'
+        ) as sleep_mock:
             client.stop_all_conversations()
 
         self.assertEqual(delete_mock.call_count, 2)
         delete_mock.assert_any_call('/api/conversations/conv-1')
         delete_mock.assert_any_call('/api/conversations/conv-2')
+        sleep_mock.assert_called_once_with(0.1)
+        client.logger.info.assert_any_call(
+            'waiting for %s OpenHands conversations to stop during shutdown',
+            2,
+        )
+
+    def test_stop_all_conversations_waits_until_the_list_is_empty(self) -> None:
+        client = KatoClient(
+            'https://openhands.example',
+            'oh-token',
+            poll_interval_seconds=0,
+            max_poll_attempts=3,
+        )
+        client.logger = Mock()
+        delete_mock = Mock(return_value=mock_response())
+
+        with patch.object(
+            client,
+            '_get',
+            side_effect=[
+                mock_response(
+                    json_data=[
+                        {'id': 'conv-1', 'execution_status': 'running'},
+                    ]
+                ),
+                mock_response(
+                    json_data=[
+                        {'id': 'conv-1', 'execution_status': 'running'},
+                    ]
+                ),
+                mock_response(json_data=[]),
+            ],
+        ), patch.object(client, '_delete', delete_mock), patch(
+            'kato.client.kato_client.time.sleep'
+        ) as sleep_mock:
+            client.stop_all_conversations()
+
+        self.assertEqual(delete_mock.call_count, 1)
+        delete_mock.assert_called_once_with('/api/conversations/conv-1')
+        sleep_mock.assert_called_once_with(0.1)
+        client.logger.info.assert_any_call(
+            'waiting for %s OpenHands conversations to stop during shutdown',
+            1,
+        )
 
     def test_stop_all_conversations_continues_on_list_failure(self) -> None:
         """A failure to list conversations is logged as a warning, not raised."""
@@ -1565,41 +1626,3 @@ class KatoClientTests(unittest.TestCase):
                 implement_task_with_defaults(client)
 
         self.assertEqual(mock_post.call_count, 1)
-
-    def test_stop_all_conversations_deletes_every_listed_conversation(self) -> None:
-        """stop_all_conversations fetches the conversation list and deletes each one."""
-        client = KatoClient('https://openhands.example', 'oh-token')
-        delete_mock = Mock(return_value=mock_response())
-
-        with patch.object(
-            client,
-            '_get',
-            return_value=mock_response(
-                json_data=[
-                    {'id': 'conv-1', 'execution_status': 'running'},
-                    {'id': 'conv-2', 'execution_status': 'paused'},
-                ]
-            ),
-        ), patch.object(client, '_delete', delete_mock):
-            client.stop_all_conversations()
-
-        self.assertEqual(delete_mock.call_count, 2)
-        delete_mock.assert_any_call('/api/conversations/conv-1')
-        delete_mock.assert_any_call('/api/conversations/conv-2')
-
-    def test_stop_all_conversations_continues_on_list_failure(self) -> None:
-        """A failure to list conversations is logged as a warning, not raised."""
-        client = KatoClient('https://openhands.example', 'oh-token')
-        client.logger = Mock()
-
-        with patch.object(
-            client,
-            '_get',
-            side_effect=RuntimeError('network error'),
-        ):
-            client.stop_all_conversations()
-
-        client.logger.warning.assert_any_call(
-            'failed to list conversations for shutdown cleanup: %s',
-            ANY,
-        )
