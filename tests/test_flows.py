@@ -946,5 +946,97 @@ class ReviewCommentFixFlowTests(unittest.TestCase):
         self._run_and_assert_review_comment_fix_flow('bitbucket', 'gitlab')
 
 
+# ---------------------------------------------------------------------------
+# ### Shutdown Flow
+# ---------------------------------------------------------------------------
+
+class ShutdownFlowTests(unittest.TestCase):
+    """
+    README shutdown behaviour: on process exit, all active OpenHands conversations
+    are deleted so agent-server containers are stopped and removed.
+    """
+
+    def test_shutdown_stops_all_conversations_on_impl_and_testing_services(self) -> None:
+        """AgentService.shutdown() calls stop_all_conversations on both services."""
+        impl_stop = Mock()
+        testing_stop = Mock()
+
+        impl_service = types.SimpleNamespace(
+            max_retries=3,
+            validate_connection=Mock(),
+            validate_model_access=Mock(),
+            implement_task=Mock(return_value={ImplementationFields.SUCCESS: True}),
+            fix_review_comment=Mock(),
+            stop_all_conversations=impl_stop,
+        )
+        testing_service = types.SimpleNamespace(
+            max_retries=3,
+            validate_connection=Mock(),
+            validate_model_access=Mock(),
+            test_task=Mock(return_value={ImplementationFields.SUCCESS: True}),
+            stop_all_conversations=testing_stop,
+        )
+
+        cfg = build_test_cfg()
+        ip = ISSUE_PLATFORMS['youtrack']
+        ticket_cfg = cfg.kato.youtrack
+
+        ticket_client = types.SimpleNamespace(
+            provider_name='youtrack',
+            max_retries=3,
+            get_assigned_tasks=Mock(return_value=[]),
+            add_comment=Mock(),
+            move_issue_to_state=Mock(),
+            validate_connection=Mock(),
+        )
+
+        task_data_access = TaskDataAccess(ticket_cfg, ticket_client)
+        task_service = TaskService(ticket_cfg, task_data_access)
+        task_state_service = TaskStateService(ticket_cfg, task_data_access)
+
+        repository_service = types.SimpleNamespace(
+            _validate_inventory=Mock(),
+            _validate_git_executable=Mock(),
+            _prepare_repository_access=Mock(),
+            _validate_repository_git_access=Mock(),
+            resolve_task_repositories=Mock(return_value=[]),
+            prepare_task_repositories=Mock(side_effect=lambda r: r),
+            prepare_task_branches=Mock(),
+            destination_branch=Mock(return_value='main'),
+            restore_task_repositories=Mock(),
+            get_repository=Mock(),
+            find_pull_requests=Mock(return_value=[]),
+            list_pull_request_comments=Mock(return_value=[]),
+            publish_review_fix=Mock(),
+            reply_to_review_comment=Mock(),
+            resolve_review_comment=Mock(),
+            build_branch_name=Mock(return_value='PROJ-1'),
+            create_pull_request=Mock(),
+            _ensure_branch_is_pushable=Mock(),
+            _ensure_branch_has_task_changes=Mock(),
+        )
+
+        notification_service = NotificationService(
+            app_name='kato',
+            email_core_lib=Mock(),
+            failure_email_cfg=cfg.kato.failure_email,
+            completion_email_cfg=cfg.kato.completion_email,
+        )
+
+        agent_service = AgentService(
+            task_service=task_service,
+            task_state_service=task_state_service,
+            implementation_service=impl_service,
+            testing_service=testing_service,
+            repository_service=repository_service,
+            notification_service=notification_service,
+        )
+
+        agent_service.shutdown()
+
+        impl_stop.assert_called_once()
+        testing_stop.assert_called_once()
+
+
 if __name__ == '__main__':
     unittest.main()

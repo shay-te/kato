@@ -26,6 +26,9 @@ class ImplementationService(Service):
     def validate_model_access(self) -> None:
         self._client.validate_model_access()
 
+    def stop_all_conversations(self) -> None:
+        self._client.stop_all_conversations()
+
     def implement_task(
         self,
         task: Task,

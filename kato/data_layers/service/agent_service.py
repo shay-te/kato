@@ -135,6 +135,11 @@ class AgentService(Service):
     def validate_connections(self) -> None:
         self._startup_validator.validate(self.logger)
 
+    def shutdown(self) -> None:
+        """Stop all active OpenHands conversations to remove agent-server containers."""
+        self._implementation_service.stop_all_conversations()
+        self._testing_service.stop_all_conversations()
+
     def get_assigned_tasks(self) -> list[Task]:
         return self._task_service.get_assigned_tasks()
 

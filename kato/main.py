@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import signal
 import time
 
 import hydra
@@ -56,6 +57,7 @@ def main(cfg: DictConfig) -> int:
     app = KatoInstance.get()
     app.logger = getattr(app, 'logger', None) or logger
     app.logger.info('starting kato agent')
+    _register_shutdown_hook(app)
     startup_delay_seconds, scan_interval_seconds = _task_scan_settings(cfg)
     _run_task_scan_loop(
         app,
@@ -63,6 +65,19 @@ def main(cfg: DictConfig) -> int:
         scan_interval_seconds=scan_interval_seconds,
     )
     return 0
+
+
+def _register_shutdown_hook(app) -> None:
+    def _shutdown(signum, frame):
+        app.logger.info('shutting down kato agent (signal %s)', signum)
+        try:
+            app.service.shutdown()
+        except Exception:
+            app.logger.exception('error during shutdown cleanup')
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _shutdown)
+    signal.signal(signal.SIGINT, _shutdown)
 
 
 def _task_scan_settings(cfg: DictConfig) -> tuple[float, float]:

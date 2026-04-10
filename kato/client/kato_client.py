@@ -384,9 +384,44 @@ class KatoClient(RetryingClientBase):
         session_id: str = '',
     ) -> dict[str, str | bool]:
         conversation_id = self._start_conversation(prompt, title, session_id)
-        payload = self._wait_for_conversation_result(conversation_id, title)
-        payload[ImplementationFields.SESSION_ID] = conversation_id
-        return payload
+        try:
+            payload = self._wait_for_conversation_result(conversation_id, title)
+            payload[ImplementationFields.SESSION_ID] = conversation_id
+            return payload
+        finally:
+            self._delete_conversation(conversation_id)
+
+    def _delete_conversation(self, conversation_id: str) -> None:
+        try:
+            response = self._delete(f'/api/conversations/{conversation_id}')
+            response.raise_for_status()
+        except Exception as exc:
+            self.logger.warning(
+                'failed to delete conversation %s after completion; '
+                'agent-server container may need manual cleanup: %s',
+                conversation_id,
+                exc,
+            )
+
+    def stop_all_conversations(self) -> None:
+        """Delete all conversations to stop and remove their agent-server containers.
+
+        Called on shutdown to ensure no containers are left running after the process exits.
+        """
+        self.logger.info('stopping all conversations to remove agent-server containers')
+        try:
+            response = self._get_with_retry(self._APP_CONVERSATIONS_PATH)
+            response.raise_for_status()
+            conversations = self._normalized_items_payload(response)
+        except Exception as exc:
+            self.logger.warning(
+                'failed to list conversations for shutdown cleanup: %s', exc
+            )
+            return
+        for conversation in conversations:
+            conversation_id = text_from_mapping(conversation, 'id')
+            if conversation_id:
+                self._delete_conversation(conversation_id)
 
     def _run_prompt_result(
         self,

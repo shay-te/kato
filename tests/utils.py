@@ -346,12 +346,16 @@ def implement_task_with_defaults(
     task: Task | None = None,
     session_id: str = '',
 ):
-    with patch.object(client, '_patch', return_value=mock_response()):
+    with patch.object(client, '_patch', return_value=mock_response()), patch.object(
+        client, '_delete', return_value=mock_response()
+    ):
         return client.implement_task(task or build_task(), '')
 
 
 def test_task_with_defaults(client, task: Task | None = None):
-    with patch.object(client, '_patch', return_value=mock_response()):
+    with patch.object(client, '_patch', return_value=mock_response()), patch.object(
+        client, '_delete', return_value=mock_response()
+    ):
         return client.test_task(task or build_task())
 
 
@@ -366,7 +370,9 @@ def fix_review_comment_with_defaults(
     task_id: str = '',
     task_summary: str = '',
 ):
-    with patch.object(client, '_patch', return_value=mock_response()):
+    with patch.object(client, '_patch', return_value=mock_response()), patch.object(
+        client, '_delete', return_value=mock_response()
+    ):
         return client.fix_review_comment(
             comment or build_review_comment(),
             branch_name,
