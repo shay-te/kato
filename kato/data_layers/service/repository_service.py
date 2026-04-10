@@ -34,6 +34,11 @@ class RepositoryService(RepositoryInventoryService):
     """Manage repository worktree preparation, branch publication, and cleanup."""
 
     GIT_SUBPROCESS_TIMEOUT_SECONDS = 300
+    NON_FAST_FORWARD_PUSH_REJECTION_MARKERS = (
+        'fetch first',
+        'non-fast-forward',
+        'updates were rejected because the remote contains work',
+    )
 
     def __init__(self, repositories_config, max_retries: int) -> None:
         super().__init__(repositories_config, max_retries)
@@ -545,7 +550,9 @@ class RepositoryService(RepositoryInventoryService):
                 repository,
             )
         self._validate_destination_branch_tracking_state(local_path, destination_branch)
-        current_branch = self._ensure_task_branch_checked_out(
+        if self._uses_remote_destination_sync(repository):
+            self._fetch_origin_for_branch_preparation(local_path, repository)
+        current_branch, should_sync_task_branch = self._ensure_task_branch_checked_out(
             local_path,
             destination_branch,
             branch_name,
@@ -553,6 +560,11 @@ class RepositoryService(RepositoryInventoryService):
         )
         self._assert_current_branch(local_path, branch_name, current_branch)
         self._ensure_clean_worktree(local_path, current_branch)
+        if should_sync_task_branch and self._uses_remote_destination_sync(repository):
+            self._sync_checked_out_task_branch(local_path, branch_name, repository)
+            current_branch = self._current_branch(local_path)
+            self._assert_current_branch(local_path, branch_name, current_branch)
+            self._ensure_clean_worktree(local_path, current_branch)
 
     def _ensure_clean_worktree(self, local_path: str, current_branch: str = '') -> None:
         status_output = self._working_tree_status(local_path)
@@ -695,25 +707,28 @@ class RepositoryService(RepositoryInventoryService):
         destination_branch: str,
         branch_name: str,
         current_branch: str,
-    ) -> str:
+    ) -> tuple[str, bool]:
         if current_branch == branch_name:
-            return current_branch
-        restored_branch = self._checkout_existing_task_branch(local_path, branch_name)
+            return current_branch, True
+        restored_branch, should_sync_task_branch = self._checkout_existing_task_branch(
+            local_path,
+            branch_name,
+        )
         if restored_branch:
-            return restored_branch
+            return restored_branch, should_sync_task_branch
         current_branch = self._ensure_destination_branch_checked_out(
             local_path,
             destination_branch,
             current_branch,
         )
         self._create_task_branch(local_path, branch_name, destination_branch)
-        return self._current_branch(local_path)
+        return self._current_branch(local_path), False
 
     def _checkout_existing_task_branch(
         self,
         local_path: str,
         branch_name: str,
-    ) -> str:
+    ) -> tuple[str, bool]:
         local_branch_ref = f'refs/heads/{branch_name}'
         remote_branch_ref = f'refs/remotes/origin/{branch_name}'
         if self._git_reference_exists(local_path, local_branch_ref):
@@ -722,15 +737,43 @@ class RepositoryService(RepositoryInventoryService):
                 ['checkout', branch_name],
                 f'failed to switch repository at {local_path} to {branch_name}',
             )
-            return self._current_branch(local_path)
+            return self._current_branch(local_path), True
         if not self._git_reference_exists(local_path, remote_branch_ref):
-            return ''
+            return '', False
         self._run_git(
             local_path,
             ['checkout', '-b', branch_name, f'origin/{branch_name}'],
             f'failed to restore branch {branch_name} from origin/{branch_name}',
         )
-        return self._current_branch(local_path)
+        return self._current_branch(local_path), False
+
+    def _fetch_origin_for_branch_preparation(
+        self,
+        local_path: str,
+        repository=None,
+    ) -> None:
+        self._run_git(
+            local_path,
+            ['fetch', 'origin'],
+            f'failed to fetch origin before preparing branch at {local_path}',
+            repository,
+        )
+
+    def _sync_checked_out_task_branch(
+        self,
+        local_path: str,
+        branch_name: str,
+        repository=None,
+    ) -> None:
+        remote_branch = f'origin/{branch_name}'
+        if not self._git_reference_exists(local_path, remote_branch):
+            return
+        self.logger.info(
+            'syncing branch %s with %s before starting work',
+            branch_name,
+            remote_branch,
+        )
+        self._rebase_branch_onto_remote(local_path, branch_name, remote_branch, repository)
 
     def _create_task_branch(
         self,
@@ -976,11 +1019,89 @@ class RepositoryService(RepositoryInventoryService):
         if dry_run:
             push_args.append('--dry-run')
         push_args.extend(['-u', 'origin', branch_name])
+        try:
+            self._run_git(
+                local_path,
+                push_args,
+                f'failed to push branch {branch_name}',
+                repository,
+            )
+        except RuntimeError as exc:
+            if dry_run or not self._is_non_fast_forward_push_rejection(exc):
+                raise
+            self.logger.warning(
+                'push for branch %s was rejected because origin has newer commits; '
+                'fetching and rebasing before retrying',
+                branch_name,
+            )
+            self._sync_branch_with_remote(local_path, branch_name, repository)
+            self._run_git(
+                local_path,
+                push_args,
+                f'failed to push branch {branch_name} after syncing with origin/{branch_name}',
+                repository,
+            )
+
+    def _sync_branch_with_remote(self, local_path: str, branch_name: str, repository=None) -> None:
+        remote_branch_ref = f'refs/remotes/origin/{branch_name}'
+        remote_branch = f'origin/{branch_name}'
         self._run_git(
             local_path,
-            push_args,
-            f'failed to push branch {branch_name}',
+            ['fetch', 'origin', f'{branch_name}:{remote_branch_ref}'],
+            f'failed to fetch latest {remote_branch} before pushing {branch_name}',
             repository,
+        )
+        if not self._git_reference_exists(local_path, remote_branch):
+            raise RuntimeError(
+                f'failed to fetch latest {remote_branch} before pushing {branch_name}: '
+                f'{remote_branch} is not available locally'
+            )
+        self._rebase_branch_onto_remote(local_path, branch_name, remote_branch, repository)
+
+    def _rebase_branch_onto_remote(
+        self,
+        local_path: str,
+        branch_name: str,
+        remote_branch: str,
+        repository=None,
+    ) -> None:
+        try:
+            self._run_git(
+                local_path,
+                ['rebase', remote_branch],
+                f'failed to rebase branch {branch_name} onto {remote_branch}',
+                repository,
+            )
+        except RuntimeError:
+            self._abort_rebase_after_failure(local_path, branch_name, repository)
+            raise
+
+    def _abort_rebase_after_failure(
+        self,
+        local_path: str,
+        branch_name: str,
+        repository=None,
+    ) -> None:
+        try:
+            self._run_git(
+                local_path,
+                ['rebase', '--abort'],
+                f'failed to abort rebase for branch {branch_name}',
+                repository,
+            )
+        except RuntimeError as abort_exc:
+            self.logger.warning(
+                'failed to abort rebase for branch %s after push-sync failure: %s',
+                branch_name,
+                abort_exc,
+            )
+
+    @classmethod
+    def _is_non_fast_forward_push_rejection(cls, exc: RuntimeError) -> bool:
+        message = normalized_lower_text(str(exc))
+        return any(
+            marker in message
+            for marker in cls.NON_FAST_FORWARD_PUSH_REJECTION_MARKERS
         )
 
     def _pull_destination_branch(

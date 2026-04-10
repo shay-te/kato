@@ -94,45 +94,68 @@ This project follows the `core-lib` layering on purpose:
 - `data_layers/data_access/` stays focused on boundary work such as ticket updates and pull-request API calls.
 - `data_layers/service/` owns the business workflow. This is where task selection, state transitions, repository preparation, OpenHands runs, publishing, notifications, and review-comment handling live.
 
-That separation matters because the main service flow should read like the actual workflow:
+That separation matters because the service flow should read like the real agent workflow. Kato starts by validating configuration and external access, then repeats one scan loop: process assigned tasks first, then process pull-request review comments. Tasks and comments are processed sequentially, one after the other, so repository state from one item does not leak into the next one.
 
-1. Load the assigned tasks from the configured issue platform.
-2. Skip tasks that were already processed.
-3. Resolve the repositories mentioned by the task and make sure each local checkout is safe to use.
-4. Move the task to the in-progress state and add a started comment.
-5. Ask OpenHands to implement the task.
-6. Re-prepare the task branches and run the testing validation step.
-7. Publish branch updates and open one pull request per affected repository.
-8. Add the pull-request summary back to the task, move the task to the review state, and send the completion notification.
+### Highlight Summary
 
-Tasks are processed sequentially, one after the other, so repository state from one task does not leak into the next one.
+- Startup validates `.env`, repository access, the active issue platform, the main OpenHands server, and the testing OpenHands server unless testing is skipped.
+- The scan loop waits for the configured startup delay, scans assigned tasks, then scans review comments, then sleeps until the next scan.
+- The task-fix flow reads the task, prepares clean branches, opens OpenHands implementation and testing conversations, commits and pushes changes, opens pull requests, moves the task to review, and stores pull-request context for follow-up comments.
+- The review-comment fix flow scans review pull requests, skips already-handled comment threads, opens an OpenHands review-fix conversation, pushes the branch update, replies to the reviewer, resolves the comment when supported, and records the processed comment keys.
+- Failed repository, branch, push, publish, and state-transition checks stop the unsafe part of the workflow instead of marking work as done too early.
 
-### Task Workflow
+### Startup Flow
 
-For each eligible task, the service does these checks and steps:
+1. `python -m kato.main`, `make run`, or the Docker entrypoint loads Hydra config and values from `.env`.
+2. Environment validation runs before the application is built. Missing required values fail fast.
+3. `KatoCoreLib` builds the active issue-platform client, repository service, OpenHands implementation service, OpenHands testing service, notification service, task publisher, preflight service, and review-comment service.
+4. Startup dependency validation checks repository connections, the active issue-platform connection, the main OpenHands connection, and the testing OpenHands connection unless `OPENHANDS_SKIP_TESTING=true`.
+5. After startup succeeds, the job loop waits for `OPENHANDS_TASK_SCAN_STARTUP_DELAY_SECONDS`.
+6. Each loop cycle runs task processing first and review-comment processing second.
+7. If a cycle fails, the error is logged and the loop retries after `OPENHANDS_TASK_SCAN_INTERVAL_SECONDS`.
 
-1. Read the full task context, including issue comments and any supported text attachments.
-2. Infer the affected repositories from the task summary and description.
-3. Validate that every repository is available locally, on the expected destination branch, and in a clean state before starting new work.
-4. Build the task branch name for each repository and prepare those branches locally.
-5. Run the implementation prompt through the main OpenHands client.
-6. Run the testing prompt through the testing OpenHands client.
-7. Commit and push the branch updates, then create pull requests or merge requests through the repository provider API.
-8. Remember the pull-request context so later review comments can be mapped back to the correct repository, branch, task, and OpenHands session.
+### Task Fix Flow
+
+For each eligible assigned task, the service does these checks and steps:
+
+1. Skip the task if it was already processed during this run.
+2. Validate model access for the task before spending work on repository changes.
+3. Check whether an earlier blocking comment still prevents a retry.
+4. Read the full task context, including issue comments, supported text attachments, and screenshot attachment metadata.
+5. Infer the affected repositories from the task summary and description.
+6. Validate that every repository is available locally, on the expected destination branch, and clean before starting work.
+7. Build the task branch name for each repository and prepare those branches locally.
+8. Before OpenHands starts, fetch `origin` and rebase any existing local task branch on top of `origin/<branch>` when that remote branch exists.
+9. Validate that task branches can be pushed.
+10. Move the issue to the in-progress state and add a started comment.
+11. Open the implementation conversation in the main OpenHands server.
+12. Validate that the task branches contain publishable changes.
+13. Open the testing conversation in the configured testing OpenHands server, or skip it when `OPENHANDS_SKIP_TESTING=true`.
+14. Commit and push the branch updates, then create pull requests or merge requests through the repository provider API.
+15. Add the pull-request summary back to the task.
+16. If every repository published successfully, move the task to the configured review state, mark the task processed for this run, and send the completion notification.
+17. Remember the pull-request context so later review comments can be mapped back to the correct repository, branch, task, and OpenHands session.
 
 If any repository cannot be published, the successful pull requests are kept, the task is not moved to the review state, and the failure is reported clearly instead of being hidden.
 
-### Review Comment Workflow
+### Review Comment Fix Flow
 
 After task processing, the agent checks tracked review pull requests for unseen comments:
 
 1. Look only at pull requests that belong to tasks already moved into the review state.
-2. Load the saved pull-request context for the repository, branch, task, and OpenHands session.
-3. Prepare the same working branch again.
-4. Ask OpenHands to address the review comment in the context of the full comment thread.
-5. Publish the branch update back to the same pull request branch.
-6. Resolve the review comment when the provider supports it.
-7. Persist the processed comment id so the same review comment is not handled twice after later polls or restarts.
+2. Load or reconstruct the saved pull-request context for the repository, branch, task, and OpenHands session.
+3. Fetch pull-request comments from the repository provider.
+4. Build the full review-comment thread context for OpenHands.
+5. Skip comment threads already replied to by Kato, already processed in memory, or already covered by another comment with the same resolution target.
+6. Log `Working on pull request comments: <pull request name>` before logging the concrete comment id.
+7. Prepare the same working branch again by fetching `origin` and rebasing the local branch on `origin/<branch>` before the review-fix conversation starts.
+8. Open the review-fix conversation in OpenHands with the pull request comment and the saved task context.
+9. Publish the review fix back to the same branch. If git push is still rejected because the remote branch changed while OpenHands was working, Kato fetches `origin/<branch>`, rebases once, and retries the push.
+10. Reply to the original review comment with the OpenHands result.
+11. Resolve the review comment when the provider supports it.
+12. If the provider reports the comment is already resolved or unavailable, Kato logs a warning and continues because the fix was already published and replied.
+13. Mark both the visible comment id and the provider resolution target as processed so the same thread is not handled again in the same run.
+14. If the review-comment flow fails, restore repository branches before the failure is raised.
 
 ### Testing OpenHands Routing
 

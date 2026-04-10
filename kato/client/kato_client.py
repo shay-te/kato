@@ -729,16 +729,25 @@ class KatoClient(RetryingClientBase):
             event_key = self._event_highlight_key(event)
             if event_key in seen_highlights:
                 continue
-            seen_highlights.add(event_key)
             highlight = self._event_highlight_text(event)
             if not highlight:
+                seen_highlights.add(event_key)
                 continue
+            highlight_key = self._event_highlight_log_key(highlight)
+            if highlight_key in seen_highlights:
+                seen_highlights.add(event_key)
+                continue
+            seen_highlights.update({event_key, highlight_key})
             self.logger.info(
                 'Mission %s: Kato %s',
                 conversation_title or conversation_id,
                 highlight,
             )
         return True
+
+    @staticmethod
+    def _event_highlight_log_key(highlight: str) -> str:
+        return f'highlight:{highlight}'
 
     def _event_highlight_key(self, event: object) -> str:
         if not isinstance(event, dict):

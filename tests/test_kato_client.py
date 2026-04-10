@@ -609,6 +609,68 @@ class KatoClientTests(unittest.TestCase):
         )
         self.assertEqual(mock_sleep.call_count, 2)
 
+    def test_log_conversation_highlights_deduplicates_same_display_text(self) -> None:
+        client = KatoClient('https://openhands.example', 'oh-token')
+        client.logger = Mock()
+
+        with patch.object(
+            client,
+            '_get_conversation_events',
+            return_value=[
+                {
+                    'id': 'evt-3',
+                    'kind': 'ActionEvent',
+                    'source': 'agent',
+                    'tool_name': 'file_editor',
+                    'tool_call': {
+                        'arguments': (
+                            '{"command":"view","path":"/workspace/project/src/app.js"}'
+                        ),
+                    },
+                },
+                {
+                    'id': 'evt-2',
+                    'kind': 'ActionEvent',
+                    'source': 'agent',
+                    'tool_name': 'terminal',
+                    'tool_call': {
+                        'arguments': '{}',
+                    },
+                },
+                {
+                    'id': 'evt-1',
+                    'kind': 'ActionEvent',
+                    'source': 'agent',
+                    'tool_name': 'terminal',
+                    'tool_call': {
+                        'arguments': '{}',
+                    },
+                },
+            ],
+        ):
+            result = client._log_conversation_highlights(
+                'conversation-1',
+                'UNA-1 [review]',
+                set(),
+            )
+
+        self.assertTrue(result)
+        self.assertEqual(
+            [call.args for call in client.logger.info.call_args_list],
+            [
+                (
+                    'Mission %s: Kato %s',
+                    'UNA-1 [review]',
+                    'used terminal',
+                ),
+                (
+                    'Mission %s: Kato %s',
+                    'UNA-1 [review]',
+                    'viewed /workspace/project/src/app.js',
+                ),
+            ],
+        )
+
     def test_implement_task_starts_fresh_conversation_even_with_uuid_session(self) -> None:
         client = KatoClient('https://openhands.example', 'oh-token')
         valid_session_id = '570ac918-7d72-42b1-b8fa-c4d06ca6f5f0'

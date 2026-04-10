@@ -528,6 +528,7 @@ class RepositoryServiceTests(unittest.TestCase):
                 Mock(returncode=0, stdout='main\n', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),
                 Mock(returncode=0, stdout='UNA-2398\n', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
             ],
@@ -540,6 +541,7 @@ class RepositoryServiceTests(unittest.TestCase):
             [
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
+                ['git', '-c', 'safe.directory=.', '-C', '.', 'fetch', 'origin'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'checkout', '-b', 'UNA-2398'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
@@ -569,6 +571,7 @@ class RepositoryServiceTests(unittest.TestCase):
                 Mock(returncode=0, stdout='main\n', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),
                 Mock(returncode=0, stdout='UNA-2398\n', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
             ],
@@ -580,7 +583,56 @@ class RepositoryServiceTests(unittest.TestCase):
             [
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
+                ['git', '-c', 'safe.directory=.', '-C', '.', 'fetch', 'origin'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'checkout', 'UNA-2398'],
+                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
+            ],
+        )
+
+    def test_prepare_task_branches_rebases_existing_local_branch_before_starting_work(self) -> None:
+        service = RepositoryService(self.cfg.kato.repositories, 3)
+
+        def reference_exists(_local_path: str, reference: str) -> bool:
+            return reference in {'refs/heads/UNA-2398', 'origin/UNA-2398'}
+
+        with patch(
+            'kato.data_layers.service.repository_service.shutil.which',
+            return_value='/usr/bin/git',
+        ), patch(
+            'kato.data_layers.service.repository_service.os.path.isdir',
+            return_value=True,
+        ), patch(
+            'kato.data_layers.service.repository_service.RepositoryService._validate_destination_branch_tracking_state',
+        ), patch(
+            'kato.data_layers.service.repository_service.RepositoryService._git_reference_exists',
+            side_effect=reference_exists,
+        ), patch(
+            'kato.data_layers.service.repository_service.subprocess.run',
+            side_effect=[
+                Mock(returncode=0, stdout='main\n', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),
+                Mock(returncode=0, stdout='UNA-2398\n', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),
+                Mock(returncode=0, stdout='UNA-2398\n', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),
+            ],
+        ) as mock_run:
+            service.prepare_task_branches([self.backend_repo], {'backend': 'UNA-2398'})
+
+        self.assertEqual(
+            [call.args[0] for call in mock_run.call_args_list],
+            [
+                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
+                ['git', '-c', 'safe.directory=.', '-C', '.', 'fetch', 'origin'],
+                ['git', '-c', 'safe.directory=.', '-C', '.', 'checkout', 'UNA-2398'],
+                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
+                ['git', '-c', 'safe.directory=.', '-C', '.', 'rebase', 'origin/UNA-2398'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
             ],
@@ -609,6 +661,7 @@ class RepositoryServiceTests(unittest.TestCase):
                 Mock(returncode=0, stdout='main\n', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),
                 Mock(returncode=0, stdout='UNA-2398\n', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
             ],
@@ -620,6 +673,7 @@ class RepositoryServiceTests(unittest.TestCase):
             [
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
+                ['git', '-c', 'safe.directory=.', '-C', '.', 'fetch', 'origin'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'checkout', '-b', 'UNA-2398', 'origin/UNA-2398'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
@@ -1991,6 +2045,65 @@ class RepositoryServiceTests(unittest.TestCase):
             expected_header,
         )
         self.assertEqual(mock_run.call_args.kwargs['env']['GIT_TERMINAL_PROMPT'], '0')
+
+    def test_push_branch_fetches_rebases_and_retries_on_non_fast_forward_rejection(self) -> None:
+        repository = types.SimpleNamespace(
+            id='client',
+            local_path='.',
+            provider='bitbucket',
+            token='bb-token',
+            remote_url='https://bitbucket.org/workspace/repo.git',
+        )
+        service = RepositoryService([], 3)
+        service.logger = Mock()
+
+        with patch(
+            'kato.data_layers.service.repository_service.shutil.which',
+            return_value='/usr/bin/git',
+        ), patch(
+            'kato.data_layers.service.repository_service.subprocess.run',
+            side_effect=[
+                Mock(
+                    returncode=1,
+                    stdout='',
+                    stderr=(
+                        ' ! [rejected] UNA-2265 -> UNA-2265 (fetch first)\n'
+                        'Updates were rejected because the remote contains work '
+                        'that you do not have locally.'
+                    ),
+                ),
+                Mock(returncode=0, stdout='', stderr=''),
+                Mock(returncode=0, stdout='origin/UNA-2265\n', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),
+            ],
+        ) as mock_run:
+            service._push_branch('.', 'UNA-2265', repository)
+
+        self.assertEqual(
+            [call.args[0] for call in mock_run.call_args_list],
+            [
+                ['git', '-c', 'safe.directory=.', '-C', '.', 'push', '-u', 'origin', 'UNA-2265'],
+                [
+                    'git',
+                    '-c',
+                    'safe.directory=.',
+                    '-C',
+                    '.',
+                    'fetch',
+                    'origin',
+                    'UNA-2265:refs/remotes/origin/UNA-2265',
+                ],
+                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--verify', 'origin/UNA-2265'],
+                ['git', '-c', 'safe.directory=.', '-C', '.', 'rebase', 'origin/UNA-2265'],
+                ['git', '-c', 'safe.directory=.', '-C', '.', 'push', '-u', 'origin', 'UNA-2265'],
+            ],
+        )
+        service.logger.warning.assert_called_once_with(
+            'push for branch %s was rejected because origin has newer commits; '
+            'fetching and rebasing before retrying',
+            'UNA-2265',
+        )
 
     def test_prepare_task_repositories_requires_git_executable(self) -> None:
         service = RepositoryService(self.cfg.kato.repositories, 3)
