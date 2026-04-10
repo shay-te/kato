@@ -616,8 +616,8 @@ class RepositoryServiceTests(unittest.TestCase):
                 Mock(returncode=0, stdout='', stderr=''),
                 Mock(returncode=0, stdout='UNA-2398\n', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
-                Mock(returncode=0, stdout='UNA-2398\n', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
+                Mock(returncode=0, stdout='UNA-2398\n', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
             ],
         ) as mock_run:

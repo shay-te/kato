@@ -561,10 +561,10 @@ class RepositoryService(RepositoryInventoryService):
         self._assert_current_branch(local_path, branch_name, current_branch)
         self._ensure_clean_worktree(local_path, current_branch)
         if should_sync_task_branch and self._uses_remote_destination_sync(repository):
-            self._sync_checked_out_task_branch(local_path, branch_name, repository)
-            current_branch = self._current_branch(local_path)
-            self._assert_current_branch(local_path, branch_name, current_branch)
-            self._ensure_clean_worktree(local_path, current_branch)
+            if self._sync_checked_out_task_branch(local_path, branch_name, repository):
+                current_branch = self._current_branch(local_path)
+                self._assert_current_branch(local_path, branch_name, current_branch)
+                self._ensure_clean_worktree(local_path, current_branch)
 
     def _ensure_clean_worktree(self, local_path: str, current_branch: str = '') -> None:
         status_output = self._working_tree_status(local_path)
@@ -764,16 +764,17 @@ class RepositoryService(RepositoryInventoryService):
         local_path: str,
         branch_name: str,
         repository=None,
-    ) -> None:
+    ) -> bool:
         remote_branch = f'origin/{branch_name}'
         if not self._git_reference_exists(local_path, remote_branch):
-            return
+            return False
         self.logger.info(
             'syncing branch %s with %s before starting work',
             branch_name,
             remote_branch,
         )
         self._rebase_branch_onto_remote(local_path, branch_name, remote_branch, repository)
+        return True
 
     def _create_task_branch(
         self,
