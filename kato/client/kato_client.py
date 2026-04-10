@@ -148,11 +148,6 @@ class KatoClient(RetryingClientBase):
         task_id: str = '',
         task_summary: str = '',
     ) -> dict[str, str | bool]:
-        self.logger.info(
-            'requesting review fix for pull request %s comment %s',
-            comment.pull_request_id,
-            comment.comment_id,
-        )
         result = self._run_prompt_result(
             prompt=self._build_review_prompt(comment, branch_name),
             title=self._review_conversation_title(

@@ -411,16 +411,6 @@ class ReviewCommentService(Service):
             review_context.branch_name,
             self._review_fix_commit_message(),
         )
-        self.logger.info(
-            'published review fix for pull request %s comment %s',
-            comment.pull_request_id,
-            comment.comment_id,
-        )
-        self.logger.info(
-            'replying to review comment %s on pull request %s',
-            comment.comment_id,
-            comment.pull_request_id,
-        )
         self._repository_service.reply_to_review_comment(
             repository,
             comment,
@@ -428,11 +418,6 @@ class ReviewCommentService(Service):
         )
         self.logger.info(
             'replied to review comment %s on pull request %s',
-            comment.comment_id,
-            comment.pull_request_id,
-        )
-        self.logger.info(
-            'resolving review comment %s on pull request %s',
             comment.comment_id,
             comment.pull_request_id,
         )

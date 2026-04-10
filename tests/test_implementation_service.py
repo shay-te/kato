@@ -23,11 +23,6 @@ class ImplementationServiceTests(unittest.TestCase):
         service.fix_review_comment(comment, 'feature/proj-1', 'conversation-1')
 
         service.logger.info.assert_any_call('delegating implementation for task %s', 'PROJ-1')
-        service.logger.info.assert_any_call(
-            'delegating review fix for pull request %s comment %s',
-            '17',
-            '99',
-        )
         client.implement_task.assert_called_once_with(
             task,
             'conversation-1',

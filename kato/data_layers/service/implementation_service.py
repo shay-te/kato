@@ -47,11 +47,6 @@ class ImplementationService(Service):
         task_id: str = '',
         task_summary: str = '',
     ) -> dict[str, str | bool]:
-        self.logger.info(
-            'delegating review fix for pull request %s comment %s',
-            comment.pull_request_id,
-            comment.comment_id,
-        )
         return self._client.fix_review_comment(
             comment,
             branch_name,

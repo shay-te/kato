@@ -844,11 +844,6 @@ class KatoClientTests(unittest.TestCase):
             'Fix review comment 99',
         )
         client.logger.info.assert_any_call(
-            'requesting review fix for pull request %s comment %s',
-            '17',
-            '99',
-        )
-        client.logger.info.assert_any_call(
             'review fix finished for pull request %s comment %s with success=%s',
             '17',
             '99',
