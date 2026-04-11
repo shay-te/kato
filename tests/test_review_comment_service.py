@@ -120,19 +120,48 @@ class ReviewCommentServiceTests(unittest.TestCase):
             'PROJ-1',
             review_comment_fixed_comment(comment),
         )
-        from kato.helpers.mission_logging_utils import _GREEN, _RESET
+        from kato.helpers.mission_logging_utils import _CYAN, _GREEN, _RESET
         self.assertEqual(
             self.service.logger.info.call_args_list[0].args,
-            ('%s>> Mission %s: %s%s', _GREEN, 'PROJ-1', 'starting mission: PROJ-1 Fix bug (comment 99)', _RESET),
+            ('%s>> Mission %s: %s%s', _GREEN, 'PROJ-1', 'starting mission', _RESET),
+        )
+        self.assertEqual(
+            self.service.logger.info.call_args_list[1].args,
+            (
+                '%s>> Mission %s: %s%s',
+                _CYAN,
+                'PROJ-1',
+                'starting pull request 17 (comment 99)',
+                _RESET,
+            ),
         )
         end_log = next(
             (c for c in self.service.logger.info.call_args_list if c.args and 'done working on mission' in str(c.args)),
             None,
         )
         self.assertIsNotNone(end_log, '"done working on mission" log missing')
+        comment_end_log = next(
+            (
+                c
+                for c in self.service.logger.info.call_args_list
+                if c.args and 'completed pull request 17 (comment 99)' in str(c.args)
+            ),
+            None,
+        )
+        self.assertIsNotNone(comment_end_log, '"completed pull request" log missing')
+        self.assertEqual(
+            comment_end_log.args,
+            (
+                '%s<< Mission %s: %s%s',
+                _CYAN,
+                'PROJ-1',
+                'completed pull request 17 (comment 99)',
+                _RESET,
+            ),
+        )
         self.assertEqual(
             end_log.args,
-            ('%s<< Mission %s: %s%s', _GREEN, 'PROJ-1', 'done working on mission: PROJ-1 Fix bug', _RESET),
+            ('%s<< Mission %s: %s%s', _GREEN, 'PROJ-1', 'done working on mission', _RESET),
         )
         self.assertTrue(
             self.state_registry.is_review_comment_processed('client', '17', '99')

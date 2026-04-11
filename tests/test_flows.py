@@ -816,14 +816,32 @@ class ReviewCommentFixFlowTests(unittest.TestCase):
         result = review_service.process_review_comment(new_comments[0])
         self.assertEqual(result['status'], 'updated')
 
-        # Step 6: mission start logged before branch preparation, mission end logged after
+        # Step 6: mission and pull-request comment lifecycle logs wrap the review-fix work
         log_calls = review_service.logger.info.call_args_list
         mission_start_idx = next(
             (
                 i
                 for i, c in enumerate(log_calls)
-                if c.args and '>>' in str(c.args[0]) and len(c.args) > 2
-                and str(c.args[2]).startswith('starting mission:')
+                if c.args and '>>' in str(c.args[0]) and len(c.args) > 3
+                and str(c.args[3]) == 'starting mission'
+            ),
+            None,
+        )
+        comment_start_idx = next(
+            (
+                i
+                for i, c in enumerate(log_calls)
+                if c.args and '>>' in str(c.args[0]) and len(c.args) > 3
+                and str(c.args[3]).startswith('starting pull request ')
+            ),
+            None,
+        )
+        comment_end_idx = next(
+            (
+                i
+                for i, c in enumerate(log_calls)
+                if c.args and '<<' in str(c.args[0]) and len(c.args) > 3
+                and str(c.args[3]).startswith('completed pull request ')
             ),
             None,
         )
@@ -831,14 +849,18 @@ class ReviewCommentFixFlowTests(unittest.TestCase):
             (
                 i
                 for i, c in enumerate(log_calls)
-                if c.args and '<<' in str(c.args[0]) and len(c.args) > 2
-                and 'done working on mission' in str(c.args[2])
+                if c.args and '<<' in str(c.args[0]) and len(c.args) > 3
+                and 'done working on mission' in str(c.args[3])
             ),
             None,
         )
         self.assertIsNotNone(mission_start_idx, '"starting mission" log missing')
+        self.assertIsNotNone(comment_start_idx, '"starting pull request" log missing')
+        self.assertIsNotNone(comment_end_idx, '"completed pull request" log missing')
         self.assertIsNotNone(mission_end_idx, '"done working on mission" log missing')
-        self.assertLess(mission_start_idx, mission_end_idx, 'start must be logged before end')
+        self.assertLess(mission_start_idx, comment_start_idx, 'mission start must be logged before comment start')
+        self.assertLess(comment_start_idx, comment_end_idx, 'comment start must be logged before comment end')
+        self.assertLess(comment_end_idx, mission_end_idx, 'comment end must be logged before mission end')
 
         # Step 7 before step 8: branch prepared before fix conversation
         self.assertLess(

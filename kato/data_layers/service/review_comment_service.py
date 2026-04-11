@@ -19,7 +19,13 @@ from kato.data_layers.service.implementation_service import ImplementationServic
 from kato.data_layers.service.repository_service import RepositoryService
 from kato.data_layers.service.task_service import TaskService
 from kato.helpers.logging_utils import configure_logger
-from kato.helpers.mission_logging_utils import log_mission_end, log_mission_start, log_mission_step
+from kato.helpers.mission_logging_utils import (
+    log_mission_end,
+    log_mission_start,
+    log_mission_step,
+    log_review_comment_end,
+    log_review_comment_start,
+)
 from kato.helpers.review_comment_utils import (
     ReviewFixContext,
     comment_context_entry,
@@ -70,12 +76,16 @@ class ReviewCommentService(Service):
 
     def process_review_comment(self, comment: ReviewComment) -> dict[str, str]:
         review_context = self._review_fix_context(comment)
-        display_name = self._review_pull_request_display_name(comment, review_context)
         log_mission_start(
             self.logger,
             review_context.task_id,
-            'starting mission: %s (comment %s)',
-            display_name,
+            'starting mission',
+        )
+        log_review_comment_start(
+            self.logger,
+            review_context.task_id,
+            'starting pull request %s (comment %s)',
+            comment.pull_request_id,
             comment.comment_id,
         )
         repository = self._repository_service.get_repository(review_context.repository_id)
@@ -84,11 +94,17 @@ class ReviewCommentService(Service):
             execution = self._run_review_comment_fix(comment, review_context)
             self._publish_review_comment_fix(comment, repository, review_context, execution)
             self._complete_review_fix(comment, review_context)
+            log_review_comment_end(
+                self.logger,
+                review_context.task_id,
+                'completed pull request %s (comment %s)',
+                comment.pull_request_id,
+                comment.comment_id,
+            )
             log_mission_end(
                 self.logger,
                 review_context.task_id,
-                'done working on mission: %s',
-                display_name,
+                'done working on mission',
             )
             return review_fix_result(comment, review_context)
         except Exception:
