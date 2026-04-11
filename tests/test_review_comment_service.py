@@ -120,20 +120,19 @@ class ReviewCommentServiceTests(unittest.TestCase):
             'PROJ-1',
             review_comment_fixed_comment(comment),
         )
+        from kato.helpers.mission_logging_utils import _GREEN, _RESET
         self.assertEqual(
             self.service.logger.info.call_args_list[0].args,
-            (
-                'Working on pull request comments: %s',
-                'PROJ-1 Fix bug',
-            ),
+            ('%s>> Mission %s: %s%s', _GREEN, '17', 'starting mission: PROJ-1 Fix bug (comment 99)', _RESET),
         )
+        end_log = next(
+            (c for c in self.service.logger.info.call_args_list if c.args and 'done working on mission' in str(c.args)),
+            None,
+        )
+        self.assertIsNotNone(end_log, '"done working on mission" log missing')
         self.assertEqual(
-            self.service.logger.info.call_args_list[1].args,
-            (
-                'processing review comment %s for pull request %s',
-                '99',
-                '17',
-            ),
+            end_log.args,
+            ('%s<< Mission %s: %s%s', _GREEN, '17', 'done working on mission: PROJ-1 Fix bug', _RESET),
         )
         self.assertTrue(
             self.state_registry.is_review_comment_processed('client', '17', '99')

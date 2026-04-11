@@ -816,31 +816,29 @@ class ReviewCommentFixFlowTests(unittest.TestCase):
         result = review_service.process_review_comment(new_comments[0])
         self.assertEqual(result['status'], 'updated')
 
-        # Step 6: "Working on pull request comments: <name>" logged before comment id
+        # Step 6: mission start logged before branch preparation, mission end logged after
         log_calls = review_service.logger.info.call_args_list
-        working_on_idx = next(
+        mission_start_idx = next(
             (
                 i
                 for i, c in enumerate(log_calls)
-                if c.args and c.args[0] == 'Working on pull request comments: %s'
+                if c.args and '>>' in str(c.args[0]) and len(c.args) > 2
+                and str(c.args[2]).startswith('starting mission:')
             ),
             None,
         )
-        comment_id_idx = next(
+        mission_end_idx = next(
             (
                 i
                 for i, c in enumerate(log_calls)
-                if c.args and c.args[0] == 'processing review comment %s for pull request %s'
+                if c.args and '<<' in str(c.args[0]) and len(c.args) > 2
+                and 'done working on mission' in str(c.args[2])
             ),
             None,
         )
-        self.assertIsNotNone(working_on_idx, '"Working on pull request comments" log missing')
-        self.assertIsNotNone(comment_id_idx, '"processing review comment" log missing')
-        self.assertLess(
-            working_on_idx,
-            comment_id_idx,
-            '"Working on pull request comments" must be logged before the comment id',
-        )
+        self.assertIsNotNone(mission_start_idx, '"starting mission" log missing')
+        self.assertIsNotNone(mission_end_idx, '"done working on mission" log missing')
+        self.assertLess(mission_start_idx, mission_end_idx, 'start must be logged before end')
 
         # Step 7 before step 8: branch prepared before fix conversation
         self.assertLess(

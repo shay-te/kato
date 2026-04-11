@@ -19,6 +19,7 @@ from kato.data_layers.service.implementation_service import ImplementationServic
 from kato.data_layers.service.repository_service import RepositoryService
 from kato.data_layers.service.task_service import TaskService
 from kato.helpers.logging_utils import configure_logger
+from kato.helpers.mission_logging_utils import log_mission_end, log_mission_start, log_mission_step
 from kato.helpers.review_comment_utils import (
     ReviewFixContext,
     comment_context_entry,
@@ -69,14 +70,13 @@ class ReviewCommentService(Service):
 
     def process_review_comment(self, comment: ReviewComment) -> dict[str, str]:
         review_context = self._review_fix_context(comment)
-        self.logger.info(
-            'Working on pull request comments: %s',
-            self._review_pull_request_display_name(comment, review_context),
-        )
-        self.logger.info(
-            'processing review comment %s for pull request %s',
-            comment.comment_id,
+        display_name = self._review_pull_request_display_name(comment, review_context)
+        log_mission_start(
+            self.logger,
             comment.pull_request_id,
+            'starting mission: %s (comment %s)',
+            display_name,
+            comment.comment_id,
         )
         repository = self._repository_service.get_repository(review_context.repository_id)
         try:
@@ -84,6 +84,12 @@ class ReviewCommentService(Service):
             execution = self._run_review_comment_fix(comment, review_context)
             self._publish_review_comment_fix(comment, repository, review_context, execution)
             self._complete_review_fix(comment, review_context)
+            log_mission_end(
+                self.logger,
+                comment.pull_request_id,
+                'done working on mission: %s',
+                display_name,
+            )
             return review_fix_result(comment, review_context)
         except Exception:
             self._restore_review_comment_repository(comment, repository)
