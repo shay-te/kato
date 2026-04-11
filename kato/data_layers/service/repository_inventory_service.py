@@ -211,16 +211,10 @@ class RepositoryInventoryService(Service):
     def _ignored_repository_folders(repository_source) -> list[str]:
         ignored_folders = getattr(repository_source, 'ignored_repository_folders', [])
         if isinstance(ignored_folders, str):
-            return [
-                normalized_text(folder)
-                for folder in ignored_folders.split(',')
-                if normalized_text(folder)
-            ]
-        if not ignored_folders:
-            return []
+            ignored_folders = ignored_folders.split(',')
         return [
             normalized_text(folder)
-            for folder in ignored_folders
+            for folder in (ignored_folders or [])
             if normalized_text(folder)
         ]
 
@@ -368,10 +362,10 @@ class RepositoryInventoryService(Service):
         if provider:
             return provider
         provider_base_url = text_from_attr(repository, RepositoryFields.PROVIDER_BASE_URL)
-        provider = self._provider_from_base_url(provider_base_url)
+        provider = self._provider_from_url_string(provider_base_url)
         if provider:
             return provider
-        provider = self._provider_from_remote_url(text_from_attr(repository, 'remote_url'))
+        provider = self._provider_from_url_string(text_from_attr(repository, 'remote_url'))
         if provider:
             return provider
         raise ValueError(
@@ -498,7 +492,7 @@ class RepositoryInventoryService(Service):
         web_base_url = self._fallback_web_base_url(repository)
         if not web_base_url or not owner or not repo_slug:
             return ''
-        provider = provider or self._provider_from_base_url(
+        provider = provider or self._provider_from_url_string(
             text_from_attr(repository, 'provider_base_url')
         )
         if provider:
@@ -532,19 +526,8 @@ class RepositoryInventoryService(Service):
         return provider_base_url
 
     @staticmethod
-    def _provider_from_base_url(provider_base_url: str) -> str:
-        normalized = provider_base_url.lower()
-        if 'bitbucket' in normalized:
-            return 'bitbucket'
-        if 'github' in normalized:
-            return 'github'
-        if 'gitlab' in normalized:
-            return 'gitlab'
-        return ''
-
-    @staticmethod
-    def _provider_from_remote_url(remote_url: str) -> str:
-        normalized = remote_url.lower()
+    def _provider_from_url_string(url: str) -> str:
+        normalized = url.lower()
         if 'bitbucket' in normalized:
             return 'bitbucket'
         if 'github' in normalized:

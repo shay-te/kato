@@ -2,17 +2,15 @@ from __future__ import annotations
 
 from omegaconf import DictConfig
 
-
-def normalized_openhands_text(value: object) -> str:
-    return str(value or '').strip()
+from kato.helpers.text_utils import normalized_text
 
 
 def is_bedrock_model(model: str) -> bool:
-    return normalized_openhands_text(model).startswith('bedrock/')
+    return normalized_text(model).startswith('bedrock/')
 
 
 def is_openrouter_model(model: str) -> bool:
-    return normalized_openhands_text(model).startswith('openrouter/')
+    return normalized_text(model).startswith('openrouter/')
 
 
 def testing_container_enabled(openhands_cfg: DictConfig) -> bool:
@@ -64,4 +62,4 @@ def _llm_settings_from_config(
 
 
 def _normalized_openhands_attr(openhands_cfg: DictConfig, key: str) -> str:
-    return normalized_openhands_text(getattr(openhands_cfg, key, ''))
+    return normalized_text(getattr(openhands_cfg, key, ''))

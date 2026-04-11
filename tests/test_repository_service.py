@@ -2201,6 +2201,72 @@ class RepositoryServiceTests(unittest.TestCase):
                 'feature/proj-1/backend',
             )
 
+    def test_commit_branch_changes_excludes_generated_artifacts_restages_and_commits(self) -> None:
+        """Generated artifacts must be reset+cleaned, then changes restaged, committed, and worktree verified."""
+        service = RepositoryService(self.cfg.kato.repositories, 3)
+
+        with patch.object(
+            service,
+            '_working_tree_status',
+            return_value=' M app.py\n?? build/main.js\n',
+        ), patch.object(
+            service,
+            '_ensure_clean_worktree',
+        ) as mock_ensure_clean_worktree, patch.object(
+            service,
+            '_run_git',
+        ) as mock_run_git:
+            result = service._commit_branch_changes_if_needed(
+                '/repo',
+                'feature/proj-1/backend',
+                'Implement PROJ-1',
+            )
+
+        self.assertEqual(result, '')
+        self.assertEqual(
+            [call.args[1] for call in mock_run_git.call_args_list],
+            [
+                ['add', '-A'],
+                ['reset', 'HEAD', '--', 'build'],
+                ['clean', '-fd', '--', 'build'],
+                ['add', '-A'],
+                ['commit', '-m', 'Implement PROJ-1'],
+            ],
+        )
+        mock_ensure_clean_worktree.assert_called_once_with('/repo', 'feature/proj-1/backend')
+
+    def test_commit_branch_changes_with_no_artifacts_stages_and_commits(self) -> None:
+        """Plain working-tree changes must be staged, committed, and worktree verified."""
+        service = RepositoryService(self.cfg.kato.repositories, 3)
+
+        with patch.object(
+            service,
+            '_working_tree_status',
+            return_value=' M app.py\n',
+        ), patch.object(
+            service,
+            '_ensure_clean_worktree',
+        ) as mock_ensure_clean_worktree, patch.object(
+            service,
+            '_run_git',
+        ) as mock_run_git:
+            result = service._commit_branch_changes_if_needed(
+                '/repo',
+                'feature/proj-1/backend',
+                'Implement PROJ-1',
+            )
+
+        self.assertEqual(result, '')
+        self.assertEqual(
+            [call.args[1] for call in mock_run_git.call_args_list],
+            [
+                ['add', '-A'],
+                ['add', '-A'],
+                ['commit', '-m', 'Implement PROJ-1'],
+            ],
+        )
+        mock_ensure_clean_worktree.assert_called_once_with('/repo', 'feature/proj-1/backend')
+
     def test_validation_report_paths_from_status_handles_renamed_report(self) -> None:
         status_output = 'R  old-report.md -> validation_report.md\n?? app.py\n'
 

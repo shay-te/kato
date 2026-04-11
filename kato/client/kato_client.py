@@ -189,18 +189,13 @@ class KatoClient(RetryingClientBase):
             return f'{normalized_task_id} [review]'
         return f'Fix review comment {comment.comment_id}'
 
-    @staticmethod
-    def _conversation_title_parts(task_id: str, task_summary: str) -> list[str]:
-        normalized_task_id = normalized_text(task_id)
-        normalized_task_summary = condensed_text(task_summary)
-        return [part for part in (normalized_task_id, normalized_task_summary) if part]
-
     def _build_implementation_prompt(
         self,
         task: Task,
         prepared_task: PreparedTaskContext | None = None,
     ) -> str:
         repository_scope = self._repository_scope_text(task, prepared_task)
+        finish_instructions = self._finish_tool_instructions_text()
         return (
             f'Implement task {task.id}: {task.summary}\n\n'
             f'{task.description}\n\n'
@@ -214,14 +209,8 @@ class KatoClient(RetryingClientBase):
             '- Do not change indentation, formatting, or unrelated lines when a narrow edit is enough.\n'
             '- Do not run npm run build, yarn build, pnpm build, or any equivalent production build command unless the task explicitly requires it.\n'
             '- Do not commit or stage generated build artifacts such as build, dist, out, coverage, or target directories.\n'
-            '- Do not report success until all intended changes are saved in the repository worktree.\n'
             '- If no dedicated tests are defined for this task, do not invent new ones; just finish after saving the change.\n'
-            '- Create validation_report.md in the repository root when the task succeeds.\n'
-            '- Write the report that the orchestration layer will use as the pull request description.\n'
-            '- Keep the report concise but explanatory.\n'
-            '- If you have validation results, include them in validation_report.md too.\n'
-            '- Do not commit or stage validation_report.md; the orchestration layer will read and remove it before opening the pull request.\n'
-            '- Do not pass extra finish-tool arguments beyond the supported fields.\n\n'
+            f'{finish_instructions}\n\n'
             'The summary must list every changed file and, under each file name, add a short explanation of what changed.\n'
             'Use this format inside summary:\n'
             'Files changed:\n'
@@ -237,6 +226,7 @@ class KatoClient(RetryingClientBase):
         prepared_task: PreparedTaskContext | None = None,
     ) -> str:
         repository_scope = self._repository_scope_text(task, prepared_task)
+        finish_instructions = self._finish_tool_instructions_text()
         return (
             f'Validate the implementation for task {task.id}: {task.summary}\n\n'
             f'{task.description}\n\n'
@@ -254,14 +244,20 @@ class KatoClient(RetryingClientBase):
             'When you finish, use the finish tool.\n'
             '- Put the text that should become the testing report in summary.\n'
             '- Put any extra testing details in message.\n'
-            '- Do not report success until all intended changes are saved in the repository worktree.\n'
             '- If no dedicated tests are defined or available, do not invent new ones; just report that no testing was defined and finish after saving the change.\n'
+            f'{finish_instructions}\n'
+        )
+
+    @staticmethod
+    def _finish_tool_instructions_text() -> str:
+        return (
+            '- Do not report success until all intended changes are saved in the repository worktree.\n'
             '- Create validation_report.md in the repository root when the task succeeds.\n'
             '- Write the report that the orchestration layer will use as the pull request description.\n'
             '- Keep the report concise but explanatory.\n'
             '- If you have validation results, include them in validation_report.md too.\n'
             '- Do not commit or stage validation_report.md; the orchestration layer will read and remove it before opening the pull request.\n'
-            '- Do not pass extra finish-tool arguments beyond the supported fields.\n'
+            '- Do not pass extra finish-tool arguments beyond the supported fields.'
         )
 
     @staticmethod

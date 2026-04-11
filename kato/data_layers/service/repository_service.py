@@ -370,78 +370,64 @@ class RepositoryService(RepositoryInventoryService):
         status_output = self._working_tree_status(local_path)
         if not status_output:
             return ''
-        self._run_git(
-            local_path,
-            ['add', '-A'],
-            f'failed to stage changes for branch {branch_name}',
+        self._run_git(local_path, ['add', '-A'], f'failed to stage changes for branch {branch_name}')
+        self._unstage_and_discard_generated_artifacts(local_path, branch_name, status_output)
+        validation_report_descriptions = self._unstage_and_read_validation_reports(
+            local_path, branch_name, status_output
         )
-        validation_report_descriptions: list[str] = []
+        self._run_git(local_path, ['add', '-A'], f'failed to restage cleanup changes for branch {branch_name}')
+        self._run_git(local_path, ['commit', '-m', commit_message], f'failed to commit changes for branch {branch_name}')
+        self._ensure_clean_worktree(local_path, branch_name)
+        return '\n\n'.join(validation_report_descriptions).strip()
+
+    def _unstage_and_discard_generated_artifacts(
+        self,
+        local_path: str,
+        branch_name: str,
+        status_output: str,
+    ) -> None:
         for artifact_path in self._generated_artifact_paths_from_status(status_output):
             self._run_git(
                 local_path,
                 ['reset', 'HEAD', '--', artifact_path],
-                (
-                    f'failed to exclude generated artifact path '
-                    f'{artifact_path} from branch {branch_name}'
-                ),
+                f'failed to exclude generated artifact path {artifact_path} from branch {branch_name}',
             )
             self._run_git(
                 local_path,
                 ['clean', '-fd', '--', artifact_path],
-                (
-                    f'failed to clean generated artifact path '
-                    f'{artifact_path} from branch {branch_name}'
-                ),
+                f'failed to clean generated artifact path {artifact_path} from branch {branch_name}',
             )
+
+    def _unstage_and_read_validation_reports(
+        self,
+        local_path: str,
+        branch_name: str,
+        status_output: str,
+    ) -> list[str]:
+        descriptions: list[str] = []
         for validation_report_path in self._validation_report_paths_from_status(status_output):
             self._run_git(
                 local_path,
                 ['reset', 'HEAD', '--', validation_report_path],
-                (
-                    f'failed to exclude validation report file '
-                    f'{validation_report_path} from branch {branch_name}'
-                ),
+                f'failed to exclude validation report file {validation_report_path} from branch {branch_name}',
             )
             # The report is published as a task comment, not as a committed file.
-            validation_report_full_path = os.path.join(local_path, validation_report_path)
-            validation_report_description = self._validation_report_text(
-                validation_report_full_path,
-            )
-            if validation_report_description is None:
+            full_path = os.path.join(local_path, validation_report_path)
+            description = self._validation_report_text(full_path)
+            if description is None:
                 self.logger.warning(
-                    'validation report file was reported by git status but missing at %s',
-                    validation_report_full_path,
+                    'validation report file was reported by git status but missing at %s', full_path
                 )
-            elif not validation_report_description:
-                self.logger.warning(
-                    'validation report file was empty at %s',
-                    validation_report_full_path,
-                )
+            elif not description:
+                self.logger.warning('validation report file was empty at %s', full_path)
             else:
-                validation_report_descriptions.append(validation_report_description)
+                descriptions.append(description)
             self._run_git(
                 local_path,
                 ['clean', '-fd', '--', validation_report_path],
-                (
-                    f'failed to clean validation report file '
-                    f'{validation_report_path} from branch {branch_name}'
-                ),
+                f'failed to clean validation report file {validation_report_path} from branch {branch_name}',
             )
-        self._run_git(
-            local_path,
-            ['add', '-A'],
-            f'failed to restage cleanup changes for branch {branch_name}',
-        )
-        self._run_git(
-            local_path,
-            ['commit', '-m', commit_message],
-            f'failed to commit changes for branch {branch_name}',
-        )
-        self._ensure_clean_worktree(
-            local_path,
-            branch_name,
-        )
-        return '\n\n'.join(validation_report_descriptions).strip()
+        return descriptions
 
     def _ensure_branch_is_publishable(
         self,
