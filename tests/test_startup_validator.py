@@ -114,8 +114,10 @@ class StartupDependencyValidatorTests(unittest.TestCase):
         self.assertIn('- unable to validate openhands_testing: testing down', message)
         self.assertIn('Details:', message)
         self.assertIn('[youtrack]', message)
+        self.assertIn('connection refused', message)
         self.assertIn('[openhands_testing]', message)
-        self.logger.exception.assert_called()
+        self.assertIn('testing down', message)
+        self.logger.exception.assert_not_called()
 
     def test_validate_raises_when_repository_validation_fails(self) -> None:
         self.repository_connections_validator.validate.side_effect = RuntimeError('repo down')

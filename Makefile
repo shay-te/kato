@@ -29,7 +29,14 @@ compose-up:
 	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
 	export KATO_SOURCE_FINGERPRINT='$(KATO_SOURCE_FINGERPRINT)'; \
 	if [ "$${OPENHANDS_SKIP_TESTING:-false}" != "true" ] && [ "$${OPENHANDS_TESTING_CONTAINER_ENABLED:-false}" = "true" ]; then \
-		docker compose --profile testing up --build --attach kato; \
+		docker compose --profile testing up --build -d; \
+		KATO_CONTAINER_ID=$$(docker compose --profile testing ps -q kato); \
 	else \
-		docker compose up --build --attach kato; \
-	fi
+		docker compose up --build -d; \
+		KATO_CONTAINER_ID=$$(docker compose ps -q kato); \
+	fi; \
+	if [ -z "$$KATO_CONTAINER_ID" ]; then \
+		echo "unable to determine kato container id"; \
+		exit 1; \
+	fi; \
+	docker attach "$$KATO_CONTAINER_ID"

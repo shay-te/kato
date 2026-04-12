@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import sys
-import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from kato.helpers.shell_status_utils import (
+    clear_active_inline_status,
     run_with_inline_status_spinner,
     supports_inline_status,
 )
@@ -90,6 +90,7 @@ class StartupDependencyValidator(ValidationBase):
                 logger=logger,
             )
         except Exception as exc:
+            clear_active_inline_status()
             logger.error('failed to validate repositories connection: %s', exc)
             raise RuntimeError(str(exc)) from exc
 
@@ -136,11 +137,10 @@ class StartupDependencyValidator(ValidationBase):
                 logger=logger,
             )
         except Exception as exc:
-            logger.exception('failed to validate %s connection', step.service_name)
             summaries.append(
                 self._validation_failure_summary(step.service_name, exc, step.max_retries)
             )
-            details.append(f'[{step.service_name}]\n{traceback.format_exc().rstrip()}')
+            details.append(f'[{step.service_name}]\n{exc}')
 
     @staticmethod
     def _run_validation_step(validate: Callable[[], None], *, status_text: str, logger) -> None:

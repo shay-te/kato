@@ -630,6 +630,10 @@ make run
 make compose-up
 ```
 
+`make compose-up` brings the Compose stack up in the background and then attaches
+directly to the `kato` container TTY, so inline countdowns and rotating status
+spinners render in place instead of being flattened into prefixed Compose log lines.
+
 ### Manual Flow
 
 1. Install the project dependencies in your environment.
@@ -711,6 +715,10 @@ You can also run OpenHands and this agent together with Docker Compose:
 ```bash
 docker compose up --build
 ```
+
+If you want the Kato inline spinner and countdown UI to render correctly, prefer
+`make compose-up` over raw `docker compose up --build`, because the Make target
+attaches directly to the `kato` container terminal.
 
 What the compose stack does:
 

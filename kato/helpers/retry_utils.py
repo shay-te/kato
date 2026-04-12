@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
 from kato.helpers.logging_utils import configure_logger
+from kato.helpers.shell_status_utils import clear_active_inline_status
 
 TRANSIENT_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 TRANSIENT_EXCEPTION_NAMES = {
@@ -50,6 +51,7 @@ def run_with_retry(operation, max_retries: int, *, operation_name: str = 'reques
                 raise
             retry_delay_seconds = _retry_delay_seconds(attempt)
             service_name, method, url = _operation_details(operation_name)
+            clear_active_inline_status()
             logger.warning(
                 '%s connection failed; retrying in %.1fs (attempt %s/%s).\n'
                 '%s (%s %s).',
@@ -68,6 +70,7 @@ def run_with_retry(operation, max_retries: int, *, operation_name: str = 'reques
         if attempt < last_attempt and is_retryable_response(response):
             retry_delay_seconds = _retry_delay_seconds(attempt, response)
             service_name, method, url = _operation_details(operation_name)
+            clear_active_inline_status()
             logger.warning(
                 '%s request returned status %s; retrying in %.1fs (attempt %s/%s).\n'
                 'Received retryable response from %s %s.',
@@ -131,6 +134,11 @@ def _operation_details(operation_name: str) -> tuple[str, str, str]:
 
 def _service_name_from_client_name(client_name: str) -> str:
     normalized_name = str(client_name or '').strip()
+    aliases = {
+        'KatoClient': 'OpenHands',
+    }
+    if normalized_name in aliases:
+        return aliases[normalized_name]
     if normalized_name.endswith('Client'):
         normalized_name = normalized_name[:-6]
     return normalized_name or 'Request'

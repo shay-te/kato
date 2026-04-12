@@ -6,6 +6,10 @@ from threading import Event, Lock, Thread
 from math import ceil
 
 
+_INLINE_STATUS_WRITE_LOCK = Lock()
+_ACTIVE_INLINE_STATUS_SPINNER = None
+
+
 def sleep_with_scan_spinner(
     total_seconds: float,
     *,
@@ -113,34 +117,49 @@ class InlineStatusSpinner:
         *,
         stream=None,
         frame_interval_seconds: float = 0.2,
+        persist_final_line: bool = False,
     ) -> None:
         self._stream = sys.stderr if stream is None else stream
         self._status_text = status_text
         self._frame_interval_seconds = frame_interval_seconds
+        self._persist_final_line = persist_final_line
         self._stop_event = Event()
         self._status_lock = Lock()
         self._thread: Thread | None = None
+        self._last_frame = '/'
 
     def start(self) -> None:
+        global _ACTIVE_INLINE_STATUS_SPINNER
         if not supports_inline_status(self._stream):
             return
+        _ACTIVE_INLINE_STATUS_SPINNER = self
         self._thread = Thread(target=self._spin, daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
+        global _ACTIVE_INLINE_STATUS_SPINNER
         if self._thread is None:
             return
         self._stop_event.set()
         self._thread.join()
-        clear_inline_status(self._stream, status_text=self._current_status_text())
+        with _INLINE_STATUS_WRITE_LOCK:
+            if self._persist_final_line:
+                self._stream.write(f'\r{self._current_status_text()}\n')
+                self._stream.flush()
+            else:
+                clear_inline_status(self._stream, status_text=self._current_status_text())
+        if _ACTIVE_INLINE_STATUS_SPINNER is self:
+            _ACTIVE_INLINE_STATUS_SPINNER = None
 
     def _spin(self) -> None:
         frames = ('/', '-', '\\', '|')
         frame_index = 0
         while not self._stop_event.is_set():
             frame = frames[frame_index % len(frames)]
-            self._stream.write(f'\r{self._current_status_text()} {frame}')
-            self._stream.flush()
+            self._last_frame = frame
+            with _INLINE_STATUS_WRITE_LOCK:
+                self._stream.write(f'\r{self._current_status_text()} {frame}')
+                self._stream.flush()
             frame_index += 1
             self._stop_event.wait(self._frame_interval_seconds)
 
@@ -155,12 +174,24 @@ def run_with_inline_status_spinner(
     status_text: str,
     stream=None,
 ):
-    spinner = InlineStatusSpinner(status_text, stream=stream)
+    spinner = InlineStatusSpinner(
+        status_text,
+        stream=stream,
+        persist_final_line=True,
+    )
     spinner.start()
     try:
         return operation()
     finally:
         spinner.stop()
+
+
+def clear_active_inline_status() -> None:
+    spinner = _ACTIVE_INLINE_STATUS_SPINNER
+    if spinner is None:
+        return
+    with _INLINE_STATUS_WRITE_LOCK:
+        clear_inline_status(spinner._stream, status_text=spinner._current_status_text())
 
 
 def supports_inline_status(stream=None) -> bool:
