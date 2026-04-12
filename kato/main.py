@@ -7,6 +7,11 @@ import hydra
 from omegaconf import DictConfig
 
 from kato.helpers.logging_utils import configure_logger
+from kato.helpers.shell_status_utils import (
+    sleep_with_scan_spinner,
+    supports_inline_status,
+    sleep_with_warmup_countdown,
+)
 from kato.validate_env import validate_environment
 
 
@@ -99,11 +104,17 @@ def _run_task_scan_loop(
     job = ProcessAssignedTasksJob()
     job.initialized(app)
     if startup_delay_seconds > 0:
-        app.logger.info(
-            'waiting %s seconds for Kato to warm up before scanning tasks',
-            startup_delay_seconds,
-        )
-        sleep_fn(startup_delay_seconds)
+        if supports_inline_status():
+            sleep_with_warmup_countdown(
+                startup_delay_seconds,
+                sleep_fn=sleep_fn,
+            )
+        else:
+            app.logger.info(
+                'Waiting %s before scanning tasks while Kato warms up',
+                _formatted_duration_text(startup_delay_seconds),
+            )
+            sleep_fn(startup_delay_seconds)
 
     cycles = 0
     while True:
@@ -119,7 +130,20 @@ def _run_task_scan_loop(
         if max_cycles is not None and cycles >= max_cycles:
             return
         if scan_interval_seconds > 0:
-            sleep_fn(scan_interval_seconds)
+            sleep_with_scan_spinner(
+                scan_interval_seconds,
+                status_text='Scanning for new tasks and comments',
+                sleep_fn=sleep_fn,
+            )
+
+
+def _formatted_duration_text(seconds: float) -> str:
+    normalized_seconds = float(seconds)
+    rounded_seconds = int(normalized_seconds)
+    if normalized_seconds == rounded_seconds:
+        seconds_label = 'second' if rounded_seconds == 1 else 'seconds'
+        return f'{rounded_seconds} {seconds_label}'
+    return f'{normalized_seconds:.1f} seconds'
 
 
 if __name__ == '__main__':

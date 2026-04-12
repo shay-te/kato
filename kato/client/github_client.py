@@ -241,6 +241,7 @@ mutation($threadId: ID!) {
                 ),
             ),
             self.max_retries,
+            operation_name=f'{self.__class__.__name__} POST {self._graphql_url()}',
         )
         response.raise_for_status()
         payload = response.json() or {}

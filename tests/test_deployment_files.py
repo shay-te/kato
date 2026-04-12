@@ -181,6 +181,8 @@ class DeploymentFilesTests(unittest.TestCase):
             compose_text,
         )
         self.assertIn('REPOSITORY_ROOT_PATH: ${REPOSITORY_ROOT_PATH:-.}', compose_text)
+        self.assertIn('tty: true', compose_text)
+        self.assertIn('stdin_open: true', compose_text)
         self.assertIn('openhands-testing:', compose_text)
         self.assertIn('profiles: ["testing"]', compose_text)
         self.assertIn(

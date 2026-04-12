@@ -88,7 +88,11 @@ class JiraClient(TicketClientBase):
         response.raise_for_status()
 
     def _put_with_retry(self, path: str, **kwargs):
-        return run_with_retry(lambda: self._put(path, **kwargs), self.max_retries)
+        return run_with_retry(
+            lambda: self._put(path, **kwargs),
+            self.max_retries,
+            operation_name=self._retry_operation_name('PUT', path),
+        )
 
     def _find_transition(self, issue_id: str, state_name: str) -> dict[str, Any]:
         response = self._get_with_retry(

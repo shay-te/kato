@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import logging
 import random
+import re
 import time
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
+from kato.helpers.logging_utils import configure_logger
 
 TRANSIENT_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 TRANSIENT_EXCEPTION_NAMES = {
@@ -16,7 +17,7 @@ TRANSIENT_EXCEPTION_NAMES = {
     'TimeoutError',
 }
 
-logger = logging.getLogger(__name__)
+logger = configure_logger('retry_utils')
 
 
 def retry_count(value: object, default: int = 1) -> int:
@@ -37,7 +38,7 @@ def is_retryable_response(response: object) -> bool:
     return getattr(response, 'status_code', None) in TRANSIENT_STATUS_CODES
 
 
-def run_with_retry(operation, max_retries: int):
+def run_with_retry(operation, max_retries: int, *, operation_name: str = 'request'):
     last_response = None
     last_attempt = max_retries - 1
 
@@ -47,24 +48,38 @@ def run_with_retry(operation, max_retries: int):
         except Exception as exc:
             if attempt == last_attempt or not is_retryable_exception(exc):
                 raise
+            retry_delay_seconds = _retry_delay_seconds(attempt)
+            service_name, method, url = _operation_details(operation_name)
             logger.warning(
-                'retrying after transient exception on attempt %s/%s: %s',
-                attempt + 1,
+                '%s connection failed; retrying in %.1fs (attempt %s/%s).\n'
+                '%s (%s %s).',
+                service_name,
+                retry_delay_seconds,
+                attempt + 2,
                 max_retries,
-                exc,
+                _retry_exception_summary(exc),
+                method,
+                url,
             )
-            time.sleep(_retry_delay_seconds(attempt))
+            time.sleep(retry_delay_seconds)
             continue
 
         last_response = response
         if attempt < last_attempt and is_retryable_response(response):
+            retry_delay_seconds = _retry_delay_seconds(attempt, response)
+            service_name, method, url = _operation_details(operation_name)
             logger.warning(
-                'retrying after transient response on attempt %s/%s with status %s',
-                attempt + 1,
-                max_retries,
+                '%s request returned status %s; retrying in %.1fs (attempt %s/%s).\n'
+                'Received retryable response from %s %s.',
+                service_name,
                 getattr(response, 'status_code', 'unknown'),
+                retry_delay_seconds,
+                attempt + 2,
+                max_retries,
+                method,
+                url,
             )
-            time.sleep(_retry_delay_seconds(attempt, response))
+            time.sleep(retry_delay_seconds)
             continue
         return response
 
@@ -104,3 +119,37 @@ def _retry_after_seconds(response: object | None) -> float | None:
     if retry_after_time.tzinfo is None:
         retry_after_time = retry_after_time.replace(tzinfo=timezone.utc)
     return max(0.0, (retry_after_time - datetime.now(timezone.utc)).total_seconds())
+
+
+def _operation_details(operation_name: str) -> tuple[str, str, str]:
+    match = re.match(r'^(\S+)\s+([A-Z]+)\s+(\S+)$', str(operation_name or '').strip())
+    if not match:
+        return ('Request', 'request', str(operation_name or 'request').strip() or 'request')
+    client_name, method, url = match.groups()
+    return (_service_name_from_client_name(client_name), method, url)
+
+
+def _service_name_from_client_name(client_name: str) -> str:
+    normalized_name = str(client_name or '').strip()
+    if normalized_name.endswith('Client'):
+        normalized_name = normalized_name[:-6]
+    return normalized_name or 'Request'
+
+
+def _retry_exception_summary(exc: Exception) -> str:
+    error_text = str(exc)
+    if (
+        'Remote end closed connection without response' in error_text
+        or 'RemoteDisconnected' in error_text
+        or 'Connection aborted' in error_text
+    ):
+        return 'Remote server closed connection'
+    if 'Read timed out' in error_text or 'read timeout=' in error_text:
+        return 'Request timed out'
+    if 'ConnectTimeout' in error_text or 'connect timeout' in error_text.lower():
+        return 'Connection timed out'
+    if 'Name or service not known' in error_text or 'Temporary failure in name resolution' in error_text:
+        return 'Could not resolve remote host'
+    if error_text:
+        return error_text.rstrip('.')
+    return exc.__class__.__name__

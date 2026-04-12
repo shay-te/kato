@@ -1,6 +1,6 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from kato.validation.startup_dependency_validator import (
     StartupDependencyValidator,
@@ -9,7 +9,14 @@ from kato.validation.startup_dependency_validator import (
 
 class StartupDependencyValidatorTests(unittest.TestCase):
     def setUp(self) -> None:
+        repository_service = SimpleNamespace(
+            repositories=[
+                SimpleNamespace(id='client'),
+                SimpleNamespace(id='backend'),
+            ]
+        )
         self.repository_connections_validator = Mock()
+        self.repository_connections_validator._repository_service = repository_service
         self.task_service = SimpleNamespace(
             provider_name='youtrack',
             validate_connection=Mock(),
@@ -33,16 +40,35 @@ class StartupDependencyValidatorTests(unittest.TestCase):
         self.logger = Mock()
 
     def test_validate_checks_repository_and_all_dependencies(self) -> None:
-        self.validator.validate(self.logger)
+        with patch(
+            'kato.validation.startup_dependency_validator.supports_inline_status',
+            return_value=False,
+        ):
+            self.validator.validate(self.logger)
 
         self.repository_connections_validator.validate.assert_called_once_with()
         self.task_service.validate_connection.assert_called_once_with()
         self.implementation_service.validate_connection.assert_called_once_with()
         self.testing_service.validate_connection.assert_called_once_with()
-        self.logger.info.assert_any_call('validated repositories connection')
-        self.logger.info.assert_any_call('validated %s connection', 'youtrack')
-        self.logger.info.assert_any_call('validated %s connection', 'openhands')
-        self.logger.info.assert_any_call('validated %s connection', 'openhands_testing')
+        self.logger.info.assert_any_call(
+            '%s',
+            'Validating connection (1/4): repositories (client, backend)',
+        )
+        self.logger.info.assert_any_call('%s', 'Validating connection (2/4): youtrack')
+        self.logger.info.assert_any_call('%s', 'Validating connection (3/4): openhands')
+        self.logger.info.assert_any_call('%s', 'Validating connection (4/4): openhands_testing')
+        self.assertEqual(
+            self.logger.info.call_args_list,
+            [
+                unittest.mock.call(
+                    '%s',
+                    'Validating connection (1/4): repositories (client, backend)',
+                ),
+                unittest.mock.call('%s', 'Validating connection (2/4): youtrack'),
+                unittest.mock.call('%s', 'Validating connection (3/4): openhands'),
+                unittest.mock.call('%s', 'Validating connection (4/4): openhands_testing'),
+            ],
+        )
 
     def test_validate_skips_testing_dependency_when_configured(self) -> None:
         validator = StartupDependencyValidator(
@@ -53,17 +79,26 @@ class StartupDependencyValidatorTests(unittest.TestCase):
             skip_testing=True,
         )
 
-        validator.validate(self.logger)
+        with patch(
+            'kato.validation.startup_dependency_validator.supports_inline_status',
+            return_value=False,
+        ):
+            validator.validate(self.logger)
 
         self.repository_connections_validator.validate.assert_called_once_with()
         self.task_service.validate_connection.assert_called_once_with()
         self.implementation_service.validate_connection.assert_called_once_with()
         self.testing_service.validate_connection.assert_not_called()
-        self.logger.info.assert_any_call('validated %s connection', 'youtrack')
-        self.logger.info.assert_any_call('validated %s connection', 'openhands')
-        self.assertNotIn(
-            unittest.mock.call('validated %s connection', 'openhands_testing'),
+        self.assertEqual(
             self.logger.info.call_args_list,
+            [
+                unittest.mock.call(
+                    '%s',
+                    'Validating connection (1/3): repositories (client, backend)',
+                ),
+                unittest.mock.call('%s', 'Validating connection (2/3): youtrack'),
+                unittest.mock.call('%s', 'Validating connection (3/3): openhands'),
+            ],
         )
 
     def test_validate_aggregates_dependency_failures(self) -> None:

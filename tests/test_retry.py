@@ -19,6 +19,10 @@ class PermanentFailure(Exception):
     pass
 
 
+class RemoteDisconnected(Exception):
+    pass
+
+
 class RetryTests(unittest.TestCase):
     def test_retry_count_enforces_minimum_one(self) -> None:
         self.assertEqual(retry_count(5), 5)
@@ -56,6 +60,64 @@ class RetryTests(unittest.TestCase):
         self.assertEqual(result, 'ok')
         mock_uniform.assert_called_once_with(1.0, 2.0)
         mock_sleep.assert_called_once_with(1.5)
+
+    def test_run_with_retry_logs_readable_exception_retry_message(self) -> None:
+        operation = Mock(side_effect=[ConnectTimeout('timeout'), 'ok'])
+
+        with patch('kato.helpers.retry_utils.random.uniform', return_value=1.5), patch(
+            'kato.helpers.retry_utils.time.sleep'
+        ), patch('kato.helpers.retry_utils.logger.warning') as mock_warning:
+            result = run_with_retry(
+                operation,
+                2,
+                operation_name='KatoClient GET http://openhands:3000/api/v1/app-conversations/count',
+            )
+
+        self.assertEqual(result, 'ok')
+        mock_warning.assert_called_once_with(
+            '%s connection failed; retrying in %.1fs (attempt %s/%s).\n'
+            '%s (%s %s).',
+            'Kato',
+            1.5,
+            2,
+            2,
+            'timeout',
+            'GET',
+            'http://openhands:3000/api/v1/app-conversations/count',
+        )
+
+    def test_run_with_retry_summarizes_remote_disconnects(self) -> None:
+        operation = Mock(
+            side_effect=[
+                ConnectionError(
+                    'Connection aborted.',
+                    RemoteDisconnected('Remote end closed connection without response'),
+                ),
+                'ok',
+            ]
+        )
+
+        with patch('kato.helpers.retry_utils.random.uniform', return_value=1.5), patch(
+            'kato.helpers.retry_utils.time.sleep'
+        ), patch('kato.helpers.retry_utils.logger.warning') as mock_warning:
+            result = run_with_retry(
+                operation,
+                5,
+                operation_name='YouTrackClient GET https://shay-te.youtrack.cloud/api/issues',
+            )
+
+        self.assertEqual(result, 'ok')
+        mock_warning.assert_called_once_with(
+            '%s connection failed; retrying in %.1fs (attempt %s/%s).\n'
+            '%s (%s %s).',
+            'YouTrack',
+            1.5,
+            2,
+            5,
+            'Remote server closed connection',
+            'GET',
+            'https://shay-te.youtrack.cloud/api/issues',
+        )
 
     def test_run_with_retry_raises_after_exhausting_all_retries(self) -> None:
         operation = Mock(side_effect=ConnectTimeout('always fails'))
@@ -114,3 +176,29 @@ class RetryTests(unittest.TestCase):
             self.assertEqual(_retry_delay_seconds(0, response), 1.75)
 
         mock_uniform.assert_called_once_with(1.0, 2.0)
+
+    def test_run_with_retry_logs_readable_retryable_response_message(self) -> None:
+        response = type('Response', (), {'status_code': 503})()
+        operation = Mock(side_effect=[response, 'ok'])
+
+        with patch('kato.helpers.retry_utils.random.uniform', return_value=1.75), patch(
+            'kato.helpers.retry_utils.time.sleep'
+        ), patch('kato.helpers.retry_utils.logger.warning') as mock_warning:
+            result = run_with_retry(
+                operation,
+                2,
+                operation_name='GitHubClient POST https://api.github.com/graphql',
+            )
+
+        self.assertEqual(result, 'ok')
+        mock_warning.assert_called_once_with(
+            '%s request returned status %s; retrying in %.1fs (attempt %s/%s).\n'
+            'Received retryable response from %s %s.',
+            'GitHub',
+            503,
+            1.75,
+            2,
+            2,
+            'POST',
+            'https://api.github.com/graphql',
+        )

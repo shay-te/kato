@@ -174,6 +174,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    tty: true
+    stdin_open: true
     entrypoint: ["/app/docker/entrypoint-run.sh"]
     depends_on:
       openhands:

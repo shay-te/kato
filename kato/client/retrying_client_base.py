@@ -19,17 +19,37 @@ class RetryingClientBase(ClientBase):
         self.max_retries = max(1, max_retries)
 
     def _get_with_retry(self, path: str, **kwargs):
-        return run_with_retry(lambda: self._get(path, **kwargs), self.max_retries)
+        return run_with_retry(
+            lambda: self._get(path, **kwargs),
+            self.max_retries,
+            operation_name=self._retry_operation_name('GET', path),
+        )
 
     def _post_with_retry(self, path: str, **kwargs):
-        return run_with_retry(lambda: self._post(path, **kwargs), self.max_retries)
+        return run_with_retry(
+            lambda: self._post(path, **kwargs),
+            self.max_retries,
+            operation_name=self._retry_operation_name('POST', path),
+        )
 
     def _put_with_retry(self, path: str, **kwargs):
-        return run_with_retry(lambda: self._put(path, **kwargs), self.max_retries)
+        return run_with_retry(
+            lambda: self._put(path, **kwargs),
+            self.max_retries,
+            operation_name=self._retry_operation_name('PUT', path),
+        )
 
     def _patch(self, path: str, **kwargs):
         url = f'{self.base_url.rstrip("/")}/{path.lstrip("/")}'
         return self.session.patch(url, **self.process_kwargs(**kwargs))
 
     def _patch_with_retry(self, path: str, **kwargs):
-        return run_with_retry(lambda: self._patch(path, **kwargs), self.max_retries)
+        return run_with_retry(
+            lambda: self._patch(path, **kwargs),
+            self.max_retries,
+            operation_name=self._retry_operation_name('PATCH', path),
+        )
+
+    def _retry_operation_name(self, method: str, path: str) -> str:
+        url = f'{self.base_url.rstrip("/")}/{path.lstrip("/")}'
+        return f'{self.__class__.__name__} {method} {url}'

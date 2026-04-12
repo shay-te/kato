@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import sys
 import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from kato.helpers.shell_status_utils import (
+    run_with_inline_status_spinner,
+    supports_inline_status,
+)
 from kato.validation.base import ValidationBase
 from kato.helpers.retry_utils import is_retryable_exception
 
@@ -40,12 +45,25 @@ class StartupDependencyValidator(ValidationBase):
         self._skip_testing = bool(skip_testing)
 
     def validate(self, logger) -> None:
-        self._validate_repositories(logger)
+        dependency_steps = self._dependency_steps()
+        total_steps = len(dependency_steps) + 1
+        self._validate_repositories(
+            logger,
+            current_step=1,
+            total_steps=total_steps,
+        )
 
         summaries: list[str] = []
         details: list[str] = []
-        for step in self._dependency_steps():
-            self._collect_validation_result(logger, step, summaries, details)
+        for current_step, step in enumerate(dependency_steps, start=2):
+            self._collect_validation_result(
+                logger,
+                step,
+                summaries,
+                details,
+                current_step=current_step,
+                total_steps=total_steps,
+            )
 
         if details:
             raise RuntimeError(
@@ -55,10 +73,22 @@ class StartupDependencyValidator(ValidationBase):
                 + '\n\n'.join(details)
             )
 
-    def _validate_repositories(self, logger) -> None:
+    def _validate_repositories(
+        self,
+        logger,
+        *,
+        current_step: int,
+        total_steps: int,
+    ) -> None:
         try:
-            self._repository_connections_validator.validate()
-            logger.info('validated repositories connection')
+            self._run_validation_step(
+                self._repository_connections_validator.validate,
+                status_text=(
+                    f'Validating connection ({current_step}/{total_steps}): '
+                    f'{self._repository_validation_label()}'
+                ),
+                logger=logger,
+            )
         except Exception as exc:
             logger.error('failed to validate repositories connection: %s', exc)
             raise RuntimeError(str(exc)) from exc
@@ -92,16 +122,49 @@ class StartupDependencyValidator(ValidationBase):
         step: DependencyValidationStep,
         summaries: list[str],
         details: list[str],
+        *,
+        current_step: int,
+        total_steps: int,
     ) -> None:
         try:
-            step.validate()
-            logger.info('validated %s connection', step.service_name)
+            self._run_validation_step(
+                step.validate,
+                status_text=(
+                    f'Validating connection ({current_step}/{total_steps}): '
+                    f'{step.service_name}'
+                ),
+                logger=logger,
+            )
         except Exception as exc:
             logger.exception('failed to validate %s connection', step.service_name)
             summaries.append(
                 self._validation_failure_summary(step.service_name, exc, step.max_retries)
             )
             details.append(f'[{step.service_name}]\n{traceback.format_exc().rstrip()}')
+
+    @staticmethod
+    def _run_validation_step(validate: Callable[[], None], *, status_text: str, logger) -> None:
+        if supports_inline_status(sys.stderr):
+            run_with_inline_status_spinner(validate, status_text=status_text)
+            return
+        logger.info('%s', status_text)
+        validate()
+
+    def _repository_validation_label(self) -> str:
+        repository_service = getattr(
+            self._repository_connections_validator,
+            '_repository_service',
+            None,
+        )
+        repositories = getattr(repository_service, 'repositories', []) or []
+        repository_ids = [
+            str(getattr(repository, 'id', '') or '').strip()
+            for repository in repositories
+            if str(getattr(repository, 'id', '') or '').strip()
+        ]
+        if not repository_ids:
+            return 'repositories'
+        return f'repositories ({", ".join(repository_ids)})'
 
     @staticmethod
     def _validation_failure_summary(

@@ -319,6 +319,7 @@ class TicketClientBase(RetryingClientBase):
             return run_with_retry(
                 lambda: self.session.get(url, **self.process_kwargs()),
                 self.max_retries,
+                operation_name=f'{self.__class__.__name__} GET {url}',
             )
         return self._get_with_retry(url)
 

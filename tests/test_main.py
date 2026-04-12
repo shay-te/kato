@@ -54,8 +54,9 @@ class MainTests(unittest.TestCase):
         job.run.side_effect = [None, None]
 
         with patch('kato.main.ProcessAssignedTasksJob', return_value=job) as mock_job_cls, patch(
-            'kato.main.time.sleep'
-        ) as mock_sleep:
+            'kato.main.supports_inline_status',
+            return_value=False,
+        ), patch('kato.main.time.sleep') as mock_sleep:
             _run_task_scan_loop(
                 app,
                 startup_delay_seconds=30.0,
@@ -69,9 +70,30 @@ class MainTests(unittest.TestCase):
         self.assertEqual(job.run.call_count, 2)
         mock_sleep.assert_has_calls([call(30.0), call(60.0)])
         app.logger.info.assert_any_call(
-            'waiting %s seconds for Kato to warm up before scanning tasks',
-            30.0,
+            'Waiting %s before scanning tasks while Kato warms up',
+            '30 seconds',
         )
+
+    def test_run_task_scan_loop_uses_warmup_countdown_when_inline_status_is_supported(self) -> None:
+        app = types.SimpleNamespace(logger=Mock())
+        job = Mock()
+        job.run.side_effect = [None]
+
+        with patch('kato.main.ProcessAssignedTasksJob', return_value=job), patch(
+            'kato.main.supports_inline_status',
+            return_value=True,
+        ), patch(
+            'kato.main.sleep_with_warmup_countdown'
+        ) as mock_warmup_countdown:
+            _run_task_scan_loop(
+                app,
+                startup_delay_seconds=30.0,
+                scan_interval_seconds=0.0,
+                max_cycles=1,
+            )
+
+        mock_warmup_countdown.assert_called_once_with(30.0, sleep_fn=unittest.mock.ANY)
+        app.logger.info.assert_not_called()
 
     def test_run_task_scan_loop_continues_after_failure(self) -> None:
         app = types.SimpleNamespace(logger=Mock())
