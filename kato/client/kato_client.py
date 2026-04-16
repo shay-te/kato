@@ -421,12 +421,14 @@ class KatoClient(RetryingClientBase):
 
     def _shutdown_conversations(self) -> list[dict] | None:
         try:
-            response = self._get_with_retry(self._APP_CONVERSATIONS_PATH)
+            response = self._get(self._APP_CONVERSATIONS_PATH)
             response.raise_for_status()
             return self._normalized_items_payload(response)
         except Exception as exc:
             self.logger.warning(
-                'failed to list conversations for shutdown cleanup: %s', exc
+                'failed to list conversations for shutdown cleanup; '
+                'skipping remaining container removal: %s',
+                exc,
             )
             return None
 

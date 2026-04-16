@@ -1665,16 +1665,15 @@ class KatoClientTests(unittest.TestCase):
         """A failure to list conversations is logged as a warning, not raised."""
         client = KatoClient('https://openhands.example', 'oh-token')
         client.logger = Mock()
+        get_mock = Mock(side_effect=RuntimeError('network error'))
 
-        with patch.object(
-            client,
-            '_get',
-            side_effect=RuntimeError('network error'),
-        ):
+        with patch.object(client, '_get', get_mock):
             client.stop_all_conversations()
 
+        get_mock.assert_called_once_with('/api/v1/app-conversations')
         client.logger.warning.assert_any_call(
-            'failed to list conversations for shutdown cleanup: %s',
+            'failed to list conversations for shutdown cleanup; '
+            'skipping remaining container removal: %s',
             ANY,
         )
 
