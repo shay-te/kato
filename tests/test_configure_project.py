@@ -287,6 +287,11 @@ class ConfigureProjectTests(unittest.TestCase):
         self.assertEqual(values['OPENHANDS_MODEL_SMOKE_TEST_ENABLED'], 'true')
         self.assertEqual(values['OPENHANDS_TASK_SCAN_STARTUP_DELAY_SECONDS'], '30')
         self.assertEqual(values['OPENHANDS_TASK_SCAN_INTERVAL_SECONDS'], '60')
+        self.assertEqual(values['KATO_WORKSPACE_BASE_PATH'], '/var/kato/tasks')
+        self.assertEqual(values['KATO_MAX_PARALLEL_CLONES'], '5')
+        self.assertEqual(values['KATO_MAX_PARALLEL_TASKS'], '5')
+        self.assertEqual(values['KATO_SECRET_PROJECT_PATH'], '')
+        self.assertEqual(values['KATO_OPENHANDS_IMAGE'], 'ghcr.io/all-hands-ai/openhands:latest')
         self.assertEqual(values['OPENHANDS_CONTAINER_LOG_ALL_EVENTS'], 'true')
         self.assertEqual(validate_openhands_env(values), [])
 

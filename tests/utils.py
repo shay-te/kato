@@ -71,6 +71,13 @@ def build_test_cfg() -> DictConfig:
                 'retry': {
                     'max_retries': 5,
                 },
+                'workspace': {
+                    'base_path': '/tmp/kato/tasks',
+                    'max_parallel_clones': 5,
+                    'max_parallel_tasks': 5,
+                    'secret_projects': '',
+                    'secret_project_path': '',
+                },
                 'failure_email': {
                     'enabled': True,
                     'template_id': '42',

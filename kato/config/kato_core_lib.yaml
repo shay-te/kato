@@ -13,6 +13,18 @@ kato:
   issue_platform: ${oc.env:KATO_ISSUE_PLATFORM,"youtrack"}
   retry:
     max_retries: ${oc.decode:${oc.env:KATO_EXTERNAL_API_MAX_RETRIES,"3"}}
+  workspace:
+    base_path: ${oc.env:KATO_WORKSPACE_BASE_PATH,"/var/kato/tasks"}
+    max_parallel_clones: ${oc.decode:${oc.env:KATO_MAX_PARALLEL_CLONES,"5"}}
+    max_parallel_tasks: ${oc.decode:${oc.env:KATO_MAX_PARALLEL_TASKS,"5"}}
+    secret_projects: ${oc.env:KATO_SECRET_PROJECTS,""}
+    secret_project_path: ${oc.env:KATO_SECRET_PROJECT_PATH,""}
+  docker:
+    image: ${oc.env:KATO_OPENHANDS_IMAGE,"ghcr.io/all-hands-ai/openhands:latest"}
+    port_range_start: ${oc.decode:${oc.env:KATO_OPENHANDS_PORT_RANGE_START,"8000"}}
+    port_range_end: ${oc.decode:${oc.env:KATO_OPENHANDS_PORT_RANGE_END,"8999"}}
+    memory_limit: ${oc.env:KATO_OPENHANDS_MEMORY_LIMIT,"4g"}
+    cpu_limit: ${oc.env:KATO_OPENHANDS_CPU_LIMIT,"2"}
   failure_email:
     enabled: ${oc.decode:${oc.env:KATO_FAILURE_EMAIL_ENABLED,"false"}}
     template_id: ${oc.env:KATO_FAILURE_EMAIL_TEMPLATE_ID,0}

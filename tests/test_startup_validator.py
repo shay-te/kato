@@ -5,6 +5,7 @@ from unittest.mock import Mock
 from kato.validation.startup_dependency_validator import (
     StartupDependencyValidator,
 )
+from utils import build_test_cfg
 
 
 class StartupDependencyValidatorTests(unittest.TestCase):
@@ -143,3 +144,27 @@ class StartupDependencyValidatorTests(unittest.TestCase):
                 unittest.mock.call('%s', 'Validating connection (4/4): openhands_testing'),
             ],
         )
+
+    def test_validate_startup_configuration_rejects_missing_secret_project_path(self) -> None:
+        cfg = build_test_cfg()
+        cfg.kato.workspace.secret_project_path = '/missing/secret-project'
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            'missing required secret project path directory: /missing/secret-project',
+        ):
+            StartupDependencyValidator.validate_startup_configuration(cfg.kato)
+
+    def test_validate_startup_configuration_rejects_runtime_source_fingerprint_mismatch(self) -> None:
+        cfg = build_test_cfg()
+        cfg.kato.source_fingerprint = 'expected-fingerprint'
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            'Kato source fingerprint mismatch',
+        ):
+            with unittest.mock.patch(
+                'kato.validation.startup_dependency_validator.runtime_source_fingerprint',
+                return_value='current-fingerprint',
+            ):
+                StartupDependencyValidator.validate_startup_configuration(cfg.kato)

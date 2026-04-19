@@ -20,6 +20,7 @@ class ValidateEnvTests(unittest.TestCase):
                 'REPOSITORY_ROOT_PATH': '.',
                 'OPENHANDS_BASE_URL': 'http://localhost:3000',
                 'OPENHANDS_API_KEY': 'local',
+                'KATO_SECRET_PROJECT_PATH': '.',
             }
         )
 
@@ -73,6 +74,7 @@ class ValidateEnvTests(unittest.TestCase):
                 'REPOSITORY_ROOT_PATH': '.',
                 'OPENHANDS_BASE_URL': 'http://localhost:3000',
                 'OPENHANDS_API_KEY': 'local',
+                'KATO_SECRET_PROJECT_PATH': '.',
             }
         )
 
@@ -90,6 +92,7 @@ class ValidateEnvTests(unittest.TestCase):
                 'REPOSITORY_ROOT_PATH': '.',
                 'OPENHANDS_BASE_URL': 'http://localhost:3000',
                 'OPENHANDS_API_KEY': 'local',
+                'KATO_SECRET_PROJECT_PATH': '.',
             }
         )
 
@@ -106,6 +109,7 @@ class ValidateEnvTests(unittest.TestCase):
                 'REPOSITORY_ROOT_PATH': '.',
                 'OPENHANDS_BASE_URL': 'http://localhost:3000',
                 'OPENHANDS_API_KEY': 'local',
+                'KATO_SECRET_PROJECT_PATH': '.',
             }
         )
 
@@ -125,6 +129,7 @@ class ValidateEnvTests(unittest.TestCase):
                 'REPOSITORY_ROOT_PATH': '.',
                 'OPENHANDS_BASE_URL': 'http://localhost:3000',
                 'OPENHANDS_API_KEY': 'local',
+                'KATO_SECRET_PROJECT_PATH': '.',
             }
         )
 
@@ -199,6 +204,25 @@ class ValidateEnvTests(unittest.TestCase):
         )
 
         self.assertIn('missing required agent env var: GITHUB_API_TOKEN', errors)
+
+    def test_validate_agent_env_rejects_missing_secret_project_path_directory(self) -> None:
+        errors = self._validate_agent_env(
+            {
+                'YOUTRACK_BASE_URL': 'https://youtrack.example',
+                'YOUTRACK_TOKEN': 'yt-token',
+                'YOUTRACK_PROJECT': 'PROJ',
+                'YOUTRACK_ASSIGNEE': 'developer',
+                'REPOSITORY_ROOT_PATH': '.',
+                'OPENHANDS_BASE_URL': 'http://localhost:3000',
+                'OPENHANDS_API_KEY': 'local',
+                'KATO_SECRET_PROJECT_PATH': '/missing/secret-project',
+            }
+        )
+
+        self.assertIn(
+            'missing required secret project path directory: /missing/secret-project',
+            errors,
+        )
 
     def test_validate_agent_env_rejects_progress_and_review_states_in_issue_queue(self) -> None:
         errors = self._validate_agent_env(

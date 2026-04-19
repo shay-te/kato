@@ -1,6 +1,7 @@
 from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from kato.helpers.shell_status_utils import (
@@ -8,6 +9,8 @@ from kato.helpers.shell_status_utils import (
 )
 from kato.validation.base import ValidationBase
 from kato.helpers.retry_utils import is_retryable_exception
+from kato.helpers.text_utils import normalized_text
+from kato.helpers.runtime_identity_utils import runtime_source_fingerprint
 
 if TYPE_CHECKING:
     from kato.data_layers.service.implementation_service import ImplementationService
@@ -68,6 +71,11 @@ class StartupDependencyValidator(ValidationBase):
                 + '\n\nDetails:\n\n'
                 + '\n\n'.join(details)
             )
+
+    @staticmethod
+    def validate_startup_configuration(open_cfg) -> None:
+        StartupDependencyValidator._validate_secret_project_path(open_cfg)
+        StartupDependencyValidator._validate_runtime_source_fingerprint(open_cfg)
 
     def _validate_repositories(
         self,
@@ -173,3 +181,36 @@ class StartupDependencyValidator(ValidationBase):
                 f'(tried {max(1, max_retries)} times)'
             )
         return f'unable to validate {service_name}: {exc}'
+
+    @staticmethod
+    def _validate_secret_project_path(open_cfg) -> None:
+        secret_project_path = normalized_text(
+            getattr(getattr(open_cfg, 'workspace', None), 'secret_project_path', '')
+        )
+        if not secret_project_path:
+            return
+        if Path(secret_project_path).is_dir():
+            return
+        raise RuntimeError(
+            f'missing required secret project path directory: {secret_project_path}'
+        )
+
+    @staticmethod
+    def _validate_runtime_source_fingerprint(open_cfg) -> None:
+        expected_source_fingerprint = normalized_text(
+            getattr(open_cfg, 'source_fingerprint', '')
+        )
+        if not expected_source_fingerprint:
+            return
+
+        current_source_fingerprint = runtime_source_fingerprint()
+        if current_source_fingerprint == expected_source_fingerprint:
+            return
+
+        raise RuntimeError(
+            'startup dependency validation failed: '
+            'Kato source fingerprint mismatch: '
+            f'expected {expected_source_fingerprint}, '
+            f'got {current_source_fingerprint}; '
+            'rebuild the Kato image before running'
+        )

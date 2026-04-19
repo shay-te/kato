@@ -283,9 +283,65 @@ def build_configuration_values(
 
     values.update(_prompt_issue_platform(defaults, issue_platform))
     values.update(_prompt_repository(defaults))
+    values.update(_prompt_task_isolation(defaults))
     values.update(_prompt_openhands(defaults))
     values.update(_prompt_notifications(defaults))
     return values
+
+
+def _prompt_task_isolation(defaults: dict[str, str]) -> dict[str, str]:
+    return {
+        'KATO_WORKSPACE_BASE_PATH': _default_str(
+            defaults,
+            'KATO_WORKSPACE_BASE_PATH',
+            fallback='/var/kato/tasks',
+        ),
+        'KATO_MAX_PARALLEL_CLONES': _default_str(
+            defaults,
+            'KATO_MAX_PARALLEL_CLONES',
+            fallback='5',
+        ),
+        'KATO_MAX_PARALLEL_TASKS': _default_str(
+            defaults,
+            'KATO_MAX_PARALLEL_TASKS',
+            fallback='5',
+        ),
+        'KATO_SECRET_PROJECTS': _default_str(
+            defaults,
+            'KATO_SECRET_PROJECTS',
+            fallback='',
+        ),
+        'KATO_SECRET_PROJECT_PATH': _default_str(
+            defaults,
+            'KATO_SECRET_PROJECT_PATH',
+            fallback='',
+        ),
+        'KATO_OPENHANDS_IMAGE': _default_str(
+            defaults,
+            'KATO_OPENHANDS_IMAGE',
+            fallback='ghcr.io/all-hands-ai/openhands:latest',
+        ),
+        'KATO_OPENHANDS_PORT_RANGE_START': _default_str(
+            defaults,
+            'KATO_OPENHANDS_PORT_RANGE_START',
+            fallback='8000',
+        ),
+        'KATO_OPENHANDS_PORT_RANGE_END': _default_str(
+            defaults,
+            'KATO_OPENHANDS_PORT_RANGE_END',
+            fallback='8999',
+        ),
+        'KATO_OPENHANDS_MEMORY_LIMIT': _default_str(
+            defaults,
+            'KATO_OPENHANDS_MEMORY_LIMIT',
+            fallback='4g',
+        ),
+        'KATO_OPENHANDS_CPU_LIMIT': _default_str(
+            defaults,
+            'KATO_OPENHANDS_CPU_LIMIT',
+            fallback='2',
+        ),
+    }
 
 
 def render_env_text(template_text: str, values: dict[str, str]) -> str:

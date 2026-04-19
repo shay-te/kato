@@ -216,6 +216,26 @@ class DeploymentFilesTests(unittest.TestCase):
             'max_retries: ${oc.decode:${oc.env:KATO_EXTERNAL_API_MAX_RETRIES,"3"}}',
             core_lib_yaml_text,
         )
+        self.assertIn(
+            'base_path: ${oc.env:KATO_WORKSPACE_BASE_PATH,"/var/kato/tasks"}',
+            core_lib_yaml_text,
+        )
+        self.assertIn(
+            'max_parallel_clones: ${oc.decode:${oc.env:KATO_MAX_PARALLEL_CLONES,"5"}}',
+            core_lib_yaml_text,
+        )
+        self.assertIn(
+            'max_parallel_tasks: ${oc.decode:${oc.env:KATO_MAX_PARALLEL_TASKS,"5"}}',
+            core_lib_yaml_text,
+        )
+        self.assertIn(
+            'secret_project_path: ${oc.env:KATO_SECRET_PROJECT_PATH,""}',
+            core_lib_yaml_text,
+        )
+        self.assertIn(
+            'image: ${oc.env:KATO_OPENHANDS_IMAGE,"ghcr.io/all-hands-ai/openhands:latest"}',
+            core_lib_yaml_text,
+        )
 
     def test_env_example_includes_openhands_llm_variables(self) -> None:
         env_example_text = (REPO_ROOT / '.env.example').read_text(encoding='utf-8')
@@ -224,6 +244,12 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('KATO_LOG_LEVEL=', env_example_text)
         self.assertIn('KATO_WORKFLOW_LOG_LEVEL=', env_example_text)
         self.assertIn('KATO_EXTERNAL_API_MAX_RETRIES=5', env_example_text)
+        self.assertIn('KATO_WORKSPACE_BASE_PATH=/var/kato/tasks', env_example_text)
+        self.assertIn('KATO_MAX_PARALLEL_CLONES=5', env_example_text)
+        self.assertIn('KATO_MAX_PARALLEL_TASKS=5', env_example_text)
+        self.assertIn('KATO_SECRET_PROJECTS=', env_example_text)
+        self.assertIn('KATO_SECRET_PROJECT_PATH=', env_example_text)
+        self.assertIn('KATO_OPENHANDS_IMAGE=ghcr.io/all-hands-ai/openhands:latest', env_example_text)
         self.assertIn('KATO_IGNORED_REPOSITORY_FOLDERS=', env_example_text)
         self.assertIn('KATO_SOURCE_FINGERPRINT=', env_example_text)
         self.assertIn('KATO_FAILURE_EMAIL_ENABLED=', env_example_text)
@@ -312,6 +338,16 @@ class DeploymentFilesTests(unittest.TestCase):
                 'KATO_LOG_LEVEL',
                 'KATO_WORKFLOW_LOG_LEVEL',
                 'KATO_EXTERNAL_API_MAX_RETRIES',
+                'KATO_WORKSPACE_BASE_PATH',
+                'KATO_MAX_PARALLEL_CLONES',
+                'KATO_MAX_PARALLEL_TASKS',
+                'KATO_SECRET_PROJECTS',
+                'KATO_SECRET_PROJECT_PATH',
+                'KATO_OPENHANDS_IMAGE',
+                'KATO_OPENHANDS_PORT_RANGE_START',
+                'KATO_OPENHANDS_PORT_RANGE_END',
+                'KATO_OPENHANDS_MEMORY_LIMIT',
+                'KATO_OPENHANDS_CPU_LIMIT',
                 'KATO_IGNORED_REPOSITORY_FOLDERS',
                 'KATO_SOURCE_FINGERPRINT',
                 'KATO_FAILURE_EMAIL_ENABLED',

@@ -1067,6 +1067,9 @@ class ShutdownFlowTests(unittest.TestCase):
             _ensure_branch_is_pushable=Mock(), _ensure_branch_has_task_changes=Mock(),
             create_pull_request=Mock(),
         )
+        workspace_service = types.SimpleNamespace(
+            cleanup_workspace=Mock(return_value=True),
+        )
 
         task_data_access = TaskDataAccess(ticket_cfg, ticket_client)
         task_service = TaskService(ticket_cfg, task_data_access)
@@ -1085,6 +1088,7 @@ class ShutdownFlowTests(unittest.TestCase):
             testing_service=TestingService(kato_client),
             repository_service=repository_service,
             notification_service=notification_service,
+            workspace_service=workspace_service,
         )
 
         # Seed the registry with a tracked session for PROJ-1 as if a task was processed
@@ -1102,6 +1106,7 @@ class ShutdownFlowTests(unittest.TestCase):
         agent_service.get_new_pull_request_comments()
 
         self.assertIn('conv-abc', delete_calls, 'conversation for done task must be deleted')
+        workspace_service.cleanup_workspace.assert_called_once_with('PROJ-1')
 
     def test_shutdown_stops_all_conversations_on_impl_and_testing_services(self) -> None:
         """AgentService.shutdown() calls stop_all_conversations on both services."""

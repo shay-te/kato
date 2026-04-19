@@ -9,6 +9,7 @@ from kato.data_layers.service.task_failure_handler import TaskFailureHandler
 from kato.data_layers.service.review_comment_service import ReviewCommentService
 from kato.data_layers.service.task_publisher import TaskPublisher
 from kato.data_layers.service.task_state_service import TaskStateService
+from kato.data_layers.service.workspace_service import WorkspaceService
 from kato.validation.repository_connections import (
     RepositoryConnectionsValidator,
 )
@@ -63,6 +64,7 @@ class AgentService(Service):
         startup_validator: StartupDependencyValidator | None = None,
         task_preflight_service: TaskPreflightService | None = None,
         skip_testing: bool = False,
+        workspace_service: WorkspaceService | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self.logger = logger or configure_logger(self.__class__.__name__)
@@ -92,6 +94,7 @@ class AgentService(Service):
         self._repository_service = repository_service
         self._notification_service = notification_service
         self._skip_testing = bool(skip_testing)
+        self._workspace_service = workspace_service
         self._state_registry = state_registry or AgentStateRegistry()
         self._review_comment_service = review_comment_service or ReviewCommentService(
             self._task_service,
@@ -143,7 +146,30 @@ class AgentService(Service):
         return self._notification_service
 
     def validate_connections(self) -> None:
-        self._startup_validator.validate(self.logger)
+        try:
+            self._startup_validator.validate(self.logger)
+        except RuntimeError as exc:
+            self._log_startup_validation_failures(exc)
+            raise
+
+    def _log_startup_validation_failures(self, error: RuntimeError) -> None:
+        summaries = self._startup_failure_summaries(str(error))
+        if not summaries:
+            self.logger.exception('%s', error)
+            return
+        for summary in summaries:
+            self.logger.exception('%s', summary)
+
+    @staticmethod
+    def _startup_failure_summaries(message: str) -> list[str]:
+        summaries: list[str] = []
+        for line in message.splitlines():
+            stripped = line.strip()
+            if stripped == 'Details:':
+                break
+            if stripped.startswith('- '):
+                summaries.append(stripped[2:])
+        return summaries
 
     def shutdown(self) -> None:
         """Stop all active OpenHands conversations to remove agent-server containers."""
@@ -190,7 +216,17 @@ class AgentService(Service):
                         session_id,
                         task_id,
                     )
+            self._cleanup_done_task_workspace(task_id)
             self._state_registry.forget_task(task_id)
+
+    def _cleanup_done_task_workspace(self, task_id: str) -> None:
+        if self._workspace_service is None:
+            return
+        try:
+            if self._workspace_service.cleanup_workspace(task_id):
+                self.logger.info('task %s is no longer in review; removed workspace', task_id)
+        except Exception:
+            self.logger.warning('failed to clean workspace for done task %s', task_id)
 
     def handle_pull_request_comment(self, payload: dict) -> dict[str, str]:
         return self._review_comment_service.handle_pull_request_comment(payload)

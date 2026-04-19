@@ -130,6 +130,7 @@ def validate_agent_env(env: dict[str, str]) -> list[str]:
     issue_platform = _configured_issue_platform(env)
     errors.extend(_validate_issue_platform(issue_platform))
     errors.extend(_validate_required_agent_keys(env, issue_platform))
+    errors.extend(_validate_secret_project_path_env(env))
     errors.extend(_validate_agent_email_env(env))
     errors.extend(_validate_repository_provider_env(env))
     errors.extend(_validate_issue_state_queue_env(env, issue_platform))
@@ -202,6 +203,20 @@ def _validate_repository_provider_env(env: dict[str, str]) -> list[str]:
             f'missing required repository provider env var: {key}'
         )
     return errors
+
+
+def _validate_secret_project_path_env(env: dict[str, str]) -> list[str]:
+    secret_project_path = normalized_text(env.get('KATO_SECRET_PROJECT_PATH', ''))
+    if not secret_project_path:
+        return []
+
+    path = Path(secret_project_path)
+    if path.is_dir():
+        return []
+
+    return [
+        f'missing required secret project path directory: {secret_project_path}'
+    ]
 
 
 def _validate_issue_state_queue_env(env: dict[str, str], issue_platform: str) -> list[str]:

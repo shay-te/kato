@@ -3,6 +3,7 @@ from unittest.mock import ANY, Mock, patch
 
 from kato.kato_core_lib import KatoCoreLib
 from kato.data_layers.data.fields import PullRequestFields, StatusFields
+from kato.validation.startup_dependency_validator import StartupDependencyValidator
 from utils import build_task, build_test_cfg
 
 
@@ -226,52 +227,64 @@ class KatoCoreLibTests(unittest.TestCase):
             repository_connections_validator=ANY,
             startup_validator=ANY,
             task_preflight_service=mock_task_preflight_service_cls.return_value,
+            workspace_service=ANY,
             skip_testing=False,
         )
         mock_service_cls.return_value.validate_connections.assert_called_once_with()
         self.assertIs(app.service, mock_service_cls.return_value)
 
-    def test_rejects_runtime_source_fingerprint_mismatch(self) -> None:
+    def test_init_validates_startup_configuration_before_building_services(self) -> None:
         cfg = build_test_cfg()
-        cfg.kato.source_fingerprint = 'expected-fingerprint'
 
-        with patch(
-            'kato.kato_core_lib.runtime_source_fingerprint',
-            return_value='current-fingerprint',
-        ), patch(
+        with patch.object(
+            StartupDependencyValidator,
+            'validate_startup_configuration',
+        ) as mock_validate_startup_configuration, patch(
             'kato.kato_core_lib.EmailCoreLib'
+        ) as mock_email_core_lib_cls, patch(
+            'kato.kato_core_lib.build_ticket_client',
+            return_value=Mock(),
         ), patch(
-            'kato.kato_core_lib.build_ticket_client'
+            'kato.kato_core_lib.KatoClient',
+            side_effect=[Mock(name='implementation_kato_client'), Mock(name='testing_kato_client')],
         ), patch(
-            'kato.kato_core_lib.KatoClient'
+            'kato.kato_core_lib.RepositoryService',
+            return_value=Mock(),
         ), patch(
-            'kato.kato_core_lib.RepositoryService'
+            'kato.kato_core_lib.TaskDataAccess',
+            return_value=Mock(),
         ), patch(
-            'kato.kato_core_lib.TaskDataAccess'
+            'kato.kato_core_lib.TaskService',
+            return_value=Mock(),
         ), patch(
-            'kato.kato_core_lib.TaskService'
+            'kato.kato_core_lib.TaskStateService',
+            return_value=Mock(),
         ), patch(
-            'kato.kato_core_lib.TaskStateService'
+            'kato.kato_core_lib.ImplementationService',
+            return_value=Mock(),
         ), patch(
-            'kato.kato_core_lib.ImplementationService'
+            'kato.kato_core_lib.TestingService',
+            return_value=Mock(),
         ), patch(
-            'kato.kato_core_lib.TestingService'
+            'kato.kato_core_lib.NotificationService',
+            return_value=Mock(),
         ), patch(
-            'kato.kato_core_lib.NotificationService'
+            'kato.kato_core_lib.TaskPreflightService',
+            return_value=Mock(),
         ), patch(
-            'kato.kato_core_lib.TaskPreflightService'
+            'kato.kato_core_lib.TaskFailureHandler',
+            return_value=Mock(),
         ), patch(
-            'kato.kato_core_lib.TaskFailureHandler'
+            'kato.kato_core_lib.TaskPublisher',
+            return_value=Mock(),
         ), patch(
-            'kato.kato_core_lib.TaskPublisher'
-        ), patch(
-            'kato.kato_core_lib.AgentService'
+            'kato.kato_core_lib.AgentService',
+            return_value=Mock(),
         ):
-            with self.assertRaises(RuntimeError) as exc:
-                KatoCoreLib(cfg)
+            KatoCoreLib(cfg)
 
-        self.assertIn('source fingerprint mismatch', str(exc.exception))
-        self.assertIn('rebuild the Kato image before running', str(exc.exception))
+        mock_validate_startup_configuration.assert_called_once_with(cfg.kato)
+        mock_email_core_lib_cls.assert_called_once_with(cfg)
 
     def test_uses_testing_container_base_url_and_llm_settings_when_enabled(self) -> None:
         cfg = build_test_cfg()

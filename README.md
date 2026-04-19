@@ -104,6 +104,31 @@ That separation matters because the service flow should read like the real agent
 - The review-comment fix flow scans review pull requests, skips already-handled comment threads, opens an OpenHands review-fix conversation, pushes the branch update, replies to the reviewer, resolves the comment when supported, and records the processed comment keys.
 - Failed repository, branch, push, publish, and state-transition checks stop the unsafe part of the workflow instead of marking work as done too early.
 
+### Workspace Model
+
+Kato uses one isolated workspace per task.
+
+- `KATO_WORKSPACE_BASE_PATH` is the base directory, not the workspace itself. The default is `/var/kato/tasks`.
+- Each task gets its own folder under that base path, such as `/var/kato/tasks/PROJ-123/`.
+- Kato clones only the repositories needed for that task into that folder.
+- Workspaces are never shared between tasks, which keeps parallel runs isolated and predictable.
+
+```text
+/var/kato/tasks/          ← workspace base directory
+├── PROJ-123/             ← workspace for task PROJ-123
+├── PROJ-124/             ← workspace for task PROJ-124
+└── PROJ-125/             ← workspace for task PROJ-125
+```
+
+### Repository Mapping
+
+Task scope comes from task tags or task text, and the repository definitions live in YAML.
+
+- Use `repo:<project>` on the task when you want to pin the exact repositories.
+- Kato matches that value against the configured repository `id`, `display_name`, `repo_slug`, folder name, and `aliases`.
+- The actual git URL stays in [`kato/config/kato_core_lib.yaml`](./kato/config/kato_core_lib.yaml) under `kato.repositories`.
+- Kato clones the configured git URL, not a URL copied from the task.
+
 ### Startup Flow
 
 1. `python -m kato.main`, `make run`, or the Docker entrypoint loads Hydra config and values from `.env`.
@@ -543,7 +568,7 @@ The agent currently supports these issue trackers:
 - GitLab Issues
 - Bitbucket Issues
 
-The repository provider is inferred from the configured repository metadata, and the same task can span multiple repositories if the task text matches them.
+Repository targeting comes from `repo:<project>` tags or from matching the task text against configured repository metadata.
 
 ## How To Use
 
@@ -556,8 +581,7 @@ If a developer is starting from zero, these are the steps:
 3. Run `make bootstrap`.
 4. Run `make configure` to create `.env`, or copy `.env.example` to `.env` and edit it manually.
 5. Fill in or confirm the credentials for the selected issue platform.
-6. Fill in or confirm the first repository entry credentials and local path.
-7. Add more repository entries in the config file if tasks can span multiple repos.
+6. Confirm the repository entries in `kato/config/kato_core_lib.yaml`.
 8. Fill in or confirm OpenHands server settings.
 9. Fill in or confirm OpenHands LLM provider settings.
 10. Fill in email settings if notifications are enabled.

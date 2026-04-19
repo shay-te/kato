@@ -23,7 +23,7 @@ from kato.data_layers.service.task_publisher import TaskPublisher
 from kato.data_layers.service.task_state_service import TaskStateService
 from kato.data_layers.service.task_service import TaskService
 from kato.data_layers.service.testing_service import TestingService
-from kato.helpers.runtime_identity_utils import runtime_source_fingerprint
+from kato.data_layers.service.workspace_service import WorkspaceService
 from kato.validation.branch_publishability import (
     TaskBranchPublishabilityValidator,
 )
@@ -70,7 +70,7 @@ class KatoCoreLib(CoreLib):
         CoreLib.__init__(self)
         self.config = cfg
         self.logger = configure_logger(cfg.core_lib.app.name)
-        self._validate_runtime_source_fingerprint(cfg.kato)
+        StartupDependencyValidator.validate_startup_configuration(cfg.kato)
         self.service = self._build_agent_service(cfg.kato)
         self.service.validate_connections()
 
@@ -99,6 +99,15 @@ class KatoCoreLib(CoreLib):
         task_service = TaskService(ticket_cfg, task_data_access)
         task_state_service = TaskStateService(ticket_cfg, task_data_access)
         repository_service = RepositoryService(open_cfg, retry_cfg.max_retries)
+        repository_entries = getattr(repository_service, 'repositories', []) or []
+        if not isinstance(repository_entries, (list, tuple)):
+            repository_entries = []
+        workspace_service = WorkspaceService(
+            open_cfg.workspace.base_path,
+            repository_entries,
+            open_cfg.workspace.secret_projects,
+            max_parallel_clones=open_cfg.workspace.max_parallel_clones,
+        )
         notification_service = self._build_notification_service(open_cfg)
         state_registry = AgentStateRegistry()
         repository_connections_validator = RepositoryConnectionsValidator(repository_service)
@@ -157,6 +166,7 @@ class KatoCoreLib(CoreLib):
             repository_connections_validator=repository_connections_validator,
             startup_validator=startup_validator,
             task_preflight_service=task_preflight_service,
+            workspace_service=workspace_service,
             skip_testing=skip_testing_enabled(open_cfg.openhands),
         )
 
@@ -177,23 +187,6 @@ class KatoCoreLib(CoreLib):
             email_core_lib=EmailCoreLib(self.config),
             failure_email_cfg=open_cfg.failure_email,
             completion_email_cfg=open_cfg.completion_email,
-        )
-
-    def _validate_runtime_source_fingerprint(self, open_cfg: DictConfig) -> None:
-        expected_source_fingerprint = str(open_cfg.get('source_fingerprint', '') or '').strip()
-        if not expected_source_fingerprint:
-            return
-
-        current_source_fingerprint = runtime_source_fingerprint()
-        if current_source_fingerprint == expected_source_fingerprint:
-            return
-
-        raise RuntimeError(
-            'startup dependency validation failed: '
-            'Kato source fingerprint mismatch: '
-            f'expected {expected_source_fingerprint}, '
-            f'got {current_source_fingerprint}; '
-            'rebuild the Kato image before running'
         )
 
     @classmethod
