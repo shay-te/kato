@@ -1863,6 +1863,42 @@ class RepositoryServiceTests(unittest.TestCase):
             ):
                 service.validate_connections()
 
+    def test_validate_connections_requires_ssh_executable_for_ssh_remote(self) -> None:
+        repository = types.SimpleNamespace(
+            id='client',
+            display_name='Client',
+            local_path='.',
+            provider='bitbucket',
+            provider_base_url='https://api.bitbucket.org/2.0',
+            token='token',
+            owner='workspace',
+            repo_slug='repo',
+            remote_url='git@bitbucket.org:workspace/repo.git',
+            destination_branch='main',
+            aliases=['frontend'],
+        )
+        service = RepositoryService([repository], 3)
+
+        with patch.dict(
+            'kato.data_layers.service.repository_service.os.environ',
+            {'SSH_AUTH_SOCK': '/ssh-agent'},
+            clear=True,
+        ), patch(
+            'kato.data_layers.service.repository_service.shutil.which',
+            side_effect=lambda name: None if name == 'ssh' else '/usr/bin/git',
+        ), patch(
+            'kato.data_layers.service.repository_service.os.path.isdir',
+            return_value=True,
+        ), patch(
+            'kato.data_layers.service.repository_service.os.path.exists',
+            return_value=True,
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                'repository client uses an SSH git remote but the ssh executable is not available on PATH; rebuild the Kato image with openssh-client installed',
+            ):
+                service.validate_connections()
+
     def test_pull_destination_branch_uses_provider_token_for_https_remote(self) -> None:
         repository = types.SimpleNamespace(
             id='client',
