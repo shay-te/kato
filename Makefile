@@ -2,7 +2,7 @@ PYTHON ?= python3
 VENV_PYTHON = .venv/bin/python
 KATO_SOURCE_FINGERPRINT := $(shell $(PYTHON) -m kato.helpers.runtime_identity_utils --root .)
 
-.PHONY: bootstrap configure doctor doctor-agent doctor-openhands test run compose-up
+.PHONY: bootstrap configure doctor doctor-agent doctor-openhands test run compose-up build-agent-server
 
 bootstrap:
 	./scripts/bootstrap.sh
@@ -24,6 +24,9 @@ test:
 
 run:
 	./scripts/run-local.sh
+
+build-agent-server:
+	docker build -t kato-agent-server:$${KATO_AGENT_SERVER_IMAGE_TAG:-1.12.0-python} docker/agent-server
 
 compose-up:
 	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \

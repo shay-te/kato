@@ -335,6 +335,10 @@ class DeploymentFilesTests(unittest.TestCase):
 
         self.assertIn('Keep orchestration logic in services.', agents_text)
         self.assertIn(
+            'Keep components free of heavy logic; move overlapping, reusable, or similar behavior into helpers or shared services instead of scattering it inside a component.',
+            agents_text,
+        )
+        self.assertIn(
             'Prefer constants from `kato/data_layers/data/fields.py` over free-text field names.',
             agents_text,
         )
