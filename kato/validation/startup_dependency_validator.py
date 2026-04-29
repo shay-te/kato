@@ -33,12 +33,14 @@ class StartupDependencyValidator(ValidationBase):
         implementation_service: ImplementationService,
         testing_service: TestingService,
         skip_testing: bool,
+        agent_backend: str = 'openhands',
     ) -> None:
         self._repository_connections_validator = repository_connections_validator
         self._task_service = task_service
         self._implementation_service = implementation_service
         self._testing_service = testing_service
         self._skip_testing = bool(skip_testing)
+        self._agent_backend = (str(agent_backend or '').strip().lower() or 'openhands')
 
     def validate(self, logger) -> None:
         dependency_steps = self._dependency_steps()
@@ -91,6 +93,7 @@ class StartupDependencyValidator(ValidationBase):
             raise RuntimeError(str(exc)) from exc
 
     def _dependency_steps(self) -> list[DependencyValidationStep]:
+        backend_label = self._agent_backend
         steps = [
             DependencyValidationStep(
                 self._task_service.provider_name,
@@ -98,7 +101,7 @@ class StartupDependencyValidator(ValidationBase):
                 self._task_service.max_retries,
             ),
             DependencyValidationStep(
-                'openhands',
+                backend_label,
                 self._implementation_service.validate_connection,
                 self._implementation_service.max_retries,
             ),
@@ -106,7 +109,7 @@ class StartupDependencyValidator(ValidationBase):
         if not self._skip_testing:
             steps.append(
                 DependencyValidationStep(
-                    'openhands_testing',
+                    f'{backend_label}_testing',
                     self._testing_service.validate_connection,
                     self._testing_service.max_retries,
                 )

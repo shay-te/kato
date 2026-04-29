@@ -11,6 +11,7 @@ core_lib:
 
 kato:
   issue_platform: ${oc.env:KATO_ISSUE_PLATFORM,"youtrack"}
+  agent_backend: ${oc.env:KATO_AGENT_BACKEND,"openhands"}
   retry:
     max_retries: ${oc.decode:${oc.env:KATO_EXTERNAL_API_MAX_RETRIES,"3"}}
   failure_email:
@@ -105,6 +106,15 @@ kato:
     testing_llm_base_url: ${oc.env:OPENHANDS_TESTING_LLM_BASE_URL,""}
     poll_interval_seconds: ${oc.decode:${oc.env:OPENHANDS_POLL_INTERVAL_SECONDS,"2.0"}}
     max_poll_attempts: ${oc.decode:${oc.env:OPENHANDS_MAX_POLL_ATTEMPTS,"900"}}
+  claude:
+    binary: ${oc.env:KATO_CLAUDE_BINARY,"claude"}
+    model: ${oc.env:KATO_CLAUDE_MODEL,""}
+    max_turns: ${oc.env:KATO_CLAUDE_MAX_TURNS,""}
+    allowed_tools: ${oc.env:KATO_CLAUDE_ALLOWED_TOOLS,""}
+    disallowed_tools: ${oc.env:KATO_CLAUDE_DISALLOWED_TOOLS,""}
+    permission_mode: ${oc.env:KATO_CLAUDE_PERMISSION_MODE,"bypassPermissions"}
+    timeout_seconds: ${oc.decode:${oc.env:KATO_CLAUDE_TIMEOUT_SECONDS,"1800"}}
+    model_smoke_test_enabled: ${oc.decode:${oc.env:KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED,"false"}}
   task_scan:
     startup_delay_seconds: ${oc.decode:${oc.env:OPENHANDS_TASK_SCAN_STARTUP_DELAY_SECONDS,"30"}}
     scan_interval_seconds: ${oc.decode:${oc.env:OPENHANDS_TASK_SCAN_INTERVAL_SECONDS,"60"}}

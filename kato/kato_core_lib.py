@@ -2,6 +2,7 @@ from omegaconf import DictConfig
 
 from core_lib.core_lib import CoreLib
 
+from kato.client.claude_cli_client import ClaudeCliClient
 from kato.client.kato_client import KatoClient
 from kato.client.ticket_client_factory import build_ticket_client
 from kato.data_layers.data_access.task_data_access import TaskDataAccess
@@ -37,6 +38,8 @@ from kato.validation.startup_dependency_validator import (
 )
 from kato.helpers.logging_utils import configure_logger
 from kato.helpers.kato_config_utils import (
+    is_claude_backend,
+    resolved_agent_backend,
     resolved_openhands_base_url,
     resolved_openhands_llm_settings,
     skip_testing_enabled,
@@ -76,6 +79,8 @@ class KatoCoreLib(CoreLib):
 
     def _build_agent_service(self, open_cfg: DictConfig) -> AgentService:
         retry_cfg = open_cfg.retry
+        agent_backend = resolved_agent_backend(open_cfg)
+        self.logger.info('using agent backend: %s', agent_backend)
         issue_platform, ticket_cfg = self._resolve_ticket_platform_config(open_cfg)
         ticket_client = build_ticket_client(
             issue_platform,
@@ -83,14 +88,14 @@ class KatoCoreLib(CoreLib):
             retry_cfg.max_retries,
         )
         implementation_service = ImplementationService(
-            self._build_kato_client(
-                open_cfg.openhands,
+            self._build_agent_client(
+                open_cfg,
                 retry_cfg.max_retries,
             )
         )
         testing_service = TestingService(
-            self._build_kato_client(
-                open_cfg.openhands,
+            self._build_agent_client(
+                open_cfg,
                 retry_cfg.max_retries,
                 testing=True,
             )
@@ -108,6 +113,7 @@ class KatoCoreLib(CoreLib):
             implementation_service,
             testing_service,
             skip_testing_enabled(open_cfg.openhands),
+            agent_backend=agent_backend,
         )
         task_model_access_validator = TaskModelAccessValidator(
             implementation_service,
@@ -197,6 +203,22 @@ class KatoCoreLib(CoreLib):
         )
 
     @classmethod
+    def _build_agent_client(
+        cls,
+        open_cfg: DictConfig,
+        max_retries: int,
+        *,
+        testing: bool = False,
+    ) -> KatoClient | ClaudeCliClient:
+        if is_claude_backend(open_cfg):
+            return cls._build_claude_client(open_cfg, max_retries, testing=testing)
+        return cls._build_kato_client(
+            open_cfg.openhands,
+            max_retries,
+            testing=testing,
+        )
+
+    @classmethod
     def _build_kato_client(
         cls,
         openhands_cfg: DictConfig,
@@ -216,6 +238,37 @@ class KatoCoreLib(CoreLib):
             max_poll_attempts=cls._openhands_max_poll_attempts(openhands_cfg),
             model_smoke_test_enabled=not testing
             and bool(getattr(openhands_cfg, 'model_smoke_test_enabled', True)),
+        )
+
+    @classmethod
+    def _build_claude_client(
+        cls,
+        open_cfg: DictConfig,
+        max_retries: int,
+        *,
+        testing: bool = False,
+    ) -> ClaudeCliClient:
+        claude_cfg = getattr(open_cfg, 'claude', None)
+        if claude_cfg is None:
+            raise RuntimeError(
+                'KATO_AGENT_BACKEND=claude requires the kato.claude config block; '
+                'rebuild the configuration template'
+            )
+        repository_root_path = str(getattr(open_cfg, 'repository_root_path', '') or '').strip()
+        return ClaudeCliClient(
+            binary=str(getattr(claude_cfg, 'binary', '') or ''),
+            model=str(getattr(claude_cfg, 'model', '') or ''),
+            max_turns=getattr(claude_cfg, 'max_turns', None),
+            allowed_tools=str(getattr(claude_cfg, 'allowed_tools', '') or ''),
+            disallowed_tools=str(getattr(claude_cfg, 'disallowed_tools', '') or ''),
+            permission_mode=str(getattr(claude_cfg, 'permission_mode', '') or ''),
+            timeout_seconds=int(getattr(claude_cfg, 'timeout_seconds', 1800) or 1800),
+            max_retries=max_retries,
+            repository_root_path=repository_root_path,
+            model_smoke_test_enabled=(
+                not testing
+                and bool(getattr(claude_cfg, 'model_smoke_test_enabled', False))
+            ),
         )
 
     @staticmethod

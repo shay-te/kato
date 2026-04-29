@@ -2,7 +2,32 @@ from __future__ import annotations
 
 from omegaconf import DictConfig
 
-from kato.helpers.text_utils import normalized_text
+from kato.helpers.text_utils import normalized_lower_text, normalized_text
+
+
+AGENT_BACKEND_OPENHANDS = 'openhands'
+AGENT_BACKEND_CLAUDE = 'claude'
+SUPPORTED_AGENT_BACKENDS = (AGENT_BACKEND_OPENHANDS, AGENT_BACKEND_CLAUDE)
+
+
+def resolved_agent_backend(open_cfg: DictConfig) -> str:
+    """Return the configured agent backend, defaulting to OpenHands.
+
+    Accepts ``claude``/``claude-code`` as aliases for the Claude CLI backend.
+    """
+    raw = normalized_lower_text(getattr(open_cfg, 'agent_backend', '') or '')
+    if raw in {'claude', 'claude-code', 'claude_code', 'claude-cli', 'claude_cli'}:
+        return AGENT_BACKEND_CLAUDE
+    if raw in {'openhands', 'open-hands', 'open_hands', ''}:
+        return AGENT_BACKEND_OPENHANDS
+    raise ValueError(
+        f'unsupported KATO_AGENT_BACKEND: {raw!r}; '
+        f'supported values are: {", ".join(SUPPORTED_AGENT_BACKENDS)}'
+    )
+
+
+def is_claude_backend(open_cfg: DictConfig) -> bool:
+    return resolved_agent_backend(open_cfg) == AGENT_BACKEND_CLAUDE
 
 
 def parse_issue_states(config: DictConfig) -> list[str]:

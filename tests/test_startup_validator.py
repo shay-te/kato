@@ -143,3 +143,52 @@ class StartupDependencyValidatorTests(unittest.TestCase):
                 unittest.mock.call('%s', 'Validating connection (4/4): openhands_testing'),
             ],
         )
+
+    def test_validate_uses_agent_backend_label_for_implementation_steps(self) -> None:
+        validator = StartupDependencyValidator(
+            self.repository_connections_validator,
+            self.task_service,
+            self.implementation_service,
+            self.testing_service,
+            skip_testing=False,
+            agent_backend='claude',
+        )
+
+        validator.validate(self.logger)
+
+        self.assertEqual(
+            self.logger.info.call_args_list,
+            [
+                unittest.mock.call(
+                    '%s',
+                    'Validating connection (1/4): repositories (client, backend)',
+                ),
+                unittest.mock.call('%s', 'Validating connection (2/4): youtrack'),
+                unittest.mock.call('%s', 'Validating connection (3/4): claude'),
+                unittest.mock.call('%s', 'Validating connection (4/4): claude_testing'),
+            ],
+        )
+
+    def test_validate_surfaces_claude_binary_missing_with_backend_label(self) -> None:
+        validator = StartupDependencyValidator(
+            self.repository_connections_validator,
+            self.task_service,
+            self.implementation_service,
+            self.testing_service,
+            skip_testing=True,
+            agent_backend='claude',
+        )
+        self.implementation_service.validate_connection = Mock(
+            side_effect=RuntimeError(
+                'Claude CLI binary "claude" was not found on PATH. '
+                'Install Claude Code from https://docs.claude.com/en/docs/claude-code/setup'
+            )
+        )
+
+        with self.assertRaisesRegex(RuntimeError, 'startup dependency validation failed') as exc_context:
+            validator.validate(self.logger)
+
+        message = str(exc_context.exception)
+        self.assertIn('- unable to validate claude:', message)
+        self.assertIn('Claude CLI binary "claude" was not found on PATH', message)
+        self.assertIn('[claude]', message)

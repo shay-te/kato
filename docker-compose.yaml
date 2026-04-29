@@ -1,5 +1,14 @@
 x-kato-env: &kato-env
   KATO_ISSUE_PLATFORM: ${KATO_ISSUE_PLATFORM:-youtrack}
+  KATO_AGENT_BACKEND: ${KATO_AGENT_BACKEND:-openhands}
+  KATO_CLAUDE_BINARY: ${KATO_CLAUDE_BINARY:-claude}
+  KATO_CLAUDE_MODEL: ${KATO_CLAUDE_MODEL:-}
+  KATO_CLAUDE_MAX_TURNS: ${KATO_CLAUDE_MAX_TURNS:-}
+  KATO_CLAUDE_ALLOWED_TOOLS: ${KATO_CLAUDE_ALLOWED_TOOLS:-}
+  KATO_CLAUDE_DISALLOWED_TOOLS: ${KATO_CLAUDE_DISALLOWED_TOOLS:-}
+  KATO_CLAUDE_PERMISSION_MODE: ${KATO_CLAUDE_PERMISSION_MODE:-bypassPermissions}
+  KATO_CLAUDE_TIMEOUT_SECONDS: ${KATO_CLAUDE_TIMEOUT_SECONDS:-1800}
+  KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED: ${KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED:-false}
   YOUTRACK_BASE_URL: ${YOUTRACK_BASE_URL}
   YOUTRACK_TOKEN: ${YOUTRACK_TOKEN}
   YOUTRACK_PROJECT: ${YOUTRACK_PROJECT}
@@ -73,6 +82,7 @@ x-kato-env: &kato-env
   KATO_WORKFLOW_LOG_LEVEL: ${KATO_WORKFLOW_LOG_LEVEL:-info}
   KATO_SOURCE_FINGERPRINT: ${KATO_SOURCE_FINGERPRINT:-}
   OPENHANDS_LLM_MODEL: ${OPENHANDS_LLM_MODEL:-}
+  OPENHANDS_LLM_API_KEY: ${OPENHANDS_LLM_API_KEY:-}
   OPENHANDS_LLM_BASE_URL: ${OPENHANDS_LLM_BASE_URL:-}
   OPENHANDS_MODEL_SMOKE_TEST_ENABLED: ${OPENHANDS_MODEL_SMOKE_TEST_ENABLED:-true}
   OPENHANDS_TESTING_LLM_MODEL: ${OPENHANDS_TESTING_LLM_MODEL:-}
@@ -119,12 +129,13 @@ x-kato-service-env: &kato-service-env
 
 services:
   openhands:
+    profiles: ["openhands"]
     image: docker.openhands.dev/openhands/openhands:1.5
     pull_policy: ${OPENHANDS_PULL_POLICY:-missing}
 
     environment:
       <<: *kato-service-env
-      LOG_ALL_EVENTS: ${OPENHANDS_CONTAINER_LOG_ALL_EVENTS}
+      LOG_ALL_EVENTS: ${OPENHANDS_CONTAINER_LOG_ALL_EVENTS:-true}
       LLM_MODEL: ${OPENHANDS_LLM_MODEL:-}
       LLM_API_KEY: ${OPENHANDS_LLM_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -178,9 +189,9 @@ services:
     tty: true
     stdin_open: true
     entrypoint: ["/app/docker/entrypoint-run.sh"]
-    depends_on:
-      openhands:
-        condition: service_started
+    # No depends_on: the openhands service is profile-gated and may not be
+    # running (e.g. KATO_AGENT_BACKEND=claude). The entrypoint waits for it
+    # itself when the openhands backend is active.
     environment:
       <<: *kato-env
       REPOSITORY_ROOT_PATH: /workspace/project

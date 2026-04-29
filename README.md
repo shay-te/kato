@@ -32,6 +32,62 @@ Reference:
 - https://shay-te.github.io/core-lib/
 - https://shay-te.github.io/core-lib/advantages.html
 
+## Choosing an Agent Backend
+
+Kato can drive its implementation, testing, and review-fix work through one of two agent backends. Selection is a single environment variable:
+
+```env
+# default
+KATO_AGENT_BACKEND=openhands
+
+# OR
+KATO_AGENT_BACKEND=claude
+```
+
+- `openhands` (default) drives the OpenHands HTTP server. Uses the `OPENHANDS_*` block of `.env`. The Docker Compose stack still ships an `openhands` container by default.
+- `claude` drives Anthropic's Claude Code CLI locally with `claude -p` (non-interactive print mode). Uses the `KATO_CLAUDE_*` block of `.env`. The CLI must be installed and authenticated on the host that runs Kato (`claude login`); the OpenHands container is not required.
+
+Everything that works with OpenHands also works with `claude -p`:
+
+- Implementation conversations per task.
+- Optional testing-validation conversations (controlled by `OPENHANDS_SKIP_TESTING`).
+- Review-comment fix conversations on existing pull requests, including session resume so the agent keeps context across review rounds (mapped to `claude --resume <session_id>`).
+- Repository scope, security guardrails, and the `validation_report.md` PR-description handoff are identical in both backends.
+
+Switching is one env value: change `KATO_AGENT_BACKEND`, run `make doctor`, restart Kato.
+
+### Setting Up the Claude CLI Backend
+
+```env
+KATO_AGENT_BACKEND=claude
+
+# Path to the binary (default: claude on PATH).
+KATO_CLAUDE_BINARY=claude
+
+# Optional model override; leave empty to use the CLI's configured default.
+# Examples: claude-opus-4-7 | claude-sonnet-4-6 | claude-haiku-4-5-20251001
+KATO_CLAUDE_MODEL=
+
+# Optional turn cap, allow/deny tool lists, permission mode.
+KATO_CLAUDE_MAX_TURNS=
+KATO_CLAUDE_ALLOWED_TOOLS=
+KATO_CLAUDE_DISALLOWED_TOOLS=
+KATO_CLAUDE_PERMISSION_MODE=bypassPermissions
+
+# Per-task subprocess timeout (seconds) and an optional startup smoke test.
+KATO_CLAUDE_TIMEOUT_SECONDS=1800
+KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED=false
+```
+
+Notes:
+
+- Install Claude Code: https://docs.claude.com/en/docs/claude-code/setup
+- Authenticate once interactively (`claude login`) on the host. Kato runs the CLI with `-p`, which uses the credentials stored by `claude login`.
+- The CLI runs locally and edits files directly in the prepared task branch, so the orchestration layer does not need OpenHands credentials, the agent-server image, or the dedicated testing container when this backend is active. The `OPENHANDS_*` block of `.env` can stay empty.
+- `KATO_CLAUDE_PERMISSION_MODE` defaults to `bypassPermissions` because the orchestration layer pins the agent to a prepared branch and runs unattended. Use `acceptEdits` if you would rather have Claude prompt for tool grants in interactive setups.
+- The CLI is invoked with `--output-format json` so the orchestration parses `result` and `session_id` from the structured output. Review-comment follow-ups pass that `session_id` back via `--resume`.
+- The agent still produces `validation_report.md` in the repository root; the existing publication flow uses it as the pull request description and removes it before pushing — same as the OpenHands path.
+
 The agent is designed to:
 
 1. Read tasks assigned to it from the configured issue platform.
@@ -357,6 +413,7 @@ The list below mirrors `.env.example`.
 | Variable | What it does |
 | --- | --- |
 | `KATO_ISSUE_PLATFORM` | Selects the active issue platform. Supported values are `youtrack`, `jira`, `github`, `gitlab`, and `bitbucket`. |
+| `KATO_AGENT_BACKEND` | Selects the active agent backend. Supported values are `openhands` (default) and `claude`. |
 | `YOUTRACK_BASE_URL` | YouTrack API base URL. |
 | `YOUTRACK_TOKEN` | YouTrack API token. |
 | `YOUTRACK_PROJECT` | YouTrack project key used to fetch tasks. |
@@ -479,6 +536,19 @@ The `openhands` container reuses the same `OPENHANDS_LLM_*` and `AWS_*` values f
 | `AWS_REGION_NAME` | AWS region used for Bedrock-backed models or AWS auth in Docker. |
 | `AWS_SESSION_TOKEN` | Optional AWS session token for temporary Bedrock credentials. |
 | `AWS_BEARER_TOKEN_BEDROCK` | Bedrock bearer token alternative to AWS access keys. |
+
+### Claude CLI Backend
+
+| Variable | What it does |
+| --- | --- |
+| `KATO_CLAUDE_BINARY` | Path to (or PATH name of) the Claude Code CLI binary. Defaults to `claude`. |
+| `KATO_CLAUDE_MODEL` | Optional model id passed via `--model` (e.g. `claude-opus-4-7`). Empty uses the CLI default. |
+| `KATO_CLAUDE_MAX_TURNS` | Optional cap on agent turns per task, passed via `--max-turns`. Empty means no cap. |
+| `KATO_CLAUDE_ALLOWED_TOOLS` | Comma-separated allowlist passed via `--allowedTools`. |
+| `KATO_CLAUDE_DISALLOWED_TOOLS` | Comma-separated denylist passed via `--disallowedTools`. |
+| `KATO_CLAUDE_PERMISSION_MODE` | Permission mode passed via `--permission-mode`. Defaults to `bypassPermissions`. |
+| `KATO_CLAUDE_TIMEOUT_SECONDS` | Per-task subprocess timeout. Defaults to 1800. Minimum 60. |
+| `KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED` | Runs a small `claude -p` prompt during startup validation. Off by default. |
 
 The active issue provider comes from `kato.issue_platform`, which defaults to `youtrack`.
 Issue states can be configured directly in `.env` with `YOUTRACK_ISSUE_STATES`, `JIRA_ISSUE_STATES`, `GITHUB_ISSUES_ISSUE_STATES`, `GITLAB_ISSUES_ISSUE_STATES`, and `BITBUCKET_ISSUES_ISSUE_STATES`.
