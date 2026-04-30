@@ -1,4 +1,4 @@
-class PullRequestFields:
+class PullRequestFields(object):
     ID = 'id'
     TITLE = 'title'
     URL = 'url'
@@ -10,7 +10,7 @@ class PullRequestFields:
     FAILED_REPOSITORIES = 'failed_repositories'
 
 
-class ReviewCommentFields:
+class ReviewCommentFields(object):
     PULL_REQUEST_ID = 'pull_request_id'
     COMMENT_ID = 'comment_id'
     AUTHOR = 'author'
@@ -21,20 +21,20 @@ class ReviewCommentFields:
     RESOLVABLE = 'resolvable'
 
 
-class TaskCommentFields:
+class TaskCommentFields(object):
     AUTHOR = 'author'
     BODY = 'body'
     ALL_COMMENTS = 'all_comments'
 
 
-class ImplementationFields:
+class ImplementationFields(object):
     COMMIT_MESSAGE = 'commit_message'
     MESSAGE = 'message'
     SESSION_ID = 'session_id'
     SUCCESS = 'success'
 
 
-class StatusFields:
+class StatusFields(object):
     STATUS = 'status'
     UPDATED = 'updated'
     READY_FOR_REVIEW = 'ready_for_review'
@@ -43,12 +43,12 @@ class StatusFields:
     TESTING_FAILED = 'testing_failed'
 
 
-class TaskFields:
+class TaskFields(object):
     ID = 'task_id'
     SUMMARY = 'task_summary'
 
 
-class EmailFields:
+class EmailFields(object):
     EMAIL = 'email'
     SUBJECT = 'subject'
     MESSAGE = 'message'
@@ -62,7 +62,7 @@ class EmailFields:
     PULL_REQUEST_SUMMARY = 'pull_request_summary'
 
 
-class RepositoryFields:
+class RepositoryFields(object):
     ID = 'id'
     DISPLAY_NAME = 'display_name'
     LOCAL_PATH = 'local_path'
@@ -73,10 +73,20 @@ class RepositoryFields:
     BITBUCKET_USERNAME = 'bitbucket_username'
     BITBUCKET_API_EMAIL = 'bitbucket_api_email'
     ALIASES = 'aliases'
-    REPOSITORY_TAG_PREFIX = 'repo:'
+    REPOSITORY_TAG_PREFIX = 'kato:repo:'
 
 
-class YouTrackAttachmentFields:
+class TaskTags(object):
+    """Kato-recognized task tag prefixes/values.
+
+    Tags are namespaced with the ``kato:`` prefix so they don't collide with
+    user-defined ticket labels.
+    """
+
+    WAIT_PLANNING = 'kato:wait-planning'
+
+
+class YouTrackAttachmentFields(object):
     ID = 'id'
     NAME = 'name'
     MIME_TYPE = 'mimeType'
@@ -85,7 +95,7 @@ class YouTrackAttachmentFields:
     URL = 'url'
 
 
-class YouTrackCommentFields:
+class YouTrackCommentFields(object):
     ID = 'id'
     TEXT = 'text'
     AUTHOR = 'author'
@@ -93,17 +103,17 @@ class YouTrackCommentFields:
     NAME = 'name'
 
 
-class YouTrackCustomFieldFields:
+class YouTrackCustomFieldFields(object):
     ID = 'id'
     NAME = 'name'
     TYPE = '$type'
 
 
-class YouTrackTagFields:
+class YouTrackTagFields(object):
     NAME = 'name'
 
 
-class JiraIssueFields:
+class JiraIssueFields(object):
     KEY = 'key'
     FIELDS = 'fields'
     SUMMARY = 'summary'
@@ -114,26 +124,26 @@ class JiraIssueFields:
     STATUS = 'status'
 
 
-class JiraCommentFields:
+class JiraCommentFields(object):
     BODY = 'body'
     AUTHOR = 'author'
     DISPLAY_NAME = 'displayName'
 
 
-class JiraAttachmentFields:
+class JiraAttachmentFields(object):
     FILENAME = 'filename'
     MIME_TYPE = 'mimeType'
     CONTENT = 'content'
     SIZE = 'size'
 
 
-class JiraTransitionFields:
+class JiraTransitionFields(object):
     ID = 'id'
     NAME = 'name'
     TO = 'to'
 
 
-class GitHubIssueFields:
+class GitHubIssueFields(object):
     NUMBER = 'number'
     TITLE = 'title'
     BODY = 'body'
@@ -145,13 +155,13 @@ class GitHubIssueFields:
     NAME = 'name'
 
 
-class GitHubCommentFields:
+class GitHubCommentFields(object):
     BODY = 'body'
     USER = 'user'
     LOGIN = 'login'
 
 
-class GitLabIssueFields:
+class GitLabIssueFields(object):
     IID = 'iid'
     TITLE = 'title'
     DESCRIPTION = 'description'
@@ -162,7 +172,7 @@ class GitLabIssueFields:
     NAME = 'name'
 
 
-class GitLabCommentFields:
+class GitLabCommentFields(object):
     BODY = 'body'
     AUTHOR = 'author'
     USERNAME = 'username'
@@ -170,7 +180,7 @@ class GitLabCommentFields:
     SYSTEM = 'system'
 
 
-class BitbucketIssueFields:
+class BitbucketIssueFields(object):
     ID = 'id'
     TITLE = 'title'
     CONTENT = 'content'
@@ -182,7 +192,7 @@ class BitbucketIssueFields:
     NICKNAME = 'nickname'
 
 
-class BitbucketIssueCommentFields:
+class BitbucketIssueCommentFields(object):
     CONTENT = 'content'
     RAW = 'raw'
     USER = 'user'

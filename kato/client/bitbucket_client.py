@@ -135,14 +135,30 @@ class BitbucketClient(PullRequestClientBase):
             raise ValueError(
                 f'invalid bitbucket review comment id for reply: {parent_id_text}'
             ) from exc
+        request_body = {
+            'content': {'raw': normalized_text(body)},
+            'parent': {'id': parent_id},
+        }
         response = self._post_with_retry(
             f'/repositories/{repo_owner}/{repo_slug}/pullrequests/{comment.pull_request_id}/comments',
-            json={
-                'content': {'raw': normalized_text(body)},
-                'parent': {'id': parent_id},
-            },
+            json=request_body,
         )
-        response.raise_for_status()
+        if not response.ok:
+            # Bubble Bitbucket's actual response body up — the bare
+            # `requests.HTTPError` only carries the status code, which
+            # makes 400s impossible to debug. Common causes here:
+            # parent comment is itself a nested reply (Bitbucket forbids
+            # >1 level of nesting), parent comment was deleted, or the
+            # body is empty / too long.
+            detail = ''
+            try:
+                detail = response.text[:1000]
+            except Exception:
+                pass
+            raise RuntimeError(
+                f'bitbucket rejected reply to PR {comment.pull_request_id} '
+                f'comment {parent_id}: HTTP {response.status_code} — {detail}'
+            )
 
     @staticmethod
     def _pull_request_payload(

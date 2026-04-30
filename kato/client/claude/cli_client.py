@@ -21,7 +21,7 @@ from kato.helpers.text_utils import (
 )
 
 
-class ClaudeCliClient:
+class ClaudeCliClient(object):
     """Drive Anthropic's Claude Code CLI (`claude -p`) as the implementation/testing backend.
 
     Provides the same public interface as :class:`KatoClient` so the rest of the
@@ -31,10 +31,14 @@ class ClaudeCliClient:
 
     DEFAULT_BINARY = 'claude'
     DEFAULT_TIMEOUT_SECONDS = 1800
-    DEFAULT_PERMISSION_MODE = 'bypassPermissions'
+    SAFE_PERMISSION_MODE = 'acceptEdits'
+    BYPASS_PERMISSION_MODE = 'bypassPermissions'
+    DEFAULT_ALLOWED_TOOLS = 'Edit,Write,Read,Bash,Glob,Grep'
     SMOKE_TEST_PROMPT = 'Reply with exactly: ok. Do not call any tools.'
     SMOKE_TEST_TIMEOUT_SECONDS = 120
     VERSION_PROBE_TIMEOUT_SECONDS = 30
+
+    SUPPORTED_EFFORT_LEVELS = frozenset({'low', 'medium', 'high', 'xhigh', 'max'})
 
     def __init__(
         self,
@@ -44,20 +48,30 @@ class ClaudeCliClient:
         max_turns: int | str | None = None,
         allowed_tools: str = '',
         disallowed_tools: str = '',
-        permission_mode: str = '',
+        bypass_permissions: bool = False,
         max_retries: int = 3,
         timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
         repository_root_path: str = '',
         model_smoke_test_enabled: bool = False,
         extra_args: list[str] | None = None,
+        effort: str = '',
     ) -> None:
         self.max_retries = max(1, int(max_retries or 1))
         self._binary = normalized_text(binary) or self.DEFAULT_BINARY
         self._model = normalized_text(model)
         self._max_turns = self._coerce_max_turns(max_turns)
-        self._allowed_tools = normalized_text(allowed_tools)
+        self._effort = self._coerce_effort(effort)
+        self._bypass_permissions = bool(bypass_permissions)
+        # When not bypassing, pre-approve a safe default tool list so the
+        # agent does not stall asking for permission in headless `-p` mode.
+        # Users can override or extend via KATO_CLAUDE_ALLOWED_TOOLS.
+        normalized_allowed = normalized_text(allowed_tools)
+        self._allowed_tools = (
+            normalized_allowed
+            if normalized_allowed or self._bypass_permissions
+            else self.DEFAULT_ALLOWED_TOOLS
+        )
         self._disallowed_tools = normalized_text(disallowed_tools)
-        self._permission_mode = normalized_text(permission_mode) or self.DEFAULT_PERMISSION_MODE
         self._timeout_seconds = max(60, int(timeout_seconds or self.DEFAULT_TIMEOUT_SECONDS))
         self._repository_root_path = normalized_text(repository_root_path)
         self._model_smoke_test_enabled = bool(model_smoke_test_enabled)
@@ -65,9 +79,37 @@ class ClaudeCliClient:
         self._extra_args = list(extra_args or [])
         self.logger = configure_logger(self.__class__.__name__)
 
+    @property
+    def _permission_mode(self) -> str:
+        return (
+            self.BYPASS_PERMISSION_MODE
+            if self._bypass_permissions
+            else self.SAFE_PERMISSION_MODE
+        )
+
     # ----- public API parity with KatoClient -----
 
+    @staticmethod
+    def _running_inside_docker() -> bool:
+        # /.dockerenv is the canonical marker the Docker engine creates
+        # inside every container it starts. A few non-Docker runtimes (e.g.
+        # Podman with --root, some CI sandboxes) also create it, which is
+        # fine for our purposes — anything that quacks like a container
+        # also can't reach the host's macOS Keychain or `claude login`.
+        return Path('/.dockerenv').exists()
+
     def validate_connection(self) -> None:
+        if self._running_inside_docker():
+            raise RuntimeError(
+                'KATO_AGENT_BACKEND=claude is not supported inside Docker. '
+                'The Claude Code CLI authenticates against your host '
+                '`claude login` credentials (macOS Keychain, Linux config '
+                'file, or Windows Credential Manager), and the container '
+                'cannot reach those. '
+                'Run kato locally instead — `make compose-up` or `make run`. '
+                'If you genuinely need Docker, switch to KATO_AGENT_BACKEND=openhands '
+                'and use `make compose-up-docker`.'
+            )
         binary_path = shutil.which(self._binary)
         if not binary_path:
             raise RuntimeError(
@@ -372,6 +414,8 @@ class ClaudeCliClient:
             command.extend(['--model', self._model])
         if self._max_turns is not None:
             command.extend(['--max-turns', str(self._max_turns)])
+        if self._effort:
+            command.extend(['--effort', self._effort])
         if self._allowed_tools:
             command.extend(['--allowedTools', self._allowed_tools])
         if self._disallowed_tools:
@@ -550,3 +594,22 @@ class ClaudeCliClient:
         if parsed <= 0:
             return None
         return parsed
+
+    @classmethod
+    def _coerce_effort(cls, value: str | None) -> str:
+        """Validate the ``--effort`` value so we fail at startup, not mid-turn.
+
+        Accepted: ``low``, ``medium``, ``high``, ``xhigh``, ``max``. Empty
+        string means "don't pass --effort" (Claude uses its default).
+        Anything else is rejected so a typo doesn't silently regress
+        reasoning quality on production tasks.
+        """
+        normalized = normalized_text(value).lower()
+        if not normalized:
+            return ''
+        if normalized not in cls.SUPPORTED_EFFORT_LEVELS:
+            raise ValueError(
+                f'invalid claude effort {value!r}; '
+                f'expected one of {sorted(cls.SUPPORTED_EFFORT_LEVELS)} or empty'
+            )
+        return normalized

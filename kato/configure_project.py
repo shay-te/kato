@@ -330,13 +330,12 @@ def _prompt_claude_backend(defaults: dict[str, str]) -> dict[str, str]:
             default=_default_str(defaults, 'KATO_CLAUDE_DISALLOWED_TOOLS'),
             allow_empty=True,
         ),
-        'KATO_CLAUDE_PERMISSION_MODE': input_str(
-            'Permission mode for `claude -p` (bypassPermissions / acceptEdits / default)',
-            default=_default_str(
-                defaults,
-                'KATO_CLAUDE_PERMISSION_MODE',
-                fallback='bypassPermissions',
-            ),
+        'KATO_CLAUDE_BYPASS_PERMISSIONS': _bool_to_env(
+            input_bool(
+                'Opt-in to bypassPermissions mode (DANGEROUS — only for trusted local runs; '
+                'refused under root). When false, uses acceptEdits + a pre-approved tools list',
+                default=_default_bool(defaults, 'KATO_CLAUDE_BYPASS_PERMISSIONS'),
+            )
         ),
         'KATO_CLAUDE_TIMEOUT_SECONDS': str(
             input_int(

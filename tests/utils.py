@@ -16,7 +16,7 @@ thread_lock = threading.Lock()
 __test__ = False
 
 
-class OblInstance:
+class OblInstance(object):
     instance = None
     config = None
 

@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class DependencyValidationStep:
+class DependencyValidationStep(object):
     service_name: str
     validate: Callable[[], None]
     max_retries: int

@@ -2,8 +2,8 @@ from omegaconf import DictConfig
 
 from core_lib.core_lib import CoreLib
 
-from kato.client.claude_cli_client import ClaudeCliClient
-from kato.client.kato_client import KatoClient
+from kato.client.claude import ClaudeCliClient, ClaudeSessionManager
+from kato.client.openhands import KatoClient
 from kato.client.ticket_client_factory import build_ticket_client
 from kato.data_layers.data_access.task_data_access import TaskDataAccess
 from kato.data_layers.service.agent_service import AgentService
@@ -14,6 +14,9 @@ from kato.data_layers.service.implementation_service import (
 from kato.data_layers.service.notification_service import NotificationService
 from kato.data_layers.service.repository_service import RepositoryService
 from kato.data_layers.service.task_failure_handler import TaskFailureHandler
+from kato.data_layers.service.planning_session_runner import (
+    PlanningSessionRunner,
+)
 from kato.data_layers.service.task_preflight_service import (
     TaskPreflightService,
 )
@@ -80,6 +83,12 @@ class KatoCoreLib(CoreLib):
     def _build_agent_service(self, open_cfg: DictConfig) -> AgentService:
         retry_cfg = open_cfg.retry
         agent_backend = resolved_agent_backend(open_cfg)
+        self.session_manager = ClaudeSessionManager.from_config(
+            open_cfg, agent_backend,
+        )
+        planning_session_runner = PlanningSessionRunner.from_config(
+            open_cfg, agent_backend, self.session_manager,
+        )
         self.logger.info('using agent backend: %s', agent_backend)
         issue_platform, ticket_cfg = self._resolve_ticket_platform_config(open_cfg)
         ticket_client = build_ticket_client(
@@ -148,6 +157,11 @@ class KatoCoreLib(CoreLib):
             implementation_service=implementation_service,
             repository_service=repository_service,
             state_registry=state_registry,
+            planning_session_runner=planning_session_runner,
+            # Always stream review-fixes through the planning UI when the
+            # streaming runner is wired (Claude backend). The user's tag
+            # decides what gets executed, not bypass mode.
+            use_streaming_for_review_fixes=planning_session_runner is not None,
         )
         return AgentService(
             task_service=task_service,
@@ -164,7 +178,10 @@ class KatoCoreLib(CoreLib):
             startup_validator=startup_validator,
             task_preflight_service=task_preflight_service,
             skip_testing=skip_testing_enabled(open_cfg.openhands),
+            planning_session_runner=planning_session_runner,
+            session_manager=self.session_manager,
         )
+
 
     @staticmethod
     def _resolve_ticket_platform_config(
@@ -259,9 +276,10 @@ class KatoCoreLib(CoreLib):
             binary=str(getattr(claude_cfg, 'binary', '') or ''),
             model=str(getattr(claude_cfg, 'model', '') or ''),
             max_turns=getattr(claude_cfg, 'max_turns', None),
+            effort=str(getattr(claude_cfg, 'effort', '') or ''),
             allowed_tools=str(getattr(claude_cfg, 'allowed_tools', '') or ''),
             disallowed_tools=str(getattr(claude_cfg, 'disallowed_tools', '') or ''),
-            permission_mode=str(getattr(claude_cfg, 'permission_mode', '') or ''),
+            bypass_permissions=bool(getattr(claude_cfg, 'bypass_permissions', False)),
             timeout_seconds=int(getattr(claude_cfg, 'timeout_seconds', 1800) or 1800),
             max_retries=max_retries,
             repository_root_path=repository_root_path,

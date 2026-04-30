@@ -5,7 +5,7 @@ from omegaconf import DictConfig
 from kato.kato_core_lib import KatoCoreLib
 
 
-class KatoInstance:
+class KatoInstance(object):
     _app_instance: KatoCoreLib | None = None
 
     @staticmethod

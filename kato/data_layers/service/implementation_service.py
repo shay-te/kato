@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING
 
 from core_lib.data_layers.service.service import Service
 
@@ -10,10 +10,7 @@ from kato.helpers.task_context_utils import PreparedTaskContext
 from kato.helpers.logging_utils import configure_logger
 
 if TYPE_CHECKING:
-    from kato.client.claude_cli_client import ClaudeCliClient
-    from kato.client.kato_client import KatoClient
-
-    AgentClient = Union[KatoClient, ClaudeCliClient]
+    from kato.client.agent_client import AgentClient
 
 
 class ImplementationService(Service):

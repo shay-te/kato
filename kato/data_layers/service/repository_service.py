@@ -543,6 +543,7 @@ class RepositoryService(RepositoryInventoryService):
             destination_branch,
             branch_name,
             current_branch,
+            repository=repository,
         )
         self._assert_current_branch(local_path, branch_name, current_branch)
         self._ensure_clean_worktree(local_path, current_branch)
@@ -693,6 +694,7 @@ class RepositoryService(RepositoryInventoryService):
         destination_branch: str,
         branch_name: str,
         current_branch: str,
+        repository=None,
     ) -> tuple[str, bool]:
         if current_branch == branch_name:
             return current_branch, True
@@ -707,8 +709,40 @@ class RepositoryService(RepositoryInventoryService):
             destination_branch,
             current_branch,
         )
+        # Fresh task-branch path: fast-forward the destination branch to
+        # origin/<destination> before forking. Without this, a local
+        # ``master`` that's behind the remote (typical immediately after
+        # the previous task's PR was merged) would seed the new task
+        # branch with stale code, and the agent's first commit would
+        # silently re-introduce the just-merged changes on top.
+        if self._uses_remote_destination_sync(repository):
+            self._sync_destination_branch_to_origin(
+                local_path, destination_branch, repository,
+            )
         self._create_task_branch(local_path, branch_name, destination_branch)
         return self._current_branch(local_path), False
+
+    def _sync_destination_branch_to_origin(
+        self,
+        local_path: str,
+        destination_branch: str,
+        repository,
+    ) -> None:
+        """Reset the local destination branch to ``origin/<destination>``.
+
+        Idempotent and safe to call when the local branch is already at
+        the remote head (the reset is a no-op). Loud failure if the
+        remote ref is missing — the caller relies on a synced base.
+        """
+        self._run_git(
+            local_path,
+            ['reset', '--hard', f'origin/{destination_branch}'],
+            (
+                f'failed to fast-forward {destination_branch} to '
+                f'origin/{destination_branch} at {local_path}'
+            ),
+            repository,
+        )
 
     def _checkout_existing_task_branch(
         self,

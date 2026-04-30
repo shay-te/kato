@@ -2,7 +2,7 @@ PYTHON ?= python3
 VENV_PYTHON = .venv/bin/python
 KATO_SOURCE_FINGERPRINT := $(shell $(PYTHON) -m kato.helpers.runtime_identity_utils --root .)
 
-.PHONY: bootstrap configure doctor doctor-agent doctor-openhands test run compose-up
+.PHONY: bootstrap configure doctor doctor-agent doctor-openhands test run compose-up compose-up-docker
 
 bootstrap:
 	./scripts/bootstrap.sh
@@ -26,6 +26,11 @@ run:
 	./scripts/run-local.sh
 
 compose-up:
+	./scripts/run-local.sh
+
+# Original docker-compose flow. Kept available for cases where you actually
+# need OpenHands containerized; the local Claude-backed path is `compose-up`.
+compose-up-docker:
 	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
 	export KATO_SOURCE_FINGERPRINT='$(KATO_SOURCE_FINGERPRINT)'; \
 	PROFILES=""; \

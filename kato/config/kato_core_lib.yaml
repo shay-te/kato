@@ -110,9 +110,13 @@ kato:
     binary: ${oc.env:KATO_CLAUDE_BINARY,"claude"}
     model: ${oc.env:KATO_CLAUDE_MODEL,""}
     max_turns: ${oc.env:KATO_CLAUDE_MAX_TURNS,""}
+    # Reasoning depth: low | medium | high | xhigh | max. Empty leaves
+    # Claude on its built-in default. Higher levels think harder before
+    # acting (more tokens, more time).
+    effort: ${oc.env:KATO_CLAUDE_EFFORT,""}
     allowed_tools: ${oc.env:KATO_CLAUDE_ALLOWED_TOOLS,""}
     disallowed_tools: ${oc.env:KATO_CLAUDE_DISALLOWED_TOOLS,""}
-    permission_mode: ${oc.env:KATO_CLAUDE_PERMISSION_MODE,"bypassPermissions"}
+    bypass_permissions: ${oc.decode:${oc.env:KATO_CLAUDE_BYPASS_PERMISSIONS,"false"}}
     timeout_seconds: ${oc.decode:${oc.env:KATO_CLAUDE_TIMEOUT_SECONDS,"1800"}}
     model_smoke_test_enabled: ${oc.decode:${oc.env:KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED,"false"}}
   task_scan:

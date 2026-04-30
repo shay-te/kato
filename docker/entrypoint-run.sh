@@ -30,16 +30,15 @@ def wait_until_reachable(url: str, label: str) -> None:
     raise SystemExit(f"{label} did not become reachable in time")
 
 
-# Only wait on OpenHands when that backend is selected. The Claude CLI
-# backend runs locally inside this container and has no HTTP server to poll.
-agent_backend = os.getenv("KATO_AGENT_BACKEND", "openhands").strip().lower()
-if agent_backend != "claude":
-    wait_until_reachable("http://openhands:3000", "OpenHands")
-    if os.getenv("OPENHANDS_SKIP_TESTING", "").strip().lower() not in TRUE_VALUES and os.getenv("OPENHANDS_TESTING_CONTAINER_ENABLED", "").strip().lower() in TRUE_VALUES:
-        wait_until_reachable(
-            os.getenv("OPENHANDS_TESTING_BASE_URL", "http://openhands-testing:3000"),
-            "OpenHands testing",
-        )
+# Docker only supports the OpenHands backend. The Claude backend is rejected
+# at app startup with a clear error, but we still wait for OpenHands here so
+# kato.main has the dependency available when it needs it.
+wait_until_reachable("http://openhands:3000", "OpenHands")
+if os.getenv("OPENHANDS_SKIP_TESTING", "").strip().lower() not in TRUE_VALUES and os.getenv("OPENHANDS_TESTING_CONTAINER_ENABLED", "").strip().lower() in TRUE_VALUES:
+    wait_until_reachable(
+        os.getenv("OPENHANDS_TESTING_BASE_URL", "http://openhands-testing:3000"),
+        "OpenHands testing",
+    )
 PY
 
 exec python -m kato.main

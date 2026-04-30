@@ -19,7 +19,7 @@ KATO_REVIEW_COMMENT_REPLY_PREFIX = 'Kato addressed this review comment'
 
 
 @dataclass(frozen=True)
-class ReviewFixContext:
+class ReviewFixContext(object):
     repository_id: str
     branch_name: str
     session_id: str

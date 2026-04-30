@@ -1,0 +1,20 @@
+[project]
+name = "kato-webserver"
+version = "0.0.1"
+description = "Kato planning UI: per-task tabs that stream Claude sessions and let humans intervene."
+requires-python = ">=3.11"
+dependencies = [
+    "flask>=3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["kato_webserver"]

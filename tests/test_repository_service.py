@@ -430,12 +430,13 @@ class RepositoryServiceTests(unittest.TestCase):
         ), patch(
             'kato.data_layers.service.repository_service.subprocess.run',
             side_effect=[
-                Mock(returncode=0, stdout='main\n', stderr=''),
-                Mock(returncode=0, stdout='', stderr=''),
-                Mock(returncode=0, stdout='', stderr=''),
-                Mock(returncode=0, stdout='', stderr=''),
-                Mock(returncode=0, stdout='UNA-2398\n', stderr=''),
-                Mock(returncode=0, stdout='', stderr=''),
+                Mock(returncode=0, stdout='main\n', stderr=''),  # rev-parse HEAD
+                Mock(returncode=0, stdout='', stderr=''),         # status --porcelain
+                Mock(returncode=0, stdout='', stderr=''),         # fetch origin
+                Mock(returncode=0, stdout='', stderr=''),         # reset --hard origin/main (new)
+                Mock(returncode=0, stdout='', stderr=''),         # checkout -b UNA-2398
+                Mock(returncode=0, stdout='UNA-2398\n', stderr=''),  # rev-parse HEAD (verify)
+                Mock(returncode=0, stdout='', stderr=''),         # status --porcelain (verify)
             ],
         ) as mock_run:
             service.prepare_task_branches([self.backend_repo], {'backend': 'UNA-2398'})
@@ -447,6 +448,7 @@ class RepositoryServiceTests(unittest.TestCase):
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'fetch', 'origin'],
+                ['git', '-c', 'safe.directory=.', '-C', '.', 'reset', '--hard', 'origin/main'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'checkout', '-b', 'UNA-2398'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],

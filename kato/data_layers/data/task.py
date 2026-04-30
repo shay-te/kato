@@ -3,7 +3,7 @@ from __future__ import annotations
 from kato.helpers.record_field_utils import RecordField
 
 
-class Task:
+class Task(object):
     id = RecordField('id')
     summary = RecordField('summary')
     description = RecordField('description')

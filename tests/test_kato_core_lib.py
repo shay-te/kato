@@ -227,6 +227,8 @@ class KatoCoreLibTests(unittest.TestCase):
             startup_validator=ANY,
             task_preflight_service=mock_task_preflight_service_cls.return_value,
             skip_testing=False,
+            planning_session_runner=None,
+            session_manager=None,
         )
         mock_service_cls.return_value.validate_connections.assert_called_once_with()
         self.assertIs(app.service, mock_service_cls.return_value)
@@ -528,7 +530,7 @@ class KatoCoreLibTests(unittest.TestCase):
             'max_turns': '',
             'allowed_tools': '',
             'disallowed_tools': '',
-            'permission_mode': 'bypassPermissions',
+            'bypass_permissions': True,
             'timeout_seconds': 1800,
             'model_smoke_test_enabled': False,
         }
@@ -566,7 +568,7 @@ class KatoCoreLibTests(unittest.TestCase):
         first_kwargs = mock_claude_client_cls.call_args_list[0].kwargs
         self.assertEqual(first_kwargs['binary'], 'claude')
         self.assertEqual(first_kwargs['model'], 'claude-opus-4-7')
-        self.assertEqual(first_kwargs['permission_mode'], 'bypassPermissions')
+        self.assertIs(first_kwargs['bypass_permissions'], True)
 
     def test_rejects_unsupported_agent_backend(self) -> None:
         cfg = build_test_cfg()

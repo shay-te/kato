@@ -330,6 +330,7 @@ class BitbucketClientTests(unittest.TestCase):
     def test_reply_to_review_comment_posts_thread_reply(self) -> None:
         client = BitbucketClient('https://bitbucket.example', 'bb-token')
         response = mock_response()
+        response.ok = True
         comment = build_review_comment(
             resolution_target_id='99',
             resolution_target_type='comment',
@@ -344,7 +345,6 @@ class BitbucketClientTests(unittest.TestCase):
                 'Done. Added support for creating new options.',
             )
 
-        response.raise_for_status.assert_called_once_with()
         mock_post.assert_called_once_with(
             '/repositories/workspace/repo/pullrequests/17/comments',
             json={
@@ -352,3 +352,22 @@ class BitbucketClientTests(unittest.TestCase):
                 'parent': {'id': 99},
             },
         )
+
+    def test_reply_to_review_comment_raises_with_response_body_on_non_ok(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+        response = mock_response()
+        response.ok = False
+        response.status_code = 400
+        response.text = '{"type":"error","error":{"message":"parent comment is a reply"}}'
+        comment = build_review_comment(
+            resolution_target_id='99',
+            resolution_target_type='comment',
+            resolvable=True,
+        )
+
+        with patch.object(client, '_post', return_value=response):
+            with self.assertRaisesRegex(RuntimeError,
+                                        'bitbucket rejected reply.*HTTP 400'):
+                client.reply_to_review_comment(
+                    'workspace', 'repo', comment, 'fixed it',
+                )

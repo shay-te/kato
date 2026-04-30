@@ -3,7 +3,7 @@ import types
 import os
 from unittest.mock import ANY, Mock, call, patch
 
-from kato.client.kato_client import KatoClient
+from kato.client.openhands.openhands_client import KatoClient
 from kato.data_layers.data.fields import ImplementationFields, ReviewCommentFields
 from utils import (
     ClientTimeout,
@@ -206,7 +206,7 @@ class KatoClientTests(unittest.TestCase):
         )
 
         with patch(
-            'kato.client.kato_client.OpenRouterClient.validate_model_available'
+            'kato.client.openhands.openhands_client.OpenRouterClient.validate_model_available'
         ) as mock_validate_model, patch.dict(
             os.environ,
             {'LLM_API_KEY': 'or-key'},
@@ -508,7 +508,7 @@ class KatoClientTests(unittest.TestCase):
             client,
             '_log_conversation_highlights',
             return_value=True,
-        ), patch('kato.client.kato_client.time.sleep'):
+        ), patch('kato.client.openhands.openhands_client.time.sleep'):
             with self.assertRaisesRegex(
                 TimeoutError,
                 'kato conversation conversation-1 did not finish after 2 polls',
@@ -1359,7 +1359,7 @@ class KatoClientTests(unittest.TestCase):
         )
 
     def test_tool_call_arguments_logs_invalid_json(self) -> None:
-        with patch('kato.client.kato_client.logger') as mock_logger:
+        with patch('kato.client.openhands.openhands_client.logger') as mock_logger:
             payload = KatoClient._tool_call_arguments(
                 {
                     'tool_call': {
@@ -1609,7 +1609,7 @@ class KatoClientTests(unittest.TestCase):
                 mock_response(json_data=[]),
             ],
         ), patch.object(client, '_delete', delete_mock), patch(
-            'kato.client.kato_client.time.sleep'
+            'kato.client.openhands.openhands_client.time.sleep'
         ) as sleep_mock:
             client.stop_all_conversations()
 
@@ -1649,7 +1649,7 @@ class KatoClientTests(unittest.TestCase):
                 mock_response(json_data=[]),
             ],
         ), patch.object(client, '_delete', delete_mock), patch(
-            'kato.client.kato_client.time.sleep'
+            'kato.client.openhands.openhands_client.time.sleep'
         ) as sleep_mock:
             client.stop_all_conversations()
 

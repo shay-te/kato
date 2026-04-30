@@ -5,7 +5,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from kato.client.claude_cli_client import ClaudeCliClient
+from kato.client.claude.cli_client import ClaudeCliClient
 from kato.data_layers.data.fields import ImplementationFields
 from utils import build_review_comment, build_task
 
@@ -29,17 +29,27 @@ def _completed(stdout: str, stderr: str = '', returncode: int = 0) -> subprocess
 class ClaudeCliClientTests(unittest.TestCase):
     def test_validate_connection_raises_when_binary_missing(self) -> None:
         client = ClaudeCliClient(binary='claude-not-installed-xyz')
-        with patch('kato.client.claude_cli_client.shutil.which', return_value=None):
+        with patch('kato.client.claude.cli_client.shutil.which', return_value=None), \
+             patch.object(ClaudeCliClient, '_running_inside_docker', return_value=False):
             with self.assertRaisesRegex(RuntimeError, 'was not found on PATH'):
+                client.validate_connection()
+
+    def test_validate_connection_rejects_running_inside_docker(self) -> None:
+        client = ClaudeCliClient(binary='claude')
+        with patch.object(ClaudeCliClient, '_running_inside_docker', return_value=True):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                'KATO_AGENT_BACKEND=claude is not supported inside Docker',
+            ):
                 client.validate_connection()
 
     def test_validate_connection_runs_version_probe(self) -> None:
         client = ClaudeCliClient(binary='claude')
         with patch(
-            'kato.client.claude_cli_client.shutil.which',
+            'kato.client.claude.cli_client.shutil.which',
             return_value='/usr/local/bin/claude',
         ), patch(
-            'kato.client.claude_cli_client.subprocess.run',
+            'kato.client.claude.cli_client.subprocess.run',
             return_value=_completed('claude 1.0.0\n'),
         ) as mock_run:
             client.validate_connection()
@@ -51,10 +61,10 @@ class ClaudeCliClientTests(unittest.TestCase):
     def test_validate_connection_raises_when_version_probe_fails(self) -> None:
         client = ClaudeCliClient(binary='claude')
         with patch(
-            'kato.client.claude_cli_client.shutil.which',
+            'kato.client.claude.cli_client.shutil.which',
             return_value='/usr/local/bin/claude',
         ), patch(
-            'kato.client.claude_cli_client.subprocess.run',
+            'kato.client.claude.cli_client.subprocess.run',
             return_value=_completed('', stderr='boom', returncode=1),
         ):
             with self.assertRaisesRegex(RuntimeError, 'failed to report a version'):
@@ -87,7 +97,7 @@ class ClaudeCliClientTests(unittest.TestCase):
             )
         )
         with patch(
-            'kato.client.claude_cli_client.subprocess.run',
+            'kato.client.claude.cli_client.subprocess.run',
             return_value=completed,
         ) as mock_run:
             result = client.implement_task(build_task(), prepared_task=prepared)
@@ -121,7 +131,7 @@ class ClaudeCliClientTests(unittest.TestCase):
         )()
         completed = _completed(json.dumps({'is_error': False, 'result': 'ok', 'session_id': ''}))
         with patch(
-            'kato.client.claude_cli_client.subprocess.run',
+            'kato.client.claude.cli_client.subprocess.run',
             return_value=completed,
         ) as mock_run:
             client.implement_task(build_task(), prepared_task=prepared)
@@ -136,7 +146,7 @@ class ClaudeCliClientTests(unittest.TestCase):
         client = ClaudeCliClient(binary='claude', repository_root_path='/tmp/x')
         completed = _completed('', stderr='exploded', returncode=2)
         with patch(
-            'kato.client.claude_cli_client.subprocess.run',
+            'kato.client.claude.cli_client.subprocess.run',
             return_value=completed,
         ):
             with self.assertRaisesRegex(RuntimeError, 'exited with status 2'):
@@ -148,7 +158,7 @@ class ClaudeCliClientTests(unittest.TestCase):
             json.dumps({'is_error': True, 'result': 'rate limited', 'session_id': ''})
         )
         with patch(
-            'kato.client.claude_cli_client.subprocess.run',
+            'kato.client.claude.cli_client.subprocess.run',
             return_value=completed,
         ):
             with self.assertRaisesRegex(RuntimeError, 'rate limited'):
@@ -157,7 +167,7 @@ class ClaudeCliClientTests(unittest.TestCase):
     def test_implement_task_raises_on_subprocess_timeout(self) -> None:
         client = ClaudeCliClient(binary='claude', timeout_seconds=60, repository_root_path='/tmp/x')
         with patch(
-            'kato.client.claude_cli_client.subprocess.run',
+            'kato.client.claude.cli_client.subprocess.run',
             side_effect=subprocess.TimeoutExpired(cmd=['claude'], timeout=60),
         ):
             with self.assertRaises(TimeoutError):
@@ -169,7 +179,7 @@ class ClaudeCliClientTests(unittest.TestCase):
             json.dumps({'is_error': False, 'result': 'fix done', 'session_id': 'sess-2'})
         )
         with patch(
-            'kato.client.claude_cli_client.subprocess.run',
+            'kato.client.claude.cli_client.subprocess.run',
             return_value=completed,
         ) as mock_run:
             result = client.fix_review_comment(
@@ -189,7 +199,7 @@ class ClaudeCliClientTests(unittest.TestCase):
             json.dumps({'is_error': False, 'result': 'tested', 'session_id': ''})
         )
         with patch(
-            'kato.client.claude_cli_client.subprocess.run',
+            'kato.client.claude.cli_client.subprocess.run',
             return_value=completed,
         ) as mock_run:
             client.test_task(build_task())
@@ -211,7 +221,7 @@ class ClaudeCliClientTests(unittest.TestCase):
             max_turns=5,
             allowed_tools='Edit,Write',
             disallowed_tools='Bash',
-            permission_mode='acceptEdits',
+            bypass_permissions=False,
         )
         cmd = client._build_command(additional_dirs=['/tmp/extra'], session_id='abc')
         self.assertEqual(cmd[0], 'claude')
@@ -227,6 +237,24 @@ class ClaudeCliClientTests(unittest.TestCase):
         self.assertIn('/tmp/extra', cmd)
         self.assertIn('--resume', cmd)
         self.assertIn('abc', cmd)
+
+    def test_default_safe_mode_uses_acceptEdits_and_default_allowlist(self) -> None:
+        client = ClaudeCliClient(binary='claude')
+        cmd = client._build_command(additional_dirs=[], session_id='')
+        self.assertIn('--permission-mode', cmd)
+        self.assertIn('acceptEdits', cmd)
+        self.assertIn('--allowedTools', cmd)
+        self.assertIn('Edit,Write,Read,Bash,Glob,Grep', cmd)
+        self.assertNotIn('bypassPermissions', cmd)
+
+    def test_bypass_permissions_opts_into_dangerous_mode(self) -> None:
+        client = ClaudeCliClient(binary='claude', bypass_permissions=True)
+        cmd = client._build_command(additional_dirs=[], session_id='')
+        self.assertIn('--permission-mode', cmd)
+        self.assertIn('bypassPermissions', cmd)
+        self.assertNotIn('acceptEdits', cmd)
+        # When bypassing, no implicit allowlist is injected.
+        self.assertNotIn('--allowedTools', cmd)
 
 
 if __name__ == '__main__':

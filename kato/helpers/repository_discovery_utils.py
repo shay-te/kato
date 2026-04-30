@@ -18,7 +18,7 @@ DISCOVERY_SKIP_DIRS = {
 }
 
 @dataclass(frozen=True)
-class DiscoveredRepository:
+class DiscoveredRepository(object):
     local_path: str
     remote_url: str
     provider: str
