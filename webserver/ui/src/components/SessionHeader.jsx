@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { postSession } from '../api.js';
+import { deriveTabStatus, tabStatusTitle } from '../utils/tabStatus.js';
 
 export default function SessionHeader({ session, onStopped }) {
   const [stopping, setStopping] = useState(false);
   if (!session) { return null; }
-  const status = session.status || 'active';
+  const status = deriveTabStatus(session);
+  const isLoading = status === 'provisioning';
 
   async function onStop() {
     setStopping(true);
@@ -19,8 +21,12 @@ export default function SessionHeader({ session, onStopped }) {
     <header id="session-header">
       <span
         id="session-status-dot"
-        className={`status-dot status-${status}`}
-        title={status}
+        className={[
+          'status-dot',
+          `status-${status}`,
+          isLoading ? 'is-loading' : '',
+        ].filter(Boolean).join(' ')}
+        title={tabStatusTitle(status)}
       />
       <strong id="session-task-id">{session.task_id}</strong>
       <span id="session-task-summary">{session.task_summary || ''}</span>
@@ -29,7 +35,7 @@ export default function SessionHeader({ session, onStopped }) {
         type="button"
         title="Stop the live Claude subprocess for this task"
         onClick={onStop}
-        disabled={stopping}
+        disabled={stopping || status !== 'active'}
       >
         {stopping ? 'Stopping…' : 'Stop'}
       </button>

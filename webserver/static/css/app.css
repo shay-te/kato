@@ -169,12 +169,31 @@ header button:hover { color: #e2e8f0; border-color: #6366f1; }
 }
 
 .status-active       { background: #047857; }   /* green: live working */
+.status-idle         { background: #475569; }   /* slate: tab present, no subprocess */
 .status-review       { background: #2563eb; }   /* blue:  awaiting review */
 .status-done         { background: #1e293b; border-color: #334155; } /* dim */
 .status-terminated   { background: #6b7280; }   /* gray: stopped */
 .status-provisioning { background: #6366f1; }   /* indigo: cloning */
 .status-errored      { background: #b91c1c; }   /* red:   half-broken workspace */
 .status-attention    { background: #f59e0b; }   /* amber: needs your input */
+
+.status-dot.is-loading {
+  position: relative;
+}
+.status-dot.is-loading::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: #818cf8;
+  border-right-color: #818cf8;
+  animation: kato-status-spin 0.9s linear infinite;
+  pointer-events: none;
+}
+@keyframes kato-status-spin {
+  to { transform: rotate(360deg); }
+}
 
 .tab.needs-attention {
   border-left-color: #f59e0b;
@@ -262,6 +281,37 @@ header button:hover { color: #e2e8f0; border-color: #6366f1; }
                     font-size: 13px; font-family: ui-monospace, monospace; }
 .bubble.error     { background: #7f1d1d; align-self: stretch; color: #fee2e2; }
 
+.working-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 24px 0;
+  font-size: 13px;
+  color: #94a3b8;
+  font-style: italic;
+  user-select: none;
+}
+.working-indicator-glyph {
+  display: inline-block;
+  color: #818cf8;
+  font-style: normal;
+  animation: kato-working-spin 2.4s linear infinite;
+}
+.working-indicator-phrase {
+  min-width: 14ch;
+}
+.working-indicator-ellipsis {
+  animation: kato-working-pulse 1.2s ease-in-out infinite;
+}
+@keyframes kato-working-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes kato-working-pulse {
+  0%, 100% { opacity: 0.3; }
+  50%      { opacity: 1; }
+}
+
 #message-form {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -298,7 +348,13 @@ header button:hover { color: #e2e8f0; border-color: #6366f1; }
 }
 #message-form button.is-steering:hover { background: #fbbf24; }
 
-#message-form button:disabled { background: #334155; cursor: not-allowed; }
+#message-form button:disabled { background: #334155; cursor: not-allowed; color: #94a3b8; }
+#message-input:disabled {
+  background: #0a0f1c;
+  color: #64748b;
+  border-color: #1e293b;
+  cursor: not-allowed;
+}
 
 code {
   background: #1e293b;

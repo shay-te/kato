@@ -59,7 +59,6 @@ function reduceIncomingEvent(state, raw) {
       next.turnInFlight = true;
       break;
     case 'result':
-      // Turn ended — any pending permission is moot (agent moved past it).
       next.turnInFlight = false;
       next.pendingPermission = null;
       break;
@@ -67,10 +66,28 @@ function reduceIncomingEvent(state, raw) {
     case 'control_request':
       next.pendingPermission = raw;
       break;
+    case 'permission_response': {
+      const respondedId = String(raw.request_id || '');
+      const pendingId = pendingRequestId(state.pendingPermission);
+      if (!respondedId || !pendingId || respondedId === pendingId) {
+        next.pendingPermission = null;
+      }
+      break;
+    }
     default:
       break;
   }
   return next;
+}
+
+function pendingRequestId(pending) {
+  if (!pending) { return ''; }
+  return String(
+    pending.request_id
+    || pending.request?.request_id
+    || pending.id
+    || '',
+  );
 }
 
 export function useSessionStream(taskId, onIncomingEvent) {

@@ -49,6 +49,7 @@ function serverBubblesFor(raw, index) {
       return resultBubbles(raw, index);
     case 'permission_request':
     case 'control_request':
+    case 'permission_response':
       return [];
     default:
       return [

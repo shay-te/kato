@@ -280,6 +280,20 @@ class StreamingClaudeSession(object):
             },
         }
         self._write_stdin_line(envelope)
+        # Mirror the response into the event log so any browser that
+        # reconnects (or another tab opened on the same task) replays a
+        # signal that this request is no longer pending — otherwise the
+        # backlog would re-pop the modal for an already-answered ask.
+        synthetic_event = SessionEvent(
+            raw={
+                'type': 'permission_response',
+                'request_id': request_id_str,
+                'allow': bool(allow),
+            },
+        )
+        with self._recent_events_lock:
+            self._recent_events.append(synthetic_event)
+        self._event_queue.put(synthetic_event)
 
     def terminate(self, grace_seconds: float = 5.0) -> None:
         """Close stdin, wait briefly, then SIGTERM / kill as needed.

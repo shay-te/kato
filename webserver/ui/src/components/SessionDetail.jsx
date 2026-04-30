@@ -3,6 +3,7 @@ import EventLog from './EventLog.jsx';
 import MessageForm from './MessageForm.jsx';
 import PermissionDecisionContainer from './PermissionDecisionContainer.jsx';
 import SessionHeader from './SessionHeader.jsx';
+import WorkingIndicator from './WorkingIndicator.jsx';
 import { ChatComposerContext } from '../contexts/ChatComposerContext.jsx';
 import { useSessionStream, SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
 import { useToolMemory } from '../hooks/useToolMemory.js';
@@ -86,11 +87,14 @@ export default function SessionDetail({ session, onActivity }) {
               hasVisibleBubbles(stream.events),
             )}
           />
+          <WorkingIndicator active={stream.turnInFlight} />
           <MessageForm
             value={composerValue}
             onChange={setComposerValue}
             turnInFlight={stream.turnInFlight}
             onSubmit={onSendMessage}
+            disabled={!isLive(stream.lifecycle)}
+            disabledReason={composerDisabledReason(stream.lifecycle)}
           />
         </section>
         <PermissionDecisionContainer
@@ -104,6 +108,24 @@ export default function SessionDetail({ session, onActivity }) {
       </main>
     </ChatComposerContext.Provider>
   );
+}
+
+function isLive(lifecycle) {
+  return lifecycle === SESSION_LIFECYCLE.STREAMING
+    || lifecycle === SESSION_LIFECYCLE.CONNECTING;
+}
+
+function composerDisabledReason(lifecycle) {
+  switch (lifecycle) {
+    case SESSION_LIFECYCLE.IDLE:
+      return 'No live subprocess — chat will resume when kato re-spawns this task.';
+    case SESSION_LIFECYCLE.CLOSED:
+      return 'Session has ended.';
+    case SESSION_LIFECYCLE.MISSING:
+      return 'No record for this task on the server.';
+    default:
+      return '';
+  }
 }
 
 // Banner is the always-visible status line at the top of the log.
@@ -138,7 +160,7 @@ function hasVisibleBubbles(entries) {
     const type = entry?.raw?.type;
     if (!type) { return false; }
     if (type === 'user' || type === 'stream_event') { return false; }
-    if (type === 'permission_request' || type === 'control_request') { return false; }
+    if (type === 'permission_request' || type === 'control_request' || type === 'permission_response') { return false; }
     if (type === 'system' && entry.raw.subtype !== 'init') { return false; }
     if (type === 'assistant') {
       const content = entry.raw?.message?.content || [];

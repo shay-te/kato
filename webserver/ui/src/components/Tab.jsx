@@ -1,10 +1,18 @@
+import { deriveTabStatus, tabStatusTitle } from '../utils/tabStatus.js';
+
 export default function Tab({ session, active, needsAttention, onSelect }) {
-  const baseStatus = session.status || 'active';
+  const baseStatus = deriveTabStatus(session);
   const status = needsAttention ? 'attention' : baseStatus;
+  const isLoading = baseStatus === 'provisioning';
   const className = [
     'tab',
     active ? 'active' : '',
     needsAttention ? 'needs-attention' : '',
+  ].filter(Boolean).join(' ');
+  const dotClass = [
+    'status-dot',
+    `status-${status}`,
+    isLoading ? 'is-loading' : '',
   ].filter(Boolean).join(' ');
   return (
     <li
@@ -13,8 +21,8 @@ export default function Tab({ session, active, needsAttention, onSelect }) {
       onClick={() => onSelect(session.task_id)}
     >
       <span
-        className={`status-dot status-${status}`}
-        title={needsAttention ? `${baseStatus} — needs your input` : baseStatus}
+        className={dotClass}
+        title={tabStatusTitle(baseStatus, needsAttention)}
       />
       <strong>{session.task_id}</strong>
       <p>{session.task_summary || ''}</p>

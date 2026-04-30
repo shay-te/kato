@@ -3,22 +3,30 @@ export default function MessageForm({
   onChange,
   turnInFlight,
   onSubmit,
+  disabled = false,
+  disabledReason = '',
 }) {
   function submit(event) {
     event.preventDefault();
+    if (disabled) { return; }
     const trimmed = (value || '').trim();
     if (!trimmed) { return; }
     onSubmit(trimmed);
     onChange('');
   }
 
+  const placeholder = disabled
+    ? disabledReason || 'Session is not live — chat resumes when kato re-spawns it.'
+    : 'Reply to Claude (Shift+Enter for newline)';
+
   return (
     <form id="message-form" onSubmit={submit}>
       <textarea
         id="message-input"
-        placeholder="Reply to Claude (Shift+Enter for newline)"
+        placeholder={placeholder}
         rows={2}
         value={value || ''}
+        disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey) {
@@ -28,12 +36,15 @@ export default function MessageForm({
       />
       <button
         type="submit"
-        className={turnInFlight ? 'is-steering' : ''}
-        title={turnInFlight
-          ? 'Claude is working — your message will steer the in-flight turn.'
-          : ''}
+        disabled={disabled}
+        className={turnInFlight && !disabled ? 'is-steering' : ''}
+        title={disabled
+          ? (disabledReason || 'Session is not live')
+          : turnInFlight
+            ? 'Claude is working — your message will steer the in-flight turn.'
+            : ''}
       >
-        {turnInFlight ? 'Steer' : 'Send'}
+        {turnInFlight && !disabled ? 'Steer' : 'Send'}
       </button>
     </form>
   );
