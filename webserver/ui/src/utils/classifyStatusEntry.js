@@ -1,8 +1,10 @@
+import { NOTIFICATION_KIND } from '../constants/notificationKind.js';
+
 const PATTERNS = [
   {
     re: /^task (\S+) tagged kato:wait-planning/,
     build: (m) => ({
-      title: 'Planning chat ready', body: m[1], taskId: m[1], kind: 'started',
+      title: 'Planning chat ready', body: m[1], taskId: m[1], kind: NOTIFICATION_KIND.STARTED,
     }),
   },
   {
@@ -11,13 +13,13 @@ const PATTERNS = [
       title: 'Task started',
       body: m[2] ? `${m[1]}: ${m[2]}` : m[1],
       taskId: m[1],
-      kind: 'started',
+      kind: NOTIFICATION_KIND.STARTED,
     }),
   },
   {
     re: /^Mission (\S+): workflow completed successfully/,
     build: (m) => ({
-      title: 'Task completed', body: m[1], taskId: m[1], kind: 'completed',
+      title: 'Task completed', body: m[1], taskId: m[1], kind: NOTIFICATION_KIND.COMPLETED,
     }),
   },
   {
@@ -26,13 +28,13 @@ const PATTERNS = [
       title: 'Approval needed',
       body: `${m[1]} → ${m[2]}`,
       taskId: m[1],
-      kind: 'attention',
+      kind: NOTIFICATION_KIND.ATTENTION,
     }),
   },
   {
     re: /^task (\S+): claude turn ended \(error\)/,
     build: (m) => ({
-      title: 'Turn failed', body: m[1], taskId: m[1], kind: 'error',
+      title: 'Turn failed', body: m[1], taskId: m[1], kind: NOTIFICATION_KIND.ERROR,
     }),
   },
 ];

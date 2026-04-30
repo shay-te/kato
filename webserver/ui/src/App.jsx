@@ -12,6 +12,8 @@ import { useSessions } from './hooks/useSessions.js';
 import { useStatusFeed } from './hooks/useStatusFeed.js';
 import { useTaskAttention } from './hooks/useTaskAttention.js';
 import { classifyStatusEntry } from './utils/classifyStatusEntry.js';
+import { CLAUDE_EVENT } from './constants/claudeEvent.js';
+import { NOTIFICATION_KIND } from './constants/notificationKind.js';
 
 const RIGHT_PANE_DEFAULT_WIDTH = 380;
 const RIGHT_PANE_MIN_WIDTH = 220;
@@ -22,6 +24,15 @@ export default function App() {
   const [activeTaskId, setActiveTaskIdState] = useState('');
   const { sessions, refresh } = useSessions();
   const attention = useTaskAttention();
+  const [workspaceVersion, setWorkspaceVersion] = useState(() => ({}));
+
+  const bumpWorkspaceVersion = useCallback((taskId) => {
+    if (!taskId) { return; }
+    setWorkspaceVersion((prev) => ({
+      ...prev,
+      [taskId]: (prev[taskId] || 0) + 1,
+    }));
+  }, []);
 
   const setActiveTaskId = useCallback((taskId) => {
     setActiveTaskIdState(taskId);
@@ -41,7 +52,7 @@ export default function App() {
   const handleStatusEntry = useCallback((entry) => {
     routing.onStatusEntry(entry);
     const classification = classifyStatusEntry(entry);
-    if (classification?.kind === 'attention' && classification.taskId) {
+    if (classification?.kind === NOTIFICATION_KIND.ATTENTION && classification.taskId) {
       attention.mark(classification.taskId);
     }
   }, [routing, attention]);
@@ -49,12 +60,17 @@ export default function App() {
   const handleSessionEvent = useCallback((raw, taskId) => {
     routing.onSessionEvent(raw, taskId);
     if (!raw?.type || !taskId) { return; }
-    if (raw.type === 'permission_request' || raw.type === 'control_request') {
+    if (raw.type === CLAUDE_EVENT.PERMISSION_REQUEST
+        || raw.type === CLAUDE_EVENT.CONTROL_REQUEST) {
       attention.mark(taskId);
-    } else if (raw.type === 'result') {
+    } else if (raw.type === CLAUDE_EVENT.PERMISSION_RESPONSE
+        || raw.type === CLAUDE_EVENT.RESULT) {
       attention.clear(taskId);
     }
-  }, [routing, attention]);
+    if (raw.type === CLAUDE_EVENT.RESULT) {
+      bumpWorkspaceVersion(taskId);
+    }
+  }, [routing, attention, bumpWorkspaceVersion]);
 
   const status = useStatusFeed(handleStatusEntry);
 
@@ -101,6 +117,7 @@ export default function App() {
         right={
           <RightPane
             activeTaskId={activeTaskId}
+            workspaceVersion={workspaceVersion[activeTaskId] || 0}
             width={resizer.width}
             onResizePointerDown={resizer.onPointerDown}
           />

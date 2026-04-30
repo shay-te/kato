@@ -98,6 +98,8 @@ class KatoCoreLib(CoreLib):
         self.workspace_manager = WorkspaceManager.from_config(
             open_cfg, agent_backend,
         )
+        if self.session_manager is not None and self.workspace_manager is not None:
+            self.session_manager.attach_workspace_manager(self.workspace_manager)
         # Worker pool sized to KATO_MAX_PARALLEL_TASKS. With max=1 the
         # behavior is identical to the previous synchronous loop —
         # submit-then-block — so single-task setups don't pay any cost.
@@ -107,6 +109,7 @@ class KatoCoreLib(CoreLib):
         planning_session_runner = PlanningSessionRunner.from_config(
             open_cfg, agent_backend, self.session_manager,
         )
+        self.planning_session_runner = planning_session_runner
         self.logger.info('using agent backend: %s', agent_backend)
         issue_platform, ticket_cfg = self._resolve_ticket_platform_config(open_cfg)
         ticket_client = build_ticket_client(

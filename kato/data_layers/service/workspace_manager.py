@@ -72,6 +72,8 @@ class WorkspaceRecord(object):
     task_summary: str = ''
     status: str = WORKSPACE_STATUS_PROVISIONING
     repository_ids: list[str] = field(default_factory=list)
+    claude_session_id: str = ''
+    cwd: str = ''
     created_at_epoch: float = field(default_factory=time.time)
     updated_at_epoch: float = field(default_factory=time.time)
 
@@ -89,6 +91,8 @@ class WorkspaceRecord(object):
             status=str(payload.get('status', WORKSPACE_STATUS_PROVISIONING)
                        or WORKSPACE_STATUS_PROVISIONING),
             repository_ids=[str(rid) for rid in repository_ids if rid],
+            claude_session_id=str(payload.get('claude_session_id', '') or ''),
+            cwd=str(payload.get('cwd', '') or ''),
             created_at_epoch=float(
                 payload.get('created_at_epoch', time.time()) or time.time(),
             ),
@@ -187,6 +191,8 @@ class WorkspaceManager(object):
                 status=(existing.status if existing else WORKSPACE_STATUS_PROVISIONING),
                 repository_ids=list(repository_ids or [])
                 or (list(existing.repository_ids) if existing else []),
+                claude_session_id=(existing.claude_session_id if existing else ''),
+                cwd=(existing.cwd if existing else ''),
                 created_at_epoch=(
                     existing.created_at_epoch if existing else time.time()
                 ),
@@ -239,6 +245,36 @@ class WorkspaceManager(object):
             if record is None:
                 return None
             record.status = status
+            record.updated_at_epoch = time.time()
+            self._write_metadata(workspace_dir, record)
+            return record
+
+    def update_claude_session(
+        self,
+        task_id: str,
+        *,
+        claude_session_id: str = '',
+        cwd: str = '',
+    ) -> WorkspaceRecord | None:
+        """Persist Claude's session id (and cwd it ran in) for later resume.
+
+        Both fields are optional — pass only what you have. Existing values
+        are kept when the corresponding argument is empty so a partial
+        update doesn't blank a previously-recorded id.
+        """
+        with self._lock:
+            workspace_dir = self.workspace_path(task_id)
+            if not workspace_dir.is_dir():
+                return None
+            record = self._read_metadata(workspace_dir)
+            if record is None:
+                return None
+            session_id = normalized_text(claude_session_id)
+            cwd_value = normalized_text(cwd)
+            if session_id:
+                record.claude_session_id = session_id
+            if cwd_value:
+                record.cwd = cwd_value
             record.updated_at_epoch = time.time()
             self._write_metadata(workspace_dir, record)
             return record

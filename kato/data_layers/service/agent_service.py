@@ -28,7 +28,9 @@ from kato.data_layers.service.task_preflight_service import (
 from kato.data_layers.service.task_service import TaskService
 from kato.data_layers.service.testing_service import TestingService
 from kato.data_layers.service.workspace_manager import (
+    WORKSPACE_STATUS_ACTIVE,
     WORKSPACE_STATUS_ERRORED,
+    WORKSPACE_STATUS_PROVISIONING,
     WORKSPACE_STATUS_REVIEW,
 )
 from kato.data_layers.data.fields import (
@@ -280,8 +282,17 @@ class AgentService(Service):
             self._delete_workspace_silent(task_id)
 
     def _stale_planning_task_ids(self, live_task_ids: set[str]) -> set[str]:
-        """Union of task ids known to either manager that aren't live anymore."""
+        """Union of task ids known to either manager that aren't live anymore.
+
+        Workspaces still in ``active`` or ``provisioning`` are protected from
+        cleanup even when the ticket has rotated out of the assigned state
+        bucket — kato moves the ticket to *In Progress* itself, which makes
+        it momentarily disappear from both ``get_assigned_tasks()`` and
+        ``get_review_tasks()``. Without this guard, the next scan tick
+        would wipe a workspace kato is actively driving.
+        """
         candidates: set[str] = set()
+        in_flight_workspace_ids: set[str] = set()
         if self._session_manager is not None:
             try:
                 candidates.update(
@@ -291,13 +302,16 @@ class AgentService(Service):
                 self.logger.exception('failed to list planning session records')
         if self._workspace_manager is not None:
             try:
-                candidates.update(
-                    record.task_id
-                    for record in self._workspace_manager.list_workspaces()
-                )
+                workspace_records = self._workspace_manager.list_workspaces()
             except Exception:
                 self.logger.exception('failed to list workspaces')
-        return candidates - live_task_ids
+                workspace_records = []
+            for record in workspace_records:
+                candidates.add(record.task_id)
+                status = getattr(record, 'status', '')
+                if status in (WORKSPACE_STATUS_ACTIVE, WORKSPACE_STATUS_PROVISIONING):
+                    in_flight_workspace_ids.add(record.task_id)
+        return candidates - live_task_ids - in_flight_workspace_ids
 
     def _terminate_session_silent(self, task_id: str) -> None:
         if self._session_manager is None:

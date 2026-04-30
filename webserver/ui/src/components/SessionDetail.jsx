@@ -5,6 +5,9 @@ import PermissionDecisionContainer from './PermissionDecisionContainer.jsx';
 import SessionHeader from './SessionHeader.jsx';
 import WorkingIndicator from './WorkingIndicator.jsx';
 import { ChatComposerContext } from '../contexts/ChatComposerContext.jsx';
+import { BUBBLE_KIND } from '../constants/bubbleKind.js';
+import { CLAUDE_EVENT, CLAUDE_SYSTEM_SUBTYPE } from '../constants/claudeEvent.js';
+import { ENTRY_SOURCE } from '../constants/entrySource.js';
 import { useSessionStream, SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
 import { useToolMemory } from '../hooks/useToolMemory.js';
 import { postSession } from '../api.js';
@@ -38,14 +41,25 @@ export default function SessionDetail({ session, onActivity }) {
   }
 
   async function onSendMessage(text) {
-    stream.appendLocalEvent({ source: 'local', kind: 'user', text });
+    stream.appendLocalEvent({ source: ENTRY_SOURCE.LOCAL, kind: BUBBLE_KIND.USER, text });
     stream.markTurnBusy(true);
     const result = await postSession(taskId, 'messages', { text });
     if (result.ok) {
-      stream.appendLocalEvent({ source: 'local', kind: 'system', text: '✓ delivered' });
+      const status = result.body?.status;
+      if (status === 'spawned') {
+        stream.appendLocalEvent({
+          source: ENTRY_SOURCE.LOCAL, kind: BUBBLE_KIND.SYSTEM,
+          text: '✓ resumed — spawning Claude…',
+        });
+        stream.reconnect();
+      } else {
+        stream.appendLocalEvent({
+          source: ENTRY_SOURCE.LOCAL, kind: BUBBLE_KIND.SYSTEM, text: '✓ delivered',
+        });
+      }
     } else {
       stream.appendLocalEvent({
-        source: 'local', kind: 'error',
+        source: ENTRY_SOURCE.LOCAL, kind: BUBBLE_KIND.ERROR,
         text: `send failed: ${result.error}`,
       });
       stream.markTurnBusy(false);
@@ -60,7 +74,7 @@ export default function SessionDetail({ session, onActivity }) {
     });
     if (!result.ok) {
       stream.appendLocalEvent({
-        source: 'local', kind: 'error',
+        source: ENTRY_SOURCE.LOCAL, kind: BUBBLE_KIND.ERROR,
         text: `permission send failed: ${result.error}`,
       });
     }
@@ -69,8 +83,8 @@ export default function SessionDetail({ session, onActivity }) {
   async function onStopped(result) {
     stream.appendLocalEvent(
       result.ok
-        ? { source: 'local', kind: 'system', text: '✗ session stopped' }
-        : { source: 'local', kind: 'error', text: `stop failed: ${result.error}` },
+        ? { source: ENTRY_SOURCE.LOCAL, kind: BUBBLE_KIND.SYSTEM, text: '✗ session stopped' }
+        : { source: ENTRY_SOURCE.LOCAL, kind: BUBBLE_KIND.ERROR, text: `stop failed: ${result.error}` },
     );
   }
 
@@ -93,8 +107,8 @@ export default function SessionDetail({ session, onActivity }) {
             onChange={setComposerValue}
             turnInFlight={stream.turnInFlight}
             onSubmit={onSendMessage}
-            disabled={!isLive(stream.lifecycle)}
-            disabledReason={composerDisabledReason(stream.lifecycle)}
+            disabled={!canSend(stream.lifecycle, session)}
+            disabledReason={composerDisabledReason(stream.lifecycle, session)}
           />
         </section>
         <PermissionDecisionContainer
@@ -110,21 +124,21 @@ export default function SessionDetail({ session, onActivity }) {
   );
 }
 
-function isLive(lifecycle) {
-  return lifecycle === SESSION_LIFECYCLE.STREAMING
-    || lifecycle === SESSION_LIFECYCLE.CONNECTING;
+function canSend(lifecycle, session) {
+  if (lifecycle === SESSION_LIFECYCLE.STREAMING
+      || lifecycle === SESSION_LIFECYCLE.CONNECTING) {
+    return true;
+  }
+  return Boolean(session?.claude_session_id);
 }
 
-function composerDisabledReason(lifecycle) {
+function composerDisabledReason(lifecycle, session) {
+  if (canSend(lifecycle, session)) { return ''; }
   switch (lifecycle) {
-    case SESSION_LIFECYCLE.IDLE:
-      return 'No live subprocess — chat will resume when kato re-spawns this task.';
-    case SESSION_LIFECYCLE.CLOSED:
-      return 'Session has ended.';
     case SESSION_LIFECYCLE.MISSING:
       return 'No record for this task on the server.';
     default:
-      return '';
+      return 'No saved Claude session — start the task again to chat.';
   }
 }
 
@@ -156,13 +170,18 @@ function lifecycleBanner(lifecycle, taskId, hasVisible) {
 // content actually arrives. Mirrors EventLog's filtering rules.
 function hasVisibleBubbles(entries) {
   return entries.some((entry) => {
-    if (entry?.source === 'local') { return true; }
+    if (entry?.source === ENTRY_SOURCE.LOCAL) { return true; }
+    if (entry?.source === ENTRY_SOURCE.HISTORY) { return true; }
     const type = entry?.raw?.type;
     if (!type) { return false; }
-    if (type === 'user' || type === 'stream_event') { return false; }
-    if (type === 'permission_request' || type === 'control_request' || type === 'permission_response') { return false; }
-    if (type === 'system' && entry.raw.subtype !== 'init') { return false; }
-    if (type === 'assistant') {
+    if (type === CLAUDE_EVENT.USER || type === CLAUDE_EVENT.STREAM_EVENT) { return false; }
+    if (type === CLAUDE_EVENT.PERMISSION_REQUEST
+        || type === CLAUDE_EVENT.CONTROL_REQUEST
+        || type === CLAUDE_EVENT.PERMISSION_RESPONSE) { return false; }
+    if (type === CLAUDE_EVENT.SYSTEM && entry.raw.subtype !== CLAUDE_SYSTEM_SUBTYPE.INIT) {
+      return false;
+    }
+    if (type === CLAUDE_EVENT.ASSISTANT) {
       const content = entry.raw?.message?.content || [];
       return content.some(
         (b) => (b?.type === 'text' && b.text) || b?.type === 'tool_use',

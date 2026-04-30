@@ -44,7 +44,11 @@ export async function postSession(taskId, endpoint, body) {
         error: await safeReadError(response),
       };
     }
-    return { ok: true, status: response.status };
+    let resultBody = null;
+    try {
+      resultBody = await response.json();
+    } catch (_) { /* not all endpoints return json; that's fine */ }
+    return { ok: true, status: response.status, body: resultBody };
   } catch (err) {
     return { ok: false, status: 0, error: String(err) };
   }

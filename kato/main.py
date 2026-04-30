@@ -99,6 +99,7 @@ def _start_planning_webserver_if_enabled(app) -> None:
 
     session_manager = getattr(app, 'session_manager', None)
     workspace_manager = getattr(app, 'workspace_manager', None)
+    planning_session_runner = getattr(app, 'planning_session_runner', None)
     if session_manager is None and workspace_manager is None:
         # Both backends now use a workspace manager, so this only fires
         # in stripped-down setups (tests, embedded use). Nothing to
@@ -121,6 +122,7 @@ def _start_planning_webserver_if_enabled(app) -> None:
     flask_app = _create_webserver_app(
         session_manager=session_manager,
         workspace_manager=workspace_manager,
+        planning_session_runner=planning_session_runner,
         status_broadcaster=_STATUS_BROADCASTER,
     )
 

@@ -1,9 +1,10 @@
+import { TAB_STATUS } from '../constants/tabStatus.js';
 import { deriveTabStatus, tabStatusTitle } from '../utils/tabStatus.js';
 
 export default function Tab({ session, active, needsAttention, onSelect }) {
   const baseStatus = deriveTabStatus(session);
-  const status = needsAttention ? 'attention' : baseStatus;
-  const isLoading = baseStatus === 'provisioning';
+  const status = needsAttention ? TAB_STATUS.ATTENTION : baseStatus;
+  const isLoading = baseStatus === TAB_STATUS.PROVISIONING;
   const className = [
     'tab',
     active ? 'active' : '',

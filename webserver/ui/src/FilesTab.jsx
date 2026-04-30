@@ -3,7 +3,7 @@ import { Tree } from 'react-arborist';
 import { fetchFileTree } from './api.js';
 import { useChatComposer } from './contexts/ChatComposerContext.jsx';
 
-export default function FilesTab({ taskId }) {
+export default function FilesTab({ taskId, workspaceVersion = 0 }) {
   const { appendToInput } = useChatComposer();
   const [state, setState] = useState({
     status: 'loading',
@@ -33,7 +33,7 @@ export default function FilesTab({ taskId }) {
         setState({ status: 'error', tree: [], cwd: '', error: String(err) });
       });
     return () => { cancelled = true; };
-  }, [taskId]);
+  }, [taskId, workspaceVersion]);
 
   useEffect(() => {
     const node = containerRef.current;

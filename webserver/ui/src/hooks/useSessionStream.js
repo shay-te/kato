@@ -1,4 +1,6 @@
-import { useEffect, useReducer } from 'react';
+import { useEffect, useReducer, useState } from 'react';
+import { CLAUDE_EVENT } from '../constants/claudeEvent.js';
+import { ENTRY_SOURCE } from '../constants/entrySource.js';
 import { safeParseJSON } from '../utils/sse.js';
 
 export const SESSION_LIFECYCLE = {
@@ -11,6 +13,7 @@ export const SESSION_LIFECYCLE = {
 
 const ACTION_RESET = 'reset';
 const ACTION_INCOMING_EVENT = 'incoming_event';
+const ACTION_INCOMING_HISTORY = 'incoming_history';
 const ACTION_LIFECYCLE = 'lifecycle';
 const ACTION_LOCAL_EVENT = 'local_event';
 const ACTION_DISMISS_PERMISSION = 'dismiss_permission';
@@ -31,6 +34,11 @@ function reducer(state, action) {
       return initialState();
     case ACTION_INCOMING_EVENT:
       return reduceIncomingEvent(state, action.event);
+    case ACTION_INCOMING_HISTORY:
+      return {
+        ...state,
+        events: [...state.events, { source: ENTRY_SOURCE.HISTORY, raw: action.event }],
+      };
     case ACTION_LOCAL_EVENT:
       return { ...state, events: [...state.events, action.event] };
     case ACTION_LIFECYCLE:
@@ -52,21 +60,21 @@ function reducer(state, action) {
 }
 
 function reduceIncomingEvent(state, raw) {
-  const events = [...state.events, { source: 'server', raw }];
+  const events = [...state.events, { source: ENTRY_SOURCE.SERVER, raw }];
   let next = { ...state, events };
   switch (raw?.type) {
-    case 'assistant':
+    case CLAUDE_EVENT.ASSISTANT:
       next.turnInFlight = true;
       break;
-    case 'result':
+    case CLAUDE_EVENT.RESULT:
       next.turnInFlight = false;
       next.pendingPermission = null;
       break;
-    case 'permission_request':
-    case 'control_request':
+    case CLAUDE_EVENT.PERMISSION_REQUEST:
+    case CLAUDE_EVENT.CONTROL_REQUEST:
       next.pendingPermission = raw;
       break;
-    case 'permission_response': {
+    case CLAUDE_EVENT.PERMISSION_RESPONSE: {
       const respondedId = String(raw.request_id || '');
       const pendingId = pendingRequestId(state.pendingPermission);
       if (!respondedId || !pendingId || respondedId === pendingId) {
@@ -92,6 +100,7 @@ function pendingRequestId(pending) {
 
 export function useSessionStream(taskId, onIncomingEvent) {
   const [state, dispatch] = useReducer(reducer, undefined, initialState);
+  const [streamGeneration, setStreamGeneration] = useState(0);
 
   useEffect(() => {
     if (!taskId) { return undefined; }
@@ -102,7 +111,6 @@ export function useSessionStream(taskId, onIncomingEvent) {
     );
 
     stream.addEventListener('session_event', (event) => {
-      // Unwrap: { type, event: { event_type, raw: <CLAUDE_EVENT> } }
       const payload = safeParseJSON(event.data);
       const envelope = payload?.event || payload;
       const raw = envelope?.raw || envelope;
@@ -112,6 +120,13 @@ export function useSessionStream(taskId, onIncomingEvent) {
       if (typeof onIncomingEvent === 'function') {
         onIncomingEvent(raw, taskId);
       }
+    });
+    stream.addEventListener('session_history_event', (event) => {
+      const payload = safeParseJSON(event.data);
+      const envelope = payload?.event || payload;
+      const raw = envelope?.raw || envelope;
+      if (!raw) { return; }
+      dispatch({ type: ACTION_INCOMING_HISTORY, event: raw });
     });
     stream.addEventListener('session_idle', () => {
       dispatch({ type: ACTION_LIFECYCLE, value: SESSION_LIFECYCLE.IDLE });
@@ -132,7 +147,7 @@ export function useSessionStream(taskId, onIncomingEvent) {
     };
     return () => stream.close();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskId]);
+  }, [taskId, streamGeneration]);
 
   return {
     events: state.events,
@@ -142,5 +157,6 @@ export function useSessionStream(taskId, onIncomingEvent) {
     appendLocalEvent: (event) => dispatch({ type: ACTION_LOCAL_EVENT, event }),
     markTurnBusy: (value) => dispatch({ type: ACTION_MARK_TURN_BUSY, value }),
     dismissPermission: () => dispatch({ type: ACTION_DISMISS_PERMISSION }),
+    reconnect: () => setStreamGeneration((n) => n + 1),
   };
 }

@@ -3,7 +3,7 @@ import { parseDiff, Diff, Hunk } from 'react-diff-view';
 import 'react-diff-view/style/index.css';
 import { fetchDiff } from './api.js';
 
-export default function ChangesTab({ taskId }) {
+export default function ChangesTab({ taskId, workspaceVersion = 0 }) {
   const [state, setState] = useState({
     status: 'loading',
     files: [],
@@ -39,7 +39,7 @@ export default function ChangesTab({ taskId }) {
         });
       });
     return () => { cancelled = true; };
-  }, [taskId]);
+  }, [taskId, workspaceVersion]);
 
   return (
     <div className="changes-tab">

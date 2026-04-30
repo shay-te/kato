@@ -79,6 +79,7 @@ def create_app(
     *,
     session_manager=None,
     workspace_manager=None,
+    planning_session_runner=None,
     fallback_state_dir: str = '',
     status_broadcaster=None,
 ) -> Flask:
@@ -90,11 +91,8 @@ def create_app(
     if session_manager is None:
         session_manager = _build_fallback_manager(fallback_state_dir)
     app.config['SESSION_MANAGER'] = session_manager
-    # Workspace manager is the source of truth for the tab list — every
-    # task with a workspace folder gets a tab, regardless of whether it
-    # currently has a live Claude subprocess. Optional for legacy
-    # /test setups that wire only the session manager.
     app.config['WORKSPACE_MANAGER'] = workspace_manager
+    app.config['PLANNING_SESSION_RUNNER'] = planning_session_runner
     app.config['STATUS_BROADCASTER'] = status_broadcaster
 
     _register_http_routes(app)
@@ -246,31 +244,51 @@ def _register_streaming_routes(app: Flask) -> None:
     @app.get('/api/sessions/<task_id>/events')
     def session_events_stream(task_id: str):
         manager = app.config['SESSION_MANAGER']
+        workspace_manager = app.config.get('WORKSPACE_MANAGER')
         return Response(
-            stream_with_context(_event_stream_generator(manager, task_id)),
+            stream_with_context(
+                _event_stream_generator(manager, workspace_manager, task_id),
+            ),
             mimetype='text/event-stream',
             headers={
                 'Cache-Control': 'no-cache, no-transform',
-                'X-Accel-Buffering': 'no',  # don't let buffering proxies stall the stream
+                'X-Accel-Buffering': 'no',
             },
         )
 
     @app.post('/api/sessions/<task_id>/messages')
     def post_message(task_id: str):
-        session, error = _resolve_writable_session(
-            app.config['SESSION_MANAGER'], task_id,
-        )
-        if error is not None:
-            return error
+        manager = app.config['SESSION_MANAGER']
         payload = request.get_json(silent=True) or {}
         text = str(payload.get('text', '') or '').strip()
         if not text:
             return jsonify({'error': 'text is required'}), 400
+
+        session = manager.get_session(task_id) if manager is not None else None
+        if session is not None and session.is_alive:
+            try:
+                session.send_user_message(text)
+            except Exception as exc:
+                return jsonify({'error': str(exc)}), 500
+            return jsonify({'status': 'delivered', 'text': text})
+
+        runner = app.config.get('PLANNING_SESSION_RUNNER')
+        workspace_manager = app.config.get('WORKSPACE_MANAGER')
+        if runner is None:
+            return jsonify({'error': 'session is not running'}), 409
+        cwd, summary = _chat_resume_context(
+            manager, workspace_manager, task_id,
+        )
         try:
-            session.send_user_message(text)
+            runner.resume_session_for_chat(
+                task_id=task_id,
+                message=text,
+                cwd=cwd,
+                task_summary=summary,
+            )
         except Exception as exc:
             return jsonify({'error': str(exc)}), 500
-        return jsonify({'status': 'delivered', 'text': text})
+        return jsonify({'status': 'spawned', 'text': text})
 
     @app.post('/api/sessions/<task_id>/stop')
     def stop_session(task_id: str):
@@ -305,6 +323,39 @@ def _register_streaming_routes(app: Flask) -> None:
         return jsonify({'status': 'delivered'})
 
 
+def _chat_resume_context(session_manager, workspace_manager, task_id: str) -> tuple[str, str]:
+    """Best-effort lookup of cwd + summary for a chat-respawn.
+
+    Falls back across managers because either side might be missing
+    (kato/sessions wiped, or workspace metadata not yet populated).
+    """
+    cwd = ''
+    summary = ''
+    if session_manager is not None:
+        try:
+            record = session_manager.get_record(task_id)
+        except Exception:
+            record = None
+        if record is not None:
+            cwd = str(getattr(record, 'cwd', '') or '')
+            summary = str(getattr(record, 'task_summary', '') or '')
+    if workspace_manager is not None:
+        try:
+            workspace = workspace_manager.get(task_id)
+        except Exception:
+            workspace = None
+        if workspace is not None:
+            cwd = cwd or str(getattr(workspace, 'cwd', '') or '')
+            summary = summary or str(getattr(workspace, 'task_summary', '') or '')
+            if not cwd and getattr(workspace, 'repository_ids', None):
+                first_repo = workspace.repository_ids[0]
+                try:
+                    cwd = str(workspace_manager.repository_path(task_id, first_repo))
+                except Exception:
+                    cwd = ''
+    return cwd, summary
+
+
 def _resolve_writable_session(manager, task_id: str):
     """Return (session, None) if writable; (None, error_response) otherwise.
 
@@ -319,25 +370,76 @@ def _resolve_writable_session(manager, task_id: str):
     return session, None
 
 
-def _event_stream_generator(manager, task_id: str):
+def _event_stream_generator(manager, workspace_manager, task_id: str):
     """Yield SSE frames for one tab's session.
 
-    Three lifecycle outcomes:
-      * `session_missing`  — no record exists for this task.
-      * `session_idle`     — a record exists but no live subprocess.
+    Lifecycle outcomes:
+      * `session_missing`  — no record AND no workspace exists for this task.
+      * `session_idle`     — workspace/record exists but no live subprocess
+        (history replayed from Claude's JSONL so the chat shows past turns).
       * (live stream + `session_closed`) — events flow until the
         subprocess exits and the buffer drains.
     """
-    record = manager.get_record(task_id)
-    if record is None:
+    claude_session_id = _resolve_claude_session_id(
+        manager, workspace_manager, task_id,
+    )
+    record = manager.get_record(task_id) if manager is not None else None
+    workspace = (
+        workspace_manager.get(task_id)
+        if workspace_manager is not None
+        else None
+    )
+    if record is None and workspace is None:
         yield _sse_message('session_missing', {})
         return
-    session = manager.get_session(task_id)
+    session = manager.get_session(task_id) if manager is not None else None
     if session is None:
-        yield _sse_message('session_idle', _record_to_dict(record))
+        yield from _replay_history_from_disk(claude_session_id)
+        idle_payload = _record_to_dict(record) if record is not None else {}
+        yield _sse_message('session_idle', idle_payload)
         return
+    yield from _replay_history_from_disk(claude_session_id)
     yield from _replay_session_backlog(session)
     yield from _follow_live_session(session)
+
+
+def _resolve_claude_session_id(manager, workspace_manager, task_id: str) -> str:
+    if manager is not None:
+        try:
+            record = manager.get_record(task_id)
+        except Exception:
+            record = None
+        if record is not None and getattr(record, 'claude_session_id', ''):
+            return str(record.claude_session_id)
+    if workspace_manager is not None:
+        try:
+            workspace = workspace_manager.get(task_id)
+        except Exception:
+            workspace = None
+        if workspace is not None and getattr(workspace, 'claude_session_id', ''):
+            return str(workspace.claude_session_id)
+    return ''
+
+
+def _replay_history_from_disk(claude_session_id: str):
+    if not claude_session_id:
+        return
+    try:
+        from kato.client.claude.session_history import load_history_events
+    except ImportError:
+        return
+    try:
+        events = load_history_events(claude_session_id)
+    except Exception:
+        return
+    # Emit under a distinct event type so the client doesn't run these
+    # through the live-state reducer (otherwise an archived ``assistant``
+    # event would set turnInFlight=true forever).
+    for raw in events:
+        yield _sse_message(
+            'session_history_event',
+            {'event': {'received_at_epoch': 0, 'raw': raw}},
+        )
 
 
 def _replay_session_backlog(session):
@@ -387,18 +489,33 @@ def _records_as_dicts(session_manager, workspace_manager) -> list[dict[str, Any]
     """Tab list payload — one entry per known task.
 
     Source of truth: the workspace manager (folder-per-task). Each entry
-    is enriched with ``live`` (is the Claude subprocess running?) read
-    from the session manager. Falls back to session-manager records for
-    legacy setups where the workspace manager isn't wired.
+    is enriched with ``live`` (is the Claude subprocess running?) and
+    ``claude_session_id`` (back-fill from session-manager records when
+    older workspace metadata didn't capture it yet).
     """
     if workspace_manager is None:
         return [_record_to_dict(r) for r in session_manager.list_records()]
     workspace_records = workspace_manager.list_workspaces()
     live_session_ids = _live_session_ids(session_manager)
+    session_ids_by_task = _session_ids_by_task(session_manager)
     return [
-        _workspace_record_to_dict(record, live_session_ids)
+        _workspace_record_to_dict(record, live_session_ids, session_ids_by_task)
         for record in workspace_records
     ]
+
+
+def _session_ids_by_task(session_manager) -> dict[str, str]:
+    if session_manager is None:
+        return {}
+    try:
+        records = session_manager.list_records()
+    except Exception:
+        return {}
+    return {
+        str(record.task_id): str(getattr(record, 'claude_session_id', '') or '')
+        for record in records
+        if getattr(record, 'claude_session_id', '')
+    }
 
 
 def _live_session_ids(session_manager) -> set[str]:
@@ -420,9 +537,17 @@ def _live_session_ids(session_manager) -> set[str]:
     return live
 
 
-def _workspace_record_to_dict(record, live_session_ids: set[str]) -> dict[str, Any]:
+def _workspace_record_to_dict(
+    record,
+    live_session_ids: set[str],
+    session_ids_by_task: dict[str, str] | None = None,
+) -> dict[str, Any]:
     payload = record.to_dict() if hasattr(record, 'to_dict') else dict(record)
     payload['live'] = record.task_id in live_session_ids
+    if not payload.get('claude_session_id') and session_ids_by_task:
+        backfilled = session_ids_by_task.get(record.task_id, '')
+        if backfilled:
+            payload['claude_session_id'] = backfilled
     return payload
 
 

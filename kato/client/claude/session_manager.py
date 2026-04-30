@@ -125,8 +125,56 @@ class ClaudeSessionManager(object):
         self._lock = threading.RLock()
         self._sessions: dict[str, StreamingClaudeSession] = {}
         self._records: dict[str, PlanningSessionRecord] = {}
+        self._workspace_manager = None
         self.logger = configure_logger(self.__class__.__name__)
         self._load_persisted_records()
+
+    def attach_workspace_manager(self, workspace_manager) -> None:
+        """Mirror session_id + cwd into workspace metadata as we capture them.
+
+        Optional wiring: when the orchestrator boots both managers it calls
+        this so kato has a single source of truth for "which Claude session
+        belongs to this task" living next to the workspace folder.
+        """
+        self._workspace_manager = workspace_manager
+        self._seed_records_from_workspaces()
+
+    def _seed_records_from_workspaces(self) -> None:
+        """Recover Claude session ids from workspace metadata on boot.
+
+        If kato's own state dir was wiped (or is on a different host than
+        the previous run), the per-task PlanningSessionRecord is missing
+        but the workspace folder still has ``.kato-meta.json`` with the
+        Claude session id. Fold those into the in-memory records so the
+        next spawn can ``--resume`` cleanly.
+        """
+        if self._workspace_manager is None:
+            return
+        try:
+            workspace_records = self._workspace_manager.list_workspaces()
+        except Exception:
+            self.logger.exception('failed to list workspaces during session seed')
+            return
+        with self._lock:
+            for workspace in workspace_records:
+                session_id = str(getattr(workspace, 'claude_session_id', '') or '').strip()
+                if not session_id:
+                    continue
+                existing = self._records.get(workspace.task_id)
+                if existing is not None and existing.claude_session_id:
+                    continue
+                record = existing or PlanningSessionRecord(
+                    task_id=workspace.task_id,
+                    task_summary=str(getattr(workspace, 'task_summary', '') or ''),
+                    status=SESSION_STATUS_TERMINATED,
+                )
+                record.claude_session_id = session_id
+                cwd = str(getattr(workspace, 'cwd', '') or '').strip()
+                if cwd and not record.cwd:
+                    record.cwd = cwd
+                record.updated_at_epoch = time.time()
+                self._records[workspace.task_id] = record
+                self._persist_record(record)
 
     # ----- public API -----
 
@@ -437,6 +485,24 @@ class ClaudeSessionManager(object):
                 'failed to persist planning session record for task %s: %s',
                 record.task_id,
                 exc,
+            )
+        self._mirror_to_workspace_metadata(record)
+
+    def _mirror_to_workspace_metadata(self, record: PlanningSessionRecord) -> None:
+        if self._workspace_manager is None:
+            return
+        if not record.claude_session_id and not record.cwd:
+            return
+        try:
+            self._workspace_manager.update_claude_session(
+                record.task_id,
+                claude_session_id=record.claude_session_id,
+                cwd=record.cwd,
+            )
+        except Exception:
+            self.logger.exception(
+                'failed to mirror claude session id to workspace metadata for task %s',
+                record.task_id,
             )
 
     def _delete_persisted_record(self, task_id: str) -> None:

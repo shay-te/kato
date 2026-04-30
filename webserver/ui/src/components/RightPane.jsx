@@ -6,7 +6,12 @@ import RightPaneResizer from './RightPaneResizer.jsx';
 const TAB_FILES = 'files';
 const TAB_CHANGES = 'changes';
 
-export default function RightPane({ activeTaskId, width, onResizePointerDown }) {
+export default function RightPane({
+  activeTaskId,
+  workspaceVersion = 0,
+  width,
+  onResizePointerDown,
+}) {
   const [tab, setTab] = useState(TAB_FILES);
 
   return (
@@ -32,8 +37,18 @@ export default function RightPane({ activeTaskId, width, onResizePointerDown }) 
               </button>
             </nav>
             <div className="right-pane-body">
-              {tab === TAB_FILES && <FilesTab taskId={activeTaskId} />}
-              {tab === TAB_CHANGES && <ChangesTab taskId={activeTaskId} />}
+              {tab === TAB_FILES && (
+                <FilesTab
+                  taskId={activeTaskId}
+                  workspaceVersion={workspaceVersion}
+                />
+              )}
+              {tab === TAB_CHANGES && (
+                <ChangesTab
+                  taskId={activeTaskId}
+                  workspaceVersion={workspaceVersion}
+                />
+              )}
             </div>
           </div>
         ) : (

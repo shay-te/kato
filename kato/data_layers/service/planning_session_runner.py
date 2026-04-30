@@ -129,6 +129,46 @@ class PlanningSessionRunner(object):
         self._clock = clock
         self.logger = configure_logger(self.__class__.__name__)
 
+    def resume_session_for_chat(
+        self,
+        *,
+        task_id: str,
+        message: str,
+        cwd: str = '',
+        task_summary: str = '',
+    ):
+        """Spawn a fresh Claude subprocess for ``task_id`` and queue ``message``.
+
+        Used by the webserver when the user sends a chat message to a tab
+        whose previous subprocess has already exited. The session manager
+        resumes via the persisted ``--resume <session_id>`` if a Claude
+        session is on file (kato-meta.json or kato/sessions), otherwise
+        starts fresh. Returns the live ``StreamingClaudeSession`` so the
+        caller can write follow-up messages, but the spawn itself does not
+        block waiting for a result event.
+        """
+        normalized_task_id = str(task_id or '').strip()
+        if not normalized_task_id:
+            raise ValueError('task_id is required to resume a chat session')
+        normalized_message = str(message or '').strip()
+        if not normalized_message:
+            raise ValueError('message is required to resume a chat session')
+        return self._session_manager.start_session(
+            task_id=normalized_task_id,
+            task_summary=normalized_text(task_summary),
+            initial_prompt=normalized_message,
+            cwd=normalized_text(cwd),
+            binary=self._defaults.binary,
+            model=self._defaults.model,
+            permission_mode=self._defaults.permission_mode,
+            permission_prompt_tool=self._defaults.permission_prompt_tool,
+            allowed_tools=self._defaults.allowed_tools,
+            disallowed_tools=self._defaults.disallowed_tools,
+            max_turns=self._defaults.max_turns,
+            effort=self._defaults.effort,
+            expected_branch='',
+        )
+
     def implement_task(
         self,
         task: Task,
