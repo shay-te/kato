@@ -1,4 +1,4 @@
-class RecordField:
+class RecordField(object):
     def __init__(self, key: str) -> None:
         self.key = key
         self._storage_name = f'_{key}'

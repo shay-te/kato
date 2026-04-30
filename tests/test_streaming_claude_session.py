@@ -1,0 +1,244 @@
+from __future__ import annotations
+
+import io
+import json
+import threading
+import time
+import unittest
+from unittest.mock import MagicMock, patch
+
+from kato.client.claude.streaming_session import SessionEvent, StreamingClaudeSession
+
+
+class _FakeProc:
+    """Minimal subprocess.Popen stand-in for the streaming session tests."""
+
+    def __init__(self, stdout_lines: list[str] | None = None) -> None:
+        self.pid = 1234
+        self._stdout_buffer = b''.join(
+            (line + '\n').encode('utf-8') for line in (stdout_lines or [])
+        )
+        self.stdout = io.BytesIO(self._stdout_buffer)
+        self.stderr = io.BytesIO(b'')
+        self.stdin = MagicMock()
+        self.stdin.write = MagicMock()
+        self.stdin.flush = MagicMock()
+        self.stdin.close = MagicMock()
+        self._returncode: int | None = None
+        self._wait_event = threading.Event()
+        self.signals_sent: list[int] = []
+        self._exit_after_close = True
+
+    def poll(self):
+        return self._returncode
+
+    def wait(self, timeout=None):
+        if self._returncode is not None:
+            return self._returncode
+        if self._exit_after_close:
+            self._returncode = 0
+            return 0
+        if timeout is None:
+            self._wait_event.wait()
+            return self._returncode or 0
+        if not self._wait_event.wait(timeout):
+            import subprocess
+            raise subprocess.TimeoutExpired(cmd=['claude'], timeout=timeout)
+        return self._returncode or 0
+
+    def send_signal(self, sig):
+        self.signals_sent.append(sig)
+        self._returncode = -sig
+
+    def force_exit(self, returncode: int = 0) -> None:
+        self._returncode = returncode
+        self._wait_event.set()
+
+
+class StreamingClaudeSessionTests(unittest.TestCase):
+    def test_start_requires_task_id(self) -> None:
+        with self.assertRaisesRegex(ValueError, 'task_id is required'):
+            StreamingClaudeSession(task_id='')
+
+    def test_start_launches_subprocess_and_pins_session_id(self) -> None:
+        fake_proc = _FakeProc(stdout_lines=[
+            json.dumps({'type': 'system', 'subtype': 'init', 'session_id': 'live-123'}),
+        ])
+        with patch(
+            'kato.client.claude.streaming_session.subprocess.Popen',
+            return_value=fake_proc,
+        ) as mock_popen, patch(
+            'kato.client.claude.streaming_session.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ):
+            session = StreamingClaudeSession(task_id='PROJ-1', cwd='/tmp')
+            session.start()
+
+        cmd = mock_popen.call_args.args[0]
+        self.assertIn('-p', cmd)
+        self.assertIn('--output-format', cmd)
+        self.assertIn('stream-json', cmd)
+        self.assertIn('--input-format', cmd)
+        # A session-id is pinned up front so a restart can resume it.
+        self.assertIn('--session-id', cmd)
+        # That pinned id should match what's exposed by the session.
+        pinned = cmd[cmd.index('--session-id') + 1]
+        self.assertEqual(session.claude_session_id, pinned)
+
+    def test_start_with_resume_id_does_not_pin_a_new_session_id(self) -> None:
+        fake_proc = _FakeProc()
+        with patch(
+            'kato.client.claude.streaming_session.subprocess.Popen',
+            return_value=fake_proc,
+        ), patch(
+            'kato.client.claude.streaming_session.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ):
+            session = StreamingClaudeSession(
+                task_id='PROJ-1',
+                resume_session_id='earlier-session-uuid',
+            )
+            session.start()
+        self.assertEqual(session.claude_session_id, '')
+
+    def test_send_user_message_writes_ndjson_envelope(self) -> None:
+        fake_proc = _FakeProc()
+        fake_proc._exit_after_close = False
+        with patch(
+            'kato.client.claude.streaming_session.subprocess.Popen',
+            return_value=fake_proc,
+        ), patch(
+            'kato.client.claude.streaming_session.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ):
+            session = StreamingClaudeSession(task_id='PROJ-1')
+            session.start()
+            session.send_user_message('please add a hover state')
+
+        fake_proc.stdin.write.assert_called_once()
+        written_bytes = fake_proc.stdin.write.call_args.args[0]
+        self.assertTrue(written_bytes.endswith(b'\n'))
+        payload = json.loads(written_bytes.decode('utf-8').strip())
+        self.assertEqual(payload['type'], 'user')
+        self.assertEqual(
+            payload['message']['content'][0]['text'],
+            'please add a hover state',
+        )
+        # Cleanup: trigger graceful exit so the daemon threads stop.
+        fake_proc.force_exit()
+        session.terminate(grace_seconds=0.2)
+
+    def test_send_permission_response_writes_control_response_envelope(self) -> None:
+        fake_proc = _FakeProc()
+        fake_proc._exit_after_close = False
+        with patch(
+            'kato.client.claude.streaming_session.subprocess.Popen',
+            return_value=fake_proc,
+        ), patch(
+            'kato.client.claude.streaming_session.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ):
+            session = StreamingClaudeSession(task_id='PROJ-1')
+            session.start()
+            # Stash a captured request so allow echoes the original input
+            # back as ``updatedInput`` (the real wire contract for
+            # ``--permission-prompt-tool stdio``).
+            with session._pending_control_requests_lock:
+                session._pending_control_requests['req-77'] = {
+                    'tool_name': 'Bash',
+                    'input': {'command': 'ls /tmp'},
+                }
+            session.send_permission_response('req-77', allow=True, rationale='ok')
+
+        written = fake_proc.stdin.write.call_args.args[0]
+        payload = json.loads(written.decode('utf-8').strip())
+        self.assertEqual(payload['type'], 'control_response')
+        response = payload['response']
+        self.assertEqual(response['subtype'], 'success')
+        self.assertEqual(response['request_id'], 'req-77')
+        decision = response['response']
+        self.assertEqual(decision['behavior'], 'allow')
+        self.assertEqual(decision['updatedInput'], {'command': 'ls /tmp'})
+        fake_proc.force_exit()
+        session.terminate(grace_seconds=0.2)
+
+    def test_send_permission_response_deny_carries_rationale(self) -> None:
+        fake_proc = _FakeProc()
+        fake_proc._exit_after_close = False
+        with patch(
+            'kato.client.claude.streaming_session.subprocess.Popen',
+            return_value=fake_proc,
+        ), patch(
+            'kato.client.claude.streaming_session.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ):
+            session = StreamingClaudeSession(task_id='PROJ-1')
+            session.start()
+            session.send_permission_response('req-99', allow=False, rationale='not safe')
+
+        written = fake_proc.stdin.write.call_args.args[0]
+        payload = json.loads(written.decode('utf-8').strip())
+        decision = payload['response']['response']
+        self.assertEqual(decision['behavior'], 'deny')
+        self.assertEqual(decision['message'], 'not safe')
+        fake_proc.force_exit()
+        session.terminate(grace_seconds=0.2)
+
+    def test_send_user_message_raises_when_subprocess_dead(self) -> None:
+        session = StreamingClaudeSession(task_id='PROJ-1')
+        with self.assertRaisesRegex(RuntimeError, 'subprocess is not running'):
+            session.send_user_message('hi')
+
+    def test_events_iter_yields_until_terminal(self) -> None:
+        fake_proc = _FakeProc(stdout_lines=[
+            json.dumps({'type': 'system', 'subtype': 'init', 'session_id': 's1'}),
+            json.dumps({'type': 'assistant', 'message': {'role': 'assistant'}}),
+            json.dumps({'type': 'result', 'subtype': 'success',
+                        'is_error': False, 'result': 'done'}),
+        ])
+        with patch(
+            'kato.client.claude.streaming_session.subprocess.Popen',
+            return_value=fake_proc,
+        ), patch(
+            'kato.client.claude.streaming_session.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ):
+            session = StreamingClaudeSession(task_id='PROJ-1')
+            session.start()
+            collected: list[SessionEvent] = []
+            # Wait briefly for reader thread to drain the stdout buffer.
+            for _ in range(40):
+                if len(session.recent_events()) >= 3:
+                    break
+                time.sleep(0.05)
+            for event in session.events_iter():
+                collected.append(event)
+                if event.is_terminal:
+                    break
+
+        self.assertEqual([event.event_type for event in collected],
+                         ['system', 'assistant', 'result'])
+        self.assertTrue(collected[-1].is_terminal)
+        self.assertIs(session.terminal_event, collected[-1])
+
+    def test_terminate_closes_stdin_and_kills_after_grace(self) -> None:
+        fake_proc = _FakeProc()
+        fake_proc._exit_after_close = False  # simulate hung subprocess
+        with patch(
+            'kato.client.claude.streaming_session.subprocess.Popen',
+            return_value=fake_proc,
+        ), patch(
+            'kato.client.claude.streaming_session.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ):
+            session = StreamingClaudeSession(task_id='PROJ-1')
+            session.start()
+            session.terminate(grace_seconds=0.1)
+
+        fake_proc.stdin.close.assert_called_once()
+        # SIGTERM is the first escalation after the grace window.
+        self.assertIn(15, fake_proc.signals_sent)
+
+
+if __name__ == '__main__':
+    unittest.main()

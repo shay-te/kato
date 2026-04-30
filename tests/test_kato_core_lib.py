@@ -177,6 +177,7 @@ class KatoCoreLibTests(unittest.TestCase):
             repository_service=mock_repository_service_cls.return_value,
             task_branch_push_validator=ANY,
             task_branch_publishability_validator=ANY,
+            workspace_provisioner=ANY,
         )
         mock_task_failure_handler_cls.assert_called_once_with(
             task_service=mock_task_service_cls.return_value,
@@ -227,6 +228,11 @@ class KatoCoreLibTests(unittest.TestCase):
             startup_validator=ANY,
             task_preflight_service=mock_task_preflight_service_cls.return_value,
             skip_testing=False,
+            planning_session_runner=None,
+            session_manager=None,
+            workspace_manager=ANY,
+            parallel_task_runner=ANY,
+            wait_planning_service=ANY,
         )
         mock_service_cls.return_value.validate_connections.assert_called_once_with()
         self.assertIs(app.service, mock_service_cls.return_value)
@@ -518,6 +524,71 @@ class KatoCoreLibTests(unittest.TestCase):
             cfg.kato.jira,
             cfg.kato.retry.max_retries,
         )
+
+    def test_uses_claude_cli_backend_when_configured(self) -> None:
+        cfg = build_test_cfg()
+        cfg.kato.agent_backend = 'claude'
+        cfg.kato.claude = {
+            'binary': 'claude',
+            'model': 'claude-opus-4-7',
+            'max_turns': '',
+            'allowed_tools': '',
+            'disallowed_tools': '',
+            'bypass_permissions': True,
+            'timeout_seconds': 1800,
+            'model_smoke_test_enabled': False,
+        }
+
+        with patch(
+            'kato.kato_core_lib.EmailCoreLib'
+        ), patch(
+            'kato.kato_core_lib.build_ticket_client'
+        ), patch(
+            'kato.kato_core_lib.KatoClient'
+        ) as mock_kato_client_cls, patch(
+            'kato.kato_core_lib.ClaudeCliClient'
+        ) as mock_claude_client_cls, patch(
+            'kato.kato_core_lib.RepositoryService'
+        ), patch(
+            'kato.kato_core_lib.TaskDataAccess'
+        ), patch(
+            'kato.kato_core_lib.TaskService'
+        ), patch(
+            'kato.kato_core_lib.TaskStateService'
+        ), patch(
+            'kato.kato_core_lib.ImplementationService'
+        ), patch(
+            'kato.kato_core_lib.TestingService'
+        ), patch(
+            'kato.kato_core_lib.NotificationService'
+        ), patch(
+            'kato.kato_core_lib.AgentService'
+        ):
+            KatoCoreLib(cfg)
+
+        mock_kato_client_cls.assert_not_called()
+        # Two clients (implementation + testing) created via Claude CLI factory.
+        self.assertEqual(mock_claude_client_cls.call_count, 2)
+        first_kwargs = mock_claude_client_cls.call_args_list[0].kwargs
+        self.assertEqual(first_kwargs['binary'], 'claude')
+        self.assertEqual(first_kwargs['model'], 'claude-opus-4-7')
+        self.assertIs(first_kwargs['bypass_permissions'], True)
+
+    def test_rejects_unsupported_agent_backend(self) -> None:
+        cfg = build_test_cfg()
+        cfg.kato.agent_backend = 'gemini'
+
+        with patch(
+            'kato.kato_core_lib.EmailCoreLib'
+        ), patch(
+            'kato.kato_core_lib.build_ticket_client'
+        ), patch(
+            'kato.kato_core_lib.KatoClient'
+        ), patch(
+            'kato.kato_core_lib.RepositoryService'
+        ):
+            with self.assertRaisesRegex(ValueError, 'unsupported KATO_AGENT_BACKEND'):
+                KatoCoreLib(cfg)
 
     def test_always_instantiates_email_core_lib_directly(self) -> None:
         cfg = build_test_cfg()

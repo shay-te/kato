@@ -1,0 +1,22 @@
+{
+  "name": "kato-planning-ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "React-driven right-side pane (Files + Changes) for the Kato planning UI.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-arborist": "^3.4.0",
+    "react-diff-view": "^3.2.1",
+    "react-dom": "^18.3.1",
+    "unidiff": "^1.0.4"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^5.4.10"
+  }
+}

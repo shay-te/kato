@@ -12,7 +12,15 @@ from kato.helpers.shell_status_utils import (
     supports_inline_status,
     sleep_with_warmup_countdown,
 )
+from kato.helpers.status_broadcaster_utils import (
+    StatusBroadcaster,
+    install_status_broadcast_handler,
+)
 from kato.validate_env import validate_environment
+
+
+_STATUS_BROADCASTER = StatusBroadcaster()
+install_status_broadcast_handler(_STATUS_BROADCASTER)
 
 
 class _ProcessAssignedTasksJobProxy:
@@ -62,6 +70,7 @@ def main(cfg: DictConfig) -> int:
     app = KatoInstance.get()
     app.logger = getattr(app, 'logger', None) or logger
     app.logger.info('Starting kato agent')
+    _start_planning_webserver_if_enabled(app)
     _register_shutdown_hook(app)
     startup_delay_seconds, scan_interval_seconds = _task_scan_settings(cfg)
     _run_task_scan_loop(
@@ -70,6 +79,114 @@ def main(cfg: DictConfig) -> int:
         scan_interval_seconds=scan_interval_seconds,
     )
     return 0
+
+
+def _start_planning_webserver_if_enabled(app) -> None:
+    """Boot the Flask planning UI in a daemon thread inside this process.
+
+    We run kato + webserver in the same Python process so they share the
+    in-memory :class:`ClaudeSessionManager`. The webserver lives in a
+    separate package (``webserver/``) but is imported here so the live
+    sessions the orchestrator creates are the same ones the browser tabs
+    talk to.
+    """
+    import os
+    import threading
+
+    if str(os.environ.get('KATO_WEBSERVER_DISABLED', '')).strip().lower() in {'1', 'true', 'yes', 'on'}:
+        app.logger.info('planning webserver disabled via KATO_WEBSERVER_DISABLED')
+        return
+
+    session_manager = getattr(app, 'session_manager', None)
+    workspace_manager = getattr(app, 'workspace_manager', None)
+    planning_session_runner = getattr(app, 'planning_session_runner', None)
+    if session_manager is None and workspace_manager is None:
+        # Both backends now use a workspace manager, so this only fires
+        # in stripped-down setups (tests, embedded use). Nothing to
+        # render → keep the webserver off.
+        app.logger.info(
+            'planning webserver skipped (no session_manager / workspace_manager wired)'
+        )
+        return
+
+    try:
+        from kato_webserver.app import create_app as _create_webserver_app
+    except ImportError as exc:
+        app.logger.warning(
+            'planning webserver not available (%s); install ./webserver to enable', exc,
+        )
+        return
+
+    host = os.environ.get('KATO_WEBSERVER_HOST', '127.0.0.1')
+    port = int(os.environ.get('KATO_WEBSERVER_PORT', '5050'))
+    flask_app = _create_webserver_app(
+        session_manager=session_manager,
+        workspace_manager=workspace_manager,
+        planning_session_runner=planning_session_runner,
+        status_broadcaster=_STATUS_BROADCASTER,
+    )
+
+    # Silence Werkzeug's per-request access log — the planning UI polls
+    # /api/sessions every 5s and that drowns the kato terminal in noise.
+    # Errors and tracebacks still come through (they go to stderr).
+    import logging as _logging
+    _logging.getLogger('werkzeug').setLevel(_logging.ERROR)
+
+    def _serve() -> None:
+        try:
+            flask_app.run(host=host, port=port, debug=False, use_reloader=False)
+        except Exception:
+            app.logger.exception('planning webserver crashed')
+
+    thread = threading.Thread(
+        target=_serve,
+        name='kato-planning-webserver',
+        daemon=True,
+    )
+    thread.start()
+    url = f'http://{host}:{port}'
+    app.logger.info('planning webserver listening on %s', url)
+    _open_browser_when_ready(url, app.logger)
+
+
+def _open_browser_when_ready(url: str, logger) -> None:
+    """Wait until the planning webserver answers, then open the browser tab.
+
+    Off by default in CI / headless setups: set ``KATO_OPEN_BROWSER=0`` to
+    skip. The poll runs in a daemon thread so kato's main loop never waits
+    on the browser opening.
+    """
+    import os
+    import threading
+    import time
+    import urllib.error
+    import urllib.request
+    import webbrowser
+
+    if str(os.environ.get('KATO_OPEN_BROWSER', '1')).strip().lower() in {'0', 'false', 'no', 'off'}:
+        return
+
+    def _wait_and_open() -> None:
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline:
+            try:
+                with urllib.request.urlopen(f'{url}/healthz', timeout=1):
+                    break
+            except (urllib.error.URLError, OSError):
+                time.sleep(0.25)
+        else:
+            logger.warning('planning webserver never answered /healthz; not opening browser')
+            return
+        try:
+            webbrowser.open_new_tab(url)
+        except Exception:
+            logger.exception('failed to open planning UI in browser')
+
+    threading.Thread(
+        target=_wait_and_open,
+        name='kato-open-browser',
+        daemon=True,
+    ).start()
 
 
 def _register_shutdown_hook(app) -> None:
@@ -81,8 +198,18 @@ def _register_shutdown_hook(app) -> None:
             app.logger.exception('error during shutdown cleanup')
         raise SystemExit(0)
 
-    signal.signal(signal.SIGTERM, _shutdown)
+    # SIGINT works on every supported platform. SIGTERM works on POSIX
+    # but Windows refuses to install a Python handler for it (and
+    # delivers TerminateProcess instead) — register defensively so
+    # kato boots cleanly on Windows shells too.
     signal.signal(signal.SIGINT, _shutdown)
+    try:
+        signal.signal(signal.SIGTERM, _shutdown)
+    except (AttributeError, ValueError):
+        app.logger.debug(
+            'SIGTERM handler not installable on this platform; '
+            'relying on SIGINT for graceful shutdown',
+        )
 
 
 def _task_scan_settings(cfg: DictConfig) -> tuple[float, float]:

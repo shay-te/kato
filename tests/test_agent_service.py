@@ -189,7 +189,10 @@ class AgentServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'startup dependency validation failed') as exc_context:
             self.service.validate_connections()
 
-        self.assertEqual(self.service.logger.exception.call_count, 3)
+        # The validator aggregates failures into the raised RuntimeError
+        # rather than logging stack traces per step (test_startup_validator
+        # locks that contract). The aggregated message must include each
+        # service's failure as both a one-line summary and a Details block.
         self.assertIn('- unable to validate youtrack: youtrack down', str(exc_context.exception))
         self.assertIn('- unable to validate openhands: openhands down', str(exc_context.exception))
         self.assertIn('- unable to validate openhands_testing: openhands down', str(exc_context.exception))
@@ -463,45 +466,6 @@ class AgentServiceTests(unittest.TestCase):
         results = self.service.get_assigned_tasks()
 
         self.assertEqual(results, [])
-
-    def test_process_assigned_task_skips_already_processed_tasks(self) -> None:
-        service = AgentService(
-            self.task_data_access,
-            self.task_state_service,
-            self.implementation_service,
-            self.testing_service,
-            self.repository_service,
-            self.notification_service,
-        )
-        service._state_registry.mark_task_processed(
-            'PROJ-1',
-            [
-                {
-                    PullRequestFields.REPOSITORY_ID: 'client',
-                    PullRequestFields.ID: '17',
-                }
-            ],
-        )
-        task = self.task_data_access.get_assigned_tasks()[0]
-
-        results = service.process_assigned_task(task)
-
-        self.assertEqual(
-            results,
-            {
-                'id': 'PROJ-1',
-                StatusFields.STATUS: StatusFields.SKIPPED,
-                PullRequestFields.PULL_REQUESTS: [
-                    {
-                        PullRequestFields.REPOSITORY_ID: 'client',
-                        PullRequestFields.ID: '17',
-                    }
-                ],
-                PullRequestFields.FAILED_REPOSITORIES: [],
-            },
-        )
-        self.repository_service.resolve_task_repositories.assert_not_called()
-        self.kato_client.implement_task.assert_not_called()
 
     def test_process_assigned_task_skips_when_prior_failure_comment_is_still_active(self) -> None:
         task = build_task(
@@ -879,6 +843,109 @@ class AgentServiceTests(unittest.TestCase):
         )
         self.task_client.move_issue_to_state.assert_not_called()
         self.kato_client.implement_task.assert_not_called()
+
+    def test_process_assigned_task_with_planning_tag_registers_chat_and_skips_execution(self) -> None:
+        from unittest.mock import MagicMock as _MagicMock
+        from kato.data_layers.service.wait_planning_service import WaitPlanningService
+        session_manager = _MagicMock()
+        # No prior session — wait-planning short-circuits when one is alive
+        # (so the scan loop doesn't respawn or spam logs every cycle).
+        session_manager.get_session.return_value = None
+        # Wait-planning is now its own service injected into AgentService,
+        # not inline methods. Construct with the same dependencies the
+        # real wiring uses.
+        wait_planning_service = WaitPlanningService(
+            session_manager=session_manager,
+            repository_service=self.repository_service,
+            task_state_service=self.task_state_service,
+        )
+        service = AgentService(
+            self.task_data_access,
+            self.task_state_service,
+            self.implementation_service,
+            self.testing_service,
+            self.repository_service,
+            self.notification_service,
+            session_manager=session_manager,
+            wait_planning_service=wait_planning_service,
+        )
+        task = build_task(tags=['kato:wait-planning'])
+
+        results = service.process_assigned_task(task)
+
+        # Tab is registered so the user can chat with the agent. The
+        # session is spawned with a contextual prompt so claude doesn't
+        # exit on empty stdin and the scan loop won't respawn it.
+        session_manager.start_session.assert_called_once()
+        kwargs = session_manager.start_session.call_args.kwargs
+        self.assertEqual(kwargs['task_id'], 'PROJ-1')
+        # Initial prompt must be non-empty (claude -p exits on empty stdin)
+        # and must not request any work — just announce readiness.
+        self.assertNotEqual(kwargs['initial_prompt'], '')
+        prompt = kwargs['initial_prompt']
+        self.assertIn('PROJ-1', prompt)
+        # Must hard-stop tool use; otherwise Claude would start working
+        # on the task instead of planning it.
+        self.assertIn('planning-only', prompt)
+        self.assertIn('DO NOT call any tools', prompt)
+        # Skip result returned: orchestrator does not run / publish anything.
+        self.assertIsNotNone(results)
+        self.assertEqual(results.get(StatusFields.STATUS), StatusFields.SKIPPED)
+        self.kato_client.implement_task.assert_not_called()
+
+    def test_process_assigned_task_with_planning_tag_skips_silently_when_session_alive(self) -> None:
+        # When the user is mid-conversation, every scan cycle calling
+        # the wait-planning handler should be a no-op — no respawn,
+        # no log line. Otherwise the kato terminal fills with duplicate
+        # "registered planning chat" lines and we risk re-injecting the
+        # initial prompt into a live conversation.
+        from unittest.mock import MagicMock as _MagicMock
+        from kato.data_layers.service.wait_planning_service import WaitPlanningService
+        session_manager = _MagicMock()
+        live_session = _MagicMock()
+        live_session.is_alive = True
+        session_manager.get_session.return_value = live_session
+        wait_planning_service = WaitPlanningService(
+            session_manager=session_manager,
+            repository_service=self.repository_service,
+            task_state_service=self.task_state_service,
+        )
+        service = AgentService(
+            self.task_data_access,
+            self.task_state_service,
+            self.implementation_service,
+            self.testing_service,
+            self.repository_service,
+            self.notification_service,
+            session_manager=session_manager,
+            wait_planning_service=wait_planning_service,
+        )
+        task = build_task(tags=['kato:wait-planning'])
+
+        results = service.process_assigned_task(task)
+
+        session_manager.start_session.assert_not_called()
+        self.assertEqual(results.get(StatusFields.STATUS), StatusFields.SKIPPED)
+
+    def test_process_assigned_task_without_planning_tag_runs_normally(self) -> None:
+        service = AgentService(
+            self.task_data_access,
+            self.task_state_service,
+            self.implementation_service,
+            self.testing_service,
+            self.repository_service,
+            self.notification_service,
+        )
+        task = build_task(
+            description=self.task_description,
+            tags=['some-other-label'],
+        )
+
+        service.process_assigned_task(task)
+
+        # No tag → run autonomously through the one-shot client (no
+        # streaming runner wired in this test setup).
+        self.kato_client.implement_task.assert_called_once()
 
     def test_process_assigned_task_skips_when_task_definition_is_too_thin(self) -> None:
         task = build_task(

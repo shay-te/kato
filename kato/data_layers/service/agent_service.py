@@ -27,7 +27,17 @@ from kato.data_layers.service.task_preflight_service import (
 )
 from kato.data_layers.service.task_service import TaskService
 from kato.data_layers.service.testing_service import TestingService
-from kato.data_layers.data.fields import ImplementationFields
+from kato.data_layers.service.workspace_manager import (
+    WORKSPACE_STATUS_ACTIVE,
+    WORKSPACE_STATUS_ERRORED,
+    WORKSPACE_STATUS_PROVISIONING,
+    WORKSPACE_STATUS_REVIEW,
+)
+from kato.data_layers.data.fields import (
+    ImplementationFields,
+    StatusFields,
+    TaskCommentFields,
+)
 from kato.data_layers.data.review_comment import ReviewComment
 from kato.validation.branch_publishability import (
     TaskBranchPublishabilityValidator,
@@ -37,7 +47,6 @@ from kato.validation.model_access import TaskModelAccessValidator
 from kato.helpers.task_execution_utils import (
     apply_testing_message,
     implementation_succeeded,
-    skip_task_result,
     testing_failed_result,
     testing_succeeded,
 )
@@ -63,6 +72,11 @@ class AgentService(Service):
         startup_validator: StartupDependencyValidator | None = None,
         task_preflight_service: TaskPreflightService | None = None,
         skip_testing: bool = False,
+        planning_session_runner=None,
+        session_manager=None,
+        workspace_manager=None,
+        parallel_task_runner=None,
+        wait_planning_service=None,
         logger: logging.Logger | None = None,
     ) -> None:
         self.logger = logger or configure_logger(self.__class__.__name__)
@@ -92,6 +106,11 @@ class AgentService(Service):
         self._repository_service = repository_service
         self._notification_service = notification_service
         self._skip_testing = bool(skip_testing)
+        self._planning_session_runner = planning_session_runner
+        self._session_manager = session_manager
+        self._workspace_manager = workspace_manager
+        self._parallel_task_runner = parallel_task_runner
+        self._wait_planning_service = wait_planning_service
         self._state_registry = state_registry or AgentStateRegistry()
         self._review_comment_service = review_comment_service or ReviewCommentService(
             self._task_service,
@@ -146,12 +165,43 @@ class AgentService(Service):
         self._startup_validator.validate(self.logger)
 
     def shutdown(self) -> None:
-        """Stop all active OpenHands conversations to remove agent-server containers."""
-        self._implementation_service.stop_all_conversations()
-        self._testing_service.stop_all_conversations()
+        """Tear down everything kato owns: pool, sessions, conversations.
+
+        Wired into the kato main process's signal handler. Each step is
+        guarded so a single failure can't block the rest of the cleanup.
+        Idempotent — safe to call twice.
+        """
+        if self._parallel_task_runner is not None:
+            try:
+                self._parallel_task_runner.shutdown(wait=True)
+            except Exception:
+                self.logger.exception('error during parallel-runner shutdown')
+        try:
+            self._implementation_service.stop_all_conversations()
+        except Exception:
+            self.logger.exception('error stopping implementation conversations')
+        try:
+            self._testing_service.stop_all_conversations()
+        except Exception:
+            self.logger.exception('error stopping testing conversations')
+        if self._session_manager is not None:
+            try:
+                self._session_manager.shutdown()
+            except Exception:
+                self.logger.exception('error tearing down planning sessions on shutdown')
 
     def get_assigned_tasks(self) -> list[Task]:
         return self._task_service.get_assigned_tasks()
+
+    @property
+    def parallel_task_runner(self):
+        """Worker pool used by the scan job to run tasks concurrently.
+
+        ``None`` when the runner wasn't wired (legacy / test setups).
+        Callers are expected to fall back to inline execution in that
+        case so the same code path works with and without the runner.
+        """
+        return self._parallel_task_runner
 
     def get_new_pull_request_comments(self) -> list[ReviewComment]:
         self._cleanup_done_task_conversations()
@@ -192,6 +242,119 @@ class AgentService(Service):
                     )
             self._state_registry.forget_task(task_id)
 
+        self._cleanup_done_planning_sessions(current_review_task_ids)
+
+    def _cleanup_done_planning_sessions(
+        self,
+        current_review_task_ids: set[str],
+    ) -> None:
+        """Drop planning-UI tabs + workspaces whose ticket has moved to done/closed.
+
+        A streaming session and its workspace folder are kept on disk
+        while the ticket is in ``Open`` or in the configured review
+        states. Once the ticket leaves both buckets — i.e. the reviewer
+        marked it done or closed — we terminate the live subprocess (if
+        any), delete the persisted session record, and remove the
+        workspace folder. The tab disappears from the planning UI on
+        the next refresh.
+        """
+        if self._session_manager is None and self._workspace_manager is None:
+            return
+        try:
+            current_assigned_task_ids = {
+                str(task.id) for task in self._task_service.get_assigned_tasks()
+            }
+        except Exception:
+            self.logger.warning(
+                'failed to fetch assigned tasks for session cleanup; '
+                'leaving planning sessions in place this cycle'
+            )
+            return
+
+        live_task_ids = current_assigned_task_ids | current_review_task_ids
+        for task_id in self._stale_planning_task_ids(live_task_ids):
+            self.logger.info(
+                'task %s is no longer assigned or in review; '
+                'closing planning session tab + deleting workspace',
+                task_id,
+            )
+            self._terminate_session_silent(task_id)
+            self._delete_workspace_silent(task_id)
+
+    def _stale_planning_task_ids(self, live_task_ids: set[str]) -> set[str]:
+        """Union of task ids known to either manager that aren't live anymore.
+
+        Workspaces still in ``active`` or ``provisioning`` are protected from
+        cleanup even when the ticket has rotated out of the assigned state
+        bucket — kato moves the ticket to *In Progress* itself, which makes
+        it momentarily disappear from both ``get_assigned_tasks()`` and
+        ``get_review_tasks()``. Without this guard, the next scan tick
+        would wipe a workspace kato is actively driving.
+        """
+        candidates: set[str] = set()
+        in_flight_workspace_ids: set[str] = set()
+        if self._session_manager is not None:
+            try:
+                candidates.update(
+                    record.task_id for record in self._session_manager.list_records()
+                )
+            except Exception:
+                self.logger.exception('failed to list planning session records')
+        if self._workspace_manager is not None:
+            try:
+                workspace_records = self._workspace_manager.list_workspaces()
+            except Exception:
+                self.logger.exception('failed to list workspaces')
+                workspace_records = []
+            for record in workspace_records:
+                candidates.add(record.task_id)
+                status = getattr(record, 'status', '')
+                if status in (WORKSPACE_STATUS_ACTIVE, WORKSPACE_STATUS_PROVISIONING):
+                    in_flight_workspace_ids.add(record.task_id)
+        return candidates - live_task_ids - in_flight_workspace_ids
+
+    def _terminate_session_silent(self, task_id: str) -> None:
+        if self._session_manager is None:
+            return
+        try:
+            self._session_manager.terminate_session(task_id, remove_record=True)
+        except Exception:
+            self.logger.exception(
+                'failed to close planning session for task %s', task_id,
+            )
+
+    def _delete_workspace_silent(self, task_id: str) -> None:
+        if self._workspace_manager is None:
+            return
+        try:
+            self._workspace_manager.delete(task_id)
+        except Exception:
+            self.logger.exception(
+                'failed to delete workspace for task %s', task_id,
+            )
+
+    def _update_workspace_status_after_publish(
+        self,
+        task_id: str,
+        publish_result: dict[str, object] | None,
+    ) -> None:
+        if self._workspace_manager is None or not publish_result:
+            return
+        status = publish_result.get(StatusFields.STATUS)
+        if status == StatusFields.READY_FOR_REVIEW:
+            target = WORKSPACE_STATUS_REVIEW
+        elif status == StatusFields.PARTIAL_FAILURE:
+            target = WORKSPACE_STATUS_ERRORED
+        else:
+            return
+        try:
+            self._workspace_manager.update_status(str(task_id), target)
+        except Exception:
+            self.logger.exception(
+                'failed to update workspace status for task %s to %s',
+                task_id, target,
+            )
+
     def handle_pull_request_comment(self, payload: dict) -> dict[str, str]:
         return self._review_comment_service.handle_pull_request_comment(payload)
 
@@ -199,9 +362,21 @@ class AgentService(Service):
         return self._review_comment_service.process_review_comment(comment)
 
     def process_assigned_task(self, task: Task) -> dict[str, object] | None:
-        processed_result = self._processed_task_result(task.id)
-        if processed_result is not None:
-            return processed_result
+        # No in-memory "already processed" short-circuit. The ticket system
+        # (state + comments) is the single source of truth: successful tasks
+        # have already been moved out of the scanned states, and skipped/
+        # failed tasks carry comments that the gate and preflight read fresh
+        # on every scan. Remove the comment, the task is re-evaluated.
+
+        # `kato:wait-planning` short-circuits the orchestration: register the
+        # planning tab so the human can chat with the agent in the UI, but
+        # do *no* implementation, testing, or publishing work. The user
+        # controls the conversation; remove the tag whenever they want
+        # autonomous execution to take over.
+        if self._wait_planning_service is not None:
+            planning_only_result = self._wait_planning_service.handle_task(task)
+            if planning_only_result is not None:
+                return planning_only_result
 
         prepared_task = self._task_preflight_service.prepare_task_execution_context(
             task,
@@ -231,16 +406,14 @@ class AgentService(Service):
         )
         if not testing_succeeded:
             return testing_result
-        return self._task_publisher.publish_task_execution(task, prepared_task, execution)
-
-    def _processed_task_result(self, task_id: str) -> dict[str, object] | None:
-        if not self._state_registry.is_task_processed(task_id):
-            return None
-        self.logger.info('skipping already processed task %s', task_id)
-        return skip_task_result(
-            task_id,
-            self._state_registry.processed_task_pull_requests(task_id),
+        publish_result = self._task_publisher.publish_task_execution(
+            task,
+            prepared_task,
+            execution,
         )
+        self._update_workspace_status_after_publish(task.id, publish_result)
+        return publish_result
+
 
     def _start_task_processing(self, task: Task, prepared_task: PreparedTaskContext) -> bool:
         try:
@@ -259,11 +432,24 @@ class AgentService(Service):
         prepared_task: PreparedTaskContext,
     ) -> dict[str, str | bool] | None:
         self._log_task_step(task.id, 'starting implementation')
+        # ``kato:wait-planning`` is short-circuited earlier — by the time we
+        # get here the task is one we *will* execute. Route through the
+        # streaming runner when it's wired so the user can watch the work
+        # (and intercept permission prompts) in the planning UI. Permission
+        # modes are baked into the runner's defaults at construction time.
+        runner = self._planning_session_runner
         try:
-            execution = self._implementation_service.implement_task(
-                task,
-                prepared_task=prepared_task,
-            ) or {}
+            if runner is not None:
+                self._log_task_step(
+                    task.id,
+                    'streaming planning session (kato:wait-planning + bypass=false)',
+                )
+                execution = runner.implement_task(task, prepared_task=prepared_task) or {}
+            else:
+                execution = self._implementation_service.implement_task(
+                    task,
+                    prepared_task=prepared_task,
+                ) or {}
         except Exception as exc:
             self.logger.exception('implementation request failed for task %s', task.id)
             self._task_failure_handler.handle_started_task_failure(

@@ -1,7 +1,7 @@
 from kato.helpers.record_field_utils import RecordField
 
 
-class ReviewComment:
+class ReviewComment(object):
     pull_request_id = RecordField('pull_request_id')
     comment_id = RecordField('comment_id')
     author = RecordField('author')

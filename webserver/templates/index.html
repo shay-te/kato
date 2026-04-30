@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Kato — Planning UI</title>
+  <!-- Vite-built CSS comes first so the global app.css can override
+       library defaults (react-diff-view ships a light theme; we want dark). -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='build/app.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
+</head>
+<body>
+  <div id="root"></div>
+  <script src="{{ url_for('static', filename='build/app.js') }}"></script>
+</body>
+</html>

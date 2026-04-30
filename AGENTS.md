@@ -107,6 +107,11 @@ The goal is to keep the code:
 - For example, a `StartupDependencyValidator` class should live in `startup_dependency_validator.py`, not a differently named utility file.
 - Keep the branding image at the project root as `kato.png`.
 
+### Class Declarations
+
+- Always declare a base class explicitly. When a class doesn't extend anything else, write `class Foo(object):` instead of the bare `class Foo:`. This applies to data containers, namespaces, and ordinary services alike.
+- The two are functionally identical in Python 3, but the explicit form makes it obvious at a glance that this is a new-style root class and matches the rest of the codebase. Files like `kato/data_layers/data/fields.py` and the streaming-session classes follow this pattern; new code should match.
+
 ### Avoid Duplication
 
 - If logic or values appear more than once, extract them.

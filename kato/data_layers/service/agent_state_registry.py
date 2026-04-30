@@ -8,7 +8,7 @@ from kato.helpers.pull_request_context_utils import (
 from kato.helpers.text_utils import normalized_text
 
 
-class AgentStateRegistry:
+class AgentStateRegistry(object):
     def __init__(self) -> None:
         self.pull_request_context_map: dict[str, list[dict[str, str]]] = {}
         self.pull_request_task_map: dict[tuple[str, str], str] = {}

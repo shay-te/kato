@@ -25,7 +25,7 @@ from kato.data_layers.service.testing_service import TestingService
 from kato.data_layers.data_access.task_data_access import TaskDataAccess
 from kato.data_layers.data.task import Task
 from kato.data_layers.data.review_comment import ReviewComment
-from kato.client.kato_client import KatoClient
+from kato.client.openhands.openhands_client import KatoClient
 from kato.data_layers.data.fields import (
     ImplementationFields,
     PullRequestFields,
@@ -36,7 +36,7 @@ from kato.data_layers.data.fields import (
 from utils import build_review_comment, build_task, build_test_cfg
 
 
-class InMemoryTicketClient:
+class InMemoryTicketClient(object):
     provider_name = 'youtrack'
 
     def __init__(self, task_id: str, summary: str, description: str, initial_state: str) -> None:

@@ -110,7 +110,7 @@ def sleep_with_warmup_countdown(
     )
 
 
-class InlineStatusSpinner:
+class InlineStatusSpinner(object):
     def __init__(
         self,
         status_text: str,

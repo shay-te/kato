@@ -47,7 +47,7 @@ class DeploymentFilesTests(unittest.TestCase):
             compose_text,
         )
         self.assertIn(
-            'LOG_ALL_EVENTS: ${OPENHANDS_CONTAINER_LOG_ALL_EVENTS}',
+            'LOG_ALL_EVENTS: ${OPENHANDS_CONTAINER_LOG_ALL_EVENTS:-true}',
             compose_text,
         )
         self.assertIn('AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}', compose_text)
@@ -309,9 +309,12 @@ class DeploymentFilesTests(unittest.TestCase):
             ordered_kato_keys,
             [
                 'KATO_ISSUE_PLATFORM',
+                'KATO_AGENT_BACKEND',
                 'KATO_LOG_LEVEL',
                 'KATO_WORKFLOW_LOG_LEVEL',
                 'KATO_EXTERNAL_API_MAX_RETRIES',
+                'KATO_WORKSPACES_ROOT',
+                'KATO_MAX_PARALLEL_TASKS',
                 'KATO_IGNORED_REPOSITORY_FOLDERS',
                 'KATO_SOURCE_FINGERPRINT',
                 'KATO_FAILURE_EMAIL_ENABLED',
@@ -326,6 +329,16 @@ class DeploymentFilesTests(unittest.TestCase):
                 'KATO_COMPLETION_EMAIL_SENDER_EMAIL',
                 'KATO_AGENT_SERVER_IMAGE_REPOSITORY',
                 'KATO_AGENT_SERVER_IMAGE_TAG',
+                'KATO_WEBSERVER_PORT',
+                'KATO_CLAUDE_BINARY',
+                'KATO_CLAUDE_MODEL',
+                'KATO_CLAUDE_MAX_TURNS',
+                'KATO_CLAUDE_EFFORT',
+                'KATO_CLAUDE_ALLOWED_TOOLS',
+                'KATO_CLAUDE_DISALLOWED_TOOLS',
+                'KATO_CLAUDE_BYPASS_PERMISSIONS',
+                'KATO_CLAUDE_TIMEOUT_SECONDS',
+                'KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED',
             ],
         )
 
@@ -415,11 +428,11 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('doctor:', makefile_text)
         self.assertIn('run:', makefile_text)
         self.assertIn('--profile testing', makefile_text)
+        self.assertIn('--profile openhands', makefile_text)
+        self.assertIn('KATO_AGENT_BACKEND', makefile_text)
         self.assertIn('OPENHANDS_SKIP_TESTING', makefile_text)
-        self.assertIn('docker compose --profile testing up --build -d', makefile_text)
-        self.assertIn('docker compose up --build -d', makefile_text)
-        self.assertIn('docker compose --profile testing ps -q kato', makefile_text)
-        self.assertIn('docker compose ps -q kato', makefile_text)
+        self.assertIn('docker compose $$PROFILES up --build -d', makefile_text)
+        self.assertIn('docker compose $$PROFILES ps -q kato', makefile_text)
         self.assertIn('docker attach "$$KATO_CONTAINER_ID"', makefile_text)
         self.assertNotIn('.docker-compose.selected-repos.yaml', makefile_text)
         self.assertIn('OPENHANDS_TESTING_CONTAINER_ENABLED', run_entrypoint_text)

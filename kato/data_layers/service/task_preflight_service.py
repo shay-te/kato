@@ -35,6 +35,7 @@ class TaskPreflightService(Service):
         repository_service: RepositoryService,
         task_branch_push_validator: TaskBranchPushValidator,
         task_branch_publishability_validator: TaskBranchPublishabilityValidator,
+        workspace_provisioner: Callable[[Task, list], list] | None = None,
         logger=None,
     ) -> None:
         self._task_model_access_validator = task_model_access_validator
@@ -42,6 +43,12 @@ class TaskPreflightService(Service):
         self._repository_service = repository_service
         self._task_branch_push_validator = task_branch_push_validator
         self._task_branch_publishability_validator = task_branch_publishability_validator
+        # Optional callable(task, repositories) -> repositories. When wired,
+        # it clones per-task workspace copies and rewrites ``local_path``
+        # so the rest of the preflight runs against isolated checkouts.
+        # Plumbing-only here — agent_service owns the actual workspace
+        # logic so this service stays free of WorkspaceManager coupling.
+        self._workspace_provisioner = workspace_provisioner
         self._active_blocking_comment_log_state: dict[str, str] = {}
         self.logger = logger or configure_logger(self.__class__.__name__)
 
@@ -170,6 +177,11 @@ class TaskPreflightService(Service):
         )
         if repositories is None:
             return None
+        # Workspace mode: clone per-task isolated copies before any
+        # ``prepare`` runs, so prepare/branch/push all operate on the
+        # task's own checkout, not a shared local clone. No-op when
+        # workspace_manager isn't wired (legacy single-clone setups).
+        repositories = self._provision_workspace_clones(task, repositories)
         repositories = self._prepare_task_repositories_for_start(
             task,
             repositories,
@@ -203,6 +215,32 @@ class TaskPreflightService(Service):
             return None
         self._log_task_step(task.id, 'task branches can be pushed')
         return prepared_task
+
+    def _provision_workspace_clones(
+        self,
+        task: Task,
+        repositories: list[object],
+    ) -> list[object]:
+        """Hand the resolved repos to the workspace provisioner if wired.
+
+        The provisioner (set by agent_service) returns repos with
+        ``local_path`` rewritten to point at this task's workspace
+        clones. Failures pass the resolved set through unchanged so the
+        legacy "use existing local clones" path still works.
+        """
+        if self._workspace_provisioner is None or not repositories:
+            return repositories
+        try:
+            return list(
+                self._workspace_provisioner(task, list(repositories)) or repositories,
+            )
+        except Exception:
+            self.logger.exception(
+                'workspace provisioning failed for task %s; '
+                'falling back to inventory clones',
+                task.id,
+            )
+            return repositories
 
     def _resolve_task_repositories(
         self,

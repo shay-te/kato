@@ -32,6 +32,62 @@ Reference:
 - https://shay-te.github.io/core-lib/
 - https://shay-te.github.io/core-lib/advantages.html
 
+## Choosing an Agent Backend
+
+Kato can drive its implementation, testing, and review-fix work through one of two agent backends. Selection is a single environment variable:
+
+```env
+# default
+KATO_AGENT_BACKEND=openhands
+
+# OR
+KATO_AGENT_BACKEND=claude
+```
+
+- `openhands` (default) drives the OpenHands HTTP server. Uses the `OPENHANDS_*` block of `.env`. The Docker Compose stack still ships an `openhands` container by default.
+- `claude` drives Anthropic's Claude Code CLI locally with `claude -p` (non-interactive print mode). Uses the `KATO_CLAUDE_*` block of `.env`. The CLI must be installed and authenticated on the host that runs Kato (`claude login`); the OpenHands container is not required.
+
+Everything that works with OpenHands also works with `claude -p`:
+
+- Implementation conversations per task.
+- Optional testing-validation conversations (controlled by `OPENHANDS_SKIP_TESTING`).
+- Review-comment fix conversations on existing pull requests, including session resume so the agent keeps context across review rounds (mapped to `claude --resume <session_id>`).
+- Repository scope, security guardrails, and the `validation_report.md` PR-description handoff are identical in both backends.
+
+Switching is one env value: change `KATO_AGENT_BACKEND`, run `make doctor`, restart Kato.
+
+### Setting Up the Claude CLI Backend
+
+```env
+KATO_AGENT_BACKEND=claude
+
+# Path to the binary (default: claude on PATH).
+KATO_CLAUDE_BINARY=claude
+
+# Optional model override; leave empty to use the CLI's configured default.
+# Examples: claude-opus-4-7 | claude-sonnet-4-6 | claude-haiku-4-5-20251001
+KATO_CLAUDE_MODEL=
+
+# Optional turn cap, allow/deny tool lists, permission mode.
+KATO_CLAUDE_MAX_TURNS=
+KATO_CLAUDE_ALLOWED_TOOLS=
+KATO_CLAUDE_DISALLOWED_TOOLS=
+KATO_CLAUDE_PERMISSION_MODE=bypassPermissions
+
+# Per-task subprocess timeout (seconds) and an optional startup smoke test.
+KATO_CLAUDE_TIMEOUT_SECONDS=1800
+KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED=false
+```
+
+Notes:
+
+- Install Claude Code: https://docs.claude.com/en/docs/claude-code/setup
+- Authenticate once interactively (`claude login`) on the host. Kato runs the CLI with `-p`, which uses the credentials stored by `claude login`.
+- The CLI runs locally and edits files directly in the prepared task branch, so the orchestration layer does not need OpenHands credentials, the agent-server image, or the dedicated testing container when this backend is active. The `OPENHANDS_*` block of `.env` can stay empty.
+- `KATO_CLAUDE_PERMISSION_MODE` defaults to `bypassPermissions` because the orchestration layer pins the agent to a prepared branch and runs unattended. Use `acceptEdits` if you would rather have Claude prompt for tool grants in interactive setups.
+- The CLI is invoked with `--output-format json` so the orchestration parses `result` and `session_id` from the structured output. Review-comment follow-ups pass that `session_id` back via `--resume`.
+- The agent still produces `validation_report.md` in the repository root; the existing publication flow uses it as the pull request description and removes it before pushing — same as the OpenHands path.
+
 The agent is designed to:
 
 1. Read tasks assigned to it from the configured issue platform.
@@ -49,41 +105,125 @@ The agent is designed to:
 
 ```text
 kato/
-  client/
-    bitbucket_issues_client.py
-    bitbucket_client.py
-    github_issues_client.py
-    gitlab_issues_client.py
-    jira_client.py
-    kato_client.py
-    ticket_client_base.py
-    ticket_client_factory.py
-    youtrack_client.py
+  client/                        # external services kato talks to
+    agent_client.py              # AgentClient Protocol — the contract
+    retrying_client_base.py      # shared retry / HTTP plumbing
+    pull_request_client_*.py     # cross-provider PR abstraction
+    ticket_client_*.py           # cross-provider issue abstraction
+    bitbucket/                   # Bitbucket auth + PR + issues
+    github/                      # GitHub PR + issues
+    gitlab/                      # GitLab PR + issues
+    jira/                        # Jira issues
+    youtrack/                    # YouTrack issues
+    claude/                      # Claude Code CLI backend
+      cli_client.py              #   one-shot autonomous client
+      streaming_session.py       #   long-lived planning subprocess
+      session_manager.py         #   per-task session registry + persistence
+    openhands/                   # OpenHands HTTP backend (kato_client.py)
+    openrouter/                  # OpenRouter helpers (used by openhands)
   config/
     kato_core_lib.yaml
-  templates/
-    email/
-      completion_email.j2
-      failure_email.j2
   data_layers/
-    data/
-    data_access/
-      pull_request_data_access.py
-      task_data_access.py
-    service/
-      agent_service.py
-      implementation_service.py
-  jobs/
-    process_assigned_tasks.py
-  main.py
-  kato_core_lib.py
-  kato_instance.py
+    data/                        # YouTrack / git / agent value types
+    data_access/                 # raw fetch + parse layer
+    service/                     # orchestration: scan → plan → execute
+      agent_service.py           #   top-level loop, tag handling
+      task_preflight_service.py  #   resolve repos, prep branches
+      task_publisher.py          #   commit, push, open PR
+      planning_session_runner.py #   route to streaming Claude
+      review_comment_service.py  #   handle PR review feedback
+  helpers/                       # cross-cutting *_utils.py modules
+  validation/                    # startup + per-task safety checks
+  jobs/process_assigned_tasks.py # the cron-scheduled scan loop
+  main.py                        # process entrypoint
+  kato_core_lib.py               # core-lib wiring: builds AgentService
+webserver/                       # planning UI (Flask + React)
+  kato_webserver/
+    app.py                       #   Flask routes (SSE + POST)
+    git_diff_utils.py            #   tree / diff for the right pane
+    session_registry.py          #   in-memory tab list (legacy)
+  templates/index.html           # HTML shell
+  static/css/app.css             # dark-theme styles
+  static/js/app.js               # vanilla-JS chat + SSE + status bar
+  ui/                            # Vite + React source for the right pane
+    src/{App,FilesTab,ChangesTab}.jsx
 scripts/
-  generate_env.py
+  bootstrap.sh                   # Mac/Linux first-time setup
+  bootstrap.ps1                  # Windows PowerShell equivalent
 tests/
-  config/
-    config.yaml
+  config/config.yaml             # test fixture config
 ```
+
+### Architecture at a glance
+
+```text
+                       ┌──────────────────────────────┐
+                       │  YouTrack / Jira / GitHub …  │
+                       │   (issues, comments, tags)   │
+                       └──────────────┬───────────────┘
+                                      │ poll
+                                      ▼
+                  ┌────────────────────────────────────┐
+                  │  kato.main  ─  ProcessAssignedTasks │
+                  │   30s scan loop, signal handling   │
+                  └──────────────┬─────────────────────┘
+                                 │
+                                 ▼
+              ┌──────────────────────────────────────────┐
+              │              AgentService                │
+              │  • wait-planning short-circuit (chat tab)│
+              │  • TaskPreflightService (resolve+prep)   │
+              │  • runner OR one-shot client (implement) │
+              │  • TestingService (validate)             │
+              │  • TaskPublisher (commit / push / PR)    │
+              └──────────────┬───────────────────────────┘
+                             │
+                ┌────────────┴────────────┐
+                ▼                         ▼
+   ┌─────────────────────┐   ┌────────────────────────────┐
+   │  ClaudeCliClient    │   │     KatoClient (OpenHands) │
+   │  (one-shot -p)      │   │     HTTP API client        │
+   └──────────┬──────────┘   └────────────────────────────┘
+              │ also used by:
+              ▼
+   ┌─────────────────────────────────────────────────────┐
+   │           PlanningSessionRunner                     │
+   │  uses ClaudeSessionManager + StreamingClaudeSession │
+   │  (long-lived `claude -p --input-format stream-json` │
+   │   subprocess, one per task id, persisted records)   │
+   └──────────┬──────────────────────────────────────────┘
+              │ shared in-memory ↕ persisted on disk
+              ▼
+   ┌─────────────────────────────────────────────────────┐
+   │      Planning UI webserver (daemon thread)          │
+   │  Flask + SSE  →  vanilla JS  +  React right-pane    │
+   │  • tab list, chat, permission modal                 │
+   │  • Files / Changes tabs (git tree + diff)           │
+   │  • status bar (kato logger → ring buffer → SSE)     │
+   │  • browser notifications on key events              │
+   └─────────────────────────────────────────────────────┘
+```
+
+Key invariants:
+
+* **One workspace folder per task.** Each ticket id (`PROJ-12`) gets
+  `~/.kato/workspaces/PROJ-12/` with fresh clones of every repo its
+  `kato:repo:*` tags name. Two parallel tasks against the same repo are
+  physically isolated checkouts — no shared branch state, no cross-task
+  git races. Sized by `KATO_MAX_PARALLEL_TASKS`.
+* **One subprocess per task id.** `ClaudeSessionManager` keyed on the
+  ticket id; `--resume` keeps context across kato restarts.
+* **The orchestrator and the webserver share the same managers.**
+  `WorkspaceManager` (tab list source of truth) and
+  `ClaudeSessionManager` (live subprocess + chat events) live in one
+  Python process so the planning UI sees both in real time without IPC.
+* **Workspace lifecycle = ticket state.** Workspaces are created when
+  kato starts a task, persist across restarts via `.kato-meta.json`,
+  and are deleted when the ticket leaves the Open + Review states
+  (e.g. PR merged → Done).
+* **Single-threaded gate, multi-threaded execute.** The scan loop
+  pulls tasks from the ticket system one at a time; heavy execution
+  (clone, run agent, test, publish) fans out across a thread pool.
 
 ## How It Works
 
@@ -357,6 +497,7 @@ The list below mirrors `.env.example`.
 | Variable | What it does |
 | --- | --- |
 | `KATO_ISSUE_PLATFORM` | Selects the active issue platform. Supported values are `youtrack`, `jira`, `github`, `gitlab`, and `bitbucket`. |
+| `KATO_AGENT_BACKEND` | Selects the active agent backend. Supported values are `openhands` (default) and `claude`. |
 | `YOUTRACK_BASE_URL` | YouTrack API base URL. |
 | `YOUTRACK_TOKEN` | YouTrack API token. |
 | `YOUTRACK_PROJECT` | YouTrack project key used to fetch tasks. |
@@ -479,6 +620,19 @@ The `openhands` container reuses the same `OPENHANDS_LLM_*` and `AWS_*` values f
 | `AWS_REGION_NAME` | AWS region used for Bedrock-backed models or AWS auth in Docker. |
 | `AWS_SESSION_TOKEN` | Optional AWS session token for temporary Bedrock credentials. |
 | `AWS_BEARER_TOKEN_BEDROCK` | Bedrock bearer token alternative to AWS access keys. |
+
+### Claude CLI Backend
+
+| Variable | What it does |
+| --- | --- |
+| `KATO_CLAUDE_BINARY` | Path to (or PATH name of) the Claude Code CLI binary. Defaults to `claude`. |
+| `KATO_CLAUDE_MODEL` | Optional model id passed via `--model` (e.g. `claude-opus-4-7`). Empty uses the CLI default. |
+| `KATO_CLAUDE_MAX_TURNS` | Optional cap on agent turns per task, passed via `--max-turns`. Empty means no cap. |
+| `KATO_CLAUDE_ALLOWED_TOOLS` | Comma-separated allowlist passed via `--allowedTools`. |
+| `KATO_CLAUDE_DISALLOWED_TOOLS` | Comma-separated denylist passed via `--disallowedTools`. |
+| `KATO_CLAUDE_PERMISSION_MODE` | Permission mode passed via `--permission-mode`. Defaults to `bypassPermissions`. |
+| `KATO_CLAUDE_TIMEOUT_SECONDS` | Per-task subprocess timeout. Defaults to 1800. Minimum 60. |
+| `KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED` | Runs a small `claude -p` prompt during startup validation. Off by default. |
 
 The active issue provider comes from `kato.issue_platform`, which defaults to `youtrack`.
 Issue states can be configured directly in `.env` with `YOUTRACK_ISSUE_STATES`, `JIRA_ISSUE_STATES`, `GITHUB_ISSUES_ISSUE_STATES`, `GITLAB_ISSUES_ISSUE_STATES`, and `BITBUCKET_ISSUES_ISSUE_STATES`.
@@ -761,6 +915,38 @@ If a task spans multiple repositories and one pull request succeeds while anothe
 - sends the failure notification path with the failing repositories in the error text
 
 That behavior is deliberate: the agent prefers explicit partial visibility over trying to revert repository state automatically.
+
+## Planning UI Build & Cleanup
+
+The right-pane planning UI is a Vite + React app that compiles to a single bundle served by the Flask webserver. The Python side reads the prebuilt files from `webserver/static/build/` at runtime — there is no live transpile step in production.
+
+### Building the bundle
+
+```bash
+cd webserver/ui
+npm install        # first run only
+npm run build      # outputs webserver/static/build/app.{js,css}
+```
+
+`npm run build` is idempotent and finishes in ~1s. There is also `npm run dev` if you want Vite's hot-reload while iterating on the UI; it serves on a separate port and proxies through to the Flask backend.
+
+After a rebuild, **hard-refresh the browser** (Cmd+Shift+R on macOS, Ctrl+Shift+R elsewhere) so it doesn't keep serving the cached `app.js`. That's the most common gotcha when changes don't appear.
+
+### Cleaning between runs
+
+For a normal Ctrl+C → `make compose-up` cycle there is nothing to clean. The table below covers the cases where something does need a wipe.
+
+| What | When to clean | How |
+| --- | --- | --- |
+| Browser cache | After a UI rebuild looks stale | Cmd+Shift+R (hard refresh) |
+| `__pycache__` | Almost never; only if you suspect a stale `.pyc` | `find . -name __pycache__ -prune -exec rm -rf {} +` |
+| `webserver/ui/node_modules` | After a `package.json` dependency change misbehaves | `rm -rf webserver/ui/node_modules && (cd webserver/ui && npm install)` |
+| `webserver/static/build/` | When a build seems half-applied | `rm -rf webserver/static/build && (cd webserver/ui && npm run build)` |
+| Per-task workspaces (`~/.kato/workspaces/`) | To wipe a stuck tab | `rm -rf ~/.kato/workspaces/<task-id>` |
+| Session records (`~/.kato/sessions/`) | To forget Claude session ids | `rm -rf ~/.kato/sessions` (the workspace's `.kato-meta.json` re-seeds the id on next boot if it has one) |
+| Claude transcripts (`~/.claude/projects/<encoded>/<id>.jsonl`) | To erase chat history replay for a task | Delete the matching JSONL — but you'll lose history-replay for that tab |
+
+`clean.sh` exists for Docker-side cleanup (containers, volumes); it is destructive and prunes unused Docker resources without prompting.
 
 ## Testing
 

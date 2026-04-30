@@ -144,6 +144,18 @@ class RepositoryInventoryServiceTests(unittest.TestCase):
 
         self.assertEqual([repository.id for repository in repositories], ['client', 'backend'])
 
+    def test_resolve_task_repositories_defaults_to_single_repo_when_nothing_matches(self) -> None:
+        service = RepositoryInventoryService([self.client_repo])
+        task = build_task(
+            summary='Random task without repo hints',
+            description='No mention of any repository name here.',
+            tags=['some-other-label'],
+        )
+
+        repositories = service.resolve_task_repositories(task)
+
+        self.assertEqual([repository.id for repository in repositories], ['client'])
+
     def test_resolve_task_repositories_rejects_unmatched_repo_tags(self) -> None:
         service = RepositoryInventoryService([self.client_repo, self.backend_repo])
 
@@ -156,14 +168,23 @@ class RepositoryInventoryServiceTests(unittest.TestCase):
             )
 
     def test_resolve_task_repositories_rejects_partial_substrings(self) -> None:
-        repository = types.SimpleNamespace(
+        # Two repos: forces the "must actually match" path. With a single repo
+        # we deliberately default; that's covered separately.
+        repository_a = types.SimpleNamespace(
             id='myrepo',
             display_name='My Repository',
             local_path='/workspace/myrepo',
             repo_slug='myrepo',
             aliases=['myrepo'],
         )
-        service = RepositoryInventoryService([repository])
+        repository_b = types.SimpleNamespace(
+            id='other',
+            display_name='Other Repository',
+            local_path='/workspace/other',
+            repo_slug='other',
+            aliases=['other'],
+        )
+        service = RepositoryInventoryService([repository_a, repository_b])
 
         with self.assertRaisesRegex(ValueError, 'no configured repository matched task PROJ-1'):
             service.resolve_task_repositories(build_task(description='myrepo-extra needs changes'))

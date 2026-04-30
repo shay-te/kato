@@ -1,18 +1,22 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from core_lib.data_layers.service.service import Service
 
-from kato.client.kato_client import KatoClient
 from kato.helpers.retry_utils import retry_count
 from kato.data_layers.data.task import Task
 from kato.helpers.task_context_utils import PreparedTaskContext
 from kato.helpers.logging_utils import configure_logger
 
+if TYPE_CHECKING:
+    from kato.client.agent_client import AgentClient
+
 
 class ImplementationService(Service):
-    """Wrap the Kato client for implementation and review-comment fixing."""
+    """Wrap the active agent client for implementation and review-comment fixing."""
 
-    def __init__(self, client: KatoClient) -> None:
+    def __init__(self, client: 'AgentClient') -> None:
         self._client = client
         self.logger = configure_logger(self.__class__.__name__)
 

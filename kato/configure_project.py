@@ -18,6 +18,7 @@ from kato.helpers.repository_discovery_utils import (
 from kato.validate_env import (
     _read_env_file,
     validate_agent_env,
+    validate_claude_env,
     validate_openhands_env,
 )
 
@@ -34,6 +35,7 @@ except (ImportError, ModuleNotFoundError):
 
 
 ISSUE_PLATFORMS = ['youtrack', 'jira', 'github', 'gitlab', 'bitbucket']
+AGENT_BACKENDS = ['openhands', 'claude']
 UNQUOTED_ENV_VALUE_PATTERN = re.compile(r'^[A-Za-z0-9_./:@%+=,\-~]*$')
 logger = logging.getLogger(__name__)
 OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1'
@@ -281,11 +283,79 @@ def build_configuration_values(
     )
     values['KATO_ISSUE_PLATFORM'] = issue_platform
 
+    agent_backend = input_enum(
+        'Which agent should run implementation/testing/review work',
+        AGENT_BACKENDS,
+        default=_default_str(defaults, 'KATO_AGENT_BACKEND', fallback='openhands'),
+    )
+    values['KATO_AGENT_BACKEND'] = agent_backend
+
     values.update(_prompt_issue_platform(defaults, issue_platform))
     values.update(_prompt_repository(defaults))
-    values.update(_prompt_openhands(defaults))
+    if agent_backend == 'claude':
+        values.update(_prompt_claude_backend(defaults))
+    else:
+        values.update(_prompt_openhands(defaults))
     values.update(_prompt_notifications(defaults))
     return values
+
+
+def _prompt_claude_backend(defaults: dict[str, str]) -> dict[str, str]:
+    logger.info('Configuring the Claude Code CLI backend (`claude -p`).')
+    logger.info(
+        'The CLI must be installed and authenticated on this host (`claude login`).'
+    )
+    return {
+        'KATO_CLAUDE_BINARY': input_str(
+            'Claude CLI binary path or name',
+            default=_default_str(defaults, 'KATO_CLAUDE_BINARY', fallback='claude'),
+        ),
+        'KATO_CLAUDE_MODEL': input_str(
+            'Claude model id (leave empty to use the CLI default)',
+            default=_default_str(defaults, 'KATO_CLAUDE_MODEL'),
+            allow_empty=True,
+        ),
+        'KATO_CLAUDE_MAX_TURNS': input_str(
+            'Max agent turns per task (leave empty for no cap)',
+            default=_default_str(defaults, 'KATO_CLAUDE_MAX_TURNS'),
+            allow_empty=True,
+        ),
+        'KATO_CLAUDE_ALLOWED_TOOLS': input_str(
+            'Comma-separated allowed tools (optional)',
+            default=_default_str(defaults, 'KATO_CLAUDE_ALLOWED_TOOLS'),
+            allow_empty=True,
+        ),
+        'KATO_CLAUDE_DISALLOWED_TOOLS': input_str(
+            'Comma-separated disallowed tools (optional)',
+            default=_default_str(defaults, 'KATO_CLAUDE_DISALLOWED_TOOLS'),
+            allow_empty=True,
+        ),
+        'KATO_CLAUDE_BYPASS_PERMISSIONS': _bool_to_env(
+            input_bool(
+                'Opt-in to bypassPermissions mode (DANGEROUS — only for trusted local runs; '
+                'refused under root). When false, uses acceptEdits + a pre-approved tools list',
+                default=_default_bool(defaults, 'KATO_CLAUDE_BYPASS_PERMISSIONS'),
+            )
+        ),
+        'KATO_CLAUDE_TIMEOUT_SECONDS': str(
+            input_int(
+                'Per-task subprocess timeout in seconds',
+                default=int(
+                    _default_str(
+                        defaults,
+                        'KATO_CLAUDE_TIMEOUT_SECONDS',
+                        fallback='1800',
+                    )
+                ),
+            )
+        ),
+        'KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED': _bool_to_env(
+            input_bool(
+                'Run a startup model smoke test (costs one tiny prompt per startup)',
+                default=_default_bool(defaults, 'KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED'),
+            )
+        ),
+    }
 
 
 def render_env_text(template_text: str, values: dict[str, str]) -> str:
@@ -374,7 +444,11 @@ def _write_configuration_file(
 
 def _report_configuration_validation(values: dict[str, str]) -> int:
     errors = validate_agent_env(values)
-    errors.extend(validate_openhands_env(values))
+    backend = str(values.get('KATO_AGENT_BACKEND', '') or '').strip().lower()
+    if backend == 'claude':
+        errors.extend(validate_claude_env(values))
+    else:
+        errors.extend(validate_openhands_env(values))
     if not errors:
         logger.info('Configuration looks valid. Next: make doctor && make run')
         return 0

@@ -2,7 +2,7 @@ PYTHON ?= python3
 VENV_PYTHON = .venv/bin/python
 KATO_SOURCE_FINGERPRINT := $(shell $(PYTHON) -m kato.helpers.runtime_identity_utils --root .)
 
-.PHONY: bootstrap configure doctor doctor-agent doctor-openhands test run compose-up
+.PHONY: bootstrap configure doctor doctor-agent doctor-openhands test run compose-up compose-up-docker
 
 bootstrap:
 	./scripts/bootstrap.sh
@@ -26,15 +26,22 @@ run:
 	./scripts/run-local.sh
 
 compose-up:
+	./scripts/run-local.sh
+
+# Original docker-compose flow. Kept available for cases where you actually
+# need OpenHands containerized; the local Claude-backed path is `compose-up`.
+compose-up-docker:
 	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
 	export KATO_SOURCE_FINGERPRINT='$(KATO_SOURCE_FINGERPRINT)'; \
-	if [ "$${OPENHANDS_SKIP_TESTING:-false}" != "true" ] && [ "$${OPENHANDS_TESTING_CONTAINER_ENABLED:-false}" = "true" ]; then \
-		docker compose --profile testing up --build -d; \
-		KATO_CONTAINER_ID=$$(docker compose --profile testing ps -q kato); \
-	else \
-		docker compose up --build -d; \
-		KATO_CONTAINER_ID=$$(docker compose ps -q kato); \
+	PROFILES=""; \
+	if [ "$${KATO_AGENT_BACKEND:-openhands}" != "claude" ]; then \
+		PROFILES="$$PROFILES --profile openhands"; \
 	fi; \
+	if [ "$${OPENHANDS_SKIP_TESTING:-false}" != "true" ] && [ "$${OPENHANDS_TESTING_CONTAINER_ENABLED:-false}" = "true" ]; then \
+		PROFILES="$$PROFILES --profile testing"; \
+	fi; \
+	docker compose $$PROFILES up --build -d; \
+	KATO_CONTAINER_ID=$$(docker compose $$PROFILES ps -q kato); \
 	if [ -z "$$KATO_CONTAINER_ID" ]; then \
 		echo "unable to determine kato container id"; \
 		exit 1; \

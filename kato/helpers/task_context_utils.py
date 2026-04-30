@@ -8,7 +8,7 @@ from kato.helpers.text_utils import normalized_text, text_from_attr, text_from_m
 
 
 @dataclass
-class PreparedTaskContext:
+class PreparedTaskContext(object):
     branch_name: str
     repositories: list[object]
     repository_branches: dict[str, str]

@@ -59,11 +59,17 @@ class ReviewCommentService(Service):
         repository_service: RepositoryService,
         state_registry: AgentStateRegistry,
         logger=None,
+        planning_session_runner=None,
+        use_streaming_for_review_fixes: bool = False,
     ) -> None:
         self._task_service = task_service
         self._implementation_service = implementation_service
         self._repository_service = repository_service
         self._state_registry = state_registry
+        self._planning_session_runner = planning_session_runner
+        self._use_streaming_for_review_fixes = bool(
+            planning_session_runner is not None and use_streaming_for_review_fixes
+        )
         self.logger = logger or configure_logger(self.__class__.__name__)
 
     @property
@@ -404,16 +410,45 @@ class ReviewCommentService(Service):
         comment: ReviewComment,
         review_context: ReviewFixContext,
     ) -> dict[str, str | bool]:
-        execution = self._implementation_service.fix_review_comment(
-            comment,
-            review_context.branch_name,
-            review_context.session_id,
-            task_id=review_context.task_id,
-            task_summary=review_context.task_summary,
-        ) or {}
+        if self._use_streaming_for_review_fixes:
+            self.logger.info(
+                'streaming review-fix session for task %s comment %s '
+                '(visible in the planning UI)',
+                review_context.task_id,
+                comment.comment_id,
+            )
+            execution = self._planning_session_runner.fix_review_comment(
+                comment,
+                review_context.branch_name,
+                task_id=review_context.task_id,
+                task_summary=review_context.task_summary,
+                repository_local_path=self._review_repository_local_path(
+                    review_context,
+                ),
+            ) or {}
+        else:
+            execution = self._implementation_service.fix_review_comment(
+                comment,
+                review_context.branch_name,
+                review_context.session_id,
+                task_id=review_context.task_id,
+                task_summary=review_context.task_summary,
+            ) or {}
         if not execution.get(ImplementationFields.SUCCESS, False):
             raise RuntimeError(f'failed to address comment {comment.comment_id}')
         return execution
+
+    def _review_repository_local_path(
+        self,
+        review_context: ReviewFixContext,
+    ) -> str:
+        try:
+            repository = self._repository_service.get_repository(
+                review_context.repository_id,
+            )
+        except Exception:
+            return ''
+        return normalized_text(getattr(repository, 'local_path', '') or '')
 
     def _publish_review_comment_fix(
         self,
@@ -433,16 +468,28 @@ class ReviewCommentService(Service):
             review_context.branch_name,
             self._review_fix_commit_message(),
         )
-        self._repository_service.reply_to_review_comment(
-            repository,
-            comment,
-            review_comment_reply_body(execution),
-        )
-        self.logger.info(
-            'replied to review comment %s on pull request %s',
-            comment.comment_id,
-            comment.pull_request_id,
-        )
+        # The fix is already on the remote at this point. Subsequent
+        # provider-side bookkeeping (reply, resolve) is best-effort: if
+        # Bitbucket/GitHub/etc. rejects the reply we don't want to roll
+        # back the actual code fix or pretend the work failed.
+        try:
+            self._repository_service.reply_to_review_comment(
+                repository,
+                comment,
+                review_comment_reply_body(execution),
+            )
+            self.logger.info(
+                'replied to review comment %s on pull request %s',
+                comment.comment_id,
+                comment.pull_request_id,
+            )
+        except Exception:
+            self.logger.exception(
+                'failed to post reply to review comment %s on pull request %s; '
+                'fix has been pushed but the reply will need manual posting',
+                comment.comment_id,
+                comment.pull_request_id,
+            )
         if self._resolve_review_comment(repository, comment):
             self.logger.info(
                 'resolved review comment %s on pull request %s',

@@ -28,6 +28,11 @@ def wait_until_reachable(url: str, label: str) -> None:
         except Exception:
             time.sleep(2)
     raise SystemExit(f"{label} did not become reachable in time")
+
+
+# Docker only supports the OpenHands backend. The Claude backend is rejected
+# at app startup with a clear error, but we still wait for OpenHands here so
+# kato.main has the dependency available when it needs it.
 wait_until_reachable("http://openhands:3000", "OpenHands")
 if os.getenv("OPENHANDS_SKIP_TESTING", "").strip().lower() not in TRUE_VALUES and os.getenv("OPENHANDS_TESTING_CONTAINER_ENABLED", "").strip().lower() in TRUE_VALUES:
     wait_until_reachable(

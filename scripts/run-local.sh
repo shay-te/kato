@@ -18,4 +18,7 @@ set -a
 . ./.env
 set +a
 
+# kato.main embeds the planning webserver as a daemon thread in the same
+# Python process so both share the live ClaudeSessionManager. Disable it
+# entirely with KATO_WEBSERVER_DISABLED=true in .env.
 exec .venv/bin/python -m kato.main

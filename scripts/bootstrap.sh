@@ -23,6 +23,19 @@ if [ ! -x .venv/bin/python ]; then
 fi
 
 run_step sh ./scripts/install-python-deps.sh .venv/bin/python editable
+run_step .venv/bin/python -m pip install --no-cache-dir -e ./webserver
+
+# Build the React planning-UI bundle when node is available. The pre-built
+# artifacts are checked into webserver/static/build/, so a missing node
+# isn't fatal — the existing bundle keeps working until someone with node
+# installed updates it.
+if command -v npm >/dev/null 2>&1; then
+  run_step npm --prefix ./webserver/ui install --no-audit --no-fund
+  run_step npm --prefix ./webserver/ui run build
+else
+  printf '%s\n' "==> skipping webserver/ui build (npm not found; using committed bundle)"
+fi
+
 run_step .venv/bin/python -m unittest discover -s tests
 
 cat <<'EOF'

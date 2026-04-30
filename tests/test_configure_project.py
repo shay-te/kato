@@ -37,6 +37,7 @@ class ConfigureProjectTests(unittest.TestCase):
         with self._patch_prompts(
             {
                 'Where are your tasks tracked': 'youtrack',
+                'Which agent should run implementation/testing/review work': 'openhands',
                 'YouTrack base URL': 'https://youtrack.example',
                 'YouTrack token': 'yt-token',
                 'YouTrack assignee login': 'developer',
@@ -80,6 +81,7 @@ class ConfigureProjectTests(unittest.TestCase):
         with self._patch_prompts(
             {
                 'Where are your tasks tracked': 'youtrack',
+                'Which agent should run implementation/testing/review work': 'openhands',
                 'YouTrack base URL': 'https://youtrack.example',
                 'YouTrack token': 'yt-token',
                 'YouTrack assignee login': 'developer',
@@ -115,6 +117,7 @@ class ConfigureProjectTests(unittest.TestCase):
         with self._patch_prompts(
             {
                 'Where are your tasks tracked': 'jira',
+                'Which agent should run implementation/testing/review work': 'openhands',
                 'Jira base URL': 'https://company.atlassian.net',
                 'Jira token': 'jira-token',
                 'Jira assignee account id or username': 'dev-user',
@@ -167,6 +170,7 @@ class ConfigureProjectTests(unittest.TestCase):
         with self._patch_prompts(
             {
                 'Where are your tasks tracked': 'bitbucket',
+                'Which agent should run implementation/testing/review work': 'openhands',
                 'Bitbucket Issues base URL': 'https://api.bitbucket.org/2.0',
                 'Bitbucket Issues token': 'bb-token',
                 'Bitbucket Issues username for git auth': 'bb-user',
@@ -207,6 +211,7 @@ class ConfigureProjectTests(unittest.TestCase):
         with self._patch_prompts(
             {
                 'Where are your tasks tracked': 'youtrack',
+                'Which agent should run implementation/testing/review work': 'openhands',
                 'YouTrack base URL': 'https://youtrack.example',
                 'YouTrack token': 'yt-token',
                 'YouTrack assignee login': 'developer',
@@ -249,6 +254,7 @@ class ConfigureProjectTests(unittest.TestCase):
         with self._patch_prompts(
             {
                 'Where are your tasks tracked': 'youtrack',
+                'Which agent should run implementation/testing/review work': 'openhands',
                 'YouTrack base URL': 'https://youtrack.example',
                 'YouTrack token': 'yt-token',
                 'YouTrack assignee login': 'developer',
@@ -429,6 +435,7 @@ class ConfigureProjectTests(unittest.TestCase):
 
             responses = {
                 'Where are your tasks tracked': 'youtrack',
+                'Which agent should run implementation/testing/review work': 'openhands',
                 'YouTrack base URL': 'https://youtrack.example',
                 'YouTrack token': 'yt-token',
                 'YouTrack assignee login': 'me',
@@ -524,6 +531,7 @@ class ConfigureProjectTests(unittest.TestCase):
 
             responses = {
                 'Where are your tasks tracked': 'youtrack',
+                'Which agent should run implementation/testing/review work': 'openhands',
                 'YouTrack base URL': 'https://youtrack.example',
                 'YouTrack token': '',
                 'YouTrack assignee login': 'me',

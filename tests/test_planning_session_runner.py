@@ -1,0 +1,134 @@
+from __future__ import annotations
+
+import time
+import unittest
+from unittest.mock import MagicMock
+
+from kato.client.claude.session_manager import (
+    SESSION_STATUS_REVIEW,
+    SESSION_STATUS_TERMINATED,
+)
+from kato.client.claude.streaming_session import SessionEvent
+from kato.data_layers.data.fields import ImplementationFields
+from kato.data_layers.service.planning_session_runner import (
+    PlanningSessionRunner,
+    StreamingSessionDefaults,
+)
+from utils import build_task
+
+
+class _FakeRepo:
+    def __init__(self, repo_id: str, local_path: str) -> None:
+        self.id = repo_id
+        self.local_path = local_path
+
+
+class _FakePrepared:
+    def __init__(self, repositories: list[_FakeRepo]) -> None:
+        self.repositories = repositories
+        self.repository_branches: dict[str, str] = {}
+        self.branch_name = 'feature/proj-1'
+
+
+class _FakeSession:
+    def __init__(self, terminal_event: SessionEvent | None) -> None:
+        self.claude_session_id = 'fake-session-id'
+        self._events_to_emit = [terminal_event] if terminal_event else []
+        self._is_alive = True
+        self.terminal_event = terminal_event
+
+    def poll_event(self, timeout: float = 0.0) -> SessionEvent | None:  # noqa: ARG002
+        if self._events_to_emit:
+            event = self._events_to_emit.pop(0)
+            if event is not None and event.is_terminal:
+                self._is_alive = False
+            return event
+        return None
+
+    @property
+    def is_alive(self) -> bool:
+        return self._is_alive
+
+
+class _FakeManager:
+    def __init__(self, terminal_event: SessionEvent | None) -> None:
+        self.start_kwargs: dict | None = None
+        self.statuses: list[str] = []
+        self._session = _FakeSession(terminal_event)
+
+    def start_session(self, **kwargs):
+        self.start_kwargs = kwargs
+        return self._session
+
+    def update_status(self, task_id: str, status: str) -> None:  # noqa: ARG002
+        self.statuses.append(status)
+
+
+def _terminal(*, is_error: bool = False, result: str = 'all done') -> SessionEvent:
+    return SessionEvent(
+        raw={
+            'type': 'result',
+            'subtype': 'success' if not is_error else 'error',
+            'is_error': is_error,
+            'result': result,
+            'session_id': 'live-id',
+        },
+    )
+
+
+class PlanningSessionRunnerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.defaults = StreamingSessionDefaults(
+            binary='claude',
+            model='claude-opus-4-7',
+            permission_mode='acceptEdits',
+            allowed_tools='Edit,Write',
+        )
+
+    def test_implement_task_starts_session_with_prompt_and_returns_result(self) -> None:
+        manager = _FakeManager(_terminal(result='shipped it'))
+        runner = PlanningSessionRunner(session_manager=manager, defaults=self.defaults)
+        prepared = _FakePrepared([_FakeRepo('client', '/tmp/client')])
+
+        result = runner.implement_task(build_task(), prepared_task=prepared)
+
+        # Session is started with the right cwd + the chosen model.
+        self.assertEqual(manager.start_kwargs['cwd'], '/tmp/client')
+        self.assertEqual(manager.start_kwargs['model'], 'claude-opus-4-7')
+        # Initial prompt was filled with the implementation guidance.
+        self.assertIn('Implement task PROJ-1', manager.start_kwargs['initial_prompt'])
+        # Status promotion to review happened after success.
+        self.assertEqual(manager.statuses, [SESSION_STATUS_REVIEW])
+
+        self.assertTrue(result[ImplementationFields.SUCCESS])
+        self.assertEqual(result[ImplementationFields.SESSION_ID], 'fake-session-id')
+        self.assertEqual(result[ImplementationFields.MESSAGE], 'shipped it')
+
+    def test_implement_task_raises_when_terminal_reports_error(self) -> None:
+        manager = _FakeManager(_terminal(is_error=True, result='Credit balance is too low'))
+        runner = PlanningSessionRunner(session_manager=manager, defaults=self.defaults)
+        prepared = _FakePrepared([_FakeRepo('client', '/tmp/client')])
+
+        with self.assertRaisesRegex(RuntimeError, 'Credit balance is too low'):
+            runner.implement_task(build_task(), prepared_task=prepared)
+        self.assertEqual(manager.statuses, [SESSION_STATUS_TERMINATED])
+
+    def test_implement_task_raises_when_session_ends_without_terminal_event(self) -> None:
+        manager = _FakeManager(terminal_event=None)
+        # Mark the fake session dead so the runner exits the wait loop quickly.
+        manager._session._is_alive = False
+        runner = PlanningSessionRunner(
+            session_manager=manager,
+            defaults=self.defaults,
+            max_wait_seconds=0.1,
+            clock=lambda: time.monotonic(),
+        )
+        prepared = _FakePrepared([_FakeRepo('client', '/tmp/client')])
+
+        with self.assertRaisesRegex(RuntimeError, 'ended without a result event'):
+            runner.implement_task(build_task(), prepared_task=prepared)
+        self.assertEqual(manager.statuses, [SESSION_STATUS_TERMINATED])
+
+
+if __name__ == '__main__':
+    unittest.main()

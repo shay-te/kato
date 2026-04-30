@@ -11,6 +11,16 @@ core_lib:
 
 kato:
   issue_platform: ${oc.env:KATO_ISSUE_PLATFORM,"youtrack"}
+  agent_backend: ${oc.env:KATO_AGENT_BACKEND,"openhands"}
+  # Per-task workspace folders that hold fresh clones of every repo a
+  # task touches. Each folder is named after the ticket id and survives
+  # kato restart; the planning UI's tab list is derived from this root.
+  workspaces_root: ${oc.env:KATO_WORKSPACES_ROOT,""}
+  # How many tasks the orchestrator runs in parallel. The main scan
+  # thread still gates each task one-at-a-time (validate, reserve slot,
+  # move to In Progress); the heavy execute / test / publish work runs
+  # in a thread pool sized by this value.
+  max_parallel_tasks: ${oc.decode:${oc.env:KATO_MAX_PARALLEL_TASKS,"1"}}
   retry:
     max_retries: ${oc.decode:${oc.env:KATO_EXTERNAL_API_MAX_RETRIES,"3"}}
   failure_email:
@@ -105,6 +115,19 @@ kato:
     testing_llm_base_url: ${oc.env:OPENHANDS_TESTING_LLM_BASE_URL,""}
     poll_interval_seconds: ${oc.decode:${oc.env:OPENHANDS_POLL_INTERVAL_SECONDS,"2.0"}}
     max_poll_attempts: ${oc.decode:${oc.env:OPENHANDS_MAX_POLL_ATTEMPTS,"900"}}
+  claude:
+    binary: ${oc.env:KATO_CLAUDE_BINARY,"claude"}
+    model: ${oc.env:KATO_CLAUDE_MODEL,""}
+    max_turns: ${oc.env:KATO_CLAUDE_MAX_TURNS,""}
+    # Reasoning depth: low | medium | high | xhigh | max. Empty leaves
+    # Claude on its built-in default. Higher levels think harder before
+    # acting (more tokens, more time).
+    effort: ${oc.env:KATO_CLAUDE_EFFORT,""}
+    allowed_tools: ${oc.env:KATO_CLAUDE_ALLOWED_TOOLS,""}
+    disallowed_tools: ${oc.env:KATO_CLAUDE_DISALLOWED_TOOLS,""}
+    bypass_permissions: ${oc.decode:${oc.env:KATO_CLAUDE_BYPASS_PERMISSIONS,"false"}}
+    timeout_seconds: ${oc.decode:${oc.env:KATO_CLAUDE_TIMEOUT_SECONDS,"1800"}}
+    model_smoke_test_enabled: ${oc.decode:${oc.env:KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED,"false"}}
   task_scan:
     startup_delay_seconds: ${oc.decode:${oc.env:OPENHANDS_TASK_SCAN_STARTUP_DELAY_SECONDS,"30"}}
     scan_interval_seconds: ${oc.decode:${oc.env:OPENHANDS_TASK_SCAN_INTERVAL_SECONDS,"60"}}
