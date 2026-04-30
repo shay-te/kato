@@ -55,9 +55,8 @@ _SSE_POLL_INTERVAL_SECONDS = 0.1
 # Periodic SSE comment that keeps proxies / load balancers from idling
 # the connection out and lets the browser detect server crashes.
 _SSE_HEARTBEAT_SECONDS = 15.0
-# How often the SSE stream re-checks the repo's HEAD against the session's
-# expected branch and pushes a `branch_state` event to the browser.
-_BRANCH_CHECK_INTERVAL_SECONDS = 2.0
+
+
 def _record_cwd_or_none(manager, task_id: str) -> str | None:
     """Return the session's cwd if a record exists and points to a real dir."""
     record = manager.get_record(task_id)
@@ -69,22 +68,17 @@ def _record_cwd_or_none(manager, task_id: str) -> str | None:
     return cwd
 
 
-def _branch_lock_state(record, cwd: str) -> dict[str, Any]:
-    expected = (
-        getattr(record, 'expected_branch', '') if record is not None else ''
-    )
-    current = current_branch(cwd)
-    locked = bool(expected) and bool(current) and expected != current
-    return {
-        'expected': expected,
-        'current': current,
-        'locked': locked,
-    }
+# Branch-safety lock is gone in workspace mode: each task has its own
+# clone, so there's no shared HEAD that another task could drift away
+# under. Kept the helper out of the import surface; the SSE generator
+# below no longer emits ``branch_state`` events and POST handlers no
+# longer 409 on branch divergence.
 
 
 def create_app(
     *,
     session_manager=None,
+    workspace_manager=None,
     fallback_state_dir: str = '',
     status_broadcaster=None,
 ) -> Flask:
@@ -96,6 +90,11 @@ def create_app(
     if session_manager is None:
         session_manager = _build_fallback_manager(fallback_state_dir)
     app.config['SESSION_MANAGER'] = session_manager
+    # Workspace manager is the source of truth for the tab list — every
+    # task with a workspace folder gets a tab, regardless of whether it
+    # currently has a live Claude subprocess. Optional for legacy
+    # /test setups that wire only the session manager.
+    app.config['WORKSPACE_MANAGER'] = workspace_manager
     app.config['STATUS_BROADCASTER'] = status_broadcaster
 
     _register_http_routes(app)
@@ -111,12 +110,18 @@ def _register_http_routes(app: Flask) -> None:
 
     @app.get('/')
     def index() -> str:
-        records = _records_as_dicts(app.config['SESSION_MANAGER'])
+        records = _records_as_dicts(
+            app.config['SESSION_MANAGER'],
+            app.config.get('WORKSPACE_MANAGER'),
+        )
         return render_template('index.html', sessions=records)
 
     @app.get('/api/sessions')
     def list_sessions():
-        return jsonify(_records_as_dicts(app.config['SESSION_MANAGER']))
+        return jsonify(_records_as_dicts(
+            app.config['SESSION_MANAGER'],
+            app.config.get('WORKSPACE_MANAGER'),
+        ))
 
     @app.get('/api/sessions/<task_id>')
     def get_session(task_id: str):
@@ -302,30 +307,16 @@ def _register_streaming_routes(app: Flask) -> None:
 
 
 def _resolve_writable_session(manager, task_id: str):
-    """Return (session, None) if the session is writable; (None, error_response) otherwise.
+    """Return (session, None) if writable; (None, error_response) otherwise.
 
-    Encapsulates the "is there a live subprocess and is the repo on the
-    right branch?" preamble that every POST endpoint does. Keeps each
-    handler focused on parsing its own payload and forwarding the call.
+    In workspace mode each task has its own clone so the old
+    branch-safety check is gone. The only failure mode left is "no
+    live subprocess for this task" — happens when kato has finished /
+    terminated the task but the tab is still rendered.
     """
     session = manager.get_session(task_id)
     if session is None or not session.is_alive:
         return None, (jsonify({'error': 'session is not running'}), 409)
-    record = manager.get_record(task_id)
-    lock = _branch_lock_state(record, session.cwd)
-    if lock['locked']:
-        return None, (
-            jsonify({
-                'error': (
-                    f"refusing to forward: repo is on '{lock['current']}' "
-                    f"but this session expects '{lock['expected']}'. "
-                    'kato has moved on; wait for the repo to return to '
-                    'the right branch before sending.'
-                ),
-                'branch_state': lock,
-            }),
-            409,
-        )
     return session, None
 
 
@@ -346,29 +337,21 @@ def _event_stream_generator(manager, task_id: str):
     if session is None:
         yield _sse_message('session_idle', _record_to_dict(record))
         return
-    yield from _replay_session_backlog(session, record)
-    yield from _follow_live_session(session, record)
+    yield from _replay_session_backlog(session)
+    yield from _follow_live_session(session)
 
 
-def _replay_session_backlog(session, record):
-    """Catch a freshly-connecting browser up on everything seen so far.
-
-    Pushes every buffered event in order plus the current branch-lock
-    state, so the UI's send button can be enabled/disabled before the
-    user even tries to type.
-    """
+def _replay_session_backlog(session):
+    """Catch a freshly-connecting browser up on everything seen so far."""
     backlog = session.recent_events()
     for event in backlog:
         yield _sse_message('session_event', {'event': event.to_dict()})
-    yield _sse_message('branch_state', _branch_lock_state(record, session.cwd))
 
 
-def _follow_live_session(session, record):
-    """Tail new events as they arrive, plus periodic branch-state and heartbeat."""
+def _follow_live_session(session):
+    """Tail new events as they arrive, plus a periodic SSE heartbeat."""
     last_index = len(session.recent_events())
     last_heartbeat = time.monotonic()
-    last_branch_check = time.monotonic()
-    last_branch_state = _branch_lock_state(record, session.cwd)
     while True:
         current = session.recent_events()
         if len(current) > last_index:
@@ -379,13 +362,6 @@ def _follow_live_session(session, record):
         if not session.is_alive and last_index >= len(session.recent_events()):
             yield _sse_message('session_closed', {})
             return
-
-        if time.monotonic() - last_branch_check >= _BRANCH_CHECK_INTERVAL_SECONDS:
-            fresh = _branch_lock_state(record, session.cwd)
-            if fresh != last_branch_state:
-                yield _sse_message('branch_state', fresh)
-                last_branch_state = fresh
-            last_branch_check = time.monotonic()
 
         if time.monotonic() - last_heartbeat >= _SSE_HEARTBEAT_SECONDS:
             yield ': ping\n\n'
@@ -408,8 +384,47 @@ def _sse_message(event_type: str, data: dict[str, Any]) -> str:
 # ----- helpers -----
 
 
-def _records_as_dicts(manager) -> list[dict[str, Any]]:
-    return [_record_to_dict(record) for record in manager.list_records()]
+def _records_as_dicts(session_manager, workspace_manager) -> list[dict[str, Any]]:
+    """Tab list payload — one entry per known task.
+
+    Source of truth: the workspace manager (folder-per-task). Each entry
+    is enriched with ``live`` (is the Claude subprocess running?) read
+    from the session manager. Falls back to session-manager records for
+    legacy setups where the workspace manager isn't wired.
+    """
+    if workspace_manager is None:
+        return [_record_to_dict(r) for r in session_manager.list_records()]
+    workspace_records = workspace_manager.list_workspaces()
+    live_session_ids = _live_session_ids(session_manager)
+    return [
+        _workspace_record_to_dict(record, live_session_ids)
+        for record in workspace_records
+    ]
+
+
+def _live_session_ids(session_manager) -> set[str]:
+    """Task ids that currently have an alive subprocess (best-effort)."""
+    if session_manager is None:
+        return set()
+    try:
+        records = session_manager.list_records()
+    except Exception:
+        return set()
+    live: set[str] = set()
+    for record in records:
+        try:
+            session = session_manager.get_session(record.task_id)
+        except Exception:
+            continue
+        if session is not None and getattr(session, 'is_alive', False):
+            live.add(record.task_id)
+    return live
+
+
+def _workspace_record_to_dict(record, live_session_ids: set[str]) -> dict[str, Any]:
+    payload = record.to_dict() if hasattr(record, 'to_dict') else dict(record)
+    payload['live'] = record.task_id in live_session_ids
+    return payload
 
 
 def _record_to_dict(record) -> dict[str, Any]:

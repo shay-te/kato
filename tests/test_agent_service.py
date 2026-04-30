@@ -846,10 +846,19 @@ class AgentServiceTests(unittest.TestCase):
 
     def test_process_assigned_task_with_planning_tag_registers_chat_and_skips_execution(self) -> None:
         from unittest.mock import MagicMock as _MagicMock
+        from kato.data_layers.service.wait_planning_service import WaitPlanningService
         session_manager = _MagicMock()
         # No prior session — wait-planning short-circuits when one is alive
         # (so the scan loop doesn't respawn or spam logs every cycle).
         session_manager.get_session.return_value = None
+        # Wait-planning is now its own service injected into AgentService,
+        # not inline methods. Construct with the same dependencies the
+        # real wiring uses.
+        wait_planning_service = WaitPlanningService(
+            session_manager=session_manager,
+            repository_service=self.repository_service,
+            task_state_service=self.task_state_service,
+        )
         service = AgentService(
             self.task_data_access,
             self.task_state_service,
@@ -858,6 +867,7 @@ class AgentServiceTests(unittest.TestCase):
             self.repository_service,
             self.notification_service,
             session_manager=session_manager,
+            wait_planning_service=wait_planning_service,
         )
         task = build_task(tags=['kato:wait-planning'])
 
@@ -885,15 +895,21 @@ class AgentServiceTests(unittest.TestCase):
 
     def test_process_assigned_task_with_planning_tag_skips_silently_when_session_alive(self) -> None:
         # When the user is mid-conversation, every scan cycle calling
-        # ``_handle_wait_for_planning`` should be a no-op — no respawn,
+        # the wait-planning handler should be a no-op — no respawn,
         # no log line. Otherwise the kato terminal fills with duplicate
         # "registered planning chat" lines and we risk re-injecting the
         # initial prompt into a live conversation.
         from unittest.mock import MagicMock as _MagicMock
+        from kato.data_layers.service.wait_planning_service import WaitPlanningService
         session_manager = _MagicMock()
         live_session = _MagicMock()
         live_session.is_alive = True
         session_manager.get_session.return_value = live_session
+        wait_planning_service = WaitPlanningService(
+            session_manager=session_manager,
+            repository_service=self.repository_service,
+            task_state_service=self.task_state_service,
+        )
         service = AgentService(
             self.task_data_access,
             self.task_state_service,
@@ -902,6 +918,7 @@ class AgentServiceTests(unittest.TestCase):
             self.repository_service,
             self.notification_service,
             session_manager=session_manager,
+            wait_planning_service=wait_planning_service,
         )
         task = build_task(tags=['kato:wait-planning'])
 

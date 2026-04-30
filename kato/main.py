@@ -98,11 +98,13 @@ def _start_planning_webserver_if_enabled(app) -> None:
         return
 
     session_manager = getattr(app, 'session_manager', None)
-    if session_manager is None:
-        # Backends without a streaming session model (e.g. OpenHands) skip
-        # the UI for now — there's nothing live to render.
+    workspace_manager = getattr(app, 'workspace_manager', None)
+    if session_manager is None and workspace_manager is None:
+        # Both backends now use a workspace manager, so this only fires
+        # in stripped-down setups (tests, embedded use). Nothing to
+        # render → keep the webserver off.
         app.logger.info(
-            'planning webserver skipped (no session manager — backend does not stream)'
+            'planning webserver skipped (no session_manager / workspace_manager wired)'
         )
         return
 
@@ -118,6 +120,7 @@ def _start_planning_webserver_if_enabled(app) -> None:
     port = int(os.environ.get('KATO_WEBSERVER_PORT', '5050'))
     flask_app = _create_webserver_app(
         session_manager=session_manager,
+        workspace_manager=workspace_manager,
         status_broadcaster=_STATUS_BROADCASTER,
     )
 

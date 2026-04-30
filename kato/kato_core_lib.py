@@ -27,6 +27,12 @@ from kato.data_layers.service.task_publisher import TaskPublisher
 from kato.data_layers.service.task_state_service import TaskStateService
 from kato.data_layers.service.task_service import TaskService
 from kato.data_layers.service.testing_service import TestingService
+from kato.data_layers.service.parallel_task_runner import ParallelTaskRunner
+from kato.data_layers.service.wait_planning_service import WaitPlanningService
+from kato.data_layers.service.workspace_manager import (
+    WorkspaceManager,
+    provision_task_workspace_clones,
+)
 from kato.helpers.runtime_identity_utils import runtime_source_fingerprint
 from kato.validation.branch_publishability import (
     TaskBranchPublishabilityValidator,
@@ -86,6 +92,18 @@ class KatoCoreLib(CoreLib):
         self.session_manager = ClaudeSessionManager.from_config(
             open_cfg, agent_backend,
         )
+        # Per-task workspace folders (one clone-set per ticket id) are
+        # backend-agnostic. Both Claude and OpenHands flows use them for
+        # isolation + parallelism.
+        self.workspace_manager = WorkspaceManager.from_config(
+            open_cfg, agent_backend,
+        )
+        # Worker pool sized to KATO_MAX_PARALLEL_TASKS. With max=1 the
+        # behavior is identical to the previous synchronous loop —
+        # submit-then-block — so single-task setups don't pay any cost.
+        self.parallel_task_runner = ParallelTaskRunner(
+            max_workers=self.workspace_manager.max_parallel_tasks,
+        )
         planning_session_runner = PlanningSessionRunner.from_config(
             open_cfg, agent_backend, self.session_manager,
         )
@@ -131,12 +149,25 @@ class KatoCoreLib(CoreLib):
         task_branch_publishability_validator = TaskBranchPublishabilityValidator(
             repository_service
         )
+        # Bind the workspace provisioner here so the preflight service
+        # stays free of WorkspaceManager coupling. The lambda closes over
+        # the manager + repository service; calling it on a task returns
+        # repos with rewritten ``local_path`` pointing at the per-task
+        # workspace clones.
+        workspace_provisioner = (
+            (lambda task, repos: provision_task_workspace_clones(
+                self.workspace_manager, repository_service, task, repos,
+            ))
+            if self.workspace_manager is not None
+            else None
+        )
         task_preflight_service = TaskPreflightService(
             task_model_access_validator=task_model_access_validator,
             task_service=task_service,
             repository_service=repository_service,
             task_branch_push_validator=task_branch_push_validator,
             task_branch_publishability_validator=task_branch_publishability_validator,
+            workspace_provisioner=workspace_provisioner,
         )
         task_failure_handler = TaskFailureHandler(
             task_service=task_service,
@@ -180,6 +211,15 @@ class KatoCoreLib(CoreLib):
             skip_testing=skip_testing_enabled(open_cfg.openhands),
             planning_session_runner=planning_session_runner,
             session_manager=self.session_manager,
+            workspace_manager=self.workspace_manager,
+            parallel_task_runner=self.parallel_task_runner,
+            wait_planning_service=WaitPlanningService(
+                session_manager=self.session_manager,
+                repository_service=repository_service,
+                task_state_service=task_state_service,
+                workspace_manager=self.workspace_manager,
+                planning_session_runner=planning_session_runner,
+            ),
         )
 
 

@@ -42,11 +42,6 @@
   // button so the user can't queue messages while the agent is working
   // (queueing technically works, but the UX of "can I send now?" matters).
   let activeTurnInFlight = false;
-  // Last branch_state event payload for the active tab. When `locked` is
-  // true the repo's HEAD doesn't match what this session was started for
-  // (kato has moved on to another branch); we hard-disable the send
-  // button so chat-driven edits don't land on the wrong branch.
-  let activeBranchState = { expected: '', current: '', locked: false };
 
   refreshButton.addEventListener('click', refreshTabList);
   tabList.addEventListener('click', onTabClick);
@@ -128,8 +123,6 @@
     activeTaskId = taskId;
     // Reset per-session memory: each tab gets its own scratch.
     sessionToolDecisions = {};
-    // Reset branch state — the SSE stream's first message will refresh it.
-    activeBranchState = { expected: '', current: '', locked: false };
     // Start idle. The backlog replay will lock us if it ends with an
     // unfinished assistant turn (we set in-flight on assistant events
     // and clear it on result events). Wait-planning sessions sit idle
@@ -475,29 +468,11 @@
     refreshSendButton();
   }
 
-  function applyBranchState(state) {
-    activeBranchState = {
-      expected: String(state && state.expected || ''),
-      current: String(state && state.current || ''),
-      locked: !!(state && state.locked),
-    };
-    refreshSendButton();
-  }
-
   function refreshSendButton() {
-    if (activeBranchState.locked) {
-      sendButton.disabled = true;
-      sendButton.textContent = 'Locked';
-      sendButton.title =
-        `Repo is on '${activeBranchState.current}' but this session expects ` +
-        `'${activeBranchState.expected}'. ` +
-        `Kato has switched to another task. Wait for the repo to return to ` +
-        `'${activeBranchState.expected}' before chatting.`;
-      return;
-    }
-    // Always enabled when not branch-locked. Claude's stream-json input
-    // accepts steering messages mid-turn — the user can interject as
-    // soon as they have something to say.
+    // Workspace mode: each task has its own clone, so the old branch-
+    // safety lock is gone. Send is always enabled when there's a live
+    // session; the only "disabled" state left is `lockSendDisabled`
+    // (no live subprocess).
     sendButton.disabled = false;
     sendButton.textContent = activeTurnInFlight ? 'Steer' : 'Send';
     sendButton.title = activeTurnInFlight
@@ -542,11 +517,6 @@
     stream.addEventListener('session_event', (event) => {
       const payload = safeParseJSON(event.data);
       if (payload) { renderEvent(payload.event || payload); }
-    });
-
-    stream.addEventListener('branch_state', (event) => {
-      const payload = safeParseJSON(event.data) || {};
-      applyBranchState(payload);
     });
 
     stream.addEventListener('session_idle', (event) => {
@@ -594,12 +564,6 @@
 
   async function onSendMessage(event) {
     event.preventDefault();
-    if (activeBranchState.locked) {
-      appendBubble('error',
-        `Cannot send — repo is on '${activeBranchState.current}' ` +
-        `but this session expects '${activeBranchState.expected}'.`);
-      return;
-    }
     // Mid-turn sends are intentional steering, not a guard violation.
     const text = messageInput.value.trim();
     if (!text || !activeTaskId) { return; }

@@ -313,6 +313,8 @@ class DeploymentFilesTests(unittest.TestCase):
                 'KATO_LOG_LEVEL',
                 'KATO_WORKFLOW_LOG_LEVEL',
                 'KATO_EXTERNAL_API_MAX_RETRIES',
+                'KATO_WORKSPACES_ROOT',
+                'KATO_MAX_PARALLEL_TASKS',
                 'KATO_IGNORED_REPOSITORY_FOLDERS',
                 'KATO_SOURCE_FINGERPRINT',
                 'KATO_FAILURE_EMAIL_ENABLED',

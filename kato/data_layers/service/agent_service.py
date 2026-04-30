@@ -27,7 +27,7 @@ from kato.data_layers.service.task_preflight_service import (
 )
 from kato.data_layers.service.task_service import TaskService
 from kato.data_layers.service.testing_service import TestingService
-from kato.data_layers.data.fields import ImplementationFields, TaskCommentFields, TaskTags
+from kato.data_layers.data.fields import ImplementationFields, TaskCommentFields
 from kato.data_layers.data.review_comment import ReviewComment
 from kato.validation.branch_publishability import (
     TaskBranchPublishabilityValidator,
@@ -37,7 +37,6 @@ from kato.validation.model_access import TaskModelAccessValidator
 from kato.helpers.task_execution_utils import (
     apply_testing_message,
     implementation_succeeded,
-    skip_task_result,
     testing_failed_result,
     testing_succeeded,
 )
@@ -65,6 +64,9 @@ class AgentService(Service):
         skip_testing: bool = False,
         planning_session_runner=None,
         session_manager=None,
+        workspace_manager=None,
+        parallel_task_runner=None,
+        wait_planning_service=None,
         logger: logging.Logger | None = None,
     ) -> None:
         self.logger = logger or configure_logger(self.__class__.__name__)
@@ -96,6 +98,9 @@ class AgentService(Service):
         self._skip_testing = bool(skip_testing)
         self._planning_session_runner = planning_session_runner
         self._session_manager = session_manager
+        self._workspace_manager = workspace_manager
+        self._parallel_task_runner = parallel_task_runner
+        self._wait_planning_service = wait_planning_service
         self._state_registry = state_registry or AgentStateRegistry()
         self._review_comment_service = review_comment_service or ReviewCommentService(
             self._task_service,
@@ -150,9 +155,25 @@ class AgentService(Service):
         self._startup_validator.validate(self.logger)
 
     def shutdown(self) -> None:
-        """Stop all active OpenHands conversations to remove agent-server containers."""
-        self._implementation_service.stop_all_conversations()
-        self._testing_service.stop_all_conversations()
+        """Tear down everything kato owns: pool, sessions, conversations.
+
+        Wired into the kato main process's signal handler. Each step is
+        guarded so a single failure can't block the rest of the cleanup.
+        Idempotent — safe to call twice.
+        """
+        if self._parallel_task_runner is not None:
+            try:
+                self._parallel_task_runner.shutdown(wait=True)
+            except Exception:
+                self.logger.exception('error during parallel-runner shutdown')
+        try:
+            self._implementation_service.stop_all_conversations()
+        except Exception:
+            self.logger.exception('error stopping implementation conversations')
+        try:
+            self._testing_service.stop_all_conversations()
+        except Exception:
+            self.logger.exception('error stopping testing conversations')
         if self._session_manager is not None:
             try:
                 self._session_manager.shutdown()
@@ -161,6 +182,16 @@ class AgentService(Service):
 
     def get_assigned_tasks(self) -> list[Task]:
         return self._task_service.get_assigned_tasks()
+
+    @property
+    def parallel_task_runner(self):
+        """Worker pool used by the scan job to run tasks concurrently.
+
+        ``None`` when the runner wasn't wired (legacy / test setups).
+        Callers are expected to fall back to inline execution in that
+        case so the same code path works with and without the runner.
+        """
+        return self._parallel_task_runner
 
     def get_new_pull_request_comments(self) -> list[ReviewComment]:
         self._cleanup_done_task_conversations()
@@ -207,15 +238,17 @@ class AgentService(Service):
         self,
         current_review_task_ids: set[str],
     ) -> None:
-        """Drop planning-UI tabs whose ticket has moved to done/closed.
+        """Drop planning-UI tabs + workspaces whose ticket has moved to done/closed.
 
-        A streaming session's record is kept on disk while the ticket is in
-        ``Open`` or in the configured review states. As soon as the ticket
-        leaves both buckets — i.e. the reviewer marked it done or closed —
-        we terminate the live subprocess (if any) and delete the persisted
-        record so the tab disappears from the planning UI.
+        A streaming session and its workspace folder are kept on disk
+        while the ticket is in ``Open`` or in the configured review
+        states. Once the ticket leaves both buckets — i.e. the reviewer
+        marked it done or closed — we terminate the live subprocess (if
+        any), delete the persisted session record, and remove the
+        workspace folder. The tab disappears from the planning UI on
+        the next refresh.
         """
-        if self._session_manager is None:
+        if self._session_manager is None and self._workspace_manager is None:
             return
         try:
             current_assigned_task_ids = {
@@ -229,28 +262,54 @@ class AgentService(Service):
             return
 
         live_task_ids = current_assigned_task_ids | current_review_task_ids
-        try:
-            records = self._session_manager.list_records()
-        except Exception:
-            self.logger.exception('failed to list planning session records')
-            return
-        for record in records:
-            if record.task_id in live_task_ids:
-                continue
+        for task_id in self._stale_planning_task_ids(live_task_ids):
             self.logger.info(
-                'task %s is no longer assigned or in review; closing planning session tab',
-                record.task_id,
+                'task %s is no longer assigned or in review; '
+                'closing planning session tab + deleting workspace',
+                task_id,
             )
+            self._terminate_session_silent(task_id)
+            self._delete_workspace_silent(task_id)
+
+    def _stale_planning_task_ids(self, live_task_ids: set[str]) -> set[str]:
+        """Union of task ids known to either manager that aren't live anymore."""
+        candidates: set[str] = set()
+        if self._session_manager is not None:
             try:
-                self._session_manager.terminate_session(
-                    record.task_id,
-                    remove_record=True,
+                candidates.update(
+                    record.task_id for record in self._session_manager.list_records()
                 )
             except Exception:
-                self.logger.exception(
-                    'failed to close planning session for task %s',
-                    record.task_id,
+                self.logger.exception('failed to list planning session records')
+        if self._workspace_manager is not None:
+            try:
+                candidates.update(
+                    record.task_id
+                    for record in self._workspace_manager.list_workspaces()
                 )
+            except Exception:
+                self.logger.exception('failed to list workspaces')
+        return candidates - live_task_ids
+
+    def _terminate_session_silent(self, task_id: str) -> None:
+        if self._session_manager is None:
+            return
+        try:
+            self._session_manager.terminate_session(task_id, remove_record=True)
+        except Exception:
+            self.logger.exception(
+                'failed to close planning session for task %s', task_id,
+            )
+
+    def _delete_workspace_silent(self, task_id: str) -> None:
+        if self._workspace_manager is None:
+            return
+        try:
+            self._workspace_manager.delete(task_id)
+        except Exception:
+            self.logger.exception(
+                'failed to delete workspace for task %s', task_id,
+            )
 
     def handle_pull_request_comment(self, payload: dict) -> dict[str, str]:
         return self._review_comment_service.handle_pull_request_comment(payload)
@@ -270,9 +329,10 @@ class AgentService(Service):
         # do *no* implementation, testing, or publishing work. The user
         # controls the conversation; remove the tag whenever they want
         # autonomous execution to take over.
-        planning_only_result = self._handle_wait_for_planning(task)
-        if planning_only_result is not None:
-            return planning_only_result
+        if self._wait_planning_service is not None:
+            planning_only_result = self._wait_planning_service.handle_task(task)
+            if planning_only_result is not None:
+                return planning_only_result
 
         prepared_task = self._task_preflight_service.prepare_task_execution_context(
             task,
@@ -304,311 +364,6 @@ class AgentService(Service):
             return testing_result
         return self._task_publisher.publish_task_execution(task, prepared_task, execution)
 
-    def _handle_wait_for_planning(self, task: Task) -> dict[str, object] | None:
-        """If the task is tagged ``kato:wait-planning``, register the chat tab and stop.
-
-        The orchestrator does no implementation/testing/publishing work for
-        these tasks — the human drives the conversation in the UI. Remove
-        the tag from the ticket whenever you want the agent to take over
-        autonomously. We register the session here (so the tab shows up
-        the moment the scan picks the task up) but never block on it.
-        """
-        if not self._task_has_wait_planning_tag(task):
-            return None
-        if self._session_manager is None:
-            # No streaming backend (e.g. OpenHands) — nothing to register.
-            # The task simply isn't worked on; nothing to comment either.
-            self.logger.info(
-                'task %s has %s but the active backend has no streaming UI; skipping',
-                task.id,
-                TaskTags.WAIT_PLANNING,
-            )
-            return skip_task_result(task.id, [])
-        # Already-alive session → tab is up, subprocess is waiting for the
-        # user. Skip silently so the scan loop doesn't spam the terminal
-        # every cycle while the user is mid-conversation.
-        existing = self._session_manager.get_session(str(task.id))
-        if existing is not None and existing.is_alive:
-            return skip_task_result(task.id, [])
-        cwd, expected_branch = self._resolve_wait_planning_context(task)
-        # Belt-and-suspenders: the prompt explicitly forbids tool use,
-        # AND the CLI runs in ``--permission-mode plan`` so Claude can't
-        # execute even if it tries. If the user later removes the
-        # ``kato:wait-planning`` tag, the autonomous flow uses the
-        # configured permission mode instead.
-        spawn_defaults = self._session_starter_defaults()
-        spawn_defaults['permission_mode'] = 'plan'
-        try:
-            self._session_manager.start_session(
-                task_id=str(task.id),
-                task_summary=str(task.summary or ''),
-                # ``claude -p --input-format stream-json`` stays alive
-                # across multiple user messages, but it must receive at
-                # least one prompt at startup — empty stdin causes it
-                # to exit with an error and the scan loop would respawn
-                # it forever. The contextual prompt below puts Claude
-                # in "ready, waiting" state without kicking off any work.
-                initial_prompt=self._build_wait_planning_prompt(task),
-                cwd=cwd,
-                expected_branch=expected_branch,
-                **spawn_defaults,
-            )
-            self.logger.info(
-                'task %s tagged %s — registered planning chat (cwd=%s); '
-                'remove the tag to let the agent run autonomously',
-                task.id,
-                TaskTags.WAIT_PLANNING,
-                cwd or '?',
-            )
-        except Exception:
-            self.logger.exception(
-                'failed to register planning session for task %s', task.id
-            )
-        # Planning is real work — move the ticket out of the inbox so it
-        # doesn't get picked up by another agent / scanned again as
-        # "needs to start". Idempotent on the ticket side, and only
-        # called on the fresh-spawn branch (the early "alive" return
-        # above guards the steady state).
-        self._move_wait_planning_task_to_in_progress(task)
-        return skip_task_result(task.id, [])
-
-    def _move_wait_planning_task_to_in_progress(self, task: Task) -> None:
-        """Move the ticket to "In Progress" when its planning session opens.
-
-        Best-effort: failures (network, permission, already-in-state)
-        are logged but never block the chat from working. The autonomous
-        flow uses ``_start_task_processing`` for the same step; we keep
-        them separate because wait-planning skips the rest of that
-        helper's work (commenting, branch push validation, etc).
-        """
-        try:
-            self._task_state_service.move_task_to_in_progress(task.id)
-            self.logger.info(
-                'task %s moved to in progress for planning session', task.id,
-            )
-        except Exception:
-            self.logger.exception(
-                'failed to move planning task %s to in progress', task.id,
-            )
-
-    def _resolve_wait_planning_context(self, task: Task) -> tuple[str, str]:
-        """Resolve and prepare the task branch for a wait-planning session.
-
-        Returns ``(cwd, expected_branch)``. We deliberately DO check out
-        the task branch (e.g. ``UNA-2576``) before the chat opens —
-        otherwise Claude would edit master if the user asks it to make
-        changes during planning. Branch creation reuses the autonomous
-        path's flow (fetch origin → fast-forward master → cut the task
-        branch from origin/master), just done up-front so the chat
-        starts on a safe base.
-
-        Best-effort: any failure (no repo match, git fetch error, etc.)
-        falls back to a more conservative result so the chat tab still
-        opens — the user sees an empty Files / Changes pane and can
-        investigate, but the conversation isn't blocked.
-        """
-        repositories = self._wait_planning_resolved_repositories(task)
-        if not repositories:
-            return '', ''
-        repositories = self._wait_planning_prepared_repositories(task, repositories)
-        if not repositories:
-            return '', ''
-        primary = repositories[0]
-        cwd = str(getattr(primary, 'local_path', '') or '').strip()
-        branch_name = self._wait_planning_branch_name(task, primary)
-        if not branch_name:
-            return cwd, ''
-        if not self._wait_planning_check_out_branches(task, repositories, primary, branch_name):
-            return cwd, ''
-        return cwd, branch_name
-
-    def _wait_planning_resolved_repositories(self, task: Task) -> list:
-        try:
-            return list(
-                self._repository_service.resolve_task_repositories(task) or [],
-            )
-        except Exception:
-            self.logger.exception(
-                'failed to resolve repositories for wait-planning task %s', task.id,
-            )
-            return []
-
-    def _wait_planning_prepared_repositories(
-        self,
-        task: Task,
-        repositories: list,
-    ) -> list:
-        try:
-            return list(
-                self._repository_service.prepare_task_repositories(repositories) or [],
-            )
-        except Exception:
-            self.logger.exception(
-                'failed to prepare repositories for wait-planning task %s', task.id,
-            )
-            # Caller falls back to ``cwd=local_path, expected_branch=''``
-            # — return [] so the caller takes that path uniformly.
-            return []
-
-    def _wait_planning_branch_name(self, task: Task, primary_repository) -> str:
-        try:
-            return str(
-                self._repository_service.build_branch_name(task, primary_repository) or '',
-            ).strip()
-        except Exception:
-            self.logger.exception(
-                'failed to derive branch name for wait-planning task %s', task.id,
-            )
-            return ''
-
-    def _wait_planning_check_out_branches(
-        self,
-        task: Task,
-        repositories: list,
-        primary_repository,
-        branch_name: str,
-    ) -> bool:
-        """Check out the task branch on the primary + sibling repositories.
-
-        Returns True on success, False on git failure. Logs siblings that
-        got pulled in so the operator can see the scope of the change.
-        """
-        with_siblings = self._repositories_with_siblings(repositories, primary_repository)
-        repository_branches = {repo.id: branch_name for repo in with_siblings}
-        try:
-            self._repository_service.prepare_task_branches(
-                with_siblings, repository_branches,
-            )
-        except Exception:
-            self.logger.exception(
-                'failed to check out task branch for wait-planning task %s; '
-                'chat will open on whatever branch is currently checked out',
-                task.id,
-            )
-            return False
-        sibling_ids = [
-            repo.id for repo in with_siblings if repo not in repositories
-        ]
-        if sibling_ids:
-            self.logger.info(
-                'task %s: also synced sibling repos %s to branch %s',
-                task.id, sibling_ids, branch_name,
-            )
-        return True
-
-    def _repositories_with_siblings(
-        self,
-        primary_repositories: list,
-        anchor_repository,
-    ) -> list:
-        """Append sibling repos (sharing a parent dir) to the prep list.
-
-        Deduplicates by ``id`` against ``primary_repositories`` so an
-        explicitly tagged repo isn't prepped twice.
-        """
-        sibling_lookup = getattr(
-            self._repository_service, 'sibling_repositories', None,
-        )
-        if sibling_lookup is None:
-            return list(primary_repositories)
-        try:
-            siblings = sibling_lookup(anchor_repository) or []
-        except Exception:
-            self.logger.exception(
-                'failed to look up sibling repositories for %s',
-                getattr(anchor_repository, 'id', '?'),
-            )
-            return list(primary_repositories)
-        seen_ids = {getattr(r, 'id', '') for r in primary_repositories}
-        novel_siblings = [
-            sibling for sibling in siblings
-            if getattr(sibling, 'id', '') and getattr(sibling, 'id', '') not in seen_ids
-        ]
-        return list(primary_repositories) + novel_siblings
-
-    @staticmethod
-    def _build_wait_planning_prompt(task: Task) -> str:
-        """Initial prompt for a wait-planning chat tab.
-
-        Three jobs at once:
-          1. Hand Claude the full task description so it has context.
-          2. Hard-stop any tool use — wait-planning is **planning only**.
-             We have to be explicit because the agent's default behavior
-             when handed a task is to start working on it.
-          3. Avoid empty stdin (which makes ``claude -p`` exit with an
-             error and the scan loop would respawn it forever).
-        """
-        task_id = str(getattr(task, 'id', '') or '').strip()
-        summary = str(getattr(task, 'summary', '') or '').strip()
-        description = str(getattr(task, 'description', '') or '').strip()
-        header = f'YouTrack ticket {task_id}' if task_id else 'this task'
-
-        sections = [
-            f"You're pair-planning with the user on {header}.",
-            '',
-            '## Task summary',
-            summary or '(no summary provided)',
-        ]
-        if description:
-            sections.extend(['', '## Task description', description])
-        sections.extend([
-            '',
-            '## Operating rules — READ CAREFULLY',
-            '- This is a **planning-only** session. DO NOT call any tools.',
-            '- DO NOT read, edit, write, or run anything.',
-            '- DO NOT touch the filesystem, the shell, or the network.',
-            '- Your job is to discuss the task with the user, ask clarifying '
-            'questions, and help them refine the approach in plain text.',
-            '- The user will explicitly tell you when planning is done. Until '
-            'then, every reply is a discussion message — no tool calls.',
-            '',
-            'Briefly acknowledge that you understand and are ready to plan. '
-            'Then wait for the user to drive the conversation.',
-        ])
-        return '\n'.join(sections)
-
-    # Fields the streaming runner exposes that ``start_session`` accepts.
-    # Strings get an empty-string fallback (avoid ``None`` slipping through
-    # to subprocess args); ``max_turns`` is passed through verbatim because
-    # ``None`` is the legitimate "no cap" sentinel.
-    _SESSION_STRING_FIELDS = (
-        'binary',
-        'model',
-        'permission_mode',
-        'permission_prompt_tool',
-        'allowed_tools',
-        'disallowed_tools',
-        'effort',
-    )
-
-    def _session_starter_defaults(self) -> dict[str, object]:
-        """Forward the runner's defaults to start_session(...).
-
-        Used by the wait-planning short-circuit to spawn a chat tab with
-        the same binary / model / permission settings the autonomous
-        path would use.
-        """
-        runner = self._planning_session_runner
-        if runner is None:
-            return {}
-        defaults = getattr(runner, '_defaults', None)
-        if defaults is None:
-            return {}
-        result: dict[str, object] = {
-            field: (getattr(defaults, field, '') or '')
-            for field in self._SESSION_STRING_FIELDS
-        }
-        result['max_turns'] = getattr(defaults, 'max_turns', None)
-        return result
-
-    @staticmethod
-    def _task_has_wait_planning_tag(task: Task) -> bool:
-        tags = getattr(task, 'tags', None) or []
-        target = TaskTags.WAIT_PLANNING.lower()
-        for tag in tags:
-            if str(tag or '').strip().lower() == target:
-                return True
-        return False
 
     def _start_task_processing(self, task: Task, prepared_task: PreparedTaskContext) -> bool:
         try:

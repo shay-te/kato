@@ -12,6 +12,15 @@ core_lib:
 kato:
   issue_platform: ${oc.env:KATO_ISSUE_PLATFORM,"youtrack"}
   agent_backend: ${oc.env:KATO_AGENT_BACKEND,"openhands"}
+  # Per-task workspace folders that hold fresh clones of every repo a
+  # task touches. Each folder is named after the ticket id and survives
+  # kato restart; the planning UI's tab list is derived from this root.
+  workspaces_root: ${oc.env:KATO_WORKSPACES_ROOT,""}
+  # How many tasks the orchestrator runs in parallel. The main scan
+  # thread still gates each task one-at-a-time (validate, reserve slot,
+  # move to In Progress); the heavy execute / test / publish work runs
+  # in a thread pool sized by this value.
+  max_parallel_tasks: ${oc.decode:${oc.env:KATO_MAX_PARALLEL_TASKS,"1"}}
   retry:
     max_retries: ${oc.decode:${oc.env:KATO_EXTERNAL_API_MAX_RETRIES,"3"}}
   failure_email:

@@ -158,10 +158,13 @@ header button:hover { color: #e2e8f0; border-color: #6366f1; }
   border: 2px solid #1e293b;
 }
 
-.status-active     { background: #047857; }   /* green: live */
-.status-review     { background: #2563eb; }   /* blue:  awaiting review */
-.status-done       { background: #1e293b; border-color: #334155; }   /* dim */
-.status-terminated { background: #6b7280; }   /* gray */
+.status-active       { background: #047857; }   /* green: live working */
+.status-review       { background: #2563eb; }   /* blue:  awaiting review */
+.status-done         { background: #1e293b; border-color: #334155; } /* dim */
+.status-terminated   { background: #6b7280; }   /* gray: stopped */
+.status-provisioning { background: #6366f1; }   /* indigo: cloning */
+.status-errored      { background: #b91c1c; }   /* red:   half-broken workspace */
+.status-attention    { background: #f59e0b; }   /* amber: needs your input */
 
 .empty {
   color: #94a3b8;

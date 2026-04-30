@@ -177,6 +177,7 @@ class KatoCoreLibTests(unittest.TestCase):
             repository_service=mock_repository_service_cls.return_value,
             task_branch_push_validator=ANY,
             task_branch_publishability_validator=ANY,
+            workspace_provisioner=ANY,
         )
         mock_task_failure_handler_cls.assert_called_once_with(
             task_service=mock_task_service_cls.return_value,
@@ -229,6 +230,9 @@ class KatoCoreLibTests(unittest.TestCase):
             skip_testing=False,
             planning_session_runner=None,
             session_manager=None,
+            workspace_manager=ANY,
+            parallel_task_runner=ANY,
+            wait_planning_service=ANY,
         )
         mock_service_cls.return_value.validate_connections.assert_called_once_with()
         self.assertIs(app.service, mock_service_cls.return_value)

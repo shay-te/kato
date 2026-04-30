@@ -100,39 +100,6 @@ class RepositoryInventoryService(Service):
                 return repository
         raise ValueError(f'unknown repository id: {repository_id}')
 
-    def sibling_repositories(self, primary_repository) -> list[object]:
-        """Configured repos that share a parent folder with ``primary_repository``.
-
-        Used when a task only resolves to one repo but the workspace
-        layout puts multiple repos under one parent (e.g. the user's
-        ``~/Desktop/dev`` with ``ob-love-admin-client`` next to
-        ``ob-love-admin-server``). Keeping the siblings on the same
-        task branch prevents accidental cross-branch commits when
-        Claude tabs between them during planning.
-        """
-        primary_local_path = normalized_text(text_from_attr(primary_repository, 'local_path'))
-        if not primary_local_path:
-            return []
-        try:
-            primary_parent = Path(primary_local_path).resolve().parent
-        except OSError:
-            return []
-        siblings: list[object] = []
-        for repository in self._repositories:
-            if repository is primary_repository:
-                continue
-            if getattr(repository, 'id', '') == getattr(primary_repository, 'id', ''):
-                continue
-            local_path = normalized_text(text_from_attr(repository, 'local_path'))
-            if not local_path:
-                continue
-            try:
-                if Path(local_path).resolve().parent == primary_parent:
-                    siblings.append(repository)
-            except OSError:
-                continue
-        return siblings
-
     def _validate_inventory(self) -> None:
         if not self._repositories:
             raise ValueError('at least one repository must be configured')

@@ -51,6 +51,36 @@ class RepositoryService(RepositoryInventoryService):
             for repository in repositories
         ]
 
+    def ensure_clone(self, repository, target_path) -> None:
+        """Clone the repo's remote into ``target_path`` if it isn't already.
+
+        Idempotent: if ``target_path/.git`` exists we trust it and skip
+        the clone (the rest of the pipeline will fetch / reset / check out
+        the task branch). Used by per-task workspace mode — each ticket
+        gets its own clone-set so parallel tasks don't share branch state.
+        """
+        self._validate_git_executable()
+        target = Path(str(target_path))
+        if (target / '.git').is_dir():
+            return
+        target.parent.mkdir(parents=True, exist_ok=True)
+        remote_url = normalized_text(text_from_attr(repository, 'remote_url'))
+        if not remote_url:
+            raise ValueError(
+                f'cannot clone repository {repository.id}: no remote_url configured'
+            )
+        # ``git -C <parent> clone <url> <name>`` keeps the call shape the
+        # rest of this service uses. Auth is whatever the user has set
+        # up on their host (ssh-agent, git credential helper, or token
+        # baked into the URL); kato doesn't manage credentials at the
+        # transport layer.
+        self._run_git(
+            str(target.parent),
+            ['clone', remote_url, target.name],
+            f'failed to clone {repository.id} from {remote_url} into {target}',
+            repository,
+        )
+
     def restore_task_repositories(
         self,
         repositories: list[object],

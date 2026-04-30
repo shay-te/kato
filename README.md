@@ -206,18 +206,24 @@ tests/
 
 Key invariants:
 
+* **One workspace folder per task.** Each ticket id (`PROJ-12`) gets
+  `~/.kato/workspaces/PROJ-12/` with fresh clones of every repo its
+  `kato:repo:*` tags name. Two parallel tasks against the same repo are
+  physically isolated checkouts — no shared branch state, no cross-task
+  git races. Sized by `KATO_MAX_PARALLEL_TASKS`.
 * **One subprocess per task id.** `ClaudeSessionManager` keyed on the
-  YouTrack/Jira ticket id; `--resume` keeps context across kato restarts.
-* **The orchestrator and the webserver share the same `ClaudeSessionManager`.**
-  Both run in one Python process so the planning UI sees the live agent
-  in real time, no IPC.
-* **Branch lock.** Each session records its `expected_branch`; the
-  webserver refuses to forward chat messages when the repo's HEAD
-  drifted to a different task's branch.
-* **Sibling repos stay in lockstep.** When the configured workspace has
-  multiple repos under one parent, both wait-planning prep and the
-  autonomous preflight check out the task branch on every sibling, so
-  cross-repo edits land on the right branch.
+  ticket id; `--resume` keeps context across kato restarts.
+* **The orchestrator and the webserver share the same managers.**
+  `WorkspaceManager` (tab list source of truth) and
+  `ClaudeSessionManager` (live subprocess + chat events) live in one
+  Python process so the planning UI sees both in real time without IPC.
+* **Workspace lifecycle = ticket state.** Workspaces are created when
+  kato starts a task, persist across restarts via `.kato-meta.json`,
+  and are deleted when the ticket leaves the Open + Review states
+  (e.g. PR merged → Done).
+* **Single-threaded gate, multi-threaded execute.** The scan loop
+  pulls tasks from the ticket system one at a time; heavy execution
+  (clone, run agent, test, publish) fans out across a thread pool.
 
 ## How It Works
 
