@@ -3,10 +3,6 @@ import { fetchSessionList } from '../api.js';
 
 const REFRESH_INTERVAL_MS = 5000;
 
-// Polls /api/sessions on a 5s tick and on demand. Returns the snapshot
-// plus a `refresh()` callback so any UI surface (refresh button, post-
-// action triggers) can ask for an immediate update without waiting for
-// the timer.
 export function useSessions() {
   const [sessions, setSessions] = useState([]);
 
@@ -14,9 +10,7 @@ export function useSessions() {
     try {
       const data = await fetchSessionList();
       if (Array.isArray(data)) { setSessions(data); }
-    } catch (_) {
-      // Transient network failures are fine — the next tick retries.
-    }
+    } catch (_) { /* next tick retries */ }
   }, []);
 
   useEffect(() => {

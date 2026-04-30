@@ -6,9 +6,6 @@ import RightPaneResizer from './RightPaneResizer.jsx';
 const TAB_FILES = 'files';
 const TAB_CHANGES = 'changes';
 
-// Right-side pane: drag-resizable column hosting the Files / Changes
-// tabs. Files + Changes are scoped to the active task; the empty state
-// renders when no task is selected.
 export default function RightPane({ activeTaskId, width, onResizePointerDown }) {
   const [tab, setTab] = useState(TAB_FILES);
 

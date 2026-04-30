@@ -4,14 +4,22 @@
  * (e.g. `.modal { display: flex }` would otherwise leak through). */
 [hidden] { display: none !important; }
 
+html, body { height: 100%; }
+
 body {
   margin: 0;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   background: #0f172a;
   color: #e2e8f0;
-  height: 100vh;
   display: flex;
   flex-direction: column;
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 header {
@@ -114,6 +122,8 @@ header button:hover { color: #e2e8f0; border-color: #6366f1; }
   grid-template-columns: 280px 1fr var(--right-pane-width, 380px);
   flex: 1;
   min-height: 0;
+  max-width: 100vw;
+  overflow: hidden;
 }
 
 #tabs-pane {
@@ -166,6 +176,18 @@ header button:hover { color: #e2e8f0; border-color: #6366f1; }
 .status-errored      { background: #b91c1c; }   /* red:   half-broken workspace */
 .status-attention    { background: #f59e0b; }   /* amber: needs your input */
 
+.tab.needs-attention {
+  border-left-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.08);
+}
+.tab.needs-attention .status-dot {
+  animation: kato-attention-pulse 1.4s ease-in-out infinite;
+}
+@keyframes kato-attention-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.6); }
+  50%      { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0); }
+}
+
 .empty {
   color: #94a3b8;
   padding: 16px;
@@ -176,6 +198,7 @@ header button:hover { color: #e2e8f0; border-color: #6366f1; }
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
 }
 
 #session-placeholder {
@@ -227,7 +250,7 @@ header button:hover { color: #e2e8f0; border-color: #6366f1; }
   padding: 10px 14px;
   max-width: 80%;
   white-space: pre-wrap;
-  word-wrap: break-word;
+  overflow-wrap: anywhere;
   font-size: 14px;
 }
 
@@ -265,7 +288,15 @@ header button:hover { color: #e2e8f0; border-color: #6366f1; }
   border-radius: 4px;
   cursor: pointer;
   font-weight: 600;
+  transition: background 120ms ease;
 }
+#message-form button:hover { background: #818cf8; }
+
+#message-form button.is-steering {
+  background: #f59e0b;
+  color: #1f1300;
+}
+#message-form button.is-steering:hover { background: #fbbf24; }
 
 #message-form button:disabled { background: #334155; cursor: not-allowed; }
 
@@ -395,8 +426,12 @@ code {
   font-weight: 600;
 }
 
-.modal-actions .primary { background: #047857; color: #fff; }
-.modal-actions .danger  { background: #b91c1c; color: #fff; }
+.modal-actions .primary   { background: #047857; color: #fff; }
+.modal-actions .secondary { background: #1e3a8a; color: #e0e7ff; }
+.modal-actions .danger    { background: #b91c1c; color: #fff; }
+.modal-actions .primary:hover   { background: #059669; }
+.modal-actions .secondary:hover { background: #1e40af; }
+.modal-actions .danger:hover    { background: #dc2626; }
 
 /* right-side pane (Files + Changes), mounted by the React bundle */
 #right-pane {
@@ -502,6 +537,8 @@ body.kato-resizing { user-select: none; cursor: col-resize; }
   min-height: 0;
   overflow: hidden;
   font-size: 13px;
+  /* react-arborist sets row paddingLeft inline; pad the body instead. */
+  padding-left: 14px;
 }
 
 .files-tab-message,
@@ -519,9 +556,7 @@ body.kato-resizing { user-select: none; cursor: col-resize; }
   display: flex;
   align-items: center;
   gap: 6px;
-  /* extra left padding so the level-0 expand chevron doesn't sit
-   * flush against the right-pane border; right is unchanged. */
-  padding: 0 8px 0 16px;
+  padding: 0 8px;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;

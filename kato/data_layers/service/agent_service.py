@@ -27,7 +27,15 @@ from kato.data_layers.service.task_preflight_service import (
 )
 from kato.data_layers.service.task_service import TaskService
 from kato.data_layers.service.testing_service import TestingService
-from kato.data_layers.data.fields import ImplementationFields, TaskCommentFields
+from kato.data_layers.service.workspace_manager import (
+    WORKSPACE_STATUS_ERRORED,
+    WORKSPACE_STATUS_REVIEW,
+)
+from kato.data_layers.data.fields import (
+    ImplementationFields,
+    StatusFields,
+    TaskCommentFields,
+)
 from kato.data_layers.data.review_comment import ReviewComment
 from kato.validation.branch_publishability import (
     TaskBranchPublishabilityValidator,
@@ -311,6 +319,28 @@ class AgentService(Service):
                 'failed to delete workspace for task %s', task_id,
             )
 
+    def _update_workspace_status_after_publish(
+        self,
+        task_id: str,
+        publish_result: dict[str, object] | None,
+    ) -> None:
+        if self._workspace_manager is None or not publish_result:
+            return
+        status = publish_result.get(StatusFields.STATUS)
+        if status == StatusFields.READY_FOR_REVIEW:
+            target = WORKSPACE_STATUS_REVIEW
+        elif status == StatusFields.PARTIAL_FAILURE:
+            target = WORKSPACE_STATUS_ERRORED
+        else:
+            return
+        try:
+            self._workspace_manager.update_status(str(task_id), target)
+        except Exception:
+            self.logger.exception(
+                'failed to update workspace status for task %s to %s',
+                task_id, target,
+            )
+
     def handle_pull_request_comment(self, payload: dict) -> dict[str, str]:
         return self._review_comment_service.handle_pull_request_comment(payload)
 
@@ -362,7 +392,13 @@ class AgentService(Service):
         )
         if not testing_succeeded:
             return testing_result
-        return self._task_publisher.publish_task_execution(task, prepared_task, execution)
+        publish_result = self._task_publisher.publish_task_execution(
+            task,
+            prepared_task,
+            execution,
+        )
+        self._update_workspace_status_after_publish(task.id, publish_result)
+        return publish_result
 
 
     def _start_task_processing(self, task: Task, prepared_task: PreparedTaskContext) -> bool:

@@ -1,17 +1,15 @@
-import { useState } from 'react';
-
-// Chat input + send button. The button label flips between "Send" and
-// "Steer" depending on whether a turn is in flight (Claude accepts
-// stdin mid-turn — sending becomes a steering message).
-export default function MessageForm({ turnInFlight, onSubmit }) {
-  const [text, setText] = useState('');
-
+export default function MessageForm({
+  value,
+  onChange,
+  turnInFlight,
+  onSubmit,
+}) {
   function submit(event) {
     event.preventDefault();
-    const trimmed = text.trim();
+    const trimmed = (value || '').trim();
     if (!trimmed) { return; }
     onSubmit(trimmed);
-    setText('');
+    onChange('');
   }
 
   return (
@@ -20,8 +18,8 @@ export default function MessageForm({ turnInFlight, onSubmit }) {
         id="message-input"
         placeholder="Reply to Claude (Shift+Enter for newline)"
         rows={2}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
+        value={value || ''}
+        onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey) {
             submit(e);
@@ -30,6 +28,7 @@ export default function MessageForm({ turnInFlight, onSubmit }) {
       />
       <button
         type="submit"
+        className={turnInFlight ? 'is-steering' : ''}
         title={turnInFlight
           ? 'Claude is working — your message will steer the in-flight turn.'
           : ''}

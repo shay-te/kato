@@ -1,9 +1,6 @@
 import { useState } from 'react';
 import StatusBarHistory from './StatusBarHistory.jsx';
 
-// One-line live readout of the kato process. Click the chevron to
-// expand the recent history. Pure presentation — `latest`, `history`,
-// `stale` come from useStatusFeed via the parent.
 export default function StatusBar({ latest, history, stale }) {
   const [open, setOpen] = useState(false);
 

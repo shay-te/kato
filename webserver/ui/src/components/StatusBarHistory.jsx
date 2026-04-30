@@ -1,5 +1,3 @@
-// Scrollable list of recent kato log entries. Auto-scrolls to bottom
-// on every new entry — the parent owns the buffer; we just render it.
 import { useEffect, useRef } from 'react';
 
 const LEVEL_CLASS = {

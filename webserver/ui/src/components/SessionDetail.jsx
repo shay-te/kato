@@ -1,192 +1,123 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import EventLog from './EventLog.jsx';
 import MessageForm from './MessageForm.jsx';
-import PermissionModal from './PermissionModal.jsx';
+import PermissionDecisionContainer from './PermissionDecisionContainer.jsx';
 import SessionHeader from './SessionHeader.jsx';
+import { ChatComposerContext } from '../contexts/ChatComposerContext.jsx';
 import { useSessionStream, SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
+import { useToolMemory } from '../hooks/useToolMemory.js';
 import { postSession } from '../api.js';
 
-// Owns one tab's chat experience. Wires the SSE stream to the log and
-// the message/permission forms to the server. Per-task state (the
-// "remember this tool" map) is local to this component, so switching
-// tabs gets a clean slate by remounting via the `key` upstream.
-export default function SessionDetail({ session, onActivity, onFileClicked }) {
+export default function SessionDetail({ session, onActivity }) {
   const taskId = session?.task_id;
-  const sessionToolDecisionsRef = useRef({});
-  const [transientBubbles, setTransientBubbles] = useState([]);
+  const [composerValue, setComposerValue] = useState('');
+  const stream = useSessionStream(taskId, onActivity);
+  const memory = useToolMemory();
 
-  const stream = useSessionStream(taskId, (raw) => {
-    onActivity?.(raw, taskId);
-  });
-
-  // When a control_request arrives and the user has already chosen
-  // "always allow" for this tool, auto-respond + skip the modal.
-  useEffect(() => {
-    const raw = stream.pendingPermission;
-    if (!raw) { return; }
-    const remembered = rememberedDecision(raw, sessionToolDecisionsRef.current);
-    if (remembered) {
-      respondToPermission({
-        allow: remembered === 'allow',
-        rationale: '',
-        remember: false,
-        requestId: extractRequestId(raw),
-        toolName: extractToolName(raw),
-        silent: true,
-      });
-    }
-  }, [stream.pendingPermission]);
-
-  // Listen for "click a tree row" events from the right pane. The chat
-  // textarea is owned by MessageForm via internal state, so we mediate
-  // with a small message channel: append the path to whatever's there.
-  useEffect(() => {
-    function handler(event) {
-      const path = event?.detail?.path;
-      if (!path) { return; }
-      const textarea = document.getElementById('message-input');
-      if (!textarea) { return; }
-      const start = textarea.selectionStart ?? textarea.value.length;
-      const end = textarea.selectionEnd ?? textarea.value.length;
-      const before = textarea.value.slice(0, start);
-      const after = textarea.value.slice(end);
-      const needsLeadingSpace = before && !/\s$/.test(before);
-      const fragment = (needsLeadingSpace ? ' ' : '') + path;
-      const next = before + fragment + after;
-      // Set the value via the native setter so React's controlled-input
-      // tracking actually picks it up.
-      const setter = Object.getOwnPropertyDescriptor(
-        window.HTMLTextAreaElement.prototype, 'value',
-      ).set;
-      setter.call(textarea, next);
-      textarea.dispatchEvent(new Event('input', { bubbles: true }));
-      textarea.focus();
-      const cursor = before.length + fragment.length;
-      textarea.setSelectionRange(cursor, cursor);
-    }
-    window.addEventListener('kato:file-clicked', handler);
-    return () => window.removeEventListener('kato:file-clicked', handler);
+  const appendToInput = useCallback((fragment) => {
+    if (!fragment) { return; }
+    setComposerValue((current) => {
+      const needsLeadingSpace = current && !/\s$/.test(current);
+      return current + (needsLeadingSpace ? ' ' : '') + fragment;
+    });
   }, []);
+
+  const composerContextValue = { appendToInput };
 
   if (!session) {
     return (
-      <main id="session-pane">
-        <section id="session-placeholder" className="placeholder">
-          Select a tab to chat with the bound Claude session.
-        </section>
-      </main>
+      <ChatComposerContext.Provider value={composerContextValue}>
+        <main id="session-pane">
+          <section id="session-placeholder" className="placeholder">
+            Select a tab to chat with the bound Claude session.
+          </section>
+        </main>
+      </ChatComposerContext.Provider>
     );
   }
 
   async function onSendMessage(text) {
-    setTransientBubbles((prev) => [
-      ...prev, { kind: 'user', text },
-    ]);
-    stream.setTurnInFlight(true);
+    stream.appendLocalEvent({ source: 'local', kind: 'user', text });
+    stream.markTurnBusy(true);
     const result = await postSession(taskId, 'messages', { text });
     if (result.ok) {
-      setTransientBubbles((prev) => [
-        ...prev, { kind: 'system', text: '✓ delivered' },
-      ]);
+      stream.appendLocalEvent({ source: 'local', kind: 'system', text: '✓ delivered' });
     } else {
-      setTransientBubbles((prev) => [
-        ...prev, { kind: 'error', text: `send failed: ${result.error}` },
-      ]);
-      stream.setTurnInFlight(false);
+      stream.appendLocalEvent({
+        source: 'local', kind: 'error',
+        text: `send failed: ${result.error}`,
+      });
+      stream.markTurnBusy(false);
     }
   }
 
-  async function respondToPermission({ allow, rationale, remember, requestId, toolName, silent = false }) {
-    if (remember && toolName) {
-      sessionToolDecisionsRef.current[toolName] = allow ? 'allow' : 'deny';
-    }
-    stream.clearPendingPermission();
+  async function submitPermissionResponse({ requestId, allow, rationale }) {
     const result = await postSession(taskId, 'permission', {
       request_id: requestId,
       allow,
       rationale,
     });
     if (!result.ok) {
-      setTransientBubbles((prev) => [
-        ...prev,
-        { kind: 'error', text: `permission send failed: ${result.error}` },
-      ]);
-      return;
-    }
-    if (!silent) {
-      setTransientBubbles((prev) => [
-        ...prev,
-        {
-          kind: 'system',
-          text: `${allow ? '✓ approved' : '✗ denied'} permission ${requestId}`
-            + (remember && toolName ? ` (remembered for ${toolName})` : ''),
-        },
-      ]);
-    } else {
-      setTransientBubbles((prev) => [
-        ...prev,
-        {
-          kind: 'system',
-          text: `(auto-${allow ? 'allow' : 'deny'}ed for ${toolName} — remembered for this session)`,
-        },
-      ]);
+      stream.appendLocalEvent({
+        source: 'local', kind: 'error',
+        text: `permission send failed: ${result.error}`,
+      });
     }
   }
 
   async function onStopped(result) {
-    setTransientBubbles((prev) => [
-      ...prev,
+    stream.appendLocalEvent(
       result.ok
-        ? { kind: 'system', text: '✗ session stopped' }
-        : { kind: 'error', text: `stop failed: ${result.error}` },
-    ]);
+        ? { source: 'local', kind: 'system', text: '✗ session stopped' }
+        : { source: 'local', kind: 'error', text: `stop failed: ${result.error}` },
+    );
   }
 
   return (
-    <main id="session-pane">
-      <section id="session-detail">
-        <SessionHeader session={session} onStopped={onStopped} />
-        <EventLog
-          events={stream.events}
-          banner={banner(stream.lifecycle, taskId)}
-          // Render transient bubbles by appending synthetic "system"-like
-          // events. We do it via an extra prop to avoid mutating the
-          // server-side event stream.
+    <ChatComposerContext.Provider value={composerContextValue}>
+      <main id="session-pane">
+        <section id="session-detail">
+          <SessionHeader session={session} onStopped={onStopped} />
+          <EventLog
+            entries={stream.events}
+            banner={lifecycleBanner(
+              stream.lifecycle,
+              taskId,
+              hasVisibleBubbles(stream.events),
+            )}
+          />
+          <MessageForm
+            value={composerValue}
+            onChange={setComposerValue}
+            turnInFlight={stream.turnInFlight}
+            onSubmit={onSendMessage}
+          />
+        </section>
+        <PermissionDecisionContainer
+          pending={stream.pendingPermission}
+          onDismiss={stream.dismissPermission}
+          onSubmit={submitPermissionResponse}
+          onAuditBubble={stream.appendLocalEvent}
+          recallToolDecision={memory.recall}
+          rememberToolDecision={memory.remember}
         />
-        {transientBubbles.length > 0 && (
-          <TransientBubbles bubbles={transientBubbles} />
-        )}
-        <MessageForm
-          turnInFlight={stream.turnInFlight}
-          onSubmit={onSendMessage}
-        />
-      </section>
-      {stream.pendingPermission && !rememberedDecision(stream.pendingPermission, sessionToolDecisionsRef.current) && (
-        <PermissionModal
-          raw={stream.pendingPermission}
-          onDecide={respondToPermission}
-        />
-      )}
-    </main>
+      </main>
+    </ChatComposerContext.Provider>
   );
 }
 
-function TransientBubbles({ bubbles }) {
-  // Rendered alongside EventLog so chat additions show inline. Kept
-  // simple: a flat list, no autoscroll (EventLog handles that).
-  return (
-    <div className="transient-bubbles">
-      {bubbles.map((b, i) => (
-        <div key={i} className={`bubble ${b.kind}`}>{b.text}</div>
-      ))}
-    </div>
-  );
-}
-
-function banner(lifecycle, taskId) {
+// Banner is the always-visible status line at the top of the log.
+// - CONNECTING / IDLE / MISSING / CLOSED → always show the explanatory text.
+// - STREAMING → show "Connected, waiting…" *only* until at least one
+//   bubble appears, then suppress so the chat reads cleanly.
+function lifecycleBanner(lifecycle, taskId, hasVisible) {
   switch (lifecycle) {
     case SESSION_LIFECYCLE.CONNECTING:
       return `Connecting to session for ${taskId}…`;
+    case SESSION_LIFECYCLE.STREAMING:
+      return hasVisible
+        ? null
+        : `Connected — waiting for Claude's first reply…`;
     case SESSION_LIFECYCLE.IDLE:
       return '(no live subprocess for this tab — chat will resume when kato re-spawns it)';
     case SESSION_LIFECYCLE.MISSING:
@@ -198,18 +129,23 @@ function banner(lifecycle, taskId) {
   }
 }
 
-function rememberedDecision(raw, decisions) {
-  const tool = extractToolName(raw);
-  return decisions[tool];
-}
-
-function extractRequestId(raw) {
-  return String(raw?.request_id || raw?.id || '');
-}
-
-function extractToolName(raw) {
-  const nested = (raw && typeof raw.request === 'object' && raw.request) || {};
-  return String(
-    raw?.tool_name || raw?.tool || nested.tool_name || nested.tool || '',
-  );
+// True when at least one entry would produce a visible bubble. Used by
+// the banner so we don't show "waiting for first reply" once chat
+// content actually arrives. Mirrors EventLog's filtering rules.
+function hasVisibleBubbles(entries) {
+  return entries.some((entry) => {
+    if (entry?.source === 'local') { return true; }
+    const type = entry?.raw?.type;
+    if (!type) { return false; }
+    if (type === 'user' || type === 'stream_event') { return false; }
+    if (type === 'permission_request' || type === 'control_request') { return false; }
+    if (type === 'system' && entry.raw.subtype !== 'init') { return false; }
+    if (type === 'assistant') {
+      const content = entry.raw?.message?.content || [];
+      return content.some(
+        (b) => (b?.type === 'text' && b.text) || b?.type === 'tool_use',
+      );
+    }
+    return true;
+  });
 }

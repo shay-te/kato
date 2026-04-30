@@ -1,8 +1,7 @@
 import { useEffect, useReducer } from 'react';
 import { safeParseJSON } from '../utils/sse.js';
 
-// Lifecycle states for the SSE connection itself (not for the task).
-const LIFECYCLE = {
+export const SESSION_LIFECYCLE = {
   CONNECTING: 'connecting',
   IDLE: 'idle',           // record exists but no live subprocess
   STREAMING: 'streaming', // events flowing
@@ -10,10 +9,17 @@ const LIFECYCLE = {
   MISSING: 'missing',     // server has no record for this task
 };
 
+const ACTION_RESET = 'reset';
+const ACTION_INCOMING_EVENT = 'incoming_event';
+const ACTION_LIFECYCLE = 'lifecycle';
+const ACTION_LOCAL_EVENT = 'local_event';
+const ACTION_DISMISS_PERMISSION = 'dismiss_permission';
+const ACTION_MARK_TURN_BUSY = 'mark_turn_busy';
+
 function initialState() {
   return {
     events: [],
-    lifecycle: LIFECYCLE.CONNECTING,
+    lifecycle: SESSION_LIFECYCLE.CONNECTING,
     turnInFlight: false,
     pendingPermission: null,
   };
@@ -21,96 +27,103 @@ function initialState() {
 
 function reducer(state, action) {
   switch (action.type) {
-    case 'reset':
+    case ACTION_RESET:
       return initialState();
-    case 'event':
-      return applyEvent(state, action.payload);
-    case 'lifecycle':
+    case ACTION_INCOMING_EVENT:
+      return reduceIncomingEvent(state, action.event);
+    case ACTION_LOCAL_EVENT:
+      return { ...state, events: [...state.events, action.event] };
+    case ACTION_LIFECYCLE:
+      // CLOSED / IDLE / MISSING all mean "nothing live is waiting for input"
+      // — drop any stale permission so the modal doesn't pop on a finished tab.
+      if (action.value === SESSION_LIFECYCLE.CLOSED
+          || action.value === SESSION_LIFECYCLE.IDLE
+          || action.value === SESSION_LIFECYCLE.MISSING) {
+        return { ...state, lifecycle: action.value, pendingPermission: null };
+      }
       return { ...state, lifecycle: action.value };
-    case 'set_pending_permission':
-      return { ...state, pendingPermission: action.value };
-    case 'set_turn_in_flight':
+    case ACTION_DISMISS_PERMISSION:
+      return { ...state, pendingPermission: null };
+    case ACTION_MARK_TURN_BUSY:
       return { ...state, turnInFlight: action.value };
     default:
       return state;
   }
 }
 
-// Each SSE event mutates a small piece of state. Centralising this
-// keeps the reducer pure and the event mapping explicit.
-function applyEvent(state, raw) {
-  const events = [...state.events, raw];
-  const type = raw?.type;
+function reduceIncomingEvent(state, raw) {
+  const events = [...state.events, { source: 'server', raw }];
   let next = { ...state, events };
-  if (type === 'assistant') {
-    next.turnInFlight = true;
-  } else if (type === 'result') {
-    next.turnInFlight = false;
-  } else if (type === 'permission_request' || type === 'control_request') {
-    next.pendingPermission = raw;
+  switch (raw?.type) {
+    case 'assistant':
+      next.turnInFlight = true;
+      break;
+    case 'result':
+      // Turn ended — any pending permission is moot (agent moved past it).
+      next.turnInFlight = false;
+      next.pendingPermission = null;
+      break;
+    case 'permission_request':
+    case 'control_request':
+      next.pendingPermission = raw;
+      break;
+    default:
+      break;
   }
   return next;
 }
 
-// Subscribes to /api/sessions/<task_id>/events. Returns the event log
-// + derived flags (turnInFlight, pendingPermission, lifecycle).
-//
-// Callers can pass `onIncomingEvent` to react to events imperatively
-// (e.g. fire OS notifications) without re-deriving state in another
-// effect.
 export function useSessionStream(taskId, onIncomingEvent) {
   const [state, dispatch] = useReducer(reducer, undefined, initialState);
 
   useEffect(() => {
     if (!taskId) { return undefined; }
-    dispatch({ type: 'reset' });
+    dispatch({ type: ACTION_RESET });
 
     const stream = new EventSource(
       `/api/sessions/${encodeURIComponent(taskId)}/events`,
     );
 
-    const handleSessionEvent = (event) => {
+    stream.addEventListener('session_event', (event) => {
+      // Unwrap: { type, event: { event_type, raw: <CLAUDE_EVENT> } }
       const payload = safeParseJSON(event.data);
-      const raw = payload?.event || payload;
+      const envelope = payload?.event || payload;
+      const raw = envelope?.raw || envelope;
       if (!raw) { return; }
-      dispatch({ type: 'event', payload: raw });
+      dispatch({ type: ACTION_INCOMING_EVENT, event: raw });
+      dispatch({ type: ACTION_LIFECYCLE, value: SESSION_LIFECYCLE.STREAMING });
       if (typeof onIncomingEvent === 'function') {
-        onIncomingEvent(raw);
+        onIncomingEvent(raw, taskId);
       }
-      // First event we see flips us into streaming mode.
-      dispatch({ type: 'lifecycle', value: LIFECYCLE.STREAMING });
-    };
-
-    stream.addEventListener('session_event', handleSessionEvent);
+    });
     stream.addEventListener('session_idle', () => {
-      dispatch({ type: 'lifecycle', value: LIFECYCLE.IDLE });
+      dispatch({ type: ACTION_LIFECYCLE, value: SESSION_LIFECYCLE.IDLE });
       stream.close();
     });
     stream.addEventListener('session_missing', () => {
-      dispatch({ type: 'lifecycle', value: LIFECYCLE.MISSING });
+      dispatch({ type: ACTION_LIFECYCLE, value: SESSION_LIFECYCLE.MISSING });
       stream.close();
     });
     stream.addEventListener('session_closed', () => {
-      dispatch({ type: 'lifecycle', value: LIFECYCLE.CLOSED });
+      dispatch({ type: ACTION_LIFECYCLE, value: SESSION_LIFECYCLE.CLOSED });
       stream.close();
     });
     stream.onerror = () => {
       if (stream.readyState === EventSource.CLOSED) {
-        dispatch({ type: 'lifecycle', value: LIFECYCLE.CLOSED });
+        dispatch({ type: ACTION_LIFECYCLE, value: SESSION_LIFECYCLE.CLOSED });
       }
     };
     return () => stream.close();
-  // ``onIncomingEvent`` is intentionally not in deps — we read it through
-  // the closure on every event delivery; subscribing/unsubscribing on
-  // every parent re-render would tear down the SSE stream constantly.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId]);
 
   return {
-    ...state,
-    setTurnInFlight: (value) => dispatch({ type: 'set_turn_in_flight', value }),
-    clearPendingPermission: () => dispatch({ type: 'set_pending_permission', value: null }),
+    events: state.events,
+    lifecycle: state.lifecycle,
+    turnInFlight: state.turnInFlight,
+    pendingPermission: state.pendingPermission,
+    appendLocalEvent: (event) => dispatch({ type: ACTION_LOCAL_EVENT, event }),
+    markTurnBusy: (value) => dispatch({ type: ACTION_MARK_TURN_BUSY, value }),
+    dismissPermission: () => dispatch({ type: ACTION_DISMISS_PERMISSION }),
   };
 }
-
-export const SESSION_LIFECYCLE = LIFECYCLE;

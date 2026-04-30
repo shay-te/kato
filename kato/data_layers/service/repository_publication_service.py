@@ -146,6 +146,8 @@ class RepositoryPublicationService(Service):
         )
 
     def _restore_workspace_after_publication(self, repository, destination_branch: str) -> None:
+        if self._is_per_task_workspace_clone(repository):
+            return
         try:
             self._repository_service.restore_task_repositories([repository], force=True)
         except Exception:
@@ -154,3 +156,14 @@ class RepositoryPublicationService(Service):
                 repository.id,
                 destination_branch,
             )
+
+    @staticmethod
+    def _is_per_task_workspace_clone(repository) -> bool:
+        from pathlib import Path
+        local_path = str(getattr(repository, 'local_path', '') or '').strip()
+        if not local_path:
+            return False
+        try:
+            return (Path(local_path).parent / '.kato-meta.json').is_file()
+        except OSError:
+            return False

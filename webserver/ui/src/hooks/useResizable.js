@@ -1,17 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-// Drag-to-resize handler shared by the right-pane resizer.
-// Owns: pointer event lifecycle, clamping, persistence to localStorage.
-//
-// Caller owns: the visual element (the grab strip) and the rendered
-// width via a CSS variable or inline style.
 export function useResizable({
   storageKey,
   defaultWidth,
   minWidth,
   maxWidth,
-  // Mouse-down side: 'left' means dragging LEFT widens the element
-  // (it's anchored to the right of the layout).
   anchor = 'right',
 }) {
   const clamp = useCallback(
@@ -50,8 +43,7 @@ export function useResizable({
 
   useEffect(() => {
     if (typeof localStorage === 'undefined') { return; }
-    try { localStorage.setItem(storageKey, String(width)); }
-    catch (_) { /* private mode / quota */ }
+    try { localStorage.setItem(storageKey, String(width)); } catch (_) {}
   }, [storageKey, width]);
 
   return { width, onPointerDown };

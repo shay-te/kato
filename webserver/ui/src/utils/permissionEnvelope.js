@@ -1,6 +1,4 @@
-// ``control_request`` (modern, from --permission-prompt-tool stdio) nests
-// payload under `request`; older ``permission_request`` puts the same
-// fields at the top level. Read either uniformly.
+// ``control_request`` nests under `request`; older ``permission_request`` is flat.
 export function unpackPermissionEnvelope(raw) {
   const nested = (raw && typeof raw.request === 'object' && raw.request) || {};
   return {

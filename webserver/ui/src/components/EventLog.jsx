@@ -2,58 +2,64 @@ import { useEffect, useRef } from 'react';
 import Bubble from './Bubble.jsx';
 import { stringifyShort } from '../utils/dom.js';
 
-// Renders the chat log: every incoming session event becomes one
-// (or zero, or a few) bubbles. Auto-scrolls on new content.
-export default function EventLog({ events, banner }) {
+export default function EventLog({ entries, banner }) {
   const containerRef = useRef(null);
   useEffect(() => {
     const node = containerRef.current;
     if (node) { node.scrollTop = node.scrollHeight; }
-  }, [events.length, banner]);
+  }, [entries.length, banner]);
 
   return (
     <div id="event-log" ref={containerRef}>
       {banner && <Bubble kind="system">{banner}</Bubble>}
-      {events.flatMap((event, index) => bubblesFor(event, index))}
+      {entries.flatMap((entry, index) => bubblesFor(entry, index))}
     </div>
   );
 }
 
-// Map one session event → the bubbles it produces. Returning [] is
-// fine for events that shouldn't render (e.g. raw `user` echoes).
-function bubblesFor(raw, eventIndex) {
+function bubblesFor(entry, index) {
+  if (entry?.source === 'local') {
+    return [
+      <Bubble key={`local-${index}`} kind={entry.kind || 'system'}>
+        {entry.text}
+      </Bubble>,
+    ];
+  }
+  return serverBubblesFor(entry?.raw, index);
+}
+
+function serverBubblesFor(raw, index) {
   if (!raw || !raw.type) { return []; }
   switch (raw.type) {
     case 'system':
       if (raw.subtype === 'init') {
         return [
-          <Bubble key={keyOf(raw, eventIndex, 'sys')} kind="system">
+          <Bubble key={keyOf(raw, index, 'sys')} kind="system">
             {`session_id: ${raw.session_id || '(none yet)'}`}
           </Bubble>,
         ];
       }
       return [];
     case 'assistant':
-      return assistantBubbles(raw, eventIndex);
+      return assistantBubbles(raw, index);
     case 'user':
     case 'stream_event':
       return [];
     case 'result':
-      return resultBubbles(raw, eventIndex);
+      return resultBubbles(raw, index);
     case 'permission_request':
     case 'control_request':
-      // Modal renders the prompt; suppress here so the log isn't noisy.
       return [];
     default:
       return [
-        <Bubble key={keyOf(raw, eventIndex, 'tool')} kind="tool">
+        <Bubble key={keyOf(raw, index, 'tool')} kind="tool">
           {`${raw.type}${raw.subtype ? ' / ' + raw.subtype : ''}`}
         </Bubble>,
       ];
   }
 }
 
-function assistantBubbles(raw, eventIndex) {
+function assistantBubbles(raw, index) {
   const message = raw.message || {};
   const content = Array.isArray(message.content) ? message.content : [];
   const textPieces = [];
@@ -65,7 +71,10 @@ function assistantBubbles(raw, eventIndex) {
     } else if (block.type === 'tool_use') {
       const toolName = block.name || 'tool';
       toolBubbles.push(
-        <Bubble key={keyOf(raw, eventIndex, `tool-${block.id || toolBubbles.length}`)} kind="tool">
+        <Bubble
+          key={keyOf(raw, index, `tool-${block.id || toolBubbles.length}`)}
+          kind="tool"
+        >
           {`→ ${toolName}(${stringifyShort(block.input)})`}
         </Bubble>,
       );
@@ -74,22 +83,22 @@ function assistantBubbles(raw, eventIndex) {
   if (textPieces.length === 0) { return toolBubbles; }
   return [
     ...toolBubbles,
-    <Bubble key={keyOf(raw, eventIndex, 'assistant')} kind="assistant">
+    <Bubble key={keyOf(raw, index, 'assistant')} kind="assistant">
       {textPieces.join('\n')}
     </Bubble>,
   ];
 }
 
-function resultBubbles(raw, eventIndex) {
+function resultBubbles(raw, index) {
   const ok = !raw.is_error;
   const summary = raw.result || (ok ? 'completed' : 'failed');
   return [
-    <Bubble key={keyOf(raw, eventIndex, 'result')} kind={ok ? 'system' : 'error'}>
+    <Bubble key={keyOf(raw, index, 'result')} kind={ok ? 'system' : 'error'}>
       {`(result: ${ok ? 'success' : 'error'}) ${summary}`}
     </Bubble>,
   ];
 }
 
-function keyOf(raw, eventIndex, slot) {
-  return `${eventIndex}:${raw.uuid || raw.session_id || ''}:${slot}`;
+function keyOf(raw, index, slot) {
+  return `${index}:${raw.uuid || raw.session_id || ''}:${slot}`;
 }

@@ -280,14 +280,15 @@ class ClaudeCliClient(object):
             'just report that no testing was defined and stop after saving any change.\n'
         )
 
-    def _build_review_prompt(self, comment: ReviewComment, branch_name: str) -> str:
+    @classmethod
+    def _build_review_prompt(cls, comment: ReviewComment, branch_name: str) -> str:
         repository_context = agent_prompt_utils.review_repository_context(comment)
         review_context = agent_prompt_utils.review_comment_context_text(comment)
         return (
             f'Address pull request comment on branch {branch_name}{repository_context}.\n'
             f'Comment by {comment.author}: {comment.body}'
             f'{review_context}\n\n'
-            f'{self._execution_guardrails_text()}\n\n'
+            f'{cls._execution_guardrails_text()}\n\n'
             'Make the smallest possible change needed to address the review comment.\n'
             'Prefer editing only the exact lines or blocks that need to change.\n'
             'Do not change indentation, formatting, or unrelated lines when a narrow edit is enough.\n'
@@ -318,8 +319,9 @@ class ClaudeCliClient(object):
             '- Stop. Do not produce any extra commentary.'
         )
 
-    def _execution_guardrails_text(self) -> str:
-        return f'{agent_prompt_utils.security_guardrails_text()}\n\n{self._tool_guardrails_text()}'
+    @classmethod
+    def _execution_guardrails_text(cls) -> str:
+        return f'{agent_prompt_utils.security_guardrails_text()}\n\n{cls._tool_guardrails_text()}'
 
     @staticmethod
     def _tool_guardrails_text() -> str:

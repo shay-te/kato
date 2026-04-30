@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { postSession } from '../api.js';
 
-// Top strip of the chat pane. Status dot + task id + summary + Stop.
 export default function SessionHeader({ session, onStopped }) {
   const [stopping, setStopping] = useState(false);
   if (!session) { return null; }

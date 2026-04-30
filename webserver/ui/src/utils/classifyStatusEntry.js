@@ -1,9 +1,3 @@
-// Maps a raw kato log line to a notification-shaped object.
-//
-// Returns `null` when the entry doesn't match any of the known
-// task-lifecycle messages — those entries flow into the status bar
-// history but don't fire OS notifications.
-
 const PATTERNS = [
   {
     re: /^task (\S+) tagged kato:wait-planning/,

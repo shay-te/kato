@@ -6,9 +6,11 @@ import SessionDetail from './components/SessionDetail.jsx';
 import StatusBar from './components/StatusBar.jsx';
 import TabList from './components/TabList.jsx';
 import { useNotifications } from './hooks/useNotifications.js';
+import { useNotificationRouting } from './hooks/useNotificationRouting.js';
 import { useResizable } from './hooks/useResizable.js';
 import { useSessions } from './hooks/useSessions.js';
 import { useStatusFeed } from './hooks/useStatusFeed.js';
+import { useTaskAttention } from './hooks/useTaskAttention.js';
 import { classifyStatusEntry } from './utils/classifyStatusEntry.js';
 
 const RIGHT_PANE_DEFAULT_WIDTH = 380;
@@ -16,57 +18,45 @@ const RIGHT_PANE_MIN_WIDTH = 220;
 const RIGHT_PANE_MAX_WIDTH = 900;
 const RIGHT_PANE_STORAGE_KEY = 'kato.rightPaneWidth';
 
-// Top of the React tree. Owns global state (active task id) + the
-// notification + status feed wiring. Children are pure-ish — they
-// receive props/handlers and render. No globals, no side channels.
 export default function App() {
-  const [activeTaskId, setActiveTaskId] = useState('');
+  const [activeTaskId, setActiveTaskIdState] = useState('');
   const { sessions, refresh } = useSessions();
+  const attention = useTaskAttention();
+
+  const setActiveTaskId = useCallback((taskId) => {
+    setActiveTaskIdState(taskId);
+    attention.clear(taskId);
+  }, [attention]);
 
   const onTaskClickFromNotification = useCallback((taskId) => {
     setActiveTaskId(taskId);
-  }, []);
-
+  }, [setActiveTaskId]);
   const notifications = useNotifications({
     activeTaskId,
     onTaskClick: onTaskClickFromNotification,
   });
 
-  // Status feed → optional OS notification.
-  const handleStatusEntry = useCallback((entry) => {
-    const classification = classifyStatusEntry(entry);
-    if (classification) {
-      notifications.notify(classification);
-    }
-  }, [notifications]);
-  const status = useStatusFeed(handleStatusEntry);
+  const routing = useNotificationRouting(notifications.notify);
 
-  // Per-session events → optional OS notification (modal-popping
-  // permission requests, error-result notifications when tabbed away).
+  const handleStatusEntry = useCallback((entry) => {
+    routing.onStatusEntry(entry);
+    const classification = classifyStatusEntry(entry);
+    if (classification?.kind === 'attention' && classification.taskId) {
+      attention.mark(classification.taskId);
+    }
+  }, [routing, attention]);
+
   const handleSessionEvent = useCallback((raw, taskId) => {
-    if (!raw?.type) { return; }
+    routing.onSessionEvent(raw, taskId);
+    if (!raw?.type || !taskId) { return; }
     if (raw.type === 'permission_request' || raw.type === 'control_request') {
-      notifications.notify({
-        title: 'Approval needed',
-        body: extractToolName(raw),
-        taskId,
-        kind: 'attention',
-      });
-      return;
+      attention.mark(taskId);
+    } else if (raw.type === 'result') {
+      attention.clear(taskId);
     }
-    if (raw.type === 'result') {
-      const ok = !raw.is_error;
-      const summary = typeof raw.result === 'string'
-        ? raw.result.slice(0, 140)
-        : '';
-      notifications.notify({
-        title: ok ? 'Claude replied' : 'Turn failed',
-        body: summary,
-        taskId,
-        kind: ok ? 'reply' : 'error',
-      });
-    }
-  }, [notifications]);
+  }, [routing, attention]);
+
+  const status = useStatusFeed(handleStatusEntry);
 
   const resizer = useResizable({
     storageKey: RIGHT_PANE_STORAGE_KEY,
@@ -97,14 +87,12 @@ export default function App() {
           <TabList
             sessions={sessions}
             activeTaskId={activeTaskId}
+            attentionTaskIds={attention.taskIds}
             onSelect={setActiveTaskId}
           />
         }
         center={
           <SessionDetail
-            // ``key`` forces a fresh component instance per task — the
-            // session-tool-decisions ref + transient bubbles get clean
-            // slates on tab change. Cheaper than wiring resets manually.
             key={activeTaskId || '__none__'}
             session={activeSession}
             onActivity={handleSessionEvent}
@@ -119,12 +107,5 @@ export default function App() {
         }
       />
     </>
-  );
-}
-
-function extractToolName(raw) {
-  const nested = (raw && typeof raw.request === 'object' && raw.request) || {};
-  return String(
-    raw?.tool_name || raw?.tool || nested.tool_name || nested.tool || 'a tool',
   );
 }

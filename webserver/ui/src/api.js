@@ -1,12 +1,3 @@
-// Single fetch surface for the planning UI.
-//
-// Two flavors:
-//   * `fetchJson(url)`   — GETs that return JSON; throws Error(server-message)
-//                          on non-2xx so UIs can render a clean line.
-//   * `postSession(taskId, endpoint, body?)` — per-task POSTs that return a
-//                          uniform `{ ok, status, error }` so the UI can
-//                          branch declaratively without try/catch sprawl.
-
 async function fetchJson(url) {
   const response = await fetch(url, { cache: 'no-store' });
   if (!response.ok) {

@@ -1,6 +1,3 @@
-// Top bar: brand + global controls. Stateless — owns no behavior beyond
-// click delegation. The notification toggle's actual state lives in the
-// useNotifications hook upstream.
 export default function Header({
   notificationsEnabled,
   notificationsSupported,

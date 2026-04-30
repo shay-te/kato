@@ -1,23 +1,11 @@
 import { useEffect, useState } from 'react';
 import { unpackPermissionEnvelope } from '../utils/permissionEnvelope.js';
 
-// Approval modal for the agent's tool requests. Stateless about the
-// underlying request; presents the input fields, captures rationale +
-// "remember this session" toggle, and surfaces the user's decision via
-// onDecide(allow, { remember }).
-//
-// The parent owns the actual round-trip back to the server.
 export default function PermissionModal({ raw, onDecide }) {
   const { requestId, toolName, toolInput } = unpackPermissionEnvelope(raw);
   const [rationale, setRationale] = useState('');
-  const [remember, setRemember] = useState(false);
 
-  // Reset rationale + remember when the request changes — old text from
-  // a prior approval shouldn't bleed into the new one.
-  useEffect(() => {
-    setRationale('');
-    setRemember(false);
-  }, [requestId]);
+  useEffect(() => { setRationale(''); }, [requestId]);
 
   if (!raw) { return null; }
 
@@ -35,16 +23,6 @@ export default function PermissionModal({ raw, onDecide }) {
           <summary>raw envelope</summary>
           <pre id="permission-detail">{safeStringify(raw)}</pre>
         </details>
-        <label className="modal-remember">
-          <input
-            type="checkbox"
-            id="permission-remember"
-            checked={remember}
-            onChange={(e) => setRemember(e.target.checked)}
-          />
-          Don't ask again this session for{' '}
-          <code id="permission-remember-tool">{toolName}</code>
-        </label>
         <textarea
           id="permission-rationale"
           placeholder="Optional rationale (sent if you Deny)"
@@ -57,17 +35,33 @@ export default function PermissionModal({ raw, onDecide }) {
             id="permission-deny"
             type="button"
             className="danger"
-            onClick={() => onDecide({ allow: false, rationale, remember, requestId, toolName })}
+            onClick={() => onDecide({
+              allow: false, rationale, remember: false, requestId, toolName,
+            })}
           >
             Deny
           </button>
           <button
-            id="permission-allow"
+            id="permission-allow-once"
+            type="button"
+            className="secondary"
+            title={`Approve this ${toolName} request only — ask again next time`}
+            onClick={() => onDecide({
+              allow: true, rationale, remember: false, requestId, toolName,
+            })}
+          >
+            Allow once
+          </button>
+          <button
+            id="permission-allow-always"
             type="button"
             className="primary"
-            onClick={() => onDecide({ allow: true, rationale, remember, requestId, toolName })}
+            title={`Approve and remember ${toolName} for the rest of this session`}
+            onClick={() => onDecide({
+              allow: true, rationale, remember: true, requestId, toolName,
+            })}
           >
-            Allow
+            Allow always
           </button>
         </div>
       </div>

@@ -1,8 +1,11 @@
 import Tab from './Tab.jsx';
 
-// Left pane: list of session tabs. Pure render — selection state lives
-// upstream so the chat detail can react to the same changes.
-export default function TabList({ sessions, activeTaskId, onSelect }) {
+export default function TabList({
+  sessions,
+  activeTaskId,
+  attentionTaskIds,
+  onSelect,
+}) {
   if (!sessions || sessions.length === 0) {
     return (
       <aside id="tabs-pane">
@@ -21,6 +24,7 @@ export default function TabList({ sessions, activeTaskId, onSelect }) {
             key={session.task_id}
             session={session}
             active={session.task_id === activeTaskId}
+            needsAttention={attentionTaskIds?.has(session.task_id) || false}
             onSelect={onSelect}
           />
         ))}

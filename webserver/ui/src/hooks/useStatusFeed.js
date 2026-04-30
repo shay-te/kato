@@ -4,10 +4,6 @@ import { safeParseJSON } from '../utils/sse.js';
 const STALE_AFTER_MS = 30_000;
 const HISTORY_LIMIT = 200;
 
-// Subscribes to /api/status/events and keeps the last N entries.
-// `onEntry` is invoked once per unique entry (deduplicated by sequence)
-// so callers can route notifications without re-implementing the
-// dedup logic.
 export function useStatusFeed(onEntry) {
   const [latest, setLatest] = useState(null);
   const [history, setHistory] = useState([]);

@@ -3,10 +3,6 @@ import { cssEscapeAttr } from '../utils/dom.js';
 
 const STORAGE_KEY = 'kato.notifications';
 
-// Owns the OS-notification opt-in state + click-to-focus behavior.
-// Components consume `enabled`, `supported`, `toggle`, and `notify(...)`.
-// `notify` is a no-op when not enabled or when the active tab matches
-// the notification's `taskId` (user is already looking).
 export function useNotifications({ activeTaskId, onTaskClick }) {
   const supported = typeof window !== 'undefined' && 'Notification' in window;
   const [permission, setPermission] = useState(
@@ -57,13 +53,9 @@ export function useNotifications({ activeTaskId, onTaskClick }) {
         }
         notification.close();
       };
-    } catch (_) {
-      // Some browsers throw under stricter policies; degrade silently.
-    }
+    } catch (_) { /* stricter browser policies — degrade silently */ }
   }, [enabled, supported]);
 
-  // Keep our `permission` mirror in sync with the browser when the user
-  // grants/revokes outside our toggle (e.g. via site settings).
   useEffect(() => {
     if (!supported) { return; }
     const id = setInterval(() => {
@@ -80,5 +72,4 @@ export function useNotifications({ activeTaskId, onTaskClick }) {
   return { supported, enabled, permission, toggle, notify };
 }
 
-// Re-exported so consumers don't need to know how the helper works.
 export { cssEscapeAttr };

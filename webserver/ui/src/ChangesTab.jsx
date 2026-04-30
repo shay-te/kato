@@ -3,9 +3,6 @@ import { parseDiff, Diff, Hunk } from 'react-diff-view';
 import 'react-diff-view/style/index.css';
 import { fetchDiff } from './api.js';
 
-// Renders `git diff origin/<base>...HEAD` for the active session as a
-// side-by-side / unified diff. Re-fetches whenever the task changes
-// (kato may have switched branches as it picks up the next task).
 export default function ChangesTab({ taskId }) {
   const [state, setState] = useState({
     status: 'loading',

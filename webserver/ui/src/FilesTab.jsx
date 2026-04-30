@@ -1,15 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Tree } from 'react-arborist';
 import { fetchFileTree } from './api.js';
+import { useChatComposer } from './contexts/ChatComposerContext.jsx';
 
-// Renders the repo's tracked + working-tree file list as a virtualized
-// tree. Clicking a leaf dispatches `kato:file-clicked` so the vanilla-JS
-// chat textarea can insert the relative path; clicking a folder just
-// toggles it.
-//
-// The fetch runs whenever the active task changes — kato can switch the
-// repo's branch as it moves between tasks, and the file set may differ.
 export default function FilesTab({ taskId }) {
+  const { appendToInput } = useChatComposer();
   const [state, setState] = useState({
     status: 'loading',
     tree: [],
@@ -84,7 +79,7 @@ export default function FilesTab({ taskId }) {
             disableDrop
             disableEdit
           >
-            {Node}
+            {(props) => <Node {...props} onPickFile={appendToInput} />}
           </Tree>
         )}
       </div>
@@ -92,8 +87,7 @@ export default function FilesTab({ taskId }) {
   );
 }
 
-// react-arborist requires a unique `id` on each node. Our server returns
-// `path`, which is unique within the tree, so we reuse it.
+// react-arborist needs a unique `id`; reuse `path`.
 function attachIds(nodes) {
   if (!Array.isArray(nodes)) { return []; }
   return nodes.map((node) => {
@@ -105,18 +99,16 @@ function attachIds(nodes) {
   });
 }
 
-function Node({ node, style }) {
+function Node({ node, style, onPickFile }) {
   const isFolder = node.isInternal;
-  // Don't stopPropagation — react-arborist's row handler updates the
-  // node's selection state, which we read for the `.selected` style.
   function onActivate() {
     if (isFolder) {
       node.toggle();
       return;
     }
-    window.dispatchEvent(new CustomEvent('kato:file-clicked', {
-      detail: { path: node.data.path },
-    }));
+    if (typeof onPickFile === 'function') {
+      onPickFile(node.data.path);
+    }
   }
   return (
     <div
