@@ -67,6 +67,9 @@ export default function NotificationSettings({
         <span>Browser notifications</span>
         <button
           type="button"
+          data-tooltip={enabled
+            ? 'Turn off all browser notifications for kato.'
+            : 'Turn on browser notifications so kato can ping you when a task needs you.'}
           onClick={onToggle}
           disabled={masterDisabled}
         >
@@ -86,7 +89,8 @@ export default function NotificationSettings({
     <div className="notification-settings" ref={popoverRef}>
       <button
         type="button"
-        title="Notification settings"
+        data-tooltip="Notification settings — choose which task events should ping you."
+        aria-label="Notification settings"
         onClick={togglePopover}
         disabled={!supported}
       >

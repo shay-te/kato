@@ -197,6 +197,30 @@ class StreamingClaudeSession(object):
             return self._proc is not None and self._proc.poll() is None
 
     @property
+    def is_working(self) -> bool:
+        """True when Claude is mid-turn — has spoken but not finalized.
+
+        Mirrors the planning UI's ``turnInFlight`` reducer, so the tab
+        dot in the sidebar can dim once a turn closes (``result`` event)
+        even when the subprocess stays alive for the next message. Walks
+        the event log from the newest end:
+
+        - first ``result`` → turn closed, not working,
+        - first ``assistant`` / ``stream_event`` / ``user`` → mid-turn,
+        - only ``system`` events → idle (just spawned, no work yet).
+        """
+        if not self.is_alive:
+            return False
+        with self._recent_events_lock:
+            for event in reversed(self._recent_events):
+                event_type = event.event_type
+                if event_type == CLAUDE_EVENT_RESULT:
+                    return False
+                if event_type in ('assistant', 'stream_event', 'user'):
+                    return True
+        return False
+
+    @property
     def has_finished(self) -> bool:
         return self._terminal_event is not None
 

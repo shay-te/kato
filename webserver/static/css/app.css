@@ -190,6 +190,13 @@ header button:hover { color: #e5e5e5; border-color: #e5e5e5; }
 }
 
 .status-active       { background: #047857; }   /* green: live working */
+.status-active.is-idle-alive {
+  /* alive subprocess but the current turn has closed (Claude said
+   * "Done") — dim the green so the sidebar visually distinguishes
+   * "still chewing" from "waiting for input". */
+  background: #064e3b;
+  opacity: 0.55;
+}
 .status-idle         { background: #404040; }   /* slate: tab present, no subprocess */
 .status-review       { background: #2563eb; }   /* blue:  awaiting review */
 .status-done         { background: #171717; border-color: #262626; } /* dim */
@@ -375,6 +382,20 @@ header button:hover { color: #e5e5e5; border-color: #e5e5e5; }
 }
 .working-indicator-ellipsis {
   animation: kato-working-pulse 1.2s ease-in-out infinite;
+}
+.working-indicator-activity {
+  font-size: 11px;
+  font-style: normal;
+  color: #737373;
+  margin-left: 6px;
+}
+.working-indicator.is-stalled {
+  color: #fbbf24;
+  font-style: normal;
+}
+.working-indicator.is-stalled .working-indicator-glyph {
+  color: #fbbf24;
+  animation: none;
 }
 @keyframes kato-working-spin {
   from { transform: rotate(0deg); }
@@ -918,6 +939,126 @@ body.kato-resizing { user-select: none; cursor: col-resize; }
   border-color: #262626;
   color: #525252;
   cursor: not-allowed;
+}
+
+#session-push,
+#session-pull-request {
+  background: #1e3a8a;
+  color: #dbeafe;
+  border: 1px solid #2563eb;
+  border-radius: 4px;
+  padding: 4px 12px;
+  font: 12px/1 inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+#session-push:hover,
+#session-pull-request:hover { background: #2563eb; color: #fff; }
+#session-push:disabled,
+#session-pull-request:disabled {
+  background: #262626;
+  border-color: #262626;
+  color: #525252;
+  cursor: not-allowed;
+}
+
+.claude-status {
+  font: 11px/1 ui-monospace, monospace;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid #262626;
+  color: #a3a3a3;
+  background: #0a0a0a;
+  flex-shrink: 0;
+}
+.claude-status-working {
+  color: #fde68a;
+  border-color: #b45309;
+  background: #1c1207;
+}
+.claude-status-idle,
+.claude-status-streaming {
+  color: #86efac;
+  border-color: #166534;
+  background: #06140a;
+}
+.claude-status-connecting,
+.claude-status-provisioning {
+  color: #93c5fd;
+  border-color: #1d4ed8;
+  background: #07112a;
+}
+.claude-status-sleeping,
+.claude-status-closed { color: #737373; }
+.claude-status-missing { color: #fca5a5; border-color: #7f1d1d; }
+
+/* ----- custom tooltips -----
+ * The browser-native ``title`` tooltip waits ~1.5s and renders in a
+ * tiny system font. Buttons in kato use ``data-tooltip`` instead so
+ * the text is readable (13px) and shows up fast (120ms delay). Native
+ * tooltips on non-button elements (like the status dot ``<span>``)
+ * are left alone — they're cheap and good enough for static labels.
+ */
+[data-tooltip] { position: relative; }
+[data-tooltip]:hover::after,
+[data-tooltip]:focus-visible::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1f2937;
+  color: #f9fafb;
+  font: 13px/1.4 -apple-system, system-ui, sans-serif;
+  font-style: normal;
+  font-weight: 400;
+  padding: 7px 11px;
+  border-radius: 5px;
+  white-space: normal;
+  max-width: 320px;
+  width: max-content;
+  border: 1px solid #374151;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
+  z-index: 1000;
+  pointer-events: none;
+  opacity: 0;
+  animation: kato-tooltip-fade 0.16s ease-out 0.12s forwards;
+  text-align: left;
+}
+[data-tooltip]:hover::before,
+[data-tooltip]:focus-visible::before {
+  content: '';
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-bottom-color: #1f2937;
+  z-index: 1000;
+  pointer-events: none;
+  opacity: 0;
+  animation: kato-tooltip-fade 0.16s ease-out 0.12s forwards;
+}
+[data-tooltip].tooltip-above:hover::after,
+[data-tooltip].tooltip-above:focus-visible::after {
+  top: auto;
+  bottom: calc(100% + 8px);
+}
+[data-tooltip].tooltip-above:hover::before,
+[data-tooltip].tooltip-above:focus-visible::before {
+  top: auto;
+  bottom: calc(100% + 2px);
+  border-bottom-color: transparent;
+  border-top-color: #1f2937;
+}
+[data-tooltip][disabled]:hover::after,
+[data-tooltip][disabled]:hover::before {
+  /* Disabled buttons should still surface their tooltip — that's
+   * usually how the operator learns *why* the button is disabled. */
+  animation: kato-tooltip-fade 0.16s ease-out 0.12s forwards;
+}
+@keyframes kato-tooltip-fade {
+  to { opacity: 1; }
 }
 
 .notification-settings { position: relative; }

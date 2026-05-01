@@ -46,7 +46,16 @@ def sleep_with_countdown_spinner(
     status_text: str,
     sleep_fn=time.sleep,
     stream=None,
+    countdown_seconds: int | None = None,
 ) -> None:
+    """Sleep for ``total_seconds`` while spinning an inline countdown.
+
+    By default the displayed number is derived from the remaining sleep,
+    so a 30s sleep ticks 30→1. Callers that drive their own outer loop
+    (e.g. ``_idle_with_heartbeat``) sleep in ~1s chunks but want the
+    spinner to show the *outer* countdown — pass ``countdown_seconds`` to
+    pin the displayed value for this call.
+    """
     if total_seconds <= 0:
         return
 
@@ -61,9 +70,12 @@ def sleep_with_countdown_spinner(
     frame_index = 0
     while remaining_seconds > 0:
         frame = frames[frame_index % len(frames)]
-        countdown_seconds = max(1, int(ceil(remaining_seconds)))
+        if countdown_seconds is None:
+            displayed = max(1, int(ceil(remaining_seconds)))
+        else:
+            displayed = max(0, int(countdown_seconds))
         output_stream.write(
-            f'\r{status_text} {frame} {countdown_seconds}'
+            f'\r{status_text} {frame} {displayed}'
         )
         output_stream.flush()
         sleep_duration = min(frame_interval_seconds, remaining_seconds)

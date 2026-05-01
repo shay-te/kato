@@ -25,6 +25,7 @@ function initialState() {
     lifecycle: SESSION_LIFECYCLE.CONNECTING,
     turnInFlight: false,
     pendingPermission: null,
+    lastEventAt: 0,
   };
 }
 
@@ -61,7 +62,10 @@ function reducer(state, action) {
 
 function reduceIncomingEvent(state, raw) {
   const events = [...state.events, { source: ENTRY_SOURCE.SERVER, raw }];
-  let next = { ...state, events };
+  // Every server event — including ``stream_event`` token chunks that
+  // never produce a chat bubble — resets the activity clock so the UI
+  // can distinguish "Claude is working" from "Claude is stuck".
+  let next = { ...state, events, lastEventAt: Date.now() };
   switch (raw?.type) {
     case CLAUDE_EVENT.ASSISTANT:
       next.turnInFlight = true;
@@ -154,6 +158,7 @@ export function useSessionStream(taskId, onIncomingEvent) {
     lifecycle: state.lifecycle,
     turnInFlight: state.turnInFlight,
     pendingPermission: state.pendingPermission,
+    lastEventAt: state.lastEventAt,
     appendLocalEvent: (event) => dispatch({ type: ACTION_LOCAL_EVENT, event }),
     markTurnBusy: (value) => dispatch({ type: ACTION_MARK_TURN_BUSY, value }),
     dismissPermission: () => dispatch({ type: ACTION_DISMISS_PERMISSION }),

@@ -10,8 +10,9 @@ export default function PermissionModal({ raw, onDecide }) {
   if (!raw) { return null; }
 
   const fields = renderFields(toolInput);
-  const allowOnceTitle = `Approve this ${toolName} request only — ask again next time`;
-  const allowAlwaysTitle = `Approve and remember ${toolName} for the rest of this session`;
+  const denyTooltip = `Deny this ${toolName} request. Claude will see your rationale (if any) and decide what to do next.`;
+  const allowOnceTitle = `Approve this ${toolName} request only — kato will ask again next time.`;
+  const allowAlwaysTitle = `Approve and remember ${toolName} for the rest of this session — kato won't ask again until you restart.`;
   function handleRationaleChange(event) {
     setRationale(event.target.value);
   }
@@ -48,7 +49,8 @@ export default function PermissionModal({ raw, onDecide }) {
           <button
             id="permission-deny"
             type="button"
-            className="danger"
+            className="danger tooltip-above"
+            data-tooltip={denyTooltip}
             onClick={handleDeny}
           >
             Deny
@@ -56,8 +58,8 @@ export default function PermissionModal({ raw, onDecide }) {
           <button
             id="permission-allow-once"
             type="button"
-            className="secondary"
-            title={allowOnceTitle}
+            className="secondary tooltip-above"
+            data-tooltip={allowOnceTitle}
             onClick={handleAllowOnce}
           >
             Allow once
@@ -65,8 +67,8 @@ export default function PermissionModal({ raw, onDecide }) {
           <button
             id="permission-allow-always"
             type="button"
-            className="primary"
-            title={allowAlwaysTitle}
+            className="primary tooltip-above"
+            data-tooltip={allowAlwaysTitle}
             onClick={handleAllowAlways}
           >
             Allow always

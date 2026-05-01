@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import copy
 import logging
+from dataclasses import dataclass
 
 from core_lib.data_layers.service.service import Service
 
@@ -21,7 +23,10 @@ from kato.data_layers.data.task import Task
 from kato.data_layers.service.implementation_service import ImplementationService
 from kato.helpers.task_context_utils import PreparedTaskContext, session_suffix
 from kato.data_layers.service.notification_service import NotificationService
-from kato.data_layers.service.repository_service import RepositoryService
+from kato.data_layers.service.repository_service import (
+    RepositoryHasNoChangesError,
+    RepositoryService,
+)
 from kato.data_layers.service.task_preflight_service import (
     TaskPreflightService,
 )
@@ -50,6 +55,28 @@ from kato.helpers.task_execution_utils import (
     testing_failed_result,
     testing_succeeded,
 )
+
+
+# ``RepositoryHasNoChangesError`` is the "no work to publish" outcome
+# from the publish path. With the per-repo ``branch_needs_push``
+# pre-filter in ``push_task`` we shouldn't trip it normally, but a
+# concurrent push or a workspace state change can still race us — log
+# those one-liners and move on instead of dumping a full stack trace.
+_ON_DEMAND_PUSH_EXPECTED_ERRORS = (RepositoryHasNoChangesError,)
+
+
+@dataclass(frozen=True)
+class _PublishTaskLite(object):
+    """Minimal Task-shaped object for on-demand push / PR-creation.
+
+    The repository service's ``build_branch_name`` and the publication
+    path only read ``.id`` and ``.summary``; carrying a full ``Task``
+    (with tags, comments, watchers, etc.) here would require re-fetching
+    from the ticket system on every button click.
+    """
+
+    id: str
+    summary: str = ''
 
 
 class AgentService(Service):
@@ -559,6 +586,272 @@ class AgentService(Service):
         with self._pending_publish_lock:
             return normalized in self._pending_publish
 
+    # ----- on-demand push / PR (planning UI buttons) -----
+
+    def push_task(self, task_id: str) -> dict[str, object]:
+        """Commit + push the task branch for every repo in its workspace.
+
+        Used by the planning UI's ``Push`` button: surfaces the work-in-
+        progress branch on the remote without opening a pull request.
+        Idempotent — pushes again from where the workspace currently is.
+        """
+        normalized = str(task_id or '').strip()
+        if not normalized:
+            return {'pushed': False, 'task_id': task_id, 'error': 'empty task id'}
+        repos, _branch_name, _task = self._resolve_publish_context(normalized)
+        if not repos:
+            return {
+                'pushed': False,
+                'task_id': normalized,
+                'error': 'no workspace context for this task',
+            }
+        pushed_repositories: list[str] = []
+        skipped_repositories: list[dict[str, str]] = []
+        failed_repositories: list[dict[str, str]] = []
+        for repository in repos:
+            branch_name = self._repository_service.build_branch_name(_task, repository)
+            # Only act on repos that actually have unpushed work. The
+            # ``Push`` button is enabled when *any* repo on the task
+            # needs pushing — without this filter we would also call
+            # ``publish_review_fix`` on the in-sync repos and trip
+            # ``_assert_branch_checked_out`` (workspace on master) or
+            # ``RepositoryHasNoChangesError`` for them.
+            try:
+                needs_push = self._repository_service.branch_needs_push(
+                    repository, branch_name,
+                )
+            except Exception:
+                self.logger.exception(
+                    'branch-needs-push pre-check failed for task %s repository %s',
+                    normalized, repository.id,
+                )
+                needs_push = False
+            if not needs_push:
+                skipped_repositories.append({
+                    'repository_id': repository.id,
+                    'reason': 'nothing to push',
+                })
+                continue
+            try:
+                self._repository_service.publish_review_fix(
+                    repository,
+                    branch_name,
+                    commit_message=f'Update {normalized}',
+                )
+                pushed_repositories.append(repository.id)
+                self.logger.info(
+                    'on-demand push for task %s: pushed branch %s to %s',
+                    normalized, branch_name, repository.id,
+                )
+            except _ON_DEMAND_PUSH_EXPECTED_ERRORS as exc:
+                # Race fallback: state changed between the pre-check
+                # and the publish call (e.g. another agent pushed). One
+                # warning line, no traceback.
+                self.logger.warning(
+                    'on-demand push for task %s skipped repository %s: %s',
+                    normalized, repository.id, exc,
+                )
+                failed_repositories.append(
+                    {'repository_id': repository.id, 'error': str(exc)},
+                )
+                continue
+            except Exception as exc:
+                self.logger.exception(
+                    'on-demand push for task %s failed in repository %s',
+                    normalized, repository.id,
+                )
+                failed_repositories.append(
+                    {'repository_id': repository.id, 'error': str(exc)},
+                )
+        return {
+            'pushed': bool(pushed_repositories),
+            'task_id': normalized,
+            'pushed_repositories': pushed_repositories,
+            'skipped_repositories': skipped_repositories,
+            'failed_repositories': failed_repositories,
+        }
+
+    def create_pull_request_for_task(self, task_id: str) -> dict[str, object]:
+        """Open a PR for every repo of the task that doesn't already have one.
+
+        Push happens as part of PR creation (the publication path stages,
+        commits, and pushes before calling the host API). Repos that
+        already have an open PR for this branch are skipped — surfaced
+        in ``skipped_existing`` so the UI can show "PR already exists".
+        """
+        normalized = str(task_id or '').strip()
+        if not normalized:
+            return {'created': False, 'task_id': task_id, 'error': 'empty task id'}
+        repos, _branch_name, task_obj = self._resolve_publish_context(normalized)
+        if not repos:
+            return {
+                'created': False,
+                'task_id': normalized,
+                'error': 'no workspace context for this task',
+            }
+        created: list[dict[str, str]] = []
+        skipped: list[dict[str, str]] = []
+        failed: list[dict[str, str]] = []
+        for repository in repos:
+            branch_name = self._repository_service.build_branch_name(task_obj, repository)
+            try:
+                existing = self._repository_service.find_pull_requests(
+                    repository, source_branch=branch_name,
+                )
+            except Exception:
+                self.logger.exception(
+                    'on-demand PR for task %s: PR lookup failed in repository %s',
+                    normalized, repository.id,
+                )
+                existing = []
+            if existing:
+                first = existing[0] if isinstance(existing[0], dict) else {}
+                skipped.append({
+                    'repository_id': repository.id,
+                    'url': str(first.get('url', '') or ''),
+                })
+                continue
+            try:
+                pull_request = self._repository_service.create_pull_request(
+                    repository,
+                    title=f'Implement {normalized}',
+                    source_branch=branch_name,
+                    description=str(getattr(task_obj, 'summary', '') or ''),
+                    commit_message=f'Implement {normalized}',
+                )
+                created.append({
+                    'repository_id': repository.id,
+                    'url': str(pull_request.get('url', '') or ''),
+                })
+                self.logger.info(
+                    'on-demand PR for task %s: opened %s in %s',
+                    normalized, pull_request.get('url', ''), repository.id,
+                )
+            except Exception as exc:
+                self.logger.exception(
+                    'on-demand PR for task %s failed in repository %s',
+                    normalized, repository.id,
+                )
+                failed.append(
+                    {'repository_id': repository.id, 'error': str(exc)},
+                )
+        return {
+            'created': bool(created),
+            'task_id': normalized,
+            'created_pull_requests': created,
+            'skipped_existing': skipped,
+            'failed_repositories': failed,
+        }
+
+    def task_publish_state(self, task_id: str) -> dict[str, object]:
+        """Workspace + push-readiness + PR-existence summary for the UI.
+
+        Drives the disabled state of the planning UI's Push and Pull
+        request buttons:
+
+        - ``has_workspace=False``    → no workspace on disk yet; both
+          buttons stay disabled.
+        - ``has_changes_to_push``    → the Push button is enabled when
+          *any* repo has unpushed work (dirty tree, branch never pushed,
+          or local ahead of ``origin/<branch>``); disabled when every
+          repo is in sync with its remote.
+        - ``has_pull_request``       → the Pull request button is
+          disabled and the existing URL is surfaced as a hint.
+
+        Best-effort: any per-repo lookup failure is ignored so a
+        transient git/API hiccup doesn't lock the UI buttons forever.
+        """
+        normalized = str(task_id or '').strip()
+        if not normalized:
+            return {
+                'has_workspace': False,
+                'has_changes_to_push': False,
+                'has_pull_request': False,
+            }
+        repos, _branch_name, task_obj = self._resolve_publish_context(normalized)
+        if not repos:
+            return {
+                'has_workspace': False,
+                'has_changes_to_push': False,
+                'has_pull_request': False,
+            }
+        has_pull_request = False
+        has_changes_to_push = False
+        pull_request_urls: list[str] = []
+        for repository in repos:
+            branch_name = self._repository_service.build_branch_name(task_obj, repository)
+            if not has_changes_to_push:
+                try:
+                    if self._repository_service.branch_needs_push(
+                        repository, branch_name,
+                    ):
+                        has_changes_to_push = True
+                except Exception:
+                    self.logger.exception(
+                        'branch-needs-push check failed for task %s repository %s',
+                        normalized, repository.id,
+                    )
+            try:
+                existing = self._repository_service.find_pull_requests(
+                    repository, source_branch=branch_name,
+                )
+            except Exception:
+                self.logger.exception(
+                    'PR lookup failed for task %s repository %s',
+                    normalized, repository.id,
+                )
+                continue
+            if existing:
+                has_pull_request = True
+                first = existing[0] if isinstance(existing[0], dict) else {}
+                url = str(first.get('url', '') or '')
+                if url:
+                    pull_request_urls.append(url)
+        return {
+            'has_workspace': True,
+            'has_changes_to_push': has_changes_to_push,
+            'has_pull_request': has_pull_request,
+            'pull_request_urls': pull_request_urls,
+        }
+
+    def _resolve_publish_context(self, task_id: str):
+        """Build (repos-with-local-path, branch_name, task-lite) for ``task_id``.
+
+        Reads the workspace record + the inventory repositories, then
+        rewrites ``local_path`` on each repo to its workspace clone path
+        (the same shape :func:`provision_task_workspace_clones` produces
+        for the autonomous flow). Returns ``([], '', None)`` whenever the
+        task has no on-disk workspace — both UI buttons rely on that as
+        the "disable everything" signal.
+        """
+        if self._workspace_manager is None:
+            return [], '', None
+        workspace = self._workspace_manager.get(task_id)
+        if workspace is None:
+            return [], '', None
+        rewritten = []
+        for repository_id in workspace.repository_ids:
+            try:
+                inventory_repo = self._repository_service.get_repository(repository_id)
+            except ValueError:
+                self.logger.warning(
+                    'workspace for task %s references unknown repository %s; skipping',
+                    task_id, repository_id,
+                )
+                continue
+            clone_path = self._workspace_manager.repository_path(task_id, repository_id)
+            rewritten_repo = copy.copy(inventory_repo)
+            rewritten_repo.local_path = str(clone_path)
+            rewritten.append(rewritten_repo)
+        if not rewritten:
+            return [], '', None
+        task_lite = _PublishTaskLite(
+            id=task_id, summary=str(workspace.task_summary or ''),
+        )
+        # build_branch_name only reads ``id`` / ``summary`` so the lite
+        # object is a faithful stand-in here.
+        branch_name = self._repository_service.build_branch_name(task_lite, rewritten[0])
+        return rewritten, branch_name, task_lite
 
     def _start_task_processing(self, task: Task, prepared_task: PreparedTaskContext) -> bool:
         try:

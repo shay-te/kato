@@ -42,6 +42,45 @@ export async function approveTaskPush(taskId) {
   }
 }
 
+export function fetchTaskPublishState(taskId) {
+  if (!taskId) {
+    return Promise.resolve({
+      has_workspace: false, has_pull_request: false,
+    });
+  }
+  return fetchJson(
+    `/api/sessions/${encodeURIComponent(taskId)}/publish-state`,
+  );
+}
+
+export async function pushTask(taskId) {
+  if (!taskId) { return { ok: false, error: 'no task id' }; }
+  try {
+    const response = await fetch(
+      `/api/sessions/${encodeURIComponent(taskId)}/push`,
+      { method: 'POST' },
+    );
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+export async function createTaskPullRequest(taskId) {
+  if (!taskId) { return { ok: false, error: 'no task id' }; }
+  try {
+    const response = await fetch(
+      `/api/sessions/${encodeURIComponent(taskId)}/pull-request`,
+      { method: 'POST' },
+    );
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
 export async function forgetTaskWorkspace(taskId) {
   if (!taskId) { return { ok: false, error: 'no task id' }; }
   try {

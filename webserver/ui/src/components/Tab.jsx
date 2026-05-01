@@ -11,10 +11,18 @@ export default function Tab({ session, active, needsAttention, onSelect, onForge
     active ? 'active' : '',
     needsAttention ? 'needs-attention' : '',
   ].filter(Boolean).join(' ');
+  // ``status === active`` covers two real states the sidebar should
+  // distinguish: Claude actively producing a turn (bright green) vs
+  // alive-but-idle (dimmed green). Backend exposes a per-session
+  // ``working`` flag (turn in flight) that we use here so the operator
+  // can tell at a glance whether the agent is still chewing on a tab
+  // they're not currently looking at.
+  const idleAlive = status === TAB_STATUS.ACTIVE && session?.working === false;
   const dotClass = [
     'status-dot',
     `status-${status}`,
     isLoading ? 'is-loading' : '',
+    idleAlive ? 'is-idle-alive' : '',
   ].filter(Boolean).join(' ');
   function handleSelect() {
     onSelect(session.task_id);
@@ -54,7 +62,8 @@ export default function Tab({ session, active, needsAttention, onSelect, onForge
       <button
         type="button"
         className="tab-forget-btn"
-        title="Forget this task — delete the local workspace and clear this tab"
+        data-tooltip="Forget this task — delete the local workspace and clear this tab. Anything not pushed will be lost."
+        aria-label="Forget this task"
         onClick={handleForget}
       >
         <Icon name="xmark" />

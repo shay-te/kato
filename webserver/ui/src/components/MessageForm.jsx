@@ -23,11 +23,11 @@ export default function MessageForm({
   const submitLabel = isSteering ? 'Steer' : 'Send';
   let submitTitle;
   if (disabled) {
-    submitTitle = disabledReason || 'Session is not live';
+    submitTitle = disabledReason || 'Session is not live — chat resumes when kato re-spawns it.';
   } else if (turnInFlight) {
     submitTitle = 'Claude is working — your message will steer the in-flight turn.';
   } else {
-    submitTitle = '';
+    submitTitle = 'Send your message to Claude (or press Enter).';
   }
 
   function handleChange(event) {
@@ -52,8 +52,8 @@ export default function MessageForm({
       <button
         type="submit"
         disabled={disabled}
-        className={submitClass}
-        title={submitTitle}
+        className={`${submitClass} tooltip-above`.trim()}
+        data-tooltip={submitTitle}
       >
         {submitLabel}
       </button>

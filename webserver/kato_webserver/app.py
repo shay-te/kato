@@ -403,6 +403,55 @@ def _register_http_routes(app: Flask) -> None:
             'task_id': task_id,
         })
 
+    @app.post('/api/sessions/<task_id>/push')
+    def push_task(task_id: str):
+        """Operator-triggered push from the planning UI's ``Push`` button."""
+        agent_service = app.config.get('AGENT_SERVICE')
+        if agent_service is None:
+            return jsonify({'error': 'agent service not wired'}), 503
+        push = getattr(agent_service, 'push_task', None)
+        if not callable(push):
+            return jsonify({'error': 'agent service does not support push'}), 501
+        result = push(task_id) or {}
+        if result.get('error') and not result.get('pushed'):
+            return jsonify(result), 404 if 'no workspace' in str(result['error']) else 500
+        return jsonify(result)
+
+    @app.post('/api/sessions/<task_id>/pull-request')
+    def create_task_pull_request(task_id: str):
+        """Operator-triggered PR open from the planning UI's ``Pull request`` button."""
+        agent_service = app.config.get('AGENT_SERVICE')
+        if agent_service is None:
+            return jsonify({'error': 'agent service not wired'}), 503
+        create = getattr(agent_service, 'create_pull_request_for_task', None)
+        if not callable(create):
+            return jsonify({'error': 'agent service does not support PR creation'}), 501
+        result = create(task_id) or {}
+        if result.get('error') and not result.get('created'):
+            return jsonify(result), 404 if 'no workspace' in str(result['error']) else 500
+        return jsonify(result)
+
+    @app.get('/api/sessions/<task_id>/publish-state')
+    def get_task_publish_state(task_id: str):
+        """UI poll: drives the disabled state of the Push / Pull request buttons."""
+        agent_service = app.config.get('AGENT_SERVICE')
+        if agent_service is None:
+            return jsonify({
+                'has_workspace': False,
+                'has_pull_request': False,
+                'task_id': task_id,
+            })
+        check = getattr(agent_service, 'task_publish_state', None)
+        if not callable(check):
+            return jsonify({
+                'has_workspace': False,
+                'has_pull_request': False,
+                'task_id': task_id,
+            })
+        state = check(task_id) or {}
+        state['task_id'] = task_id
+        return jsonify(state)
+
     @app.delete('/api/sessions/<task_id>/workspace')
     def forget_task_workspace(task_id: str):
         """Manual escape hatch: wipe ``~/.kato/workspaces/<task_id>/``.
@@ -813,6 +862,7 @@ def _records_as_dicts(
         return [_record_to_dict(r) for r in session_manager.list_records()]
     workspace_records = workspace_manager.list_workspaces()
     live_session_ids = _live_session_ids(session_manager)
+    working_session_ids = _working_session_ids(session_manager)
     session_ids_by_task = _session_ids_by_task(session_manager)
     awaiting_push = getattr(agent_service, 'is_awaiting_push_approval', None)
     return [
@@ -821,6 +871,7 @@ def _records_as_dicts(
             live_session_ids,
             session_ids_by_task,
             awaiting_push,
+            working_session_ids=working_session_ids,
         )
         for record in workspace_records
     ]
@@ -838,6 +889,30 @@ def _session_ids_by_task(session_manager) -> dict[str, str]:
         for record in records
         if getattr(record, 'claude_session_id', '')
     }
+
+
+def _working_session_ids(session_manager) -> set[str]:
+    """Subset of ``_live_session_ids`` whose Claude turn is in flight.
+
+    The sidebar tab dot uses this to dim a tab whose subprocess is alive
+    but not actively producing — operator can tell at a glance whether
+    Claude is still chewing on a turn or just waiting for input.
+    """
+    if session_manager is None:
+        return set()
+    try:
+        records = session_manager.list_records()
+    except Exception:
+        return set()
+    working: set[str] = set()
+    for record in records:
+        try:
+            session = session_manager.get_session(record.task_id)
+        except Exception:
+            continue
+        if session is not None and getattr(session, 'is_working', False):
+            working.add(record.task_id)
+    return working
 
 
 def _live_session_ids(session_manager) -> set[str]:
@@ -864,9 +939,15 @@ def _workspace_record_to_dict(
     live_session_ids: set[str],
     session_ids_by_task: dict[str, str] | None = None,
     awaiting_push_check=None,
+    *,
+    working_session_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     payload = record.to_dict() if hasattr(record, 'to_dict') else dict(record)
     payload['live'] = record.task_id in live_session_ids
+    payload['working'] = (
+        record.task_id in working_session_ids
+        if working_session_ids is not None else False
+    )
     if not payload.get('claude_session_id') and session_ids_by_task:
         backfilled = session_ids_by_task.get(record.task_id, '')
         if backfilled:

@@ -206,6 +206,88 @@ class RepositoryService(RepositoryInventoryService):
             title_prefix=title_prefix,
         )
 
+    def branch_needs_push(self, repository, branch_name: str) -> bool:
+        """True when ``Push`` would actually publish something.
+
+        The on-demand push path (``publish_review_fix``) refuses to
+        proceed unless three preconditions hold; this check mirrors all
+        three so the planning UI doesn't enable a button whose click
+        would error:
+
+        1. The workspace is currently checked out on ``branch_name`` —
+           ``_assert_branch_checked_out`` rejects everything else.
+        2. There would be at least one commit ahead of the destination
+           branch after committing any dirty tree —
+           ``_ensure_branch_is_publishable`` raises
+           ``RepositoryHasNoChangesError`` when the branch is in sync.
+        3. The push would actually send work to the remote — ``origin/
+           <branch>`` is missing or behind, OR the working tree is dirty
+           (the new commit will move local past origin).
+
+        Best-effort: any git failure returns ``False`` so the button
+        stays disabled rather than promising a push that won't work.
+        """
+        local_path = str(getattr(repository, 'local_path', '') or '').strip()
+        normalized_branch = (branch_name or '').strip()
+        if not local_path or not normalized_branch:
+            return False
+        try:
+            if not (Path(local_path) / '.git').is_dir():
+                return False
+        except OSError:
+            return False
+        try:
+            current_branch = self._current_branch(local_path)
+        except Exception:
+            return False
+        # Precondition 1 — publish_review_fix asserts the workspace is
+        # checked out on the task branch. If it isn't (e.g. workspace
+        # was reset to master after a prior publish), there's nothing
+        # the Push button can do without first checking out, so disable.
+        if current_branch != normalized_branch:
+            return False
+        try:
+            is_dirty = bool(self._working_tree_status(local_path).strip())
+        except Exception:
+            return False
+        # Precondition 2 — branch must be (or become, after committing
+        # dirty tree) ahead of the destination branch.
+        try:
+            destination_branch = self.destination_branch(repository)
+            comparison_reference = self._comparison_reference(
+                local_path, destination_branch,
+            )
+        except Exception:
+            return False
+        try:
+            ahead_destination = self._ahead_count(
+                local_path, comparison_reference, normalized_branch,
+            )
+        except Exception:
+            return False
+        if ahead_destination == 0 and not is_dirty:
+            return False
+        # Precondition 3 — push must send something the remote doesn't
+        # already have. Dirty tree → upcoming commit will exceed origin.
+        if is_dirty:
+            return True
+        remote_reference = f'origin/{normalized_branch}'
+        try:
+            remote_branch_exists = self._git_reference_exists(
+                local_path, remote_reference,
+            )
+        except Exception:
+            return False
+        if not remote_branch_exists:
+            return True
+        try:
+            ahead_remote, _behind = self._left_right_commit_counts(
+                local_path, normalized_branch, remote_reference,
+            )
+        except Exception:
+            return False
+        return ahead_remote > 0
+
     def resolve_review_comment(self, repository, comment) -> None:
         self._publication_service.resolve_review_comment(repository, comment)
 

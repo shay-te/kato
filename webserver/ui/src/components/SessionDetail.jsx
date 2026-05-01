@@ -103,9 +103,14 @@ export default function SessionDetail({ session, onActivity, needsAttention = fa
             session={session}
             needsAttention={needsAttention}
             onStopped={onStopped}
+            streamLifecycle={stream.lifecycle}
+            turnInFlight={stream.turnInFlight}
           />
           <EventLog entries={stream.events} banner={banner} />
-          <WorkingIndicator active={stream.turnInFlight} />
+          <WorkingIndicator
+            active={stream.turnInFlight}
+            lastEventAt={stream.lastEventAt}
+          />
           <MessageForm
             value={composerValue}
             onChange={setComposerValue}

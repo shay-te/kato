@@ -21,7 +21,8 @@ export default function Header({
       <span className="subtitle">Planning UI</span>
       <button
         type="button"
-        title={bellTitle}
+        data-tooltip={bellTitle}
+        aria-label={bellTitle}
         onClick={onToggleNotifications}
         disabled={!notificationsSupported}
       >
@@ -35,7 +36,12 @@ export default function Header({
         onSetKindEnabled={onSetKindEnabled}
         onToggle={onToggleNotifications}
       />
-      <button type="button" title="Refresh sessions" onClick={onRefresh}>
+      <button
+        type="button"
+        data-tooltip="Refresh the task list — re-scans tickets and reloads workspace state."
+        aria-label="Refresh sessions"
+        onClick={onRefresh}
+      >
         <Icon name="refresh" />
       </button>
     </header>

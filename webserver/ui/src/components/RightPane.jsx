@@ -32,6 +32,7 @@ export default function RightPane({
         <button
           type="button"
           className={filesTabClass}
+          data-tooltip="Browse the workspace file tree for this task."
           onClick={showFiles}
         >
           Files
@@ -39,6 +40,7 @@ export default function RightPane({
         <button
           type="button"
           className={changesTabClass}
+          data-tooltip="Review the diff: every file the agent has modified on this task's branch."
           onClick={showChanges}
         >
           Changes

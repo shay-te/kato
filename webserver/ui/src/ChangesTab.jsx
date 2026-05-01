@@ -58,7 +58,8 @@ export default function ChangesTab({
       <button
         type="button"
         className="changes-tab-icon-btn"
-        title="Expand all repositories"
+        data-tooltip="Expand all repositories — show every changed file in every workspace."
+        aria-label="Expand all repositories"
         onClick={expandAll}
       >
         <Icon name="plus" />
@@ -66,7 +67,8 @@ export default function ChangesTab({
       <button
         type="button"
         className="changes-tab-icon-btn"
-        title="Collapse all repositories"
+        data-tooltip="Collapse all repositories — keep only the repository names visible."
+        aria-label="Collapse all repositories"
         onClick={collapseAll}
       >
         <Icon name="minus" />
