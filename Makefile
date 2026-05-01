@@ -2,7 +2,7 @@ PYTHON ?= python3
 VENV_PYTHON = .venv/bin/python
 KATO_SOURCE_FINGERPRINT := $(shell $(PYTHON) -m kato.helpers.runtime_identity_utils --root .)
 
-.PHONY: bootstrap configure doctor doctor-agent doctor-openhands test run compose-up compose-up-docker
+.PHONY: bootstrap configure doctor doctor-agent doctor-openhands test run compose-up compose-up-docker sandbox-build sandbox-login sandbox-verify
 
 # All operator-facing entry points are canonical Python scripts so the
 # behavior matches what Windows operators see (`python scripts\<name>.py`).
@@ -31,6 +31,28 @@ run:
 
 compose-up:
 	$(VENV_PYTHON) scripts/run_local.py
+
+# Build the hardened Claude sandbox image up-front. Kato also builds
+# it lazily on the first sandboxed spawn, so this target is optional —
+# useful if you want to pre-warm the cache or surface build errors
+# before starting kato.
+sandbox-build:
+	$(VENV_PYTHON) -c "from kato.sandbox.manager import build_image; build_image()"
+
+# One-time interactive login for the sandbox. Seeds the persistent
+# ``kato-claude-config`` Docker volume with the operator's Claude
+# credentials so kato-spawned sandbox containers can reuse them.
+# Skip if you set ANTHROPIC_API_KEY in your shell instead.
+sandbox-login:
+	$(VENV_PYTHON) -c "from kato.sandbox.manager import ensure_image, login_command; import subprocess, sys; ensure_image(); sys.exit(subprocess.call(login_command()))"
+
+# End-to-end smoke test: builds the image, spins up a throwaway
+# container, asserts every protection (uid drop, cap drop, read-only
+# rootfs, IPv6 disabled, DNS pinned, allowed/blocked egress), and
+# tears down. Run this before relying on the sandbox in production
+# and any time the Dockerfile / firewall script changes.
+sandbox-verify:
+	$(VENV_PYTHON) -m kato.sandbox.verify
 
 # Original docker-compose flow. Kept available for cases where you actually
 # need OpenHands containerized; the local Claude-backed path is `compose-up`.

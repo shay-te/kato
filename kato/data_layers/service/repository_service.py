@@ -147,7 +147,12 @@ class RepositoryService(RepositoryInventoryService):
         return repositories
 
     def get_repository(self, repository_id: str):
-        for repository in self._repositories:
+        # ``_repositories`` is lazy-initialized via ``_ensure_repositories``
+        # — iterating it directly trips on ``None`` when nothing has
+        # warmed the inventory yet (e.g. the planning UI's publish-state
+        # poll firing before the first scan). Use the ensure-helper so
+        # the load is idempotent and the iteration is always safe.
+        for repository in self._ensure_repositories():
             if repository.id == repository_id:
                 return repository
         raise ValueError(f'unknown repository id: {repository_id}')
@@ -445,9 +450,17 @@ class RepositoryService(RepositoryInventoryService):
 
     @classmethod
     def _git_command(cls, local_path: str, args: list[str]) -> list[str]:
+        # ``core.hooksPath=/dev/null`` disables every git hook (pre-commit,
+        # post-commit, pre-push, etc.) for kato's own git invocations.
+        # Defends against a sandboxed Claude that drops a malicious
+        # ``.git/hooks/pre-push`` into the workspace: when kato later runs
+        # ``git push`` on the host (outside the sandbox) the hook would
+        # otherwise fire with the operator's privileges. Single funnel
+        # point; covers every git command kato runs.
         return [
             'git',
             *cls._git_safe_directory_args(local_path),
+            '-c', 'core.hooksPath=/dev/null',
             '-C',
             local_path,
             *args,

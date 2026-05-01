@@ -657,8 +657,7 @@ The `openhands` container reuses the same `OPENHANDS_LLM_*` and `AWS_*` values f
 | `KATO_CLAUDE_EFFORT` | Optional reasoning depth passed via `--effort` (`low`/`medium`/`high`/`xhigh`/`max`). Empty leaves Claude on its built-in default. |
 | `KATO_CLAUDE_ALLOWED_TOOLS` | Comma-separated allowlist passed via `--allowedTools`. |
 | `KATO_CLAUDE_DISALLOWED_TOOLS` | Comma-separated denylist passed via `--disallowedTools`. |
-| `KATO_CLAUDE_BYPASS_PERMISSIONS` | When `true`, kato runs Claude with `--permission-mode bypassPermissions` (no per-tool prompts). When `false` (the default), kato runs in `acceptEdits` mode and routes any permission asks back over the planning UI. Refused under root and under CI/Docker/cron without explicit acknowledgement — see below. |
-| `KATO_CLAUDE_BYPASS_PERMISSIONS_ACCEPT` | Required companion flag for non-interactive runs (CI, Docker, cron, systemd). When `KATO_CLAUDE_BYPASS_PERMISSIONS=true` and stdin is not a TTY, kato refuses to start unless this flag is also `true`. Setting it means the operator has read SECURITY.md and accepts responsibility for the agent running every tool without asking. |
+| `KATO_CLAUDE_BYPASS_PERMISSIONS` | When `true`, kato runs Claude with `--permission-mode bypassPermissions` (no per-tool prompts) inside the hardened Docker sandbox. When `false` (the default), kato runs in `acceptEdits` mode and routes any permission asks back over the planning UI. Refused under root, refused under CI/Docker/cron (no TTY for confirmation), and double-prompted on the terminal at every interactive startup. See [BYPASS_PROTECTIONS.md](BYPASS_PROTECTIONS.md). |
 | `KATO_CLAUDE_TIMEOUT_SECONDS` | Per-task subprocess timeout. Defaults to 1800. Minimum 60. |
 | `KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED` | Runs a small `claude -p` prompt during startup validation. Off by default. |
 | `KATO_ARCHITECTURE_DOC_PATH` | Optional path to a project-architecture markdown file. When set, kato appends the file's contents to Claude's system prompt on every spawn (autonomous, planning, chat-respawn) via `--append-system-prompt`. Re-read on each spawn so edits land without a kato restart. |
@@ -996,8 +995,8 @@ What kato does **not** do today:
 `KATO_CLAUDE_BYPASS_PERMISSIONS=true` removes the planning-UI prompt layer in exchange for unattended speed. To make this state impossible to enable silently or by accident, kato applies the following defense-in-depth layers:
 
 - **Refused under root.** Kato will not start when `KATO_CLAUDE_BYPASS_PERMISSIONS=true` and the process runs as root. There is no exception and no override.
-- **Refused under CI / Docker / cron unless explicitly acknowledged.** When stdin is not a TTY, kato refuses to start unless `KATO_CLAUDE_BYPASS_PERMISSIONS_ACCEPT=true` is also set. The companion flag exists so the operator's acknowledgement is recorded in writing in their `.env`.
-- **Interactive y/n confirmation** when stdin is a TTY and the ACCEPT flag is not set — answered "no" aborts startup.
+- **Refused under CI / Docker / cron / systemd.** When stdin is not a TTY, kato refuses to start with bypass on — there is no flag-only escape hatch. Acknowledgement must come from a real terminal. Either run kato interactively to confirm, or unset the flag.
+- **Double-prompt on every interactive boot.** When stdin is a TTY, kato asks the operator twice with `prompt_yes_no` ("are you sure?" then "final confirmation, this disables every per-tool prompt for the entire session?"). Either no aborts startup. A fat-fingered Enter cannot slip through.
 - **Unmissable stderr banner** at every boot, written before logger configuration so log level cannot suppress it.
 - **Persistent red banner across the top of the planning UI** — every operator looking at the browser sees the bypass state.
 - **Configurator requires typing `I ACCEPT`** before writing the flag (`python -m kato.configure_project`).

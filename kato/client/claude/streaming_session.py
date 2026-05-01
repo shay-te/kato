@@ -239,10 +239,62 @@ class StreamingClaudeSession(object):
                 )
             command = self._build_command()
             env = self._build_env()
+            # Bypass mode wraps the spawn in the hardened Docker
+            # sandbox — see ``kato.sandbox.manager``. The container
+            # bind-mounts the workspace, blocks egress to anything but
+            # api.anthropic.com, and runs Claude as a non-root user
+            # with no capabilities. The stdin/stdout NDJSON contract
+            # is unchanged; reader threads don't care that the other
+            # end is a docker process.
+            spawn_cwd: str | None = self._cwd
+            if self._permission_mode == 'bypassPermissions':
+                from kato.sandbox.manager import (
+                    SandboxError,
+                    ensure_image,
+                    make_container_name,
+                    record_spawn,
+                    wrap_command,
+                )
+                try:
+                    ensure_image(logger=self.logger)
+                except SandboxError as exc:
+                    raise RuntimeError(
+                        f'failed to prepare Claude sandbox image: {exc}',
+                    ) from exc
+                container_name = make_container_name(self._task_id)
+                # Pre-spawn workspace check — refuse (don't just warn)
+                # if the operator's repo contains files that look like
+                # committed credentials. Operator can override via
+                # KATO_SANDBOX_ALLOW_WORKSPACE_SECRETS=true if these
+                # are intentional repo fixtures.
+                from kato.sandbox.manager import enforce_no_workspace_secrets
+                try:
+                    enforce_no_workspace_secrets(self._cwd, logger=self.logger)
+                except SandboxError as exc:
+                    raise RuntimeError(
+                        f'sandbox spawn blocked: {exc}',
+                    ) from exc
+                command = wrap_command(
+                    command,
+                    workspace_path=self._cwd,
+                    container_name=container_name,
+                )
+                # Audit-log this spawn before the subprocess actually
+                # starts so the operator has a record even if the
+                # container fails to come up.
+                record_spawn(
+                    task_id=self._task_id,
+                    container_name=container_name,
+                    workspace_path=self._cwd,
+                    logger=self.logger,
+                )
+                # Docker sets the container WORKDIR to /workspace; the
+                # host cwd is irrelevant for the docker client itself.
+                spawn_cwd = None
             try:
                 self._proc = subprocess.Popen(
                     command,
-                    cwd=self._cwd,
+                    cwd=spawn_cwd,
                     env=env,
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,

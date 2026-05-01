@@ -125,7 +125,7 @@ These are the decisions most operators get stuck on. The full per-platform setup
 
 **Scan tick keeps logging `task scan failed; retrying in 60 seconds`.** Almost always a credentials problem on the issue platform. Run `make doctor` and check the token + assignee for the active platform.
 
-**`KATO_CLAUDE_BYPASS_PERMISSIONS=true` but kato refuses to start.** Working as designed. Set `KATO_CLAUDE_BYPASS_PERMISSIONS_ACCEPT=true` for non-interactive runs (CI/Docker/cron). Read [SECURITY.md](SECURITY.md) before doing this.
+**`KATO_CLAUDE_BYPASS_PERMISSIONS=true` but kato refuses to start.** Working as designed. Bypass mode requires interactive confirmation on a TTY at startup — there is no flag-only escape hatch. Either run `make compose-up` from a real terminal (you'll be double-prompted to confirm), or unset the flag. Refused under root regardless. Also requires Docker — see [BYPASS_PROTECTIONS.md](BYPASS_PROTECTIONS.md).
 
 **`make compose-up` opens a browser tab but nothing happens.** No tasks are assigned to your `*_ASSIGNEE`. Assign one and wait one scan cycle.
 

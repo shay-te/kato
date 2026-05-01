@@ -995,35 +995,30 @@ def _prompt_bypass_permissions(defaults: dict[str, str]) -> dict[str, str]:
     """Configurator step for KATO_CLAUDE_BYPASS_PERMISSIONS.
 
     The bypass flag removes the planning UI's per-tool permission layer
-    entirely. The configurator therefore: (1) shows the danger explicitly,
-    (2) requires the operator to type the phrase ``I ACCEPT`` to confirm,
-    and (3) writes the matching ``KATO_CLAUDE_BYPASS_PERMISSIONS_ACCEPT``
-    flag so unattended runs (Docker, CI, cron) start without re-prompting.
-    See SECURITY.md.
+    entirely. The configurator: (1) shows the danger explicitly, then
+    (2) requires the operator to type the phrase ``I ACCEPT``. There is
+    no second env var — at runtime, kato will additionally double-prompt
+    on the terminal before starting under bypass mode (see SECURITY.md
+    and BYPASS_PROTECTIONS.md).
     """
     bypass_default = _default_bool(defaults, 'KATO_CLAUDE_BYPASS_PERMISSIONS')
-    accept_default = _default_bool(
-        defaults, 'KATO_CLAUDE_BYPASS_PERMISSIONS_ACCEPT'
-    )
     chose_bypass = input_bool(
         'Enable bypassPermissions (DANGEROUS — agent runs every tool without '
-        'asking; refused under root; requires explicit acknowledgement). When '
+        'asking; refused under root; refused under non-interactive runs). When '
         'false, uses acceptEdits + a pre-approved tools list and the planning '
         'UI intercepts each Bash/Edit/Write call',
         default=bypass_default,
     )
     if not chose_bypass:
-        return {
-            'KATO_CLAUDE_BYPASS_PERMISSIONS': _bool_to_env(False),
-            'KATO_CLAUDE_BYPASS_PERMISSIONS_ACCEPT': _bool_to_env(False),
-        }
+        return {'KATO_CLAUDE_BYPASS_PERMISSIONS': _bool_to_env(False)}
     print(
         '\n'
         '!!  KATO_CLAUDE_BYPASS_PERMISSIONS=true means the agent can run\n'
         '!!  Bash, Edit, Write, and any other tool without asking.\n'
         '!!  The planning UI permission layer is OFF. The operator who\n'
         '!!  sets this flag accepts responsibility for any harm caused\n'
-        '!!  by the agent. Read SECURITY.md before continuing.\n'
+        '!!  by the agent. Kato will double-prompt at every startup as\n'
+        '!!  belt-and-suspenders. Read SECURITY.md before continuing.\n'
     )
     confirmation = input_str(
         'Type "I ACCEPT" (without quotes) to confirm and continue, or '
@@ -1035,14 +1030,8 @@ def _prompt_bypass_permissions(defaults: dict[str, str]) -> dict[str, str]:
             'bypassPermissions not confirmed; falling back to '
             'KATO_CLAUDE_BYPASS_PERMISSIONS=false.'
         )
-        return {
-            'KATO_CLAUDE_BYPASS_PERMISSIONS': _bool_to_env(False),
-            'KATO_CLAUDE_BYPASS_PERMISSIONS_ACCEPT': _bool_to_env(False),
-        }
-    return {
-        'KATO_CLAUDE_BYPASS_PERMISSIONS': _bool_to_env(True),
-        'KATO_CLAUDE_BYPASS_PERMISSIONS_ACCEPT': _bool_to_env(True),
-    }
+        return {'KATO_CLAUDE_BYPASS_PERMISSIONS': _bool_to_env(False)}
+    return {'KATO_CLAUDE_BYPASS_PERMISSIONS': _bool_to_env(True)}
 
 
 def _default_projects_root(values: dict[str, str]) -> str:

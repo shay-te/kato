@@ -2,7 +2,6 @@ export default function SafetyBanner({ state }) {
   if (!state || !state.bypass_permissions) {
     return null;
   }
-  const acknowledged = !!state.accept_acknowledged;
   return (
     <div className="kato-safety-banner" role="alert" aria-live="polite">
       <span className="kato-safety-banner__icon" aria-hidden="true">!</span>
@@ -11,9 +10,7 @@ export default function SafetyBanner({ state }) {
         {' '}
         The agent is running every tool without asking — Bash, Edit, Write,
         anything Claude exposes. Per-tool permission prompts are disabled.
-        {acknowledged
-          ? ' The operator acknowledged this in .env.'
-          : ' Operator acknowledgement was given interactively.'}
+        Operator acknowledged the double-confirm at startup.
         {' '}
         See SECURITY.md.
       </span>

@@ -28,27 +28,25 @@ class SafetyEndpointTests(unittest.TestCase):
     def test_bypass_off_reports_false(self) -> None:
         with patch.dict(os.environ, {
             'KATO_CLAUDE_BYPASS_PERMISSIONS': 'false',
-            'KATO_CLAUDE_BYPASS_PERMISSIONS_ACCEPT': 'false',
         }, clear=False):
             resp = self._client().get('/api/safety')
         self.assertEqual(resp.status_code, 200)
         body = resp.get_json()
         self.assertFalse(body['bypass_permissions'])
-        self.assertFalse(body['accept_acknowledged'])
 
     def test_bypass_on_reports_true_so_banner_renders(self) -> None:
         # The UI's <SafetyBanner /> renders iff state.bypass_permissions
         # is truthy. We're asserting the wire shape that gates the banner.
         with patch.dict(os.environ, {
             'KATO_CLAUDE_BYPASS_PERMISSIONS': 'true',
-            'KATO_CLAUDE_BYPASS_PERMISSIONS_ACCEPT': 'true',
         }, clear=False):
             resp = self._client().get('/api/safety')
         self.assertEqual(resp.status_code, 200)
         body = resp.get_json()
         self.assertTrue(body['bypass_permissions'])
-        self.assertTrue(body['accept_acknowledged'])
         self.assertIn('running_as_root', body)
+        # ACCEPT was removed; the field should no longer be present.
+        self.assertNotIn('accept_acknowledged', body)
 
 
 if __name__ == '__main__':

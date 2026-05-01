@@ -337,7 +337,6 @@ class DeploymentFilesTests(unittest.TestCase):
                 'KATO_CLAUDE_ALLOWED_TOOLS',
                 'KATO_CLAUDE_DISALLOWED_TOOLS',
                 'KATO_CLAUDE_BYPASS_PERMISSIONS',
-                'KATO_CLAUDE_BYPASS_PERMISSIONS_ACCEPT',
                 'KATO_CLAUDE_TIMEOUT_SECONDS',
                 'KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED',
                 'KATO_ARCHITECTURE_DOC_PATH',

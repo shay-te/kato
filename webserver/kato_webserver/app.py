@@ -250,13 +250,11 @@ def _register_http_routes(app: Flask) -> None:
     @app.get('/api/safety')
     def safety_state():
         from kato.validation.bypass_permissions_validator import (
-            is_accept_acknowledged,
             is_bypass_enabled,
             is_running_as_root,
         )
         return jsonify({
             'bypass_permissions': is_bypass_enabled(),
-            'accept_acknowledged': is_accept_acknowledged(),
             'running_as_root': is_running_as_root(),
         })
 

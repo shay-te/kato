@@ -70,6 +70,43 @@ def main(cfg: DictConfig) -> int:
     except BypassPermissionsRefused as exc:
         logger.error('%s', exc)
         return 1
+    # Bypass mode requires the Docker sandbox so Claude can never reach
+    # beyond the per-task workspace. If Docker isn't available, refuse
+    # to start with a clear CLI message — falling back to host
+    # execution silently would defeat the point of the flag.
+    from kato.validation.bypass_permissions_validator import is_bypass_enabled
+    if is_bypass_enabled():
+        from kato.sandbox.manager import (
+            check_docker_or_exit,
+            check_gvisor_or_exit,
+            docker_running_rootless,
+            gvisor_runtime_available,
+        )
+        check_docker_or_exit()
+        # gVisor is required by default — refuses to start without
+        # it unless the operator explicitly accepts the residual
+        # via KATO_SANDBOX_ALLOW_NO_GVISOR=true. See the printed
+        # message for the install link / override path.
+        check_gvisor_or_exit()
+        if gvisor_runtime_available():
+            logger.info(
+                'sandbox: gVisor (runsc) runtime detected — using it '
+                'for syscall-level isolation on top of namespaces',
+            )
+        else:
+            logger.warning(
+                'sandbox: starting WITHOUT gVisor (operator override '
+                'KATO_SANDBOX_ALLOW_NO_GVISOR=true). Container relies '
+                'on the host kernel for isolation; a kernel CVE could '
+                'be used to escape. Other 8 sandbox layers still apply.',
+            )
+        if not docker_running_rootless():
+            logger.info(
+                'sandbox: Docker daemon is running in rooted mode. For '
+                'stricter isolation (a container escape stays in your '
+                'user account, not full root on the host) consider '
+                'rootless Docker: https://docs.docker.com/engine/security/rootless/',
+            )
     print_security_posture()
     try:
         KatoInstance.init(cfg)

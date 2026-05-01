@@ -11,15 +11,14 @@ Decisions (in order):
 2. **Bypass on, running as root** -> refuse. Root + bypass + agent =
    the worst possible blast radius. There is no legitimate reason to
    combine the three.
-3. **Bypass on, ``KATO_CLAUDE_BYPASS_PERMISSIONS_ACCEPT=true`` set** ->
-   allow. The operator has acknowledged the risk in writing in their
-   ``.env``. We still print a stderr banner.
-4. **Bypass on, interactive TTY, no acknowledgement** -> prompt the
-   operator with ``input_yes_no`` (from ``core_lib``). Refuse on no.
-   On yes, kato still runs only this once; the operator must set
-   ``KATO_CLAUDE_BYPASS_PERMISSIONS_ACCEPT=true`` to skip the prompt.
-5. **Bypass on, non-interactive (CI/Docker/cron), no acknowledgement**
-   -> refuse with a clear message naming the env var to set.
+3. **Bypass on, non-interactive (CI/Docker/cron, no TTY)** -> refuse.
+   With a single flag and no second-factor env var, there is no way
+   to acknowledge from a non-interactive runner — kato refuses to
+   start. Run kato interactively to confirm, or unset the flag.
+4. **Bypass on, interactive TTY** -> prompt the operator twice with
+   ``input_yes_no``. The first question is "are you sure"; the second
+   is "final confirmation, this disables every per-tool prompt for
+   the entire session". Both must answer yes; either no -> refuse.
 
 The stderr banner is written *before* logger configuration runs so log
 level cannot suppress it. SECURITY.md is the canonical reference.
@@ -31,13 +30,15 @@ import os
 import sys
 
 try:
-    from core_lib.helpers.command_line import input_yes_no as _core_input_yes_no
+    # Use ``prompt_yes_no`` (not ``input_yes_no``) — it loops on
+    # invalid input instead of silently defaulting, which matters for
+    # a security prompt: a fat-fingered Enter must not accept "yes".
+    from core_lib.helpers.command_line import prompt_yes_no as _core_prompt_yes_no
 except (ImportError, ModuleNotFoundError):  # pragma: no cover - core-lib is required
-    _core_input_yes_no = None
+    _core_prompt_yes_no = None
 
 
 BYPASS_ENV_KEY = 'KATO_CLAUDE_BYPASS_PERMISSIONS'
-ACCEPT_ENV_KEY = 'KATO_CLAUDE_BYPASS_PERMISSIONS_ACCEPT'
 TRUE_VALUES = frozenset({'1', 'true', 'yes', 'on'})
 
 _BANNER_LINE = '!' * 78
@@ -61,11 +62,6 @@ class BypassPermissionsRefused(RuntimeError):
 def is_bypass_enabled(env: dict | None = None) -> bool:
     source = env if env is not None else os.environ
     return str(source.get(BYPASS_ENV_KEY, '')).strip().lower() in TRUE_VALUES
-
-
-def is_accept_acknowledged(env: dict | None = None) -> bool:
-    source = env if env is not None else os.environ
-    return str(source.get(ACCEPT_ENV_KEY, '')).strip().lower() in TRUE_VALUES
 
 
 def is_running_as_root() -> bool:
@@ -97,6 +93,22 @@ def _emit_banner(stderr=None) -> None:
         pass
 
 
+# Prompts shown to the operator in interactive mode. Two of them so a
+# fat-fingered Enter doesn't sail through the "are you sure" question.
+# The wording escalates: Q1 frames what's happening, Q2 makes the
+# operator commit to "yes, I really mean this for the whole session".
+_PROMPT_FIRST = (
+    f'{BYPASS_ENV_KEY}=true. The agent will run every tool '
+    'without asking, including Bash, Edit, and Write. Are you sure '
+    'you want to continue?'
+)
+_PROMPT_SECOND = (
+    'Final confirmation: this disables every per-tool permission '
+    'prompt for the *entire* kato session, not just this turn. '
+    'Continue?'
+)
+
+
 def validate_bypass_permissions(
     *,
     env: dict | None = None,
@@ -121,38 +133,32 @@ def validate_bypass_permissions(
             'Run kato as an unprivileged user. See SECURITY.md.'
         )
 
-    if is_accept_acknowledged(env):
-        return
-
     if not _is_interactive_stdin(stream=stdin):
         raise BypassPermissionsRefused(
-            f'{BYPASS_ENV_KEY}=true requires explicit acknowledgement when '
-            'running non-interactively (CI, Docker, cron, systemd, etc.). '
-            f'Set {ACCEPT_ENV_KEY}=true in your .env to acknowledge that '
-            'the operator accepts responsibility for the agent running '
-            'every tool without asking. See SECURITY.md.'
+            f'{BYPASS_ENV_KEY}=true requires interactive confirmation at '
+            'startup, but stdin is not a TTY (CI / Docker / cron / '
+            'systemd). Either run kato interactively so the operator '
+            f'can confirm at the terminal, or unset {BYPASS_ENV_KEY}.'
         )
 
-    prompter = yes_no_prompter if yes_no_prompter is not None else _core_input_yes_no
+    prompter = yes_no_prompter if yes_no_prompter is not None else _core_prompt_yes_no
     if prompter is None:  # pragma: no cover - core-lib is required
         raise BypassPermissionsRefused(
-            'core-lib input_yes_no helper is unavailable; cannot prompt. '
-            f'Set {ACCEPT_ENV_KEY}=true in your .env to bypass the prompt.'
+            'core-lib prompt_yes_no helper is unavailable; cannot prompt '
+            f'for confirmation. Unset {BYPASS_ENV_KEY} to start kato.'
         )
 
-    answered_yes = bool(
-        prompter(
-            (
-                f'{BYPASS_ENV_KEY}=true. The agent will run every tool '
-                'without asking, including Bash, Edit, and Write. Are you '
-                'sure you want to continue?'
-            ),
-            False,
-        )
-    )
-    if not answered_yes:
+    # Two-step confirmation. Both must be yes; either no -> refuse.
+    # ``prompt_yes_no`` loops on invalid input until y/n is given, so
+    # a stray Enter does not select the default.
+    if not bool(prompter(_PROMPT_FIRST, False)):
         raise BypassPermissionsRefused(
             'Operator declined the bypass-permissions prompt. Aborting.'
+        )
+    if not bool(prompter(_PROMPT_SECOND, False)):
+        raise BypassPermissionsRefused(
+            'Operator declined the bypass-permissions final confirmation. '
+            'Aborting.'
         )
 
 
@@ -170,7 +176,6 @@ def print_security_posture(*, env: dict | None = None, stderr=None) -> None:
     target = stderr if stderr is not None else sys.stderr
 
     bypass = is_bypass_enabled(source)
-    accept = is_accept_acknowledged(source)
     running_root = is_running_as_root()
     allowed_tools = str(source.get('KATO_CLAUDE_ALLOWED_TOOLS', '')).strip()
     arch_doc = str(source.get('KATO_ARCHITECTURE_DOC_PATH', '')).strip()
@@ -189,8 +194,7 @@ def print_security_posture(*, env: dict | None = None, stderr=None) -> None:
         ' kato — security posture at boot',
         '=' * 78,
         f'  agent backend         : {backend}',
-        f'  bypass permissions    : {"true" if bypass else "false"}'
-        + ('  (operator acknowledged via .env)' if bypass and accept else ''),
+        f'  bypass permissions    : {"true" if bypass else "false"}',
         f'  running as root       : {"yes" if running_root else "no"}',
         f'  architecture doc      : {arch_doc or "(not set)"}',
         f'  allowed-tools (extra) : {", ".join(extra_tools) if extra_tools else "(safe default only)"}',

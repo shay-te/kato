@@ -1,8 +1,9 @@
 """Tests for the KATO_CLAUDE_BYPASS_PERMISSIONS safety gate.
 
-Each test exercises one decision branch: bypass off, bypass + root, bypass +
-acknowledged, bypass + non-interactive (refused), bypass + interactive +
-operator says yes, bypass + interactive + operator says no.
+Each test exercises one decision branch: bypass off, bypass + root,
+bypass + non-interactive (refused), bypass + interactive + both
+prompts say yes (allowed), bypass + interactive + first prompt says
+no (refused), bypass + interactive + first yes / second no (refused).
 """
 
 from __future__ import annotations
@@ -13,10 +14,8 @@ import unittest
 from unittest.mock import patch
 
 from kato.validation.bypass_permissions_validator import (
-    ACCEPT_ENV_KEY,
     BYPASS_ENV_KEY,
     BypassPermissionsRefused,
-    is_accept_acknowledged,
     is_bypass_enabled,
     is_running_as_root,
     validate_bypass_permissions,
@@ -43,11 +42,6 @@ class BypassDetectionTests(unittest.TestCase):
         self.assertFalse(is_bypass_enabled({BYPASS_ENV_KEY: ''}))
         self.assertFalse(is_bypass_enabled({}))
 
-    def test_is_accept_acknowledged_reads_env_dict(self) -> None:
-        self.assertTrue(is_accept_acknowledged({ACCEPT_ENV_KEY: 'true'}))
-        self.assertFalse(is_accept_acknowledged({ACCEPT_ENV_KEY: 'false'}))
-        self.assertFalse(is_accept_acknowledged({}))
-
 
 class BypassValidatorTests(unittest.TestCase):
     def test_bypass_off_returns_silently(self) -> None:
@@ -57,36 +51,26 @@ class BypassValidatorTests(unittest.TestCase):
 
     def test_bypass_on_writes_banner_to_stderr(self) -> None:
         stderr = io.StringIO()
-        env = {BYPASS_ENV_KEY: 'true', ACCEPT_ENV_KEY: 'true'}
+        env = {BYPASS_ENV_KEY: 'true'}
         with patch.object(os, 'geteuid', create=True, return_value=1000):
-            validate_bypass_permissions(env=env, stderr=stderr)
+            validate_bypass_permissions(
+                env=env,
+                stderr=stderr,
+                stdin=_FakeTTY(),
+                yes_no_prompter=lambda *_: True,
+            )
         self.assertIn('KATO_CLAUDE_BYPASS_PERMISSIONS=true', stderr.getvalue())
         self.assertIn('SECURITY.md', stderr.getvalue())
 
     def test_bypass_on_root_is_refused_unconditionally(self) -> None:
-        env = {BYPASS_ENV_KEY: 'true', ACCEPT_ENV_KEY: 'true'}
+        env = {BYPASS_ENV_KEY: 'true'}
         stderr = io.StringIO()
         with patch.object(os, 'geteuid', create=True, return_value=0):
             with self.assertRaises(BypassPermissionsRefused) as cm:
                 validate_bypass_permissions(env=env, stderr=stderr)
         self.assertIn('root', str(cm.exception))
 
-    def test_bypass_on_acknowledged_skips_prompt(self) -> None:
-        env = {BYPASS_ENV_KEY: 'true', ACCEPT_ENV_KEY: 'true'}
-        stderr = io.StringIO()
-
-        def _should_not_be_called(*_a, **_k):
-            raise AssertionError('prompter must not run when ACCEPT=true')
-
-        with patch.object(os, 'geteuid', create=True, return_value=1000):
-            validate_bypass_permissions(
-                env=env,
-                stderr=stderr,
-                stdin=_FakeTTY(),
-                yes_no_prompter=_should_not_be_called,
-            )
-
-    def test_bypass_on_non_interactive_without_accept_is_refused(self) -> None:
+    def test_bypass_on_non_interactive_is_refused(self) -> None:
         env = {BYPASS_ENV_KEY: 'true'}
         stderr = io.StringIO()
         with patch.object(os, 'geteuid', create=True, return_value=1000):
@@ -96,9 +80,12 @@ class BypassValidatorTests(unittest.TestCase):
                     stderr=stderr,
                     stdin=_FakeNonTTY(),
                 )
-        self.assertIn(ACCEPT_ENV_KEY, str(cm.exception))
+        # The refusal message must name the env var so the operator
+        # knows what to unset / how to make the run interactive.
+        self.assertIn(BYPASS_ENV_KEY, str(cm.exception))
 
-    def test_bypass_on_interactive_yes_continues(self) -> None:
+    def test_bypass_on_interactive_double_yes_continues(self) -> None:
+        """Both prompts must answer yes; both questions must fire."""
         env = {BYPASS_ENV_KEY: 'true'}
         stderr = io.StringIO()
         prompts: list[str] = []
@@ -114,10 +101,11 @@ class BypassValidatorTests(unittest.TestCase):
                 stdin=_FakeTTY(),
                 yes_no_prompter=_yes,
             )
-        self.assertEqual(len(prompts), 1)
+        self.assertEqual(len(prompts), 2)
         self.assertIn('Are you sure', prompts[0])
+        self.assertIn('Final confirmation', prompts[1])
 
-    def test_bypass_on_interactive_no_is_refused(self) -> None:
+    def test_bypass_on_interactive_first_no_is_refused(self) -> None:
         env = {BYPASS_ENV_KEY: 'true'}
         stderr = io.StringIO()
         with patch.object(os, 'geteuid', create=True, return_value=1000):
@@ -129,6 +117,25 @@ class BypassValidatorTests(unittest.TestCase):
                     yes_no_prompter=lambda *_: False,
                 )
         self.assertIn('declined', str(cm.exception).lower())
+
+    def test_bypass_on_interactive_first_yes_second_no_is_refused(self) -> None:
+        """A fat-fingered Enter on the first prompt must not slip through."""
+        env = {BYPASS_ENV_KEY: 'true'}
+        stderr = io.StringIO()
+        answers = iter([True, False])
+
+        def _prompter(_message, _default):
+            return next(answers)
+
+        with patch.object(os, 'geteuid', create=True, return_value=1000):
+            with self.assertRaises(BypassPermissionsRefused) as cm:
+                validate_bypass_permissions(
+                    env=env,
+                    stderr=stderr,
+                    stdin=_FakeTTY(),
+                    yes_no_prompter=_prompter,
+                )
+        self.assertIn('final confirmation', str(cm.exception).lower())
 
     def test_running_as_root_handles_missing_geteuid(self) -> None:
         with patch.object(os, 'geteuid', create=True, side_effect=AttributeError):
