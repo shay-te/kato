@@ -81,6 +81,15 @@ class ClaudeCliClient(object):
         self._extra_args = list(extra_args or [])
         self._architecture_doc_path = normalized_text(architecture_doc_path)
         self.logger = configure_logger(self.__class__.__name__)
+        if self._bypass_permissions:
+            self.logger.warning(
+                'KATO_CLAUDE_BYPASS_PERMISSIONS=true: Claude will run with '
+                '--permission-mode bypassPermissions. Per-tool prompts are '
+                'disabled — the agent can run Bash, Edit, Write, and any '
+                'other tool without asking. The operator who set this flag '
+                'accepts responsibility for any harm caused by the agent. '
+                'See SECURITY.md.'
+            )
 
     @property
     def _permission_mode(self) -> str:

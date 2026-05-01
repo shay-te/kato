@@ -968,11 +968,25 @@ What kato does **not** do today:
 - Filesystem sandboxing (the agent can read anything the kato process can).
 - Per-task containerization for the agent.
 
-`KATO_CLAUDE_BYPASS_PERMISSIONS=true` removes the planning-UI prompt layer in exchange for unattended speed. Only enable it when you've already locked the agent down at a different layer (e.g. you're running kato inside a network-restricted environment of your own making).
+`KATO_CLAUDE_BYPASS_PERMISSIONS=true` removes the planning-UI prompt layer in exchange for unattended speed. When you set this flag, kato logs a `WARNING` line on every Claude spawn naming the loss of per-tool prompts. Only enable it when you've already locked the agent down at a different layer.
 
 The actual safety net is the same one you use for human contributors: **review every diff before merging**. Treat the agent's output as untrusted and gate it through normal code review.
 
-Planned (not wired yet): integration with [Claude Code's devcontainer support](https://code.claude.com/docs/en/devcontainer), which will let kato run the agent inside a container with no network and only the per-task workspace mounted in.
+### Recommended sandbox: Claude Code devcontainer
+
+For unattended runs (especially with `KATO_CLAUDE_BYPASS_PERMISSIONS=true`) the recommended isolation layer is [Claude Code's devcontainer](https://code.claude.com/docs/en/devcontainer): run the `claude` binary inside a container with no network and only the per-task workspace mounted in. Kato itself does not yet wire this automatically, but operators can set it up today by configuring `KATO_CLAUDE_BINARY` to a wrapper script that launches `claude` inside the devcontainer. If you are running kato unattended, this is the layer that turns "advisory guardrails" into actual containment.
+
+### Operator responsibilities
+
+By running kato — and especially by setting `KATO_CLAUDE_BYPASS_PERMISSIONS=true` — you, the operator, accept the following:
+
+- **You authorize the agent to act with your credentials.** Anything the kato process can reach (git remotes, ticket platforms, the local filesystem, the network, any environment variable you pass in) is reachable by the agent. There is no internal privilege boundary between kato and the agent it spawns.
+- **You are responsible for the systems kato touches.** Kato is intended for use against repositories and ticket platforms you own or are explicitly authorized to modify. Do not point it at third-party systems without that authorization.
+- **You are responsible for reviewing the agent's output.** Every PR kato opens must go through normal human code review before merging. The MIT no-warranty disclaimer below covers the maintainers; it does not move review responsibility off the operator.
+- **You are responsible for your own sandbox.** If your use case requires network isolation, filesystem sandboxing, secret-scope reduction, or any compliance property (SOC 2, HIPAA, GDPR, export control, etc.), build that layer yourself — devcontainer, separate VM, scoped credentials — before pointing kato at production work.
+- **You are responsible for what you set true.** `KATO_CLAUDE_BYPASS_PERMISSIONS=true` and any future flag of similar weight ship off-by-default. Flipping them on is an explicit operator decision, recorded in your `.env`, and surfaced in kato's logs as a `WARNING`. The decision and its consequences are yours.
+
+Vulnerability disclosure path and the longer threat model live in [SECURITY.md](SECURITY.md).
 
 ### No warranty
 

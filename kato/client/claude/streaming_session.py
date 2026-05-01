@@ -166,6 +166,16 @@ class StreamingClaudeSession(object):
         self._stderr_lines: list[str] = []
         self._stderr_lock = threading.Lock()
         self.logger = configure_logger(self.__class__.__name__)
+        if self._permission_mode == 'bypassPermissions':
+            self.logger.warning(
+                'KATO_CLAUDE_BYPASS_PERMISSIONS=true: streaming Claude session '
+                'for task %s will run with --permission-mode bypassPermissions. '
+                'The planning UI will not intercept tool calls — the agent can '
+                'run Bash, Edit, Write, and any other tool without asking. '
+                'The operator who set this flag accepts responsibility for any '
+                'harm caused by the agent. See SECURITY.md.',
+                self._task_id,
+            )
 
     # ----- properties -----
 
