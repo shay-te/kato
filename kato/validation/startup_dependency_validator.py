@@ -147,13 +147,17 @@ class StartupDependencyValidator(ValidationBase):
         validate()
 
     def _repository_validation_label(self) -> str:
+        # Read the *already-materialised* inventory, never the
+        # ``.repositories`` property — that property would force the
+        # lazy auto-discovery walk just to format a status line, which
+        # is the whole reason startup got slow on big project roots.
         repository_service = getattr(
             self._repository_connections_validator,
             '_repository_service',
             None,
         )
-        repositories = getattr(repository_service, 'repositories', []) or []
-        if not isinstance(repositories, (list, tuple)):
+        repositories = getattr(repository_service, '_repositories', None)
+        if not isinstance(repositories, (list, tuple)) or not repositories:
             return 'repositories'
         repository_ids = [
             str(getattr(repository, 'id', '') or '').strip()

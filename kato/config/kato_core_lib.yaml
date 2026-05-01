@@ -135,3 +135,9 @@ kato:
   task_scan:
     startup_delay_seconds: ${oc.decode:${oc.env:OPENHANDS_TASK_SCAN_STARTUP_DELAY_SECONDS,"30"}}
     scan_interval_seconds: ${oc.decode:${oc.env:OPENHANDS_TASK_SCAN_INTERVAL_SECONDS,"60"}}
+  task_publish:
+    # Retries for the publish step (per-repo PR creation + the
+    # YouTrack/Jira move-to-review call). Implementation work is NOT
+    # re-run on retry; only the publish-side network/API calls are
+    # retried with exponential backoff. 2 retries → up to 3 attempts.
+    max_retries: ${oc.decode:${oc.env:KATO_TASK_PUBLISH_MAX_RETRIES,"2"}}

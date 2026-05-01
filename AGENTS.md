@@ -11,6 +11,7 @@ do not do any git commit or push. let me inspect the changes
 - Keep components free of heavy logic; move overlapping, reusable, or similar behavior into helpers or shared services instead of scattering it inside a component.
 - Keep external API calls inside clients and data-access layers.
 - When `AgentService` starts accumulating a second coherent workflow cluster, split it into a dedicated service and inject that service through the constructor instead of adding more private helper methods there. Preflight/startup logic such as model-access checks, blocking-comment retries, repository resolution, branch preparation, and push validation should live in a dedicated service rather than in `AgentService`.
+- **`kato/kato_core_lib.py` is composition-only.** Its job is to build the dependency graph (instantiate clients, services, validators) and inject them into `AgentService`. Do not add helper functions, prompt templates, config-key parsing, factory builders, or any other domain logic there. If a feature needs a small builder or parser, put it next to the feature: a classmethod on the owning service, a module-level helper in the service's file, or a `kato/helpers/*_utils.py` module. The only content `kato_core_lib.py` should grow when you add a feature is more constructor calls and more keyword arguments.
 - If a service starts collecting a grab-bag of pure helpers, formatting functions, or repeated logging wrappers, move them into `kato/helpers/*_utils.py` or split them into a smaller service instead of keeping one oversized file.
 - Do not add pass-through helper methods on `KatoCoreLib` when the service can be used directly.
 - Prefer constants from `kato/data_layers/data/fields.py` over free-text field names.
@@ -41,6 +42,8 @@ do not do any git commit or push. let me inspect the changes
 - Run the relevant tests before opening a pull request.
 - If tests fail, fix the code or the tests and rerun them until they pass.
 - Add edge-case coverage for malformed payloads, retries, timeouts, and degraded downstream behavior when relevant.
+- **Trust the gut.** If anything in the change feels even slightly under-tested — a new branch, a new exception, a new fallback, an interaction between two existing layers — write the test before moving on. Don't talk yourself out of it because "the happy path is covered" or "it would be over-testing." If you're considering whether a case needs coverage, the answer is yes; add the test.
+- When fixing a real bug surfaced by the user, the regression test is a *requirement*, not optional. Each bug fix should ship with a test that fails on the old code and passes on the new.
 - In tests, prefer existing entities and shared test helpers over ad hoc objects.
 - Do not add test bootstrap shims or fake package injectors to work around missing required dependencies.
 - Tests in this repository must run against the real installed packages and should fail fast if those packages are missing.

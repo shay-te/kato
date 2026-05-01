@@ -70,6 +70,20 @@ class JiraClient(TicketClientBase):
         )
         response.raise_for_status()
 
+    def add_tag(self, issue_id: str, tag_name: str) -> None:
+        # Jira's "labels" field is the closest thing to a tag.
+        self._modify_label(issue_id, tag_name, action='add')
+
+    def remove_tag(self, issue_id: str, tag_name: str) -> None:
+        self._modify_label(issue_id, tag_name, action='remove')
+
+    def _modify_label(self, issue_id: str, tag_name: str, *, action: str) -> None:
+        response = self._put_with_retry(
+            f'/rest/api/3/issue/{issue_id}',
+            json={'update': {'labels': [{action: tag_name}]}},
+        )
+        response.raise_for_status()
+
     def move_issue_to_state(self, issue_id: str, field_name: str, state_name: str) -> None:
         normalized_field_name = str(field_name or '').strip().lower()
         if normalized_field_name in {'status', JiraIssueFields.STATUS.lower()}:

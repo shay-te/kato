@@ -94,5 +94,151 @@ class WebserverAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
 
 
+class _FakeWorkspaceRecord:
+    def __init__(self, **payload):
+        self._payload = payload
+        self.task_id = payload.get('task_id', '')
+        self.repository_ids = payload.get('repository_ids', [])
+
+    def to_dict(self):
+        return dict(self._payload)
+
+
+class _FakeWorkspaceManager:
+    """Minimal stand-in for ``WorkspaceManager`` for the multi-repo routes."""
+
+    def __init__(self, records, *, repo_paths=None):
+        self._records = records
+        self._repo_paths = repo_paths or {}
+
+    def list_workspaces(self):
+        return list(self._records)
+
+    def get(self, task_id):
+        for record in self._records:
+            if record.task_id == task_id:
+                return record
+        return None
+
+    def repository_path(self, task_id, repo_id):
+        from pathlib import Path
+        return Path(self._repo_paths.get((task_id, repo_id), '/missing'))
+
+
+class _FakeRecordWithCwd(_FakeRecord):
+    def __init__(self, **payload):
+        super().__init__(**payload)
+        self.task_id = payload.get('task_id', '')
+
+
+class MultiRepoEndpointShapeTests(unittest.TestCase):
+    """The Files / Diff endpoints must now surface every repo per task."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp_root = Path(self._tmp.name)
+        self.repo_a = self.tmp_root / 'PROJ-1' / 'client'
+        self.repo_b = self.tmp_root / 'PROJ-1' / 'backend'
+        for repo in (self.repo_a, self.repo_b):
+            (repo / '.git').mkdir(parents=True)
+
+        # The session manager only owns the legacy single cwd; the
+        # workspace manager carries the multi-repo list.
+        self.session_manager = _FakeManager(records=[
+            _FakeRecordWithCwd(
+                task_id='PROJ-1',
+                task_summary='multi-repo task',
+                status='active',
+                claude_session_id='abc',
+                cwd=str(self.repo_a),
+            ),
+        ])
+        self.workspace_manager = _FakeWorkspaceManager(
+            records=[
+                _FakeWorkspaceRecord(
+                    task_id='PROJ-1',
+                    task_summary='multi-repo task',
+                    status='active',
+                    repository_ids=['client', 'backend'],
+                ),
+            ],
+            repo_paths={
+                ('PROJ-1', 'client'): str(self.repo_a),
+                ('PROJ-1', 'backend'): str(self.repo_b),
+            },
+        )
+        self.app = create_app(
+            session_manager=self.session_manager,
+            workspace_manager=self.workspace_manager,
+        )
+        self.client = self.app.test_client()
+
+    def test_files_endpoint_returns_one_tree_per_repo(self):
+        response = self.client.get('/api/sessions/PROJ-1/files')
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload['repository_ids'], ['client', 'backend'])
+        repo_ids_in_trees = [entry['repo_id'] for entry in payload['trees']]
+        self.assertEqual(repo_ids_in_trees, ['client', 'backend'])
+        # Legacy fields are still populated for old clients.
+        self.assertEqual(payload['cwd'], str(self.repo_a))
+
+    def test_diff_endpoint_returns_one_diff_entry_per_repo(self):
+        # Patch git helpers so we don't need a real upstream remote.
+        from unittest.mock import patch
+        with patch(
+            'kato_webserver.app.detect_default_branch',
+            return_value='master',
+        ), patch(
+            'kato_webserver.app.current_branch',
+            return_value='UNA-1',
+        ), patch(
+            'kato_webserver.app.diff_against_base',
+            return_value='',
+        ):
+            response = self.client.get('/api/sessions/PROJ-1/diff')
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload['repository_ids'], ['client', 'backend'])
+        repo_ids_in_diffs = [entry['repo_id'] for entry in payload['diffs']]
+        self.assertEqual(repo_ids_in_diffs, ['client', 'backend'])
+        self.assertEqual(payload['repo_id'], 'client')  # legacy scalar
+        self.assertEqual(payload['base'], 'master')
+        self.assertEqual(payload['head'], 'UNA-1')
+
+    def test_diff_endpoint_records_error_when_default_branch_unknown(self):
+        # ``detect_default_branch`` returning empty must not crash the
+        # endpoint — the affected repo's accordion section gets an
+        # ``error`` field and the rest still ship.
+        from unittest.mock import patch
+
+        def _branch_for(cwd: str) -> str:
+            return 'master' if cwd == str(self.repo_a) else ''
+
+        with patch(
+            'kato_webserver.app.detect_default_branch',
+            side_effect=_branch_for,
+        ), patch(
+            'kato_webserver.app.current_branch',
+            return_value='UNA-1',
+        ), patch(
+            'kato_webserver.app.diff_against_base',
+            return_value='',
+        ):
+            response = self.client.get('/api/sessions/PROJ-1/diff')
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        client_diff = next(d for d in payload['diffs'] if d['repo_id'] == 'client')
+        backend_diff = next(d for d in payload['diffs'] if d['repo_id'] == 'backend')
+        self.assertEqual(client_diff['error'], '')
+        self.assertEqual(backend_diff['error'], 'could not detect default branch')
+
+
 if __name__ == '__main__':
     unittest.main()

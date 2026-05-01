@@ -87,3 +87,9 @@ class TaskDataAccess(DataAccess):
     def move_task_to_state(self, issue_id: str, field_name: str, state_name: str) -> None:
         move_task_state_rule_validator.validate_dict({'issue_id': issue_id})
         self._client.move_issue_to_state(issue_id, field_name, state_name)
+
+    def add_tag(self, issue_id: str, tag_name: str) -> None:
+        self._client.add_tag(issue_id, tag_name)
+
+    def remove_tag(self, issue_id: str, tag_name: str) -> None:
+        self._client.remove_tag(issue_id, tag_name)

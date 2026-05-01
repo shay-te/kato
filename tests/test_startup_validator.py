@@ -9,8 +9,11 @@ from kato.validation.startup_dependency_validator import (
 
 class StartupDependencyValidatorTests(unittest.TestCase):
     def setUp(self) -> None:
+        # Label-formatting reads the *materialised* inventory at
+        # ``_repositories`` to avoid forcing a lazy disk walk just to
+        # enumerate names. Mirror that here.
         repository_service = SimpleNamespace(
-            repositories=[
+            _repositories=[
                 SimpleNamespace(id='client'),
                 SimpleNamespace(id='backend'),
             ]

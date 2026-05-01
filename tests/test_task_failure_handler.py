@@ -4,6 +4,9 @@ from unittest.mock import Mock
 
 from kato.data_layers.data.task import Task
 from kato.data_layers.service.notification_service import NotificationService
+from kato.data_layers.service.repository_inventory_service import (
+    RepositoryIgnoredByConfigError,
+)
 from kato.data_layers.service.repository_service import RepositoryService
 from kato.data_layers.service.task_failure_handler import TaskFailureHandler
 from kato.data_layers.service.task_state_service import TaskStateService
@@ -41,6 +44,37 @@ class TaskFailureHandlerTests(unittest.TestCase):
         self.assertIn('repository name or alias', comment)
         self.task_state_service.move_task_to_open.assert_not_called()
         self.notification_service.notify_failure.assert_not_called()
+
+    def test_handle_repository_resolution_failure_comments_rejection_for_ignored_repo(
+        self,
+    ) -> None:
+        # Tag points at an ignored folder → kato refuses, posts an
+        # actionable comment, does NOT reopen the task or notify ops.
+        # The next scan will hit the same rejection until the operator
+        # fixes the tag or the ignore list.
+        task = build_task(description='Multi-repo task with one ignored tag')
+
+        self.handler.handle_repository_resolution_failure(
+            task,
+            RepositoryIgnoredByConfigError(
+                'task PROJ-1 references repositories that are in '
+                'KATO_IGNORED_REPOSITORY_FOLDERS: forbidden-repo. '
+                'Either remove the kato:repo:<name> tag from the task or '
+                'remove the folder from KATO_IGNORED_REPOSITORY_FOLDERS.'
+            ),
+        )
+
+        self.task_service.add_comment.assert_called_once()
+        comment = self.task_service.add_comment.call_args.args[1]
+        self.assertIn('Kato refused to run this task', comment)
+        self.assertIn('KATO_IGNORED_REPOSITORY_FOLDERS', comment)
+        self.assertIn('forbidden-repo', comment)
+        self.assertIn('kato:repo:<name>', comment)
+        # Not a "stop and notify" failure — this is a config issue the
+        # operator owns, not an outage to page on.
+        self.task_state_service.move_task_to_open.assert_not_called()
+        self.notification_service.notify_failure.assert_not_called()
+        self.repository_service.restore_task_repositories.assert_not_called()
 
     def test_handle_task_failure_restores_repositories_and_notifies_without_reopening(self) -> None:
         prepared_task = types.SimpleNamespace(repositories=[types.SimpleNamespace(id='client')])

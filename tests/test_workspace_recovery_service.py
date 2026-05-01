@@ -117,6 +117,43 @@ class WorkspaceRecoveryServiceTests(unittest.TestCase):
 
         self.assertEqual(len(adopted), 1)
 
+    def test_recovery_persists_claude_session_id_in_metadata(self) -> None:
+        # Pin the load-bearing assertion: when recovery finds a Claude
+        # session whose cwd matches the orphan's repo path, the
+        # session id must end up in ``.kato-meta.json`` so the next
+        # spawn can ``--resume`` cleanly.
+        from unittest.mock import patch as _patch
+
+        orphan_dir = self._stage_orphan()
+        repo_dir = orphan_dir / 'client'
+
+        def fake_find(cwd, **_):
+            return 'claude-sess-recovered' if str(cwd) == str(repo_dir) else ''
+
+        with _patch(
+            'kato.data_layers.service.workspace_recovery_service.find_session_id_for_cwd',
+            side_effect=fake_find,
+        ):
+            adopted = self.service.recover_orphan_workspaces()
+
+        self.assertEqual(len(adopted), 1)
+        meta = json.loads((orphan_dir / '.kato-meta.json').read_text())
+        self.assertEqual(meta['claude_session_id'], 'claude-sess-recovered')
+        self.assertEqual(meta['cwd'], str(repo_dir))
+
+    def test_recovery_writes_empty_session_id_when_no_match_found(self) -> None:
+        # When no Claude session matches the orphan's cwd, recovery
+        # still adopts the workspace but records an empty session id —
+        # never invents one. Future operator reruns can fix this when
+        # they spot the empty field in the metadata.
+        orphan_dir = self._stage_orphan()
+
+        adopted = self.service.recover_orphan_workspaces()
+
+        self.assertEqual(len(adopted), 1)
+        meta = json.loads((orphan_dir / '.kato-meta.json').read_text())
+        self.assertEqual(meta.get('claude_session_id', ''), '')
+
 
 if __name__ == '__main__':
     unittest.main()

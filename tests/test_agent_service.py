@@ -1066,6 +1066,10 @@ class AgentServiceTests(unittest.TestCase):
             ImplementationFields.MESSAGE: 'Validation report: no dedicated tests were defined.',
             'summary': 'Testing agent validated the implementation',
         }
+        # Backend's PR creation fails on every retry attempt (the
+        # publisher uses 3 attempts by default); side_effect must
+        # supply 3 errors so we land in the failure-handler branch
+        # rather than burning through StopIteration.
         self.repository_service.create_pull_request.side_effect = [
             {
                 PullRequestFields.REPOSITORY_ID: 'client',
@@ -1076,13 +1080,25 @@ class AgentServiceTests(unittest.TestCase):
                 PullRequestFields.DESTINATION_BRANCH: 'master',
             },
             RuntimeError('github down'),
+            RuntimeError('github down'),
+            RuntimeError('github down'),
         ]
         task = self.task_data_access.get_assigned_tasks()[0]
+        # Skip retry-backoff sleeps so the test stays fast.
+        self.service._task_publisher._sleep_fn = lambda _: None
 
         results = self.service.process_assigned_task(task)
 
         self.assertEqual(results[StatusFields.STATUS], StatusFields.PARTIAL_FAILURE)
-        self.assertEqual(results[PullRequestFields.FAILED_REPOSITORIES], ['backend'])
+        # Result payload now carries the per-repo error so callers
+        # (and downstream emails / logs) can render an actionable line.
+        self.assertEqual(
+            results[PullRequestFields.FAILED_REPOSITORIES],
+            [{
+                PullRequestFields.REPOSITORY_ID: 'backend',
+                'error': 'github down',
+            }],
+        )
         self.assertEqual(
             self.task_client.move_issue_to_state.call_args_list,
             [
@@ -1094,8 +1110,10 @@ class AgentServiceTests(unittest.TestCase):
             'stopped working on this task',
             self.task_client.add_comment.call_args_list[-1].args[1],
         )
+        # Comment text includes the failure reason so the operator can
+        # diagnose without spelunking through kato logs.
         self.assertIn(
-            'failed to create pull requests for repositories: backend',
+            'failed to create pull requests for repositories: backend (github down)',
             self.task_client.add_comment.call_args_list[-1].args[1],
         )
         self.assertNotIn(
@@ -1177,12 +1195,19 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(self.email_core_lib.send.call_count, 2)
 
     def test_process_assigned_task_reopens_when_move_to_review_fails(self) -> None:
+        # Publisher now retries move-to-review with the default budget
+        # (2 retries → 3 attempts) before giving up. Permanent failure
+        # = all 3 attempts fail; only then does kato reopen the task.
         self.task_client.move_issue_to_state.side_effect = [
-            None,
-            RuntimeError('state update failed'),
-            None,
+            None,                                # initial → In Progress
+            RuntimeError('state update failed'),  # to-review attempt 1
+            RuntimeError('state update failed'),  # to-review attempt 2
+            RuntimeError('state update failed'),  # to-review attempt 3
+            None,                                # reopen → Todo
         ]
         self.service.logger = Mock()
+        # Skip the retry-backoff sleeps so the test stays fast.
+        self.service._task_publisher._sleep_fn = lambda _: None
         task = self.task_data_access.get_assigned_tasks()[0]
 
         with patch.object(self.service, 'logger', self.service.logger):
@@ -1193,6 +1218,8 @@ class AgentServiceTests(unittest.TestCase):
             self.task_client.move_issue_to_state.call_args_list,
             [
                 unittest.mock.call('PROJ-1', 'State', 'In Progress'),
+                unittest.mock.call('PROJ-1', 'State', 'To Verify'),
+                unittest.mock.call('PROJ-1', 'State', 'To Verify'),
                 unittest.mock.call('PROJ-1', 'State', 'To Verify'),
                 unittest.mock.call('PROJ-1', 'State', 'Todo'),
             ],

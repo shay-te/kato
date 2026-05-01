@@ -97,6 +97,53 @@ class YouTrackClient(TicketClientBase):
     def add_pull_request_comment(self, issue_id: str, pull_request_url: str) -> None:
         self.add_comment(issue_id, f'Pull request created: {pull_request_url}')
 
+    def add_tag(self, issue_id: str, tag_name: str) -> None:
+        """Attach ``tag_name`` to a YouTrack issue.
+
+        YouTrack tags are first-class objects; the request is a POST to
+        ``/api/issues/<id>/tags`` with ``{name: <tag_name>}``. A 200/201
+        response means the tag is now on the issue (existing or newly
+        created). Used by the triage flow to record an outcome tag.
+        """
+        response = self._post_with_retry(
+            f'/api/issues/{issue_id}/tags',
+            json={'name': tag_name},
+        )
+        response.raise_for_status()
+
+    def remove_tag(self, issue_id: str, tag_name: str) -> None:
+        """Detach ``tag_name`` from a YouTrack issue.
+
+        Tags must be removed by their tag id, so we look the id up
+        first. A missing tag is a no-op (kato may try to remove
+        ``kato:triage:investigate`` after triage even when somebody
+        already cleaned it up by hand).
+        """
+        tag_id = self._issue_tag_id(issue_id, tag_name)
+        if not tag_id:
+            return
+        response = self._delete_with_retry(
+            f'/api/issues/{issue_id}/tags/{tag_id}',
+        )
+        response.raise_for_status()
+
+    def _issue_tag_id(self, issue_id: str, tag_name: str) -> str:
+        """Return the YouTrack tag id for ``tag_name`` on this issue, or ''."""
+        response = self._get_with_retry(
+            f'/api/issues/{issue_id}/tags',
+            params={'fields': 'id,name', '$top': 200},
+        )
+        try:
+            response.raise_for_status()
+        except Exception:
+            return ''
+        for item in self._json_items(response):
+            if not isinstance(item, dict):
+                continue
+            if normalized_text(item.get('name', '')) == tag_name:
+                return str(item.get('id', '') or '')
+        return ''
+
     def move_issue_to_state(self, issue_id: str, field_name: str, state_name: str) -> None:
         field = self._issue_state_field(issue_id, field_name)
         if self._field_value_name(field) == state_name:

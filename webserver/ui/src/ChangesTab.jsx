@@ -1,55 +1,77 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { parseDiff, Diff, Hunk } from 'react-diff-view';
 import 'react-diff-view/style/index.css';
 import { fetchDiff } from './api.js';
 
-export default function ChangesTab({ taskId, workspaceVersion = 0 }) {
+export default function ChangesTab({
+  taskId,
+  workspaceVersion = 0,
+}) {
   const [state, setState] = useState({
     status: 'loading',
-    files: [],
-    base: '',
-    head: '',
+    diffs: [],
     error: '',
   });
+  const [collapsed, setCollapsed] = useState(() => new Set());
 
   useEffect(() => {
     if (!taskId) { return; }
     let cancelled = false;
-    setState({ status: 'loading', files: [], base: '', head: '', error: '' });
+    setState({ status: 'loading', diffs: [], error: '' });
     fetchDiff(taskId)
       .then((payload) => {
         if (cancelled) { return; }
-        const raw = String(payload.diff || '');
         setState({
           status: 'ready',
-          files: raw ? parseDiff(raw) : [],
-          base: payload.base || '',
-          head: payload.head || '',
+          diffs: parseRepoDiffs(payload),
           error: '',
         });
       })
       .catch((err) => {
         if (cancelled) { return; }
-        setState({
-          status: 'error',
-          files: [],
-          base: '',
-          head: '',
-          error: String(err),
-        });
+        setState({ status: 'error', diffs: [], error: String(err) });
       });
     return () => { cancelled = true; };
   }, [taskId, workspaceVersion]);
 
+  const repoIds = useMemo(
+    () => state.diffs.map((entry) => entry.repo_id || entry.cwd),
+    [state.diffs],
+  );
+
+  function toggleRepo(repoKey) {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(repoKey)) { next.delete(repoKey); } else { next.add(repoKey); }
+      return next;
+    });
+  }
+  function collapseAll() { setCollapsed(new Set(repoIds)); }
+  function expandAll() { setCollapsed(new Set()); }
+
   return (
     <div className="changes-tab">
       <header className="changes-tab-header">
-        {state.base && state.head ? (
-          <span>
-            <code>{state.base}</code> … <code>{state.head}</code>
+        <span>diff</span>
+        {repoIds.length > 1 && (
+          <span className="changes-tab-toolbar">
+            <button
+              type="button"
+              className="changes-tab-icon-btn"
+              title="Expand all repositories"
+              onClick={expandAll}
+            >
+              ▾
+            </button>
+            <button
+              type="button"
+              className="changes-tab-icon-btn"
+              title="Collapse all repositories"
+              onClick={collapseAll}
+            >
+              ▸
+            </button>
           </span>
-        ) : (
-          <span>diff</span>
         )}
       </header>
       <div className="changes-tab-body">
@@ -59,17 +81,88 @@ export default function ChangesTab({ taskId, workspaceVersion = 0 }) {
         {state.status === 'error' && (
           <p className="changes-tab-message error">{state.error}</p>
         )}
-        {state.status === 'ready' && state.files.length === 0 && (
-          <p className="changes-tab-message">
-            No changes between <code>{state.base}</code> and{' '}
-            <code>{state.head}</code>.
-          </p>
+        {state.status === 'ready' && state.diffs.length === 0 && (
+          <p className="changes-tab-message">No repositories for this task.</p>
         )}
-        {state.status === 'ready' && state.files.map((file) => (
-          <DiffFile key={diffFileKey(file)} file={file} />
-        ))}
+        {state.status === 'ready' && state.diffs.map((repoDiff) => {
+          const repoKey = repoDiff.repo_id || repoDiff.cwd;
+          return (
+            <RepoDiff
+              key={repoKey}
+              repoDiff={repoDiff}
+              collapsed={collapsed.has(repoKey)}
+              onToggle={() => toggleRepo(repoKey)}
+            />
+          );
+        })}
       </div>
     </div>
+  );
+}
+
+// Shape the wire payload into a uniform per-repo list. Handles both the
+// new ``diffs: [...]`` envelope and the legacy single-repo flat shape.
+function parseRepoDiffs(payload) {
+  const diffs = Array.isArray(payload?.diffs) ? payload.diffs : null;
+  if (diffs && diffs.length > 0) {
+    return diffs.map((entry) => normalizeDiff(entry));
+  }
+  return [normalizeDiff(payload)];
+}
+
+function normalizeDiff(entry) {
+  const raw = String(entry?.diff || '');
+  const cwd = String(entry?.cwd || '');
+  // Older server responses don't carry repo_id; derive from the cwd's
+  // last path segment so the accordion still has a meaningful heading.
+  const repoId = String(entry?.repo_id || '') || basenameOf(cwd);
+  return {
+    repo_id: repoId,
+    cwd,
+    base: String(entry?.base || ''),
+    head: String(entry?.head || ''),
+    error: String(entry?.error || ''),
+    files: raw ? parseDiff(raw) : [],
+  };
+}
+
+function basenameOf(path) {
+  if (!path) { return ''; }
+  const trimmed = path.replace(/[\\/]+$/, '');
+  const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+  return idx >= 0 ? trimmed.slice(idx + 1) : trimmed;
+}
+
+function RepoDiff({ repoDiff, collapsed, onToggle }) {
+  const heading = repoDiff.repo_id || repoDiff.cwd || 'repo';
+  return (
+    <section className="diff-repo">
+      <header className="diff-repo-header" onClick={onToggle}>
+        <span className="diff-repo-chevron">{collapsed ? '▸' : '▾'}</span>
+        <span className="diff-repo-name">{heading}</span>
+        {repoDiff.base && repoDiff.head && (
+          <span className="diff-repo-range">
+            <code>{repoDiff.base}</code> … <code>{repoDiff.head}</code>
+          </span>
+        )}
+      </header>
+      {!collapsed && (
+        <div className="diff-repo-body">
+          {repoDiff.error && (
+            <p className="changes-tab-message error">{repoDiff.error}</p>
+          )}
+          {!repoDiff.error && repoDiff.files.length === 0 && (
+            <p className="changes-tab-message">
+              No changes between <code>{repoDiff.base}</code> and{' '}
+              <code>{repoDiff.head}</code>.
+            </p>
+          )}
+          {!repoDiff.error && repoDiff.files.map((file) => (
+            <DiffFile key={diffFileKey(file)} file={file} />
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

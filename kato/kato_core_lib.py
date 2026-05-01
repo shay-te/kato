@@ -28,6 +28,10 @@ from kato.data_layers.service.task_state_service import TaskStateService
 from kato.data_layers.service.task_service import TaskService
 from kato.data_layers.service.testing_service import TestingService
 from kato.data_layers.service.parallel_task_runner import ParallelTaskRunner
+from kato.data_layers.service.triage_service import (
+    TriageService,
+    build_claude_triage_investigator,
+)
 from kato.data_layers.service.wait_planning_service import WaitPlanningService
 from kato.data_layers.service.workspace_manager import (
     WorkspaceManager,
@@ -188,6 +192,7 @@ class KatoCoreLib(CoreLib):
             notification_service=notification_service,
             state_registry=state_registry,
             failure_handler=task_failure_handler,
+            publish_max_retries=TaskPublisher.max_retries_from_config(open_cfg),
         )
         review_comment_service = ReviewCommentService(
             task_service=task_service,
@@ -237,6 +242,17 @@ class KatoCoreLib(CoreLib):
                 task_state_service=task_state_service,
                 workspace_manager=self.workspace_manager,
                 planning_session_runner=planning_session_runner,
+            ),
+            triage_service=TriageService(
+                task_service=task_service,
+                # Hand the investigator only when we have a Claude
+                # backend that can answer free-form prompts. For
+                # OpenHands or no-backend setups, TriageService still
+                # lives — it just posts an "unavailable" comment when
+                # a triage tag arrives, instead of silently ignoring it.
+                triage_investigator=build_claude_triage_investigator(
+                    implementation_service,
+                ),
             ),
         )
 

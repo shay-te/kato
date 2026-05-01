@@ -57,6 +57,12 @@ class TaskService(Service):
     def add_pull_request_comment(self, issue_id: str, pull_request_url: str) -> None:
         self.add_comment(issue_id, f'Pull request created: {pull_request_url}')
 
+    def add_tag(self, issue_id: str, tag_name: str) -> None:
+        self._task_data_access.add_tag(issue_id, tag_name)
+
+    def remove_tag(self, issue_id: str, tag_name: str) -> None:
+        self._task_data_access.remove_tag(issue_id, tag_name)
+
     def _configured_assignee(self) -> str:
         return self._config.assignee
 

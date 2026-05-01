@@ -50,6 +50,13 @@ class RetryingClientBase(ClientBase):
             operation_name=self._retry_operation_name('PATCH', path),
         )
 
+    def _delete_with_retry(self, path: str, **kwargs):
+        return run_with_retry(
+            lambda: self._delete(path, **kwargs),
+            self.max_retries,
+            operation_name=self._retry_operation_name('DELETE', path),
+        )
+
     def _retry_operation_name(self, method: str, path: str) -> str:
         url = f'{self.base_url.rstrip("/")}/{path.lstrip("/")}'
         return f'{self.__class__.__name__} {method} {url}'

@@ -77,6 +77,82 @@ def _record_cwd_or_none(manager, task_id: str) -> str | None:
     return cwd
 
 
+def _task_repository_ids(workspace_manager, task_id: str) -> list[str]:
+    """Repository ids the workspace was provisioned with (in order)."""
+    if workspace_manager is None:
+        return []
+    try:
+        record = workspace_manager.get(task_id)
+    except Exception:
+        return []
+    if record is None:
+        return []
+    repository_ids = getattr(record, 'repository_ids', []) or []
+    return [str(repo_id) for repo_id in repository_ids if repo_id]
+
+
+def _repository_cwd(
+    workspace_manager,
+    task_id: str,
+    repo_id: str,
+) -> str | None:
+    """Resolve <workspace>/<task>/<repo>/ as a cwd, validating it exists."""
+    if workspace_manager is None or not repo_id:
+        return None
+    try:
+        path = workspace_manager.repository_path(task_id, repo_id)
+    except Exception:
+        return None
+    return str(path) if path.is_dir() else None
+
+
+def _compute_repo_diff(repo_id: str, cwd: str) -> dict[str, Any]:
+    """Build the per-repo diff payload the Changes-tab accordion expects.
+
+    Failures (e.g. a repo where ``origin/<default>`` isn't reachable)
+    surface as an ``error`` field so the UI can render that single
+    accordion section in an error state without breaking the rest.
+    """
+    base = detect_default_branch(cwd)
+    if not base:
+        return {
+            'repo_id': repo_id,
+            'cwd': cwd,
+            'base': '',
+            'head': '',
+            'diff': '',
+            'error': 'could not detect default branch',
+        }
+    return {
+        'repo_id': repo_id,
+        'cwd': cwd,
+        'base': base,
+        'head': current_branch(cwd),
+        'diff': diff_against_base(cwd, f'origin/{base}'),
+        'error': '',
+    }
+
+
+def _resolve_repo_cwd(
+    session_manager,
+    workspace_manager,
+    task_id: str,
+    repo_id: str,
+) -> str | None:
+    """Pick the cwd to inspect for the Files / Changes panes.
+
+    When ``repo_id`` is provided, point at that workspace clone so the
+    UI can switch between every repo a multi-repo task touches. Empty
+    ``repo_id`` falls back to the session record (legacy single-repo
+    flows and tabs that haven't yet picked one).
+    """
+    if repo_id:
+        cwd = _repository_cwd(workspace_manager, task_id, repo_id)
+        if cwd is not None:
+            return cwd
+    return _record_cwd_or_none(session_manager, task_id)
+
+
 # Branch-safety lock is gone in workspace mode: each task has its own
 # clone, so there's no shared HEAD that another task could drift away
 # under. Kept the helper out of the import surface; the SSE generator
@@ -160,24 +236,78 @@ def _register_http_routes(app: Flask) -> None:
     @app.get('/api/sessions/<task_id>/files')
     def list_session_files(task_id: str):
         manager = app.config['SESSION_MANAGER']
+        workspace_manager = app.config.get('WORKSPACE_MANAGER')
+        repository_ids = _task_repository_ids(workspace_manager, task_id)
+        # Multi-repo task: enumerate every clone so the UI can render
+        # one tree per repo. Single-repo / legacy: fall back to the
+        # session record cwd so the response shape is unchanged.
+        if repository_ids:
+            trees = []
+            for repo_id in repository_ids:
+                cwd = _repository_cwd(workspace_manager, task_id, repo_id)
+                if cwd is None:
+                    continue
+                trees.append({
+                    'repo_id': repo_id,
+                    'cwd': cwd,
+                    'tree': tracked_file_tree(cwd),
+                })
+            if trees:
+                return jsonify({
+                    'repository_ids': [t['repo_id'] for t in trees],
+                    'trees': trees,
+                    # Back-compat: first repo doubles as the legacy
+                    # ``cwd``/``tree`` pair so older clients still work.
+                    'cwd': trees[0]['cwd'],
+                    'tree': trees[0]['tree'],
+                })
         cwd = _record_cwd_or_none(manager, task_id)
         if cwd is None:
             return jsonify({'error': 'session not found'}), 404
-        return jsonify({'cwd': cwd, 'tree': tracked_file_tree(cwd)})
+        return jsonify({
+            'repository_ids': [],
+            'trees': [{'repo_id': '', 'cwd': cwd, 'tree': tracked_file_tree(cwd)}],
+            'cwd': cwd,
+            'tree': tracked_file_tree(cwd),
+        })
 
     @app.get('/api/sessions/<task_id>/diff')
     def get_session_diff(task_id: str):
         manager = app.config['SESSION_MANAGER']
+        workspace_manager = app.config.get('WORKSPACE_MANAGER')
+        repository_ids = _task_repository_ids(workspace_manager, task_id)
+        # Multi-repo task: compute one diff per clone so the UI can
+        # render accordions side by side. Single-repo / legacy path:
+        # fall back to the session record cwd, same shape as before.
+        if repository_ids:
+            diffs = []
+            for repo_id in repository_ids:
+                cwd = _repository_cwd(workspace_manager, task_id, repo_id)
+                if cwd is None:
+                    continue
+                diffs.append(_compute_repo_diff(repo_id, cwd))
+            if diffs:
+                first = diffs[0]
+                return jsonify({
+                    'repository_ids': [d['repo_id'] for d in diffs],
+                    'diffs': diffs,
+                    # Back-compat scalar fields mirror the first repo.
+                    'repo_id': first['repo_id'],
+                    'base': first['base'],
+                    'head': first['head'],
+                    'diff': first['diff'],
+                })
         cwd = _record_cwd_or_none(manager, task_id)
         if cwd is None:
             return jsonify({'error': 'session not found'}), 404
-        base = detect_default_branch(cwd)
-        if not base:
-            return jsonify({'error': 'could not detect default branch'}), 500
+        single = _compute_repo_diff('', cwd)
         return jsonify({
-            'base': base,
-            'head': current_branch(cwd),
-            'diff': diff_against_base(cwd, f'origin/{base}'),
+            'repository_ids': [],
+            'diffs': [single],
+            'repo_id': '',
+            'base': single['base'],
+            'head': single['head'],
+            'diff': single['diff'],
         })
 
 
@@ -249,7 +379,20 @@ def _status_event_stream(broadcaster):
 
 
 def _register_streaming_routes(app: Flask) -> None:
+    """Register every per-task chat / SSE / control endpoint.
 
+    Each route is wired by its own focused registrar so this function
+    stays a flat checklist instead of a god-handler. Want to add a new
+    streaming endpoint? Add a registrar next to the others and call it
+    from here.
+    """
+    _register_session_events_route(app)
+    _register_post_message_route(app)
+    _register_stop_session_route(app)
+    _register_post_permission_route(app)
+
+
+def _register_session_events_route(app: Flask) -> None:
     @app.get('/api/sessions/<task_id>/events')
     def session_events_stream(task_id: str):
         manager = app.config['SESSION_MANAGER']
@@ -265,40 +408,22 @@ def _register_streaming_routes(app: Flask) -> None:
             },
         )
 
+
+def _register_post_message_route(app: Flask) -> None:
     @app.post('/api/sessions/<task_id>/messages')
     def post_message(task_id: str):
-        manager = app.config['SESSION_MANAGER']
         payload = request.get_json(silent=True) or {}
         text = str(payload.get('text', '') or '').strip()
         if not text:
             return jsonify({'error': 'text is required'}), 400
+        manager = app.config['SESSION_MANAGER']
+        delivered = _deliver_to_live_session(manager, task_id, text)
+        if delivered is not None:
+            return delivered
+        return _spawn_or_reject_chat_session(app, task_id, text)
 
-        session = manager.get_session(task_id) if manager is not None else None
-        if session is not None and session.is_alive:
-            try:
-                session.send_user_message(text)
-            except Exception as exc:
-                return jsonify({'error': str(exc)}), 500
-            return jsonify({'status': 'delivered', 'text': text})
 
-        runner = app.config.get('PLANNING_SESSION_RUNNER')
-        workspace_manager = app.config.get('WORKSPACE_MANAGER')
-        if runner is None:
-            return jsonify({'error': 'session is not running'}), 409
-        cwd, summary = _chat_resume_context(
-            manager, workspace_manager, task_id,
-        )
-        try:
-            runner.resume_session_for_chat(
-                task_id=task_id,
-                message=text,
-                cwd=cwd,
-                task_summary=summary,
-            )
-        except Exception as exc:
-            return jsonify({'error': str(exc)}), 500
-        return jsonify({'status': 'spawned', 'text': text})
-
+def _register_stop_session_route(app: Flask) -> None:
     @app.post('/api/sessions/<task_id>/stop')
     def stop_session(task_id: str):
         manager = app.config['SESSION_MANAGER']
@@ -310,6 +435,8 @@ def _register_streaming_routes(app: Flask) -> None:
             return jsonify({'error': str(exc)}), 500
         return jsonify({'status': 'stopped'})
 
+
+def _register_post_permission_route(app: Flask) -> None:
     @app.post('/api/sessions/<task_id>/permission')
     def post_permission(task_id: str):
         session, error = _resolve_writable_session(
@@ -330,6 +457,49 @@ def _register_streaming_routes(app: Flask) -> None:
         except Exception as exc:
             return jsonify({'error': str(exc)}), 500
         return jsonify({'status': 'delivered'})
+
+
+def _deliver_to_live_session(manager, task_id: str, text: str):
+    """Send the user message to a live subprocess if one is running.
+
+    Returns the Flask response on hit (delivered or 500 on send error)
+    or ``None`` to signal the caller to fall through to the respawn
+    path. Keeping this branch out of the route handler lets the
+    "resume on idle" logic live in its own helper too.
+    """
+    session = manager.get_session(task_id) if manager is not None else None
+    if session is None or not session.is_alive:
+        return None
+    try:
+        session.send_user_message(text)
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+    return jsonify({'status': 'delivered', 'text': text})
+
+
+def _spawn_or_reject_chat_session(app: Flask, task_id: str, text: str):
+    """Lazy-respawn for idle tabs, or 409 if no runner is wired.
+
+    Hits when the live-session path returned None — i.e. the tab is
+    real but the subprocess has exited. Spawns a fresh Claude with
+    ``--resume`` so the conversation continues without losing context.
+    """
+    runner = app.config.get('PLANNING_SESSION_RUNNER')
+    if runner is None:
+        return jsonify({'error': 'session is not running'}), 409
+    manager = app.config['SESSION_MANAGER']
+    workspace_manager = app.config.get('WORKSPACE_MANAGER')
+    cwd, summary = _chat_resume_context(manager, workspace_manager, task_id)
+    try:
+        runner.resume_session_for_chat(
+            task_id=task_id,
+            message=text,
+            cwd=cwd,
+            task_summary=summary,
+        )
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+    return jsonify({'status': 'spawned', 'text': text})
 
 
 def _chat_resume_context(session_manager, workspace_manager, task_id: str) -> tuple[str, str]:

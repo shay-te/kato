@@ -58,6 +58,28 @@ class GitHubIssuesClient(TicketClientBase):
         )
         response.raise_for_status()
 
+    def add_tag(self, issue_id: str, tag_name: str) -> None:
+        # GitHub Issues "labels" are kato's tag equivalent.
+        response = self._post_with_retry(
+            f'/repos/{self._owner}/{self._repo}/issues/{issue_id}/labels',
+            json={'labels': [tag_name]},
+        )
+        response.raise_for_status()
+
+    def remove_tag(self, issue_id: str, tag_name: str) -> None:
+        # GitHub label names land in URL paths so they need encoding.
+        from urllib.parse import quote as _quote
+        response = self._delete_with_retry(
+            f'/repos/{self._owner}/{self._repo}/issues/{issue_id}'
+            f'/labels/{_quote(tag_name, safe="")}',
+        )
+        if response.status_code in (200, 204):
+            return
+        # 404 means the label was already off the issue — idempotent.
+        if response.status_code == 404:
+            return
+        response.raise_for_status()
+
     def move_issue_to_state(self, issue_id: str, field_name: str, state_name: str) -> None:
         normalized_field = str(field_name or '').strip().lower()
         if normalized_field in {'labels', 'label'}:

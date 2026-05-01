@@ -50,6 +50,21 @@ class GitLabIssuesClient(TicketClientBase):
         )
         response.raise_for_status()
 
+    def add_tag(self, issue_id: str, tag_name: str) -> None:
+        # GitLab issues use "labels" as the tag equivalent.
+        response = self._put_with_retry(
+            f'/projects/{self._project}/issues/{issue_id}',
+            json={'add_labels': tag_name},
+        )
+        response.raise_for_status()
+
+    def remove_tag(self, issue_id: str, tag_name: str) -> None:
+        response = self._put_with_retry(
+            f'/projects/{self._project}/issues/{issue_id}',
+            json={'remove_labels': tag_name},
+        )
+        response.raise_for_status()
+
     def move_issue_to_state(self, issue_id: str, field_name: str, state_name: str) -> None:
         normalized_field = str(field_name or '').strip().lower()
         if normalized_field in {'labels', 'label'}:

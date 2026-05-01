@@ -68,6 +68,39 @@ class TicketClientBase(RetryingClientBase):
     def move_issue_to_state(self, issue_id: str, field_name: str, state_name: str) -> None:
         raise NotImplementedError
 
+    # Cross-platform tag manipulation. Subclasses that have native
+    # label/tag APIs (YouTrack tags, GitHub/GitLab labels, Jira labels)
+    # SHOULD override these to call the native endpoint — the user can
+    # then filter / search by the tag in the platform UI. Platforms
+    # without native tag mutation (or where we haven't wired it yet)
+    # get the comment-marker fallback below: kato posts a structured
+    # comment so the tag change is at least visible in the activity
+    # log even if it's not a queryable field.
+    KATO_TAG_COMMENT_PREFIX = '<!-- kato-tag '
+    KATO_TAG_COMMENT_SUFFIX = ' -->'
+
+    def add_tag(self, issue_id: str, tag_name: str) -> None:
+        self._post_kato_tag_marker_comment(issue_id, 'add', tag_name)
+
+    def remove_tag(self, issue_id: str, tag_name: str) -> None:
+        self._post_kato_tag_marker_comment(issue_id, 'remove', tag_name)
+
+    def _post_kato_tag_marker_comment(
+        self,
+        issue_id: str,
+        action: str,
+        tag_name: str,
+    ) -> None:
+        marker = (
+            f'{self.KATO_TAG_COMMENT_PREFIX}'
+            f'{{"action": "{action}", "tag": "{tag_name}"}}'
+            f'{self.KATO_TAG_COMMENT_SUFFIX}'
+        )
+        body = (
+            f'Kato {action}ed tag `{tag_name}`.\n\n{marker}'
+        )
+        self.add_comment(issue_id, body)
+
     @classmethod
     def _set_task_comments(cls, task, comments: list[dict[str, str]]) -> None:
         setattr(task, TaskCommentFields.ALL_COMMENTS, comments)

@@ -85,6 +85,44 @@ class TaskTags(object):
 
     WAIT_PLANNING = 'kato:wait-planning'
 
+    # Triage workflow: when ``TRIAGE_INVESTIGATE`` is on a task, kato
+    # spends one Claude turn investigating (read-only — no edits, no
+    # PRs) and replaces it with one of the outcome tags below. The
+    # original triage tag is removed once the outcome tag lands.
+    TRIAGE_INVESTIGATE = 'kato:triage:investigate'
+    TRIAGE_PREFIX = 'kato:triage:'
+
+    # Priority/urgency outcomes — the issue is real, kato classifies
+    # how soon it should be worked.
+    TRIAGE_CRITICAL = 'kato:triage:critical'
+    TRIAGE_HIGH = 'kato:triage:high'
+    TRIAGE_MEDIUM = 'kato:triage:medium'
+    TRIAGE_LOW = 'kato:triage:low'
+
+    # Disposition outcomes — the issue won't be worked as-is.
+    TRIAGE_DUPLICATE = 'kato:triage:duplicate'
+    TRIAGE_WONTFIX = 'kato:triage:wontfix'
+    TRIAGE_INVALID = 'kato:triage:invalid'
+    TRIAGE_NEEDS_INFO = 'kato:triage:needs-info'
+
+    # Optional extras.
+    TRIAGE_BLOCKED = 'kato:triage:blocked'
+    TRIAGE_QUESTION = 'kato:triage:question'
+
+
+TRIAGE_OUTCOME_TAGS = (
+    TaskTags.TRIAGE_CRITICAL,
+    TaskTags.TRIAGE_HIGH,
+    TaskTags.TRIAGE_MEDIUM,
+    TaskTags.TRIAGE_LOW,
+    TaskTags.TRIAGE_DUPLICATE,
+    TaskTags.TRIAGE_WONTFIX,
+    TaskTags.TRIAGE_INVALID,
+    TaskTags.TRIAGE_NEEDS_INFO,
+    TaskTags.TRIAGE_BLOCKED,
+    TaskTags.TRIAGE_QUESTION,
+)
+
 
 class YouTrackAttachmentFields(object):
     ID = 'id'

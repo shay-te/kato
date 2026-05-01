@@ -1,6 +1,7 @@
 import os
 import re
 import shutil
+from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlparse
 
@@ -12,6 +13,7 @@ from kato.data_layers.data.fields import RepositoryFields
 from kato.data_layers.data_access.pull_request_data_access import PullRequestDataAccess
 from kato.helpers.logging_utils import configure_logger
 from kato.helpers.repository_discovery_utils import (
+    build_discovered_repository,
     discover_git_repositories,
     display_name_from_repo_slug,
     remote_web_base_url,
@@ -23,6 +25,15 @@ from kato.helpers.text_utils import (
     normalized_text,
     text_from_attr,
 )
+
+
+class RepositoryIgnoredByConfigError(ValueError):
+    """Raised when a task tag points at a folder in the ignore list.
+
+    Distinct from the generic "no repository matched" failure so the
+    task-failure handler can post an actionable comment instead of the
+    catch-all "kato could not safely process this task" message.
+    """
 
 
 class RepositoryInventoryService(Service):
@@ -42,13 +53,45 @@ class RepositoryInventoryService(Service):
         self._provider_api_defaults = self._provider_api_defaults_from_source(
             repositories_config
         )
-        self._repositories = self._load_repositories(repositories_config)
+        self._repositories_config = repositories_config
+        self._tag_cache: dict[str, object] = {}
+        # Explicit ``kato.repositories`` config is materialised
+        # immediately — it's just a dict→namespace transform, so there
+        # is no I/O cost. Validation (duplicate id / alias detection)
+        # runs on first read via ``_ensure_repositories`` so callers
+        # still get a clear error from ``validate_connections`` and
+        # from the first task lookup. The expensive
+        # ``repository_root_path`` walk is deferred to the first task.
+        explicit = self._explicit_repositories_from_config(repositories_config)
+        self._repositories: list[object] | None = explicit if explicit else None
+        self._inventory_validated = False
+
+    @classmethod
+    def _explicit_repositories_from_config(cls, repository_source) -> list[object]:
+        if not cls._looks_like_repository_settings(repository_source):
+            return cls._normalized_repositories(repository_source)
+        return cls._normalized_repositories(
+            getattr(repository_source, 'repositories', None),
+        )
 
     @property
     def repositories(self) -> list[object]:
-        return list(self._repositories)
+        return list(self._ensure_repositories())
+
+    def _ensure_repositories(self) -> list[object]:
+        if self._repositories is None:
+            self._repositories = self._load_repositories(self._repositories_config)
+        if not self._inventory_validated:
+            self._validate_inventory()
+            self._inventory_validated = True
+        return self._repositories
 
     def validate_connections(self) -> None:
+        # Auto-discovery and per-repo git-access checks are deferred to
+        # the first task that uses a given repo (see
+        # ``RepositoryService._prepare_task_repository``). Startup only
+        # validates whatever is already loaded — typically the explicit
+        # ``kato.repositories`` config, which is cheap to inspect.
         from kato.validation.repository_connections import (
             RepositoryConnectionsValidator,
         )
@@ -59,10 +102,11 @@ class RepositoryInventoryService(Service):
         tagged_repositories = self._repositories_from_task_tags(task)
         if tagged_repositories:
             return tagged_repositories
+        repositories = self._ensure_repositories()
         searchable_text = f'{task.summary}\n{task.description}'.lower()
         matches = [
             repository
-            for repository in self._repositories
+            for repository in repositories
             if self._repository_matches(searchable_text, repository)
         ]
         if matches:
@@ -70,30 +114,126 @@ class RepositoryInventoryService(Service):
         # Single-repo workspaces: skip the tag/description ceremony — there's
         # only one possible answer. Multi-repo setups still raise so the user
         # has to be explicit about which repos a task touches.
-        if len(self._repositories) == 1:
-            return [self._repositories[0]]
+        if len(repositories) == 1:
+            return [repositories[0]]
         raise ValueError(f'no configured repository matched task {task.id}')
 
     def _repositories_from_task_tags(self, task) -> list[object]:
         repository_tags = self._repository_tags(task)
         if not repository_tags:
             return []
-        matches = [
-            repository
-            for repository in self._repositories
-            if any(
-                self._repository_matches(repository_tag, repository)
-                for repository_tag in repository_tags
+        ignored_lower = {
+            folder.lower()
+            for folder in self._ignored_repository_folders(self._repositories_config)
+        }
+        matched: list[object] = []
+        seen_ids: set[str] = set()
+        rejected_by_ignore: list[str] = []
+        for repository_tag in repository_tags:
+            if normalized_lower_text(repository_tag) in ignored_lower:
+                rejected_by_ignore.append(repository_tag)
+                continue
+            repository = self._resolve_repository_for_tag(repository_tag)
+            if repository is None:
+                continue
+            repo_id = str(getattr(repository, 'id', '') or '')
+            if repo_id in seen_ids:
+                continue
+            seen_ids.add(repo_id)
+            matched.append(repository)
+        if rejected_by_ignore:
+            raise RepositoryIgnoredByConfigError(
+                f'task {task.id} references repositories that are in '
+                f'KATO_IGNORED_REPOSITORY_FOLDERS: '
+                f'{", ".join(rejected_by_ignore)}. '
+                f'Either remove the kato:repo:<name> tag from the task or '
+                f'remove the folder from KATO_IGNORED_REPOSITORY_FOLDERS.'
             )
-        ]
-        if not matches:
+        if not matched:
             raise ValueError(
                 f'no configured repository matched repo tags on task {task.id}'
             )
-        return matches
+        return matched
+
+    def _resolve_repository_for_tag(self, repository_tag: str):
+        """Find the inventory entry for a ``kato:repo:<tag>`` value.
+
+        Order of operations (cheapest first):
+        1. In-memory cache from a previous resolution this run.
+        2. Direct folder lookup at ``<repository_root_path>/<tag>/`` —
+           if it's a real git checkout, build a single inventory entry
+           and cache it. Avoids walking the whole tree just to clone
+           one repo whose name we already know.
+        3. Fall back to the full inventory (forces a one-time walk if
+           we haven't done it yet) and match by id / alias / slug.
+
+        Returns ``None`` when no candidate matches.
+        """
+        tag_key = normalized_lower_text(repository_tag)
+        if not tag_key:
+            return None
+        cached = self._tag_cache.get(tag_key)
+        if cached is not None:
+            return cached
+        direct = self._discover_repository_at_named_folder(repository_tag)
+        if direct is not None:
+            self._tag_cache[tag_key] = direct
+            return direct
+        for repository in self._ensure_repositories():
+            if self._repository_matches(repository_tag, repository):
+                self._tag_cache[tag_key] = repository
+                return repository
+        return None
+
+    def _discover_repository_at_named_folder(self, repository_tag: str):
+        """Try to recognize a repo at ``<repository_root_path>/<tag>/``.
+
+        Returns a fully-formed inventory entry on hit, or ``None`` on
+        miss. The entry is constructed identically to the auto-discovery
+        path so downstream code can't tell the difference.
+        """
+        normalized_tag = normalized_text(repository_tag)
+        if not normalized_tag or os.sep in normalized_tag or '/' in normalized_tag:
+            return None
+        root_path = text_from_attr(self._repositories_config, 'repository_root_path')
+        if not root_path:
+            return None
+        candidate_dir = Path(root_path).expanduser() / normalized_tag
+        if not candidate_dir.is_dir():
+            return None
+        if not (candidate_dir / '.git').exists():
+            return None
+        ignored = {
+            folder.lower()
+            for folder in self._ignored_repository_folders(self._repositories_config)
+        }
+        if candidate_dir.name.lower() in ignored:
+            return None
+        try:
+            discovered = build_discovered_repository(candidate_dir.resolve())
+        except OSError:
+            return None
+        return self._build_repository_entry(discovered)
+
+    def _build_repository_entry(self, discovered) -> object:
+        local_path = normalized_text(discovered.local_path)
+        folder_name = os.path.basename(local_path)
+        repo_slug = normalized_text(discovered.repo_slug or folder_name)
+        repository_name = self._discovered_repository_name(folder_name, repo_slug)
+        aliases = [folder_name, repo_slug]
+        return SimpleNamespace(
+            id=repository_id_from_name(repository_name),
+            display_name=display_name_from_repo_slug(repository_name),
+            local_path=local_path,
+            provider=normalized_text(discovered.provider),
+            remote_url=normalized_text(discovered.remote_url),
+            owner=normalized_text(discovered.owner),
+            repo_slug=repo_slug,
+            aliases=[alias for alias in aliases if alias],
+        )
 
     def get_repository(self, repository_id: str):
-        for repository in self._repositories:
+        for repository in self._ensure_repositories():
             if repository.id == repository_id:
                 return repository
         raise ValueError(f'unknown repository id: {repository_id}')

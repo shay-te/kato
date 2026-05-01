@@ -203,6 +203,39 @@ class ClaudeCliClient(object):
         )
         return result
 
+    def investigate(self, prompt: str, *, cwd: str = '') -> str:
+        """Run a single read-only Claude turn and return the raw text.
+
+        Used by the triage flow: kato hands Claude a task description
+        and a list of valid triage outcome tags, asks Claude to pick
+        one. No file edits, no PR work — disallowedTools blocks all
+        write paths (Edit, Write, Bash, etc.) so even a confused turn
+        can't damage the repo.
+        """
+        normalized_prompt = normalized_text(prompt)
+        if not normalized_prompt:
+            raise ValueError('prompt is required to run an investigation')
+        normalized_cwd = normalized_text(cwd)
+        if not normalized_cwd:
+            normalized_cwd = self._repository_root_path or os.getcwd()
+        # Strict tool denylist: triage is read-only by definition.
+        original_disallowed = self._disallowed_tools
+        original_allowed = self._allowed_tools
+        try:
+            self._disallowed_tools = 'Edit,Write,MultiEdit,NotebookEdit,Bash,WebFetch'
+            self._allowed_tools = 'Read,Glob,Grep'
+            payload = self._run_prompt(
+                prompt=normalized_prompt,
+                cwd=normalized_cwd,
+                additional_dirs=[],
+                log_label='triage investigation',
+            )
+        finally:
+            self._disallowed_tools = original_disallowed
+            self._allowed_tools = original_allowed
+        result_text = payload.get('result') or payload.get(ImplementationFields.MESSAGE) or ''
+        return str(result_text)
+
     def fix_review_comment(
         self,
         comment: ReviewComment,

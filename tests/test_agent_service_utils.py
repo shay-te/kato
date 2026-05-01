@@ -207,7 +207,12 @@ class AgentServiceUtilsTests(unittest.TestCase):
         self.assertNotIn('Validation report:', summary)
         self.assertIn('Published review links:', summary)
         self.assertIn('- client: https://example.com/pr/17', summary)
-        self.assertIn('Failed repositories: backend', summary)
+        # Multi-line failure section: header on its own line, repos as
+        # bullet entries below. Per-repo error reasons are appended
+        # after a colon when callers pass dicts/tuples, but a plain id
+        # list (legacy) renders as a bare bullet.
+        self.assertIn('Failed repositories:', summary)
+        self.assertIn('- backend', summary)
 
     def test_pull_request_summary_comment_includes_validation_report_when_present(self) -> None:
         task = build_task(task_id='PROJ-1', summary='Fix bug')

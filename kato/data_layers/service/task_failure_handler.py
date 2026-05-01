@@ -35,6 +35,9 @@ class TaskFailureHandler(Service):
         error: Exception,
         prepared_task: PreparedTaskContext | None = None,
     ) -> None:
+        if self._is_repository_ignored_by_config(error):
+            self._handle_repository_ignored_by_config(task, error)
+            return
         if self._is_repository_detection_failure(error):
             self._handle_repository_detection_failure(task, error)
             return
@@ -115,6 +118,25 @@ class TaskFailureHandler(Service):
             'Please mention the repository name or alias in the task summary or description.',
             after_step='added repository detection skip comment',
             failure_log_message='failed to add repository detection comment for task %s',
+        )
+
+    def _handle_repository_ignored_by_config(self, task: Task, error: Exception) -> None:
+        # The operator has explicitly told kato to ignore this folder
+        # via KATO_IGNORED_REPOSITORY_FOLDERS but the task tagged it
+        # anyway. Treat as a clean reject — post an actionable comment,
+        # don't move the task to a failed state, don't notify ops. The
+        # next scan will hit the same rejection until either the tag
+        # or the ignore list is fixed.
+        self._log_task_step(task.id, 'rejecting task: tag points at ignored repository')
+        self._add_task_comment(
+            task.id,
+            'Kato refused to run this task because one of its '
+            f'kato:repo:<name> tags is in KATO_IGNORED_REPOSITORY_FOLDERS. '
+            f'Details: {error}',
+            after_step='added ignored-repository rejection comment',
+            failure_log_message=(
+                'failed to add ignored-repository rejection comment for task %s'
+            ),
         )
 
     def _handle_unsuccessful_agent_result(
@@ -211,6 +233,16 @@ class TaskFailureHandler(Service):
     @staticmethod
     def _is_repository_detection_failure(error: Exception) -> bool:
         return isinstance(error, ValueError) and 'no configured repository matched task' in str(error)
+
+    @staticmethod
+    def _is_repository_ignored_by_config(error: Exception) -> bool:
+        # Imported lazily — task_failure_handler is loaded early in the
+        # service-construction graph and we'd rather avoid a possibly-
+        # circular import at module load.
+        from kato.data_layers.service.repository_inventory_service import (
+            RepositoryIgnoredByConfigError,
+        )
+        return isinstance(error, RepositoryIgnoredByConfigError)
 
     def _log_task_step(self, task_id: str, message: str, *args) -> None:
         log_mission_step(self.logger, task_id, message, *args)

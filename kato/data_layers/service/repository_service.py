@@ -28,6 +28,17 @@ from kato.data_layers.service.repository_publication_service import (
 )
 
 
+class RepositoryHasNoChangesError(RuntimeError):
+    """Raised when a task branch has nothing to publish in a given repo.
+
+    A typed exception (rather than a string-matched RuntimeError) lets
+    the publisher tell ``"the work was a no-op for this repo"`` apart
+    from genuine publish failures. The former is a normal outcome for
+    multi-repo tasks where a repository is tagged for context but the
+    agent didn't change any of its files; the latter blocks the task.
+    """
+
+
 class RepositoryService(RepositoryInventoryService):
     """Manage repository worktree preparation, branch publication, and cleanup."""
 
@@ -467,7 +478,7 @@ class RepositoryService(RepositoryInventoryService):
         ahead_count = self._ahead_count(local_path, comparison_ref, branch_name)
         if ahead_count >= 1:
             return
-        raise RuntimeError(
+        raise RepositoryHasNoChangesError(
             f'branch {branch_name} has no task changes ahead of {comparison_ref}'
         )
 

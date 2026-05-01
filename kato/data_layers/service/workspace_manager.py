@@ -37,6 +37,7 @@ from pathlib import Path
 
 from kato.helpers.atomic_json_utils import atomic_write_json
 from kato.helpers.logging_utils import configure_logger
+from kato.helpers.mission_logging_utils import log_mission_step
 from kato.helpers.text_utils import normalized_text
 
 
@@ -412,6 +413,17 @@ def provision_task_workspace_clones(
             clone_path = workspace_manager.repository_path(
                 str(task.id), repository.id,
             )
+            # Log only when an actual clone will happen — ensure_clone
+            # is idempotent (it short-circuits when the .git folder
+            # already exists), and announcing "cloning" for every
+            # already-cloned repo on every scan tick would be noisy.
+            if not (clone_path / '.git').is_dir():
+                log_mission_step(
+                    workspace_manager.logger,
+                    str(task.id),
+                    'cloning repository: %s',
+                    repository.id,
+                )
             repository_service.ensure_clone(repository, clone_path)
             rewritten = copy.copy(repository)
             rewritten.local_path = str(clone_path)

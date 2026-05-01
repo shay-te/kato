@@ -192,6 +192,7 @@ class KatoCoreLibTests(unittest.TestCase):
             notification_service=mock_notification_service_cls.return_value,
             state_registry=ANY,
             failure_handler=mock_task_failure_handler_cls.return_value,
+            publish_max_retries=ANY,
         )
         mock_task_da_cls.assert_called_once_with(
             self.cfg.kato.youtrack,
@@ -233,6 +234,7 @@ class KatoCoreLibTests(unittest.TestCase):
             workspace_manager=ANY,
             parallel_task_runner=ANY,
             wait_planning_service=ANY,
+            triage_service=ANY,
         )
         mock_service_cls.return_value.validate_connections.assert_called_once_with()
         self.assertIs(app.service, mock_service_cls.return_value)

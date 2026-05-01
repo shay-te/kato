@@ -19,8 +19,10 @@ export function fetchFileTree(taskId) {
   return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/files`);
 }
 
-export function fetchDiff(taskId) {
-  return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/diff`);
+export function fetchDiff(taskId, { repoId = '' } = {}) {
+  const url = `/api/sessions/${encodeURIComponent(taskId)}/diff`;
+  const query = repoId ? `?repo_id=${encodeURIComponent(repoId)}` : '';
+  return fetchJson(`${url}${query}`);
 }
 
 export async function postSession(taskId, endpoint, body) {

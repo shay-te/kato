@@ -10,7 +10,6 @@ from kato.helpers.kato_config_utils import (
     is_bedrock_model,
     is_openrouter_model,
 )
-from kato.helpers.repository_discovery_utils import discover_git_repositories
 from kato.helpers.text_utils import (
     alphanumeric_lower_text,
     normalized_lower_text,
@@ -210,26 +209,19 @@ def _validate_agent_email_env(env: dict[str, str]) -> list[str]:
 
 
 def _validate_repository_provider_env(env: dict[str, str]) -> list[str]:
-    repository_root_path = normalized_text(env.get('REPOSITORY_ROOT_PATH', ''))
-    if not repository_root_path or not Path(repository_root_path).exists():
-        return []
+    """No-op at startup.
 
-    errors: list[str] = []
-    missing_keys: set[str] = set()
-    for repository in discover_git_repositories(repository_root_path):
-        provider = normalized_lower_text(text_from_attr(repository, 'provider'))
-        token_keys = PROVIDER_TOKEN_ENV_KEYS.get(provider, ())
-        if token_keys and not _has_any(env, token_keys):
-            missing_keys.add(token_keys[0])
-        if provider == 'bitbucket':
-            for key in BITBUCKET_REPOSITORY_REQUIRED_KEYS:
-                if not normalized_text(env.get(key, '')):
-                    missing_keys.add(key)
-    for key in sorted(missing_keys):
-        errors.append(
-            f'missing required repository provider env var: {key}'
-        )
-    return errors
+    Auto-discovery used to walk every git folder under
+    ``REPOSITORY_ROOT_PATH`` here and demand provider creds for each
+    one — slow on big project roots and noisy when most of those repos
+    aren't kato's concern. The runtime inventory now resolves repos
+    lazily (per task, with a tag-name fast path), so credential
+    requirements surface naturally when kato actually tries to use a
+    repository. Kept as a hook so future per-platform pre-flight
+    checks have a place to plug in.
+    """
+    del env  # unused on purpose
+    return []
 
 
 def _validate_issue_state_queue_env(env: dict[str, str], issue_platform: str) -> list[str]:

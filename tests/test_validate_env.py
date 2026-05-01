@@ -160,6 +160,36 @@ class ValidateEnvTests(unittest.TestCase):
             errors,
         )
 
+    def test_validate_agent_env_skips_ignored_folders_during_provider_discovery(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self._create_git_repository(
+                root / 'bitbucket-repo',
+                'git@bitbucket.org:workspace/project.git',
+            )
+            self._create_git_repository(
+                root / 'github-repo',
+                'git@github.com:owner/project.git',
+            )
+
+            errors = validate_agent_env(
+                {
+                    'YOUTRACK_BASE_URL': 'https://youtrack.example',
+                    'YOUTRACK_TOKEN': 'yt-token',
+                    'YOUTRACK_PROJECT': 'PROJ',
+                    'YOUTRACK_ASSIGNEE': 'developer',
+                    'REPOSITORY_ROOT_PATH': str(root),
+                    'KATO_IGNORED_REPOSITORY_FOLDERS': 'github-repo',
+                    'BITBUCKET_API_TOKEN': 'bb-token',
+                    'BITBUCKET_USERNAME': 'bb-user',
+                    'BITBUCKET_API_EMAIL': 'bb-user@example.com',
+                    'OPENHANDS_BASE_URL': 'http://localhost:3000',
+                    'OPENHANDS_API_KEY': 'local',
+                }
+            )
+
+        self.assertEqual(errors, [])
+
     def test_validate_agent_env_accepts_provider_token_for_discovered_bitbucket_repo(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_path = Path(temp_dir) / 'project'
@@ -506,5 +536,4 @@ class ValidateEnvTests(unittest.TestCase):
 
     @staticmethod
     def _validate_agent_env(env: dict[str, str]) -> list[str]:
-        with patch('kato.validate_env.discover_git_repositories', return_value=[]):
-            return validate_agent_env(env)
+        return validate_agent_env(env)

@@ -76,6 +76,7 @@ class AgentService(Service):
         workspace_manager=None,
         parallel_task_runner=None,
         wait_planning_service=None,
+        triage_service=None,
         logger: logging.Logger | None = None,
     ) -> None:
         self.logger = logger or configure_logger(self.__class__.__name__)
@@ -110,6 +111,7 @@ class AgentService(Service):
         self._workspace_manager = workspace_manager
         self._parallel_task_runner = parallel_task_runner
         self._wait_planning_service = wait_planning_service
+        self._triage_service = triage_service
         self._state_registry = state_registry or AgentStateRegistry()
         self._review_comment_service = review_comment_service or ReviewCommentService(
             self._task_service,
@@ -366,6 +368,18 @@ class AgentService(Service):
         # have already been moved out of the scanned states, and skipped/
         # failed tasks carry comments that the gate and preflight read fresh
         # on every scan. Remove the comment, the task is re-evaluated.
+
+        # `kato:triage:investigate` short-circuits the orchestration too,
+        # but for a different reason: instead of registering an
+        # interactive chat, kato spends one Claude turn classifying the
+        # task and writes back a kato:triage:<level> outcome tag. No
+        # implementation, no testing, no PR. Runs *before* wait-planning
+        # so a triage task that also carries the wait-planning tag
+        # still gets classified rather than opened as a chat tab.
+        if self._triage_service is not None:
+            triage_result = self._triage_service.handle_task(task)
+            if triage_result is not None:
+                return triage_result
 
         # `kato:wait-planning` short-circuits the orchestration: register the
         # planning tab so the human can chat with the agent in the UI, but

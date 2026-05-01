@@ -1,8 +1,8 @@
 from kato.client.bitbucket.issues_client import BitbucketIssuesClient
 from kato.client.github.issues_client import GitHubIssuesClient
 from kato.client.gitlab.issues_client import GitLabIssuesClient
-from kato.client.jira.client import JiraClient
-from kato.client.youtrack.client import YouTrackClient
+from kato.client.jira.issues_client import JiraClient
+from kato.client.youtrack.issues_client import YouTrackClient
 
 
 def build_ticket_client(issue_platform: str, config, max_retries: int):
