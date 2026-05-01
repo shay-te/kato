@@ -35,6 +35,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from kato.helpers.atomic_json_utils import atomic_write_json
 from kato.helpers.logging_utils import configure_logger
 from kato.helpers.text_utils import normalized_text
 
@@ -359,18 +360,12 @@ class WorkspaceManager(object):
         return WorkspaceRecord.from_dict(payload)
 
     def _write_metadata(self, workspace_dir: Path, record: WorkspaceRecord) -> None:
-        path = self._metadata_path(workspace_dir)
-        tmp_path = path.with_suffix('.json.tmp')
-        try:
-            tmp_path.write_text(
-                json.dumps(record.to_dict(), indent=2, sort_keys=True),
-                encoding='utf-8',
-            )
-            tmp_path.replace(path)
-        except OSError as exc:
-            self.logger.warning(
-                'failed to persist workspace metadata at %s: %s', path, exc,
-            )
+        atomic_write_json(
+            self._metadata_path(workspace_dir),
+            record.to_dict(),
+            logger=self.logger,
+            label='workspace metadata',
+        )
 
 
 def _coerce_positive_int(value, *, default: int) -> int:

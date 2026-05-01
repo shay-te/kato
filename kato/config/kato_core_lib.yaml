@@ -128,6 +128,10 @@ kato:
     bypass_permissions: ${oc.decode:${oc.env:KATO_CLAUDE_BYPASS_PERMISSIONS,"false"}}
     timeout_seconds: ${oc.decode:${oc.env:KATO_CLAUDE_TIMEOUT_SECONDS,"1800"}}
     model_smoke_test_enabled: ${oc.decode:${oc.env:KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED,"false"}}
+    # Optional path to an architecture / project-context document that
+    # kato appends to Claude's system prompt on every spawn (autonomous
+    # runs, planning sessions, and review-fix retries). Empty disables.
+    architecture_doc_path: ${oc.env:KATO_ARCHITECTURE_DOC_PATH,""}
   task_scan:
     startup_delay_seconds: ${oc.decode:${oc.env:OPENHANDS_TASK_SCAN_STARTUP_DELAY_SECONDS,"30"}}
     scan_interval_seconds: ${oc.decode:${oc.env:OPENHANDS_TASK_SCAN_INTERVAL_SECONDS,"60"}}

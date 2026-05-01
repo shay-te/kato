@@ -70,6 +70,7 @@ def main(cfg: DictConfig) -> int:
     app = KatoInstance.get()
     app.logger = getattr(app, 'logger', None) or logger
     app.logger.info('Starting kato agent')
+    _recover_orphan_workspaces(app)
     _start_planning_webserver_if_enabled(app)
     _register_shutdown_hook(app)
     startup_delay_seconds, scan_interval_seconds = _task_scan_settings(cfg)
@@ -79,6 +80,28 @@ def main(cfg: DictConfig) -> int:
         scan_interval_seconds=scan_interval_seconds,
     )
     return 0
+
+
+def _recover_orphan_workspaces(app) -> None:
+    """Adopt out-of-band task folders dropped under ``KATO_WORKSPACES_ROOT``.
+
+    Best-effort, runs exactly once per kato process. Failures are logged
+    and swallowed so a flaky filesystem can't block startup.
+    """
+    recovery = getattr(app, 'workspace_recovery_service', None)
+    if recovery is None:
+        return
+    try:
+        adopted = recovery.recover_orphan_workspaces()
+    except Exception:
+        app.logger.exception('workspace recovery failed; continuing without it')
+        return
+    if adopted:
+        app.logger.info(
+            'recovered %d orphan workspace%s during startup',
+            len(adopted),
+            '' if len(adopted) == 1 else 's',
+        )
 
 
 def _start_planning_webserver_if_enabled(app) -> None:

@@ -23,6 +23,8 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from kato.helpers.atomic_json_utils import atomic_write_json
+
 from kato.client.claude.streaming_session import StreamingClaudeSession
 from kato.helpers.logging_utils import configure_logger
 from kato.helpers.text_utils import normalized_text
@@ -195,6 +197,7 @@ class ClaudeSessionManager(object):
         effort: str = '',
         env: dict[str, str] | None = None,
         expected_branch: str = '',
+        architecture_doc_path: str = '',
     ) -> StreamingClaudeSession:
         """Spawn (or rehydrate) the streaming session bound to ``task_id``.
 
@@ -215,6 +218,7 @@ class ClaudeSessionManager(object):
             'max_turns': max_turns,
             'effort': effort,
             'env': env,
+            'architecture_doc_path': architecture_doc_path,
         }
         with self._lock:
             existing = self._sessions.get(normalized_task_id)
@@ -472,20 +476,12 @@ class ClaudeSessionManager(object):
         return self._state_dir / f'{safe_name}.json'
 
     def _persist_record(self, record: PlanningSessionRecord) -> None:
-        path = self._record_path(record.task_id)
-        tmp_path = path.with_suffix('.json.tmp')
-        try:
-            tmp_path.write_text(
-                json.dumps(record.to_dict(), indent=2, sort_keys=True),
-                encoding='utf-8',
-            )
-            tmp_path.replace(path)
-        except OSError as exc:
-            self.logger.warning(
-                'failed to persist planning session record for task %s: %s',
-                record.task_id,
-                exc,
-            )
+        atomic_write_json(
+            self._record_path(record.task_id),
+            record.to_dict(),
+            logger=self.logger,
+            label=f'planning session record for task {record.task_id}',
+        )
         self._mirror_to_workspace_metadata(record)
 
     def _mirror_to_workspace_metadata(self, record: PlanningSessionRecord) -> None:

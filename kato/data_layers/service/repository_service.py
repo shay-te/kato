@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -16,7 +15,6 @@ from kato.helpers.git_clean_utils import (
     status_contains_only_removable_artifacts,
     validation_report_paths_from_status,
 )
-from kato.helpers.logging_utils import configure_logger
 from kato.helpers.text_utils import (
     normalized_lower_text,
     normalized_text,

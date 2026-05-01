@@ -6,7 +6,6 @@ from urllib.parse import urlparse
 from core_lib.data_layers.service.service import Service
 from requests import HTTPError
 
-from kato.client.ticket_client_base import TicketClientBase
 from kato.data_layers.data.fields import (
     ImplementationFields,
     PullRequestFields,
@@ -22,7 +21,6 @@ from kato.helpers.logging_utils import configure_logger
 from kato.helpers.mission_logging_utils import (
     log_mission_end,
     log_mission_start,
-    log_mission_step,
     log_review_comment_end,
     log_review_comment_start,
 )

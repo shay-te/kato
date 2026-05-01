@@ -25,6 +25,16 @@ from dataclasses import dataclass, field
 from queue import Empty, Queue
 from typing import Any
 
+from kato.client.claude.wire_protocol import (
+    CLAUDE_EVENT_CONTROL_REQUEST,
+    CLAUDE_EVENT_CONTROL_RESPONSE,
+    CLAUDE_EVENT_PERMISSION_RESPONSE,
+    CLAUDE_EVENT_RESULT,
+    CLAUDE_EVENT_SYSTEM,
+    CLAUDE_SYSTEM_SUBTYPE_INIT,
+    PERMISSION_REQUEST_EVENT_TYPES,
+)
+from kato.helpers.architecture_doc_utils import read_architecture_doc
 from kato.helpers.logging_utils import configure_logger
 from kato.helpers.text_utils import condensed_text, normalized_text
 
@@ -56,7 +66,7 @@ class SessionEvent(object):
     @property
     def is_terminal(self) -> bool:
         # Claude CLI emits exactly one final `{"type": "result", ...}` event.
-        return self.event_type == 'result'
+        return self.event_type == CLAUDE_EVENT_RESULT
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -105,6 +115,7 @@ class StreamingClaudeSession(object):
         resume_session_id: str = '',
         env: dict[str, str] | None = None,
         effort: str = '',
+        architecture_doc_path: str = '',
     ) -> None:
         if not str(task_id or '').strip():
             raise ValueError('task_id is required for a streaming session')
@@ -128,6 +139,7 @@ class StreamingClaudeSession(object):
         self._max_turns = max_turns
         self._effort = normalized_text(effort).lower()
         self._resume_session_id = normalized_text(resume_session_id)
+        self._architecture_doc_path = normalized_text(architecture_doc_path)
         self._env_overrides = dict(env or {})
 
         self._proc: subprocess.Popen[bytes] | None = None
@@ -272,7 +284,7 @@ class StreamingClaudeSession(object):
                 'message': normalized_text(rationale) or 'denied by user',
             }
         envelope = {
-            'type': 'control_response',
+            'type': CLAUDE_EVENT_CONTROL_RESPONSE,
             'response': {
                 'subtype': 'success',
                 'request_id': request_id_str,
@@ -286,7 +298,7 @@ class StreamingClaudeSession(object):
         # backlog would re-pop the modal for an already-answered ask.
         synthetic_event = SessionEvent(
             raw={
-                'type': 'permission_response',
+                'type': CLAUDE_EVENT_PERMISSION_RESPONSE,
                 'request_id': request_id_str,
                 'allow': bool(allow),
             },
@@ -398,6 +410,11 @@ class StreamingClaudeSession(object):
             command.extend(['--allowedTools', self._allowed_tools])
         if self._disallowed_tools:
             command.extend(['--disallowedTools', self._disallowed_tools])
+        architecture_doc = read_architecture_doc(
+            self._architecture_doc_path, logger=self.logger,
+        )
+        if architecture_doc:
+            command.extend(['--append-system-prompt', architecture_doc])
         if self._resume_session_id:
             command.extend(['--resume', self._resume_session_id])
         else:
@@ -476,7 +493,7 @@ class StreamingClaudeSession(object):
 
     def _maybe_capture_control_request(self, event: SessionEvent) -> None:
         """Store ``control_request`` payloads so we can echo ``updatedInput``."""
-        if event.event_type != 'control_request':
+        if event.event_type != CLAUDE_EVENT_CONTROL_REQUEST:
             return
         request_id = str(event.raw.get('request_id', '') or '').strip()
         if not request_id:
@@ -496,7 +513,7 @@ class StreamingClaudeSession(object):
         Deny click) and result events (turn completed).
         """
         event_type = event.event_type
-        if event_type in ('permission_request', 'control_request'):
+        if event_type in PERMISSION_REQUEST_EVENT_TYPES:
             tool_name, request_id = self._permission_request_details(event)
             self.logger.info(
                 'task %s: claude is asking permission to run %s '
@@ -505,7 +522,7 @@ class StreamingClaudeSession(object):
                 tool_name,
                 request_id,
             )
-        elif event_type == 'result':
+        elif event_type == CLAUDE_EVENT_RESULT:
             is_error = bool(event.raw.get('is_error', False))
             result_text = condensed_text(event.raw.get('result', ''))[:160]
             stderr_tail = self.stderr_snapshot()[-10:] if is_error else []

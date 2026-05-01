@@ -18,7 +18,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from kato.client.claude.session_manager import (
-    SESSION_STATUS_ACTIVE,
     SESSION_STATUS_REVIEW,
     SESSION_STATUS_TERMINATED,
     ClaudeSessionManager,
@@ -60,6 +59,7 @@ class StreamingSessionDefaults(object):
     disallowed_tools: str = ''
     max_turns: int | None = None
     effort: str = ''
+    architecture_doc_path: str = ''
 
 
 class PlanningSessionRunner(object):
@@ -109,6 +109,7 @@ class PlanningSessionRunner(object):
             disallowed_tools=str(getattr(claude_cfg, 'disallowed_tools', '') or ''),
             max_turns=_coerce_optional_int(getattr(claude_cfg, 'max_turns', None)),
             effort=str(getattr(claude_cfg, 'effort', '') or ''),
+            architecture_doc_path=str(getattr(claude_cfg, 'architecture_doc_path', '') or ''),
         )
 
     def __init__(
@@ -167,6 +168,7 @@ class PlanningSessionRunner(object):
             max_turns=self._defaults.max_turns,
             effort=self._defaults.effort,
             expected_branch='',
+            architecture_doc_path=self._defaults.architecture_doc_path,
         )
 
     def implement_task(
@@ -294,6 +296,7 @@ class PlanningSessionRunner(object):
             max_turns=self._defaults.max_turns,
             effort=self._defaults.effort,
             expected_branch=branch_name,
+            architecture_doc_path=self._defaults.architecture_doc_path,
         )
 
     def _raise_if_terminal_failed(

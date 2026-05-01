@@ -38,6 +38,15 @@ from flask import (
     stream_with_context,
 )
 
+from kato.client.claude.wire_protocol import (
+    SSE_EVENT_SESSION_CLOSED,
+    SSE_EVENT_SESSION_EVENT,
+    SSE_EVENT_SESSION_HISTORY_EVENT,
+    SSE_EVENT_SESSION_IDLE,
+    SSE_EVENT_SESSION_MISSING,
+    SSE_EVENT_STATUS_DISABLED,
+    SSE_EVENT_STATUS_ENTRY,
+)
 from kato_webserver.git_diff_utils import (
     current_branch,
     detect_default_branch,
@@ -194,7 +203,7 @@ def _register_status_routes(app: Flask) -> None:
             # Stream a single "disabled" event then close so the UI can
             # render a tasteful "no live feed" line instead of waiting.
             def _empty():
-                yield _sse_message('status_disabled', {})
+                yield _sse_message(SSE_EVENT_STATUS_DISABLED, {})
             return Response(
                 stream_with_context(_empty()),
                 mimetype='text/event-stream',
@@ -221,7 +230,7 @@ def _status_event_stream(broadcaster):
     backlog = broadcaster.recent()
     last_sequence = backlog[-1].sequence if backlog else 0
     for entry in backlog:
-        yield _sse_message('status_entry', entry.to_dict())
+        yield _sse_message(SSE_EVENT_STATUS_ENTRY, entry.to_dict())
     last_heartbeat = time.monotonic()
     while True:
         new_entries = broadcaster.wait_for_new(
@@ -229,7 +238,7 @@ def _status_event_stream(broadcaster):
             timeout=_SSE_HEARTBEAT_SECONDS,
         )
         for entry in new_entries:
-            yield _sse_message('status_entry', entry.to_dict())
+            yield _sse_message(SSE_EVENT_STATUS_ENTRY, entry.to_dict())
             last_sequence = entry.sequence
         if not new_entries and time.monotonic() - last_heartbeat >= _SSE_HEARTBEAT_SECONDS:
             yield ': ping\n\n'
@@ -390,13 +399,13 @@ def _event_stream_generator(manager, workspace_manager, task_id: str):
         else None
     )
     if record is None and workspace is None:
-        yield _sse_message('session_missing', {})
+        yield _sse_message(SSE_EVENT_SESSION_MISSING, {})
         return
     session = manager.get_session(task_id) if manager is not None else None
     if session is None:
         yield from _replay_history_from_disk(claude_session_id)
         idle_payload = _record_to_dict(record) if record is not None else {}
-        yield _sse_message('session_idle', idle_payload)
+        yield _sse_message(SSE_EVENT_SESSION_IDLE, idle_payload)
         return
     yield from _replay_history_from_disk(claude_session_id)
     yield from _replay_session_backlog(session)
@@ -437,7 +446,7 @@ def _replay_history_from_disk(claude_session_id: str):
     # event would set turnInFlight=true forever).
     for raw in events:
         yield _sse_message(
-            'session_history_event',
+            SSE_EVENT_SESSION_HISTORY_EVENT,
             {'event': {'received_at_epoch': 0, 'raw': raw}},
         )
 
@@ -446,7 +455,7 @@ def _replay_session_backlog(session):
     """Catch a freshly-connecting browser up on everything seen so far."""
     backlog = session.recent_events()
     for event in backlog:
-        yield _sse_message('session_event', {'event': event.to_dict()})
+        yield _sse_message(SSE_EVENT_SESSION_EVENT, {'event': event.to_dict()})
 
 
 def _follow_live_session(session):
@@ -457,11 +466,11 @@ def _follow_live_session(session):
         current = session.recent_events()
         if len(current) > last_index:
             for event in current[last_index:]:
-                yield _sse_message('session_event', {'event': event.to_dict()})
+                yield _sse_message(SSE_EVENT_SESSION_EVENT, {'event': event.to_dict()})
             last_index = len(current)
 
         if not session.is_alive and last_index >= len(session.recent_events()):
-            yield _sse_message('session_closed', {})
+            yield _sse_message(SSE_EVENT_SESSION_CLOSED, {})
             return
 
         if time.monotonic() - last_heartbeat >= _SSE_HEARTBEAT_SECONDS:

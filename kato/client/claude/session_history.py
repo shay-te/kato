@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import glob
 import json
-import os
 from pathlib import Path
 from typing import Iterable
 
@@ -43,6 +42,83 @@ def find_session_file(
     if not matches:
         return None
     return Path(matches[0])
+
+
+def find_session_id_for_cwd(
+    cwd: str | Path,
+    *,
+    projects_root: Path | str | None = None,
+) -> str:
+    """Return the most-recent Claude session id whose ``cwd`` matches.
+
+    Used by the workspace-recovery flow: when an orphan task folder has
+    no ``.kato-meta.json`` we still want to attach Claude's existing
+    transcript. Claude records each turn's ``cwd`` inside the JSONL, so
+    we walk every transcript under ``~/.claude/projects/*`` and pick
+    the freshest one whose first datum points at ``cwd``. Returns ''
+    when no session matches.
+    """
+    target = str(cwd or '').strip()
+    if not target:
+        return ''
+    root = Path(projects_root) if projects_root else _DEFAULT_PROJECTS_ROOT
+    if not root.is_dir():
+        return ''
+    matches: list[tuple[float, str]] = []
+    for jsonl_path in root.glob('*/*.jsonl'):
+        recorded_cwd, recorded_session_id = _peek_session_metadata(jsonl_path)
+        if not recorded_session_id:
+            continue
+        if not _paths_equivalent(recorded_cwd, target):
+            continue
+        try:
+            mtime = jsonl_path.stat().st_mtime
+        except OSError:
+            mtime = 0.0
+        matches.append((mtime, recorded_session_id))
+    if not matches:
+        return ''
+    matches.sort(reverse=True)
+    return matches[0][1]
+
+
+def _peek_session_metadata(path: Path) -> tuple[str, str]:
+    """Return ``(cwd, session_id)`` from the first record that has them.
+
+    The first few lines are usually queue-ops without cwd; we read until
+    we see a ``user``/``assistant`` record (which carries both fields)
+    or give up after a few lines so we don't slurp giant transcripts.
+    """
+    try:
+        with path.open('r', encoding='utf-8') as fh:
+            for index, raw_line in enumerate(fh):
+                if index >= 20:
+                    break
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(payload, dict):
+                    continue
+                cwd = str(payload.get('cwd', '') or '').strip()
+                session_id = str(payload.get('sessionId', '') or '').strip()
+                if cwd and session_id:
+                    return cwd, session_id
+    except OSError:
+        pass
+    return '', ''
+
+
+def _paths_equivalent(left: str, right: str) -> bool:
+    if not left or not right:
+        return False
+    try:
+        return Path(left).resolve() == Path(right).resolve()
+    except OSError:
+        return left.rstrip('/') == right.rstrip('/')
 
 
 def load_history_events(

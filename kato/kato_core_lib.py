@@ -33,6 +33,9 @@ from kato.data_layers.service.workspace_manager import (
     WorkspaceManager,
     provision_task_workspace_clones,
 )
+from kato.data_layers.service.workspace_recovery_service import (
+    WorkspaceRecoveryService,
+)
 from kato.helpers.runtime_identity_utils import runtime_source_fingerprint
 from kato.validation.branch_publishability import (
     TaskBranchPublishabilityValidator,
@@ -197,6 +200,18 @@ class KatoCoreLib(CoreLib):
             # decides what gets executed, not bypass mode.
             use_streaming_for_review_fixes=planning_session_runner is not None,
         )
+        # Stash recovery so main.py can invoke it once after startup
+        # validation — adopting orphan workspace folders is opt-in, runs
+        # exactly once per process, and never blocks the scan loop.
+        self.workspace_recovery_service = (
+            WorkspaceRecoveryService(
+                workspace_manager=self.workspace_manager,
+                task_service=task_service,
+                repository_service=repository_service,
+            )
+            if self.workspace_manager is not None
+            else None
+        )
         return AgentService(
             task_service=task_service,
             task_state_service=task_state_service,
@@ -329,6 +344,9 @@ class KatoCoreLib(CoreLib):
             model_smoke_test_enabled=(
                 not testing
                 and bool(getattr(claude_cfg, 'model_smoke_test_enabled', False))
+            ),
+            architecture_doc_path=str(
+                getattr(claude_cfg, 'architecture_doc_path', '') or ''
             ),
         )
 

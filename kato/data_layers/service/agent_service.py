@@ -36,7 +36,6 @@ from kato.data_layers.service.workspace_manager import (
 from kato.data_layers.data.fields import (
     ImplementationFields,
     StatusFields,
-    TaskCommentFields,
 )
 from kato.data_layers.data.review_comment import ReviewComment
 from kato.validation.branch_publishability import (

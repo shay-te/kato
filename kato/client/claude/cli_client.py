@@ -6,10 +6,11 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from kato.data_layers.data.fields import ImplementationFields, PullRequestFields
+from kato.data_layers.data.fields import ImplementationFields
 from kato.data_layers.data.review_comment import ReviewComment
 from kato.data_layers.data.task import Task
 from kato.helpers import agent_prompt_utils
+from kato.helpers.architecture_doc_utils import read_architecture_doc
 from kato.helpers.kato_result_utils import build_openhands_result
 from kato.helpers.logging_utils import configure_logger
 from kato.helpers.task_context_utils import PreparedTaskContext
@@ -55,6 +56,7 @@ class ClaudeCliClient(object):
         model_smoke_test_enabled: bool = False,
         extra_args: list[str] | None = None,
         effort: str = '',
+        architecture_doc_path: str = '',
     ) -> None:
         self.max_retries = max(1, int(max_retries or 1))
         self._binary = normalized_text(binary) or self.DEFAULT_BINARY
@@ -77,6 +79,7 @@ class ClaudeCliClient(object):
         self._model_smoke_test_enabled = bool(model_smoke_test_enabled)
         self._model_access_smoke_test_ran = False
         self._extra_args = list(extra_args or [])
+        self._architecture_doc_path = normalized_text(architecture_doc_path)
         self.logger = configure_logger(self.__class__.__name__)
 
     @property
@@ -422,6 +425,11 @@ class ClaudeCliClient(object):
             command.extend(['--allowedTools', self._allowed_tools])
         if self._disallowed_tools:
             command.extend(['--disallowedTools', self._disallowed_tools])
+        architecture_doc = read_architecture_doc(
+            self._architecture_doc_path, logger=self.logger,
+        )
+        if architecture_doc:
+            command.extend(['--append-system-prompt', architecture_doc])
         normalized_session_id = normalized_text(session_id)
         if normalized_session_id:
             command.extend(['--resume', normalized_session_id])

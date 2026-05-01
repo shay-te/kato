@@ -9,11 +9,7 @@ from kato.client.openrouter import OpenRouterClient
 from kato.client.retrying_client_base import RetryingClientBase
 from kato.data_layers.data.review_comment import ReviewComment
 from kato.data_layers.data.task import Task
-from kato.data_layers.data.fields import (
-    ImplementationFields,
-    PullRequestFields,
-    ReviewCommentFields,
-)
+from kato.data_layers.data.fields import ImplementationFields
 from kato.helpers import agent_prompt_utils
 from kato.helpers.kato_result_utils import build_openhands_result
 from kato.helpers.kato_config_utils import is_openrouter_model
@@ -24,7 +20,6 @@ from kato.helpers.text_utils import (
     condensed_text,
     normalized_lower_text,
     normalized_text,
-    text_from_attr,
     text_from_mapping,
 )
 
