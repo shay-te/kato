@@ -72,7 +72,10 @@ KATO_CLAUDE_MODEL=
 KATO_CLAUDE_MAX_TURNS=
 KATO_CLAUDE_ALLOWED_TOOLS=
 KATO_CLAUDE_DISALLOWED_TOOLS=
-KATO_CLAUDE_PERMISSION_MODE=bypassPermissions
+# When true, kato runs Claude with `--permission-mode bypassPermissions`.
+# When false (default), kato uses acceptEdits and routes permission asks
+# back through the planning UI.
+KATO_CLAUDE_BYPASS_PERMISSIONS=false
 
 # Per-task subprocess timeout (seconds) and an optional startup smoke test.
 KATO_CLAUDE_TIMEOUT_SECONDS=1800
@@ -628,11 +631,14 @@ The `openhands` container reuses the same `OPENHANDS_LLM_*` and `AWS_*` values f
 | `KATO_CLAUDE_BINARY` | Path to (or PATH name of) the Claude Code CLI binary. Defaults to `claude`. |
 | `KATO_CLAUDE_MODEL` | Optional model id passed via `--model` (e.g. `claude-opus-4-7`). Empty uses the CLI default. |
 | `KATO_CLAUDE_MAX_TURNS` | Optional cap on agent turns per task, passed via `--max-turns`. Empty means no cap. |
+| `KATO_CLAUDE_EFFORT` | Optional reasoning depth passed via `--effort` (`low`/`medium`/`high`/`xhigh`/`max`). Empty leaves Claude on its built-in default. |
 | `KATO_CLAUDE_ALLOWED_TOOLS` | Comma-separated allowlist passed via `--allowedTools`. |
 | `KATO_CLAUDE_DISALLOWED_TOOLS` | Comma-separated denylist passed via `--disallowedTools`. |
-| `KATO_CLAUDE_PERMISSION_MODE` | Permission mode passed via `--permission-mode`. Defaults to `bypassPermissions`. |
+| `KATO_CLAUDE_BYPASS_PERMISSIONS` | When `true`, kato runs Claude with `--permission-mode bypassPermissions` (no per-tool prompts). When `false` (the default), kato runs in `acceptEdits` mode and routes any permission asks back over the planning UI. |
 | `KATO_CLAUDE_TIMEOUT_SECONDS` | Per-task subprocess timeout. Defaults to 1800. Minimum 60. |
 | `KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED` | Runs a small `claude -p` prompt during startup validation. Off by default. |
+| `KATO_ARCHITECTURE_DOC_PATH` | Optional path to a project-architecture markdown file. When set, kato appends the file's contents to Claude's system prompt on every spawn (autonomous, planning, chat-respawn) via `--append-system-prompt`. Re-read on each spawn so edits land without a kato restart. |
+| `KATO_TASK_PUBLISH_MAX_RETRIES` | Retries for the publish step (per-repo PR creation + the move-to-review transition). Implementation work is not re-run. Defaults to `2` (up to 3 attempts) with exponential backoff. |
 
 The active issue provider comes from `kato.issue_platform`, which defaults to `youtrack`.
 Issue states can be configured directly in `.env` with `YOUTRACK_ISSUE_STATES`, `JIRA_ISSUE_STATES`, `GITHUB_ISSUES_ISSUE_STATES`, `GITLAB_ISSUES_ISSUE_STATES`, and `BITBUCKET_ISSUES_ISSUE_STATES`.
@@ -947,6 +953,30 @@ For a normal Ctrl+C → `make compose-up` cycle there is nothing to clean. The t
 | Claude transcripts (`~/.claude/projects/<encoded>/<id>.jsonl`) | To erase chat history replay for a task | Delete the matching JSONL — but you'll lose history-replay for that tab |
 
 `clean.sh` exists for Docker-side cleanup (containers, volumes); it is destructive and prunes unused Docker resources without prompting.
+
+## Security model — note
+
+Kato hands large amounts of trust to the underlying agent (Claude / OpenHands): the agent reads the task description, decides which files to edit, and writes the changes. What kato actually does to contain a misbehaving agent today:
+
+- **Prompt-level guardrails** baked into every kato prompt ([cli_client.py](kato/client/claude/cli_client.py)) ask the agent not to touch credentials, escape the repository, or run git commands. These are advisory — a sufficiently determined or compromised model can ignore them.
+- **Per-tool permission prompts via the planning UI** when `KATO_CLAUDE_BYPASS_PERMISSIONS=false` (the default). Each Bash / write-style tool call fires a modal that you Approve / Deny by hand, and the decision is sent back to Claude before it can act. This is the real interactive safety layer; it only works when you're watching.
+- **Per-task workspace isolation on the filesystem.** Each task gets a fresh clone under `~/.kato/workspaces/<task-id>/`. Two parallel tasks don't share branch state. This is isolation between *tasks*, not between *the agent and your machine*.
+
+What kato does **not** do today:
+
+- Network isolation for the agent (it has the same network access as the host kato process).
+- Filesystem sandboxing (the agent can read anything the kato process can).
+- Per-task containerization for the agent.
+
+`KATO_CLAUDE_BYPASS_PERMISSIONS=true` removes the planning-UI prompt layer in exchange for unattended speed. Only enable it when you've already locked the agent down at a different layer (e.g. you're running kato inside a network-restricted environment of your own making).
+
+The actual safety net is the same one you use for human contributors: **review every diff before merging**. Treat the agent's output as untrusted and gate it through normal code review.
+
+Planned (not wired yet): integration with [Claude Code's devcontainer support](https://code.claude.com/docs/en/devcontainer), which will let kato run the agent inside a container with no network and only the per-task workspace mounted in.
+
+### No warranty
+
+Kato is provided under the [MIT License](LICENSE) — no warranty, express or implied. You run kato on your code, your repos, and your credentials at your own risk. The maintainers do not take responsibility for damage caused by the agent (a compromised model, a misconfigured environment, an exfiltrated secret, a force-pushed branch, anything else). If your use case requires guaranteed isolation or compliance properties, build that layer yourself before pointing kato at production work.
 
 ## Testing
 
