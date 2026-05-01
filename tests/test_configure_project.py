@@ -380,7 +380,10 @@ class ConfigureProjectTests(unittest.TestCase):
 
     @staticmethod
     def _validate_agent_env(values: dict[str, str]) -> list[str]:
-        with patch('kato.validate_env.discover_git_repositories', return_value=[]):
+        with patch(
+            'kato.helpers.repository_discovery_utils.discover_git_repositories',
+            return_value=[],
+        ):
             return validate_agent_env(values)
 
     def test_main_writes_env_file(self) -> None:

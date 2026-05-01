@@ -1,7 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { NOTIFICATION_KIND } from '../constants/notificationKind.js';
 import { cssEscapeAttr } from '../utils/dom.js';
 
 const STORAGE_KEY = 'kato.notifications';
+const KIND_STORAGE_KEY = 'kato.notifications.kinds';
+const ALL_KINDS = Object.values(NOTIFICATION_KIND);
+
+function _readKindPrefs() {
+  if (typeof localStorage === 'undefined') {
+    return Object.fromEntries(ALL_KINDS.map((k) => [k, true]));
+  }
+  try {
+    const raw = localStorage.getItem(KIND_STORAGE_KEY);
+    if (!raw) {
+      return Object.fromEntries(ALL_KINDS.map((k) => [k, true]));
+    }
+    const parsed = JSON.parse(raw);
+    return Object.fromEntries(
+      ALL_KINDS.map((k) => [k, parsed[k] !== false]),
+    );
+  } catch (_) {
+    return Object.fromEntries(ALL_KINDS.map((k) => [k, true]));
+  }
+}
 
 export function useNotifications({ activeTaskId, onTaskClick }) {
   const supported = typeof window !== 'undefined' && 'Notification' in window;
@@ -14,15 +35,27 @@ export function useNotifications({ activeTaskId, onTaskClick }) {
     && (typeof localStorage !== 'undefined'
         && localStorage.getItem(STORAGE_KEY) === 'on')
   ));
+  const [kindPrefs, setKindPrefs] = useState(_readKindPrefs);
   const onTaskClickRef = useRef(onTaskClick);
   onTaskClickRef.current = onTaskClick;
   const activeTaskIdRef = useRef(activeTaskId);
   activeTaskIdRef.current = activeTaskId;
+  const kindPrefsRef = useRef(kindPrefs);
+  kindPrefsRef.current = kindPrefs;
 
   const persistEnabled = useCallback((value) => {
     setEnabled(value);
     try { localStorage.setItem(STORAGE_KEY, value ? 'on' : 'off'); }
     catch (_) { /* private mode / quota */ }
+  }, []);
+
+  const setKindEnabled = useCallback((kind, on) => {
+    setKindPrefs((prev) => {
+      const next = { ...prev, [kind]: !!on };
+      try { localStorage.setItem(KIND_STORAGE_KEY, JSON.stringify(next)); }
+      catch (_) { /* private mode / quota */ }
+      return next;
+    });
   }, []);
 
   const toggle = useCallback(async () => {
@@ -40,11 +73,15 @@ export function useNotifications({ activeTaskId, onTaskClick }) {
   const notify = useCallback(({ title, body, taskId, kind }) => {
     if (!enabled || !supported || Notification.permission !== 'granted') { return; }
     if (!document.hidden && taskId && taskId === activeTaskIdRef.current) { return; }
+    // Per-kind opt-out. Unknown kinds are allowed by default so a new
+    // notification surface doesn't get silently swallowed.
+    const kindKey = kind || 'info';
+    if (kindPrefsRef.current[kindKey] === false) { return; }
     try {
       const notification = new Notification(title, {
         body: body || '',
         icon: '/logo.png',
-        tag: `kato-${kind || 'info'}-${taskId || 'global'}`,
+        tag: `kato-${kindKey}-${taskId || 'global'}`,
       });
       notification.onclick = () => {
         window.focus();
@@ -69,7 +106,15 @@ export function useNotifications({ activeTaskId, onTaskClick }) {
     return () => clearInterval(id);
   }, [enabled, permission, persistEnabled, supported]);
 
-  return { supported, enabled, permission, toggle, notify };
+  return {
+    supported,
+    enabled,
+    permission,
+    toggle,
+    notify,
+    kindPrefs,
+    setKindEnabled,
+  };
 }
 
 export { cssEscapeAttr };

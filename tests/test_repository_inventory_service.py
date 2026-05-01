@@ -218,10 +218,14 @@ class RepositoryInventoryServiceTests(unittest.TestCase):
                 ),
             )
 
-        self.assertEqual([repository.id for repository in service.repositories], ['ob-love-admin-client'])
-        self.assertEqual(service.repositories[0].display_name, 'Ob Love Admin Client')
-        self.assertEqual(service.repositories[0].repo_slug, 'ob-love-admin-client')
-        self.assertEqual(service.repositories[0].aliases, ['project', 'ob-love-admin-client'])
+            # Lazy discovery: must access repositories while the temp
+            # directory still exists, since the walk now happens at
+            # first-read time, not at __init__.
+            repositories = service.repositories
+            self.assertEqual([repository.id for repository in repositories], ['ob-love-admin-client'])
+            self.assertEqual(repositories[0].display_name, 'Ob Love Admin Client')
+            self.assertEqual(repositories[0].repo_slug, 'ob-love-admin-client')
+            self.assertEqual(repositories[0].aliases, ['project', 'ob-love-admin-client'])
 
     @staticmethod
     def _create_git_repository(path: Path, remote_url: str) -> None:

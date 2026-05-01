@@ -5,8 +5,10 @@ export default function TabList({
   activeTaskId,
   attentionTaskIds,
   onSelect,
+  onForget,
 }) {
-  if (!sessions || sessions.length === 0) {
+  const isEmpty = !sessions || sessions.length === 0;
+  if (isEmpty) {
     return (
       <aside id="tabs-pane">
         <p id="empty-state" className="empty">
@@ -16,18 +18,24 @@ export default function TabList({
       </aside>
     );
   }
+  const tabs = sessions.map((session) => {
+    const isActive = session.task_id === activeTaskId;
+    const needsAttention = !!attentionTaskIds && attentionTaskIds.has(session.task_id);
+    return (
+      <Tab
+        key={session.task_id}
+        session={session}
+        active={isActive}
+        needsAttention={needsAttention}
+        onSelect={onSelect}
+        onForget={onForget}
+      />
+    );
+  });
   return (
     <aside id="tabs-pane">
       <ul id="tab-list">
-        {sessions.map((session) => (
-          <Tab
-            key={session.task_id}
-            session={session}
-            active={session.task_id === activeTaskId}
-            needsAttention={attentionTaskIds?.has(session.task_id) || false}
-            onSelect={onSelect}
-          />
-        ))}
+        {tabs}
       </ul>
     </aside>
   );

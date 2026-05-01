@@ -19,7 +19,28 @@ from pathlib import Path
 from kato.helpers.text_utils import normalized_text
 
 
-_MAX_CHARS = 200_000
+_MAX_BODY_CHARS = 200_000
+
+
+_LIVING_DOC_DIRECTIVE_TEMPLATE = (
+    'Project architecture document (location: {path}).\n'
+    'Treat this as a living document that you, Claude, are responsible '
+    'for keeping accurate. At the start of every task: re-read this '
+    'document and let it shape your plan. While working: if you discover '
+    'something about the project that is not in this document and would '
+    'help a future agent (a non-obvious convention, a hidden contract, a '
+    'gotcha, a layer boundary, a "why we do it this way"), update the '
+    'document via the Edit tool — append a new sub-section under the '
+    'most appropriate top-level section, or add a new section if none '
+    'fits. Do not duplicate content that is already documented; do not '
+    'restate what the code already shows. The document is a navigation '
+    'aid and a contract registry, not a mirror of the source. Kato '
+    'commits and pushes the file (you must NEVER run git); just edit.\n'
+    '\n'
+    '--- BEGIN ARCHITECTURE DOCUMENT ---\n'
+    '{text}\n'
+    '--- END ARCHITECTURE DOCUMENT ---\n'
+)
 
 
 def read_architecture_doc(
@@ -29,10 +50,15 @@ def read_architecture_doc(
 ) -> str:
     """Return the architecture-doc text, or '' when nothing is configured.
 
-    The result is trimmed and capped at ``_MAX_CHARS`` so a runaway file
-    can't blow the system-prompt budget. ``path`` may be an empty string
-    (returns ''), a missing file (warns once + returns ''), or a real
-    file (returns content).
+    The body is trimmed and capped at ``_MAX_BODY_CHARS`` so a runaway
+    file can't blow the system-prompt budget. The wrapper directive adds
+    a fixed prefix + suffix on top of the body, so the final returned
+    string is slightly longer than the cap. ``path`` may be an empty
+    string (returns ''), a missing file (warns once + returns ''), or a
+    real file (returns content). When content is found, it is wrapped
+    in a "living document" directive instructing Claude to re-read it
+    at the start of every task and to update it (via Edit) when
+    discovering new project knowledge.
     """
     normalized = normalized_text(path)
     if not normalized:
@@ -56,6 +82,9 @@ def read_architecture_doc(
     text = text.strip()
     if not text:
         return ''
-    if len(text) > _MAX_CHARS:
-        text = text[:_MAX_CHARS]
-    return text
+    if len(text) > _MAX_BODY_CHARS:
+        text = text[:_MAX_BODY_CHARS]
+    return _LIVING_DOC_DIRECTIVE_TEMPLATE.format(
+        path=str(file_path),
+        text=text,
+    )

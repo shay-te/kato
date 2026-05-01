@@ -4,8 +4,12 @@ KATO_SOURCE_FINGERPRINT := $(shell $(PYTHON) -m kato.helpers.runtime_identity_ut
 
 .PHONY: bootstrap configure doctor doctor-agent doctor-openhands test run compose-up compose-up-docker
 
+# All operator-facing entry points are canonical Python scripts so the
+# behavior matches what Windows operators see (`python scripts\<name>.py`).
+# The `.sh` files are POSIX-only wrappers; we skip them here.
+
 bootstrap:
-	./scripts/bootstrap.sh
+	$(PYTHON) scripts/bootstrap.py
 
 configure:
 	$(VENV_PYTHON) scripts/generate_env.py --output .env
@@ -23,10 +27,10 @@ test:
 	$(VENV_PYTHON) -m unittest discover -s tests
 
 run:
-	./scripts/run-local.sh
+	$(VENV_PYTHON) scripts/run_local.py
 
 compose-up:
-	./scripts/run-local.sh
+	$(VENV_PYTHON) scripts/run_local.py
 
 # Original docker-compose flow. Kept available for cases where you actually
 # need OpenHands containerized; the local Claude-backed path is `compose-up`.

@@ -64,10 +64,12 @@ class RepositoryServiceTests(unittest.TestCase):
                 3,
             )
 
-        self.assertEqual([repository.id for repository in service.repositories], ['ob-love-admin-client'])
-        self.assertEqual(service.repositories[0].display_name, 'Ob Love Admin Client')
-        self.assertEqual(service.repositories[0].repo_slug, 'ob-love-admin-client')
-        self.assertEqual(service.repositories[0].aliases, ['project', 'ob-love-admin-client'])
+            # Lazy discovery: read while the temp dir still exists.
+            repositories = service.repositories
+            self.assertEqual([repository.id for repository in repositories], ['ob-love-admin-client'])
+            self.assertEqual(repositories[0].display_name, 'Ob Love Admin Client')
+            self.assertEqual(repositories[0].repo_slug, 'ob-love-admin-client')
+            self.assertEqual(repositories[0].aliases, ['project', 'ob-love-admin-client'])
 
     def test_raises_when_no_repository_matches_task_text(self) -> None:
         service = RepositoryService(self.cfg.kato.repositories, 3)
@@ -1562,6 +1564,10 @@ class RepositoryServiceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'missing local repository path'):
                 service.validate_connections()
 
+    @unittest.skip(
+        'Obsolete: validate_connections is now lazy. Per-repo git-access '
+        'checks fire at first resolve_task_repositories(), not at boot.'
+    )
     def test_validate_connections_checks_git_access_for_single_repository_root(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             projects_root = Path(temp_dir)
@@ -1619,6 +1625,11 @@ class RepositoryServiceTests(unittest.TestCase):
         )
         self.assertEqual(mock_run.call_args.kwargs['env']['GIT_TERMINAL_PROMPT'], '0')
 
+    @unittest.skip(
+        'Obsolete: validate_connections is now lazy. Auto-discovery + '
+        'per-repo git-access checks defer to first resolve_task_repositories(). '
+        'Per-repo access is exercised by preflight tests.'
+    )
     def test_validate_connections_checks_git_access_for_each_repository_in_parent_root(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             projects_root = Path(temp_dir)
@@ -1728,6 +1739,10 @@ class RepositoryServiceTests(unittest.TestCase):
         ).decode('ascii')
         self.assertEqual(header, expected_header)
 
+    @unittest.skip(
+        'Obsolete: validate_connections is now lazy. Per-repo git-permission '
+        'errors surface at preflight time (TaskPreflightService), not at boot.'
+    )
     def test_validate_connections_stops_when_git_permissions_are_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             projects_root = Path(temp_dir)
@@ -2066,6 +2081,11 @@ class RepositoryServiceTests(unittest.TestCase):
             ):
                 service.prepare_task_repositories([self.cfg.kato.repositories[0]])
 
+    @unittest.skip(
+        'Obsolete: zero explicit repositories is now valid at boot — '
+        'auto-discovery via REPOSITORY_ROOT_PATH happens lazily on the first '
+        'task. The "no repos resolvable" error now surfaces at preflight.'
+    )
     def test_validate_connections_requires_at_least_one_repository(self) -> None:
         service = RepositoryService([], 3)
 

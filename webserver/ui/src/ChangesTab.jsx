@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { parseDiff, Diff, Hunk } from 'react-diff-view';
 import 'react-diff-view/style/index.css';
 import { fetchDiff } from './api.js';
+import Icon from './components/Icon.jsx';
 
 export default function ChangesTab({
   taskId,
@@ -10,6 +11,7 @@ export default function ChangesTab({
   const [state, setState] = useState({
     status: 'loading',
     diffs: [],
+    workspaceStatus: '',
     error: '',
   });
   const [collapsed, setCollapsed] = useState(() => new Set());
@@ -17,27 +19,27 @@ export default function ChangesTab({
   useEffect(() => {
     if (!taskId) { return; }
     let cancelled = false;
-    setState({ status: 'loading', diffs: [], error: '' });
+    setState({ status: 'loading', diffs: [], workspaceStatus: '', error: '' });
     fetchDiff(taskId)
       .then((payload) => {
         if (cancelled) { return; }
         setState({
           status: 'ready',
           diffs: parseRepoDiffs(payload),
+          workspaceStatus: String(payload?.workspace_status || ''),
           error: '',
         });
       })
       .catch((err) => {
         if (cancelled) { return; }
-        setState({ status: 'error', diffs: [], error: String(err) });
+        setState({ status: 'error', diffs: [], workspaceStatus: '', error: String(err) });
       });
     return () => { cancelled = true; };
   }, [taskId, workspaceVersion]);
 
-  const repoIds = useMemo(
-    () => state.diffs.map((entry) => entry.repo_id || entry.cwd),
-    [state.diffs],
-  );
+  const repoIds = useMemo(() => {
+    return state.diffs.map((entry) => entry.repo_id || entry.cwd);
+  }, [state.diffs]);
 
   function toggleRepo(repoKey) {
     setCollapsed((prev) => {
@@ -49,55 +51,84 @@ export default function ChangesTab({
   function collapseAll() { setCollapsed(new Set(repoIds)); }
   function expandAll() { setCollapsed(new Set()); }
 
+  const diffLabel = diffLabelForStatus(state.workspaceStatus);
+  const showToolbar = repoIds.length > 1;
+  const toolbar = showToolbar && (
+    <span className="changes-tab-toolbar">
+      <button
+        type="button"
+        className="changes-tab-icon-btn"
+        title="Expand all repositories"
+        onClick={expandAll}
+      >
+        <Icon name="plus" />
+      </button>
+      <button
+        type="button"
+        className="changes-tab-icon-btn"
+        title="Collapse all repositories"
+        onClick={collapseAll}
+      >
+        <Icon name="minus" />
+      </button>
+    </span>
+  );
+
+  let body;
+  if (state.status === 'loading') {
+    body = <p className="changes-tab-message">Computing diff…</p>;
+  } else if (state.status === 'error') {
+    body = <p className="changes-tab-message error">{state.error}</p>;
+  } else if (state.diffs.length === 0) {
+    body = <p className="changes-tab-message">No repositories for this task.</p>;
+  } else {
+    body = state.diffs.map((repoDiff) => {
+      const repoKey = repoDiff.repo_id || repoDiff.cwd;
+      return (
+        <RepoDiff
+          key={repoKey}
+          repoDiff={repoDiff}
+          collapsed={collapsed.has(repoKey)}
+          onToggle={() => toggleRepo(repoKey)}
+        />
+      );
+    });
+  }
+
+  const showHeader = !!diffLabel || showToolbar;
+  const header = showHeader && (
+    <header className="changes-tab-header">
+      <span>{diffLabel}</span>
+      {toolbar}
+    </header>
+  );
   return (
     <div className="changes-tab">
-      <header className="changes-tab-header">
-        <span>diff</span>
-        {repoIds.length > 1 && (
-          <span className="changes-tab-toolbar">
-            <button
-              type="button"
-              className="changes-tab-icon-btn"
-              title="Expand all repositories"
-              onClick={expandAll}
-            >
-              ▾
-            </button>
-            <button
-              type="button"
-              className="changes-tab-icon-btn"
-              title="Collapse all repositories"
-              onClick={collapseAll}
-            >
-              ▸
-            </button>
-          </span>
-        )}
-      </header>
+      {header}
       <div className="changes-tab-body">
-        {state.status === 'loading' && (
-          <p className="changes-tab-message">Computing diff…</p>
-        )}
-        {state.status === 'error' && (
-          <p className="changes-tab-message error">{state.error}</p>
-        )}
-        {state.status === 'ready' && state.diffs.length === 0 && (
-          <p className="changes-tab-message">No repositories for this task.</p>
-        )}
-        {state.status === 'ready' && state.diffs.map((repoDiff) => {
-          const repoKey = repoDiff.repo_id || repoDiff.cwd;
-          return (
-            <RepoDiff
-              key={repoKey}
-              repoDiff={repoDiff}
-              collapsed={collapsed.has(repoKey)}
-              onToggle={() => toggleRepo(repoKey)}
-            />
-          );
-        })}
+        {body}
       </div>
     </div>
   );
+}
+
+// Maps the workspace status reported by /api/sessions/<id>/diff into a
+// header label so a "still has a diff" tab doesn't look like uncommitted
+// work after publish. Empty string for the active/in-flight case — the
+// "Changes" tab title already says what the body is.
+function diffLabelForStatus(status) {
+  switch (String(status || '').toLowerCase()) {
+    case 'review':
+      return 'already pushed (PR open)';
+    case 'done':
+      return 'merged';
+    case 'errored':
+      return 'publish errored';
+    case 'terminated':
+      return 'terminated';
+    default:
+      return '';
+  }
 }
 
 // Shape the wire payload into a uniform per-repo list. Handles both the
@@ -135,10 +166,11 @@ function basenameOf(path) {
 
 function RepoDiff({ repoDiff, collapsed, onToggle }) {
   const heading = repoDiff.repo_id || repoDiff.cwd || 'repo';
+  const chevronName = collapsed ? 'chevron-right' : 'chevron-down';
   return (
     <section className="diff-repo">
       <header className="diff-repo-header" onClick={onToggle}>
-        <span className="diff-repo-chevron">{collapsed ? '▸' : '▾'}</span>
+        <span className="diff-repo-chevron"><Icon name={chevronName} /></span>
         <span className="diff-repo-name">{heading}</span>
         {repoDiff.base && repoDiff.head && (
           <span className="diff-repo-range">

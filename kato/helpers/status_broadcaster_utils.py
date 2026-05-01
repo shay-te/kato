@@ -123,23 +123,46 @@ class StatusBroadcastHandler(logging.Handler):
         )
 
 
+_KATO_WORKFLOW_LOGGER_PREFIX = 'kato.workflow'
+
+
 def install_status_broadcast_handler(
     broadcaster: StatusBroadcaster,
     *,
     level: int = logging.INFO,
     root_logger: logging.Logger | None = None,
 ) -> StatusBroadcastHandler:
-    """Attach a :class:`StatusBroadcastHandler` to the root logger.
+    """Attach a :class:`StatusBroadcastHandler` to the root *and* workflow loggers.
+
+    Why both: ``kato.helpers.logging_utils`` sets
+    ``propagate = False`` on the ``kato.workflow`` logger so the
+    workflow handler can format mission lines in colour without doubling
+    them into the root logger's stderr handler. The side effect is that
+    *every* ``Mission ...`` / ``task ...`` log line — exactly the lines
+    the planning UI's status bar should reflect — never reaches the root
+    logger. Installing on root alone would leave the UI silent for the
+    most useful events.
 
     Idempotent: re-installing replaces any prior handler bound to the
-    same broadcaster so a hot-reload doesn't double-fire entries.
+    same broadcaster on each target logger so a hot-reload doesn't
+    double-fire entries.
     """
-    target = root_logger or logging.getLogger()
-    for existing in list(target.handlers):
-        if isinstance(existing, StatusBroadcastHandler) and existing._broadcaster is broadcaster:
-            target.removeHandler(existing)
-    handler = StatusBroadcastHandler(broadcaster, level=level)
-    target.addHandler(handler)
-    if target.level == logging.NOTSET or target.level > level:
-        target.setLevel(level)
-    return handler
+    targets: list[logging.Logger] = []
+    targets.append(root_logger or logging.getLogger())
+    targets.append(logging.getLogger(_KATO_WORKFLOW_LOGGER_PREFIX))
+    handler: StatusBroadcastHandler | None = None
+    for target in targets:
+        for existing in list(target.handlers):
+            if (
+                isinstance(existing, StatusBroadcastHandler)
+                and existing._broadcaster is broadcaster
+            ):
+                target.removeHandler(existing)
+        new_handler = StatusBroadcastHandler(broadcaster, level=level)
+        target.addHandler(new_handler)
+        if target.level == logging.NOTSET or target.level > level:
+            target.setLevel(level)
+        handler = new_handler
+    # Returns the handler attached to the last target — historically the
+    # workflow logger now, since that's where most kato events live.
+    return handler  # type: ignore[return-value]

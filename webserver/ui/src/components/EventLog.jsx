@@ -4,6 +4,7 @@ import { BUBBLE_KIND } from '../constants/bubbleKind.js';
 import { CLAUDE_EVENT, CLAUDE_SYSTEM_SUBTYPE } from '../constants/claudeEvent.js';
 import { ENTRY_SOURCE } from '../constants/entrySource.js';
 import { stringifyShort } from '../utils/dom.js';
+import { formatToolUse } from '../utils/formatToolUse.js';
 
 export default function EventLog({ entries, banner }) {
   const containerRef = useRef(null);
@@ -12,10 +13,14 @@ export default function EventLog({ entries, banner }) {
     if (node) { node.scrollTop = node.scrollHeight; }
   }, [entries.length, banner]);
 
+  const bannerBubble = banner && <Bubble kind={BUBBLE_KIND.SYSTEM}>{banner}</Bubble>;
+  const eventBubbles = entries.flatMap((entry, index) => {
+    return bubblesFor(entry, index);
+  });
   return (
     <div id="event-log" ref={containerRef}>
-      {banner && <Bubble kind={BUBBLE_KIND.SYSTEM}>{banner}</Bubble>}
-      {entries.flatMap((entry, index) => bubblesFor(entry, index))}
+      {bannerBubble}
+      {eventBubbles}
     </div>
   );
 }
@@ -63,12 +68,16 @@ function serverBubblesFor(raw, index, isHistory = false) {
     case CLAUDE_EVENT.CONTROL_REQUEST:
     case CLAUDE_EVENT.PERMISSION_RESPONSE:
       return [];
-    default:
+    default: {
+      const eventLabel = raw.subtype
+        ? `${raw.type} / ${raw.subtype}`
+        : String(raw.type || '');
       return [
         <Bubble key={keyOf(raw, index, 'tool')} kind={BUBBLE_KIND.TOOL}>
-          {`${raw.type}${raw.subtype ? ' / ' + raw.subtype : ''}`}
+          {eventLabel}
         </Bubble>,
       ];
+    }
   }
 }
 
@@ -83,12 +92,13 @@ function assistantBubbles(raw, index) {
       textPieces.push(block.text);
     } else if (block.type === 'tool_use') {
       const toolName = block.name || 'tool';
+      const summary = formatToolUse(toolName, block.input);
       toolBubbles.push(
         <Bubble
           key={keyOf(raw, index, `tool-${block.id || toolBubbles.length}`)}
           kind={BUBBLE_KIND.TOOL}
         >
-          {`→ ${toolName}(${stringifyShort(block.input)})`}
+          {`→ ${summary}`}
         </Bubble>,
       );
     }
@@ -119,12 +129,15 @@ function historyUserBubbles(raw, index) {
 function resultBubbles(raw, index) {
   const ok = !raw.is_error;
   const summary = raw.result || (ok ? 'completed' : 'failed');
+  const bubbleKind = ok ? BUBBLE_KIND.SYSTEM : BUBBLE_KIND.ERROR;
+  const resultLabel = ok ? 'success' : 'error';
+  const resultText = `(result: ${resultLabel}) ${summary}`;
   return [
     <Bubble
       key={keyOf(raw, index, 'result')}
-      kind={ok ? BUBBLE_KIND.SYSTEM : BUBBLE_KIND.ERROR}
+      kind={bubbleKind}
     >
-      {`(result: ${ok ? 'success' : 'error'}) ${summary}`}
+      {resultText}
     </Bubble>,
   ];
 }

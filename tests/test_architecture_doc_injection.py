@@ -68,10 +68,13 @@ class ReadArchitectureDocTests(unittest.TestCase):
 
         result = read_architecture_doc(str(path))
 
-        self.assertTrue(result.startswith('# Kato architecture'))
-        self.assertTrue(result.endswith('Layers ...'))
-        # No leading/trailing whitespace.
-        self.assertEqual(result, result.strip())
+        # File body is wrapped in a "living document" prompt directive so
+        # Claude knows to re-read + update it. Body content must appear
+        # inside the wrapped output, between the BEGIN/END markers.
+        self.assertIn('# Kato architecture', result)
+        self.assertIn('Layers ...', result)
+        self.assertIn('--- BEGIN ARCHITECTURE DOCUMENT ---', result)
+        self.assertIn('--- END ARCHITECTURE DOCUMENT ---', result)
 
     def test_returns_empty_for_whitespace_only_file(self) -> None:
         path = self.tmp_root / 'ARCHITECTURE.md'
@@ -85,8 +88,11 @@ class ReadArchitectureDocTests(unittest.TestCase):
 
         result = read_architecture_doc(str(path))
 
-        self.assertEqual(len(result), 200_000)
-        self.assertTrue(result.startswith('x'))
+        # Body is capped at 200k chars (the wrapper adds a fixed prefix +
+        # suffix on top, so the final string is longer but the embedded
+        # body is exactly 200k 'x's).
+        self.assertIn('x' * 200_000, result)
+        self.assertNotIn('x' * 200_001, result)
 
     def test_expands_tilde_in_path(self) -> None:
         # ``~/ARCHITECTURE.md`` should resolve to ``$HOME/ARCHITECTURE.md``.
@@ -100,7 +106,7 @@ class ReadArchitectureDocTests(unittest.TestCase):
 
         result = read_architecture_doc('~/ARCHITECTURE.md')
 
-        self.assertEqual(result, '# tilde-resolved')
+        self.assertIn('# tilde-resolved', result)
 
     @staticmethod
     def _restore_home(original_home: str | None) -> None:
@@ -149,7 +155,10 @@ class ClaudeCliClientArchitectureDocTests(unittest.TestCase):
 
         self.assertIn('--append-system-prompt', cmd)
         index = cmd.index('--append-system-prompt')
-        self.assertEqual(cmd[index + 1], '# Kato architecture\n\nLayers...')
+        # Doc content is wrapped in a "living document" directive so the
+        # value is the wrapped string, not just the raw file body.
+        self.assertIn('# Kato architecture', cmd[index + 1])
+        self.assertIn('Layers...', cmd[index + 1])
 
     def test_doc_is_re_read_on_every_build(self) -> None:
         # Editing the doc between spawns should land in the next
@@ -166,8 +175,9 @@ class ClaudeCliClientArchitectureDocTests(unittest.TestCase):
 
         first_idx = first.index('--append-system-prompt')
         second_idx = second.index('--append-system-prompt')
-        self.assertEqual(first[first_idx + 1], 'first version')
-        self.assertEqual(second[second_idx + 1], 'second version')
+        self.assertIn('first version', first[first_idx + 1])
+        self.assertIn('second version', second[second_idx + 1])
+        self.assertNotIn('first version', second[second_idx + 1])
 
 
 class StreamingClaudeSessionArchitectureDocTests(unittest.TestCase):
@@ -205,18 +215,24 @@ class StreamingClaudeSessionArchitectureDocTests(unittest.TestCase):
 
         self.assertIn('--append-system-prompt', cmd)
         index = cmd.index('--append-system-prompt')
-        self.assertEqual(cmd[index + 1], '# Kato architecture\n\nLayers...')
+        self.assertIn('# Kato architecture', cmd[index + 1])
+        self.assertIn('Layers...', cmd[index + 1])
 
     def test_doc_is_re_read_on_every_build_for_streaming_sessions_too(self) -> None:
-        _write(self.doc_path, 'one')
+        # Use distinctive tokens that can't accidentally appear inside the
+        # living-document directive wrapper.
+        _write(self.doc_path, 'token-FIRST-revision')
         session = self._build_session(architecture_doc_path=str(self.doc_path))
 
         first = session._build_command()
-        _write(self.doc_path, 'two')
+        _write(self.doc_path, 'token-SECOND-revision')
         second = session._build_command()
 
-        self.assertEqual(first[first.index('--append-system-prompt') + 1], 'one')
-        self.assertEqual(second[second.index('--append-system-prompt') + 1], 'two')
+        first_value = first[first.index('--append-system-prompt') + 1]
+        second_value = second[second.index('--append-system-prompt') + 1]
+        self.assertIn('token-FIRST-revision', first_value)
+        self.assertIn('token-SECOND-revision', second_value)
+        self.assertNotIn('token-FIRST-revision', second_value)
 
 
 class ResumedSessionStillReceivesDocTests(unittest.TestCase):
@@ -242,9 +258,9 @@ class ResumedSessionStillReceivesDocTests(unittest.TestCase):
         self.assertIn('--resume', cmd)
         self.assertIn('abc-123', cmd)
         # Both flags should have a value following them.
-        self.assertEqual(
-            cmd[cmd.index('--append-system-prompt') + 1],
+        self.assertIn(
             'shared context',
+            cmd[cmd.index('--append-system-prompt') + 1],
         )
 
     def test_cli_client_with_resume_keeps_append_system_prompt(self) -> None:
@@ -257,9 +273,9 @@ class ResumedSessionStillReceivesDocTests(unittest.TestCase):
 
         self.assertIn('--append-system-prompt', cmd)
         self.assertIn('--resume', cmd)
-        self.assertEqual(
-            cmd[cmd.index('--append-system-prompt') + 1],
+        self.assertIn(
             'shared context',
+            cmd[cmd.index('--append-system-prompt') + 1],
         )
 
 

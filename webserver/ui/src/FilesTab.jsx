@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Tree } from 'react-arborist';
 import { fetchFileTree } from './api.js';
+import Icon from './components/Icon.jsx';
 import { useChatComposer } from './contexts/ChatComposerContext.jsx';
 
 export default function FilesTab({ taskId, workspaceVersion = 0 }) {
@@ -10,6 +11,7 @@ export default function FilesTab({ taskId, workspaceVersion = 0 }) {
     trees: [],
     error: '',
   });
+  const [collapsed, setCollapsed] = useState(() => new Set());
   const containerRef = useRef(null);
   const [size, setSize] = useState({ width: 320, height: 480 });
 
@@ -48,26 +50,75 @@ export default function FilesTab({ taskId, workspaceVersion = 0 }) {
     return () => observer.disconnect();
   }, []);
 
+  const repoIds = useMemo(() => {
+    return state.trees.map((entry) => entry.repo_id || entry.cwd);
+  }, [state.trees]);
+
+  function toggleRepo(repoKey) {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(repoKey)) { next.delete(repoKey); } else { next.add(repoKey); }
+      return next;
+    });
+  }
+  function collapseAll() { setCollapsed(new Set(repoIds)); }
+  function expandAll() { setCollapsed(new Set()); }
+
+  const showToolbar = repoIds.length > 1;
+  const toolbar = showToolbar && (
+    <span className="files-tab-toolbar">
+      <button
+        type="button"
+        className="files-tab-icon-btn"
+        title="Expand all repositories"
+        onClick={expandAll}
+      >
+        <Icon name="plus" />
+      </button>
+      <button
+        type="button"
+        className="files-tab-icon-btn"
+        title="Collapse all repositories"
+        onClick={collapseAll}
+      >
+        <Icon name="minus" />
+      </button>
+    </span>
+  );
+
+  let body;
+  if (state.status === 'loading') {
+    body = <p className="files-tab-message">Loading files…</p>;
+  } else if (state.status === 'error') {
+    body = <p className="files-tab-message error">{state.error}</p>;
+  } else if (state.trees.length === 0) {
+    body = <p className="files-tab-message">No tracked files in this task.</p>;
+  } else {
+    body = state.trees.map((repoTree) => {
+      const repoKey = repoTree.repo_id || repoTree.cwd;
+      return (
+        <RepoTree
+          key={repoKey}
+          repoTree={repoTree}
+          width={size.width}
+          collapsed={collapsed.has(repoKey)}
+          onToggle={() => toggleRepo(repoKey)}
+          onPickFile={appendToInput}
+        />
+      );
+    });
+  }
+
+  const header = showToolbar && (
+    <header className="files-tab-header">
+      {toolbar}
+    </header>
+  );
   return (
     <div className="files-tab">
+      {header}
       <div className="files-tab-body" ref={containerRef}>
-        {state.status === 'loading' && (
-          <p className="files-tab-message">Loading files…</p>
-        )}
-        {state.status === 'error' && (
-          <p className="files-tab-message error">{state.error}</p>
-        )}
-        {state.status === 'ready' && state.trees.length === 0 && (
-          <p className="files-tab-message">No tracked files in this task.</p>
-        )}
-        {state.status === 'ready' && state.trees.map((repoTree) => (
-          <RepoTree
-            key={repoTree.cwd || repoTree.repo_id}
-            repoTree={repoTree}
-            width={size.width}
-            onPickFile={appendToInput}
-          />
-        ))}
+        {body}
       </div>
     </div>
   );
@@ -103,32 +154,48 @@ function basenameOf(path) {
   return idx >= 0 ? trimmed.slice(idx + 1) : trimmed;
 }
 
-function RepoTree({ repoTree, width, onPickFile }) {
-  const treeData = useMemo(() => attachIds(repoTree.tree), [repoTree.tree]);
+function RepoTree({ repoTree, width, collapsed, onToggle, onPickFile }) {
+  const treeData = useMemo(() => {
+    return attachIds(repoTree.tree);
+  }, [repoTree.tree]);
   const heading = repoTree.repo_id || repoTree.cwd || 'repo';
   const treeHeight = Math.max(120, Math.min(treeData.length * 22 + 8, 800));
+  const chevronName = collapsed ? 'chevron-right' : 'chevron-down';
+  let body;
+  if (collapsed) {
+    body = null;
+  } else if (treeData.length === 0) {
+    body = <p className="files-tab-message">No tracked files in this repo.</p>;
+  } else {
+    body = (
+      <Tree
+        data={treeData}
+        width={width}
+        height={treeHeight}
+        rowHeight={22}
+        indent={14}
+        openByDefault={false}
+        disableDrag
+        disableDrop
+        disableEdit
+      >
+        {(props) => <Node {...props} onPickFile={onPickFile} />}
+      </Tree>
+    );
+  }
   return (
     <section className="files-tab-repo">
-      <header className="files-tab-repo-header" title={repoTree.cwd}>
-        {heading}
+      <header
+        className="files-tab-repo-header"
+        title={repoTree.cwd}
+        onClick={onToggle}
+      >
+        <span className="files-tab-repo-chevron">
+          <Icon name={chevronName} />
+        </span>
+        <span className="files-tab-repo-name">{heading}</span>
       </header>
-      {treeData.length === 0 ? (
-        <p className="files-tab-message">No tracked files in this repo.</p>
-      ) : (
-        <Tree
-          data={treeData}
-          width={width}
-          height={treeHeight}
-          rowHeight={22}
-          indent={14}
-          openByDefault={false}
-          disableDrag
-          disableDrop
-          disableEdit
-        >
-          {(props) => <Node {...props} onPickFile={onPickFile} />}
-        </Tree>
-      )}
+      {body}
     </section>
   );
 }
@@ -155,15 +222,22 @@ function Node({ node, style, onPickFile }) {
       onPickFile(node.data.path);
     }
   }
+  const rowClass = 'tree-row' + (node.isSelected ? ' selected' : '');
+  let iconName;
+  if (!isFolder) {
+    iconName = 'file';
+  } else if (node.isOpen) {
+    iconName = 'folder-open';
+  } else {
+    iconName = 'folder';
+  }
   return (
     <div
-      className={'tree-row' + (node.isSelected ? ' selected' : '')}
+      className={rowClass}
       style={style}
       onClick={onActivate}
     >
-      <span className="tree-row-icon">
-        {isFolder ? (node.isOpen ? '▾' : '▸') : '·'}
-      </span>
+      <span className="tree-row-icon"><Icon name={iconName} /></span>
       <span className="tree-row-name">{node.data.name}</span>
     </div>
   );

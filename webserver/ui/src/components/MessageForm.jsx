@@ -18,7 +18,26 @@ export default function MessageForm({
   const placeholder = disabled
     ? disabledReason || 'Session is not live — chat resumes when kato re-spawns it.'
     : 'Reply to Claude (Shift+Enter for newline)';
+  const isSteering = turnInFlight && !disabled;
+  const submitClass = isSteering ? 'is-steering' : '';
+  const submitLabel = isSteering ? 'Steer' : 'Send';
+  let submitTitle;
+  if (disabled) {
+    submitTitle = disabledReason || 'Session is not live';
+  } else if (turnInFlight) {
+    submitTitle = 'Claude is working — your message will steer the in-flight turn.';
+  } else {
+    submitTitle = '';
+  }
 
+  function handleChange(event) {
+    onChange(event.target.value);
+  }
+  function handleKeyDown(event) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      submit(event);
+    }
+  }
   return (
     <form id="message-form" onSubmit={submit}>
       <textarea
@@ -27,24 +46,16 @@ export default function MessageForm({
         rows={2}
         value={value || ''}
         disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey) {
-            submit(e);
-          }
-        }}
+        onChange={handleChange}
+        onKeyDown={handleKeyDown}
       />
       <button
         type="submit"
         disabled={disabled}
-        className={turnInFlight && !disabled ? 'is-steering' : ''}
-        title={disabled
-          ? (disabledReason || 'Session is not live')
-          : turnInFlight
-            ? 'Claude is working — your message will steer the in-flight turn.'
-            : ''}
+        className={submitClass}
+        title={submitTitle}
       >
-        {turnInFlight && !disabled ? 'Steer' : 'Send'}
+        {submitLabel}
       </button>
     </form>
   );

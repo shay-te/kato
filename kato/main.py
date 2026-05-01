@@ -17,6 +17,12 @@ from kato.helpers.status_broadcaster_utils import (
     install_status_broadcast_handler,
 )
 from kato.validate_env import validate_environment
+from kato.validation.bypass_permissions_validator import (
+    BypassPermissionsRefused,
+    is_bypass_enabled,
+    print_security_posture,
+    validate_bypass_permissions,
+)
 
 
 _STATUS_BROADCASTER = StatusBroadcaster()
@@ -60,6 +66,12 @@ def main(cfg: DictConfig) -> int:
     except ValueError as exc:
         logger.error('%s', exc)
         return 1
+    try:
+        validate_bypass_permissions()
+    except BypassPermissionsRefused as exc:
+        logger.error('%s', exc)
+        return 1
+    print_security_posture()
     try:
         KatoInstance.init(cfg)
     except RuntimeError as exc:
@@ -147,6 +159,7 @@ def _start_planning_webserver_if_enabled(app) -> None:
         workspace_manager=workspace_manager,
         planning_session_runner=planning_session_runner,
         status_broadcaster=_STATUS_BROADCASTER,
+        agent_service=getattr(app, 'service', None),
     )
 
     # Silence Werkzeug's per-request access log — the planning UI polls
@@ -268,8 +281,10 @@ def _run_task_scan_loop(
 
     cycles = 0
     while True:
+        app.logger.info('Scanning for new tasks and reviews')
         try:
             job.run()
+            app.logger.info('Scan complete')
         except Exception:
             app.logger.warning(
                 'task scan failed; retrying in %s seconds',
@@ -280,11 +295,49 @@ def _run_task_scan_loop(
         if max_cycles is not None and cycles >= max_cycles:
             return
         if scan_interval_seconds > 0:
-            sleep_with_scan_spinner(
+            _idle_with_heartbeat(
                 scan_interval_seconds,
+                logger=app.logger,
+                sleep_fn=sleep_fn,
+            )
+
+
+def _idle_with_heartbeat(
+    interval_seconds: float,
+    *,
+    logger,
+    sleep_fn=time.sleep,
+    heartbeat_seconds: float = 5.0,
+) -> None:
+    """Sleep ``interval_seconds`` between scan ticks while broadcasting a live
+    countdown so the planning UI's status bar doesn't go silent.
+
+    Each heartbeat is a single ``logger.info`` line — the terminal still
+    shows its inline spinner via :func:`sleep_with_scan_spinner`, but that
+    spinner uses carriage-return overwrites and never flows through the
+    logger / SSE broadcaster. The heartbeat is what the UI actually sees.
+
+    The loop is driven by chunk count, not wall-clock, so a mocked
+    ``sleep_fn`` in tests doesn't have to also patch ``time.monotonic``.
+    """
+    total = float(interval_seconds)
+    if total <= 0:
+        return
+    step = max(1.0, float(heartbeat_seconds))
+    use_spinner = supports_inline_status()
+    remaining = total
+    while remaining > 0:
+        chunk = step if remaining >= step else remaining
+        logger.info('Idle · next scan in %ds', int(round(remaining)))
+        if use_spinner:
+            sleep_with_scan_spinner(
+                chunk,
                 status_text='Scanning for new tasks and comments',
                 sleep_fn=sleep_fn,
             )
+        else:
+            sleep_fn(chunk)
+        remaining -= chunk
 
 
 def _formatted_duration_text(seconds: float) -> str:

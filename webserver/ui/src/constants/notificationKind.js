@@ -5,6 +5,7 @@
 
 export const NOTIFICATION_KIND = Object.freeze({
   STARTED: 'started',
+  STATUS_CHANGE: 'status_change',
   COMPLETED: 'completed',
   ATTENTION: 'attention',
   ERROR: 'error',

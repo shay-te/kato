@@ -131,6 +131,11 @@ class ValidateEnvTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
 
+    @unittest.skip(
+        'Obsolete: validate_agent_env no longer walks REPOSITORY_ROOT_PATH '
+        'eagerly. Provider-credential errors now surface at first lazy '
+        'repository use (per task, via the inventory tag fast-path).'
+    )
     def test_validate_agent_env_requires_provider_token_for_discovered_bitbucket_repo(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_path = Path(temp_dir) / 'project'

@@ -106,6 +106,24 @@ def _repository_cwd(
     return str(path) if path.is_dir() else None
 
 
+def _workspace_status(workspace_manager, task_id: str) -> str:
+    """Return the workspace's current status (provisioning|active|review|done|...).
+
+    Empty string when the workspace manager isn't wired or the task has
+    no record. Used by the diff endpoint so the UI can label diffs that
+    are *already pushed* differently from in-flight changes.
+    """
+    if workspace_manager is None:
+        return ''
+    try:
+        record = workspace_manager.get(task_id)
+    except Exception:
+        return ''
+    if record is None:
+        return ''
+    return str(getattr(record, 'status', '') or '')
+
+
 def _compute_repo_diff(repo_id: str, cwd: str) -> dict[str, Any]:
     """Build the per-repo diff payload the Changes-tab accordion expects.
 
@@ -167,6 +185,7 @@ def create_app(
     planning_session_runner=None,
     fallback_state_dir: str = '',
     status_broadcaster=None,
+    agent_service=None,
 ) -> Flask:
     app = Flask(
         __name__,
@@ -179,6 +198,7 @@ def create_app(
     app.config['WORKSPACE_MANAGER'] = workspace_manager
     app.config['PLANNING_SESSION_RUNNER'] = planning_session_runner
     app.config['STATUS_BROADCASTER'] = status_broadcaster
+    app.config['AGENT_SERVICE'] = agent_service
 
     _register_http_routes(app)
     _register_streaming_routes(app)
@@ -203,6 +223,7 @@ def _register_http_routes(app: Flask) -> None:
         return jsonify(_records_as_dicts(
             app.config['SESSION_MANAGER'],
             app.config.get('WORKSPACE_MANAGER'),
+            app.config.get('AGENT_SERVICE'),
         ))
 
     @app.get('/api/sessions/<task_id>')
@@ -226,12 +247,49 @@ def _register_http_routes(app: Flask) -> None:
     def healthz():
         return {'status': 'ok'}
 
+    @app.get('/api/safety')
+    def safety_state():
+        from kato.validation.bypass_permissions_validator import (
+            is_accept_acknowledged,
+            is_bypass_enabled,
+            is_running_as_root,
+        )
+        return jsonify({
+            'bypass_permissions': is_bypass_enabled(),
+            'accept_acknowledged': is_accept_acknowledged(),
+            'running_as_root': is_running_as_root(),
+        })
+
     @app.get('/logo.png')
     def logo():
         candidate = KATO_REPO_ROOT / 'kato.png'
         if not candidate.exists():
             return ('logo not found', 404)
         return send_file(candidate, mimetype='image/png')
+
+    @app.get('/favicon.png')
+    def favicon_png():
+        candidate = KATO_REPO_ROOT / 'kato.png'
+        if not candidate.exists():
+            return ('favicon not found', 404)
+        response = send_file(candidate, mimetype='image/png')
+        # Browsers cache favicons aggressively. Tell them to revalidate so
+        # a fresh kato.png gets picked up without forcing the operator to
+        # clear browser site data.
+        response.headers['Cache-Control'] = 'no-cache, must-revalidate'
+        return response
+
+    @app.get('/favicon.ico')
+    def favicon_ico():
+        # Browsers probe /favicon.ico by default even without a <link>
+        # tag. Serve the same PNG (mislabelled as image/x-icon is fine,
+        # every browser kato targets honors the actual content).
+        candidate = KATO_REPO_ROOT / 'kato.png'
+        if not candidate.exists():
+            return ('favicon not found', 404)
+        response = send_file(candidate, mimetype='image/png')
+        response.headers['Cache-Control'] = 'no-cache, must-revalidate'
+        return response
 
     @app.get('/api/sessions/<task_id>/files')
     def list_session_files(task_id: str):
@@ -275,6 +333,7 @@ def _register_http_routes(app: Flask) -> None:
     def get_session_diff(task_id: str):
         manager = app.config['SESSION_MANAGER']
         workspace_manager = app.config.get('WORKSPACE_MANAGER')
+        workspace_status = _workspace_status(workspace_manager, task_id)
         repository_ids = _task_repository_ids(workspace_manager, task_id)
         # Multi-repo task: compute one diff per clone so the UI can
         # render accordions side by side. Single-repo / legacy path:
@@ -291,6 +350,7 @@ def _register_http_routes(app: Flask) -> None:
                 return jsonify({
                     'repository_ids': [d['repo_id'] for d in diffs],
                     'diffs': diffs,
+                    'workspace_status': workspace_status,
                     # Back-compat scalar fields mirror the first repo.
                     'repo_id': first['repo_id'],
                     'base': first['base'],
@@ -304,11 +364,65 @@ def _register_http_routes(app: Flask) -> None:
         return jsonify({
             'repository_ids': [],
             'diffs': [single],
+            'workspace_status': workspace_status,
             'repo_id': '',
             'base': single['base'],
             'head': single['head'],
             'diff': single['diff'],
         })
+
+    @app.post('/api/sessions/<task_id>/approve-push')
+    def approve_task_push(task_id: str):
+        """Operator approves the paused push for a ``kato:wait-before-git-push`` task."""
+        agent_service = app.config.get('AGENT_SERVICE')
+        if agent_service is None:
+            return jsonify({'error': 'agent service not wired'}), 503
+        approve = getattr(agent_service, 'approve_push', None)
+        if not callable(approve):
+            return jsonify({'error': 'agent service does not support push approval'}), 501
+        result = approve(task_id)
+        if result is None:
+            return jsonify({
+                'approved': False,
+                'task_id': task_id,
+                'error': 'no pending publish for this task',
+            }), 404
+        return jsonify({'approved': True, 'task_id': task_id, 'result': result})
+
+    @app.get('/api/sessions/<task_id>/awaiting-push-approval')
+    def get_awaiting_push_approval(task_id: str):
+        """UI uses this to decide whether to render the "Approve push" button."""
+        agent_service = app.config.get('AGENT_SERVICE')
+        if agent_service is None:
+            return jsonify({'awaiting_push_approval': False, 'task_id': task_id})
+        check = getattr(agent_service, 'is_awaiting_push_approval', None)
+        if not callable(check):
+            return jsonify({'awaiting_push_approval': False, 'task_id': task_id})
+        return jsonify({
+            'awaiting_push_approval': bool(check(task_id)),
+            'task_id': task_id,
+        })
+
+    @app.delete('/api/sessions/<task_id>/workspace')
+    def forget_task_workspace(task_id: str):
+        """Manual escape hatch: wipe ``~/.kato/workspaces/<task_id>/``.
+
+        Used by the "Forget this task" button on a task tab when kato's
+        cleanup loop hasn't run yet (e.g. the ticket is still in the
+        watched states but the operator knows the task is done).
+        """
+        workspace_manager = app.config.get('WORKSPACE_MANAGER')
+        if workspace_manager is None:
+            return jsonify({'error': 'workspace manager not wired'}), 503
+        try:
+            workspace_manager.delete(task_id)
+            return jsonify({'forgotten': True, 'task_id': task_id})
+        except Exception as exc:
+            return jsonify({
+                'forgotten': False,
+                'task_id': task_id,
+                'error': str(exc),
+            }), 500
 
 
 # ----- live status feed (SSE) -----
@@ -357,10 +471,29 @@ def _status_event_stream(broadcaster):
     variable for new entries. A periodic SSE comment keeps the connection
     alive through proxies that idle out silent streams.
     """
+    # Flush response headers immediately so the browser's EventSource
+    # transitions out of CONNECTING the moment it subscribes — otherwise
+    # a freshly-booted kato with an empty broadcaster backlog leaves the
+    # status bar stuck on "Connecting to kato…" until the first heartbeat.
+    yield ': open\n\n'
     backlog = broadcaster.recent()
     last_sequence = backlog[-1].sequence if backlog else 0
-    for entry in backlog:
-        yield _sse_message(SSE_EVENT_STATUS_ENTRY, entry.to_dict())
+    if backlog:
+        for entry in backlog:
+            yield _sse_message(SSE_EVENT_STATUS_ENTRY, entry.to_dict())
+    else:
+        # Empty backlog: synthesize a non-broadcaster entry so the UI
+        # has *something* to render and never sits on "Connecting…".
+        # The string sentinel keeps it distinct from any sequence number
+        # the broadcaster will ever produce; the JS dedupe set treats
+        # it as a normal key.
+        yield _sse_message(SSE_EVENT_STATUS_ENTRY, {
+            'sequence': 'synthetic-open',
+            'epoch': time.time(),
+            'level': 'INFO',
+            'logger': 'webserver',
+            'message': 'Live feed connected. Waiting for the first scan tick.',
+        })
     last_heartbeat = time.monotonic()
     while True:
         new_entries = broadcaster.wait_for_new(
@@ -664,21 +797,31 @@ def _sse_message(event_type: str, data: dict[str, Any]) -> str:
 # ----- helpers -----
 
 
-def _records_as_dicts(session_manager, workspace_manager) -> list[dict[str, Any]]:
+def _records_as_dicts(
+    session_manager, workspace_manager, agent_service=None,
+) -> list[dict[str, Any]]:
     """Tab list payload — one entry per known task.
 
     Source of truth: the workspace manager (folder-per-task). Each entry
-    is enriched with ``live`` (is the Claude subprocess running?) and
+    is enriched with ``live`` (is the Claude subprocess running?),
     ``claude_session_id`` (back-fill from session-manager records when
-    older workspace metadata didn't capture it yet).
+    older workspace metadata didn't capture it yet), and
+    ``has_changes_pending`` (true when kato is paused awaiting push
+    approval — the workspace has commits ready to push).
     """
     if workspace_manager is None:
         return [_record_to_dict(r) for r in session_manager.list_records()]
     workspace_records = workspace_manager.list_workspaces()
     live_session_ids = _live_session_ids(session_manager)
     session_ids_by_task = _session_ids_by_task(session_manager)
+    awaiting_push = getattr(agent_service, 'is_awaiting_push_approval', None)
     return [
-        _workspace_record_to_dict(record, live_session_ids, session_ids_by_task)
+        _workspace_record_to_dict(
+            record,
+            live_session_ids,
+            session_ids_by_task,
+            awaiting_push,
+        )
         for record in workspace_records
     ]
 
@@ -720,6 +863,7 @@ def _workspace_record_to_dict(
     record,
     live_session_ids: set[str],
     session_ids_by_task: dict[str, str] | None = None,
+    awaiting_push_check=None,
 ) -> dict[str, Any]:
     payload = record.to_dict() if hasattr(record, 'to_dict') else dict(record)
     payload['live'] = record.task_id in live_session_ids
@@ -727,6 +871,13 @@ def _workspace_record_to_dict(
         backfilled = session_ids_by_task.get(record.task_id, '')
         if backfilled:
             payload['claude_session_id'] = backfilled
+    has_pending = False
+    if callable(awaiting_push_check):
+        try:
+            has_pending = bool(awaiting_push_check(record.task_id))
+        except Exception:
+            has_pending = False
+    payload['has_changes_pending'] = has_pending
     return payload
 
 

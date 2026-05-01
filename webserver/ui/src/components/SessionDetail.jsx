@@ -12,7 +12,7 @@ import { useSessionStream, SESSION_LIFECYCLE } from '../hooks/useSessionStream.j
 import { useToolMemory } from '../hooks/useToolMemory.js';
 import { postSession } from '../api.js';
 
-export default function SessionDetail({ session, onActivity }) {
+export default function SessionDetail({ session, onActivity, needsAttention = false }) {
   const taskId = session?.task_id;
   const [composerValue, setComposerValue] = useState('');
   const stream = useSessionStream(taskId, onActivity);
@@ -88,27 +88,31 @@ export default function SessionDetail({ session, onActivity }) {
     );
   }
 
+  const banner = lifecycleBanner(
+    stream.lifecycle,
+    taskId,
+    hasVisibleBubbles(stream.events),
+  );
+  const composerDisabled = !canSend(stream.lifecycle, session);
+  const composerHint = composerDisabledReason(stream.lifecycle, session);
   return (
     <ChatComposerContext.Provider value={composerContextValue}>
       <main id="session-pane">
         <section id="session-detail">
-          <SessionHeader session={session} onStopped={onStopped} />
-          <EventLog
-            entries={stream.events}
-            banner={lifecycleBanner(
-              stream.lifecycle,
-              taskId,
-              hasVisibleBubbles(stream.events),
-            )}
+          <SessionHeader
+            session={session}
+            needsAttention={needsAttention}
+            onStopped={onStopped}
           />
+          <EventLog entries={stream.events} banner={banner} />
           <WorkingIndicator active={stream.turnInFlight} />
           <MessageForm
             value={composerValue}
             onChange={setComposerValue}
             turnInFlight={stream.turnInFlight}
             onSubmit={onSendMessage}
-            disabled={!canSend(stream.lifecycle, session)}
-            disabledReason={composerDisabledReason(stream.lifecycle, session)}
+            disabled={composerDisabled}
+            disabledReason={composerHint}
           />
         </section>
         <PermissionDecisionContainer

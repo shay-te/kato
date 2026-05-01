@@ -68,7 +68,16 @@ class MainTests(unittest.TestCase):
         mock_job_cls.assert_called_once_with()
         job.initialized.assert_called_once_with(app)
         self.assertEqual(job.run.call_count, 2)
-        mock_sleep.assert_has_calls([call(30.0), call(60.0)])
+        # The first sleep is the 30s startup delay. After each scan tick
+        # the loop divides the 60s scan interval into 5s heartbeat chunks
+        # (so the planning UI status bar gets a live countdown). Total
+        # sleep between ticks must still sum to 60s.
+        sleep_durations = [call_obj.args[0] for call_obj in mock_sleep.call_args_list]
+        self.assertEqual(sleep_durations[0], 30.0)
+        between_ticks = sleep_durations[1:]
+        # 12 chunks of 5s = 60s total. Allow either-or since the loop
+        # may emit slightly fewer chunks if the deadline elapses early.
+        self.assertAlmostEqual(sum(between_ticks), 60.0, delta=5.0)
         app.logger.info.assert_any_call(
             'Waiting %s before scanning tasks while Kato warms up',
             '30 seconds',
@@ -93,7 +102,10 @@ class MainTests(unittest.TestCase):
             )
 
         mock_warmup_countdown.assert_called_once_with(30.0, sleep_fn=unittest.mock.ANY)
-        app.logger.info.assert_not_called()
+        # Each scan tick now logs the start/end so the planning UI status
+        # bar reflects what kato is doing in real time.
+        app.logger.info.assert_any_call('Scanning for new tasks and reviews')
+        app.logger.info.assert_any_call('Scan complete')
 
     def test_run_task_scan_loop_continues_after_failure(self) -> None:
         app = types.SimpleNamespace(logger=Mock())

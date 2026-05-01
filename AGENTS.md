@@ -125,3 +125,101 @@ The goal is to keep the code:
 - When service-layer orchestration repeats the same control-flow, error handling, or logging pattern, extract a small private helper in that service before introducing a broader shared abstraction.
 - When a service file starts carrying two different responsibilities, split the responsibilities into dedicated service/helper classes and keep the remaining class focused on one job.
 - When deduplicating code, preserve the existing behavior, task-state transitions, log messages, and test-visible outputs unless the task explicitly requires changing them.
+
+### Comments
+
+- Comments must be short — **max 2 lines, simple, only when the *why* is non-obvious**. No paragraph explanations, no rationale dumps, no "why this approach vs that approach" essays. If you find yourself writing more than two lines, the explanation belongs in a PR description or a design doc, not the code.
+- Do not reformat files. Pull-request diffs should show only the changes that were made — no whitespace churn, no import reorders unrelated to the change, no quote-style flips.
+
+---
+
+## React UI rules (`webserver/ui/`)
+
+The planning UI under [`webserver/ui/`](webserver/ui/) is a small Vite + React app. The rules below apply only to JS/JSX files there; they don't apply to Python.
+
+### No logic inside JSX
+
+**The JSX returned from a component renders variables and components — nothing else.** All logic, including conditions, loops, and derived values, is computed before the `return` statement and assigned to a variable.
+
+#### Anti-patterns to avoid
+
+```jsx
+// ❌ Inline logic / conditions / mapping inside JSX
+{props.items && props.items.length > 0 && <List items={props.items} />}
+{condition && renderMobileOnly()}
+{otherCondition ? <ComponentA /> : <ComponentB />}
+{options.map((item) => <Row {...item} />)}
+```
+
+```jsx
+// ❌ Creating JSX unconditionally then hiding it
+const content = <ExpensiveLabeledInputWrap>...</ExpensiveLabeledInputWrap>;
+return <div>{condition ? content : null}</div>;
+```
+
+#### Good patterns
+
+```jsx
+// ✓ Extract condition + render call to a variable, BEFORE return
+const mobileOnly = props.is_mobile_app_available && renderMobileOnly();
+return (
+  <div>
+    {mobileOnly}
+  </div>
+);
+```
+
+```jsx
+// ✓ Compute derived values before return
+const isEmpty = items.length === 0;
+const content = isEmpty ? <Empty /> : <List items={items} />;
+return <div>{content}</div>;
+```
+
+```jsx
+// ✓ For mapped lists, build the array before return
+const rows = items.map((item) => <Row key={item.id} {...item} />);
+return <ul>{rows}</ul>;
+```
+
+The `&&` and `?:` operators inside JSX *are* logic. Extract them.
+
+### Component logic extraction
+
+- **Components contain rendering only.** Any computation that isn't rendering — data transformations, filtering / grouping, set/map building, index translation, validation, domain rules, derived selectors — lives in a helper file, not in the component.
+- **Rule of thumb:** if a block of code could be unit-tested without mounting React, it does not belong in the component. Move it to the nearest domain-appropriate helper (e.g. `<Feature>Helpers.js` next to the component file) and import it.
+- **Where helpers live:** next to the feature, not in a top-level catch-all utilities module.
+- **What stays in the component:** state (`useState`, `useReducer`), refs, effect wiring, call sites for helpers, prop plumbing, and JSX. Nothing else.
+- **What specifically moves out:** `new Set()`/`new Map()` builders, `.forEach`/`.filter`/`.reduce` over props or derived data, boolean derivations beyond a single `&&`/ternary, loops that produce strings or objects for downstream use.
+
+### Arrow functions
+
+Always use curly braces `{}` and an explicit `return` in arrow functions. Never use the implicit-return (expression body) form.
+
+```jsx
+// ❌ Bad
+const lerp = (a, b, t) => a + (b - a) * t;
+const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+
+// ✓ Good
+const lerp = (a, b, t) => {
+  return a + (b - a) * t;
+};
+const clamp = (value, min, max) => {
+  return Math.min(Math.max(value, min), max);
+};
+```
+
+The exception is one-line callbacks passed inline (`items.map((x) => x.id)`); the rule targets *named* arrow functions you'd otherwise debug or step through.
+
+### Styling
+
+- Plain CSS lives in [`webserver/static/css/app.css`](webserver/static/css/app.css). Don't introduce SCSS, CSS-in-JS, or styled-components without an explicit ask — pick the existing convention.
+- Keep class names short and component-scoped (`status-bar`, `tab-forget-btn`, `files-tab-repo-header`). Don't introduce BEM (`__` / `--` separators).
+- For colors and sizes that repeat across the file, define a CSS custom property (`--color-bg-elevated`, `--space-2`) instead of repeating the hex / px value. Don't hardcode the same color in five places.
+
+### Tool preferences
+
+- For file searches and grep work, prefer `rg` (ripgrep) over `find` + `grep`. Always scope: `rg "pattern" webserver/ui/src --type js -l`.
+- For single-line edits / deletions, `sed -i` is fine. Don't read an entire file just to find one key — search first.
+- Don't run `git diff`, `git status`, or any git command unless the task explicitly involves git.

@@ -418,8 +418,14 @@ class StreamingClaudeSession(object):
             command.extend(['--effort', self._effort])
         if self._allowed_tools:
             command.extend(['--allowedTools', self._allowed_tools])
-        if self._disallowed_tools:
-            command.extend(['--disallowedTools', self._disallowed_tools])
+        # Hard, non-overridable git denylist. Kato is the only component
+        # that ever runs git operations; Claude must NEVER invoke `git`
+        # directly. See ClaudeCliClient.GIT_DENY_PATTERNS for rationale.
+        from kato.client.claude.cli_client import ClaudeCliClient as _CliClient
+        merged_disallowed = _CliClient._merge_disallowed_with_git_deny(
+            self._disallowed_tools
+        )
+        command.extend(['--disallowedTools', merged_disallowed])
         architecture_doc = read_architecture_doc(
             self._architecture_doc_path, logger=self.logger,
         )

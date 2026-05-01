@@ -85,6 +85,14 @@ class TaskTags(object):
 
     WAIT_PLANNING = 'kato:wait-planning'
 
+    # Hold-before-publish gate. When this tag is on a task, kato runs
+    # the agent and commits to the local task branch as usual, but
+    # stops before pushing the branch and opening the PR. Removing the
+    # tag (via the planning UI's "Approve push" button or the platform
+    # tag UI) lets the next scan tick proceed with publish. Kato — not
+    # Claude — performs the push when approved.
+    WAIT_BEFORE_GIT_PUSH = 'kato:wait-before-git-push'
+
     # Triage workflow: when ``TRIAGE_INVESTIGATE`` is on a task, kato
     # spends one Claude turn investigating (read-only — no edits, no
     # PRs) and replaces it with one of the outcome tags below. The

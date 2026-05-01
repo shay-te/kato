@@ -230,7 +230,10 @@ class ClaudeCliClientTests(unittest.TestCase):
         self.assertIn('--allowedTools', cmd)
         self.assertIn('Edit,Write', cmd)
         self.assertIn('--disallowedTools', cmd)
-        self.assertIn('Bash', cmd)
+        # The disallowed-tools value now always includes the non-overridable
+        # git denylist plus whatever the operator passed in.
+        idx = cmd.index('--disallowedTools')
+        self.assertIn('Bash', cmd[idx + 1].split(','))
         self.assertIn('--permission-mode', cmd)
         self.assertIn('acceptEdits', cmd)
         self.assertIn('--add-dir', cmd)

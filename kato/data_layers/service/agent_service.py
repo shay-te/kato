@@ -36,6 +36,7 @@ from kato.data_layers.service.workspace_manager import (
 from kato.data_layers.data.fields import (
     ImplementationFields,
     StatusFields,
+    TaskTags,
 )
 from kato.data_layers.data.review_comment import ReviewComment
 from kato.validation.branch_publishability import (
@@ -77,6 +78,7 @@ class AgentService(Service):
         parallel_task_runner=None,
         wait_planning_service=None,
         triage_service=None,
+        review_workspace_ttl_seconds: float = 3600.0,
         logger: logging.Logger | None = None,
     ) -> None:
         self.logger = logger or configure_logger(self.__class__.__name__)
@@ -112,6 +114,22 @@ class AgentService(Service):
         self._parallel_task_runner = parallel_task_runner
         self._wait_planning_service = wait_planning_service
         self._triage_service = triage_service
+        self._review_workspace_ttl_seconds = max(
+            0.0, float(review_workspace_ttl_seconds or 0.0),
+        )
+        # `kato:wait-before-git-push` plumbing. The dict stashes the
+        # (task, prepared_task, execution) tuple after testing so the
+        # operator-triggered ``approve_push`` can resume publish without
+        # re-running the agent. In-memory only — a kato restart loses
+        # pending approvals (the workspace branch + commits survive on
+        # disk; operator can re-trigger by removing the tag and letting
+        # the next scan re-process the task).
+        # ``RLock`` rather than ``Lock`` so a future approve-flow callback
+        # that re-enters ``is_awaiting_push_approval`` from inside another
+        # critical section won't deadlock.
+        import threading as _threading
+        self._pending_publish_lock = _threading.RLock()
+        self._pending_publish: dict[str, tuple] = {}
         self._state_registry = state_registry or AgentStateRegistry()
         self._review_comment_service = review_comment_service or ReviewCommentService(
             self._task_service,
@@ -291,9 +309,21 @@ class AgentService(Service):
         it momentarily disappear from both ``get_assigned_tasks()`` and
         ``get_review_tasks()``. Without this guard, the next scan tick
         would wipe a workspace kato is actively driving.
+
+        Also: review-status workspaces older than
+        ``review_workspace_ttl_seconds`` are eligible for cleanup even
+        if the ticket is still in the review bucket. This keeps the local
+        workspace cache from accumulating stale clones for tickets sitting
+        in review for hours/days. Review-comment fix flow re-clones on
+        demand if a workspace was already cleaned.
         """
+        import time as _time
+
         candidates: set[str] = set()
         in_flight_workspace_ids: set[str] = set()
+        review_ttl_expired: set[str] = set()
+        ttl = self._review_workspace_ttl_seconds
+        now_epoch = _time.time()
         if self._session_manager is not None:
             try:
                 candidates.update(
@@ -312,7 +342,13 @@ class AgentService(Service):
                 status = getattr(record, 'status', '')
                 if status in (WORKSPACE_STATUS_ACTIVE, WORKSPACE_STATUS_PROVISIONING):
                     in_flight_workspace_ids.add(record.task_id)
-        return candidates - live_task_ids - in_flight_workspace_ids
+                elif status == WORKSPACE_STATUS_REVIEW and ttl > 0:
+                    updated = float(getattr(record, 'updated_at_epoch', 0.0) or 0.0)
+                    if updated > 0 and (now_epoch - updated) > ttl:
+                        review_ttl_expired.add(record.task_id)
+        return (candidates - live_task_ids - in_flight_workspace_ids) | (
+            review_ttl_expired - in_flight_workspace_ids
+        )
 
     def _terminate_session_silent(self, task_id: str) -> None:
         if self._session_manager is None:
@@ -419,6 +455,8 @@ class AgentService(Service):
         )
         if not testing_succeeded:
             return testing_result
+        if self._task_has_wait_before_push_tag(task):
+            return self._pause_for_push_approval(task, prepared_task, execution)
         publish_result = self._task_publisher.publish_task_execution(
             task,
             prepared_task,
@@ -426,6 +464,100 @@ class AgentService(Service):
         )
         self._update_workspace_status_after_publish(task.id, publish_result)
         return publish_result
+
+    @staticmethod
+    def _task_has_wait_before_push_tag(task: Task) -> bool:
+        tags = getattr(task, 'tags', None) or []
+        target = TaskTags.WAIT_BEFORE_GIT_PUSH.lower()
+        for tag in tags:
+            if str(tag or '').strip().lower() == target:
+                return True
+        return False
+
+    def _pause_for_push_approval(
+        self,
+        task: Task,
+        prepared_task: PreparedTaskContext,
+        execution: dict,
+    ) -> dict[str, object]:
+        """Stash the post-test execution context and post a "waiting" comment.
+
+        The actual push happens via :meth:`approve_push` (called from the
+        planning UI's "Approve push" button). We do NOT post the
+        ``Kato completed task`` blocking-comment prefix here — that one
+        signals success and would prevent re-processing. Instead we use
+        a one-off informational comment that does not interfere with the
+        existing comment-driven blocker mechanism.
+        """
+        task_id = str(task.id)
+        with self._pending_publish_lock:
+            self._pending_publish[task_id] = (task, prepared_task, execution)
+        try:
+            self._task_service.add_comment(
+                task_id,
+                'Kato has finished implementation and testing for this task. '
+                'Push and PR creation are paused because '
+                f'`{TaskTags.WAIT_BEFORE_GIT_PUSH}` is set. To proceed, '
+                'click "Approve push" in the planning UI, or remove the '
+                f'`{TaskTags.WAIT_BEFORE_GIT_PUSH}` tag and re-trigger the '
+                'task. Kato — not the agent — performs the push.',
+            )
+        except Exception:
+            self.logger.exception(
+                'failed to post wait-before-push comment for task %s', task_id,
+            )
+        if self._workspace_manager is not None:
+            try:
+                self._workspace_manager.update_status(
+                    task_id, WORKSPACE_STATUS_REVIEW,
+                )
+            except Exception:
+                self.logger.exception(
+                    'failed to update workspace status for task %s', task_id,
+                )
+        self.logger.info(
+            'task %s implementation complete; awaiting push approval', task_id,
+        )
+        return {
+            StatusFields.STATUS: 'awaiting_push_approval',
+            'task_id': task_id,
+        }
+
+    def approve_push(self, task_id: str) -> dict[str, object] | None:
+        """Operator-triggered push for a task paused on ``kato:wait-before-git-push``.
+
+        Returns the publish result on success, or ``None`` when no pending
+        publish exists for the task (e.g. operator clicked the button on a
+        task that wasn't paused, or kato restarted and lost the in-memory
+        pending state).
+        """
+        normalized_task_id = str(task_id or '').strip()
+        if not normalized_task_id:
+            return None
+        with self._pending_publish_lock:
+            pending = self._pending_publish.pop(normalized_task_id, None)
+        if pending is None:
+            return None
+        task, prepared_task, execution = pending
+        self.logger.info(
+            'operator approved push for task %s; resuming publish',
+            normalized_task_id,
+        )
+        publish_result = self._task_publisher.publish_task_execution(
+            task,
+            prepared_task,
+            execution,
+        )
+        self._update_workspace_status_after_publish(task.id, publish_result)
+        return publish_result
+
+    def is_awaiting_push_approval(self, task_id: str) -> bool:
+        """True when ``approve_push`` has a pending publish for this task."""
+        normalized = str(task_id or '').strip()
+        if not normalized:
+            return False
+        with self._pending_publish_lock:
+            return normalized in self._pending_publish
 
 
     def _start_task_processing(self, task: Task, prepared_task: PreparedTaskContext) -> bool:

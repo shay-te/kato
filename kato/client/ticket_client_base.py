@@ -55,6 +55,14 @@ class TicketClientBase(RetryingClientBase):
         'kato: retry approved',
         'kato retry approved',
     )
+    # Operator command that resumes a task paused on
+    # ``kato:wait-before-git-push``. Posted as a ticket comment; kato
+    # detects it on the next scan tick and triggers publish via
+    # AgentService.approve_push(task_id).
+    PUSH_APPROVAL_COMMAND_PREFIXES = (
+        'kato: push approved',
+        'kato push approved',
+    )
 
     def validate_connection(self, project: str, assignee: str, states: list[str]) -> None:
         raise NotImplementedError

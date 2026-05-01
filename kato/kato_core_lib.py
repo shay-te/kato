@@ -254,6 +254,9 @@ class KatoCoreLib(CoreLib):
                     implementation_service,
                 ),
             ),
+            review_workspace_ttl_seconds=float(
+                getattr(open_cfg, 'review_workspace_ttl_seconds', 3600)
+            ),
         )
 
 

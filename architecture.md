@@ -211,13 +211,13 @@ The whole pipeline is read-fresh: kato never relies on in-memory "this task was 
 - `_ensure_repositories()` lazy-loads on first read; results are validated for duplicate ids/aliases at load time.
 
 **Ignore-list rules** (`KATO_IGNORED_REPOSITORY_FOLDERS`) — comma-separated folder names. Honored at every layer:
-- Auto-discovery walk skips them via `os.walk` dir-pruning ([`repository_discovery_utils.py:45-50`](kato/helpers/repository_discovery_utils.py#L45)).
+- Auto-discovery walk skips them via `os.walk` dir-pruning ([`repository_discovery_utils.py`](kato/helpers/repository_discovery_utils.py)).
 - Fast-path direct lookup checks the ignore set before accepting a candidate.
 - A task tag `kato:repo:<name>` whose `<name>` is in the ignore list raises `RepositoryIgnoredByConfigError` and the failure handler posts a clear "Kato refused to run this task" comment — the operator must remove the tag or the ignore-list entry. The contract is about the *name*, not whether the folder happens to exist on disk.
 
 ### 5.2 No-changes repos are skipped, not failed
 
-A multi-repo task often tags a repo for *context* (e.g. "look at the client UI to know what shape the backend should expose"); the agent reads it but never edits it. When `task_publisher` reaches that repo's publish step, [`_ensure_branch_is_publishable`](kato/data_layers/service/repository_service.py#L470) raises `RepositoryHasNoChangesError`. The publisher catches it explicitly:
+A multi-repo task often tags a repo for *context* (e.g. "look at the client UI to know what shape the backend should expose"); the agent reads it but never edits it. When `task_publisher` reaches that repo's publish step, [`_ensure_branch_is_publishable`](kato/data_layers/service/repository_service.py) raises `RepositoryHasNoChangesError`. The publisher catches it explicitly:
 
 - The repo is moved to a `unchanged_repositories` list (not `failed_repositories`).
 - The task still moves to review with PRs only for the repos that actually changed.
@@ -282,9 +282,11 @@ Each task gets its own folder at `KATO_WORKSPACES_ROOT/<task-id>/` (default `~/.
 - One subfolder per repo the task tags (`<task-id>/<repo-id>/.git/...`).
 - A `.kato-meta.json` with `task_id`, `task_summary`, `status` (`provisioning` | `active` | `review` | `done` | `errored` | `terminated`), `repository_ids`, `claude_session_id`, `cwd`, timestamps.
 
-Created in [`provision_task_workspace_clones`](kato/data_layers/service/workspace_manager.py#L380) during preflight. Mirrored to/from kato's session manager so a kato restart can recover the Claude session id even if `~/.kato/sessions/<task-id>.json` was wiped. Deleted by the cleanup loop ([`agent_service._cleanup_done_planning_sessions`](kato/data_layers/service/agent_service.py)) when the ticket leaves both the assigned and the review state — *unless* the workspace status is `active` or `provisioning`, which protects in-flight tasks even when they momentarily disappear from the assigned-tasks query (e.g. between "moved to In Progress" and "moved to Review").
+Created in [`provision_task_workspace_clones`](kato/data_layers/service/workspace_manager.py) during preflight. Mirrored to/from kato's session manager so a kato restart can recover the Claude session id even if `~/.kato/sessions/<task-id>.json` was wiped. Deleted by the cleanup loop ([`agent_service._cleanup_done_planning_sessions`](kato/data_layers/service/agent_service.py)) when the ticket leaves both the assigned and the review state — *unless* the workspace status is `active` or `provisioning`, which protects in-flight tasks even when they momentarily disappear from the assigned-tasks query (e.g. between "moved to In Progress" and "moved to Review").
 
 [`WorkspaceRecoveryService`](kato/data_layers/service/workspace_recovery_service.py) handles the inverse case: a workspace folder appears but kato didn't create it (operator dropped a clone in by hand, restored from another machine, etc.). On boot, recovery scans the root, matches each orphan to a live task by id + repo tags, looks up the matching Claude session by walking `~/.claude/projects/*/*.jsonl` for one whose `cwd` resolves to the workspace's repo path, and writes a fresh `.kato-meta.json` so kato adopts it.
+
+**Review-state TTL.** `KATO_WORKSPACE_REVIEW_TTL_SECONDS` (default 3600 = 1 hour) caps how long a `review`-status workspace persists before the cleanup loop deletes it, regardless of whether the ticket is still in the review bucket. Set to 0 to disable. Review-comment processing for tickets whose workspace was already cleaned re-clones on demand. The operator can also force immediate cleanup via the planning UI's "Forget this task" button, which calls `DELETE /api/sessions/<task_id>/workspace`.
 
 ### 5.8 Architecture-doc context injection
 
@@ -308,12 +310,22 @@ Multi-repo task UX:
 
 Workspace version counter ([`App.jsx`](webserver/ui/src/App.jsx)) bumps per-task on every `result` event so Files + Changes refetch automatically without a manual reload.
 
-### 5.10 Kato-injected prompt guardrails
+**Idle right pane.** When no task is selected, the right pane shows [`OrchestratorActivityFeed`](webserver/ui/src/components/OrchestratorActivityFeed.jsx) — a chronological view of recent scan-loop entries (driven by the same SSE history as the top status bar, with `Idle · next scan in Xs` heartbeats filtered out). Lets the operator watch what kato is doing across all tasks without picking a tab.
 
-Every Claude turn kato spawns includes a security/tool guardrail block ([`cli_client.py:321`](kato/client/claude/cli_client.py)). These are *advisory* — the model can ignore them. Real safety lives in:
+**Diff label by workspace status.** [`ChangesTab`](webserver/ui/src/ChangesTab.jsx) reads `workspace_status` from the diff response and labels the header accordingly: `diff` for active, `diff · already pushed (PR open)` for review, `diff · merged` for done, `diff · publish errored` / `diff · terminated` for the failure cases. Prevents "the diff is still showing — did kato break?" confusion when the workspace is just lingering past publish.
+
+**"Forget this task" button.** Per-tab `×` button (visible on hover or when active) calls `DELETE /api/sessions/<task_id>/workspace`, which invokes `WorkspaceManager.delete(task_id)`. Manual escape hatch for tickets where the operator wants the workspace gone immediately rather than waiting for the cleanup loop or the review TTL.
+
+**Auto-focus.** When kato emits an `assistant` event for a task and the operator hasn't manually picked any tab yet, the live task becomes the active tab automatically. A manual click flips a session-long flag that suppresses auto-focus thereafter, so kato never yanks focus mid-investigation. The flag resets on `Forget this task`.
+
+### 5.10 Kato-injected prompt guardrails + bypass-permissions safety gate
+
+Every Claude turn kato spawns includes a security/tool guardrail block ([`cli_client.py`](kato/client/claude/cli_client.py)). These are *advisory* — the model can ignore them. Real safety lives in:
 - The `--allowedTools` / `--disallowedTools` flags Claude does enforce.
 - `KATO_CLAUDE_BYPASS_PERMISSIONS=false` (default) which routes per-tool permission asks back through the planning UI.
 - **Code review on the resulting PR** — that's the actual safety net. See [README.md](README.md#security-model--note).
+
+**Bypass-permissions safety gate.** [`BypassPermissionsValidator`](kato/validation/bypass_permissions_validator.py) runs once at boot, before `KatoCoreLib.__init__`. When `KATO_CLAUDE_BYPASS_PERMISSIONS=true` it: (a) refuses to start when `os.geteuid() == 0`, (b) refuses non-interactive runs unless `KATO_CLAUDE_BYPASS_PERMISSIONS_ACCEPT=true` is also set, (c) prompts the operator with `core_lib.helpers.command_line.input_yes_no` on a TTY, (d) writes an unmissable stderr banner before logger config so it cannot be suppressed by log level. The webserver exposes `/api/safety` returning `{ bypass_permissions, accept_acknowledged, running_as_root }`; the planning UI's [`SafetyBanner`](webserver/ui/src/components/SafetyBanner.jsx) renders a sticky red bar across every page when bypass is on. Per-spawn `WARNING` logs in [`ClaudeCliClient`](kato/client/claude/cli_client.py) and [`StreamingClaudeSession`](kato/client/claude/streaming_session.py) reinforce the state. The configurator ([`configure_project.py`](kato/configure_project.py)) requires typing the literal phrase `I ACCEPT` before writing the flag. Full threat model: [SECURITY.md](SECURITY.md).
 
 ---
 

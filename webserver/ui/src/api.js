@@ -15,6 +15,47 @@ export function fetchSessionList() {
   return fetchJson('/api/sessions');
 }
 
+export function fetchSafetyState() {
+  return fetchJson('/api/safety');
+}
+
+export function fetchAwaitingPushApproval(taskId) {
+  if (!taskId) {
+    return Promise.resolve({ awaiting_push_approval: false });
+  }
+  return fetchJson(
+    `/api/sessions/${encodeURIComponent(taskId)}/awaiting-push-approval`,
+  );
+}
+
+export async function approveTaskPush(taskId) {
+  if (!taskId) { return { ok: false, error: 'no task id' }; }
+  try {
+    const response = await fetch(
+      `/api/sessions/${encodeURIComponent(taskId)}/approve-push`,
+      { method: 'POST' },
+    );
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+export async function forgetTaskWorkspace(taskId) {
+  if (!taskId) { return { ok: false, error: 'no task id' }; }
+  try {
+    const response = await fetch(
+      `/api/sessions/${encodeURIComponent(taskId)}/workspace`,
+      { method: 'DELETE' },
+    );
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
 export function fetchFileTree(taskId) {
   return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/files`);
 }

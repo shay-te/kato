@@ -447,6 +447,7 @@ class TaskPublisher(Service):
         prepared_task: PreparedTaskContext,
         pull_requests: list[dict[str, str]],
     ) -> dict[str, object] | None:
+        self._log_task_step(task.id, 'moving issue to review state')
         try:
             self._run_publish_with_retry(
                 lambda: self._task_state_service.move_task_to_review(task.id),
@@ -460,6 +461,7 @@ class TaskPublisher(Service):
                 prepared_task=prepared_task,
             )
             return None
+        self._log_task_step(task.id, 'moved issue to review state')
         # Record success before notification so a notification failure cannot
         # cause duplicate publish work on a later retry.
         self._state_registry.mark_task_processed(task.id, pull_requests)

@@ -35,6 +35,16 @@ class ClaudeCliClient(object):
     SAFE_PERMISSION_MODE = 'acceptEdits'
     BYPASS_PERMISSION_MODE = 'bypassPermissions'
     DEFAULT_ALLOWED_TOOLS = 'Edit,Write,Read,Bash,Glob,Grep'
+    # Hard, non-overridable denylist. Kato is the only component that
+    # ever runs git operations (commit, push, branch, reset, fetch,
+    # rebase, ...). Claude must NEVER invoke git directly: it would race
+    # with kato's branch state machine, bypass the publish-step retry
+    # logic, and could push work kato hasn't validated. Every shape of
+    # `git ...` we know Claude Code's allow-pattern matcher recognizes
+    # is listed here. The two patterns cover both the colon-form
+    # (`Bash(git:*)`) and the bare-form (`Bash(git *)`) that Claude
+    # versions accept.
+    GIT_DENY_PATTERNS = ('Bash(git:*)', 'Bash(git *)')
     SMOKE_TEST_PROMPT = 'Reply with exactly: ok. Do not call any tools.'
     SMOKE_TEST_TIMEOUT_SECONDS = 120
     VERSION_PROBE_TIMEOUT_SECONDS = 30
@@ -376,7 +386,7 @@ class ClaudeCliClient(object):
             '- Use Bash sparingly and only for non-destructive shell needs (rg, sed -n, cat, ls).\n'
             '- Never call create_pr or any pull-request or merge-request creation tool.\n'
             '- Do not call GitHub, GitLab, or Bitbucket APIs to publish a pull request yourself.\n'
-            '- Do not run git checkout, git switch, git branch, git pull, git push, or git commit unless the orchestration layer explicitly asks you to edit an already-checked-out branch.'
+            '- ABSOLUTE: Do NOT run any `git` command. Not `git status`, not `git diff`, not `git log`, not `git add`, not `git commit`, not `git push`, not `git pull`, not `git fetch`, not `git checkout`, not `git switch`, not `git branch`, not `git reset`, not `git rebase`, not `git stash`, not `git tag`, not anything. Kato runs every git operation. The Bash tool will refuse `git ...` invocations regardless of permission mode. If you need information from git (e.g. current branch, recent commits), report what you need in plain language and Kato will surface it. Edit files directly; do not stage or commit.'
         )
 
     # ----- subprocess execution -----
@@ -465,8 +475,8 @@ class ClaudeCliClient(object):
             command.extend(['--effort', self._effort])
         if self._allowed_tools:
             command.extend(['--allowedTools', self._allowed_tools])
-        if self._disallowed_tools:
-            command.extend(['--disallowedTools', self._disallowed_tools])
+        merged_disallowed = self._merge_disallowed_with_git_deny(self._disallowed_tools)
+        command.extend(['--disallowedTools', merged_disallowed])
         architecture_doc = read_architecture_doc(
             self._architecture_doc_path, logger=self.logger,
         )
@@ -481,6 +491,26 @@ class ClaudeCliClient(object):
                 command.extend(['--add-dir', normalized_dir])
         command.extend(self._extra_args)
         return command
+
+    @classmethod
+    def _merge_disallowed_with_git_deny(cls, operator_disallowed: str) -> str:
+        """Always include the git denylist, regardless of operator config.
+
+        The operator can extend the denylist via ``KATO_CLAUDE_DISALLOWED_TOOLS``
+        but cannot remove the git patterns. Kato is the sole component that
+        runs git operations.
+        """
+        existing = [
+            entry.strip()
+            for entry in (operator_disallowed or '').split(',')
+            if entry.strip()
+        ]
+        seen = {entry: True for entry in existing}
+        for pattern in cls.GIT_DENY_PATTERNS:
+            if pattern not in seen:
+                existing.append(pattern)
+                seen[pattern] = True
+        return ','.join(existing)
 
     def _build_subprocess_env(self) -> dict[str, str]:
         env = os.environ.copy()

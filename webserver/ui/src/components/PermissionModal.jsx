@@ -10,6 +10,20 @@ export default function PermissionModal({ raw, onDecide }) {
   if (!raw) { return null; }
 
   const fields = renderFields(toolInput);
+  const allowOnceTitle = `Approve this ${toolName} request only — ask again next time`;
+  const allowAlwaysTitle = `Approve and remember ${toolName} for the rest of this session`;
+  function handleRationaleChange(event) {
+    setRationale(event.target.value);
+  }
+  function handleDeny() {
+    onDecide({ allow: false, rationale, remember: false, requestId, toolName });
+  }
+  function handleAllowOnce() {
+    onDecide({ allow: true, rationale, remember: false, requestId, toolName });
+  }
+  function handleAllowAlways() {
+    onDecide({ allow: true, rationale, remember: true, requestId, toolName });
+  }
 
   return (
     <div id="permission-modal" className="modal">
@@ -28,16 +42,14 @@ export default function PermissionModal({ raw, onDecide }) {
           placeholder="Optional rationale (sent if you Deny)"
           rows={2}
           value={rationale}
-          onChange={(e) => setRationale(e.target.value)}
+          onChange={handleRationaleChange}
         />
         <div className="modal-actions">
           <button
             id="permission-deny"
             type="button"
             className="danger"
-            onClick={() => onDecide({
-              allow: false, rationale, remember: false, requestId, toolName,
-            })}
+            onClick={handleDeny}
           >
             Deny
           </button>
@@ -45,10 +57,8 @@ export default function PermissionModal({ raw, onDecide }) {
             id="permission-allow-once"
             type="button"
             className="secondary"
-            title={`Approve this ${toolName} request only — ask again next time`}
-            onClick={() => onDecide({
-              allow: true, rationale, remember: false, requestId, toolName,
-            })}
+            title={allowOnceTitle}
+            onClick={handleAllowOnce}
           >
             Allow once
           </button>
@@ -56,10 +66,8 @@ export default function PermissionModal({ raw, onDecide }) {
             id="permission-allow-always"
             type="button"
             className="primary"
-            title={`Approve and remember ${toolName} for the rest of this session`}
-            onClick={() => onDecide({
-              allow: true, rationale, remember: true, requestId, toolName,
-            })}
+            title={allowAlwaysTitle}
+            onClick={handleAllowAlways}
           >
             Allow always
           </button>
@@ -70,18 +78,23 @@ export default function PermissionModal({ raw, onDecide }) {
 }
 
 function renderFields(toolInput) {
-  if (!toolInput || typeof toolInput !== 'object'
-      || Object.keys(toolInput).length === 0) {
+  const isEmpty = !toolInput
+    || typeof toolInput !== 'object'
+    || Object.keys(toolInput).length === 0;
+  if (isEmpty) {
     return (
       <p className="permission-field-value">(no arguments)</p>
     );
   }
-  return Object.entries(toolInput).map(([key, value]) => (
-    <div className="permission-field" key={key}>
-      <span className="permission-field-label">{key}</span>
-      <div className="permission-field-value">{formatValue(value)}</div>
-    </div>
-  ));
+  return Object.entries(toolInput).map(([key, value]) => {
+    const formatted = formatValue(value);
+    return (
+      <div className="permission-field" key={key}>
+        <span className="permission-field-label">{key}</span>
+        <div className="permission-field-value">{formatted}</div>
+      </div>
+    );
+  });
 }
 
 function formatValue(value) {

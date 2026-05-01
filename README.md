@@ -342,6 +342,29 @@ cp .env.example .env
 
 Use `KATO_ISSUE_PLATFORM` for all new setups.
 
+## Tag reference
+
+Kato uses ticket-platform tags (YouTrack tags / Jira labels / GitHub labels / GitLab labels) namespaced under `kato:` to control per-task behavior. Apply or remove them on the ticket itself; kato reads them on every scan tick and reacts on the next pass.
+
+| Tag | What it does |
+|---|---|
+| `kato:repo:<repo-name>` | **Required for any task that should produce a PR.** Names the repository folder (under `REPOSITORY_ROOT_PATH`) that kato should clone for this task. Add multiple tags to drive a multi-repo task — one PR per tag. The folder name must match the directory; case-sensitive. |
+| `kato:wait-planning` | **Don't run autonomously — open a chat tab.** Kato registers the task in the planning UI and waits for the operator to chat with the agent. No implementation, no testing, no PR. Remove the tag to hand control back to the orchestrator. |
+| `kato:wait-before-git-push` | **Run the agent, but pause before push + PR.** Kato runs implementation and testing as usual, commits to the local task branch, then stops. The operator approves the push via the planning UI's "Approve push" button (or by removing the tag and re-triggering the task). The push and PR creation are still done by kato — never by Claude. |
+| `kato:triage:investigate` | **Classify the task instead of working it.** Kato spends one read-only Claude turn analyzing the task description and writes back exactly one `kato:triage:<level>` outcome tag (see below), then removes this tag. No code edits, no PR. Useful for triaging a backlog. |
+| `kato:triage:critical` | Outcome: real, urgent. Set by the triage flow. |
+| `kato:triage:high` | Outcome: real, work soon. |
+| `kato:triage:medium` | Outcome: real, normal priority. |
+| `kato:triage:low` | Outcome: real, low priority. |
+| `kato:triage:duplicate` | Outcome: covered by another ticket. |
+| `kato:triage:wontfix` | Outcome: real but won't be worked. |
+| `kato:triage:invalid` | Outcome: not a real issue. |
+| `kato:triage:needs-info` | Outcome: not enough info to act on. |
+| `kato:triage:blocked` | Outcome: blocked by something external. |
+| `kato:triage:question` | Outcome: a question, not a task. |
+
+**Cross-platform tag mutation.** Native APIs are used where available (YouTrack, Jira, GitHub Issues, GitLab Issues). Platforms without native tag support (Bitbucket Issues today) fall through to a structured comment-marker fallback — kato posts `<!-- kato-tag {"action": "add", "tag": "..."} -->` as a comment.
+
 ## Third-Party Setup
 
 Pick one issue platform with `KATO_ISSUE_PLATFORM`, then fill in the matching block below. Keep the other issue-platform blocks empty unless you are switching providers or using their repository API credentials for pull requests.
@@ -634,11 +657,13 @@ The `openhands` container reuses the same `OPENHANDS_LLM_*` and `AWS_*` values f
 | `KATO_CLAUDE_EFFORT` | Optional reasoning depth passed via `--effort` (`low`/`medium`/`high`/`xhigh`/`max`). Empty leaves Claude on its built-in default. |
 | `KATO_CLAUDE_ALLOWED_TOOLS` | Comma-separated allowlist passed via `--allowedTools`. |
 | `KATO_CLAUDE_DISALLOWED_TOOLS` | Comma-separated denylist passed via `--disallowedTools`. |
-| `KATO_CLAUDE_BYPASS_PERMISSIONS` | When `true`, kato runs Claude with `--permission-mode bypassPermissions` (no per-tool prompts). When `false` (the default), kato runs in `acceptEdits` mode and routes any permission asks back over the planning UI. |
+| `KATO_CLAUDE_BYPASS_PERMISSIONS` | When `true`, kato runs Claude with `--permission-mode bypassPermissions` (no per-tool prompts). When `false` (the default), kato runs in `acceptEdits` mode and routes any permission asks back over the planning UI. Refused under root and under CI/Docker/cron without explicit acknowledgement — see below. |
+| `KATO_CLAUDE_BYPASS_PERMISSIONS_ACCEPT` | Required companion flag for non-interactive runs (CI, Docker, cron, systemd). When `KATO_CLAUDE_BYPASS_PERMISSIONS=true` and stdin is not a TTY, kato refuses to start unless this flag is also `true`. Setting it means the operator has read SECURITY.md and accepts responsibility for the agent running every tool without asking. |
 | `KATO_CLAUDE_TIMEOUT_SECONDS` | Per-task subprocess timeout. Defaults to 1800. Minimum 60. |
 | `KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED` | Runs a small `claude -p` prompt during startup validation. Off by default. |
 | `KATO_ARCHITECTURE_DOC_PATH` | Optional path to a project-architecture markdown file. When set, kato appends the file's contents to Claude's system prompt on every spawn (autonomous, planning, chat-respawn) via `--append-system-prompt`. Re-read on each spawn so edits land without a kato restart. |
 | `KATO_TASK_PUBLISH_MAX_RETRIES` | Retries for the publish step (per-repo PR creation + the move-to-review transition). Implementation work is not re-run. Defaults to `2` (up to 3 attempts) with exponential backoff. |
+| `KATO_WORKSPACE_REVIEW_TTL_SECONDS` | How long a workspace in `review` state persists before the cleanup loop deletes it, regardless of whether the ticket is still in the review bucket. Default `3600` (1 hour). Set to `0` to disable TTL-based cleanup (legacy behavior: workspace persists until the ticket leaves both assigned and review). Review-comment processing for cleaned tickets re-clones on demand. |
 
 The active issue provider comes from `kato.issue_platform`, which defaults to `youtrack`.
 Issue states can be configured directly in `.env` with `YOUTRACK_ISSUE_STATES`, `JIRA_ISSUE_STATES`, `GITHUB_ISSUES_ISSUE_STATES`, `GITLAB_ISSUES_ISSUE_STATES`, and `BITBUCKET_ISSUES_ISSUE_STATES`.
@@ -968,7 +993,17 @@ What kato does **not** do today:
 - Filesystem sandboxing (the agent can read anything the kato process can).
 - Per-task containerization for the agent.
 
-`KATO_CLAUDE_BYPASS_PERMISSIONS=true` removes the planning-UI prompt layer in exchange for unattended speed. When you set this flag, kato logs a `WARNING` line on every Claude spawn naming the loss of per-tool prompts. Only enable it when you've already locked the agent down at a different layer.
+`KATO_CLAUDE_BYPASS_PERMISSIONS=true` removes the planning-UI prompt layer in exchange for unattended speed. To make this state impossible to enable silently or by accident, kato applies the following defense-in-depth layers:
+
+- **Refused under root.** Kato will not start when `KATO_CLAUDE_BYPASS_PERMISSIONS=true` and the process runs as root. There is no exception and no override.
+- **Refused under CI / Docker / cron unless explicitly acknowledged.** When stdin is not a TTY, kato refuses to start unless `KATO_CLAUDE_BYPASS_PERMISSIONS_ACCEPT=true` is also set. The companion flag exists so the operator's acknowledgement is recorded in writing in their `.env`.
+- **Interactive y/n confirmation** when stdin is a TTY and the ACCEPT flag is not set — answered "no" aborts startup.
+- **Unmissable stderr banner** at every boot, written before logger configuration so log level cannot suppress it.
+- **Persistent red banner across the top of the planning UI** — every operator looking at the browser sees the bypass state.
+- **Configurator requires typing `I ACCEPT`** before writing the flag (`python -m kato.configure_project`).
+- **Per-spawn `WARNING` log** on every Claude turn naming the loss of per-tool prompts.
+
+Only enable bypass when you've already locked the agent down at a different layer (devcontainer, dedicated VM, scoped credentials, egress firewall — see SECURITY.md).
 
 The actual safety net is the same one you use for human contributors: **review every diff before merging**. Treat the agent's output as untrusted and gate it through normal code review.
 

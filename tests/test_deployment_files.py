@@ -337,10 +337,12 @@ class DeploymentFilesTests(unittest.TestCase):
                 'KATO_CLAUDE_ALLOWED_TOOLS',
                 'KATO_CLAUDE_DISALLOWED_TOOLS',
                 'KATO_CLAUDE_BYPASS_PERMISSIONS',
+                'KATO_CLAUDE_BYPASS_PERMISSIONS_ACCEPT',
                 'KATO_CLAUDE_TIMEOUT_SECONDS',
                 'KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED',
                 'KATO_ARCHITECTURE_DOC_PATH',
                 'KATO_TASK_PUBLISH_MAX_RETRIES',
+                'KATO_WORKSPACE_REVIEW_TTL_SECONDS',
             ],
         )
 
@@ -408,13 +410,22 @@ class DeploymentFilesTests(unittest.TestCase):
         config_text = (
             REPO_ROOT / 'kato' / 'config' / 'kato_core_lib.yaml'
         ).read_text(encoding='utf-8')
+        # install-python-deps.sh is now a thin POSIX wrapper around the
+        # cross-platform Python script. Probe the canonical Python file
+        # for dependency content.
         install_deps_text = (
-            REPO_ROOT / 'scripts' / 'install-python-deps.sh'
+            REPO_ROOT / 'scripts' / 'install_python_deps.py'
         ).read_text(encoding='utf-8')
 
-        self.assertIn('cp .env.example .env', bootstrap_text)
-        self.assertIn('sh ./scripts/install-python-deps.sh .venv/bin/python editable', bootstrap_text)
-        self.assertIn('.venv/bin/python -m unittest discover -s tests', bootstrap_text)
+        # bootstrap.sh is now a thin POSIX wrapper around the canonical
+        # cross-platform Python entrypoint at scripts/bootstrap.py.
+        self.assertIn('python3 scripts/bootstrap.py', bootstrap_text)
+        bootstrap_py_text = (
+            REPO_ROOT / 'scripts' / 'bootstrap.py'
+        ).read_text(encoding='utf-8')
+        self.assertIn('.env.example', bootstrap_py_text)
+        self.assertIn('install_python_deps.py', bootstrap_py_text)
+        self.assertIn("'unittest', 'discover', '-s', 'tests'", bootstrap_py_text)
         self.assertIn('hydra-core>=1.3.2', install_deps_text)
         self.assertIn('core-lib>=0.2.0', install_deps_text)
         self.assertNotIn('alembic', install_deps_text)

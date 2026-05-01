@@ -20,7 +20,7 @@ kato:
   # thread still gates each task one-at-a-time (validate, reserve slot,
   # move to In Progress); the heavy execute / test / publish work runs
   # in a thread pool sized by this value.
-  max_parallel_tasks: ${oc.decode:${oc.env:KATO_MAX_PARALLEL_TASKS,"1"}}
+  max_parallel_tasks: ${oc.decode:${oc.env:KATO_MAX_PARALLEL_TASKS,"2"}}
   retry:
     max_retries: ${oc.decode:${oc.env:KATO_EXTERNAL_API_MAX_RETRIES,"3"}}
   failure_email:
@@ -133,7 +133,7 @@ kato:
     # runs, planning sessions, and review-fix retries). Empty disables.
     architecture_doc_path: ${oc.env:KATO_ARCHITECTURE_DOC_PATH,""}
   task_scan:
-    startup_delay_seconds: ${oc.decode:${oc.env:OPENHANDS_TASK_SCAN_STARTUP_DELAY_SECONDS,"30"}}
+    startup_delay_seconds: ${oc.decode:${oc.env:OPENHANDS_TASK_SCAN_STARTUP_DELAY_SECONDS,"5"}}
     scan_interval_seconds: ${oc.decode:${oc.env:OPENHANDS_TASK_SCAN_INTERVAL_SECONDS,"60"}}
   task_publish:
     # Retries for the publish step (per-repo PR creation + the
@@ -141,3 +141,10 @@ kato:
     # re-run on retry; only the publish-side network/API calls are
     # retried with exponential backoff. 2 retries → up to 3 attempts.
     max_retries: ${oc.decode:${oc.env:KATO_TASK_PUBLISH_MAX_RETRIES,"2"}}
+  # How long a workspace in `review` state survives before the cleanup
+  # loop deletes it, even if the ticket is still in the review bucket.
+  # Default 3600s = 1 hour. After this window, kato re-clones on demand
+  # if a review comment fires for an already-cleaned task. Set to 0 to
+  # disable TTL-based cleanup (workspace persists for the full review
+  # bucket lifetime, which is the legacy behavior).
+  review_workspace_ttl_seconds: ${oc.decode:${oc.env:KATO_WORKSPACE_REVIEW_TTL_SECONDS,"3600"}}

@@ -42,6 +42,10 @@ class KatoCoreLibTests(unittest.TestCase):
 
         repository = cfg.kato.repositories[0]
         repository_service = Mock()
+        # validate_connections is now lazy: if ``_repositories`` is None
+        # the connection validator skips per-repo iteration. Mock() would
+        # otherwise auto-create a non-iterable Mock for this attribute.
+        repository_service._repositories = None
         repository_service.repositories = [repository]
         repository_service.resolve_task_repositories.return_value = [repository]
         repository_service.prepare_task_repositories.side_effect = lambda repositories: repositories
@@ -235,6 +239,7 @@ class KatoCoreLibTests(unittest.TestCase):
             parallel_task_runner=ANY,
             wait_planning_service=ANY,
             triage_service=ANY,
+            review_workspace_ttl_seconds=ANY,
         )
         mock_service_cls.return_value.validate_connections.assert_called_once_with()
         self.assertIs(app.service, mock_service_cls.return_value)

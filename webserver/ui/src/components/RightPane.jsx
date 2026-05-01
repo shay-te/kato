@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import FilesTab from '../FilesTab.jsx';
 import ChangesTab from '../ChangesTab.jsx';
+import OrchestratorActivityFeed from './OrchestratorActivityFeed.jsx';
 import RightPaneResizer from './RightPaneResizer.jsx';
 
 const TAB_FILES = 'files';
@@ -11,51 +12,52 @@ export default function RightPane({
   workspaceVersion = 0,
   width,
   onResizePointerDown,
+  activityHistory = [],
 }) {
   const [tab, setTab] = useState(TAB_FILES);
+
+  const filesBody = tab === TAB_FILES && (
+    <FilesTab taskId={activeTaskId} workspaceVersion={workspaceVersion} />
+  );
+  const changesBody = tab === TAB_CHANGES && (
+    <ChangesTab taskId={activeTaskId} workspaceVersion={workspaceVersion} />
+  );
+  const filesTabClass = tab === TAB_FILES ? 'active' : '';
+  const changesTabClass = tab === TAB_CHANGES ? 'active' : '';
+  function showFiles() { setTab(TAB_FILES); }
+  function showChanges() { setTab(TAB_CHANGES); }
+  const sessionBody = activeTaskId ? (
+    <div className="right-pane">
+      <nav className="right-pane-tabs">
+        <button
+          type="button"
+          className={filesTabClass}
+          onClick={showFiles}
+        >
+          Files
+        </button>
+        <button
+          type="button"
+          className={changesTabClass}
+          onClick={showChanges}
+        >
+          Changes
+        </button>
+      </nav>
+      <div className="right-pane-body">
+        {filesBody}
+        {changesBody}
+      </div>
+    </div>
+  ) : (
+    <OrchestratorActivityFeed history={activityHistory} />
+  );
 
   return (
     <aside id="right-pane" style={{ width }}>
       <RightPaneResizer onPointerDown={onResizePointerDown} />
       <div id="right-pane-root">
-        {activeTaskId ? (
-          <div className="right-pane">
-            <nav className="right-pane-tabs">
-              <button
-                type="button"
-                className={tab === TAB_FILES ? 'active' : ''}
-                onClick={() => setTab(TAB_FILES)}
-              >
-                Files
-              </button>
-              <button
-                type="button"
-                className={tab === TAB_CHANGES ? 'active' : ''}
-                onClick={() => setTab(TAB_CHANGES)}
-              >
-                Changes
-              </button>
-            </nav>
-            <div className="right-pane-body">
-              {tab === TAB_FILES && (
-                <FilesTab
-                  taskId={activeTaskId}
-                  workspaceVersion={workspaceVersion}
-                />
-              )}
-              {tab === TAB_CHANGES && (
-                <ChangesTab
-                  taskId={activeTaskId}
-                  workspaceVersion={workspaceVersion}
-                />
-              )}
-            </div>
-          </div>
-        ) : (
-          <div className="right-pane-empty">
-            Select a tab on the left to inspect files and changes.
-          </div>
-        )}
+        {sessionBody}
       </div>
     </aside>
   );

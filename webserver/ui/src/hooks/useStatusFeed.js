@@ -8,6 +8,7 @@ export function useStatusFeed(onEntry) {
   const [latest, setLatest] = useState(null);
   const [history, setHistory] = useState([]);
   const [stale, setStale] = useState(false);
+  const [connected, setConnected] = useState(false);
   const seenSequencesRef = useRef(new Set());
   const onEntryRef = useRef(onEntry);
   onEntryRef.current = onEntry;
@@ -21,17 +22,27 @@ export function useStatusFeed(onEntry) {
     };
 
     const stream = new EventSource('/api/status/events');
+    stream.addEventListener('open', () => {
+      setConnected(true);
+      resetStale();
+    });
     stream.addEventListener('status_entry', (event) => {
       const entry = safeParseJSON(event.data);
       if (!entry || seenSequencesRef.current.has(entry.sequence)) { return; }
       seenSequencesRef.current.add(entry.sequence);
+      // Drop idle-heartbeat entries from the rolling history so a long
+      // idle window doesn't push real activity off the top. They still
+      // update `latest` so the live bar shows the countdown.
+      const isHeartbeat = String(entry.message || '').startsWith('Idle · next scan in');
       setLatest(entry);
-      setHistory((prev) => {
-        const next = [...prev, entry];
-        return next.length > HISTORY_LIMIT
-          ? next.slice(-HISTORY_LIMIT)
-          : next;
-      });
+      if (!isHeartbeat) {
+        setHistory((prev) => {
+          const next = [...prev, entry];
+          return next.length > HISTORY_LIMIT
+            ? next.slice(-HISTORY_LIMIT)
+            : next;
+        });
+      }
       resetStale();
       if (typeof onEntryRef.current === 'function') {
         onEntryRef.current(entry);
@@ -39,11 +50,13 @@ export function useStatusFeed(onEntry) {
     });
     stream.addEventListener('status_disabled', () => {
       setStale(true);
+      setConnected(false);
       stream.close();
     });
     stream.onerror = () => {
       if (stream.readyState === EventSource.CLOSED) {
         setStale(true);
+        setConnected(false);
       }
     };
     resetStale();
@@ -53,5 +66,5 @@ export function useStatusFeed(onEntry) {
     };
   }, []);
 
-  return { latest, history, stale };
+  return { latest, history, stale, connected };
 }
