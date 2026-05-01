@@ -245,6 +245,28 @@ class TaskPublisher(Service):
             or isinstance(pull_request, _PublishFailure)
         ):
             return pull_request
+        # Surface the push + PR creation explicitly. Until this fires,
+        # the operator can't see "the branch is now on the remote" in
+        # the planning UI status feed.
+        pull_request_url = text_from_mapping(pull_request, PullRequestFields.URL)
+        pull_request_id = text_from_mapping(pull_request, PullRequestFields.ID)
+        if pull_request_url:
+            self._log_task_step(
+                task.id,
+                'pushed branch %s to %s and opened PR %s — %s',
+                branch_name,
+                repository.id,
+                f'#{pull_request_id}' if pull_request_id else '(id unknown)',
+                pull_request_url,
+            )
+        else:
+            self._log_task_step(
+                task.id,
+                'pushed branch %s to %s and opened PR %s',
+                branch_name,
+                repository.id,
+                f'#{pull_request_id}' if pull_request_id else '(id unknown)',
+            )
         self._record_created_pull_request(
             task,
             repository,

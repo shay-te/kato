@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { safeParseJSON } from '../utils/sse.js';
+import { MessageFilter } from '../utils/MessageFilter.js';
 
 const STALE_AFTER_MS = 30_000;
 const HISTORY_LIMIT = 200;

@@ -5,16 +5,18 @@ import { CLAUDE_EVENT, CLAUDE_SYSTEM_SUBTYPE } from '../constants/claudeEvent.js
 import { ENTRY_SOURCE } from '../constants/entrySource.js';
 import { stringifyShort } from '../utils/dom.js';
 import { formatToolUse } from '../utils/formatToolUse.js';
+import { MessageFilter } from '../utils/MessageFilter.js';
 
 export default function EventLog({ entries, banner }) {
   const containerRef = useRef(null);
+  const visibleEntries = MessageFilter.dedupeRateLimitCycles(entries);
   useEffect(() => {
     const node = containerRef.current;
     if (node) { node.scrollTop = node.scrollHeight; }
-  }, [entries.length, banner]);
+  }, [visibleEntries.length, banner]);
 
   const bannerBubble = banner && <Bubble kind={BUBBLE_KIND.SYSTEM}>{banner}</Bubble>;
-  const eventBubbles = entries.flatMap((entry, index) => {
+  const eventBubbles = visibleEntries.flatMap((entry, index) => {
     return bubblesFor(entry, index);
   });
   return (

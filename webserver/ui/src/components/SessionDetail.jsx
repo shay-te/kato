@@ -129,21 +129,17 @@ export default function SessionDetail({ session, onActivity, needsAttention = fa
 }
 
 function canSend(lifecycle, session) {
-  if (lifecycle === SESSION_LIFECYCLE.STREAMING
-      || lifecycle === SESSION_LIFECYCLE.CONNECTING) {
-    return true;
-  }
-  return Boolean(session?.claude_session_id);
+  // Only block when the server has no record at all. CLOSED/IDLE still
+  // accept sends — the backend respawns Claude on demand, and after a
+  // rate-limit hit the operator needs to be able to retry once the
+  // window resets without manually refreshing.
+  if (lifecycle === SESSION_LIFECYCLE.MISSING) { return false; }
+  return true;
 }
 
 function composerDisabledReason(lifecycle, session) {
   if (canSend(lifecycle, session)) { return ''; }
-  switch (lifecycle) {
-    case SESSION_LIFECYCLE.MISSING:
-      return 'No record for this task on the server.';
-    default:
-      return 'No saved Claude session — start the task again to chat.';
-  }
+  return 'No record for this task on the server.';
 }
 
 // Banner is the always-visible status line at the top of the log.

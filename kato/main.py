@@ -8,7 +8,7 @@ from omegaconf import DictConfig
 
 from kato.helpers.logging_utils import configure_logger
 from kato.helpers.shell_status_utils import (
-    sleep_with_scan_spinner,
+    sleep_with_countdown_spinner,
     supports_inline_status,
     sleep_with_warmup_countdown,
 )
@@ -19,7 +19,6 @@ from kato.helpers.status_broadcaster_utils import (
 from kato.validate_env import validate_environment
 from kato.validation.bypass_permissions_validator import (
     BypassPermissionsRefused,
-    is_bypass_enabled,
     print_security_posture,
     validate_bypass_permissions,
 )
@@ -309,17 +308,19 @@ def _idle_with_heartbeat(
     sleep_fn=time.sleep,
     heartbeat_seconds: float = 5.0,
 ) -> None:
-    """Sleep ``interval_seconds`` between scan ticks while broadcasting a live
-    countdown so the planning UI's status bar doesn't go silent.
+    """Sleep ``interval_seconds`` between scan ticks.
 
-    Each heartbeat is a single ``logger.info`` line — the terminal still
-    shows its inline spinner via :func:`sleep_with_scan_spinner`, but that
-    spinner uses carriage-return overwrites and never flows through the
-    logger / SSE broadcaster. The heartbeat is what the UI actually sees.
+    The terminal sees a single inline-status line that updates in place
+    via carriage-return; no new lines per heartbeat. The planning UI's
+    SSE feed sees one heartbeat entry per ``heartbeat_seconds`` chunk so
+    the status bar shows a live countdown — published directly to the
+    broadcaster (bypassing the Python logger so it doesn't double-print
+    to stderr).
 
     The loop is driven by chunk count, not wall-clock, so a mocked
     ``sleep_fn`` in tests doesn't have to also patch ``time.monotonic``.
     """
+    del logger  # unused: we publish to the broadcaster directly now
     total = float(interval_seconds)
     if total <= 0:
         return
@@ -328,11 +329,21 @@ def _idle_with_heartbeat(
     remaining = total
     while remaining > 0:
         chunk = step if remaining >= step else remaining
-        logger.info('Idle · next scan in %ds', int(round(remaining)))
+        countdown = int(round(remaining))
+        # Push the heartbeat to the SSE feed only — the broadcaster bypasses
+        # the Python logger so no new line lands on the terminal.
+        _STATUS_BROADCASTER.publish(
+            level='INFO',
+            logger_name='kato.heartbeat',
+            message=f'Idle · next scan in {countdown}s',
+        )
         if use_spinner:
-            sleep_with_scan_spinner(
+            # Carriage-return spinner with countdown — single inline line
+            # the terminal updates in place every chunk.
+            sleep_with_countdown_spinner(
                 chunk,
-                status_text='Scanning for new tasks and comments',
+                status_text='Idle · next scan in',
+                countdown_seconds=countdown,
                 sleep_fn=sleep_fn,
             )
         else:

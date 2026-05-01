@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <style>
+    /* Kato silhouette must be visible on light AND dark browser tabs.
+       `currentColor` is unreliable for favicons — most browsers resolve
+       it to black, which disappears on dark tabs. Drive fill from a
+       prefers-color-scheme media query instead. */
+    :root { --kato-fg: #111; }
+    @media (prefers-color-scheme: dark) {
+      :root { --kato-fg: #f5f5f5; }
+    }
+    path, circle { fill: var(--kato-fg); }
+    .face { opacity: 0.15; }
+  </style>
+  <!-- Cap brim -->
+  <path d="M10 24 Q32 18 54 24 L52 28 Q32 24 12 28 Z"/>
+  <!-- Cap crown -->
+  <path d="M14 24 Q14 10 32 9 Q50 10 50 24 Q32 19 14 24 Z"/>
+  <!-- Cap badge dot -->
+  <circle cx="32" cy="14" r="2.2"/>
+  <!-- Face oval (subtle) -->
+  <path class="face" d="M19 30 Q19 50 32 54 Q45 50 45 30 Q32 34 19 30 Z"/>
+  <!-- Domino mask -->
+  <path d="M16 30 Q16 38 22 39 L29 39 Q31 36 32 36 Q33 36 35 39 L42 39 Q48 38 48 30 Q32 34 16 30 Z"/>
+</svg>
