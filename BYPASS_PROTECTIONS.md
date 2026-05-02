@@ -107,7 +107,7 @@ attacks to kato's specific countermeasure for each. Status legend:
 
 | # | Risk | Status | How kato handles it |
 |---|---|---|---|
-| 9 | `~/.claude` token theft | **M** | Auth lives in a **named Docker volume** (`kato-claude-config`), NOT a bind from host's `~/.claude`. The volume is mounted **read-only** at `/auth-src` during spawn; the entrypoint copies a strict allowlist (`.credentials.json` only) into a per-task tmpfs at `/home/claude/.claude`, so this task can read but never write the persistent credential store. The volume content is the operator's own Claude OAuth credentials — Claude reading its own session token is uninteresting (already model-side). |
+| 9 | `~/.claude` token theft | **M** for theft / persistence; see residual model for model-channel disclosure | Auth lives in a **named Docker volume** (`kato-claude-config`), NOT a bind from host's `~/.claude`. The volume is mounted **read-only** at `/auth-src` during spawn; the entrypoint copies a strict allowlist (`.credentials.json` only) into a per-task tmpfs at `/home/claude/.claude`, so this task can read but never write the persistent credential store. Theft-for-use-elsewhere is mitigated. **Disclosure of the credential value via prompt injection → Anthropic egress is a separate risk** covered in the "Residual model — Prompt-injection ↔ Anthropic egress" section near the end of this file; the firewall cannot fix that, by design. |
 | 10 | Exfil through allowlisted domains (e.g. github.com → public gist) | **M** | **GitHub is NOT in the allowlist.** The only allowed egress is `api.anthropic.com:443`. No npm, no pypi, no statsig, no sentry, no GitHub. |
 | 11 | Environment variable leakage via `printenv` | **B** | Container env contains only what `wrap_command` sets: `CLAUDE_CONFIG_DIR`, the two telemetry/auto-update opt-outs, and (if explicitly set on host) `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`. Host env is **not** inherited wholesale. Only Claude credentials are sensitive — and they're scoped to Claude itself. |
 | 12 | `.env` file disclosure (cloned with the repo) | **A** | If operator commits secrets to the repo, Claude can read them. **Don't put host secrets in workspace folders.** Documented as F10. |
@@ -200,20 +200,20 @@ attacks to kato's specific countermeasure for each. Status legend:
 | 64 | Hook installation (`.claude/settings.json` registers hooks) | **M** | The auth volume is mounted **read-only** at `/auth-src` during spawns, and the entrypoint copies only `.credentials.json` into the per-task tmpfs at `/home/claude/.claude`. `settings.json`, `hooks/`, `commands/`, `agents/`, and MCP config from the volume are **not** carried into spawn containers, so a poisoned write from a prior task cannot register hooks for this one. The login flow is the only path that can write the volume, and after each successful login `stamp_auth_volume_manifest` records a SHA-256 of `.credentials.json` that subsequent spawns verify (mismatch = abort). |
 | 65 | Settings file modification (disable safety / change permission rules) | **M** | Same as #64 — `settings.json` is never copied into the spawn tmpfs, so settings written by a prior task do not apply. The kernel firewall and capability drops live outside Claude's reach regardless. |
 | 66 | Cross-task contamination via shared auth volume | **M** | Auth volume is mounted **read-only** during spawns (RW only during `make sandbox-login`). A poisoned `settings.json` / hook / MCP config from task A is never copied into task B's tmpfs `.claude`. SHA-256 manifest stamped at login detects out-of-band tampering. |
-| 67 | DNS exfiltration via subdomain encoding | **M** | DNS to Cloudflare 1.1.1.1 / 1.0.0.1 is rate-limited via `iptables -m hashlimit` to 60 queries/minute per resolver with a burst of 20. A patient attacker can still trickle small amounts of data (the resolver recurses, so an attacker-controlled authoritative server logs the encoded subdomain) — but bulk exfil of the workspace via DNS is impractical. |
+| 67 | DNS exfiltration via subdomain encoding | **B** | DNS to Cloudflare 1.1.1.1 / 1.0.0.1 is rate-limited via `iptables -m hashlimit` to 60 queries/minute per resolver with a burst of 20. The resolver is recursive, so an attacker-controlled authoritative server logs the encoded subdomain — a patient attacker can still trickle small amounts of data over hours. Bulk exfil of the workspace via DNS is impractical, but the channel is not eliminated. |
 | 68 | Cloud-instance metadata exfil (AWS IMDS, GCP) | **M** | `169.254.169.254` and the entire `169.254.0.0/16` link-local range are explicitly DROPped at the start of the OUTPUT chain, before any ACCEPT. RFC1918 ranges (`10/8`, `172.16/12`, `192.168/16`) and CGNAT (`100.64/10`) are also blocked, so the sandbox cannot reach the host's docker bridge IP, the operator's LAN, or shared cloud services. |
-| 66 | Auto-update poisoning (CLI fetches new version mid-session) | **M** | `DISABLE_AUTOUPDATER=1` baked into image; egress firewall would block the update fetch anyway. Image is rebuilt explicitly via `make sandbox-build`. |
+| 69 | Auto-update poisoning (CLI fetches new version mid-session) | **M** | `DISABLE_AUTOUPDATER=1` baked into image; egress firewall would block the update fetch anyway. Image is rebuilt explicitly via `make sandbox-build`. |
 
 ## Summary
 
-- **Mitigated (M):** 45 of 68 risks are effectively eliminated.
-- **Bounded (B):** 16 of 68 have their consequences capped (workspace-scoped, sandbox-bounded, or operator-reviewable in the diff).
-- **Accepted (A):** 3 of 68 are residual by design (workspace secrets, model exfil channel, base-image trust).
-- **Not applicable (N):** 4 of 68 don't apply (no MCP servers in this sandbox image).
+- **Mitigated (M):** 38 of 69 risks are effectively eliminated.
+- **Bounded (B):** 23 of 69 have their consequences capped (workspace-scoped, sandbox-bounded, operator-reviewable in the diff, or rate-limited).
+- **Accepted (A):** 2 of 69 are residual by design (#12 workspace-resident secrets, #17 source-code exfil to Anthropic). Build-time supply chain is documented separately as **Accepted-with-mitigation** in the Residual model section — pin the base image via `KATO_SANDBOX_BASE_IMAGE` and build from a trusted network.
+- **Not applicable (N):** 6 of 69 don't apply (no MCP servers in this sandbox image).
 
 The biggest single multiplier is the **strict egress allowlist** —
-`api.anthropic.com:443` only — which alone neutralises 14 of the 66
-risks (every "exfil to attacker host" / "fetch from attacker host"
+`api.anthropic.com:443` only — which alone neutralises ~14 risks
+(every "exfil to attacker host" / "fetch from attacker host"
 flavour). The second is the **no-`git` image** + `core.hooksPath=
 /dev/null` on every kato git invocation, which neutralises 9 more
 (every git-side abuse). Everything else is process/FS/cap hardening
@@ -238,7 +238,7 @@ the categorical breakdown is for browsing.
 | F3 | Container writes to its own root filesystem | **M** | `--read-only` rootfs; only the workspace bind-mount and the auth volume are writable |
 | F4 | `/proc` / `/sys` write or sensitive read | **M** | Docker default masks `/proc/keys`, `/proc/sched_debug`, etc.; `/sys` mounted read-only |
 | F5 | `/dev` device escape (e.g. `/dev/mem`, `/dev/kmem`) | **M** | Docker default `--cap-drop=SYS_RAWIO` and seccomp deny these |
-| F6 | Tmpfs exhaustion | **M** | All three tmpfs mounts have explicit size caps (128M / 8M / 16M) |
+| F6 | Tmpfs exhaustion | **M** | All three tmpfs mounts have explicit size caps (`/tmp`=256M, `/run`=4M, `/var/tmp`=32M); `/dev/shm` capped at 16M; `.claude` per-task tmpfs at 64M with `nosuid,nodev` |
 | F7 | Auth credentials leak through workspace | **M** | Auth volume is a *named* Docker volume, not a host bind — invisible to other containers and not on host filesystem |
 | F8 | Host kato source readable from container | **M** | Not mounted; container has no path back to kato |
 | F9 | Other tasks' workspaces readable | **M** | Each spawn is a fresh `--rm` container, only its own task's workspace mounted |
@@ -289,7 +289,7 @@ the categorical breakdown is for browsing.
 | R4 | Disk fill via `/workspace` writes | **B** | Bounded by host disk. Operator can quota the workspace mount with filesystem-level quotas if needed. |
 | R5 | Tmpfs fill | **M** | All three tmpfs mounts have explicit size caps |
 | R6 | CPU starvation of host | **M** | `--cpus=2` |
-| R7 | `/dev/shm` exhaustion | **M** | `--shm-size=64m` |
+| R7 | `/dev/shm` exhaustion | **M** | `--shm-size=16m` (Claude doesn't use SysV shared memory; bound is intentionally tight) |
 | R8 | Zombie process accumulation | **M** | `--init` (tini) reaps zombies |
 | R9 | Unbounded turn duration | **B** | Claude CLI accepts `--max-turns`; operator can `Stop` from the planning UI; container is `--rm` so cleanup is automatic |
 
@@ -298,7 +298,7 @@ the categorical breakdown is for browsing.
 | # | Risk | Status | Mitigation |
 |---|---|---|---|
 | C1 | `--privileged` mode | **M** | Never set |
-| C2 | Same-named image of unknown provenance in cache | **M** | `image_built_by_kato()` checks the `org.kato.sandbox=true` LABEL; mismatched image triggers forced rebuild |
+| C2 | Same-named image of unknown provenance in cache | **B** | `image_built_by_kato()` checks the `org.kato.sandbox=true` LABEL — this is a **cache sanity check**, NOT cryptographic identity. A determined attacker with local Docker access can tag any image with the same label, so the check defends against accidental collisions (operator pulled something, built from a different source) but not against adversarial manipulation. The runtime defense is `wrap_command`'s JIT digest pin (`image@sha256:<digest>` resolved at spawn time) which closes the TOCTOU window between `ensure_image()` and `docker run`. Operators wanting cryptographic provenance should pin the base image by digest via `KATO_SANDBOX_BASE_IMAGE` and host their own image registry. |
 | C3 | Image runtime tampering | **M** | Rootfs `--read-only`; image contents can't be modified at runtime |
 | C4 | Container persistence beyond task | **M** | `--rm` removes container on exit; no state survives outside the auth volume |
 | C5 | Cgroups bypass | **M** | Not possible without CAP_SYS_ADMIN, which is dropped |
@@ -318,7 +318,7 @@ the categorical breakdown is for browsing.
 
 | # | Risk | Status | Mitigation |
 |---|---|---|---|
-| S1 | Base image (`node:20-bookworm-slim`) tamper | **A** | Operator-side trust in Docker Hub / official mirror. Standard Docker hardening (DCT, image signing) applies. |
+| S1 | Base image (`node:22-bookworm-slim`) tamper | **Accepted-with-mitigation** | Default pulls the moving `node:22-bookworm-slim` tag from Docker Hub. Operators concerned about supply-chain attacks pin a specific digest by setting `KATO_SANDBOX_BASE_IMAGE=node:22-bookworm-slim@sha256:<digest>`; `manager.build_image` passes this through as the Dockerfile `BASE_IMAGE` build-arg. See the "Build-time supply chain" section in the Residual model for what this does and doesn't address. |
 | S2 | `npm install -g @anthropic-ai/claude-code` pulls tampered package | **B** | Build-time only, not runtime. Egress firewall would block runtime fetches. Operator can pin a specific version in the Dockerfile if desired. |
 | S3 | Debian package repo tamper | **A** | Build-time only, signed via apt. |
 | S4 | Auto-update fetches new Claude CLI at runtime | **M** | `DISABLE_AUTOUPDATER=1` in image; runtime egress firewall would block npm fetches anyway |
@@ -407,12 +407,13 @@ network `kato-sandbox-net` created with
 containers (e.g. kato spawning Claude for two tasks at once) cannot
 reach each other.
 
-The script self-verifies before exec'ing Claude:
+The script self-verifies before exec'ing Claude — every check is fail-closed:
 
-- It **must** be able to reach `api.anthropic.com`. (Warning if not.)
+- It **must** be able to reach `api.anthropic.com`. (Hard fail — Claude can't function without it; warn-and-continue would just produce confusing retry spirals.)
 - It **must NOT** be able to reach `example.com`. (Hard fail.)
 - The OUTPUT policy **must** be `DROP`. (Hard fail.)
 - The OUTPUT REJECT catchall **must** be present. (Hard fail.)
+- DNS resolution of `api.anthropic.com` **must NOT** return a private/loopback IP. (Hard fail — defense vs DNS poisoning.)
 
 > Bypass lives in **userspace** (Claude's permission mode); iptables
 > lives in the **kernel**. `--permission-mode bypassPermissions` cannot
@@ -423,14 +424,28 @@ The script self-verifies before exec'ing Claude:
 The container is launched with:
 
 - `--cap-drop=ALL`, then `--cap-add=NET_ADMIN,NET_RAW` so only the
-  init-firewall step can manipulate iptables.
+  init-firewall step can manipulate iptables, plus
+  `--cap-add=SETUID,SETGID` so the entrypoint's `setpriv` step can
+  drop root → claude (uid 1000) — without these, `setresuid` fails
+  with EPERM even from root. **All four added capabilities are
+  transient**: the entrypoint's `--bounding-set=-all` wipes them
+  before `exec`-ing Claude, so the running Claude process holds
+  no capabilities at all. The firewall rules persist in the
+  network namespace independent of process credentials.
 - `--security-opt no-new-privileges`: setuid binaries cannot escalate.
+- `--security-opt apparmor=docker-default` (no-op on hosts without
+  AppArmor; explicit pin where it's available).
 - `--read-only` rootfs.
-- `--ipc=none`: no SysV IPC, no shared-memory channels.
+- `--ipc=none`, `--cgroupns=private`, `--pid=container`,
+  `--uts=private`: explicit namespace isolation for IPC, cgroups,
+  PIDs, hostname.
 - `--init`: tini reaps zombie child processes.
 - `--memory=2g` with matching `--memory-swap` (swap disabled),
-  `--pids-limit=256`, `--cpus=2`, `--shm-size=64m`,
-  `--ulimit nofile=1024`, `--ulimit nproc=128`.
+  `--pids-limit=256`, `--cpus=2`, `--shm-size=16m`,
+  `--ulimit nofile=1024`, `--ulimit nproc=128`,
+  `--ulimit fsize=1g` (per-file write cap),
+  `--ulimit msgqueue=0` (POSIX message queues disabled),
+  `--ulimit sigpending=8192`, `--ulimit locks=64`.
 - `--dns 1.1.1.1 --dns 1.0.0.1`: resolver pinned to Cloudflare.
 - `--sysctl net.ipv6.conf.{all,default,lo}.disable_ipv6=1`: IPv6 off.
 
@@ -475,32 +490,41 @@ Bypass mode is never silent:
   requires the operator to type `I ACCEPT` literally before it will
   write the flag into `.env`.
 
-## Optional second-tier hardening (auto-detected)
+## Second-tier hardening
 
-Three further protections kick in automatically when the operator's
-Docker setup supports them — kato never fails on their absence, just
-falls back and logs an info-level recommendation:
+Three further protections sit on top of the eight numbered layers.
+They differ in whether kato refuses to start without them:
 
-- **gVisor (`runsc`)** — when the daemon has `runsc` configured as a
-  runtime, kato adds `--runtime=runsc` to every sandbox spawn.
-  gVisor is a userspace kernel sitting between the container and the
-  host's Linux kernel, so most kernel-CVE escape paths require an
-  attacker to break gVisor first. Install via
-  https://gvisor.dev/docs/user_guide/install/.
-- **Rootless Docker** — when the daemon runs in rootless mode, a
-  container escape lands in the operator's user account, not in
-  full host root. Documented at
+- **gVisor (`runsc`)** — **strict by default**. When bypass mode is
+  on, kato calls `check_gvisor_or_exit()` at startup and refuses to
+  proceed unless `runsc` is configured as a Docker runtime. gVisor is
+  a userspace kernel sitting between the container and the host's
+  Linux kernel, so most kernel-CVE escape paths require an attacker
+  to break gVisor first. Install via
+  https://gvisor.dev/docs/user_guide/install/. The override
+  `KATO_SANDBOX_ALLOW_NO_GVISOR=true` exists for environments where
+  gVisor cannot be installed (most notably Docker Desktop on macOS /
+  Windows where the underlying VM is locked down) — operator
+  explicitly accepts the residual kernel-CVE risk; the other eight
+  sandbox layers still apply.
+- **Rootless Docker** — recommended, not required. When the daemon
+  runs in rootless mode, a container escape lands in the operator's
+  user account, not in full host root. Kato logs a one-line info-
+  level recommendation at boot when bypass is on and the daemon is
+  rooted; it does not refuse to start. Documented at
   https://docs.docker.com/engine/security/rootless/.
-- **Pre-spawn workspace secret scan** — before each sandboxed spawn,
-  kato walks the workspace and warns the operator about files that
-  look like operator credentials (`.env`, `id_rsa`, `.aws/credentials`,
-  `.kube/config`, `.docker/config.json`, etc.). Heuristic by design;
-  `.env.example` / `.env.sample` / `.env.template` are correctly
-  ignored. Doesn't block — operator decides whether the matches are
-  legitimate fixtures or accidentally-committed secrets.
+- **Pre-spawn workspace secret scan** — **strict by default**. Before
+  each sandboxed spawn, kato walks the workspace and refuses to
+  launch if any file matches a credential-shape allowlist (`.env`,
+  `id_rsa`/`id_ed25519`/`id_ecdsa`, `.aws/credentials`, `.kube/config`,
+  `.docker/config.json`, `.netrc`, `.git-credentials`, etc.). The
+  override `KATO_SANDBOX_ALLOW_WORKSPACE_SECRETS=true` exists for
+  legitimate test fixtures whose names happen to match. The scanner
+  correctly ignores `.env.example` / `.env.sample` / `.env.template`.
 
 The image build itself uses `apt-get upgrade -y` + `node:22-bookworm-slim`
-to pull in current security patches. Container processes also have
+to pull in current security patches (operator can pin the base by
+digest via `KATO_SANDBOX_BASE_IMAGE`). Container processes also have
 core dumps disabled (`--ulimit core=0:0`) so a crash can't leak
 memory contents to disk.
 
