@@ -60,6 +60,7 @@ class ClaudeCliClient(object):
         allowed_tools: str = '',
         disallowed_tools: str = '',
         bypass_permissions: bool = False,
+        docker_mode_on: bool = False,
         max_retries: int = 3,
         timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
         repository_root_path: str = '',
@@ -74,6 +75,15 @@ class ClaudeCliClient(object):
         self._max_turns = self._coerce_max_turns(max_turns)
         self._effort = self._coerce_effort(effort)
         self._bypass_permissions = bool(bypass_permissions)
+        # Set from ``KATO_CLAUDE_DOCKER`` at boot. When True, the
+        # per-task spawns (test_task → _run_prompt, investigate →
+        # _run_prompt) wrap the Claude subprocess in the hardened
+        # sandbox. Boot-time validators (validate_connection,
+        # _run_model_access_validation) deliberately stay on the host —
+        # they have no workspace and no untrusted prompt. Independent
+        # of ``bypass_permissions``: docker is containment, bypass is
+        # the prompt layer.
+        self._docker_mode_on = bool(docker_mode_on)
         # When not bypassing, pre-approve a safe default tool list so the
         # agent does not stall asking for permission in headless `-p` mode.
         # Users can override or extend via KATO_CLAUDE_ALLOWED_TOOLS.
@@ -139,6 +149,11 @@ class ClaudeCliClient(object):
                 'Install Claude Code from https://docs.claude.com/en/docs/claude-code/setup '
                 'and ensure the `claude` binary is on PATH, or set KATO_CLAUDE_BINARY.'
             )
+        # Boot-time validator: no workspace, no untrusted prompt — runs
+        # ``claude --version`` only. Sandbox-wrap is intentionally
+        # skipped even when ``KATO_CLAUDE_DOCKER=true``: nothing here for
+        # the sandbox to bound, and a container spin would add ~1-2s to
+        # every startup with zero security benefit.
         try:
             result = subprocess.run(
                 [self._binary, '--version'],
@@ -193,6 +208,7 @@ class ClaudeCliClient(object):
             default_commit_message=f'Implement {task.id}',
             session_id=session_id,
             log_label=agent_prompt_utils.task_conversation_title(task),
+            task_id=str(task.id),
         )
         self.logger.info(
             'implementation finished for task %s with success=%s',
@@ -214,6 +230,7 @@ class ClaudeCliClient(object):
             cwd=cwd,
             additional_dirs=additional_dirs,
             log_label=agent_prompt_utils.task_conversation_title(task, suffix=' [testing]'),
+            task_id=str(task.id),
         )
         self.logger.info(
             'testing validation finished for task %s with success=%s',
@@ -248,6 +265,7 @@ class ClaudeCliClient(object):
                 cwd=normalized_cwd,
                 additional_dirs=[],
                 log_label='triage investigation',
+                task_id='triage',
             )
         finally:
             self._disallowed_tools = original_disallowed
@@ -277,6 +295,7 @@ class ClaudeCliClient(object):
                 task_id=task_id,
                 task_summary=task_summary,
             ),
+            task_id=task_id,
         )
         self.logger.info(
             'review fix finished for pull request %s comment %s with success=%s',
@@ -418,6 +437,7 @@ class ClaudeCliClient(object):
         default_commit_message: str | None = None,
         session_id: str = '',
         log_label: str = '',
+        task_id: str = '',
     ) -> dict[str, str | bool]:
         payload = self._run_prompt(
             prompt=prompt,
@@ -425,6 +445,7 @@ class ClaudeCliClient(object):
             additional_dirs=additional_dirs,
             session_id=session_id,
             log_label=log_label,
+            task_id=task_id,
         )
         return build_openhands_result(
             payload,
@@ -440,6 +461,7 @@ class ClaudeCliClient(object):
         additional_dirs: list[str],
         session_id: str = '',
         log_label: str = '',
+        task_id: str = '',
     ) -> dict[str, str | bool]:
         command = self._build_command(
             additional_dirs=additional_dirs,
@@ -447,12 +469,70 @@ class ClaudeCliClient(object):
         )
         env = self._build_subprocess_env()
         log_label = log_label or 'Claude CLI'
+        # Docker mode wraps the spawn in the hardened sandbox — see
+        # ``kato.sandbox.manager``. Mirrors the streaming-session path
+        # in ``kato.client.claude.streaming_session.StreamingClaudeSession.start``
+        # so test_task and investigate get the same containment as the
+        # interactive planning sessions. Gated on ``_docker_mode_on``,
+        # not ``_bypass_permissions``: docker is containment, bypass is
+        # the prompt layer.
+        spawn_cwd: str | None = cwd or None
+        if self._docker_mode_on:
+            from kato.sandbox.manager import (
+                SandboxError,
+                check_spawn_rate,
+                ensure_image,
+                enforce_no_workspace_secrets,
+                make_container_name,
+                record_spawn,
+                wrap_command,
+            )
+            workspace_path = cwd or self._repository_root_path or os.getcwd()
+            try:
+                ensure_image(logger=self.logger)
+            except SandboxError as exc:
+                raise RuntimeError(
+                    f'failed to prepare Claude sandbox image: {exc}',
+                ) from exc
+            try:
+                check_spawn_rate()
+            except SandboxError as exc:
+                raise RuntimeError(
+                    f'sandbox spawn rate-limited: {exc}',
+                ) from exc
+            container_name = make_container_name(task_id)
+            try:
+                enforce_no_workspace_secrets(workspace_path, logger=self.logger)
+            except SandboxError as exc:
+                raise RuntimeError(
+                    f'sandbox spawn blocked: {exc}',
+                ) from exc
+            command = wrap_command(
+                command,
+                workspace_path=workspace_path,
+                container_name=container_name,
+                task_id=task_id or 'unknown',
+            )
+            try:
+                record_spawn(
+                    task_id=task_id or 'unknown',
+                    container_name=container_name,
+                    workspace_path=workspace_path,
+                    logger=self.logger,
+                )
+            except SandboxError as exc:
+                raise RuntimeError(
+                    f'sandbox audit log required but failed: {exc}',
+                ) from exc
+            # Docker sets the container WORKDIR to /workspace; the host
+            # cwd is irrelevant for the docker client itself.
+            spawn_cwd = None
         self.logger.info('Mission %s: invoking Claude CLI', log_label)
         try:
             completed = subprocess.run(
                 command,
                 input=prompt,
-                cwd=cwd or None,
+                cwd=spawn_cwd,
                 env=env,
                 capture_output=True,
                 text=True,
@@ -657,6 +737,13 @@ class ClaudeCliClient(object):
         self.logger.info('running Claude CLI model access validation')
         command = self._build_command(additional_dirs=[], session_id='')
         env = self._build_subprocess_env()
+        # Boot-time validator: fixed ``SMOKE_TEST_PROMPT`` ("Reply with
+        # exactly: ok"), no tools, no untrusted input. Sandbox-wrap is
+        # intentionally skipped even when ``KATO_CLAUDE_DOCKER=true`` —
+        # there is no workspace to leak from, the only egress is the
+        # api.anthropic.com call that has to happen, and the operator
+        # would pay container-spin cost on every startup with zero
+        # security benefit.
         try:
             completed = subprocess.run(
                 command,

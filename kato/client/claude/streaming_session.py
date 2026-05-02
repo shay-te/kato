@@ -116,6 +116,7 @@ class StreamingClaudeSession(object):
         env: dict[str, str] | None = None,
         effort: str = '',
         architecture_doc_path: str = '',
+        docker_mode_on: bool = False,
         done_callback=None,
     ) -> None:
         if not str(task_id or '').strip():
@@ -141,6 +142,11 @@ class StreamingClaudeSession(object):
         self._effort = normalized_text(effort).lower()
         self._resume_session_id = normalized_text(resume_session_id)
         self._architecture_doc_path = normalized_text(architecture_doc_path)
+        # Set from ``KATO_CLAUDE_DOCKER`` at boot, threaded down through
+        # the session manager. Independent of ``permission_mode``: docker
+        # is the *containment* layer (sandbox), permission_mode is the
+        # *prompt* layer (acceptEdits vs bypassPermissions).
+        self._docker_mode_on = bool(docker_mode_on)
         self._env_overrides = dict(env or {})
         # Callback fired once when an assistant message arrives that
         # contains the ``KATO_TASK_DONE_SENTINEL`` token. Wired by the
@@ -248,15 +254,18 @@ class StreamingClaudeSession(object):
                 )
             command = self._build_command()
             env = self._build_env()
-            # Bypass mode wraps the spawn in the hardened Docker
-            # sandbox — see ``kato.sandbox.manager``. The container
-            # bind-mounts the workspace, blocks egress to anything but
+            # Docker mode wraps the spawn in the hardened sandbox —
+            # see ``kato.sandbox.manager``. The container bind-mounts
+            # the workspace, blocks egress to anything but
             # api.anthropic.com, and runs Claude as a non-root user
             # with no capabilities. The stdin/stdout NDJSON contract
             # is unchanged; reader threads don't care that the other
-            # end is a docker process.
+            # end is a docker process. Gated on ``_docker_mode_on``,
+            # not ``_permission_mode``: with docker=true and bypass=false
+            # the operator gets sandbox containment AND permission
+            # prompts (the recommended posture).
             spawn_cwd: str | None = self._cwd
-            if self._permission_mode == 'bypassPermissions':
+            if self._docker_mode_on:
                 from kato.sandbox.manager import (
                     SandboxError,
                     check_spawn_rate,

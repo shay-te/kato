@@ -130,5 +130,55 @@ class PlanningSessionRunnerTests(unittest.TestCase):
         self.assertEqual(manager.statuses, [SESSION_STATUS_TERMINATED])
 
 
+class PlanningSessionRunnerDockerModeTests(unittest.TestCase):
+    """``KATO_CLAUDE_DOCKER`` plumbing through the runner."""
+
+    def _build_claude_cfg(self, **overrides):
+        cfg = MagicMock()
+        cfg.bypass_permissions = overrides.get('bypass_permissions', False)
+        cfg.binary = 'claude'
+        cfg.model = ''
+        cfg.allowed_tools = ''
+        cfg.disallowed_tools = ''
+        cfg.max_turns = None
+        cfg.effort = ''
+        cfg.architecture_doc_path = ''
+        return cfg
+
+    def test_build_defaults_picks_up_docker_mode_on(self) -> None:
+        defaults = PlanningSessionRunner._build_defaults(
+            self._build_claude_cfg(), docker_mode_on=True,
+        )
+        self.assertTrue(defaults.docker_mode_on)
+
+    def test_build_defaults_default_is_off(self) -> None:
+        defaults = PlanningSessionRunner._build_defaults(self._build_claude_cfg())
+        self.assertFalse(defaults.docker_mode_on)
+
+    def test_from_config_threads_docker_mode_on_to_defaults(self) -> None:
+        open_cfg = MagicMock()
+        open_cfg.claude = self._build_claude_cfg()
+        runner = PlanningSessionRunner.from_config(
+            open_cfg, 'claude', session_manager=MagicMock(),
+            docker_mode_on=True,
+        )
+        self.assertIsNotNone(runner)
+        self.assertTrue(runner._defaults.docker_mode_on)
+
+    def test_implement_task_forwards_docker_mode_on_to_session_manager(self) -> None:
+        manager = _FakeManager(_terminal(result='ok'))
+        defaults = StreamingSessionDefaults(
+            binary='claude',
+            permission_mode='acceptEdits',
+            docker_mode_on=True,
+        )
+        runner = PlanningSessionRunner(session_manager=manager, defaults=defaults)
+        prepared = _FakePrepared([_FakeRepo('client', '/tmp/client')])
+
+        runner.implement_task(build_task(), prepared_task=prepared)
+
+        self.assertIs(manager.start_kwargs['docker_mode_on'], True)
+
+
 if __name__ == '__main__':
     unittest.main()

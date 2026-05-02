@@ -60,6 +60,11 @@ class StreamingSessionDefaults(object):
     max_turns: int | None = None
     effort: str = ''
     architecture_doc_path: str = ''
+    # Set from ``KATO_CLAUDE_DOCKER`` at boot. When True, every spawned
+    # streaming session wraps the Claude subprocess in the hardened
+    # Docker sandbox. Independent of ``permission_mode`` — docker is
+    # the *containment* layer; permission_mode is the *prompt* layer.
+    docker_mode_on: bool = False
 
 
 class PlanningSessionRunner(object):
@@ -80,6 +85,8 @@ class PlanningSessionRunner(object):
         open_cfg,
         agent_backend: str,
         session_manager: ClaudeSessionManager | None,
+        *,
+        docker_mode_on: bool = False,
     ) -> 'PlanningSessionRunner | None':
         """Build the runner (or return None) from the kato config block.
 
@@ -95,11 +102,15 @@ class PlanningSessionRunner(object):
         claude_cfg = getattr(open_cfg, 'claude', None)
         if claude_cfg is None:
             return None
-        defaults = cls._build_defaults(claude_cfg)
+        defaults = cls._build_defaults(claude_cfg, docker_mode_on=docker_mode_on)
         return cls(session_manager=session_manager, defaults=defaults)
 
     @staticmethod
-    def _build_defaults(claude_cfg) -> 'StreamingSessionDefaults':
+    def _build_defaults(
+        claude_cfg,
+        *,
+        docker_mode_on: bool = False,
+    ) -> 'StreamingSessionDefaults':
         bypass = bool(getattr(claude_cfg, 'bypass_permissions', False))
         return StreamingSessionDefaults(
             binary=str(getattr(claude_cfg, 'binary', '') or 'claude'),
@@ -110,6 +121,7 @@ class PlanningSessionRunner(object):
             max_turns=_coerce_optional_int(getattr(claude_cfg, 'max_turns', None)),
             effort=str(getattr(claude_cfg, 'effort', '') or ''),
             architecture_doc_path=str(getattr(claude_cfg, 'architecture_doc_path', '') or ''),
+            docker_mode_on=bool(docker_mode_on),
         )
 
     def __init__(
@@ -169,6 +181,7 @@ class PlanningSessionRunner(object):
             effort=self._defaults.effort,
             expected_branch='',
             architecture_doc_path=self._defaults.architecture_doc_path,
+            docker_mode_on=self._defaults.docker_mode_on,
         )
 
     def implement_task(
@@ -297,6 +310,7 @@ class PlanningSessionRunner(object):
             effort=self._defaults.effort,
             expected_branch=branch_name,
             architecture_doc_path=self._defaults.architecture_doc_path,
+            docker_mode_on=self._defaults.docker_mode_on,
         )
 
     def _raise_if_terminal_failed(

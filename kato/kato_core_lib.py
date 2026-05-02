@@ -41,6 +41,7 @@ from kato.data_layers.service.workspace_recovery_service import (
     WorkspaceRecoveryService,
 )
 from kato.helpers.runtime_identity_utils import runtime_source_fingerprint
+from kato.validation.bypass_permissions_validator import is_docker_mode_enabled
 from kato.validation.branch_publishability import (
     TaskBranchPublishabilityValidator,
 )
@@ -105,6 +106,10 @@ class KatoCoreLib(CoreLib):
     def _build_agent_service(self, open_cfg: DictConfig) -> AgentService:
         retry_cfg = open_cfg.retry
         agent_backend = resolved_agent_backend(open_cfg)
+        # Read once at boot. Threaded through every Claude spawn point so
+        # the sandbox-wrap decision is uniform across one-shot and
+        # streaming paths and survives a rename without a sweep.
+        docker_mode_on = is_docker_mode_enabled()
         self.session_manager = ClaudeSessionManager.from_config(
             open_cfg, agent_backend,
         )
@@ -124,6 +129,7 @@ class KatoCoreLib(CoreLib):
         )
         planning_session_runner = PlanningSessionRunner.from_config(
             open_cfg, agent_backend, self.session_manager,
+            docker_mode_on=docker_mode_on,
         )
         self.planning_session_runner = planning_session_runner
         self.logger.info('using agent backend: %s', agent_backend)
@@ -137,6 +143,7 @@ class KatoCoreLib(CoreLib):
             self._build_agent_client(
                 open_cfg,
                 retry_cfg.max_retries,
+                docker_mode_on=docker_mode_on,
             )
         )
         testing_service = TestingService(
@@ -144,6 +151,7 @@ class KatoCoreLib(CoreLib):
                 open_cfg,
                 retry_cfg.max_retries,
                 testing=True,
+                docker_mode_on=docker_mode_on,
             )
         )
         task_data_access = TaskDataAccess(ticket_cfg, ticket_client)
@@ -312,9 +320,15 @@ class KatoCoreLib(CoreLib):
         max_retries: int,
         *,
         testing: bool = False,
+        docker_mode_on: bool = False,
     ) -> KatoClient | ClaudeCliClient:
         if is_claude_backend(open_cfg):
-            return cls._build_claude_client(open_cfg, max_retries, testing=testing)
+            return cls._build_claude_client(
+                open_cfg,
+                max_retries,
+                testing=testing,
+                docker_mode_on=docker_mode_on,
+            )
         return cls._build_kato_client(
             open_cfg.openhands,
             max_retries,
@@ -350,6 +364,7 @@ class KatoCoreLib(CoreLib):
         max_retries: int,
         *,
         testing: bool = False,
+        docker_mode_on: bool = False,
     ) -> ClaudeCliClient:
         claude_cfg = getattr(open_cfg, 'claude', None)
         if claude_cfg is None:
@@ -366,6 +381,7 @@ class KatoCoreLib(CoreLib):
             allowed_tools=str(getattr(claude_cfg, 'allowed_tools', '') or ''),
             disallowed_tools=str(getattr(claude_cfg, 'disallowed_tools', '') or ''),
             bypass_permissions=bool(getattr(claude_cfg, 'bypass_permissions', False)),
+            docker_mode_on=docker_mode_on,
             timeout_seconds=int(getattr(claude_cfg, 'timeout_seconds', 1800) or 1800),
             max_retries=max_retries,
             repository_root_path=repository_root_path,

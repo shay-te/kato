@@ -179,6 +179,36 @@ class ClaudeSessionManagerTests(unittest.TestCase):
         self.manager.shutdown()
         self.assertTrue(all(fake.terminate_calls == 1 for fake in self._fakes))
 
+    def test_start_session_forwards_docker_mode_on_to_factory(self) -> None:
+        captured: dict = {}
+
+        def factory(**kwargs):
+            captured.update(kwargs)
+            return _FakeStreamingSession(**kwargs)
+
+        manager = ClaudeSessionManager(
+            state_dir=self.state_dir,
+            session_factory=factory,
+        )
+        manager.start_session(task_id='PROJ-9', docker_mode_on=True)
+
+        self.assertIs(captured['docker_mode_on'], True)
+
+    def test_start_session_default_docker_mode_is_off(self) -> None:
+        captured: dict = {}
+
+        def factory(**kwargs):
+            captured.update(kwargs)
+            return _FakeStreamingSession(**kwargs)
+
+        manager = ClaudeSessionManager(
+            state_dir=self.state_dir,
+            session_factory=factory,
+        )
+        manager.start_session(task_id='PROJ-10')
+
+        self.assertIs(captured['docker_mode_on'], False)
+
 
 class PlanningSessionRecordTests(unittest.TestCase):
     def test_round_trips_through_dict(self) -> None:

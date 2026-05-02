@@ -71,12 +71,19 @@ def main(cfg: DictConfig) -> int:
     except BypassPermissionsRefused as exc:
         logger.error('%s', exc)
         return 1
-    # Bypass mode requires the Docker sandbox so Claude can never reach
-    # beyond the per-task workspace. If Docker isn't available, refuse
-    # to start with a clear CLI message — falling back to host
-    # execution silently would defeat the point of the flag.
-    from kato.validation.bypass_permissions_validator import is_bypass_enabled
-    if is_bypass_enabled():
+    # Docker mode wraps every Claude spawn in the hardened sandbox
+    # (workspace bind-mount only, default-DROP egress firewall,
+    # capability drop, read-only rootfs, audit log). When the operator
+    # opts into it via ``KATO_CLAUDE_DOCKER=true``, the Docker daemon
+    # MUST be available — falling back to host execution silently
+    # would defeat the point of the flag. The same is true for
+    # ``KATO_CLAUDE_BYPASS_PERMISSIONS=true`` (which requires docker
+    # by the constraint enforced in ``validate_bypass_permissions``);
+    # by the time this gate runs, bypass-without-docker has already
+    # been refused, so checking ``is_docker_mode_enabled()`` alone
+    # is sufficient.
+    from kato.validation.bypass_permissions_validator import is_docker_mode_enabled
+    if is_docker_mode_enabled():
         from kato.sandbox.manager import (
             check_docker_or_exit,
             check_gvisor_or_exit,
@@ -84,10 +91,12 @@ def main(cfg: DictConfig) -> int:
             gvisor_runtime_available,
         )
         check_docker_or_exit()
-        # gVisor is required by default — refuses to start without
-        # it unless the operator explicitly accepts the residual
-        # via KATO_SANDBOX_ALLOW_NO_GVISOR=true. See the printed
-        # message for the install link / override path.
+        # gVisor is required by default for any docker-mode spawn —
+        # refuses to start without it unless the operator explicitly
+        # accepts the residual via KATO_SANDBOX_ALLOW_NO_GVISOR=true.
+        # The check applies regardless of bypass; docker-only mode
+        # gets the same kernel-CVE-isolation floor as the original
+        # bypass mode.
         check_gvisor_or_exit()
         if gvisor_runtime_available():
             logger.info(

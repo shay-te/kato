@@ -260,5 +260,163 @@ class ClaudeCliClientTests(unittest.TestCase):
         self.assertNotIn('--allowedTools', cmd)
 
 
+class ClaudeCliClientDockerModeTests(unittest.TestCase):
+    """``KATO_CLAUDE_DOCKER`` plumbing for the per-task spawn paths.
+
+    Docker mode wraps ``test_task`` and ``investigate`` spawns in the
+    sandbox; boot-time validators (``validate_connection``,
+    ``_run_model_access_validation``) deliberately stay on the host.
+    """
+
+    def test_docker_mode_off_does_not_invoke_sandbox_for_test_task(self) -> None:
+        client = ClaudeCliClient(binary='claude', docker_mode_on=False)
+        completed = _completed(
+            json.dumps({'is_error': False, 'result': 'ok', 'session_id': 's'}),
+        )
+        with patch(
+            'kato.client.claude.cli_client.subprocess.run',
+            return_value=completed,
+        ) as mock_run, patch(
+            'kato.sandbox.manager.wrap_command',
+        ) as mock_wrap:
+            client.test_task(build_task())
+
+        mock_wrap.assert_not_called()
+        # Spawn argv is the raw claude command, not a docker run.
+        spawn_argv = mock_run.call_args.args[0]
+        self.assertEqual(spawn_argv[0], 'claude')
+
+    def test_docker_mode_on_wraps_test_task_spawn_in_sandbox(self) -> None:
+        client = ClaudeCliClient(
+            binary='claude',
+            docker_mode_on=True,
+            repository_root_path='/tmp/repo',
+        )
+        completed = _completed(
+            json.dumps({'is_error': False, 'result': 'ok', 'session_id': 's'}),
+        )
+        with patch(
+            'kato.client.claude.cli_client.subprocess.run',
+            return_value=completed,
+        ) as mock_run, patch(
+            'kato.sandbox.manager.ensure_image',
+        ), patch(
+            'kato.sandbox.manager.check_spawn_rate',
+        ), patch(
+            'kato.sandbox.manager.enforce_no_workspace_secrets',
+        ), patch(
+            'kato.sandbox.manager.record_spawn',
+        ) as mock_record, patch(
+            'kato.sandbox.manager.wrap_command',
+            return_value=['docker', 'run', '--rm', 'kato-sandbox', 'claude'],
+        ) as mock_wrap, patch(
+            'kato.sandbox.manager.make_container_name',
+            return_value='kato-sandbox-PROJ-1-abcd1234',
+        ):
+            client.test_task(build_task())
+
+        mock_wrap.assert_called_once()
+        wrap_kwargs = mock_wrap.call_args.kwargs
+        self.assertEqual(wrap_kwargs['task_id'], 'PROJ-1')
+        self.assertEqual(wrap_kwargs['container_name'], 'kato-sandbox-PROJ-1-abcd1234')
+        # Audit log fires before the subprocess runs.
+        mock_record.assert_called_once()
+        # Spawn argv is the docker-wrapped command.
+        spawn_argv = mock_run.call_args.args[0]
+        self.assertEqual(spawn_argv[:2], ['docker', 'run'])
+
+    def test_docker_mode_on_wraps_investigate_with_triage_task_id(self) -> None:
+        client = ClaudeCliClient(
+            binary='claude',
+            docker_mode_on=True,
+            repository_root_path='/tmp/repo',
+        )
+        completed = _completed(
+            json.dumps({'is_error': False, 'result': 'verdict', 'session_id': 's'}),
+        )
+        with patch(
+            'kato.client.claude.cli_client.subprocess.run',
+            return_value=completed,
+        ), patch(
+            'kato.sandbox.manager.ensure_image',
+        ), patch(
+            'kato.sandbox.manager.check_spawn_rate',
+        ), patch(
+            'kato.sandbox.manager.enforce_no_workspace_secrets',
+        ), patch(
+            'kato.sandbox.manager.record_spawn',
+        ) as mock_record, patch(
+            'kato.sandbox.manager.wrap_command',
+            return_value=['docker', 'run', '--rm', 'kato-sandbox', 'claude'],
+        ) as mock_wrap, patch(
+            'kato.sandbox.manager.make_container_name',
+            return_value='kato-sandbox-triage-abcd1234',
+        ) as mock_name:
+            client.investigate('classify this task', cwd='/tmp/repo')
+
+        mock_wrap.assert_called_once()
+        # Triage carries no real task id — kato passes a synthetic
+        # ``triage`` so the container name and audit row are still
+        # grep-able rather than ``unknown``.
+        mock_name.assert_called_once_with('triage')
+        self.assertEqual(mock_wrap.call_args.kwargs['task_id'], 'triage')
+        self.assertEqual(mock_record.call_args.kwargs['task_id'], 'triage')
+
+    def test_docker_mode_on_does_NOT_wrap_validate_connection(self) -> None:
+        """Boot-time validator: no workspace, no untrusted prompt — host only."""
+        client = ClaudeCliClient(binary='claude', docker_mode_on=True)
+        with patch(
+            'kato.client.claude.cli_client.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ), patch(
+            'kato.client.claude.cli_client.subprocess.run',
+            return_value=_completed('claude 1.0.0\n'),
+        ) as mock_run, patch(
+            'kato.sandbox.manager.wrap_command',
+        ) as mock_wrap, patch.object(
+            ClaudeCliClient, '_running_inside_docker', return_value=False,
+        ):
+            client.validate_connection()
+
+        mock_wrap.assert_not_called()
+        # Spawn argv is the raw ``claude --version``.
+        spawn_argv = mock_run.call_args.args[0]
+        self.assertEqual(spawn_argv, ['claude', '--version'])
+
+    def test_docker_mode_on_does_NOT_wrap_model_access_validation(self) -> None:
+        """Boot-time validator: fixed smoke-test prompt, no tools — host only."""
+        client = ClaudeCliClient(binary='claude', docker_mode_on=True)
+        with patch(
+            'kato.client.claude.cli_client.subprocess.run',
+            return_value=_completed(json.dumps({'is_error': False, 'result': 'ok'})),
+        ) as mock_run, patch(
+            'kato.sandbox.manager.wrap_command',
+        ) as mock_wrap:
+            client._run_model_access_validation()
+
+        mock_wrap.assert_not_called()
+        # Spawn argv is the raw ``claude -p ...``.
+        spawn_argv = mock_run.call_args.args[0]
+        self.assertEqual(spawn_argv[0], 'claude')
+
+    def test_docker_mode_default_is_off(self) -> None:
+        client = ClaudeCliClient(binary='claude')
+        self.assertFalse(client._docker_mode_on)
+
+    def test_docker_mode_independent_of_bypass_permissions(self) -> None:
+        # docker=true, bypass=false (the new "structural-only" mode)
+        client_a = ClaudeCliClient(
+            binary='claude', docker_mode_on=True, bypass_permissions=False,
+        )
+        self.assertTrue(client_a._docker_mode_on)
+        self.assertFalse(client_a._bypass_permissions)
+        # docker=true, bypass=true (the original "bypass mode")
+        client_b = ClaudeCliClient(
+            binary='claude', docker_mode_on=True, bypass_permissions=True,
+        )
+        self.assertTrue(client_b._docker_mode_on)
+        self.assertTrue(client_b._bypass_permissions)
+
+
 if __name__ == '__main__':
     unittest.main()
