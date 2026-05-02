@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import os
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -69,6 +70,60 @@ class BypassValidatorTests(unittest.TestCase):
             with self.assertRaises(BypassPermissionsRefused) as cm:
                 validate_bypass_permissions(env=env, stderr=stderr)
         self.assertIn('root', str(cm.exception))
+
+    def test_bypass_on_native_windows_is_refused_with_wsl2_redirect(self) -> None:
+        """Native Windows Python under bypass must be refused, not degraded.
+
+        On native Windows: ``os.geteuid`` is absent (Layer 2 silently
+        no-ops), the workspace path validator's POSIX path constants
+        are wrong-shape for ``C:\\...`` host paths, ``fcntl.flock``
+        is unavailable so the audit chain loses parallel-write
+        protection, and the sandbox image is Linux-only. Rather than
+        let any of those degrade silently, refuse with an actionable
+        message pointing at WSL2.
+        """
+        env = {BYPASS_ENV_KEY: 'true'}
+        stderr = io.StringIO()
+        # The Windows refusal must fire BEFORE the root check, so the
+        # geteuid mock here is just to make sure if the platform check
+        # fails we'd hit a different (root) refusal instead of slipping
+        # through entirely.
+        with patch.object(sys, 'platform', 'win32'), \
+                patch.object(os, 'geteuid', create=True, return_value=1000):
+            with self.assertRaises(BypassPermissionsRefused) as cm:
+                validate_bypass_permissions(
+                    env=env,
+                    stderr=stderr,
+                    stdin=_FakeTTY(),
+                    yes_no_prompter=lambda *_: True,
+                )
+        msg = str(cm.exception)
+        # Must name what was rejected (the env var) AND the redirect
+        # path (WSL2) so the operator knows what to do next.
+        self.assertIn(BYPASS_ENV_KEY, msg)
+        self.assertIn('Windows', msg)
+        self.assertIn('WSL2', msg)
+
+    def test_bypass_on_non_windows_passes_platform_gate(self) -> None:
+        """Linux / macOS / WSL2 (where sys.platform != 'win32') proceed past the Windows gate.
+
+        Sanity check that the Windows refusal isn't accidentally
+        catching POSIX hosts. We mock platform to 'linux' to be
+        explicit even though the test runner is already on a POSIX
+        host — keeps the test robust to platform changes in the
+        runner environment.
+        """
+        env = {BYPASS_ENV_KEY: 'true'}
+        stderr = io.StringIO()
+        with patch.object(sys, 'platform', 'linux'), \
+                patch.object(os, 'geteuid', create=True, return_value=1000):
+            # Should NOT raise — both prompts say yes.
+            validate_bypass_permissions(
+                env=env,
+                stderr=stderr,
+                stdin=_FakeTTY(),
+                yes_no_prompter=lambda *_: True,
+            )
 
     def test_bypass_on_non_interactive_is_refused(self) -> None:
         env = {BYPASS_ENV_KEY: 'true'}

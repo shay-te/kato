@@ -8,14 +8,21 @@ services and decides whether to allow the process to continue.
 Decisions (in order):
 
 1. **Bypass off** -> nothing to do.
-2. **Bypass on, running as root** -> refuse. Root + bypass + agent =
+2. **Bypass on, native Windows Python (sys.platform == 'win32')** ->
+   refuse. The sandbox image is Linux, the path validator assumes
+   POSIX semantics, ``os.geteuid`` is absent (so the root-refusal
+   below would silently no-op), and ``fcntl.flock`` for the audit
+   chain is unavailable. Operators on Windows should run kato from
+   inside a WSL2 distribution; Docker Desktop's WSL2 backend will
+   spawn the sandbox correctly.
+3. **Bypass on, running as root** -> refuse. Root + bypass + agent =
    the worst possible blast radius. There is no legitimate reason to
    combine the three.
-3. **Bypass on, non-interactive (CI/Docker/cron, no TTY)** -> refuse.
+4. **Bypass on, non-interactive (CI/Docker/cron, no TTY)** -> refuse.
    With a single flag and no second-factor env var, there is no way
    to acknowledge from a non-interactive runner — kato refuses to
    start. Run kato interactively to confirm, or unset the flag.
-4. **Bypass on, interactive TTY** -> prompt the operator twice with
+5. **Bypass on, interactive TTY** -> prompt the operator twice with
    ``input_yes_no``. The first question is "are you sure"; the second
    is "final confirmation, this disables every per-tool prompt for
    the entire session". Both must answer yes; either no -> refuse.
@@ -126,6 +133,26 @@ def validate_bypass_permissions(
         return
 
     _emit_banner(stderr=stderr)
+
+    # Native Windows Python is not a supported bypass-mode host. The
+    # sandbox image is Linux (node:22-bookworm-slim), the workspace
+    # path validation assumes POSIX semantics (forbidden-mount lists,
+    # Path.home() resolution, fcntl.flock for the audit chain), and
+    # the os.geteuid root-refusal does not exist on Windows. Rather
+    # than degrade Layer 2 / the path validator / the audit lock
+    # silently, refuse here with an operator-actionable redirect:
+    # Docker Desktop's WSL2 backend gives the operator a real Linux
+    # environment where every layer applies as it would on Linux
+    # native. See BYPASS_PROTECTIONS.md → Cross-OS support matrix.
+    if sys.platform == 'win32':
+        raise BypassPermissionsRefused(
+            f'{BYPASS_ENV_KEY}=true is not supported on native Windows. '
+            'The sandbox image is Linux-based and the workspace path '
+            'validation assumes POSIX semantics. Run kato from inside '
+            'a WSL2 distribution (Ubuntu, Debian) — Docker Desktop\'s '
+            'WSL2 backend will spawn the sandbox correctly. See '
+            'BYPASS_PROTECTIONS.md for the cross-OS support matrix.'
+        )
 
     if is_running_as_root():
         raise BypassPermissionsRefused(

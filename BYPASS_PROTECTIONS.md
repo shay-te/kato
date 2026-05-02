@@ -34,6 +34,47 @@ designed to keep the blast radius bounded. (Layers 4–6 do depend on
 layer 3 — Docker itself — so a Docker-daemon compromise affects them
 as a group; that's why kato refuses to start without Docker.)
 
+## Cross-OS support matrix
+
+Kato's bypass mode is first-class on Linux and on Docker Desktop's
+LinuxKit / WSL2 backends. **Native Windows Python is refused at
+startup** with a redirect to WSL2 — the sandbox image is Linux,
+the workspace path validator assumes POSIX semantics, and the
+audit-chain `flock` requires `fcntl`. Native Windows containers are
+unsupported by image base.
+
+Per-OS layer status (see linked file:line for the determining code):
+
+| Layer | Linux modern + gVisor | Linux modern, no gVisor | Linux cgroup v1 | macOS Docker Desktop | Windows + WSL2 (kato run from WSL2) | Native Windows Python | Windows native containers |
+|---|---|---|---|---|---|---|---|
+| L1 double-prompt + non-TTY refusal | Active | Active | Active | Active | Active | **Refused at startup** | Unsupported |
+| L2 root refusal | Active | Active | Active | Active | Active | **Refused at startup** | Unsupported |
+| L3 Docker required | Active | Active | Active | Active | Active | **Refused at startup** | Unsupported |
+| L4 filesystem boundary + workspace validator | Active (Linux paths) | Active | Active | **Active + macOS-specific subtrees** in the forbidden list ([`manager.py:181-218`](kato/sandbox/manager.py)) | Active (WSL2 paths look like Linux) | **Refused** | Unsupported |
+| L5 default-DROP egress firewall | Active | Active | Active | Active inside LinuxKit VM | Active inside WSL2 | **Refused** | Unsupported |
+| L6 cap-drop ALL + setpriv bounding-set wipe | Active | Active | Active | Active | Active | **Refused** | Unsupported |
+| L6 AppArmor pin (`apparmor=docker-default`) | Active where AppArmor loaded (Ubuntu, Debian) | Active | Active | **Silently no-op** — Docker Desktop's LinuxKit base does not load AppArmor; the hypervisor + cap-drop + read-only rootfs are the substitute boundaries. | **Silently no-op** in WSL2 backend | Refused | Unsupported |
+| L6 read-only rootfs + tmpfs caps | Active | Active | Active | Active (gRPC-FUSE / VirtioFS bind-mounts; container-side semantics unchanged) | Active | Refused | Unsupported |
+| L6 `--cgroupns=private` | Fully isolating (cgroup v2) | Fully isolating | **Partially isolating** (cgroup v1 — namespace exists, host-tree visibility weaker) | Fully isolating | Fully isolating | Refused | Unsupported |
+| L6 IPv6 disabled | Active | Active | Active | Active | Active | Refused | Unsupported |
+| L7 in-prompt git denylist | Active | Active | Active | Active | Active | Refused | Unsupported |
+| L8 operator visibility | Active | Active | Active | Active | Active | Refused | Unsupported |
+| **L9 gVisor (`runsc`) strict-by-default** | Active | **Override required**: `KATO_SANDBOX_ALLOW_NO_GVISOR=true`. Kernel-CVE escape risk degrades from Mitigated to Bounded (host kernel only). | Override required | **Override required.** Docker Desktop cannot run gVisor. The LinuxKit VM + macOS Hypervisor.framework boundary is the substitute — arguably stronger than no-gVisor on Linux because there are *two* kernels separated by a hypervisor. | **Override required.** Same shape on the WSL2 backend (Hyper-V Lightweight Utility VM provides the substitute). | Refused | Unsupported |
+| Auth volume invariants (RO `/auth-src`, tmpfs target, allowlist copy, bidirectional manifest) | Active | Active | Active | Active | Active | Refused | Unsupported |
+| Audit log hash chain + `flock` | Active | Active | Active | Active (`fcntl` on macOS) | Active inside WSL2 | **Refused** (no `fcntl` on native Windows; refusal sidesteps the degradation) | Unsupported |
+
+**Where the refusal fires:** [`bypass_permissions_validator.py:validate_bypass_permissions`](kato/validation/bypass_permissions_validator.py) — the platform check is decision step 2 in the module's docstring. See SECURITY.md for the full operator decision tree.
+
+**Substitute boundaries on macOS / WSL2 backend** — when AppArmor is no-op and gVisor is unavailable, the substitute is the **hypervisor + double-kernel separation**: the container runs in Docker Desktop's LinuxKit (or WSL2's lightweight VM) which has its own kernel, separated from the host (macOS / Windows) by a hypervisor (Apple `Hypervisor.framework` / Microsoft Hyper-V). This means a container escape on macOS / WSL2 backends has to break through a kernel boundary AND a hypervisor boundary to reach the host, which is why kato treats `KATO_SANDBOX_ALLOW_NO_GVISOR=true` as the intended path on those platforms. It is not equivalent to gVisor — gVisor's userspace kernel is a tighter syscall blockade — but it is materially better than no-gVisor on Linux native, where the host kernel is the only boundary.
+
+**What this matrix does NOT promise**:
+
+- A guarantee that Docker Desktop's gRPC-FUSE / VirtioFS bind-mount layer is itself bug-free. Sandbox semantics inside the container are unchanged, but the host-to-VM filesystem path has its own surface.
+- That `--cgroupns=private` is a meaningful boundary on cgroup v1. It isn't fully — it's partial.
+- That AppArmor would catch a container escape on Linux. AppArmor is one belt; cap-drop, read-only rootfs, gVisor (when present) are the others.
+
+Operators on Windows: install [Docker Desktop with WSL2 backend](https://docs.docker.com/desktop/wsl/), then run kato from inside a WSL2 distribution (Ubuntu, Debian). All layers apply as they would on Linux native, with gVisor unavailable (override required).
+
 ## Why these specific surfaces — read before proposing a change
 
 The flags applied in [`wrap_command`](kato/sandbox/manager.py), the
