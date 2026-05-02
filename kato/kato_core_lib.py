@@ -91,6 +91,15 @@ class KatoCoreLib(CoreLib):
         self.logger = configure_logger(cfg.core_lib.app.name)
         self._validate_runtime_source_fingerprint(cfg.kato)
         self.service = self._build_agent_service(cfg.kato)
+        # Wire the ``<KATO_TASK_DONE>`` sentinel callback after both
+        # AgentService and SessionManager exist. Every Claude session
+        # spawned from now on (planning chats, autonomous turns, the
+        # boot-time resumes) carries the callback automatically; when
+        # Claude prints the sentinel, kato runs the publish flow.
+        if self.session_manager is not None:
+            self.session_manager.set_done_callback(
+                self.service.finish_task_planning_session,
+            )
         self.service.validate_connections()
 
     def _build_agent_service(self, open_cfg: DictConfig) -> AgentService:

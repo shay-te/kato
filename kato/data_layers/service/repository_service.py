@@ -28,6 +28,24 @@ from kato.data_layers.service.repository_publication_service import (
 )
 
 
+def _is_per_task_workspace_clone(repository) -> bool:
+    """True when ``repository.local_path`` is under a per-task kato workspace.
+
+    Per-task clones live at ``<workspace_root>/<task_id>/<repo_id>/``
+    next to a ``.kato-meta.json`` sidecar; legacy / shared clones live
+    elsewhere on disk and don't carry the sidecar. We use this signal
+    to keep per-task clones on the task branch across publish ops
+    (the "restore to master after push" behavior is for shared clones).
+    """
+    local_path = str(getattr(repository, 'local_path', '') or '').strip()
+    if not local_path:
+        return False
+    try:
+        return (Path(local_path).parent / '.kato-meta.json').is_file()
+    except OSError:
+        return False
+
+
 class RepositoryHasNoChangesError(RuntimeError):
     """Raised when a task branch has nothing to publish in a given repo.
 
@@ -626,7 +644,14 @@ class RepositoryService(RepositoryInventoryService):
             )
             self._push_branch(local_path, branch_name, repository)
         finally:
-            if restore_workspace:
+            # Per-task workspace clones (``~/.kato/workspaces/<task_id>/<repo>/``)
+            # are owned exclusively by one task — they must STAY on the
+            # task branch across publish operations so the next push /
+            # PR / Files-tab open finds the correct HEAD. Without this
+            # guard, the on-demand "Push" UI button would push and then
+            # restore to master; the subsequent "Pull request" click
+            # would then fail with "expected branch X but found master".
+            if restore_workspace and not _is_per_task_workspace_clone(repository):
                 self._prepare_workspace_for_task(local_path, destination_branch, repository)
         return validation_report_description
 

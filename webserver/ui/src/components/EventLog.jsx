@@ -71,6 +71,14 @@ function serverBubblesFor(raw, index, isHistory = false) {
     case CLAUDE_EVENT.PERMISSION_RESPONSE:
       return [];
     default: {
+      // Hidden chat-event types (``rate_limit_event``, etc.) live in
+      // MessageFilter — the canonical "what's noise vs signal" list.
+      // Without this guard the default case below would render every
+      // unknown type as a TOOL bubble, including pure plan-throttle
+      // metadata the operator doesn't need to see.
+      if (MessageFilter.isChatEventHidden(raw.type)) {
+        return [];
+      }
       const eventLabel = raw.subtype
         ? `${raw.type} / ${raw.subtype}`
         : String(raw.type || '');

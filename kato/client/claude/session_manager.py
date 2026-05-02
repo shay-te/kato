@@ -128,8 +128,21 @@ class ClaudeSessionManager(object):
         self._sessions: dict[str, StreamingClaudeSession] = {}
         self._records: dict[str, PlanningSessionRecord] = {}
         self._workspace_manager = None
+        # Default ``done_callback`` injected into every spawned session.
+        # ``AgentService`` sets this via ``set_done_callback`` so Claude
+        # printing ``<KATO_TASK_DONE>`` triggers the publish flow.
+        self._done_callback = None
         self.logger = configure_logger(self.__class__.__name__)
         self._load_persisted_records()
+
+    def set_done_callback(self, callback) -> None:
+        """Register the function to fire when a session detects ``<KATO_TASK_DONE>``.
+
+        Called once during kato startup wiring with
+        ``AgentService.finish_task_planning_session``. Every session
+        spawned after this picks up the callback automatically.
+        """
+        self._done_callback = callback
 
     def attach_workspace_manager(self, workspace_manager) -> None:
         """Mirror session_id + cwd into workspace metadata as we capture them.
@@ -219,6 +232,7 @@ class ClaudeSessionManager(object):
             'effort': effort,
             'env': env,
             'architecture_doc_path': architecture_doc_path,
+            'done_callback': self._done_callback,
         }
         with self._lock:
             existing = self._sessions.get(normalized_task_id)

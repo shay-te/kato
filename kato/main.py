@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import signal
 import time
 
@@ -119,6 +120,8 @@ def main(cfg: DictConfig) -> int:
     app.logger = getattr(app, 'logger', None) or logger
     app.logger.info('Starting kato agent')
     _recover_orphan_workspaces(app)
+    _reconcile_workspace_branches(app)
+    _resume_streaming_sessions(app)
     _start_planning_webserver_if_enabled(app)
     _register_shutdown_hook(app)
     startup_delay_seconds, scan_interval_seconds = _task_scan_settings(cfg)
@@ -128,6 +131,198 @@ def main(cfg: DictConfig) -> int:
         scan_interval_seconds=scan_interval_seconds,
     )
     return 0
+
+
+def _reconcile_workspace_branches(app) -> None:
+    """Walk every workspace and align each clone to its task branch.
+
+    Per-task workspace clones are *supposed* to live on the branch
+    named after the task (kato's convention: ``branch_name == task_id``).
+    A previous kato session can leave them on ``master`` if it crashed
+    mid-publish, or if a manual recovery left the clone in a weird
+    state. This runs once at boot, idempotent and best-effort —
+    workspaces that are dirty / can't be cleanly checked out are
+    skipped with a warning so kato still boots.
+    """
+    workspace_manager = getattr(app, 'workspace_manager', None)
+    if workspace_manager is None:
+        return
+    try:
+        from kato_webserver.git_diff_utils import (
+            current_branch,
+            ensure_branch_checked_out,
+        )
+    except ImportError:
+        # Webserver not on the path — kato can run headless without it.
+        return
+    try:
+        records = workspace_manager.list_workspaces()
+    except Exception:
+        app.logger.exception('failed to list workspaces during branch reconcile')
+        return
+    realigned = 0
+    skipped: list[str] = []
+    for record in records:
+        task_id = str(getattr(record, 'task_id', '') or '')
+        if not task_id:
+            continue
+        for repository_id in (getattr(record, 'repository_ids', []) or []):
+            try:
+                clone_path = workspace_manager.repository_path(
+                    task_id, str(repository_id),
+                )
+            except Exception:
+                continue
+            if not clone_path.is_dir() or not (clone_path / '.git').is_dir():
+                continue
+            cwd = str(clone_path)
+            on = current_branch(cwd)
+            if on == task_id:
+                continue
+            if ensure_branch_checked_out(cwd, task_id):
+                app.logger.info(
+                    'workspace %s/%s realigned: %s -> %s',
+                    task_id, repository_id, on or '<unknown>', task_id,
+                )
+                realigned += 1
+            else:
+                skipped.append(f'{task_id}/{repository_id} (on {on or "<unknown>"})')
+    if realigned:
+        app.logger.info(
+            'realigned %d workspace clone(s) to their task branch',
+            realigned,
+        )
+    if skipped:
+        app.logger.warning(
+            'could not realign %d workspace clone(s) to task branch '
+            '(dirty tree or missing branch): %s',
+            len(skipped), ', '.join(skipped[:10]),
+        )
+
+
+_RESUME_PROMPT = (
+    "kato has been restarted. This is a system notice — no user "
+    "action requested. Please reply with one short line "
+    "acknowledging you're ready to continue, then wait for the "
+    "operator's next message."
+)
+
+
+def _resume_streaming_sessions(app) -> None:
+    """Re-spawn Claude sessions for every active workspace at boot.
+
+    Without this, restarting kato leaves every previously-open chat
+    tab in a "Claude: sleeping" state until the operator types into
+    it. We walk the workspace registry and call ``start_session`` for
+    each ``active`` workspace; the session manager's existing
+    resume-id plumbing reuses the saved ``claude_session_id`` so the
+    chat picks up where it left off. A short system-notice prompt is
+    sent so the Claude CLI doesn't exit on empty stdin (it requires
+    at least one message at startup).
+
+    Best-effort: any per-task failure is logged and skipped — the tab
+    falls back to the existing "operator types to wake it" path.
+    """
+    session_manager = getattr(app, 'session_manager', None)
+    workspace_manager = getattr(app, 'workspace_manager', None)
+    runner = getattr(app, 'planning_session_runner', None)
+    if session_manager is None or workspace_manager is None:
+        return
+    try:
+        from kato.data_layers.service.workspace_manager import (
+            WORKSPACE_STATUS_ACTIVE,
+            WORKSPACE_STATUS_PROVISIONING,
+        )
+    except ImportError:
+        return
+    try:
+        records = workspace_manager.list_workspaces()
+    except Exception:
+        app.logger.exception('failed to list workspaces during session resume')
+        return
+    spawn_defaults = _planning_spawn_defaults(runner)
+    architecture_doc_path = (
+        os.environ.get('KATO_ARCHITECTURE_DOC_PATH', '') or ''
+    )
+    resumed = 0
+    skipped: list[str] = []
+    for record in records:
+        task_id = str(getattr(record, 'task_id', '') or '')
+        if not task_id:
+            continue
+        status = str(getattr(record, 'status', '') or '')
+        if status not in (WORKSPACE_STATUS_ACTIVE, WORKSPACE_STATUS_PROVISIONING):
+            continue
+        cwd = str(getattr(record, 'cwd', '') or '')
+        if not cwd:
+            # Fall back to the first repo clone if cwd wasn't recorded.
+            for repo_id in (getattr(record, 'repository_ids', []) or []):
+                try:
+                    candidate = workspace_manager.repository_path(
+                        task_id, str(repo_id),
+                    )
+                except Exception:
+                    continue
+                if candidate.is_dir():
+                    cwd = str(candidate)
+                    break
+        if not cwd:
+            skipped.append(f'{task_id} (no cwd)')
+            continue
+        try:
+            session_manager.start_session(
+                task_id=task_id,
+                task_summary=str(getattr(record, 'task_summary', '') or ''),
+                initial_prompt=_RESUME_PROMPT,
+                cwd=cwd,
+                expected_branch=task_id,
+                architecture_doc_path=architecture_doc_path,
+                **spawn_defaults,
+            )
+            resumed += 1
+        except Exception as exc:
+            app.logger.warning(
+                'could not resume Claude session for %s: %s '
+                '(operator can send a message to wake the tab manually)',
+                task_id, exc,
+            )
+            skipped.append(task_id)
+    if resumed:
+        app.logger.info(
+            'resumed %d Claude session(s) from previous kato run',
+            resumed,
+        )
+    if skipped:
+        app.logger.info(
+            'skipped resume for %d session(s): %s',
+            len(skipped), ', '.join(skipped[:10]),
+        )
+
+
+def _planning_spawn_defaults(runner) -> dict[str, object]:
+    """Mirror ``WaitPlanningService._session_starter_defaults`` so the
+    resumed sessions use the same binary / model / permission-mode the
+    autonomous flow uses.
+    """
+    if runner is None:
+        return {}
+    defaults = getattr(runner, '_defaults', None)
+    if defaults is None:
+        return {}
+    fields = (
+        'binary',
+        'model',
+        'permission_mode',
+        'permission_prompt_tool',
+        'allowed_tools',
+        'disallowed_tools',
+        'effort',
+    )
+    result: dict[str, object] = {
+        field: (getattr(defaults, field, '') or '') for field in fields
+    }
+    result['max_turns'] = getattr(defaults, 'max_turns', None)
+    return result
 
 
 def _recover_orphan_workspaces(app) -> None:

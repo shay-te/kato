@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { postSession } from '../api.js';
+import { finishTask, postSession } from '../api.js';
 import { TAB_STATUS } from '../constants/tabStatus.js';
 import { usePushApproval } from '../hooks/usePushApproval.js';
 import { useTaskPublish } from '../hooks/useTaskPublish.js';
 import { deriveTabStatus, resolveTabStatus, tabStatusTitle } from '../utils/tabStatus.js';
 import { SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
+import { toast } from '../stores/toastStore.js';
 
 export default function SessionHeader({
   session,
@@ -14,6 +15,7 @@ export default function SessionHeader({
   turnInFlight = false,
 }) {
   const [stopping, setStopping] = useState(false);
+  const [finishing, setFinishing] = useState(false);
   const pushApproval = usePushApproval(session?.task_id || '');
   const taskPublish = useTaskPublish(session?.task_id || '');
   if (!session) { return null; }
@@ -28,6 +30,34 @@ export default function SessionHeader({
     if (typeof onStopped === 'function') {
       onStopped(result);
     }
+  }
+
+  async function onFinish() {
+    if (finishing) { return; }
+    setFinishing(true);
+    const result = await finishTask(session.task_id);
+    setFinishing(false);
+    // Force a publish-state refresh so the Push/PR buttons reflect
+    // the new state immediately (PR exists, nothing to push).
+    if (typeof taskPublish.refresh === 'function') {
+      taskPublish.refresh();
+    }
+    // Toast classification: full success → green, partial → amber,
+    // request-level failure → red. Multi-line message is fine — the
+    // toast component renders <pre> and wraps long lines.
+    const { title, message } = formatFinishResult(result);
+    const body = (result && result.body) || {};
+    const kind = !result.ok
+      ? 'error'
+      : body.finished
+        ? 'success'
+        : 'warning';
+    toast.show({
+      kind,
+      title,
+      message,
+      durationMs: kind === 'error' ? 12000 : 7000,
+    });
   }
 
   const idleAlive = status === TAB_STATUS.ACTIVE
@@ -102,6 +132,15 @@ export default function SessionHeader({
         {taskPublish.prBusy ? 'Opening PR…' : 'Pull request'}
       </button>
       <button
+        id="session-finish"
+        type="button"
+        data-tooltip="Done — push pending changes, open a PR if missing, and move the ticket to In Review. Same flow Claude can trigger by emitting <KATO_TASK_DONE>."
+        onClick={onFinish}
+        disabled={finishing}
+      >
+        {finishing ? 'Finishing…' : 'Done'}
+      </button>
+      <button
         id="session-stop"
         type="button"
         data-tooltip="Stop the live Claude subprocess for this task. The chat history is preserved; kato can respawn Claude when you send the next message."
@@ -112,6 +151,68 @@ export default function SessionHeader({
       </button>
     </header>
   );
+}
+
+// Render the per-step outcome of POST /finish into a toast title +
+// multi-line message. Goal: never leave the operator guessing
+// whether *anything* happened — every step (push, PR, move-to-review)
+// gets one line, with the failure reason inline when a step didn't
+// run or errored.
+function formatFinishResult(result) {
+  const body = (result && result.body) || {};
+  if (!result || !result.ok) {
+    return {
+      title: 'Finish request failed',
+      message: (result && result.error)
+        || JSON.stringify(body, null, 2)
+        || 'unknown error',
+    };
+  }
+  const lines = [];
+  const push = body.pushed || {};
+  const pushedCount = (push.pushed_repositories || []).length;
+  const pushSkipped = (push.skipped_repositories || []).length;
+  const pushFailed = (push.failed_repositories || []).length;
+  if (pushedCount) {
+    lines.push(`✓ pushed ${pushedCount} repo(s): ${(push.pushed_repositories || []).join(', ')}`);
+  } else if (pushSkipped) {
+    lines.push(`• push skipped — nothing to push (${pushSkipped} repo(s) already in sync)`);
+  } else if (pushFailed) {
+    const errs = (push.failed_repositories || [])
+      .map((r) => `${r.repository_id}: ${r.error}`).join('; ');
+    lines.push(`✗ push failed: ${errs}`);
+  } else {
+    lines.push(`• push: ${push.error || 'no action'}`);
+  }
+  const pr = body.pull_request || {};
+  const prCreated = (pr.created_pull_requests || []).length;
+  const prSkipped = (pr.skipped_existing || []).length;
+  const prFailed = (pr.failed_repositories || []).length;
+  if (prCreated) {
+    const urls = (pr.created_pull_requests || [])
+      .map((r) => r.url || r.repository_id).join(', ');
+    lines.push(`✓ opened ${prCreated} pull request(s): ${urls}`);
+  } else if (prSkipped) {
+    lines.push(`• PR skipped — already exists for ${prSkipped} repo(s)`);
+  } else if (prFailed) {
+    const errs = (pr.failed_repositories || [])
+      .map((r) => `${r.repository_id}: ${r.error}`).join('; ');
+    lines.push(`✗ PR failed: ${errs}`);
+  } else {
+    lines.push(`• pull request: ${pr.error || 'no action'}`);
+  }
+  if (body.moved_to_review) {
+    lines.push('✓ ticket moved to In Review');
+  } else {
+    const why = body.move_error || 'unknown reason — check kato logs';
+    lines.push(`✗ ticket did NOT move to In Review: ${why}`);
+  }
+  return {
+    title: body.finished
+      ? 'Done — task finalised'
+      : 'Done — partial completion',
+    message: lines.join('\n'),
+  };
 }
 
 function pushTitleFor(state) {

@@ -315,6 +315,7 @@ class WaitPlanningService(object):
         ]
         if description:
             sections.extend(['', '## Task description', description])
+        from kato.data_layers.data.sentinels import KATO_TASK_DONE_SENTINEL
         sections.extend([
             '',
             '## Operating rules — READ CAREFULLY',
@@ -325,6 +326,16 @@ class WaitPlanningService(object):
             'questions, and help them refine the approach in plain text.',
             '- The user will explicitly tell you when planning is done. Until '
             'then, every reply is a discussion message — no tool calls.',
+            '',
+            '## How to signal "I am done" — IMPORTANT',
+            f'When the operator confirms the task is complete and they are '
+            f'satisfied with the result, end your final reply with this exact '
+            f'token on its own line: {KATO_TASK_DONE_SENTINEL}',
+            'Kato watches for this token. When it appears, kato will push '
+            'pending changes, open a pull request if one does not exist, and '
+            'move the ticket to In Review automatically. Emit it ONLY when '
+            'the operator has clearly said the work is done — never as part '
+            'of a question, an apology, or speculative text.',
             '',
             'Briefly acknowledge that you understand and are ready to plan. '
             'Then wait for the user to drive the conversation.',

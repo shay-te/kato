@@ -51,6 +51,7 @@ from kato_webserver.git_diff_utils import (
     current_branch,
     detect_default_branch,
     diff_against_base,
+    ensure_branch_checked_out,
     tracked_file_tree,
 )
 
@@ -124,13 +125,27 @@ def _workspace_status(workspace_manager, task_id: str) -> str:
     return str(getattr(record, 'status', '') or '')
 
 
-def _compute_repo_diff(repo_id: str, cwd: str) -> dict[str, Any]:
+def _compute_repo_diff(
+    repo_id: str,
+    cwd: str,
+    *,
+    task_id: str = '',
+) -> dict[str, Any]:
     """Build the per-repo diff payload the Changes-tab accordion expects.
+
+    A per-task workspace clone is supposed to live on the task branch
+    (named after ``task_id`` per kato's branch-naming convention). If
+    the clone has drifted to ``master`` for any reason, opening the
+    Changes tab self-heals it by checking out the task branch first
+    — otherwise the operator would see "No changes between master
+    and master" and have no way to fix it from the UI.
 
     Failures (e.g. a repo where ``origin/<default>`` isn't reachable)
     surface as an ``error`` field so the UI can render that single
     accordion section in an error state without breaking the rest.
     """
+    if task_id:
+        ensure_branch_checked_out(cwd, task_id)
     base = detect_default_branch(cwd)
     if not base:
         return {
@@ -342,7 +357,7 @@ def _register_http_routes(app: Flask) -> None:
                 cwd = _repository_cwd(workspace_manager, task_id, repo_id)
                 if cwd is None:
                     continue
-                diffs.append(_compute_repo_diff(repo_id, cwd))
+                diffs.append(_compute_repo_diff(repo_id, cwd, task_id=task_id))
             if diffs:
                 first = diffs[0]
                 return jsonify({
@@ -358,7 +373,7 @@ def _register_http_routes(app: Flask) -> None:
         cwd = _record_cwd_or_none(manager, task_id)
         if cwd is None:
             return jsonify({'error': 'session not found'}), 404
-        single = _compute_repo_diff('', cwd)
+        single = _compute_repo_diff('', cwd, task_id=task_id)
         return jsonify({
             'repository_ids': [],
             'diffs': [single],
@@ -427,6 +442,23 @@ def _register_http_routes(app: Flask) -> None:
         result = create(task_id) or {}
         if result.get('error') and not result.get('created'):
             return jsonify(result), 404 if 'no workspace' in str(result['error']) else 500
+        return jsonify(result)
+
+    @app.post('/api/sessions/<task_id>/finish')
+    def finish_task(task_id: str):
+        """Operator-triggered "I'm done" — same flow Claude triggers via
+        the ``<KATO_TASK_DONE>`` sentinel. Pushes pending changes, opens
+        a PR if none exists, and moves the ticket to In Review.
+        """
+        agent_service = app.config.get('AGENT_SERVICE')
+        if agent_service is None:
+            return jsonify({'error': 'agent service not wired'}), 503
+        finish = getattr(agent_service, 'finish_task_planning_session', None)
+        if not callable(finish):
+            return jsonify({'error': 'agent service does not support finish'}), 501
+        result = finish(task_id) or {}
+        if result.get('error') and not result.get('finished'):
+            return jsonify(result), 500
         return jsonify(result)
 
     @app.get('/api/sessions/<task_id>/publish-state')

@@ -425,16 +425,21 @@ header button:hover { color: #e5e5e5; border-color: #e5e5e5; }
 }
 
 #message-form button {
+  /* Primary action of the form. Bright background with dark text so
+   * the enabled state is unmistakably distinct from the disabled
+   * state below (#262626 on muted gray). The previous combo
+   * (white text on near-white background) read as disabled at a
+   * glance. */
   background: #e5e5e5;
-  color: #fff;
+  color: #171717;
   border: none;
   padding: 0 16px;
   border-radius: 4px;
   cursor: pointer;
   font-weight: 600;
-  transition: background 120ms ease;
+  transition: background 120ms ease, color 120ms ease;
 }
-#message-form button:hover { background: #a3a3a3; }
+#message-form button:hover { background: #fff; color: #000; }
 
 #message-form button.is-steering {
   background: #f59e0b;
@@ -962,6 +967,27 @@ body.kato-resizing { user-select: none; cursor: col-resize; }
   cursor: not-allowed;
 }
 
+/* Done = the one-click finalizer (push + PR + move-to-review).
+ * Green to distinguish "I'm finishing this task" from the
+ * incremental Push / Pull-request actions next to it. */
+#session-finish {
+  background: #047857;
+  color: #d1fae5;
+  border: 1px solid #059669;
+  border-radius: 4px;
+  padding: 4px 12px;
+  font: 12px/1 inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+#session-finish:hover { background: #059669; color: #fff; }
+#session-finish:disabled {
+  background: #262626;
+  border-color: #262626;
+  color: #525252;
+  cursor: not-allowed;
+}
+
 .claude-status {
   font: 11px/1 ui-monospace, monospace;
   padding: 3px 8px;
@@ -991,6 +1017,98 @@ body.kato-resizing { user-select: none; cursor: col-resize; }
 .claude-status-sleeping,
 .claude-status-closed { color: #737373; }
 .claude-status-missing { color: #fca5a5; border-color: #7f1d1d; }
+
+/* ----- toasts -----
+ * Anchored top-center, slide in from above, auto-dismiss after 5s
+ * (configurable per-toast). Click anywhere on the card to dismiss
+ * early; the explicit × button is for keyboard / a11y.
+ *
+ * The container uses pointer-events: none so the toast stack
+ * doesn't block clicks on the page underneath; each individual
+ * card re-enables pointer-events. */
+.toast-container {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+  max-width: calc(100vw - 48px);
+}
+.toast {
+  pointer-events: auto;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  background: #1f2937;
+  color: #f9fafb;
+  border: 1px solid #374151;
+  border-left-width: 4px;
+  border-radius: 6px;
+  padding: 10px 14px;
+  min-width: 320px;
+  max-width: 560px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  animation: kato-toast-slide 0.18s ease-out;
+  cursor: pointer;
+  font: 13px/1.5 -apple-system, system-ui, sans-serif;
+}
+.toast:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+.toast-success { border-left-color: #10b981; }
+.toast-error   { border-left-color: #ef4444; }
+.toast-warning { border-left-color: #f59e0b; }
+.toast-info    { border-left-color: #3b82f6; }
+.toast-glyph {
+  font-size: 16px;
+  line-height: 1.3;
+  flex-shrink: 0;
+}
+.toast-success .toast-glyph { color: #34d399; }
+.toast-error   .toast-glyph { color: #f87171; }
+.toast-warning .toast-glyph { color: #fbbf24; }
+.toast-info    .toast-glyph { color: #60a5fa; }
+.toast-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+.toast-title {
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.01em;
+}
+.toast-message {
+  margin: 0;
+  font-family: inherit;
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #e5e7eb;
+}
+.toast-close {
+  background: transparent;
+  border: 0;
+  color: #9ca3af;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 4px;
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+.toast-close:hover { color: #f9fafb; }
+@keyframes kato-toast-slide {
+  from { transform: translateY(-12px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
 
 /* ----- custom tooltips -----
  * The browser-native ``title`` tooltip waits ~1.5s and renders in a
@@ -1056,6 +1174,51 @@ body.kato-resizing { user-select: none; cursor: col-resize; }
   /* Disabled buttons should still surface their tooltip — that's
    * usually how the operator learns *why* the button is disabled. */
   animation: kato-tooltip-fade 0.16s ease-out 0.12s forwards;
+}
+
+/* Tooltips on buttons near the right edge of their container would
+ * otherwise be center-aligned and run off the side. ``tooltip-end``
+ * anchors the tooltip's RIGHT edge to the trigger's right edge so it
+ * grows to the LEFT instead. The arrow shifts to align under the
+ * button rather than under the tooltip's centre.
+ *
+ * Width is capped tighter than the default (320px → 220px) because
+ * tooltip-end buttons are typically inside narrow containers like
+ * the sidebar (280px) — a 320px tooltip overflows the parent and
+ * gets clipped by ``#layout: overflow:hidden``. The text wraps to
+ * 3–4 lines when needed. */
+[data-tooltip].tooltip-end:hover::after,
+[data-tooltip].tooltip-end:focus-visible::after {
+  left: auto;
+  right: 0;
+  transform: none;
+  max-width: 220px;
+}
+[data-tooltip].tooltip-end:hover::before,
+[data-tooltip].tooltip-end:focus-visible::before {
+  left: auto;
+  right: 6px;
+  transform: none;
+}
+/* Combo: above + end (e.g. for buttons near bottom-right corners). */
+[data-tooltip].tooltip-above.tooltip-end:hover::after,
+[data-tooltip].tooltip-above.tooltip-end:focus-visible::after {
+  top: auto;
+  bottom: calc(100% + 8px);
+  left: auto;
+  right: 0;
+  transform: none;
+  max-width: 220px;
+}
+[data-tooltip].tooltip-above.tooltip-end:hover::before,
+[data-tooltip].tooltip-above.tooltip-end:focus-visible::before {
+  top: auto;
+  bottom: calc(100% + 2px);
+  left: auto;
+  right: 6px;
+  transform: none;
+  border-bottom-color: transparent;
+  border-top-color: #1f2937;
 }
 @keyframes kato-tooltip-fade {
   to { opacity: 1; }

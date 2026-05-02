@@ -727,6 +727,42 @@ class AgentService(Service):
                     'on-demand PR for task %s: opened %s in %s',
                     normalized, pull_request.get('url', ''), repository.id,
                 )
+            except _ON_DEMAND_PUSH_EXPECTED_ERRORS as exc:
+                # "No changes to publish" race fallback — the workspace
+                # state shifted between the pre-check and the create
+                # call. One warning line, no traceback.
+                self.logger.warning(
+                    'on-demand PR for task %s skipped repository %s: %s',
+                    normalized, repository.id, exc,
+                )
+                failed.append(
+                    {'repository_id': repository.id, 'error': str(exc)},
+                )
+            except RuntimeError as exc:
+                # The publish path raises bare RuntimeError for two
+                # well-known cases: "expected branch X but found Y"
+                # (workspace drift — handled by the boot-time realigner
+                # and the diff-tab self-heal) and "remote rejected
+                # ... reference already exists" (Git push of a branch
+                # the remote already has at a different commit). Both
+                # are operator-visible state issues, not kato bugs —
+                # surface as a one-line warning, no stack trace.
+                if 'expected repository' in str(exc) or 'reference already exists' in str(exc):
+                    self.logger.warning(
+                        'on-demand PR for task %s skipped repository %s: %s',
+                        normalized, repository.id, exc,
+                    )
+                    failed.append(
+                        {'repository_id': repository.id, 'error': str(exc)},
+                    )
+                else:
+                    self.logger.exception(
+                        'on-demand PR for task %s failed in repository %s',
+                        normalized, repository.id,
+                    )
+                    failed.append(
+                        {'repository_id': repository.id, 'error': str(exc)},
+                    )
             except Exception as exc:
                 self.logger.exception(
                     'on-demand PR for task %s failed in repository %s',
@@ -741,6 +777,55 @@ class AgentService(Service):
             'created_pull_requests': created,
             'skipped_existing': skipped,
             'failed_repositories': failed,
+        }
+
+    def finish_task_planning_session(self, task_id: str) -> dict[str, object]:
+        """Finalize a wait-planning chat task in one call.
+
+        Equivalent to the operator clicking, in sequence: ``Push`` →
+        ``Pull request`` → manually moving the ticket to In Review on
+        the issue tracker. Idempotent: if everything is already pushed
+        and the PR already exists, only the ticket-state move runs.
+        Used by both the backend sentinel detector (Claude printed
+        ``<KATO_TASK_DONE>``) and the planning UI's ``Done`` button.
+
+        Returns a summary the UI can render — operator gets one
+        notification per repo with what happened.
+        """
+        normalized = str(task_id or '').strip()
+        if not normalized:
+            return {
+                'finished': False,
+                'task_id': task_id,
+                'error': 'empty task id',
+            }
+        push_result = self.push_task(normalized)
+        pr_result = self.create_pull_request_for_task(normalized)
+        moved_to_review = False
+        move_error = ''
+        try:
+            self._task_state_service.move_task_to_review(normalized)
+            moved_to_review = True
+            self.logger.info(
+                'finished planning session for task %s: moved to In Review',
+                normalized,
+            )
+        except Exception as exc:
+            move_error = str(exc) or exc.__class__.__name__
+            # Full traceback to the kato terminal so the operator can
+            # diagnose state-machine / auth / config issues. UI also
+            # surfaces the message inline via the /finish response.
+            self.logger.exception(
+                'failed to move task %s to In Review during finish',
+                normalized,
+            )
+        return {
+            'finished': moved_to_review,
+            'task_id': normalized,
+            'pushed': push_result,
+            'pull_request': pr_result,
+            'moved_to_review': moved_to_review,
+            'move_error': move_error,
         }
 
     def task_publish_state(self, task_id: str) -> dict[str, object]:

@@ -55,6 +55,54 @@ def current_branch(cwd: str) -> str:
     return out.strip() if out is not None else ''
 
 
+def local_branch_exists(cwd: str, branch: str) -> bool:
+    """True when a local ref named ``branch`` exists in ``cwd``."""
+    if not branch:
+        return False
+    return run_git(
+        cwd, ['rev-parse', '--verify', f'refs/heads/{branch}'], timeout=5,
+    ) is not None
+
+
+def remote_branch_exists(cwd: str, branch: str, remote: str = 'origin') -> bool:
+    """True when ``<remote>/<branch>`` exists in ``cwd``."""
+    if not branch:
+        return False
+    return run_git(
+        cwd, ['rev-parse', '--verify', f'refs/remotes/{remote}/{branch}'],
+        timeout=5,
+    ) is not None
+
+
+def ensure_branch_checked_out(cwd: str, branch: str) -> bool:
+    """Best-effort: checkout ``branch`` in ``cwd`` when not already on it.
+
+    A per-task workspace clone is supposed to live on the task branch.
+    If it has drifted to ``master`` (e.g. because the previous kato
+    session crashed mid-publish), this restores it. Tries the local
+    branch first; falls back to ``origin/<branch>`` if no local ref
+    exists yet (clone-checkout-fail path). Returns True iff the
+    workspace ends up on ``branch`` after the call. Non-destructive:
+    if the working tree is dirty and checkout would clobber, git
+    refuses and we return False without forcing.
+    """
+    if not branch:
+        return False
+    if current_branch(cwd) == branch:
+        return True
+    if local_branch_exists(cwd, branch):
+        if run_git(cwd, ['checkout', branch], timeout=15) is None:
+            return False
+    elif remote_branch_exists(cwd, branch):
+        if run_git(
+            cwd, ['checkout', '-b', branch, f'origin/{branch}'], timeout=15,
+        ) is None:
+            return False
+    else:
+        return False
+    return current_branch(cwd) == branch
+
+
 def detect_default_branch(cwd: str) -> str:
     """Repo's default branch (e.g. ``main`` / ``master``), or '' on failure.
 

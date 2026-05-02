@@ -61,7 +61,7 @@ export default function Tab({ session, active, needsAttention, onSelect, onForge
       {changesIndicator}
       <button
         type="button"
-        className="tab-forget-btn"
+        className="tab-forget-btn tooltip-end"
         data-tooltip="Forget this task — delete the local workspace and clear this tab. Anything not pushed will be lost."
         aria-label="Forget this task"
         onClick={handleForget}

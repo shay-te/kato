@@ -6,6 +6,7 @@ import SafetyBanner from './components/SafetyBanner.jsx';
 import SessionDetail from './components/SessionDetail.jsx';
 import StatusBar from './components/StatusBar.jsx';
 import TabList from './components/TabList.jsx';
+import ToastContainer from './components/ToastContainer.jsx';
 import { forgetTaskWorkspace } from './api.js';
 import { useNotifications } from './hooks/useNotifications.js';
 import { useNotificationRouting } from './hooks/useNotificationRouting.js';
@@ -140,6 +141,7 @@ export default function App() {
 
   return (
     <>
+      <ToastContainer />
       <SafetyBanner state={safetyState} />
       <Header
         notificationsEnabled={notifications.enabled}

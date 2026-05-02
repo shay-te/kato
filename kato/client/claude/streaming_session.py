@@ -116,6 +116,7 @@ class StreamingClaudeSession(object):
         env: dict[str, str] | None = None,
         effort: str = '',
         architecture_doc_path: str = '',
+        done_callback=None,
     ) -> None:
         if not str(task_id or '').strip():
             raise ValueError('task_id is required for a streaming session')
@@ -141,6 +142,14 @@ class StreamingClaudeSession(object):
         self._resume_session_id = normalized_text(resume_session_id)
         self._architecture_doc_path = normalized_text(architecture_doc_path)
         self._env_overrides = dict(env or {})
+        # Callback fired once when an assistant message arrives that
+        # contains the ``KATO_TASK_DONE_SENTINEL`` token. Wired by the
+        # session manager to ``AgentService.finish_task_planning_session``
+        # so Claude can end the chat by emitting the magic string.
+        # ``_done_sentinel_fired`` guards against re-firing on later
+        # messages that quote the sentinel back.
+        self._done_callback = done_callback
+        self._done_sentinel_fired = False
 
         self._proc: subprocess.Popen[bytes] | None = None
         self._proc_lock = threading.Lock()
@@ -553,6 +562,7 @@ class StreamingClaudeSession(object):
             self._event_queue.put(event)
             self._maybe_capture_session_id(event)
             self._maybe_capture_control_request(event)
+            self._maybe_fire_done_sentinel(event)
             self._log_event_for_operator(event)
             if event.is_terminal:
                 self._terminal_event = event
@@ -582,6 +592,48 @@ class StreamingClaudeSession(object):
             or '?'
         )
         return tool_name, request_id
+
+    def _maybe_fire_done_sentinel(self, event: SessionEvent) -> None:
+        """Detect ``<KATO_TASK_DONE>`` in an assistant text block and fire once.
+
+        The wait-planning prompt instructs Claude to end its final
+        message with this exact token when work is complete. We scan
+        every assistant text block, but fire the callback at most
+        once per session — if Claude later quotes the sentinel back
+        in an apology/correction message, we ignore it. Failures in
+        the callback are logged and never propagate so a flaky
+        publish path can't crash the reader thread.
+        """
+        if self._done_sentinel_fired or self._done_callback is None:
+            return
+        if event.event_type != 'assistant':
+            return
+        message = event.raw.get('message') if isinstance(event.raw, dict) else None
+        if not isinstance(message, dict):
+            return
+        content = message.get('content')
+        if not isinstance(content, list):
+            return
+        from kato.data_layers.data.sentinels import KATO_TASK_DONE_SENTINEL
+        for block in content:
+            if not isinstance(block, dict) or block.get('type') != 'text':
+                continue
+            text = str(block.get('text', '') or '')
+            if KATO_TASK_DONE_SENTINEL in text:
+                self._done_sentinel_fired = True
+                self.logger.info(
+                    'task %s: detected %s in assistant message — '
+                    'firing done callback',
+                    self._task_id, KATO_TASK_DONE_SENTINEL,
+                )
+                try:
+                    self._done_callback(self._task_id)
+                except Exception:
+                    self.logger.exception(
+                        'done callback failed for task %s',
+                        self._task_id,
+                    )
+                return
 
     def _maybe_capture_control_request(self, event: SessionEvent) -> None:
         """Store ``control_request`` payloads so we can echo ``updatedInput``."""
