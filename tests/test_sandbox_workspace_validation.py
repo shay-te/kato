@@ -135,6 +135,58 @@ class _WorkspacePathTests(unittest.TestCase):
                 with self.assertRaises(manager.SandboxError):
                     manager._validate_workspace_path(path_str)
 
+    def test_macos_sensitive_library_subtrees_are_refused(self):
+        """Every macOS-specific ``~/Library/...`` subtree in the forbidden
+        set must reject the path itself AND a descendant.
+
+        The validator checks set membership BEFORE existence, so this
+        test runs identically on Linux / WSL2 / macOS — we are
+        verifying the forbidden-subtree rule, not whether the path
+        exists on this particular host. (On non-macOS hosts the
+        paths simply don't exist; on macOS they hold Apple ID auth
+        tokens, iMessage history, Mail data, Safari cookies / history,
+        contacts, calendar, call history — every one of which a
+        misconfigured workspace path could otherwise expose to the
+        agent.)
+        """
+        macos_subtrees = [
+            'Library/Cookies',
+            'Library/Mail',
+            'Library/Messages',
+            'Library/Safari',
+            'Library/Calendars',
+            'Library/IdentityServices',
+            'Library/Group Containers',
+            'Library/Containers',
+            'Library/Application Support/com.apple.sharedfilelist',
+            'Library/Application Support/AddressBook',
+            'Library/Application Support/Knowledge',
+            'Library/Application Support/CallHistoryDB',
+        ]
+        for rel in macos_subtrees:
+            base = Path.home() / rel
+            with self.subTest(path=str(base), kind='self'):
+                with self.assertRaises(manager.SandboxError) as ctx:
+                    manager._validate_workspace_path(str(base))
+                # Must be the subtree-forbidden rejection, not "does
+                # not exist" — proves the entry is actually in the
+                # forbidden set, not just absent on disk.
+                msg = str(ctx.exception)
+                self.assertTrue(
+                    'sensitive directory' in msg or
+                    'system or home directory' in msg,
+                    msg=f'{base}: rejected for the wrong reason ({msg})',
+                )
+            descendant = base / 'synthetic-child-for-test'
+            with self.subTest(path=str(descendant), kind='descendant'):
+                with self.assertRaises(manager.SandboxError) as ctx:
+                    manager._validate_workspace_path(str(descendant))
+                self.assertIn(
+                    'sensitive directory',
+                    str(ctx.exception),
+                    msg=f'{descendant}: descendant rejected for wrong reason',
+                )
+
     # ----- exact-match-only checks (descendants are intentionally allowed) -----
 
     def test_home_exact_is_refused_but_subdir_is_allowed(self):

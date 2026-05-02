@@ -187,9 +187,35 @@ _FORBIDDEN_MOUNT_SOURCES_SUBTREE = frozenset({
     Path.home() / '.config' / 'gcloud',
     Path.home() / '.config' / 'kato',
     # macOS keychain / app-support secrets directories.
+    #
+    # Broad by intent: bypass mode runs an autonomous coding agent
+    # with no per-tool prompts. Mounting any of these as a workspace
+    # would expose Apple ID auth tokens (IdentityServices), iMessage
+    # chat history (Messages, Group Containers), Mail, Safari
+    # cookies / bookmarks / history, calendar database, contacts
+    # (AddressBook), call history, recently-opened-file lists, and
+    # the broad Containers / Group Containers trees used by every
+    # sandboxed macOS app for its private data. Operators who keep
+    # workspaces under any of these subtrees should move them.
+    #
+    # On non-macOS hosts (Linux / WSL2) these paths simply don't
+    # exist; ``_validate_workspace_path``'s exists() check would
+    # catch them anyway, so the entries are harmless on Linux.
     Path.home() / 'Library' / 'Keychains',
+    Path.home() / 'Library' / 'Cookies',
+    Path.home() / 'Library' / 'Mail',
+    Path.home() / 'Library' / 'Messages',
+    Path.home() / 'Library' / 'Safari',
+    Path.home() / 'Library' / 'Calendars',
+    Path.home() / 'Library' / 'IdentityServices',
+    Path.home() / 'Library' / 'Group Containers',
+    Path.home() / 'Library' / 'Containers',
     Path.home() / 'Library' / 'Application Support' / 'Google' / 'Chrome',
     Path.home() / 'Library' / 'Application Support' / 'Firefox',
+    Path.home() / 'Library' / 'Application Support' / 'com.apple.sharedfilelist',
+    Path.home() / 'Library' / 'Application Support' / 'AddressBook',
+    Path.home() / 'Library' / 'Application Support' / 'Knowledge',
+    Path.home() / 'Library' / 'Application Support' / 'CallHistoryDB',
 })
 _FORBIDDEN_MOUNT_SOURCES_EXACT = frozenset({
     Path('/'),

@@ -840,8 +840,20 @@ narrows the allowed mount surface; removing widens it.
 - ~/.config/gcloud
 - ~/.config/kato
 - ~/Library/Keychains
+- ~/Library/Cookies
+- ~/Library/Mail
+- ~/Library/Messages
+- ~/Library/Safari
+- ~/Library/Calendars
+- ~/Library/IdentityServices
+- ~/Library/Group Containers
+- ~/Library/Containers
 - ~/Library/Application Support/Google/Chrome
 - ~/Library/Application Support/Firefox
+- ~/Library/Application Support/com.apple.sharedfilelist
+- ~/Library/Application Support/AddressBook
+- ~/Library/Application Support/Knowledge
+- ~/Library/Application Support/CallHistoryDB
 <!-- SECURITY-INVARIANTS:forbidden-mount-subtree:END -->
 
 ### Forbidden workspace mount roots — exact-match
