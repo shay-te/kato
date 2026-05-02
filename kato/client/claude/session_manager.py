@@ -211,6 +211,7 @@ class ClaudeSessionManager(object):
         env: dict[str, str] | None = None,
         expected_branch: str = '',
         architecture_doc_path: str = '',
+        docker_mode_on: bool = False,
     ) -> StreamingClaudeSession:
         """Spawn (or rehydrate) the streaming session bound to ``task_id``.
 
@@ -232,6 +233,7 @@ class ClaudeSessionManager(object):
             'effort': effort,
             'env': env,
             'architecture_doc_path': architecture_doc_path,
+            'docker_mode_on': docker_mode_on,
             'done_callback': self._done_callback,
         }
         with self._lock:

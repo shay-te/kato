@@ -240,5 +240,83 @@ class StreamingClaudeSessionTests(unittest.TestCase):
         self.assertIn(15, fake_proc.signals_sent)
 
 
+class StreamingClaudeSessionDockerModeTests(unittest.TestCase):
+    """``KATO_CLAUDE_DOCKER`` plumbing for the streaming spawn path.
+
+    Sandbox-wrap on streaming sessions now gates on the new
+    ``docker_mode_on`` attribute, not on ``permission_mode ==
+    bypassPermissions``. This separates *containment* (docker) from the
+    *prompt layer* (bypass), so an operator can run docker=true with
+    permission prompts on for the strongest combined posture.
+    """
+
+    def test_docker_mode_off_does_not_wrap_spawn_even_when_bypass_permissions(self) -> None:
+        fake_proc = _FakeProc()
+        with patch(
+            'kato.client.claude.streaming_session.subprocess.Popen',
+            return_value=fake_proc,
+        ) as mock_popen, patch(
+            'kato.client.claude.streaming_session.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ), patch(
+            'kato.sandbox.manager.wrap_command',
+        ) as mock_wrap:
+            session = StreamingClaudeSession(
+                task_id='PROJ-1',
+                cwd='/tmp/repo',
+                permission_mode='bypassPermissions',
+                docker_mode_on=False,
+            )
+            session.start()
+
+        mock_wrap.assert_not_called()
+        spawn_argv = mock_popen.call_args.args[0]
+        # Streaming session resolves the binary via shutil.which.
+        self.assertNotEqual(spawn_argv[:2], ['docker', 'run'])
+
+    def test_docker_mode_on_wraps_spawn_in_sandbox(self) -> None:
+        fake_proc = _FakeProc()
+        with patch(
+            'kato.client.claude.streaming_session.subprocess.Popen',
+            return_value=fake_proc,
+        ) as mock_popen, patch(
+            'kato.client.claude.streaming_session.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ), patch(
+            'kato.sandbox.manager.ensure_image',
+        ), patch(
+            'kato.sandbox.manager.check_spawn_rate',
+        ), patch(
+            'kato.sandbox.manager.enforce_no_workspace_secrets',
+        ), patch(
+            'kato.sandbox.manager.record_spawn',
+        ) as mock_record, patch(
+            'kato.sandbox.manager.wrap_command',
+            return_value=['docker', 'run', '--rm', 'kato-sandbox', 'claude'],
+        ) as mock_wrap, patch(
+            'kato.sandbox.manager.make_container_name',
+            return_value='kato-sandbox-PROJ-1-abcd1234',
+        ):
+            session = StreamingClaudeSession(
+                task_id='PROJ-1',
+                cwd='/tmp/repo',
+                docker_mode_on=True,
+            )
+            session.start()
+
+        mock_wrap.assert_called_once()
+        wrap_kwargs = mock_wrap.call_args.kwargs
+        self.assertEqual(wrap_kwargs['task_id'], 'PROJ-1')
+        self.assertEqual(wrap_kwargs['workspace_path'], '/tmp/repo')
+        # Audit log fires before the subprocess starts.
+        mock_record.assert_called_once()
+        spawn_argv = mock_popen.call_args.args[0]
+        self.assertEqual(spawn_argv[:2], ['docker', 'run'])
+
+    def test_docker_mode_default_is_off(self) -> None:
+        session = StreamingClaudeSession(task_id='PROJ-1')
+        self.assertFalse(session._docker_mode_on)
+
+
 if __name__ == '__main__':
     unittest.main()

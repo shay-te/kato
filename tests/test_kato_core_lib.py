@@ -581,6 +581,105 @@ class KatoCoreLibTests(unittest.TestCase):
         self.assertEqual(first_kwargs['model'], 'claude-opus-4-7')
         self.assertIs(first_kwargs['bypass_permissions'], True)
 
+    def test_docker_mode_env_threads_through_to_claude_client(self) -> None:
+        """``KATO_CLAUDE_DOCKER=true`` must reach every Claude spawn point."""
+        cfg = build_test_cfg()
+        cfg.kato.agent_backend = 'claude'
+        cfg.kato.claude = {
+            'binary': 'claude',
+            'model': 'claude-opus-4-7',
+            'max_turns': '',
+            'allowed_tools': '',
+            'disallowed_tools': '',
+            'bypass_permissions': False,
+            'timeout_seconds': 1800,
+            'model_smoke_test_enabled': False,
+        }
+
+        with patch(
+            'kato.kato_core_lib.EmailCoreLib'
+        ), patch(
+            'kato.kato_core_lib.build_ticket_client'
+        ), patch(
+            'kato.kato_core_lib.KatoClient'
+        ), patch(
+            'kato.kato_core_lib.ClaudeCliClient'
+        ) as mock_claude_client_cls, patch(
+            'kato.kato_core_lib.RepositoryService'
+        ), patch(
+            'kato.kato_core_lib.TaskDataAccess'
+        ), patch(
+            'kato.kato_core_lib.TaskService'
+        ), patch(
+            'kato.kato_core_lib.TaskStateService'
+        ), patch(
+            'kato.kato_core_lib.ImplementationService'
+        ), patch(
+            'kato.kato_core_lib.TestingService'
+        ), patch(
+            'kato.kato_core_lib.NotificationService'
+        ), patch(
+            'kato.kato_core_lib.AgentService'
+        ), patch(
+            'kato.kato_core_lib.PlanningSessionRunner'
+        ) as mock_runner_cls, patch(
+            'kato.kato_core_lib.is_docker_mode_enabled', return_value=True,
+        ):
+            KatoCoreLib(cfg)
+
+        # Both clients (implementation + testing) get docker_mode_on=True.
+        for call in mock_claude_client_cls.call_args_list:
+            self.assertIs(call.kwargs['docker_mode_on'], True)
+        # PlanningSessionRunner.from_config also sees docker_mode_on=True.
+        from_config_kwargs = mock_runner_cls.from_config.call_args.kwargs
+        self.assertIs(from_config_kwargs['docker_mode_on'], True)
+
+    def test_docker_mode_default_off_threads_through_to_claude_client(self) -> None:
+        cfg = build_test_cfg()
+        cfg.kato.agent_backend = 'claude'
+        cfg.kato.claude = {
+            'binary': 'claude',
+            'model': 'claude-opus-4-7',
+            'max_turns': '',
+            'allowed_tools': '',
+            'disallowed_tools': '',
+            'bypass_permissions': False,
+            'timeout_seconds': 1800,
+            'model_smoke_test_enabled': False,
+        }
+
+        with patch(
+            'kato.kato_core_lib.EmailCoreLib'
+        ), patch(
+            'kato.kato_core_lib.build_ticket_client'
+        ), patch(
+            'kato.kato_core_lib.KatoClient'
+        ), patch(
+            'kato.kato_core_lib.ClaudeCliClient'
+        ) as mock_claude_client_cls, patch(
+            'kato.kato_core_lib.RepositoryService'
+        ), patch(
+            'kato.kato_core_lib.TaskDataAccess'
+        ), patch(
+            'kato.kato_core_lib.TaskService'
+        ), patch(
+            'kato.kato_core_lib.TaskStateService'
+        ), patch(
+            'kato.kato_core_lib.ImplementationService'
+        ), patch(
+            'kato.kato_core_lib.TestingService'
+        ), patch(
+            'kato.kato_core_lib.NotificationService'
+        ), patch(
+            'kato.kato_core_lib.AgentService'
+        ), patch(
+            'kato.kato_core_lib.is_docker_mode_enabled', return_value=False,
+        ):
+            KatoCoreLib(cfg)
+
+        for call in mock_claude_client_cls.call_args_list:
+            self.assertIs(call.kwargs['docker_mode_on'], False)
+
     def test_rejects_unsupported_agent_backend(self) -> None:
         cfg = build_test_cfg()
         cfg.kato.agent_backend = 'gemini'
