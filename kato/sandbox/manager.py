@@ -186,10 +186,6 @@ _FORBIDDEN_MOUNT_SOURCES_SUBTREE = frozenset({
     Path.home() / '.docker',
     Path.home() / '.config' / 'gcloud',
     Path.home() / '.config' / 'kato',
-    # kato's own state lives here (audit log, future credentials
-    # cache). Mounting it into the sandbox would let Claude tamper
-    # with kato itself.
-    Path.home() / '.kato',
     # macOS keychain / app-support secrets directories.
     Path.home() / 'Library' / 'Keychains',
     Path.home() / 'Library' / 'Application Support' / 'Google' / 'Chrome',
@@ -200,6 +196,13 @@ _FORBIDDEN_MOUNT_SOURCES_EXACT = frozenset({
     Path('/home'),
     Path('/Users'),
     Path.home(),
+    # ``~/.kato`` itself is refused (it holds the audit log + lock,
+    # plus per-task workspace clones at ``~/.kato/workspaces/`` by
+    # default). Mounting the whole dir would let Claude see the audit
+    # log and any sibling task's workspace. Descendants are allowed —
+    # the legitimate per-task workspace path is
+    # ``~/.kato/workspaces/<task_id>/<repo>/``.
+    Path.home() / '.kato',
 })
 
 
