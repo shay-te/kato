@@ -259,6 +259,7 @@ class StreamingClaudeSession(object):
             if self._permission_mode == 'bypassPermissions':
                 from kato.sandbox.manager import (
                     SandboxError,
+                    check_spawn_rate,
                     ensure_image,
                     make_container_name,
                     record_spawn,
@@ -269,6 +270,14 @@ class StreamingClaudeSession(object):
                 except SandboxError as exc:
                     raise RuntimeError(
                         f'failed to prepare Claude sandbox image: {exc}',
+                    ) from exc
+                # Refuse if sandbox spawns are flooding (catches runaway
+                # task scan loops and DoS attempts).
+                try:
+                    check_spawn_rate()
+                except SandboxError as exc:
+                    raise RuntimeError(
+                        f'sandbox spawn rate-limited: {exc}',
                     ) from exc
                 container_name = make_container_name(self._task_id)
                 # Pre-spawn workspace check — refuse (don't just warn)
@@ -287,16 +296,24 @@ class StreamingClaudeSession(object):
                     command,
                     workspace_path=self._cwd,
                     container_name=container_name,
+                    task_id=self._task_id,
                 )
                 # Audit-log this spawn before the subprocess actually
                 # starts so the operator has a record even if the
-                # container fails to come up.
-                record_spawn(
-                    task_id=self._task_id,
-                    container_name=container_name,
-                    workspace_path=self._cwd,
-                    logger=self.logger,
-                )
+                # container fails to come up. ``env=None`` lets
+                # ``record_spawn`` consult the live ``os.environ``
+                # for ``KATO_SANDBOX_AUDIT_REQUIRED``.
+                try:
+                    record_spawn(
+                        task_id=self._task_id,
+                        container_name=container_name,
+                        workspace_path=self._cwd,
+                        logger=self.logger,
+                    )
+                except SandboxError as exc:
+                    raise RuntimeError(
+                        f'sandbox audit log required but failed: {exc}',
+                    ) from exc
                 # Docker sets the container WORKDIR to /workspace; the
                 # host cwd is irrelevant for the docker client itself.
                 spawn_cwd = None

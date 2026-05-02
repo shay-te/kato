@@ -44,7 +44,7 @@ sandbox-build:
 # credentials so kato-spawned sandbox containers can reuse them.
 # Skip if you set ANTHROPIC_API_KEY in your shell instead.
 sandbox-login:
-	$(VENV_PYTHON) -c "from kato.sandbox.manager import ensure_image, login_command; import subprocess, sys; ensure_image(); sys.exit(subprocess.call(login_command()))"
+	$(VENV_PYTHON) -c "from kato.sandbox.manager import ensure_image, login_command, stamp_auth_volume_manifest; import subprocess, sys; ensure_image(); rc = subprocess.call(login_command()); stamp_auth_volume_manifest() if rc == 0 else None; sys.exit(rc)"
 
 # End-to-end smoke test: builds the image, spins up a throwaway
 # container, asserts every protection (uid drop, cap drop, read-only

@@ -17,6 +17,12 @@ Checks performed inside the container, in this order:
 8. ``example.com`` is **not** reachable (firewall blocking).
 9. ``github.com`` is **not** reachable (firewall blocking).
 10. Outbound DNS to a non-pinned resolver fails (firewall blocking).
+11. ``/auth-src`` is read-only (writes must fail with EROFS).
+12. ``/home/claude/.claude`` is on tmpfs (per-task ephemeral, not a
+    persistent volume) and writes by Claude do **not** persist back
+    to the auth volume.
+13. Cloud metadata IP (169.254.169.254) is firewall-blocked.
+14. RFC1918 host-bridge IPs (e.g. 172.17.0.1) are firewall-blocked.
 
 The verification command runs as the same ``claude`` user the real
 spawn uses, so anything it can't do, the real Claude can't either.
@@ -120,6 +126,37 @@ check "TCP/8080 outbound BLOCKED" bash -c '
 check "plain HTTP (port 80) to api.anthropic.com BLOCKED" bash -c '
     ! curl --connect-timeout 5 --max-time 8 -sI http://api.anthropic.com/ \
         -o /dev/null 2>/dev/null
+'
+# ----- new layer-0 protections (auth volume isolation, metadata, RFC1918) -----
+check "auth source mount /auth-src is READ-ONLY" bash -c '
+    test -d /auth-src && ! touch /auth-src/_kato_verify_probe 2>/dev/null
+'
+check "/home/claude/.claude is on tmpfs (per-task ephemeral)" bash -c '
+    fs=$(stat -f -c %T /home/claude/.claude 2>/dev/null \
+         || stat --file-system --format=%T /home/claude/.claude 2>/dev/null)
+    test "$fs" = "tmpfs"
+'
+check ".claude is writable by claude user (own state, not persistent)" bash -c '
+    touch /home/claude/.claude/_probe && rm -f /home/claude/.claude/_probe
+'
+check "AWS/GCP cloud metadata IP (169.254.169.254) BLOCKED" bash -c '
+    ! timeout 5 bash -c "</dev/tcp/169.254.169.254/80" 2>/dev/null
+'
+check "RFC1918 host-bridge IP (172.17.0.1) BLOCKED" bash -c '
+    ! timeout 5 bash -c "</dev/tcp/172.17.0.1/80" 2>/dev/null
+'
+check "private LAN IP (192.168.1.1) BLOCKED" bash -c '
+    ! timeout 5 bash -c "</dev/tcp/192.168.1.1/80" 2>/dev/null
+'
+check "DNS rate limit eventually drops bursts (>60/min)" bash -c '
+    # Fire ~120 unique queries in a tight loop and confirm at least
+    # one is dropped (timeout on dig). Hashlimit grants a burst of 20
+    # then drops at the limit, so within 120 queries we expect drops.
+    drops=0
+    for i in $(seq 1 120); do
+        timeout 1 dig @1.1.1.1 "kato-rl-$i.example.invalid" +tries=1 +time=1 +short >/dev/null 2>&1 || drops=$((drops+1))
+    done
+    test "$drops" -gt 0
 '
 
 if [ "$fail_count" -gt 0 ]; then
