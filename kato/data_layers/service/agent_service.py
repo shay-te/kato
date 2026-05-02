@@ -712,12 +712,20 @@ class AgentService(Service):
                 })
                 continue
             try:
+                # Reuse the canonical title builder so on-demand PRs
+                # match the autonomous flow's format: ``<id> <summary>``,
+                # not the older ``Implement <id>`` placeholder. Same
+                # helper task_publisher uses for the auto-published
+                # flow, so PR titles are consistent regardless of which
+                # path opened them.
+                from kato.helpers.pull_request_utils import pull_request_title
+                title = pull_request_title(task_obj)
                 pull_request = self._repository_service.create_pull_request(
                     repository,
-                    title=f'Implement {normalized}',
+                    title=title,
                     source_branch=branch_name,
                     description=str(getattr(task_obj, 'summary', '') or ''),
-                    commit_message=f'Implement {normalized}',
+                    commit_message=title,
                 )
                 created.append({
                     'repository_id': repository.id,
