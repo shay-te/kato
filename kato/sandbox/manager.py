@@ -561,6 +561,23 @@ def build_image(
                 'sandbox: pinning base image to %s (KATO_SANDBOX_BASE_IMAGE)',
                 base_override,
             )
+    # Operator-side npm-side supply-chain pin. If
+    # KATO_SANDBOX_CLAUDE_CLI_VERSION is set (e.g. ``2.1.5``), pass
+    # it as the CLAUDE_CLI_VERSION build-arg so the Dockerfile installs
+    # ``@anthropic-ai/claude-code@<that version>`` instead of ``latest``.
+    # Closes the build-time channel where a malicious ``latest`` could
+    # be pushed to npm between operator builds. Default ``latest``
+    # preserves existing behavior — operators opt into pinning when
+    # their threat model requires it.
+    cli_override = os.environ.get('KATO_SANDBOX_CLAUDE_CLI_VERSION', '').strip()
+    if cli_override:
+        cmd.extend(['--build-arg', f'CLAUDE_CLI_VERSION={cli_override}'])
+        if logger is not None:
+            logger.info(
+                'sandbox: pinning Claude CLI version to %s '
+                '(KATO_SANDBOX_CLAUDE_CLI_VERSION)',
+                cli_override,
+            )
     cmd.append(str(_SANDBOX_DIR))
     try:
         result = subprocess.run(

@@ -63,10 +63,20 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
-# Claude Code CLI. We pin to ``latest`` at image-build time and disable
-# the in-CLI auto-updater at runtime (the firewall would block its
-# fetch anyway, but the explicit env var stops it from trying).
-RUN npm install -g @anthropic-ai/claude-code
+# Claude Code CLI. Pinnable via build-arg so operators concerned about
+# npm-side supply-chain attacks (a malicious "latest" pushed between
+# operator builds) can lock in a specific version:
+#
+#   docker build --build-arg CLAUDE_CLI_VERSION=2.1.5 ...
+#
+# (or set ``KATO_SANDBOX_CLAUDE_CLI_VERSION`` and let
+# ``manager.build_image`` pass it through). Default ``latest``
+# preserves existing behavior — operators can opt into pinning when
+# their threat model requires it. The in-CLI auto-updater is disabled
+# at runtime via ``DISABLE_AUTOUPDATER=1`` (the firewall would block
+# its fetch anyway, but the explicit env var stops it from trying).
+ARG CLAUDE_CLI_VERSION=latest
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CLI_VERSION}
 
 # Non-root user for the actual Claude process. Uid 1000 matches the
 # typical host developer uid so bind-mounted workspace files don't

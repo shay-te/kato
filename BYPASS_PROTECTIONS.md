@@ -75,6 +75,59 @@ Per-OS layer status (see linked file:line for the determining code):
 
 Operators on Windows: install [Docker Desktop with WSL2 backend](https://docs.docker.com/desktop/wsl/), then run kato from inside a WSL2 distribution (Ubuntu, Debian). All layers apply as they would on Linux native, with gVisor unavailable (override required).
 
+## Recommended deployment patterns
+
+The single cheapest "protection" is making the blast radius small. Most kato operators don't need a hardened multi-tenant kubernetes cluster — they need an answer to the question *"if Claude does the worst thing it could plausibly do, what does it actually reach?"* Three deployment shapes, ranked by how small that blast radius is:
+
+### Pattern A — developer laptop (Docker Desktop)
+
+The default. You're already here.
+
+- **Blast radius:** your laptop. A successful container escape lands in the LinuxKit / WSL2 VM (which is itself isolated from your macOS/Windows host by the hypervisor). A successful workspace-side compromise is bounded to the per-task workspace folder.
+- **Setup checklist:**
+  - [ ] Install Docker Desktop with the latest version
+  - [ ] Set `KATO_SANDBOX_ALLOW_NO_GVISOR=true` (Docker Desktop cannot run gVisor; the hypervisor + double-kernel separation is the substitute)
+  - [ ] Run `make sandbox-build && make sandbox-login && make sandbox-verify` once before first use
+  - [ ] Don't commit secrets to workspaces (the pre-spawn secret scan catches credential-shape names; arbitrary in-source secrets are residual)
+- **Tradeoff:** if your laptop has anything sensitive on it that you don't want correlated with your kato sessions, see Pattern B.
+
+### Pattern B — dedicated machine (old laptop, disposable VM, home server)
+
+Stronger isolation between kato and your "real" work.
+
+- **Blast radius:** the dedicated machine only. If kato is the only thing running, there's nothing else for a successful escape to reach.
+- **Setup checklist:**
+  - [ ] Install a stock Linux distro (Ubuntu 22.04+, Debian 12+, Fedora 38+) — modern enough for cgroup v2
+  - [ ] Install Docker via the distro's package manager AND configure rootless mode: https://docs.docker.com/engine/security/rootless/
+  - [ ] Install gVisor: https://gvisor.dev/docs/user_guide/install/ (kato won't need the `KATO_SANDBOX_ALLOW_NO_GVISOR=true` override on this host)
+  - [ ] Pin the sandbox base image: `export KATO_SANDBOX_BASE_IMAGE=node:22-bookworm-slim@sha256:<digest>`
+  - [ ] Pin the Claude CLI version: `export KATO_SANDBOX_CLAUDE_CLI_VERSION=<version>` (closes the npm-side supply-chain channel)
+  - [ ] Run kato as a non-root user (Layer 2 enforces this anyway)
+  - [ ] If multi-user host: don't add other users to the docker group (forensic labels are readable via `docker inspect` to anyone in that group)
+- **Tradeoff:** an old laptop is cheap insurance. A $100 used ThinkPad on your desk runs kato indefinitely with zero crossover into your daily workstation.
+
+### Pattern C — cloud VPS ($5–20/month)
+
+The strongest isolation for solo operators. Kato runs nowhere near your files.
+
+- **Blast radius:** a single cheap VPS. If something escapes, it has nothing to reach beyond the VPS itself — which you can rebuild from snapshot in minutes.
+- **Setup checklist:**
+  - [ ] Pick a provider with hourly billing and easy snapshots: Hetzner Cloud (~€4/mo for 2 vCPU), Linode/Akamai, DigitalOcean, Vultr
+  - [ ] Provision a Linux VM (Ubuntu 22.04+ or Debian 12+; 2 vCPU / 4 GB RAM is plenty for one kato instance)
+  - [ ] Same package install + rootless Docker + gVisor + base/CLI digest pinning as Pattern B
+  - [ ] SSH key-only auth; disable password login; firewall the SSH port to your IP if your provider supports it
+  - [ ] Snapshot the VM after the first successful `make sandbox-verify` — restore-to-snapshot is your "wipe + start over" button
+  - [ ] Ship the audit log to an external sink (S3 with Object Lock, syslog forwarder, SIEM) — see "Operational hardening" → "What the hash chain proves (and doesn't)"
+- **Tradeoff:** you need a way to interact with kato remotely. Tailscale / Cloudflare Tunnel for the planning UI, SSH for the terminal prompts. The interactive double-prompt at startup means you're in a real terminal session, not a one-shot SSH command.
+
+### Decision tree
+
+- Solo developer, occasional use, work mostly involves your own repos → **Pattern A**
+- Solo developer, daily use, you'd rather not have a coding agent on the same machine as your password manager → **Pattern B**
+- Anyone who treats kato as production infrastructure (ticket-driven autonomous PRs against shared repos) → **Pattern C**, with audit-log shipping mandatory
+
+The three patterns are not mutually exclusive — many operators start with A, move to B once the workflow becomes daily, and adopt C if the threat model shifts (e.g., kato starts working on customer code).
+
 ## Why these specific surfaces — read before proposing a change
 
 The flags applied in [`wrap_command`](kato/sandbox/manager.py), the
