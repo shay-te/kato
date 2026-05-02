@@ -203,6 +203,109 @@ _FORBIDDEN_MOUNT_SOURCES_EXACT = frozenset({
 })
 
 
+# ============================================================================
+# Security invariants — single source of truth, kept in sync with
+# BYPASS_PROTECTIONS.md by tests/test_bypass_protections_doc_consistency.py
+# ============================================================================
+#
+# Each constant below is the canonical declaration of a security-relevant
+# property of the sandbox. The companion test asserts SET-EQUALITY against
+# anchored sections in ``BYPASS_PROTECTIONS.md`` and (where mechanical
+# verification is possible) against the actual ``wrap_command`` argv.
+#
+# To add, remove, or rename anything in any of these sets you MUST also
+# update the matching anchor block in ``BYPASS_PROTECTIONS.md`` — and you
+# should think very hard about whether you're changing what the threat
+# model says the sandbox guarantees. The drift guard exists to make that
+# decision impossible to skip silently.
+
+# Required Docker run flags. Every entry MUST appear in ``wrap_command``
+# argv (verified semantically by the drift-guard test). Form:
+# ``--key=value`` for kv flags, ``--key`` for boolean flags. The test's
+# matcher accepts either single-token (``--ipc=none``) or two-token
+# (``--ipc none``) form in argv.
+_REQUIRED_DOCKER_FLAGS = frozenset({
+    '--network=kato-sandbox-net',
+    '--ipc=none',
+    '--cgroupns=private',
+    '--pid=container',
+    '--uts=private',
+    '--cap-drop=ALL',
+    '--cap-add=NET_ADMIN',
+    '--cap-add=NET_RAW',
+    '--cap-add=SETUID',
+    '--cap-add=SETGID',
+    '--security-opt=no-new-privileges',
+    '--security-opt=apparmor=docker-default',
+    '--read-only',
+})
+
+# Forbidden Docker run flags. NONE of these may appear in ``wrap_command``
+# argv (verified semantically). Each one would silently downgrade the
+# threat model in a specific way; the per-flag rationale lives in the
+# "Why these specific surfaces" section of BYPASS_PROTECTIONS.md.
+_FORBIDDEN_DOCKER_FLAGS = frozenset({
+    '--privileged',
+    '--network=host',
+    '--pid=host',
+    '--ipc=host',
+    '--uts=host',
+    '--userns=host',
+    '--cgroupns=host',
+    '--cap-add=ALL',
+    '--cap-add=SYS_ADMIN',
+    '--cap-add=SYS_PTRACE',
+    '--cap-add=SYS_MODULE',
+    '--cap-add=SYS_BOOT',
+    '--security-opt=seccomp=unconfined',
+    '--security-opt=apparmor=unconfined',
+    '--security-opt=systempaths=unconfined',
+    '--security-opt=label=disable',
+})
+
+# Auth-volume invariants — named tags for properties that the spawn /
+# login flows guarantee. Mechanical verification of each property lives
+# in entrypoint.sh, wrap_command, login_command, and the Makefile. The
+# drift guard ensures the named SET stays in sync with the doc.
+_AUTH_VOLUME_INVARIANTS = frozenset({
+    'spawn-source-readonly',
+    'spawn-target-tmpfs',
+    'spawn-credentials-allowlist',
+    'spawn-bidirectional-manifest-check',
+    'spawn-sha256-manifest-verify',
+    'login-direct-readwrite',
+    'login-only-volume-writer',
+    'login-stamps-manifest',
+})
+
+# Firewall guarantees — named tags for properties of init-firewall.sh +
+# the wrap_command sysctls/dns flags. Same pattern: mechanical
+# enforcement is elsewhere; drift guard keeps the NAMED set in sync.
+_FIREWALL_GUARANTEES = frozenset({
+    'default-drop-policy',
+    'allowlist-only-anthropic-tcp-443',
+    'dns-only-cloudflare',
+    'dns-rate-limit-60-per-minute',
+    'rfc1918-explicit-deny',
+    'cloud-metadata-explicit-deny',
+    'icmp-blocked',
+    'ipv6-disabled',
+    'fail-closed-on-anthropic-unreachable',
+    'refuses-private-ip-in-allowlist',
+})
+
+# Threat-model classification terms used in BYPASS_PROTECTIONS.md
+# tables. Adding a new term (e.g. "Bounded-with-monitoring") must
+# happen in BOTH places — the drift guard catches drift either way.
+_CLASSIFICATION_TERMS = frozenset({
+    'Mitigated',
+    'Bounded',
+    'Accepted',
+    'Accepted-with-mitigation',
+    'Not-applicable',
+})
+
+
 class SandboxError(RuntimeError):
     """Raised when the sandbox cannot be prepared or launched."""
 

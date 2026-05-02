@@ -29,6 +29,57 @@ defense:
 
 If any single layer fails, the others still hold.
 
+## Why these specific surfaces — read before proposing a change
+
+The flags applied in [`wrap_command`](kato/sandbox/manager.py), the
+firewall allowlist in [`init-firewall.sh`](kato/sandbox/init-firewall.sh),
+the auth-volume mount semantics in [`entrypoint.sh`](kato/sandbox/entrypoint.sh),
+and the env-var pass-through list are deliberately narrow. Every common
+"can we just…" ergonomics improvement breaks a specific load-bearing
+property of the threat model. If you are proposing one of these, the
+PR description must name what changes about the threat model and which
+table row(s) need to be re-classified — otherwise reviewers cannot tell
+whether the change is safe.
+
+The five most common temptations and what each one breaks:
+
+1. **Adding `npm`, `pypi`, or `github.com` to the egress allowlist** —
+   every B-rated supply-chain risk in §"Supply chain & code execution"
+   downgrades to A or worse, because postinstall scripts now reach
+   attacker-controlled hosts during normal Claude work. The runtime
+   firewall stops being a meaningful boundary against package-manager
+   compromise.
+
+2. **Bind-mounting the operator's git config / SSH agent socket / `~/.gitconfig`
+   so commits work inside the sandbox** — cross-task auth-volume isolation
+   is moot. One task's repo can read another's `.git/config` credentials,
+   and the SSH agent socket leaks any key the operator has loaded. Risks
+   #13–#16 (credential theft) flip from M to A.
+
+3. **Swapping the base image without `KATO_SANDBOX_BASE_IMAGE` digest
+   pin** — build-time supply chain becomes unbounded, and the
+   `org.kato.sandbox` identity-label check (C2) loses its meaning because
+   anyone can re-stamp any image with the same label. Risks S1, S2, C2 all
+   downgrade.
+
+4. **Pass-through of additional environment variables (`AWS_*`,
+   `GITHUB_TOKEN`, `OPENAI_API_KEY`, etc.) via `_PASS_THROUGH_ENV`** —
+   host secrets become visible to Claude inside the container, and from
+   there are one prompt-injection away from the Anthropic egress channel.
+   Risk #11 (env leakage) downgrades from B to A.
+
+5. **Persisting `settings.json`, `hooks/`, MCP config, `commands/`, or
+   `agents/` across tasks (i.e. extending the auth-volume copy-allowlist)** —
+   the auth-volume isolation design is structurally undone. One poisoned
+   task taints all subsequent tasks. This is the exact failure mode the
+   bidirectional manifest check in [`entrypoint.sh`](kato/sandbox/entrypoint.sh)
+   was added to catch; relaxing it re-opens risks #64–#66.
+
+If a change in any of those five categories looks worth doing, write
+the threat-model update first, then the code. The drift guard
+([`tests/test_bypass_protections_doc_consistency.py`](tests/test_bypass_protections_doc_consistency.py))
+will fail CI until both sides agree.
+
 ## Comprehensive risk × mitigation table
 
 This table maps the canonical 66-risk inventory of `--dangerously-skip-permissions`
@@ -594,4 +645,207 @@ new tenant on TCP/443 (still TLS-validated by the Claude CLI, but
 the iptables-level claim "Anthropic only" is "Anthropic-as-of-boot
 only"). Real-world impact: low — the certificate name check at the
 TLS layer prevents data flowing to a non-Anthropic endpoint.
+
+---
+
+## Machine-checked invariants
+
+The blocks below are the canonical lists of security-relevant flags,
+mount roots, and named invariants. They are kept in lock-step with the
+constants of the same name in [`kato/sandbox/manager.py`](kato/sandbox/manager.py)
+by [`tests/test_bypass_protections_doc_consistency.py`](tests/test_bypass_protections_doc_consistency.py).
+
+If you add, remove, or rename anything inside an anchor block, the
+test will fail until the matching constant in `manager.py` agrees. If
+you change a constant in `manager.py` without updating the matching
+anchor block, the test will fail until the doc agrees. The set
+equality is bidirectional.
+
+**Do not rename the anchor markers.** The format is exactly:
+`<!-- SECURITY-INVARIANTS:<group>:BEGIN -->` and the matching `:END`.
+Each entry is a single bullet (`- item`) on its own line. Free prose
+between blocks is fine; prose inside a block is parsed as items.
+
+### Required Docker run flags
+
+Every flag below MUST appear in `wrap_command` argv. The drift guard
+asserts this semantically — removing a flag from `wrap_command` while
+leaving it in this list is a test failure. Form: `--key=value` for
+key/value flags, `--key` for boolean flags. Two-token argv form
+(`--key value`) is matched as if it were single-token (`--key=value`).
+
+<!-- SECURITY-INVARIANTS:required-docker-flags:BEGIN -->
+- --network=kato-sandbox-net
+- --ipc=none
+- --cgroupns=private
+- --pid=container
+- --uts=private
+- --cap-drop=ALL
+- --cap-add=NET_ADMIN
+- --cap-add=NET_RAW
+- --cap-add=SETUID
+- --cap-add=SETGID
+- --security-opt=no-new-privileges
+- --security-opt=apparmor=docker-default
+- --read-only
+<!-- SECURITY-INVARIANTS:required-docker-flags:END -->
+
+### Forbidden Docker run flags
+
+NONE of these may appear in `wrap_command` argv. Each one would
+silently downgrade the threat model — the relevant downgrade is
+described in the "Why these specific surfaces" section near the top
+of this file. The drift guard asserts NONE are present and the named
+list matches the code constant.
+
+<!-- SECURITY-INVARIANTS:forbidden-docker-flags:BEGIN -->
+- --privileged
+- --network=host
+- --pid=host
+- --ipc=host
+- --uts=host
+- --userns=host
+- --cgroupns=host
+- --cap-add=ALL
+- --cap-add=SYS_ADMIN
+- --cap-add=SYS_PTRACE
+- --cap-add=SYS_MODULE
+- --cap-add=SYS_BOOT
+- --security-opt=seccomp=unconfined
+- --security-opt=apparmor=unconfined
+- --security-opt=systempaths=unconfined
+- --security-opt=label=disable
+<!-- SECURITY-INVARIANTS:forbidden-docker-flags:END -->
+
+### Forbidden workspace mount roots — subtree
+
+The path itself **and any descendant** is refused as a workspace
+mount target by `_validate_workspace_path`. `~/...` paths expand to
+the operator's `$HOME` at validation time. Adding to this list
+narrows the allowed mount surface; removing widens it.
+
+<!-- SECURITY-INVARIANTS:forbidden-mount-subtree:BEGIN -->
+- /root
+- /etc
+- /usr
+- /var
+- /bin
+- /sbin
+- /lib
+- /boot
+- /dev
+- /proc
+- /sys
+- /var/run/docker.sock
+- /var/lib/docker
+- /var/lib/containerd
+- /run/docker.sock
+- /run/containerd
+- /private
+- /Library
+- /System
+- /Applications
+- /Volumes
+- ~/.ssh
+- ~/.aws
+- ~/.gnupg
+- ~/.gcp
+- ~/.kube
+- ~/.docker
+- ~/.config/gcloud
+- ~/.config/kato
+- ~/.kato
+- ~/Library/Keychains
+- ~/Library/Application Support/Google/Chrome
+- ~/Library/Application Support/Firefox
+<!-- SECURITY-INVARIANTS:forbidden-mount-subtree:END -->
+
+### Forbidden workspace mount roots — exact-match
+
+ONLY the exact path is refused; descendants are allowed (per-task
+workspaces under `$HOME` are typical). `~` denotes `Path.home()`.
+
+<!-- SECURITY-INVARIANTS:forbidden-mount-exact:BEGIN -->
+- /
+- /home
+- /Users
+- ~
+<!-- SECURITY-INVARIANTS:forbidden-mount-exact:END -->
+
+### Auth-volume invariants
+
+Named tags for properties that the spawn / login flows guarantee.
+Mechanical enforcement lives in [`entrypoint.sh`](kato/sandbox/entrypoint.sh),
+[`wrap_command`](kato/sandbox/manager.py),
+[`login_command`](kato/sandbox/manager.py), and the
+[`Makefile`](Makefile) `sandbox-login` target. The drift guard
+ensures the named SET stays in sync with the code constant.
+
+| Tag | What it means |
+|---|---|
+| `spawn-source-readonly` | Spawn-mode containers mount the auth volume **read-only** at `/auth-src`. |
+| `spawn-target-tmpfs` | Spawn-mode containers receive a per-task tmpfs at `/home/claude/.claude` — destroyed on container exit, never carried into the next task. |
+| `spawn-credentials-allowlist` | Entrypoint copies only `{credentials.json, .credentials.json}` from `/auth-src` into the per-task tmpfs. |
+| `spawn-bidirectional-manifest-check` | Entrypoint refuses to start if `/auth-src` contains any file outside `{credentials.json, .credentials.json, manifest.sha256, lost+found}` — catches an injected `settings.json` / `hooks/` etc. that wouldn't invalidate any hash. |
+| `spawn-sha256-manifest-verify` | If `/auth-src/manifest.sha256` exists, every listed file's hash is verified before any copy. Mismatch = abort. |
+| `login-direct-readwrite` | Login mode mounts the auth volume **read-write** directly at `/home/claude/.claude` (no `/auth-src`, no tmpfs). |
+| `login-only-volume-writer` | The login flow is the only path that writes the persistent auth volume. Spawn mode cannot. |
+| `login-stamps-manifest` | After a successful login, `stamp_auth_volume_manifest` records a fresh SHA-256 manifest into the volume. |
+
+<!-- SECURITY-INVARIANTS:auth-volume-invariants:BEGIN -->
+- spawn-source-readonly
+- spawn-target-tmpfs
+- spawn-credentials-allowlist
+- spawn-bidirectional-manifest-check
+- spawn-sha256-manifest-verify
+- login-direct-readwrite
+- login-only-volume-writer
+- login-stamps-manifest
+<!-- SECURITY-INVARIANTS:auth-volume-invariants:END -->
+
+### Firewall guarantees
+
+Named tags for properties of [`init-firewall.sh`](kato/sandbox/init-firewall.sh)
+plus the `--sysctl` / `--dns` flags in `wrap_command`. Drift guard
+keeps the named set in sync with the code constant.
+
+| Tag | What it means |
+|---|---|
+| `default-drop-policy` | iptables `INPUT`, `FORWARD`, `OUTPUT` chains have policy DROP after init. |
+| `allowlist-only-anthropic-tcp-443` | The only ACCEPT rule for outbound TCP traffic targets the resolved `api.anthropic.com` IPs on port 443. |
+| `dns-only-cloudflare` | DNS (UDP/TCP 53) is allowed only to `1.1.1.1` and `1.0.0.1`. The container's resolver is pinned via `--dns`. |
+| `dns-rate-limit-60-per-minute` | DNS queries are bounded by `iptables -m hashlimit` to 60/minute per resolver, burst 20 — caps subdomain-encoding exfiltration via the recursive resolver. |
+| `rfc1918-explicit-deny` | `10/8`, `172.16/12`, `192.168/16`, and CGNAT `100.64/10` are explicitly DROPped before any ACCEPT — defense vs Docker bridge-IP / LAN reach. |
+| `cloud-metadata-explicit-deny` | `169.254.169.254` (AWS IMDS / GCP metadata) and the entire `169.254/16` link-local range are explicitly DROPped. |
+| `icmp-blocked` | ICMP is dropped in both directions — no ping, no traceroute, no ICMP-tunnel exfil. |
+| `ipv6-disabled` | IPv6 is disabled at the sysctl level and `ip6tables` policies are set to DROP. |
+| `fail-closed-on-anthropic-unreachable` | If `api.anthropic.com` cannot be reached at firewall init, the container exits non-zero (no warn-and-continue). |
+| `refuses-private-ip-in-allowlist` | If DNS resolution returns a private/loopback IP for `api.anthropic.com`, init aborts (defense vs DNS poisoning). |
+
+<!-- SECURITY-INVARIANTS:firewall-guarantees:BEGIN -->
+- default-drop-policy
+- allowlist-only-anthropic-tcp-443
+- dns-only-cloudflare
+- dns-rate-limit-60-per-minute
+- rfc1918-explicit-deny
+- cloud-metadata-explicit-deny
+- icmp-blocked
+- ipv6-disabled
+- fail-closed-on-anthropic-unreachable
+- refuses-private-ip-in-allowlist
+<!-- SECURITY-INVARIANTS:firewall-guarantees:END -->
+
+### Threat-model classification terms
+
+The exact set of status labels used in the risk × mitigation table.
+Adding a new term (e.g. `Bounded-with-monitoring`) must happen in
+both code and doc — the drift guard enforces this.
+
+<!-- SECURITY-INVARIANTS:classification-terms:BEGIN -->
+- Mitigated
+- Bounded
+- Accepted
+- Accepted-with-mitigation
+- Not-applicable
+<!-- SECURITY-INVARIANTS:classification-terms:END -->
 
