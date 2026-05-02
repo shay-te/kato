@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -224,13 +225,28 @@ class _DocVsBehaviorTests(unittest.TestCase):
                 if forbidden_ancestor_of_home is not None and \
                         (base == Path.home() or
                          base.is_relative_to(forbidden_ancestor_of_home)):
-                    self.skipTest(
+                    skip_reason = (
                         f'Path.home() ({Path.home()}) is under subtree-'
                         f'forbidden {forbidden_ancestor_of_home}; '
                         f'descendants of {doc_path} are correctly '
                         f'rejected by the validator on this host. '
-                        f'Test environment quirk, not a code bug.'
+                        f'Test environment quirk, not a code bug '
+                        f'(production kato refuses bypass mode under '
+                        f'euid 0 — Layer 2 — so this scenario cannot '
+                        f'reach a real spawn).'
                     )
+                    # Print to stderr so the reason is visible at default
+                    # test verbosity. ``self.skipTest`` records the message
+                    # for unittest's verbose output but a plain ``s`` is
+                    # all you see at the default level — operator hitting
+                    # this on a CI runner deserves to know why without
+                    # having to re-run with -v.
+                    print(
+                        f'[SKIP {doc_path}] {skip_reason}',
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    self.skipTest(skip_reason)
                 # Pick a descendant location that is itself a
                 # legitimate workspace clone shape. For ``~/.kato``
                 # this is the canonical default workspace path.
