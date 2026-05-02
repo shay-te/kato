@@ -72,6 +72,29 @@ def _expand(doc_path_str: str) -> Path:
     return Path(doc_path_str)
 
 
+def _home_is_under_subtree_forbidden() -> Path | None:
+    """Return a subtree-forbidden ancestor of ``Path.home()``, or None.
+
+    Edge case for CI: a runner with ``$HOME=/root`` (running as root,
+    which kato itself refuses for bypass mode but the validator can
+    still be unit-tested in) would put ``Path.home()`` under the
+    subtree-forbidden ``/root``. Descendants of ``~`` would then be
+    correctly rejected by the validator — and the descendant-acceptance
+    test below would fail not because the validator is broken, but
+    because the test environment violates the test's own assumption.
+    Skip cleanly in that case rather than confuse a future operator.
+    """
+    home = Path.home()
+    from kato.sandbox import manager as _m
+    for p in _m._FORBIDDEN_MOUNT_SOURCES_SUBTREE:
+        try:
+            if home == p or home.is_relative_to(p):
+                return p
+        except (ValueError, AttributeError):
+            continue
+    return None
+
+
 # ----- exact-match descendants we can actually exercise -----
 #
 # For EXACT-forbidden paths the documented semantic is: "the path
@@ -187,10 +210,27 @@ class _DocVsBehaviorTests(unittest.TestCase):
         ``~/.kato/workspaces/<task>/<repo>`` path will start raising
         and this test will fail with a message that names the bug.
         """
+        # CI portability: if Path.home() itself is under a subtree-
+        # forbidden root (e.g., $HOME=/root on a container running as
+        # root), every descendant of ~ would correctly be rejected
+        # by the validator. Skip the ~ case rather than fail noisily
+        # on a test-environment quirk; ~/.kato is unaffected since
+        # /root/.kato isn't subsumed unless /root itself is the home.
+        forbidden_ancestor_of_home = _home_is_under_subtree_forbidden()
         exact_paths = _parse_anchor('forbidden-mount-exact')
         for doc_path in sorted(exact_paths & _TESTABLE_EXACT_DESCENDANTS):
             with self.subTest(path=doc_path):
                 base = _expand(doc_path)
+                if forbidden_ancestor_of_home is not None and \
+                        (base == Path.home() or
+                         base.is_relative_to(forbidden_ancestor_of_home)):
+                    self.skipTest(
+                        f'Path.home() ({Path.home()}) is under subtree-'
+                        f'forbidden {forbidden_ancestor_of_home}; '
+                        f'descendants of {doc_path} are correctly '
+                        f'rejected by the validator on this host. '
+                        f'Test environment quirk, not a code bug.'
+                    )
                 # Pick a descendant location that is itself a
                 # legitimate workspace clone shape. For ``~/.kato``
                 # this is the canonical default workspace path.
