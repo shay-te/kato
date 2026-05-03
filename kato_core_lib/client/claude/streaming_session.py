@@ -595,13 +595,6 @@ class StreamingClaudeSession(object):
             event = self._parse_stdout_line(text)
             if event is None:
                 continue
-            with self._recent_events_lock:
-                self._recent_events.append(event)
-            self._event_queue.put(event)
-            self._maybe_capture_session_id(event)
-            self._maybe_capture_control_request(event)
-            self._maybe_fire_done_sentinel(event)
-            self._log_event_for_operator(event)
             if event.is_terminal:
                 self._terminal_event = event
                 # Output-side credential scan on the assembled final
@@ -611,6 +604,13 @@ class StreamingClaudeSession(object):
                 # audit signal. Detective-only: the agent's text has
                 # already crossed to Anthropic.
                 self._scan_terminal_for_credentials(event)
+            with self._recent_events_lock:
+                self._recent_events.append(event)
+            self._event_queue.put(event)
+            self._maybe_capture_session_id(event)
+            self._maybe_capture_control_request(event)
+            self._maybe_fire_done_sentinel(event)
+            self._log_event_for_operator(event)
                 # Don't break here — let the subprocess close stdout itself.
         # stdout closed; the subprocess is winding down or already gone.
 

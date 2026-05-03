@@ -118,6 +118,19 @@ def build_test_cfg() -> DictConfig:
                     'review_state': 'In Review',
                     'issue_states': ['To Do', 'Open'],
                 },
+                'github_core_lib': {
+                    'name': 'github-core-lib-config',
+                    'provider_name': 'github',
+                    'core-lib': {
+                        'github-core-lib': {
+                            'base_url': 'https://api.github.com',
+                            'token': 'gh-core-token',
+                            'owner': 'workspace',
+                            'repo': 'issues-repo',
+                            'max_retries': 5,
+                        },
+                    },
+                },
                 'github_issues': {
                     'name': 'github-issues-config',
                     'provider_name': 'github',
@@ -132,6 +145,7 @@ def build_test_cfg() -> DictConfig:
                     'review_state_field': 'labels',
                     'review_state': 'In Review',
                     'issue_states': ['open'],
+                    'max_retries': 5,
                 },
                 'gitlab_issues': {
                     'name': 'gitlab-issues-config',

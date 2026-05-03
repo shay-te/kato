@@ -8,7 +8,7 @@ from vcs_provider_contracts.review_comment import ReviewComment
 
 @runtime_checkable
 class PullRequestProvider(Protocol):
-    def validate_repository_access(self, repo_owner: str, repo_slug: str) -> None:
+    def validate_connection(self, repo_owner: str, repo_slug: str) -> None:
         raise NotImplementedError
 
     def create_pull_request(

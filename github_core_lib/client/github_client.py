@@ -4,10 +4,16 @@ from typing import Any
 from urllib.parse import urlparse
 
 from kato_core_lib.client.pull_request_client_base import PullRequestClientBase
-from kato_core_lib.helpers.retry_utils import run_with_retry
-from kato_core_lib.data_layers.data.review_comment import ReviewComment
 from kato_core_lib.data_layers.data.fields import PullRequestFields, ReviewCommentFields
-from kato_core_lib.helpers.text_utils import dict_from_mapping, list_from_mapping, normalized_text, text_from_attr, text_from_mapping
+from kato_core_lib.data_layers.data.review_comment import ReviewComment
+from kato_core_lib.helpers.retry_utils import run_with_retry
+from kato_core_lib.helpers.text_utils import (
+    dict_from_mapping,
+    list_from_mapping,
+    normalized_text,
+    text_from_attr,
+    text_from_mapping,
+)
 
 
 class GitHubClient(PullRequestClientBase):

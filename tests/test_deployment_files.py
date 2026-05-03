@@ -213,9 +213,11 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertNotIn('OPENHANDS_CONTAINER_AWS_SESSION_TOKEN', compose_text)
         self.assertNotIn('OPENHANDS_CONTAINER_AWS_DEFAULT_REGION', compose_text)
         self.assertIn(
-            'max_retries: ${oc.decode:${oc.env:KATO_EXTERNAL_API_MAX_RETRIES,"3"}}',
+            'defaults:\n  - github_core_lib: github_core_lib\n  - _self_',
             core_lib_yaml_text,
         )
+        self.assertIn('base_url: ${github_core_lib.core-lib.github-core-lib.base_url}', core_lib_yaml_text)
+        self.assertIn('max_retries: ${github_core_lib.core-lib.github-core-lib.max_retries}', core_lib_yaml_text)
 
     def test_env_example_includes_openhands_llm_variables(self) -> None:
         env_example_text = (REPO_ROOT / '.env.example').read_text(encoding='utf-8')

@@ -18,7 +18,8 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 
 [tool.setuptools.packages.find]
-include = ["kato_core_lib*", "hydra_plugins*", "vcs_provider_contracts*"]
+include = ["kato_core_lib*", "github_core_lib*", "hydra_plugins*", "vcs_provider_contracts*"]
 
 [tool.setuptools.package-data]
 "kato_core_lib.templates.email" = ["*.j2"]
+"github_core_lib.config" = ["*.yaml"]

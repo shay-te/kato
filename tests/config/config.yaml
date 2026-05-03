@@ -52,6 +52,14 @@ kato:
     issue_states:
       - To Do
       - Open
+  github_core_lib:
+    core-lib:
+      github-core-lib:
+        base_url: https://api.github.com
+        token: test-github-issues-token
+        owner: test-owner
+        repo: test-repo
+        max_retries: 5
   github_issues:
     base_url: https://api.github.com
     token: test-github-issues-token
@@ -63,6 +71,7 @@ kato:
     review_state: In Review
     issue_states:
       - open
+    max_retries: 5
   gitlab_issues:
     base_url: http://localhost:8083/api/v4
     token: test-gitlab-issues-token

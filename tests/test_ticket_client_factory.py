@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 
+from github_core_lib.client.github_issues_client import GitHubIssuesClient
 from kato_core_lib.client.ticket_client_factory import build_ticket_client
 from utils import build_test_cfg
 
@@ -36,18 +37,10 @@ class TicketClientFactoryTests(unittest.TestCase):
 
     def test_builds_github_issues_client(self) -> None:
         cfg = build_test_cfg()
+        client = build_ticket_client('github', cfg.kato.github_issues, 5)
 
-        with patch('kato_core_lib.client.ticket_client_factory.GitHubIssuesClient') as mock_client_cls:
-            client = build_ticket_client('github', cfg.kato.github_issues, 5)
-
-        self.assertIs(client, mock_client_cls.return_value)
-        mock_client_cls.assert_called_once_with(
-            cfg.kato.github_issues.base_url,
-            cfg.kato.github_issues.token,
-            cfg.kato.github_issues.owner,
-            cfg.kato.github_issues.repo,
-            5,
-        )
+        self.assertIsInstance(client, GitHubIssuesClient)
+        self.assertEqual(client.max_retries, 5)
 
     def test_builds_gitlab_issues_client(self) -> None:
         cfg = build_test_cfg()

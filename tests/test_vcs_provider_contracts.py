@@ -1,8 +1,11 @@
 import inspect
 import unittest
 
+from github_core_lib.client.github_client import GitHubClient
+from github_core_lib.client.github_issues_client import GitHubIssuesClient
+from github_core_lib.github_core_lib import GitHubCoreLib
+from omegaconf import OmegaConf
 from vcs_provider_contracts.issue import Issue
-from vcs_provider_contracts.issue_comment import IssueComment
 from vcs_provider_contracts.issue_provider import IssueProvider
 from vcs_provider_contracts.pull_request import PullRequest
 from vcs_provider_contracts.pull_request_provider import PullRequestProvider
@@ -10,7 +13,7 @@ from vcs_provider_contracts.review_comment import ReviewComment
 
 
 class ContractPullRequestProvider(object):
-    def validate_repository_access(self, repo_owner: str, repo_slug: str) -> None:
+    def validate_connection(self, repo_owner: str, repo_slug: str) -> None:
         return None
 
     def create_pull_request(
@@ -61,34 +64,36 @@ class ContractPullRequestProvider(object):
 
 
 class ContractIssueProvider(object):
-    def validate_issue_access(self, project: str, assignee: str, states: list[str]) -> None:
+    def validate_connection(self, project: str, assignee: str, states: list[str]) -> None:
         return None
 
-    def get_assigned_issues(self, project: str, assignee: str, states: list[str]) -> list[Issue]:
+    def get_assigned_tasks(self, project: str, assignee: str, states: list[str]) -> list[Issue]:
         return [Issue(id='ISSUE-1', title='Example')]
 
-    def list_issue_comments(self, issue_id: str) -> list[IssueComment]:
-        return [IssueComment(author='reviewer', body=issue_id)]
-
-    def add_issue_comment(self, issue_id: str, comment: str) -> None:
+    def add_comment(self, issue_id: str, comment: str) -> None:
         return None
 
     def move_issue_to_state(self, issue_id: str, field_name: str, state_name: str) -> None:
         return None
 
-    def add_issue_label(self, issue_id: str, label_name: str) -> None:
+    def add_tag(self, issue_id: str, label_name: str) -> None:
         return None
 
-    def remove_issue_label(self, issue_id: str, label_name: str) -> None:
+    def remove_tag(self, issue_id: str, label_name: str) -> None:
         return None
 
 
 class VcsProviderContractsTests(unittest.TestCase):
     def test_pull_request_contract_runtime_check_accepts_matching_provider(self) -> None:
         self.assertIsInstance(ContractPullRequestProvider(), PullRequestProvider)
+        self.assertIsInstance(GitHubClient('https://api.github.com', 'gh-token'), PullRequestProvider)
 
     def test_issue_contract_runtime_check_accepts_matching_provider(self) -> None:
         self.assertIsInstance(ContractIssueProvider(), IssueProvider)
+        self.assertIsInstance(
+            GitHubIssuesClient('https://api.github.com', 'gh-token', 'workspace', 'repo'),
+            IssueProvider,
+        )
 
     def test_pull_request_provider_signature_names_are_stable(self) -> None:
         self.assertEqual(
@@ -110,7 +115,7 @@ class VcsProviderContractsTests(unittest.TestCase):
 
     def test_issue_provider_signature_names_are_stable(self) -> None:
         self.assertEqual(
-            list(inspect.signature(IssueProvider.get_assigned_issues).parameters),
+            list(inspect.signature(IssueProvider.get_assigned_tasks).parameters),
             ['self', 'project', 'assignee', 'states'],
         )
         self.assertEqual(
@@ -134,3 +139,44 @@ class VcsProviderContractsTests(unittest.TestCase):
         self.assertEqual(pull_request.id, '17')
         self.assertEqual(comment.resolution_target_id, 'thread-1')
         self.assertEqual(issue.labels, ('bug',))
+
+    def test_github_core_lib_composes_both_clients(self) -> None:
+        cfg = OmegaConf.create(
+            {
+                'core-lib': {
+                    'github-core-lib': {
+                        'base_url': 'https://api.github.com',
+                        'token': 'gh-token',
+                        'owner': 'octo',
+                        'repo': 'repo',
+                        'max_retries': 3,
+                    },
+                },
+            }
+        )
+        github = GitHubCoreLib(cfg)
+
+        self.assertIsInstance(github.pull_request, GitHubClient)
+        self.assertIsInstance(github.issue, GitHubIssuesClient)
+        self.assertEqual(github.pull_request.max_retries, 3)
+        self.assertEqual(github.issue.max_retries, 3)
+
+    def test_github_core_lib_accepts_repository_config_slug_name(self) -> None:
+        cfg = OmegaConf.create(
+            {
+                'core-lib': {
+                    'github-core-lib': {
+                        'base_url': 'https://api.github.com',
+                        'token': 'gh-token',
+                        'owner': 'octo',
+                        'repo_slug': 'repo',
+                        'max_retries': 4,
+                    },
+                },
+            }
+        )
+        github = GitHubCoreLib(cfg)
+
+        self.assertIsInstance(github.pull_request, GitHubClient)
+        self.assertIsInstance(github.issue, GitHubIssuesClient)
+        self.assertEqual(github.issue.max_retries, 4)

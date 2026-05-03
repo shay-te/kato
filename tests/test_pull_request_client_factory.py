@@ -1,10 +1,10 @@
 import unittest
-from unittest.mock import patch
 
 
 from kato_core_lib.client.bitbucket.client import BitbucketClient
-from kato_core_lib.client.github.client import GitHubClient
 from kato_core_lib.client.gitlab.client import GitLabClient
+from github_core_lib.client.github_client import GitHubClient
+from omegaconf import OmegaConf
 from kato_core_lib.client.pull_request_client_factory import (
     build_pull_request_client,
     detect_pull_request_provider,
@@ -22,8 +22,18 @@ class PullRequestClientFactoryTests(unittest.TestCase):
             detect_pull_request_provider('https://code.example.com/api')
 
     def test_builds_github_client(self) -> None:
-        config = type('Config', (), {'base_url': 'https://api.github.com', 'token': 'gh-token'})
-        self.assertIsInstance(build_pull_request_client(config, 3), GitHubClient)
+        config = OmegaConf.create(
+            {
+                'base_url': 'https://api.github.com',
+                'token': 'gh-token',
+                'owner': 'octo',
+                'repo_slug': 'repo',
+            }
+        )
+        client = build_pull_request_client(config, 3)
+
+        self.assertIsInstance(client, GitHubClient)
+        self.assertEqual(client.max_retries, 3)
 
     def test_builds_gitlab_client(self) -> None:
         config = type('Config', (), {'base_url': 'https://gitlab.example/api/v4', 'token': 'gl-token'})

@@ -1,8 +1,10 @@
 from kato_core_lib.client.bitbucket.issues_client import BitbucketIssuesClient
-from kato_core_lib.client.github.issues_client import GitHubIssuesClient
 from kato_core_lib.client.gitlab.issues_client import GitLabIssuesClient
 from kato_core_lib.client.jira.issues_client import JiraClient
 from kato_core_lib.client.youtrack.issues_client import YouTrackClient
+from omegaconf import OmegaConf
+
+from github_core_lib.github_core_lib import GitHubCoreLib
 
 
 def build_ticket_client(issue_platform: str, config, max_retries: int):
@@ -17,13 +19,17 @@ def build_ticket_client(issue_platform: str, config, max_retries: int):
             max_retries,
         )
     if normalized in {'github', 'github_issues'}:
-        return GitHubIssuesClient(
-            config.base_url,
-            config.token,
-            getattr(config, 'owner', ''),
-            getattr(config, 'repo', ''),
-            max_retries,
+        github_config = OmegaConf.create(
+            {
+                'core-lib': {
+                    'github-core-lib': OmegaConf.merge(
+                        config,
+                        {'max_retries': max_retries},
+                    ),
+                },
+            }
         )
+        return GitHubCoreLib(github_config).issue
     if normalized in {'gitlab', 'gitlab_issues'}:
         return GitLabIssuesClient(
             config.base_url,

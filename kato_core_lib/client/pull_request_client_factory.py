@@ -1,11 +1,11 @@
 from urllib.parse import urlparse
 
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from kato_core_lib.client.bitbucket.client import BitbucketClient
-from kato_core_lib.client.github.client import GitHubClient
 from kato_core_lib.client.gitlab.client import GitLabClient
 from kato_core_lib.client.pull_request_client_base import PullRequestClientBase
+from github_core_lib.github_core_lib import GitHubCoreLib
 
 
 def detect_pull_request_provider(base_url: str) -> str:
@@ -33,5 +33,15 @@ def build_pull_request_client(
             username=getattr(config, 'api_email', '') or getattr(config, 'username', ''),
         )
     if provider == 'github':
-        return GitHubClient(config.base_url, config.token, max_retries)
+        github_config = OmegaConf.create(
+            {
+                'core-lib': {
+                    'github-core-lib': OmegaConf.merge(
+                        config,
+                        {'max_retries': max_retries},
+                    ),
+                },
+            }
+        )
+        return GitHubCoreLib(github_config).pull_request
     return GitLabClient(config.base_url, config.token, max_retries)

@@ -30,5 +30,8 @@ class HydraPluginTests(unittest.TestCase):
 
         self.assertEqual(
             search_path.calls,
-            [("kato_core_lib", "pkg://kato_core_lib.config")],
+            [
+                ("kato_core_lib", "pkg://kato_core_lib.config"),
+                ("github_core_lib", "pkg://github_core_lib.config"),
+            ],
         )

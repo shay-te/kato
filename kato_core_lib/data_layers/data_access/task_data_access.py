@@ -4,7 +4,7 @@ from core_lib.data_layers.data_access.data_access import DataAccess
 from core_lib.rule_validator.rule_validator import RuleValidator, ValueRuleValidator
 
 from kato_core_lib.helpers.retry_utils import retry_count
-from kato_core_lib.client.ticket_client_base import TicketClientBase
+from vcs_provider_contracts.issue_provider import IssueProvider
 from kato_core_lib.data_layers.data.task import Task
 
 
@@ -29,7 +29,7 @@ move_task_state_rule_validator = RuleValidator(
 )
 
 class TaskDataAccess(DataAccess):
-    def __init__(self, config: DictConfig, client: TicketClientBase) -> None:
+    def __init__(self, config: DictConfig, client: IssueProvider) -> None:
         self._config = config
         self._client = client
 
