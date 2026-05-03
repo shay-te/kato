@@ -144,3 +144,82 @@ class MainTests(unittest.TestCase):
         self.assertEqual(result, 1)
         configured_logger.error.assert_called_once_with('%s', env_error)
         mock_init.assert_not_called()
+
+    def test_docker_mode_on_runs_sandbox_preflight(self) -> None:
+        """``KATO_CLAUDE_DOCKER=true`` must run the sandbox daemon checks.
+
+        Locks the Phase 2 gate at ``main.py:86``. If a future refactor
+        reverts ``is_docker_mode_enabled()`` back to ``is_bypass_enabled()``,
+        ``docker=true, bypass=false`` operators silently lose the docker
+        daemon preflight — exactly the case this gate exists to catch.
+        """
+        app = types.SimpleNamespace(logger=Mock())
+
+        with patch('kato.main.validate_environment'), patch(
+            'kato.main.validate_bypass_permissions'
+        ), patch(
+            'kato.main.print_security_posture'
+        ), patch(
+            'kato.main.KatoInstance.init'
+        ), patch(
+            'kato.main.KatoInstance.get', return_value=app,
+        ), patch(
+            'kato.main._run_task_scan_loop'
+        ), patch(
+            'kato.validation.bypass_permissions_validator.is_docker_mode_enabled',
+            return_value=True,
+        ), patch(
+            'kato.sandbox.manager.check_docker_or_exit'
+        ) as mock_check_docker, patch(
+            'kato.sandbox.manager.check_gvisor_or_exit'
+        ) as mock_check_gvisor, patch(
+            'kato.sandbox.manager.gvisor_runtime_available',
+            return_value=True,
+        ) as mock_gvisor_runtime, patch(
+            'kato.sandbox.manager.docker_running_rootless',
+            return_value=True,
+        ) as mock_rootless:
+            main(self.cfg)
+
+        mock_check_docker.assert_called_once()
+        mock_check_gvisor.assert_called_once()
+        mock_gvisor_runtime.assert_called_once()
+        mock_rootless.assert_called_once()
+
+    def test_docker_mode_off_skips_sandbox_preflight(self) -> None:
+        """``KATO_CLAUDE_DOCKER`` unset → the four sandbox helpers must not run.
+
+        Without this assertion, a regression that runs the sandbox
+        preflight unconditionally would force every kato user to install
+        Docker even when they're on the host-only path.
+        """
+        app = types.SimpleNamespace(logger=Mock())
+
+        with patch('kato.main.validate_environment'), patch(
+            'kato.main.validate_bypass_permissions'
+        ), patch(
+            'kato.main.print_security_posture'
+        ), patch(
+            'kato.main.KatoInstance.init'
+        ), patch(
+            'kato.main.KatoInstance.get', return_value=app,
+        ), patch(
+            'kato.main._run_task_scan_loop'
+        ), patch(
+            'kato.validation.bypass_permissions_validator.is_docker_mode_enabled',
+            return_value=False,
+        ), patch(
+            'kato.sandbox.manager.check_docker_or_exit'
+        ) as mock_check_docker, patch(
+            'kato.sandbox.manager.check_gvisor_or_exit'
+        ) as mock_check_gvisor, patch(
+            'kato.sandbox.manager.gvisor_runtime_available'
+        ) as mock_gvisor_runtime, patch(
+            'kato.sandbox.manager.docker_running_rootless'
+        ) as mock_rootless:
+            main(self.cfg)
+
+        mock_check_docker.assert_not_called()
+        mock_check_gvisor.assert_not_called()
+        mock_gvisor_runtime.assert_not_called()
+        mock_rootless.assert_not_called()
