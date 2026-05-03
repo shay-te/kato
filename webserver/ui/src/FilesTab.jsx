@@ -158,8 +158,8 @@ function basenameOf(path) {
 
 function RepoTree({ repoTree, width, collapsed, onToggle, onPickFile }) {
   const treeData = useMemo(() => {
-    return attachIds(repoTree.tree);
-  }, [repoTree.tree]);
+    return attachIds(repoTree.tree, repoTree.cwd);
+  }, [repoTree.tree, repoTree.cwd]);
   const heading = repoTree.repo_id || repoTree.cwd || 'repo';
   const treeHeight = Math.max(120, Math.min(treeData.length * 22 + 8, 800));
   const chevronName = collapsed ? 'chevron-right' : 'chevron-down';
@@ -202,15 +202,29 @@ function RepoTree({ repoTree, width, collapsed, onToggle, onPickFile }) {
   );
 }
 
-function attachIds(nodes) {
+function attachIds(nodes, cwd = '') {
   if (!Array.isArray(nodes)) { return []; }
   return nodes.map((node) => {
-    const next = { ...node, id: node.path };
+    const next = {
+      ...node,
+      id: node.path,
+      relativePath: relativePathForRepo(node.path, cwd),
+    };
     if (Array.isArray(node.children)) {
-      next.children = attachIds(node.children);
+      next.children = attachIds(node.children, cwd);
     }
     return next;
   });
+}
+
+function relativePathForRepo(path, cwd) {
+  const normalizedPath = String(path || '').replace(/\\/g, '/');
+  const normalizedCwd = String(cwd || '').replace(/\\/g, '/').replace(/\/+$/, '');
+  const cwdPrefix = normalizedCwd + '/';
+  if (normalizedCwd && normalizedPath.startsWith(cwdPrefix)) {
+    return normalizedPath.slice(cwdPrefix.length);
+  }
+  return normalizedPath.replace(/^\/+/, '');
 }
 
 function Node({ node, style, onPickFile }) {
@@ -221,7 +235,7 @@ function Node({ node, style, onPickFile }) {
       return;
     }
     if (typeof onPickFile === 'function') {
-      onPickFile(node.data.path);
+      onPickFile(node.data.relativePath);
     }
   }
   const rowClass = 'tree-row' + (node.isSelected ? ' selected' : '');

@@ -470,6 +470,36 @@ class ReviewCommentServiceTests(unittest.TestCase):
             },
         )
 
+    def test_get_new_pull_request_comments_strips_markdown_autolink_wrapper_from_pull_request_url(self) -> None:
+        self.task_service.get_review_tasks.return_value = [
+            build_task(
+                task_id='PROJ-1',
+                description=(
+                    'Requested change.\n\n'
+                    'Pull request created: '
+                    '<https://bitbucket.org/workspace/repo/pull-requests/17>'
+                ),
+                tags=['repo:client'],
+            )
+        ]
+        self.repository_service.list_pull_request_comments.return_value = [
+            ReviewComment(
+                pull_request_id='17',
+                comment_id='99',
+                author='reviewer',
+                body='Please rename this variable.',
+            )
+        ]
+
+        comments = self.service.get_new_pull_request_comments()
+
+        self.assertEqual([comment.comment_id for comment in comments], ['99'])
+        self.repository_service.find_pull_requests.assert_not_called()
+        self.repository_service.list_pull_request_comments.assert_called_once_with(
+            self.repository,
+            '17',
+        )
+
     def test_get_new_pull_request_comments_uses_task_comment_pull_request_url_before_api_lookup(self) -> None:
         self.task_service.get_review_tasks.return_value = [
             build_task(

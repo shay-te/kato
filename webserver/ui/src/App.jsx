@@ -8,6 +8,7 @@ import StatusBar from './components/StatusBar.jsx';
 import TabList from './components/TabList.jsx';
 import ToastContainer from './components/ToastContainer.jsx';
 import { forgetTaskWorkspace } from './api.js';
+import { ChatComposerContext } from './contexts/ChatComposerContext.jsx';
 import { useNotifications } from './hooks/useNotifications.js';
 import { useNotificationRouting } from './hooks/useNotificationRouting.js';
 import { useResizable } from './hooks/useResizable.js';
@@ -26,6 +27,7 @@ const RIGHT_PANE_STORAGE_KEY = 'kato.rightPaneWidth';
 
 export default function App() {
   const [activeTaskId, setActiveTaskIdState] = useState('');
+  const [composerValue, setComposerValue] = useState('');
   const { sessions, refresh } = useSessions();
   const attention = useTaskAttention();
   const [workspaceVersion, setWorkspaceVersion] = useState(() => ({}));
@@ -56,6 +58,18 @@ export default function App() {
         [taskId]: (prev[taskId] || 0) + 1,
       }));
     }, 1200);
+  }, []);
+
+  useEffect(() => {
+    setComposerValue('');
+  }, [activeTaskId]);
+
+  const appendToInput = useCallback((fragment) => {
+    if (!fragment) { return; }
+    setComposerValue((current) => {
+      const needsLeadingSpace = current && !/\s$/.test(current);
+      return current + (needsLeadingSpace ? ' ' : '') + fragment;
+    });
   }, []);
 
   const setActiveTaskId = useCallback((taskId) => {
@@ -138,6 +152,42 @@ export default function App() {
 
   const activeSession = sessions.find((s) => s.task_id === activeTaskId) || null;
   const activeNeedsAttention = !!activeTaskId && attention.taskIds.has(activeTaskId);
+  const activeSessionKey = activeTaskId || '__none__';
+  const activeWorkspaceVersion = workspaceVersion[activeTaskId] || 0;
+  const composerContextValue = { appendToInput };
+  const layout = (
+    <Layout
+      rightWidth={resizer.width}
+      left={
+        <TabList
+          sessions={sessions}
+          activeTaskId={activeTaskId}
+          attentionTaskIds={attention.taskIds}
+          onSelect={setActiveTaskId}
+          onForget={handleForgetTask}
+        />
+      }
+      center={
+        <SessionDetail
+          key={activeSessionKey}
+          session={activeSession}
+          needsAttention={activeNeedsAttention}
+          onActivity={handleSessionEvent}
+          composerValue={composerValue}
+          onComposerChange={setComposerValue}
+        />
+      }
+      right={
+        <RightPane
+          activeTaskId={activeTaskId}
+          workspaceVersion={activeWorkspaceVersion}
+          width={resizer.width}
+          onResizePointerDown={resizer.onPointerDown}
+          activityHistory={status.history}
+        />
+      }
+    />
+  );
 
   return (
     <>
@@ -157,35 +207,9 @@ export default function App() {
         stale={status.stale}
         connected={status.connected}
       />
-      <Layout
-        rightWidth={resizer.width}
-        left={
-          <TabList
-            sessions={sessions}
-            activeTaskId={activeTaskId}
-            attentionTaskIds={attention.taskIds}
-            onSelect={setActiveTaskId}
-            onForget={handleForgetTask}
-          />
-        }
-        center={
-          <SessionDetail
-            key={activeTaskId || '__none__'}
-            session={activeSession}
-            needsAttention={activeNeedsAttention}
-            onActivity={handleSessionEvent}
-          />
-        }
-        right={
-          <RightPane
-            activeTaskId={activeTaskId}
-            workspaceVersion={workspaceVersion[activeTaskId] || 0}
-            width={resizer.width}
-            onResizePointerDown={resizer.onPointerDown}
-            activityHistory={status.history}
-          />
-        }
-      />
+      <ChatComposerContext.Provider value={composerContextValue}>
+        {layout}
+      </ChatComposerContext.Provider>
     </>
   );
 }

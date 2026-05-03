@@ -260,7 +260,7 @@ class ReviewCommentService(Service):
 
     @staticmethod
     def _pull_request_urls(text: str) -> list[str]:
-        return re.findall(r'https?://[^\s)]+', str(text or ''))
+        return re.findall(r"https?://[^\s<>'\")]+", str(text or ''))
 
     def _repository_pull_request_id_from_url(self, url: str, repository) -> str:
         parsed = urlparse(str(url or '').strip())

@@ -1,10 +1,8 @@
-import { useCallback, useState } from 'react';
 import EventLog from './EventLog.jsx';
 import MessageForm from './MessageForm.jsx';
 import PermissionDecisionContainer from './PermissionDecisionContainer.jsx';
 import SessionHeader from './SessionHeader.jsx';
 import WorkingIndicator from './WorkingIndicator.jsx';
-import { ChatComposerContext } from '../contexts/ChatComposerContext.jsx';
 import { BUBBLE_KIND } from '../constants/bubbleKind.js';
 import { CLAUDE_EVENT, CLAUDE_SYSTEM_SUBTYPE } from '../constants/claudeEvent.js';
 import { ENTRY_SOURCE } from '../constants/entrySource.js';
@@ -12,31 +10,25 @@ import { useSessionStream, SESSION_LIFECYCLE } from '../hooks/useSessionStream.j
 import { useToolMemory } from '../hooks/useToolMemory.js';
 import { postSession } from '../api.js';
 
-export default function SessionDetail({ session, onActivity, needsAttention = false }) {
+export default function SessionDetail({
+  session,
+  onActivity,
+  needsAttention = false,
+  composerValue = '',
+  onComposerChange,
+}) {
   const taskId = session?.task_id;
-  const [composerValue, setComposerValue] = useState('');
   const stream = useSessionStream(taskId, onActivity);
   const memory = useToolMemory();
-
-  const appendToInput = useCallback((fragment) => {
-    if (!fragment) { return; }
-    setComposerValue((current) => {
-      const needsLeadingSpace = current && !/\s$/.test(current);
-      return current + (needsLeadingSpace ? ' ' : '') + fragment;
-    });
-  }, []);
-
-  const composerContextValue = { appendToInput };
+  const updateComposer = typeof onComposerChange === 'function' ? onComposerChange : noop;
 
   if (!session) {
     return (
-      <ChatComposerContext.Provider value={composerContextValue}>
-        <main id="session-pane">
-          <section id="session-placeholder" className="placeholder">
-            Select a tab to chat with the bound Claude session.
-          </section>
-        </main>
-      </ChatComposerContext.Provider>
+      <main id="session-pane">
+        <section id="session-placeholder" className="placeholder">
+          Select a tab to chat with the bound Claude session.
+        </section>
+      </main>
     );
   }
 
@@ -96,42 +88,42 @@ export default function SessionDetail({ session, onActivity, needsAttention = fa
   const composerDisabled = !canSend(stream.lifecycle, session);
   const composerHint = composerDisabledReason(stream.lifecycle, session);
   return (
-    <ChatComposerContext.Provider value={composerContextValue}>
-      <main id="session-pane">
-        <section id="session-detail">
-          <SessionHeader
-            session={session}
-            needsAttention={needsAttention}
-            onStopped={onStopped}
-            streamLifecycle={stream.lifecycle}
-            turnInFlight={stream.turnInFlight}
-          />
-          <EventLog entries={stream.events} banner={banner} />
-          <WorkingIndicator
-            active={stream.turnInFlight}
-            lastEventAt={stream.lastEventAt}
-          />
-          <MessageForm
-            value={composerValue}
-            onChange={setComposerValue}
-            turnInFlight={stream.turnInFlight}
-            onSubmit={onSendMessage}
-            disabled={composerDisabled}
-            disabledReason={composerHint}
-          />
-        </section>
-        <PermissionDecisionContainer
-          pending={stream.pendingPermission}
-          onDismiss={stream.dismissPermission}
-          onSubmit={submitPermissionResponse}
-          onAuditBubble={stream.appendLocalEvent}
-          recallToolDecision={memory.recall}
-          rememberToolDecision={memory.remember}
+    <main id="session-pane">
+      <section id="session-detail">
+        <SessionHeader
+          session={session}
+          needsAttention={needsAttention}
+          onStopped={onStopped}
+          streamLifecycle={stream.lifecycle}
+          turnInFlight={stream.turnInFlight}
         />
-      </main>
-    </ChatComposerContext.Provider>
+        <EventLog entries={stream.events} banner={banner} />
+        <WorkingIndicator
+          active={stream.turnInFlight}
+          lastEventAt={stream.lastEventAt}
+        />
+        <MessageForm
+          value={composerValue}
+          onChange={updateComposer}
+          turnInFlight={stream.turnInFlight}
+          onSubmit={onSendMessage}
+          disabled={composerDisabled}
+          disabledReason={composerHint}
+        />
+      </section>
+      <PermissionDecisionContainer
+        pending={stream.pendingPermission}
+        onDismiss={stream.dismissPermission}
+        onSubmit={submitPermissionResponse}
+        onAuditBubble={stream.appendLocalEvent}
+        recallToolDecision={memory.recall}
+        rememberToolDecision={memory.remember}
+      />
+    </main>
   );
 }
+
+function noop() {}
 
 function canSend(lifecycle, session) {
   // Only block when the server has no record at all. CLOSED/IDLE still
