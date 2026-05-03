@@ -604,8 +604,58 @@ class StreamingClaudeSession(object):
             self._log_event_for_operator(event)
             if event.is_terminal:
                 self._terminal_event = event
+                # Output-side credential scan on the assembled final
+                # text — closes residual #18 on the streaming path.
+                # Mirrors ClaudeCliClient._scan_response_for_credentials
+                # so the one-shot and streaming spawns produce identical
+                # audit signal. Detective-only: the agent's text has
+                # already crossed to Anthropic.
+                self._scan_terminal_for_credentials(event)
                 # Don't break here — let the subprocess close stdout itself.
         # stdout closed; the subprocess is winding down or already gone.
+
+    def _scan_terminal_for_credentials(self, event: SessionEvent) -> None:
+        """WARNING-log credential AND phishing patterns in terminal text.
+
+        Pattern names + redacted previews only — full values are never
+        logged. Mirrors ``ClaudeCliClient._scan_response_for_credentials``
+        so the one-shot and streaming paths produce the same audit
+        signal. See ``BYPASS_PROTECTIONS.md`` residuals #16 (phishing)
+        and #18 (credential exfil).
+        """
+        from kato.sandbox.credential_patterns import (
+            find_credential_patterns,
+            find_phishing_patterns,
+            summarize_findings,
+        )
+
+        raw = event.raw or {}
+        result_text = str(raw.get('result', '') or '')
+        if not result_text:
+            return
+        cred_findings = find_credential_patterns(result_text)
+        if cred_findings:
+            self.logger.warning(
+                'CREDENTIAL PATTERN DETECTED in streaming Claude session for '
+                'task %s: %s. The agent response has already been transmitted '
+                'to Anthropic; rotate the named credential(s) immediately. '
+                'See BYPASS_PROTECTIONS.md residual #18.',
+                self._task_id,
+                summarize_findings(cred_findings),
+            )
+        phishing_findings = find_phishing_patterns(result_text)
+        if phishing_findings:
+            self.logger.warning(
+                'PHISHING PATTERN DETECTED in streaming Claude session for '
+                'task %s: %s. The agent appears to be instructing the '
+                'operator to run shell commands on their host. Kato handles '
+                'infrastructure; the agent has no legitimate reason to '
+                'direct the operator to execute commands. Treat the '
+                'suggestion as untrusted. See BYPASS_PROTECTIONS.md '
+                'residual #16.',
+                self._task_id,
+                summarize_findings(phishing_findings),
+            )
 
     @staticmethod
     def _permission_request_details(event: SessionEvent) -> tuple[str, str]:

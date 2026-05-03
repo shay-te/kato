@@ -1,12 +1,19 @@
 import unittest
 from unittest.mock import MagicMock
 
-from kato_webserver.app import create_app
+from kato_webserver.app import (
+    _follow_live_session,
+    _replay_session_backlog,
+    _session_has_pending_permission,
+    create_app,
+)
 
 
 class _FakeRecord:
     def __init__(self, **kwargs):
         self._payload = kwargs
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
     def to_dict(self):
         return dict(self._payload)
@@ -30,6 +37,31 @@ class _FakeManager:
         return None
 
 
+class _FakeSessionEvent:
+    def __init__(self, event_type):
+        self.event_type = event_type
+        self.raw = {'type': event_type}
+
+    def to_dict(self):
+        return {'raw': {'type': self.event_type}, 'received_at_epoch': 1.0}
+
+
+class _RaceyLiveSession:
+    def __init__(self):
+        self._events = [_FakeSessionEvent('system')]
+        self._recent_event_calls = 0
+
+    @property
+    def is_alive(self):
+        return False
+
+    def recent_events(self):
+        self._recent_event_calls += 1
+        if self._recent_event_calls == 2:
+            self._events.append(_FakeSessionEvent('control_request'))
+        return list(self._events)
+
+
 class WebserverAppTests(unittest.TestCase):
     def setUp(self):
         self.manager = _FakeManager(records=[
@@ -51,15 +83,16 @@ class WebserverAppTests(unittest.TestCase):
     def test_index_renders_session_card(self):
         response = self.client.get('/')
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b'PROJ-1', response.data)
-        self.assertIn(b'do the thing', response.data)
+        self.assertIn(b'<div id="root"></div>', response.data)
+        self.assertIn(b'/static/build/app.js', response.data)
 
     def test_index_renders_empty_state_when_no_sessions(self):
         empty_app = create_app(session_manager=_FakeManager(records=[]))
         client = empty_app.test_client()
         response = client.get('/')
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b'kato:wait-planning', response.data)
+        self.assertIn(b'<div id="root"></div>', response.data)
+        self.assertIn(b'/static/build/app.js', response.data)
 
     def test_session_list_endpoint_returns_serialized_records(self):
         response = self.client.get('/api/sessions')
@@ -92,6 +125,62 @@ class WebserverAppTests(unittest.TestCase):
     def test_session_detail_endpoint_returns_404_for_unknown_task(self):
         response = self.client.get('/api/sessions/PROJ-99')
         self.assertEqual(response.status_code, 404)
+
+    def test_live_stream_does_not_skip_event_created_between_backlog_and_follow(self):
+        session = _RaceyLiveSession()
+        backlog = _replay_session_backlog(session)
+        frames = []
+        try:
+            while True:
+                frames.append(next(backlog))
+        except StopIteration as exc:
+            replayed_count = exc.value
+
+        follow = _follow_live_session(session, start_index=replayed_count)
+        frames.append(next(follow))
+
+        joined = ''.join(frames)
+        self.assertIn('"type": "system"', joined)
+        self.assertIn('"type": "control_request"', joined)
+
+    def test_session_pending_permission_detects_unanswered_request(self):
+        session = MagicMock()
+        session.recent_events.return_value = [
+            _FakeSessionEvent('assistant'),
+            _FakeSessionEvent('control_request'),
+        ]
+
+        self.assertTrue(_session_has_pending_permission(session))
+
+    def test_session_pending_permission_clears_after_response(self):
+        session = MagicMock()
+        session.recent_events.return_value = [
+            _FakeSessionEvent('control_request'),
+            _FakeSessionEvent('permission_response'),
+        ]
+
+        self.assertFalse(_session_has_pending_permission(session))
+
+    def test_session_list_endpoint_marks_pending_permission_without_workspace(self):
+        live_session = MagicMock()
+        live_session.is_alive = True
+        live_session.is_working = False
+        live_session.recent_events.return_value = [_FakeSessionEvent('control_request')]
+        manager = _FakeManager(records=[
+            _FakeRecord(
+                task_id='PROJ-3',
+                task_summary='approval',
+                status='active',
+                claude_session_id='s',
+            ),
+        ])
+        manager.get_session = lambda task_id: live_session if task_id == 'PROJ-3' else None
+        app = create_app(session_manager=manager)
+        response = app.test_client().get('/api/sessions')
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload[0]['has_pending_permission'])
 
 
 class _FakeWorkspaceRecord:
@@ -186,6 +275,21 @@ class MultiRepoEndpointShapeTests(unittest.TestCase):
         self.assertEqual(repo_ids_in_trees, ['client', 'backend'])
         # Legacy fields are still populated for old clients.
         self.assertEqual(payload['cwd'], str(self.repo_a))
+
+    def test_session_list_endpoint_marks_inactive_workspace_pending_permission(self):
+        live_session = MagicMock()
+        live_session.is_alive = True
+        live_session.is_working = False
+        live_session.recent_events.return_value = [_FakeSessionEvent('control_request')]
+        self.session_manager.get_session = (
+            lambda task_id: live_session if task_id == 'PROJ-1' else None
+        )
+        response = self.client.get('/api/sessions')
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload[0]['has_pending_permission'])
+        self.assertFalse(payload[0]['working'])
 
     def test_diff_endpoint_returns_one_diff_entry_per_repo(self):
         # Patch git helpers so we don't need a real upstream remote.

@@ -115,6 +115,24 @@ class ClaudeCliClientTests(unittest.TestCase):
         self.assertIn('claude-opus-4-7', mock_run.call_args.args[0])
         self.assertIn('Implement task PROJ-1', kwargs['input'])
 
+    def test_implement_task_prompt_marks_ignored_repositories_out_of_bounds(self) -> None:
+        client = ClaudeCliClient(binary='claude', model='claude-opus-4-7')
+        completed = _completed(json.dumps({'is_error': False, 'result': 'done'}))
+        with patch.dict(
+            'os.environ',
+            {'KATO_IGNORED_REPOSITORY_FOLDERS': 'secret-client'},
+        ), patch(
+            'kato.client.claude.cli_client.subprocess.run',
+            return_value=completed,
+        ) as mock_run:
+            client.implement_task(build_task())
+
+        prompt = mock_run.call_args.kwargs['input']
+        self.assertIn('Forbidden repository folders', prompt)
+        self.assertIn('- secret-client', prompt)
+        self.assertIn('Do not access them with Read, Glob, Grep, Bash', prompt)
+        self.assertIn('Execution protocol for forbidden repositories', prompt)
+
     def test_implement_task_adds_extra_repository_dirs(self) -> None:
         client = ClaudeCliClient(binary='claude')
         prepared = type(
@@ -484,6 +502,91 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
         mock_wrap.assert_not_called()
         spawn_argv = mock_run.call_args.args[0]
         self.assertEqual(spawn_argv[0], 'claude')
+
+
+class ClaudeCliClientCredentialOutputScanTests(unittest.TestCase):
+    """Output-side credential scan on the agent's response.
+
+    Closes residual #18 on the detective side: when the agent's
+    response text contains a named credential pattern, kato logs a
+    WARNING with the pattern name + redacted preview so the operator
+    knows to rotate. Cannot undo the leak to Anthropic — names the
+    fact that the leak happened so it doesn't go silent.
+    """
+
+    def test_warning_logged_when_response_contains_credential(self) -> None:
+        import logging
+
+        client = ClaudeCliClient(binary='claude', repository_root_path='/tmp/x')
+        # Fake AWS key in the agent's response — same shape as the
+        # credential_patterns test fixtures, never resembling a real
+        # credential value.
+        fake_aws_key = 'AKIAEXAMPLEFAKE12345'
+        completed = _completed(
+            json.dumps({
+                'is_error': False,
+                'result': f'Here is the value: {fake_aws_key}',
+                'session_id': 's',
+            })
+        )
+        with patch(
+            'kato.client.claude.cli_client.subprocess.run',
+            return_value=completed,
+        ), self.assertLogs('kato.workflow.ClaudeCliClient', level='WARNING') as cm:
+            client.implement_task(build_task())
+
+        joined = ' '.join(cm.output)
+        # The pattern name must appear so the operator knows what to rotate.
+        self.assertIn('aws_access_key_id', joined)
+        # The CREDENTIAL PATTERN DETECTED tag is the grep-anchor.
+        self.assertIn('CREDENTIAL PATTERN DETECTED', joined)
+        # The full credential value must NEVER be logged — only the
+        # redacted preview (prefix + "[REDACTED, ...]").
+        self.assertNotIn(fake_aws_key, joined)
+        self.assertIn('REDACTED', joined)
+
+    def test_no_warning_when_response_is_clean(self) -> None:
+        client = ClaudeCliClient(binary='claude', repository_root_path='/tmp/x')
+        completed = _completed(
+            json.dumps({
+                'is_error': False,
+                'result': 'Done — edits written, kato will publish.',
+                'session_id': 's',
+            })
+        )
+        with patch(
+            'kato.client.claude.cli_client.subprocess.run',
+            return_value=completed,
+        ):
+            # No warnings expected; assertNoLogs makes the absence
+            # explicit so a future regression that always-warns is
+            # caught.
+            with self.assertNoLogs('kato.workflow.ClaudeCliClient', level='WARNING'):
+                client.implement_task(build_task())
+
+    def test_warning_lists_each_distinct_pattern(self) -> None:
+        client = ClaudeCliClient(binary='claude', repository_root_path='/tmp/x')
+        # Two distinct credential types in one response.
+        fake_pem = '-----BEGIN RSA PRIVATE KEY-----'
+        fake_github = 'ghp_' + 'A' * 36
+        completed = _completed(
+            json.dumps({
+                'is_error': False,
+                'result': f'Found:\n{fake_pem}\n\nAnd:\n{fake_github}',
+                'session_id': 's',
+            })
+        )
+        with patch(
+            'kato.client.claude.cli_client.subprocess.run',
+            return_value=completed,
+        ), self.assertLogs('kato.workflow.ClaudeCliClient', level='WARNING') as cm:
+            client.implement_task(build_task())
+
+        joined = ' '.join(cm.output)
+        self.assertIn('pem_private_key_block', joined)
+        self.assertIn('github_pat_classic', joined)
+        # Neither raw value present.
+        self.assertNotIn(fake_github, joined)
 
 
 if __name__ == '__main__':

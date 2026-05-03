@@ -48,6 +48,19 @@ SANDBOX_SYSTEM_PROMPT_ADDENDUM = (
     '   capabilities dropped. sudo is unavailable. Filesystem ownership\n'
     '   outside the workspace mount cannot be modified.\n'
     '\n'
+    '4. Operator-host commands. Do not generate shell commands the\n'
+    '   operator should run on their host machine. Kato handles every\n'
+    "   infrastructure operation — git, build, push, deploy. You don't\n"
+    '   need to teach the operator to install or run anything. If a\n'
+    '   task surfaces work that genuinely requires a host change\n'
+    '   (a service restart, an environment-variable change, a missing\n'
+    '   dependency), state the requirement plainly in prose so the\n'
+    '   operator can decide independently. Never produce copy-paste\n'
+    "   shell snippets — especially never ``curl ... | bash``,\n"
+    '   ``sudo ...``, or ``eval "$(...)"`` patterns. Those shapes are\n'
+    '   the canonical operator-phishing surface and have no defensible\n'
+    '   non-phishing use in your replies.\n'
+    '\n'
     'This is your environment by design — the operator chose it. Work\n'
     'within it: read and edit the workspace files, use the language\n'
     "tooling that's already installed in the sandbox image, and do not\n"

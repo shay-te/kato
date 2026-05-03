@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Header from './components/Header.jsx';
 import Layout from './components/Layout.jsx';
 import RightPane from './components/RightPane.jsx';
@@ -16,9 +16,8 @@ import { useSafetyState } from './hooks/useSafetyState.js';
 import { useSessions } from './hooks/useSessions.js';
 import { useStatusFeed } from './hooks/useStatusFeed.js';
 import { useTaskAttention } from './hooks/useTaskAttention.js';
-import { classifyStatusEntry } from './utils/classifyStatusEntry.js';
 import { CLAUDE_EVENT } from './constants/claudeEvent.js';
-import { NOTIFICATION_KIND } from './constants/notificationKind.js';
+import { mergePendingPermissionTaskIds } from './utils/sessionAttention.js';
 
 const RIGHT_PANE_DEFAULT_WIDTH = 380;
 const RIGHT_PANE_MIN_WIDTH = 220;
@@ -100,11 +99,16 @@ export default function App() {
 
   const handleStatusEntry = useCallback((entry) => {
     routing.onStatusEntry(entry);
-    const classification = classifyStatusEntry(entry);
-    if (classification?.kind === NOTIFICATION_KIND.ATTENTION && classification.taskId) {
-      attention.mark(classification.taskId);
+  }, [routing]);
+
+  const handlePendingPermissionChange = useCallback((taskId, pending) => {
+    if (!taskId) { return; }
+    if (pending) {
+      attention.mark(taskId);
+      return;
     }
-  }, [routing, attention]);
+    attention.clear(taskId);
+  }, [attention]);
 
   const handleSessionEvent = useCallback((raw, taskId) => {
     routing.onSessionEvent(raw, taskId);
@@ -151,7 +155,10 @@ export default function App() {
   });
 
   const activeSession = sessions.find((s) => s.task_id === activeTaskId) || null;
-  const activeNeedsAttention = !!activeTaskId && attention.taskIds.has(activeTaskId);
+  const attentionTaskIds = useMemo(() => {
+    return mergePendingPermissionTaskIds(attention.taskIds, sessions);
+  }, [attention.taskIds, sessions]);
+  const activeNeedsAttention = !!activeTaskId && attentionTaskIds.has(activeTaskId);
   const activeSessionKey = activeTaskId || '__none__';
   const activeWorkspaceVersion = workspaceVersion[activeTaskId] || 0;
   const composerContextValue = { appendToInput };
@@ -159,10 +166,10 @@ export default function App() {
     <Layout
       rightWidth={resizer.width}
       left={
-        <TabList
-          sessions={sessions}
-          activeTaskId={activeTaskId}
-          attentionTaskIds={attention.taskIds}
+          <TabList
+            sessions={sessions}
+            activeTaskId={activeTaskId}
+            attentionTaskIds={attentionTaskIds}
           onSelect={setActiveTaskId}
           onForget={handleForgetTask}
         />
@@ -173,6 +180,7 @@ export default function App() {
           session={activeSession}
           needsAttention={activeNeedsAttention}
           onActivity={handleSessionEvent}
+          onPendingPermissionChange={handlePendingPermissionChange}
           composerValue={composerValue}
           onComposerChange={setComposerValue}
         />

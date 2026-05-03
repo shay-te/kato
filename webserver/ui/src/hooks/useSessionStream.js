@@ -36,10 +36,7 @@ function reducer(state, action) {
     case ACTION_INCOMING_EVENT:
       return reduceIncomingEvent(state, action.event);
     case ACTION_INCOMING_HISTORY:
-      return {
-        ...state,
-        events: [...state.events, { source: ENTRY_SOURCE.HISTORY, raw: action.event }],
-      };
+      return reduceIncomingHistory(state, action.event);
     case ACTION_LOCAL_EVENT:
       return { ...state, events: [...state.events, action.event] };
     case ACTION_LIFECYCLE:
@@ -80,6 +77,31 @@ function reduceIncomingEvent(state, raw) {
       break;
     case CLAUDE_EVENT.PERMISSION_RESPONSE: {
       const respondedId = String(raw.request_id || '');
+      const pendingId = pendingRequestId(state.pendingPermission);
+      if (!respondedId || !pendingId || respondedId === pendingId) {
+        next.pendingPermission = null;
+      }
+      break;
+    }
+    default:
+      break;
+  }
+  return next;
+}
+
+function reduceIncomingHistory(state, raw) {
+  const events = [...state.events, { source: ENTRY_SOURCE.HISTORY, raw }];
+  let next = { ...state, events };
+  switch (raw?.type) {
+    case CLAUDE_EVENT.PERMISSION_REQUEST:
+    case CLAUDE_EVENT.CONTROL_REQUEST:
+      next.pendingPermission = raw;
+      break;
+    case CLAUDE_EVENT.RESULT:
+      next.pendingPermission = null;
+      break;
+    case CLAUDE_EVENT.PERMISSION_RESPONSE: {
+      const respondedId = String(raw.request_id || raw.request?.request_id || '');
       const pendingId = pendingRequestId(state.pendingPermission);
       if (!respondedId || !pendingId || respondedId === pendingId) {
         next.pendingPermission = null;

@@ -70,6 +70,40 @@ operators see no behavioral change — bypass continues to require
 docker (now enforced explicitly at startup) and the eight sandbox
 layers fire as before.
 
+2026-05-03 (later) — Three additional defenses landed against the
+"not technically escape" residuals (#16, #17, #18):
+
+- **Mandatory base-image digest pin (#17).** Kato refuses to build
+  the sandbox image unless `KATO_SANDBOX_BASE_IMAGE` is digest-pinned
+  (`node:22-bookworm-slim@sha256:<digest>`) OR the operator opts
+  out via `KATO_SANDBOX_ALLOW_FLOATING_BASE_IMAGE=true`. Half-pinned
+  values (tag without a digest) are also refused — half-pinning is
+  no protection but gives a false sense of security. Closes the
+  base-image substitution channel that was previously
+  operator-discretionary.
+- **Credential pattern detector (#18).** New module
+  `kato.sandbox.credential_patterns` carries vendor-issued credential
+  shapes (AWS, GitHub, OpenAI, Anthropic, Google, Slack, Stripe,
+  PEM private-key blocks). Two surfaces consume it: the pre-spawn
+  workspace scanner (`enforce_no_workspace_secrets`) now refuses
+  the spawn when a high-confidence credential pattern is found in
+  any non-test file CONTENT (not just file name); and post-spawn,
+  every Claude response is scanned and a WARNING with redacted
+  preview is logged + audit-trailed when a credential pattern is
+  emitted. The pre-spawn surface is preventive (blocks the leak);
+  the post-spawn surface is detective (operator knows to rotate
+  even though the data has already crossed to Anthropic).
+- **Operator-phishing detector + system-prompt addendum (#16).**
+  The same patterns module gains
+  `find_phishing_patterns` for high-confidence phishing shapes
+  (`curl ... | bash`, `eval "$(curl ...)"`, `sudo` snippets). Both
+  output scanners (one-shot + streaming) now log a WARNING when
+  agent output contains those shapes. The sandbox-awareness
+  system-prompt addendum (`kato.sandbox.system_prompt`) gains a
+  Section 4 "Operator-host commands" that explicitly forbids
+  generating those patterns and directs the agent to "state the
+  requirement plainly in prose" instead.
+
 ## Cross-OS support matrix
 
 Kato's sandbox is first-class on Linux and on Docker Desktop's
@@ -164,6 +198,102 @@ The strongest isolation for solo operators. Kato runs nowhere near your files.
 - Anyone who treats kato as production infrastructure (ticket-driven autonomous PRs against shared repos) → **Pattern C**, with audit-log shipping mandatory
 
 The three patterns are not mutually exclusive — many operators start with A, move to B once the workflow becomes daily, and adopt C if the threat model shifts (e.g., kato starts working on customer code).
+
+## Attack-and-defense map (boundary-by-boundary)
+
+The "comprehensive risk × mitigation table" further down enumerates 69
+specific risks. This section is the higher-level companion: the
+**escape boundaries** an attacker (or compromised agent process) has
+to cross to reach the operator's host, and what kato does at each one.
+Roughly ranked from "happens in the wild" to "nation-state-only."
+
+Status legend (kato column):
+
+- **Mitigated** — kato closes this attack class by default.
+- **Bounded** — kato caps consequences but the channel exists.
+- **Operator-discretionary** — kato names a fix; operator must apply it.
+- **Accepted** — residual risk by design (no software fix bounds it).
+- **Open gap** — known unfixed; named explicitly so it isn't silent.
+
+### Single-boundary Docker escapes (1–8)
+
+The container shares the host kernel and runs through the host Docker
+runtime. These are the most common real-world escape paths.
+
+| # | Attack class | Defense | Kato status |
+|---|---|---|---|
+| 1 | **Kernel CVE exploitation** — container shares host kernel; a privileged-user kernel bug (dirty pipe, dirty cow, OverlayFS, io_uring) lets an inside process escalate to host root. Most common real-world escape. | gVisor (`runsc`) userspace kernel between container and host kernel; most kernel CVEs require breaking gVisor first. Update host kernel promptly. | **Mitigated** on Linux + gVisor (Layer 9, strict-by-default; override `KATO_SANDBOX_ALLOW_NO_GVISOR=true` for Docker Desktop / WSL2 where the hypervisor is the substitute boundary). |
+| 2 | **Capability misconfiguration** — `--privileged`, `CAP_SYS_ADMIN`, `CAP_SYS_PTRACE`, `CAP_SYS_MODULE` left on. Direct path to host root. | `--cap-drop=ALL` then add only what's needed; `setpriv --bounding-set=-all` wipes capabilities permanently before the agent runs. | **Mitigated** (Layer 6; transient `NET_ADMIN`/`NET_RAW`/`SETUID`/`SETGID` are wiped from the bounding set before Claude exec). |
+| 3 | **Mounted Docker socket** (`/var/run/docker.sock`) — agent runs `docker run --privileged -v /:/host` and creates a sibling container with full host access. One-line escape. | Never mount `docker.sock`; validate workspace paths against a forbidden list. | **Mitigated** (workspace path validator's `forbidden-mount-subtree` includes `/var/run/docker.sock`, `/var/lib/docker`, `/var/lib/containerd`, `/run/docker.sock`, `/run/containerd`; pre-spawn workspace scan also refuses if a stray `docker.sock`/`containerd.sock` is found at workspace top-level). |
+| 4 | **Mounted sensitive host paths** — `/`, `/etc`, `/var/lib/docker`, `~/.ssh` bind-mounted in. Read/write to host without an exploit. | Workspace path validator with subtree-forbidden + exact-forbidden lists. | **Mitigated** (Layer 4 + the `forbidden-mount-subtree` / `forbidden-mount-exact` invariant blocks; refuses `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.gcp`, `~/.kube`, `~/.docker`, system roots, macOS sensitive subtrees, etc.). |
+| 5 | **Seccomp/AppArmor disabled** — `--security-opt seccomp=unconfined` lets the agent call dangerous syscalls (`kexec`, `init_module`) the default profile blocks. | Use Docker defaults (`apparmor=docker-default`, default seccomp); never `unconfined`. | **Mitigated** (Layer 6; drift-guard's `forbidden-docker-flags` block lists `--security-opt=seccomp=unconfined`, `--security-opt=apparmor=unconfined`, `--security-opt=systempaths=unconfined`, `--security-opt=label=disable` as forbidden). |
+| 6 | **Shared namespaces** — `--pid=host`, `--network=host`, `--ipc=host`. Container shares the host's process table / network / IPC; trivial reach into host processes. | `--pid=container`, `--network=<custom-bridge>`, `--ipc=none`, `--uts=private`. | **Mitigated** (Layer 6; required-flags block lists all four; forbidden-flags block lists the host variants). |
+| 7 | **runc / containerd vulnerabilities** — bugs in the container runtime itself (CVE-2019-5736: write to host runc binary from inside a container). | Keep `runc`/`containerd`/Docker patched; subscribe to CVE feeds; restart containers after runtime upgrades. | **Operator-discretionary** — kato cannot patch the runtime for the operator; deployment patterns name keeping the package set current. The `--security-opt no-new-privileges` flag (Layer 6) reduces some runtime-bug exploit paths. |
+| 8 | **Kernel module loading** — if `CAP_SYS_MODULE` is present or modules can be loaded indirectly, load a malicious module that runs in kernel space. | `--cap-drop=ALL` removes `CAP_SYS_MODULE`; default seccomp denies `init_module`/`finit_module`/`delete_module`. | **Mitigated** (Layer 6 + Docker default seccomp). |
+
+### Docker-in-VM escapes (9–12)
+
+Two boundaries: container + VM. The agent has to escape the container
+*and* the VM to reach the host. Rare, requires high skill, generally
+nation-state territory.
+
+| # | Attack class | Defense | Kato status |
+|---|---|---|---|
+| 9 | **Hypervisor CVE** — bugs in QEMU, KVM, Hyper-V, VMware, Xen. VENOM (2015), L1TF, MDS-class side channels. Agent escapes container *and* VM. | Run on macOS Hypervisor.framework (Docker Desktop) or Hyper-V (WSL2) — different hypervisor than Linux native, attacker needs a different exploit. Better: Kata Containers (VM-per-container) so each task is its own VM. Patch hypervisor regularly. | **Bounded** on macOS / WSL2 (the doc names this as "hypervisor + double-kernel separation" — see Cross-OS support matrix). **Operator-discretionary** for Kata Containers (not wired today; would require runtime swap). |
+| 10 | **Virtio / paravirt driver bugs** — VM talks to host through emulated devices (network, disk, GPU). Bugs in those drivers cross the VM boundary. Multiple CVEs per year. | Patch host's virtio drivers; prefer hypervisors with smaller attack surface (Firecracker for Kata is hardened for this). | **Operator-discretionary** — kato can't patch host virtio drivers; deployment patterns name keeping host current. |
+| 11 | **VM escape via shared filesystem** — VirtFS, VirtioFS, Plan 9 sharing — bugs in the guest↔host file-sharing layer. | Don't share filesystems beyond what's needed; use bind mounts, not virtio-fs, where possible; avoid `9p`/VirtFS in older setups. | **Bounded** — kato bind-mounts only the per-task workspace (Layer 4). The host-to-VM filesystem path on Docker Desktop's gRPC-FUSE / VirtioFS layer is itself a known surface; the doc names this in "What this matrix does NOT promise." |
+| 12 | **VM escape via GPU passthrough** — GPU drivers in guest can attack host GPU stack. | Don't pass GPU through unless required. | **Mitigated** by default — kato's `wrap_command` does not request GPU passthrough. |
+
+### Below the OS (13–15)
+
+No software sandbox can fix these. Naming them explicitly so the
+threat model isn't silent about its limits.
+
+| # | Attack class | Defense | Kato status |
+|---|---|---|---|
+| 13 | **Hardware side channels** — Spectre, Meltdown, RowHammer, ZenBleed, Downfall. Agent reads memory across security boundaries via CPU microarchitectural state. No complete software fix. | Kernel mitigations (`spectre_v2=on`, `mds=full`), microcode updates, dedicated hardware (don't share CPU with adversaries). For Spectre-class: hardware separation is the only real fix. | **Accepted** — out of scope for an in-process sandbox. Pattern C (cheap VPS dedicated to kato) is the practical mitigation: nothing sensitive shares the CPU. |
+| 14 | **Firmware compromise** — UEFI implants, ME/AMT exploits, BMC firmware. Below the kernel, below the hypervisor. Persistent across reinstalls. | Measured boot + TPM attestation, vendor firmware updates, secure boot with custom keys, vetted hardware supply chain. Talos Linux, Bottlerocket, ChromeOS-like architectures. | **Accepted** — out of scope. Operator's responsibility to vet hardware and apply firmware updates. |
+| 15 | **Hardware implants** — physical tampering with the machine. | Physical security, vetted hardware, tamper-evident seals. Government-clearance levels of supply-chain control. | **Accepted** — out of scope. Different problem entirely. |
+
+### Not technically "escape" but reaches the host anyway (16–18)
+
+The agent never breaks a boundary; it reaches the host through a
+legitimate channel that wasn't designed to bound it.
+
+| # | Attack class | Defense | Kato status |
+|---|---|---|---|
+| 16 | **Operator phishing** — agent generates plausible-looking instructions that trick the operator into running something on the host. The agent never escapes; the operator opens the door. | System-prompt instructions about not generating host-execution prompts; operator awareness; output-side detection of suspicious shell-snippet patterns; out-of-band review of what the agent suggests. | **Bounded** — three defenses combined: (1) the sandbox-awareness system-prompt addendum (`kato.sandbox.system_prompt`) carries an explicit Section 4 "Operator-host commands" forbidding `curl ... \| bash`, `sudo`, and `eval "$(...)"` patterns, with the framing that those have no defensible non-phishing use; (2) `kato.sandbox.credential_patterns.find_phishing_patterns` scans every agent response for those shapes and logs a WARNING-level audit line when matched; (3) the addendum directs the agent to state requirements in prose rather than producing copy-paste shell snippets. Doesn't cover every social-engineering shape (the agent could produce phishing in pure prose), but bounds the highest-impact patterns. |
+| 17 | **Build-time supply chain** — image build pulls a compromised npm/Debian package. The "container" already has hostile code; no escape needed. | Mandatory base-image digest pin; pin Claude CLI version (`KATO_SANDBOX_CLAUDE_CLI_VERSION`); build from a trusted network; ideally build inside a sandbox itself so the build is bounded too. | **Mitigated** for base-image substitution — kato now refuses to build unless `KATO_SANDBOX_BASE_IMAGE` is digest-pinned (`node:22-bookworm-slim@sha256:<digest>`) OR `KATO_SANDBOX_ALLOW_FLOATING_BASE_IMAGE=true` is set as an explicit operator opt-out. Half-pinned values (tag without `@sha256:`) are also refused. **Operator-discretionary** for npm-side compromise — `KATO_SANDBOX_CLAUDE_CLI_VERSION` exists; operator must set it. **Open gap** for full build-time sandbox: the build itself still runs on the host's network; a fully-sandboxed build is named below. |
+| 18 | **Credential exfiltration via the legitimate egress channel** — agent exfils host data through Anthropic's API as part of "normal" conversation. No boundary is broken. | Two-layer defense: **preventive** workspace content scan refuses spawn when committed credentials are detected; **detective** output-side scan logs an audit line when agent response text contains a credential pattern. The egress firewall cannot bound this channel because the channel IS the legitimate egress. | **Mitigated (preventive) + Bounded (detective)** — `enforce_no_workspace_secrets` now scans file CONTENT (not just file names) for AWS / GitHub / OpenAI / Anthropic / Google / Slack / Stripe keys + PEM blocks (`kato.sandbox.credential_patterns`), refusing the spawn if a pattern is found in any non-test file (override: `KATO_SANDBOX_ALLOW_WORKSPACE_SECRETS=true`). The post-spawn scan in `cli_client._scan_response_for_credentials` and `streaming_session._scan_terminal_for_credentials` logs a WARNING with the pattern name + redacted preview when the agent's response contains a credential — cannot undo the leak (data has already crossed to Anthropic) but produces an auditable record so the operator knows to rotate. |
+
+### Honest summary by category
+
+- **Threats 1–8 (single-boundary Docker):** kato closes essentially all of them by default. That's what the eight numbered layers are for.
+- **Threats 9–12 (Docker-in-VM escapes):** kato's hypervisor + double-kernel posture on macOS/WSL2 raises the bar substantially. Patching the hypervisor is the operator's job. Kata Containers (VM-per-container) would close more on Linux and is a named open gap below.
+- **Threats 13–15 (hardware/firmware/physical):** no software product fixes these. This is where "kato is not for the Pentagon" lives. Pattern C (cheap VPS) is the practical mitigation: blast radius is bounded to a disposable VM, not the operator's laptop.
+- **Threats 16–18 (not-actually-escape):** all three now have real defenses. #17 is mitigated for base-image substitution (mandatory digest pin, strict-by-default). #18 is mitigated preventively (workspace content scan) and bounded detectively (output scan with audit-trail). #16 is bounded by the system-prompt addendum's "Operator-host commands" section combined with the output-side phishing-pattern detector.
+
+### Named open gaps — work kato could still do
+
+The list below names defenses that are within kato's responsibility
+but not yet implemented. Each has a one-line case for what it would
+close. If "more secure" is still the goal, these are the real next
+work items in priority order:
+
+| # | Open gap | What it would close | Approx effort |
+|---|---|---|---|
+| OG1 | **Build-time sandbox** (full) — run `docker build` itself inside a sandbox so a hostile network during build can't poison the image even with the digest pin. | Closes #17's npm-side / Debian-package channels that the digest pin doesn't bound. | 2–3 days |
+| OG2 | **External audit-log shipping** — ship the hash-chain audit log to S3-with-Object-Lock or a syslog forwarder so tail-truncation is detectable. | Closes the "tail-truncation looks valid" residual the doc names under "What the hash chain proves (and doesn't)." | 1–2 days |
+| OG3 | **Kata Containers as opt-in runtime** — VM-per-container on Linux. | Closes #7 (runc/containerd CVEs) fully on Linux + raises the floor for #9–#11. | ~3 days |
+| OG4 | **TLS certificate pinning for `api.anthropic.com`** — pin the cert fingerprint at the network layer instead of only relying on system CA validation. | Defends against rogue-CA scenarios. Doesn't fix nation-state CA compromise but raises the bar. | ~1 day |
+| OG5 | **Egress proxy with per-domain logging** — instead of iptables-only allowlist, run an HTTPS proxy in the sandbox that logs every request. | Adds visibility into what the agent actually sent, complementing #18's detective scan with a request log. | ~2 days |
+| OG6 | **Network namespace isolation for the build** — same intent as OG1 but at network level only. | Cheaper than full build-time sandbox; still closes the build-time supply chain. | 1 day |
+| OG7 | **Custom seccomp profile** — Docker's default seccomp is generic; a kato-specific profile that allows only what Claude actually needs would be tighter. | Reduces syscall attack surface. Ongoing maintenance cost. | ~2 days |
+| OG8 | **Per-task workspace encryption at rest** — encrypt the workspace bind-mount with a per-task key destroyed on container exit. | Defends against host-side snapshot/forensic recovery of in-flight work. Niche but real. | ~2 days |
+
+The first three (OG1, OG2, OG3) are the highest-leverage remaining
+items. Everything else on the threats 1–18 list is either covered,
+accepted with named rationale, or out of scope by design.
 
 ## Why these specific surfaces — read before proposing a change
 
@@ -742,12 +872,46 @@ Mapping to the protections below:
   https://docs.docker.com/engine/security/rootless/.
 - **Pre-spawn workspace secret scan** — **strict by default**. Before
   each sandboxed spawn, kato walks the workspace and refuses to
-  launch if any file matches a credential-shape allowlist (`.env`,
-  `id_rsa`/`id_ed25519`/`id_ecdsa`, `.aws/credentials`, `.kube/config`,
-  `.docker/config.json`, `.netrc`, `.git-credentials`, etc.). The
-  override `KATO_SANDBOX_ALLOW_WORKSPACE_SECRETS=true` exists for
-  legitimate test fixtures whose names happen to match. The scanner
-  correctly ignores `.env.example` / `.env.sample` / `.env.template`.
+  launch if **either** signal fires:
+  - **File-name signal:** any file matches a credential-shape
+    allowlist (`.env`, `id_rsa`/`id_ed25519`/`id_ecdsa`,
+    `.aws/credentials`, `.kube/config`, `.docker/config.json`,
+    `.netrc`, `.git-credentials`, etc.). The scanner correctly
+    ignores `.env.example` / `.env.sample` / `.env.template`.
+  - **File-content signal:** any file's contents match a
+    high-confidence credential pattern from
+    `kato.sandbox.credential_patterns` (AWS access key id,
+    GitHub PAT/OAuth, OpenAI / Anthropic / Google API keys,
+    Slack tokens, Stripe live keys, PEM private-key blocks).
+    Scoped to ≤1 MiB per file; skips known-noisy directories
+    (`.git`, `node_modules`, `venv`, `dist`, `build`, …). Closes
+    the case where a secret lives in a file with an innocuous
+    name (`config.yaml`, a migration, a README). The override
+    `KATO_SANDBOX_ALLOW_WORKSPACE_SECRETS=true` covers both
+    signals.
+- **Mandatory base-image digest pin** — **strict by default**.
+  Kato refuses to build the sandbox image unless either
+  `KATO_SANDBOX_BASE_IMAGE` is digest-pinned
+  (`node:22-bookworm-slim@sha256:<digest>`) or
+  `KATO_SANDBOX_ALLOW_FLOATING_BASE_IMAGE=true` is set as an
+  explicit operator opt-out. Half-pinned values (tag without
+  `@sha256:`) are also refused — they provide no protection
+  but give a false sense of security. Closes the build-time
+  base-image substitution channel that was previously
+  operator-discretionary.
+- **Output-side credential & phishing detector** — **strict by
+  default** (no override). Every Claude response (one-shot via
+  `cli_client._scan_response_for_credentials`, streaming via
+  `streaming_session._scan_terminal_for_credentials`) is scanned
+  for the same credential patterns the workspace scan uses, plus
+  high-confidence phishing patterns (`curl ... | bash`,
+  `sudo` snippets, `eval "$(curl …)"`). A match logs a WARNING
+  with the pattern name + redacted preview — full credential
+  values are never logged. Detective only on the credential
+  side (the data has already crossed to Anthropic by the time
+  the response is scanned); preventive on the phishing side
+  (the warning surfaces in the operator's UI before they act
+  on the suggestion).
 
 The image build itself uses `apt-get upgrade -y` + `node:22-bookworm-slim`
 to pull in current security patches (operator can pin the base by

@@ -3,13 +3,26 @@ import unittest
 from unittest.mock import Mock, call, patch
 
 
-from kato.main import _run_task_scan_loop, main
+from kato.main import (
+    _RESUME_CONTINUE_PROMPT,
+    _RESUME_WAIT_PROMPT,
+    _resume_prompt_for_workspace,
+    _resume_streaming_sessions,
+    _run_task_scan_loop,
+    main,
+)
 from utils import build_test_cfg
 
 
 class MainTests(unittest.TestCase):
     def setUp(self) -> None:
         self.cfg = build_test_cfg()
+        self._env_patch = patch.dict(
+            'os.environ',
+            {'KATO_IGNORED_REPOSITORY_FOLDERS': ''},
+        )
+        self._env_patch.start()
+        self.addCleanup(self._env_patch.stop)
 
     def test_main_returns_zero_on_success(self) -> None:
         app = types.SimpleNamespace(logger=Mock())
@@ -128,6 +141,91 @@ class MainTests(unittest.TestCase):
             'task scan failed; retrying in %s seconds',
             60.0,
         )
+
+    def test_resume_prompt_continues_interrupted_work_by_default(self) -> None:
+        record = types.SimpleNamespace()
+
+        self.assertEqual(_resume_prompt_for_workspace(record), _RESUME_CONTINUE_PROMPT)
+
+    def test_resume_prompt_waits_for_operator_for_planning_workspace(self) -> None:
+        record = types.SimpleNamespace(resume_on_startup=False)
+
+        self.assertEqual(_resume_prompt_for_workspace(record), _RESUME_WAIT_PROMPT)
+
+    def test_resume_prompt_includes_forbidden_repository_guardrails(self) -> None:
+        record = types.SimpleNamespace()
+
+        with patch.dict(
+            'os.environ',
+            {'KATO_IGNORED_REPOSITORY_FOLDERS': 'secret-client'},
+        ):
+            prompt = _resume_prompt_for_workspace(record)
+
+        self.assertIn('Forbidden repository folders', prompt)
+        self.assertIn('secret-client', prompt)
+        self.assertTrue(prompt.endswith(_RESUME_CONTINUE_PROMPT))
+
+    def test_resume_streaming_sessions_starts_active_workspace_with_continue_prompt(self) -> None:
+        workspace_root = types.SimpleNamespace(is_dir=Mock(return_value=True))
+        workspace_manager = types.SimpleNamespace(
+            list_workspaces=Mock(
+                return_value=[
+                    types.SimpleNamespace(
+                        task_id='PROJ-1',
+                        task_summary='continue me',
+                        status='active',
+                        cwd='',
+                        repository_ids=['client'],
+                    )
+                ]
+            ),
+            repository_path=Mock(return_value=workspace_root),
+        )
+        session_manager = types.SimpleNamespace(start_session=Mock())
+        app = types.SimpleNamespace(
+            logger=Mock(),
+            session_manager=session_manager,
+            workspace_manager=workspace_manager,
+            planning_session_runner=None,
+        )
+
+        _resume_streaming_sessions(app)
+
+        session_manager.start_session.assert_called_once()
+        call_kwargs = session_manager.start_session.call_args.kwargs
+        self.assertEqual(call_kwargs['task_id'], 'PROJ-1')
+        self.assertEqual(call_kwargs['initial_prompt'], _RESUME_CONTINUE_PROMPT)
+        self.assertEqual(call_kwargs['cwd'], str(workspace_root))
+
+    def test_resume_streaming_sessions_uses_wait_prompt_for_operator_driven_workspace(self) -> None:
+        workspace_manager = types.SimpleNamespace(
+            list_workspaces=Mock(
+                return_value=[
+                    types.SimpleNamespace(
+                        task_id='PROJ-2',
+                        task_summary='planning chat',
+                        status='active',
+                        cwd='/repo',
+                        repository_ids=['client'],
+                        resume_on_startup=False,
+                    )
+                ]
+            ),
+        )
+        session_manager = types.SimpleNamespace(start_session=Mock())
+        app = types.SimpleNamespace(
+            logger=Mock(),
+            session_manager=session_manager,
+            workspace_manager=workspace_manager,
+            planning_session_runner=None,
+        )
+
+        _resume_streaming_sessions(app)
+
+        session_manager.start_session.assert_called_once()
+        call_kwargs = session_manager.start_session.call_args.kwargs
+        self.assertEqual(call_kwargs['task_id'], 'PROJ-2')
+        self.assertEqual(call_kwargs['initial_prompt'], _RESUME_WAIT_PROMPT)
 
     def test_main_returns_one_without_traceback_when_startup_validation_fails(self) -> None:
         configured_logger = Mock()

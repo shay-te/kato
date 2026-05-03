@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from kato.client.claude.session_manager import (
     SESSION_STATUS_REVIEW,
@@ -109,6 +109,43 @@ class PlanningSessionRunnerTests(unittest.TestCase):
         self.assertTrue(result[ImplementationFields.SUCCESS])
         self.assertEqual(result[ImplementationFields.SESSION_ID], 'fake-session-id')
         self.assertEqual(result[ImplementationFields.MESSAGE], 'shipped it')
+
+    def test_implement_task_prompt_marks_ignored_repositories_out_of_bounds(self) -> None:
+        manager = _FakeManager(_terminal(result='shipped it'))
+        runner = PlanningSessionRunner(session_manager=manager, defaults=self.defaults)
+        prepared = _FakePrepared([_FakeRepo('client', '/tmp/client')])
+
+        with patch.dict(
+            'os.environ',
+            {'KATO_IGNORED_REPOSITORY_FOLDERS': 'secret-client'},
+        ):
+            runner.implement_task(build_task(), prepared_task=prepared)
+
+        prompt = manager.start_kwargs['initial_prompt']
+        self.assertIn('Forbidden repository folders', prompt)
+        self.assertIn('- secret-client', prompt)
+        self.assertIn('Do not access them with Read, Glob, Grep, Bash', prompt)
+        self.assertIn('Execution protocol for forbidden repositories', prompt)
+
+    def test_resume_session_for_chat_prepends_forbidden_repositories(self) -> None:
+        manager = _FakeManager(_terminal(result='ignored'))
+        runner = PlanningSessionRunner(session_manager=manager, defaults=self.defaults)
+
+        with patch.dict(
+            'os.environ',
+            {'KATO_IGNORED_REPOSITORY_FOLDERS': 'secret-client'},
+        ):
+            runner.resume_session_for_chat(
+                task_id='PROJ-1',
+                message='please continue',
+                cwd='/tmp/client',
+                task_summary='summary',
+            )
+
+        prompt = manager.start_kwargs['initial_prompt']
+        self.assertIn('Forbidden repository folders', prompt)
+        self.assertIn('secret-client', prompt)
+        self.assertTrue(prompt.endswith('please continue'))
 
     def test_implement_task_raises_when_terminal_reports_error(self) -> None:
         manager = _FakeManager(_terminal(is_error=True, result='Credit balance is too low'))

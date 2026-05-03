@@ -166,10 +166,13 @@ class PlanningSessionRunner(object):
         normalized_message = str(message or '').strip()
         if not normalized_message:
             raise ValueError('message is required to resume a chat session')
+        initial_prompt = agent_prompt_utils.prepend_forbidden_repository_guardrails(
+            normalized_message,
+        )
         return self._session_manager.start_session(
             task_id=normalized_task_id,
             task_summary=normalized_text(task_summary),
-            initial_prompt=normalized_message,
+            initial_prompt=initial_prompt,
             cwd=normalized_text(cwd),
             binary=self._defaults.binary,
             model=self._defaults.model,

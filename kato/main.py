@@ -7,6 +7,7 @@ import time
 import hydra
 from omegaconf import DictConfig
 
+from kato.helpers import agent_prompt_utils
 from kato.helpers.logging_utils import configure_logger
 from kato.helpers.shell_status_utils import (
     sleep_with_countdown_spinner,
@@ -209,7 +210,15 @@ def _reconcile_workspace_branches(app) -> None:
         )
 
 
-_RESUME_PROMPT = (
+_RESUME_CONTINUE_PROMPT = (
+    "kato has been restarted while this task workspace was still active. "
+    "Resume the interrupted task now. First inspect the existing worktree "
+    "and conversation context so you do not duplicate or overwrite work, "
+    "then continue from the last safe point. If the task is already complete, "
+    "say so and end with the normal Kato completion token."
+)
+
+_RESUME_WAIT_PROMPT = (
     "kato has been restarted. This is a system notice — no user "
     "action requested. Please reply with one short line "
     "acknowledging you're ready to continue, then wait for the "
@@ -279,10 +288,11 @@ def _resume_streaming_sessions(app) -> None:
             skipped.append(f'{task_id} (no cwd)')
             continue
         try:
+            initial_prompt = _resume_prompt_for_workspace(record)
             session_manager.start_session(
                 task_id=task_id,
                 task_summary=str(getattr(record, 'task_summary', '') or ''),
-                initial_prompt=_RESUME_PROMPT,
+                initial_prompt=initial_prompt,
                 cwd=cwd,
                 expected_branch=task_id,
                 architecture_doc_path=architecture_doc_path,
@@ -332,6 +342,14 @@ def _planning_spawn_defaults(runner) -> dict[str, object]:
     }
     result['max_turns'] = getattr(defaults, 'max_turns', None)
     return result
+
+
+def _resume_prompt_for_workspace(record) -> str:
+    if bool(getattr(record, 'resume_on_startup', True)):
+        return agent_prompt_utils.prepend_forbidden_repository_guardrails(
+            _RESUME_CONTINUE_PROMPT,
+        )
+    return agent_prompt_utils.prepend_forbidden_repository_guardrails(_RESUME_WAIT_PROMPT)
 
 
 def _recover_orphan_workspaces(app) -> None:

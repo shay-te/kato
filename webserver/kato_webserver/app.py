@@ -39,6 +39,10 @@ from flask import (
 )
 
 from kato.client.claude.wire_protocol import (
+    CLAUDE_EVENT_CONTROL_REQUEST,
+    CLAUDE_EVENT_PERMISSION_REQUEST,
+    CLAUDE_EVENT_PERMISSION_RESPONSE,
+    CLAUDE_EVENT_RESULT,
     SSE_EVENT_SESSION_CLOSED,
     SSE_EVENT_SESSION_EVENT,
     SSE_EVENT_SESSION_HISTORY_EVENT,
@@ -790,8 +794,8 @@ def _event_stream_generator(manager, workspace_manager, task_id: str):
         yield _sse_message(SSE_EVENT_SESSION_IDLE, idle_payload)
         return
     yield from _replay_history_from_disk(claude_session_id)
-    yield from _replay_session_backlog(session)
-    yield from _follow_live_session(session)
+    replayed_count = yield from _replay_session_backlog(session)
+    yield from _follow_live_session(session, start_index=replayed_count)
 
 
 def _resolve_claude_session_id(manager, workspace_manager, task_id: str) -> str:
@@ -838,11 +842,12 @@ def _replay_session_backlog(session):
     backlog = session.recent_events()
     for event in backlog:
         yield _sse_message(SSE_EVENT_SESSION_EVENT, {'event': event.to_dict()})
+    return len(backlog)
 
 
-def _follow_live_session(session):
+def _follow_live_session(session, start_index: int = 0):
     """Tail new events as they arrive, plus a periodic SSE heartbeat."""
-    last_index = len(session.recent_events())
+    last_index = max(0, int(start_index or 0))
     last_heartbeat = time.monotonic()
     while True:
         current = session.recent_events()
@@ -888,11 +893,20 @@ def _records_as_dicts(
     ``has_changes_pending`` (true when kato is paused awaiting push
     approval — the workspace has commits ready to push).
     """
-    if workspace_manager is None:
-        return [_record_to_dict(r) for r in session_manager.list_records()]
-    workspace_records = workspace_manager.list_workspaces()
     live_session_ids = _live_session_ids(session_manager)
     working_session_ids = _working_session_ids(session_manager)
+    pending_permission_session_ids = _pending_permission_session_ids(session_manager)
+    if workspace_manager is None:
+        return [
+            _session_record_to_dict(
+                record,
+                live_session_ids,
+                working_session_ids,
+                pending_permission_session_ids,
+            )
+            for record in session_manager.list_records()
+        ]
+    workspace_records = workspace_manager.list_workspaces()
     session_ids_by_task = _session_ids_by_task(session_manager)
     awaiting_push = getattr(agent_service, 'is_awaiting_push_approval', None)
     return [
@@ -902,9 +916,24 @@ def _records_as_dicts(
             session_ids_by_task,
             awaiting_push,
             working_session_ids=working_session_ids,
+            pending_permission_session_ids=pending_permission_session_ids,
         )
         for record in workspace_records
     ]
+
+
+def _session_record_to_dict(
+    record,
+    live_session_ids: set[str],
+    working_session_ids: set[str],
+    pending_permission_session_ids: set[str],
+) -> dict[str, Any]:
+    payload = _record_to_dict(record)
+    task_id = str(payload.get('task_id') or getattr(record, 'task_id', '') or '')
+    payload['live'] = task_id in live_session_ids
+    payload['working'] = task_id in working_session_ids
+    payload['has_pending_permission'] = task_id in pending_permission_session_ids
+    return payload
 
 
 def _session_ids_by_task(session_manager) -> dict[str, str]:
@@ -945,6 +974,39 @@ def _working_session_ids(session_manager) -> set[str]:
     return working
 
 
+def _pending_permission_session_ids(session_manager) -> set[str]:
+    """Task ids whose live session is paused on an unanswered approval."""
+    if session_manager is None:
+        return set()
+    try:
+        records = session_manager.list_records()
+    except Exception:
+        return set()
+    pending: set[str] = set()
+    for record in records:
+        try:
+            session = session_manager.get_session(record.task_id)
+        except Exception:
+            continue
+        if session is not None and _session_has_pending_permission(session):
+            pending.add(record.task_id)
+    return pending
+
+
+def _session_has_pending_permission(session) -> bool:
+    for event in reversed(session.recent_events()):
+        raw = getattr(event, 'raw', {}) or {}
+        event_type = raw.get('type') if isinstance(raw, dict) else ''
+        if event_type in (
+            CLAUDE_EVENT_PERMISSION_REQUEST,
+            CLAUDE_EVENT_CONTROL_REQUEST,
+        ):
+            return True
+        if event_type in (CLAUDE_EVENT_PERMISSION_RESPONSE, CLAUDE_EVENT_RESULT):
+            return False
+    return False
+
+
 def _live_session_ids(session_manager) -> set[str]:
     """Task ids that currently have an alive subprocess (best-effort)."""
     if session_manager is None:
@@ -971,12 +1033,17 @@ def _workspace_record_to_dict(
     awaiting_push_check=None,
     *,
     working_session_ids: set[str] | None = None,
+    pending_permission_session_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     payload = record.to_dict() if hasattr(record, 'to_dict') else dict(record)
     payload['live'] = record.task_id in live_session_ids
     payload['working'] = (
         record.task_id in working_session_ids
         if working_session_ids is not None else False
+    )
+    payload['has_pending_permission'] = (
+        record.task_id in pending_permission_session_ids
+        if pending_permission_session_ids is not None else False
     )
     if not payload.get('claude_session_id') and session_ids_by_task:
         backfilled = session_ids_by_task.get(record.task_id, '')

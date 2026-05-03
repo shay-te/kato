@@ -26,6 +26,7 @@ from kato.data_layers.data.task import Task
 from kato.data_layers.service.workspace_manager import (
     provision_task_workspace_clones,
 )
+from kato.helpers import agent_prompt_utils
 from kato.helpers.logging_utils import configure_logger
 from kato.helpers.task_execution_utils import skip_task_result
 from kato.helpers.text_utils import text_from_attr
@@ -147,6 +148,7 @@ class WaitPlanningService(object):
                 expected_branch=context.expected_branch,
                 **spawn_defaults,
             )
+            self._mark_workspace_waiting_for_operator(task)
             self.logger.info(
                 'task %s tagged %s — registered planning chat (cwd=%s); '
                 'remove the tag to let the agent run autonomously',
@@ -157,6 +159,17 @@ class WaitPlanningService(object):
         except Exception:
             self.logger.exception(
                 'failed to register planning session for task %s', task.id,
+            )
+
+    def _mark_workspace_waiting_for_operator(self, task: Task) -> None:
+        if self._workspace_manager is None:
+            return
+        try:
+            self._workspace_manager.update_resume_on_startup(str(task.id), False)
+        except Exception:
+            self.logger.exception(
+                'failed to mark planning workspace %s as operator-driven',
+                task.id,
             )
 
     def _move_to_in_progress(self, task: Task) -> None:
@@ -315,6 +328,9 @@ class WaitPlanningService(object):
         ]
         if description:
             sections.extend(['', '## Task description', description])
+        forbidden_repositories = agent_prompt_utils.forbidden_repository_guardrails_text()
+        if forbidden_repositories:
+            sections.extend(['', '## Forbidden repositories', forbidden_repositories])
         from kato.data_layers.data.sentinels import KATO_TASK_DONE_SENTINEL
         sections.extend([
             '',

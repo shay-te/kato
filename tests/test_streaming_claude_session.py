@@ -338,5 +338,69 @@ class StreamingClaudeSessionDockerModeTests(unittest.TestCase):
         self.assertEqual(cmd[idx + 1], SANDBOX_SYSTEM_PROMPT_ADDENDUM)
 
 
+class StreamingClaudeSessionCredentialOutputScanTests(unittest.TestCase):
+    """Output-side credential scan on the streaming terminal event.
+
+    Closes residual #18 on the streaming spawn path. Mirrors the
+    one-shot behavior in
+    ``ClaudeCliClient._scan_response_for_credentials`` so both paths
+    produce the same audit signal when the agent emits a credential
+    pattern in its final response. Detective-only: the response has
+    already crossed to Anthropic by the time we see it.
+    """
+
+    def test_warning_logged_when_terminal_event_contains_credential(self) -> None:
+        fake_aws_key = 'AKIAEXAMPLEFAKE12345'
+        terminal_line = json.dumps({
+            'type': 'result',
+            'subtype': 'success',
+            'is_error': False,
+            'result': f'Here is the value: {fake_aws_key}',
+            'session_id': 'live-1',
+        })
+        fake_proc = _FakeProc(stdout_lines=[terminal_line])
+        with patch(
+            'kato.client.claude.streaming_session.subprocess.Popen',
+            return_value=fake_proc,
+        ), patch(
+            'kato.client.claude.streaming_session.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ), self.assertLogs('kato.workflow.StreamingClaudeSession', level='WARNING') as cm:
+            session = StreamingClaudeSession(task_id='PROJ-CRED')
+            session.start()
+            # Consume events to drive the reader thread to the terminal.
+            for _ in session.events_iter():
+                pass
+
+        joined = ' '.join(cm.output)
+        self.assertIn('aws_access_key_id', joined)
+        self.assertIn('CREDENTIAL PATTERN DETECTED', joined)
+        # Full credential value must never be logged.
+        self.assertNotIn(fake_aws_key, joined)
+        self.assertIn('REDACTED', joined)
+
+    def test_no_warning_when_terminal_event_is_clean(self) -> None:
+        terminal_line = json.dumps({
+            'type': 'result',
+            'subtype': 'success',
+            'is_error': False,
+            'result': 'Done — edits written.',
+            'session_id': 'live-2',
+        })
+        fake_proc = _FakeProc(stdout_lines=[terminal_line])
+        with patch(
+            'kato.client.claude.streaming_session.subprocess.Popen',
+            return_value=fake_proc,
+        ), patch(
+            'kato.client.claude.streaming_session.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ):
+            session = StreamingClaudeSession(task_id='PROJ-CLEAN')
+            with self.assertNoLogs('kato.workflow.StreamingClaudeSession', level='WARNING'):
+                session.start()
+                for _ in session.events_iter():
+                    pass
+
+
 if __name__ == '__main__':
     unittest.main()

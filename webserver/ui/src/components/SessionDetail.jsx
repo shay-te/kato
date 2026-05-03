@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import EventLog from './EventLog.jsx';
 import MessageForm from './MessageForm.jsx';
 import PermissionDecisionContainer from './PermissionDecisionContainer.jsx';
@@ -13,6 +14,7 @@ import { postSession } from '../api.js';
 export default function SessionDetail({
   session,
   onActivity,
+  onPendingPermissionChange,
   needsAttention = false,
   composerValue = '',
   onComposerChange,
@@ -21,6 +23,11 @@ export default function SessionDetail({
   const stream = useSessionStream(taskId, onActivity);
   const memory = useToolMemory();
   const updateComposer = typeof onComposerChange === 'function' ? onComposerChange : noop;
+
+  useEffect(() => {
+    if (typeof onPendingPermissionChange !== 'function') { return; }
+    onPendingPermissionChange(taskId, !!stream.pendingPermission);
+  }, [taskId, stream.pendingPermission, onPendingPermissionChange]);
 
   if (!session) {
     return (
@@ -69,7 +76,9 @@ export default function SessionDetail({
         source: ENTRY_SOURCE.LOCAL, kind: BUBBLE_KIND.ERROR,
         text: `permission send failed: ${result.error}`,
       });
+      return false;
     }
+    return true;
   }
 
   async function onStopped(result) {
@@ -98,10 +107,11 @@ export default function SessionDetail({
           turnInFlight={stream.turnInFlight}
         />
         <EventLog entries={stream.events} banner={banner} />
-        <WorkingIndicator
-          active={stream.turnInFlight}
-          lastEventAt={stream.lastEventAt}
-        />
+          <WorkingIndicator
+            active={stream.turnInFlight || !!stream.pendingPermission}
+            waitingForApproval={!!stream.pendingPermission}
+            lastEventAt={stream.lastEventAt}
+          />
         <MessageForm
           value={composerValue}
           onChange={updateComposer}

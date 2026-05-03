@@ -139,6 +139,44 @@ class AddendumWordingLockTests(unittest.TestCase):
         for jargon in ('bind-mount', 'bind mount', 'rootfs', 'gVisor', 'cgroup'):
             self.assertNotIn(jargon, SANDBOX_SYSTEM_PROMPT_ADDENDUM)
 
+    def test_addendum_includes_operator_phishing_section(self) -> None:
+        """Section 4 — operator-host commands.
+
+        Locks the phishing-prevention section that closes residual #16
+        on the system-prompt side. A future reword that softens the
+        framing ("you may suggest commands the operator could run")
+        breaks this test before it ships.
+        """
+        # Section header.
+        self.assertIn('Operator-host commands', SANDBOX_SYSTEM_PROMPT_ADDENDUM)
+        # The directive itself — "do not generate" is the load-bearing
+        # phrase. A loosening to "consider whether to generate" would
+        # be caught here.
+        self.assertIn(
+            'Do not generate shell commands the\n   operator should run',
+            SANDBOX_SYSTEM_PROMPT_ADDENDUM,
+        )
+        # Specific patterns named so the agent has concrete shapes to
+        # avoid, not just abstract guidance.
+        self.assertIn('curl ... | bash', SANDBOX_SYSTEM_PROMPT_ADDENDUM)
+        self.assertIn('sudo', SANDBOX_SYSTEM_PROMPT_ADDENDUM)
+        self.assertIn('eval "$(...)"', SANDBOX_SYSTEM_PROMPT_ADDENDUM)
+        # Framing the patterns as phishing surfaces — operator-facing
+        # context for WHY they're forbidden.
+        self.assertIn(
+            'operator-phishing surface',
+            SANDBOX_SYSTEM_PROMPT_ADDENDUM,
+        )
+
+    def test_addendum_directs_agent_to_state_requirements_in_prose(self) -> None:
+        # Positive instruction: state requirements plainly. Without
+        # this, the agent hits the "do not generate commands"
+        # negative and may simply omit work the operator needs to do.
+        self.assertIn(
+            'state the requirement plainly in prose',
+            SANDBOX_SYSTEM_PROMPT_ADDENDUM,
+        )
+
 
 if __name__ == '__main__':
     unittest.main()

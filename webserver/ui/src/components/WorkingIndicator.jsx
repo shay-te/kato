@@ -32,7 +32,11 @@ function pickDifferent(previous) {
   return choices[Math.floor(Math.random() * choices.length)];
 }
 
-export default function WorkingIndicator({ active, lastEventAt = 0 }) {
+export default function WorkingIndicator({
+  active,
+  waitingForApproval = false,
+  lastEventAt = 0,
+}) {
   const [phrase, setPhrase] = useState(() => pickDifferent(''));
   const [now, setNow] = useState(() => Date.now());
 
@@ -58,10 +62,27 @@ export default function WorkingIndicator({ active, lastEventAt = 0 }) {
     ? Math.max(0, Math.floor((now - lastEventAt) / 1000))
     : 0;
   const stalled = lastEventAt > 0 && idleSeconds >= STALL_THRESHOLD_SECONDS;
-  const className = `working-indicator${stalled ? ' is-stalled' : ''}`;
+  const className = [
+    'working-indicator',
+    stalled ? 'is-stalled' : '',
+    waitingForApproval ? 'is-waiting-approval' : '',
+  ].filter(Boolean).join(' ');
   const activityText = lastEventAt > 0
     ? `last activity ${formatSeconds(idleSeconds)} ago`
     : '';
+
+  if (waitingForApproval) {
+    return (
+      <div className={className} aria-live="polite" role="status">
+        <span className="working-indicator-glyph" aria-hidden="true">!</span>
+        <span className="working-indicator-phrase">waiting for approval</span>
+        <span className="working-indicator-progress" aria-hidden="true" />
+        {activityText && (
+          <span className="working-indicator-activity">{activityText}</span>
+        )}
+      </div>
+    );
+  }
 
   if (stalled) {
     return (

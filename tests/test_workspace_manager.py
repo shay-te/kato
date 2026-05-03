@@ -39,6 +39,7 @@ class WorkspaceManagerTests(unittest.TestCase):
         self.assertEqual(meta['task_id'], 'PROJ-1')
         self.assertEqual(meta['task_summary'], 'something')
         self.assertEqual(meta['repository_ids'], ['client'])
+        self.assertTrue(meta['resume_on_startup'])
 
     def test_create_is_idempotent_and_preserves_created_at(self) -> None:
         first = self.manager.create(task_id='PROJ-1', task_summary='one')
@@ -113,6 +114,13 @@ class WorkspaceManagerTests(unittest.TestCase):
         assert record is not None
         self.assertEqual(record.repository_ids, ['a', 'b'])
 
+    def test_update_resume_on_startup_persists(self) -> None:
+        self.manager.create(task_id='PROJ-1')
+        self.manager.update_resume_on_startup('PROJ-1', False)
+        record = self.manager.get('PROJ-1')
+        assert record is not None
+        self.assertFalse(record.resume_on_startup)
+
     def test_delete_removes_the_folder(self) -> None:
         self.manager.create(task_id='PROJ-1', task_summary='one')
         self.assertTrue((self.root / 'PROJ-1').is_dir())
@@ -142,6 +150,7 @@ class WorkspaceManagerTests(unittest.TestCase):
             task_summary='roundtrip test',
             status=WORKSPACE_STATUS_DONE,
             repository_ids=['repo1', 'repo2'],
+            resume_on_startup=False,
             created_at_epoch=100.0,
             updated_at_epoch=200.0,
         )

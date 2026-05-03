@@ -83,7 +83,12 @@ export default function SessionHeader({
     </button>
   );
 
-  const claudeStatus = describeClaudeStatus(streamLifecycle, turnInFlight, baseStatus);
+  const claudeStatus = describeClaudeStatus(
+    streamLifecycle,
+    turnInFlight,
+    baseStatus,
+    needsAttention,
+  );
   // The Push button is *only* gated on "is there anything to push?" —
   // not on workspace existence, not on PR existence. When everything's
   // already on the remote we disable it (clicking would be a no-op);
@@ -244,7 +249,12 @@ function prTitleFor(state) {
 // Claude agent indicator. ``streamLifecycle`` is undefined when the
 // header is rendered without a stream context (defensive — should not
 // happen in normal use but keeps the chip from blowing up).
-function describeClaudeStatus(streamLifecycle, turnInFlight, baseStatus) {
+function describeClaudeStatus(
+  streamLifecycle,
+  turnInFlight,
+  baseStatus,
+  needsAttention,
+) {
   if (baseStatus === TAB_STATUS.PROVISIONING) {
     return {
       kind: 'provisioning',
@@ -257,6 +267,13 @@ function describeClaudeStatus(streamLifecycle, turnInFlight, baseStatus) {
       kind: 'working',
       label: 'working',
       title: 'Claude is processing the current turn.',
+    };
+  }
+  if (needsAttention) {
+    return {
+      kind: 'approval',
+      label: 'approval',
+      title: 'Claude is paused waiting for your approval.',
     };
   }
   switch (streamLifecycle) {

@@ -948,6 +948,32 @@ class AgentServiceTests(unittest.TestCase):
         session_manager.start_session.assert_not_called()
         self.assertEqual(results.get(StatusFields.STATUS), StatusFields.SKIPPED)
 
+    def test_wait_planning_marks_workspace_as_operator_driven_for_startup_resume(self) -> None:
+        from unittest.mock import MagicMock as _MagicMock
+        from kato.data_layers.service.wait_planning_service import WaitPlanningService
+        session_manager = _MagicMock()
+        session_manager.get_session.return_value = None
+        workspace_manager = _MagicMock()
+        wait_planning_service = WaitPlanningService(
+            session_manager=session_manager,
+            repository_service=self.repository_service,
+            task_state_service=self.task_state_service,
+            workspace_manager=workspace_manager,
+        )
+        wait_planning_service._resolve_planning_context = Mock(
+            return_value=types.SimpleNamespace(cwd='.', expected_branch='PROJ-1')
+        )
+        task = build_task(tags=['kato:wait-planning'])
+
+        results = wait_planning_service.handle_task(task)
+
+        self.assertEqual(results.get(StatusFields.STATUS), StatusFields.SKIPPED)
+        session_manager.start_session.assert_called_once()
+        workspace_manager.update_resume_on_startup.assert_called_once_with(
+            'PROJ-1',
+            False,
+        )
+
     def test_process_assigned_task_without_planning_tag_runs_normally(self) -> None:
         service = AgentService(
             self.task_data_access,

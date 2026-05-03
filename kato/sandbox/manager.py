@@ -528,9 +528,93 @@ def image_built_by_kato(image_tag: str = SANDBOX_IMAGE_TAG) -> bool:
     return result.stdout.strip() == _IMAGE_IDENTITY_VALUE
 
 
+_BASE_IMAGE_ENV_KEY = 'KATO_SANDBOX_BASE_IMAGE'
+_ALLOW_FLOATING_BASE_IMAGE_ENV_KEY = 'KATO_SANDBOX_ALLOW_FLOATING_BASE_IMAGE'
+
+
+def _validate_base_image_pin_or_refuse(
+    *,
+    env: dict | None = None,
+    logger: logging.Logger | None = None,
+) -> None:
+    """Refuse to build unless the base image is digest-pinned (strict-by-default).
+
+    Closes the build-time supply-chain channel #17 by changing the
+    default. Operators have two paths:
+
+      1. **Recommended** — set ``KATO_SANDBOX_BASE_IMAGE`` to a
+         digest-pinned reference like
+         ``node:22-bookworm-slim@sha256:<digest>``. The build will use
+         that exact immutable digest; a hostile registry / DNS hijack
+         at build time cannot substitute the base image.
+      2. **Opt-out** — set ``KATO_SANDBOX_ALLOW_FLOATING_BASE_IMAGE=true``
+         to acknowledge the residual and allow the moving
+         ``node:22-bookworm-slim`` tag. Operator accepts that a
+         hostile network during the next build could poison the
+         resulting image.
+
+    A value set on ``KATO_SANDBOX_BASE_IMAGE`` without ``@sha256:``
+    in it is also refused — half-pinning (``node:22-bookworm-slim``
+    without a digest) is no protection at all and would give the
+    operator a false sense of security.
+    """
+    source = env if env is not None else os.environ
+    base = str(source.get(_BASE_IMAGE_ENV_KEY, '') or '').strip()
+    allow_floating = str(
+        source.get(_ALLOW_FLOATING_BASE_IMAGE_ENV_KEY, '') or ''
+    ).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+    if base:
+        if '@sha256:' not in base:
+            raise SandboxError(
+                f'{_BASE_IMAGE_ENV_KEY}={base!r} is set but does not '
+                f'include a digest pin (expected '
+                f'``node:22-bookworm-slim@sha256:<digest>``). A '
+                f'tag-only value provides no supply-chain protection — '
+                f'kato refuses to build with a half-pinned base image. '
+                f'Either add the digest, or set '
+                f'{_ALLOW_FLOATING_BASE_IMAGE_ENV_KEY}=true to '
+                f'explicitly accept the floating-tag residual.'
+            )
+        if logger is not None:
+            logger.info(
+                'sandbox: building with digest-pinned base image %s '
+                '(%s)', base, _BASE_IMAGE_ENV_KEY,
+            )
+        return
+
+    if allow_floating:
+        if logger is not None:
+            logger.warning(
+                'sandbox: building with FLOATING base image tag '
+                '(%s=true). A compromised registry or hostile network '
+                'at build time could substitute the base image. '
+                'Recommend %s=node:22-bookworm-slim@sha256:<digest>.',
+                _ALLOW_FLOATING_BASE_IMAGE_ENV_KEY,
+                _BASE_IMAGE_ENV_KEY,
+            )
+        return
+
+    # Strict default — refuse the build.
+    raise SandboxError(
+        'kato refuses to build the sandbox image without a digest-pinned '
+        f'base image. The previous default (floating ``node:22-bookworm-slim`` '
+        f'tag) left the build-time supply chain unbounded — a hostile '
+        f'registry / DNS hijack / corporate proxy at build time could '
+        f'substitute the base image and every subsequent spawn would '
+        f'run poisoned binaries. Pick one:\n'
+        f'  1. Recommended: export {_BASE_IMAGE_ENV_KEY}=node:22-bookworm-slim@sha256:<digest>\n'
+        f'     (find the current digest with: docker manifest inspect node:22-bookworm-slim | jq -r .config.digest)\n'
+        f'  2. Opt-out: export {_ALLOW_FLOATING_BASE_IMAGE_ENV_KEY}=true\n'
+        f'     (operator accepts the residual; build proceeds with the floating tag)\n'
+        f'See BYPASS_PROTECTIONS.md "Build-time supply chain" for detail.'
+    )
+
+
 def build_image(
     *,
     image_tag: str = SANDBOX_IMAGE_TAG,
+    env: dict | None = None,
     logger: logging.Logger | None = None,
 ) -> None:
     """Build ``image_tag`` from the Dockerfile next to this module.
@@ -540,7 +624,13 @@ def build_image(
     on a warm npm cache, longer cold). Raises ``SandboxError`` with
     the captured output on failure so the caller can surface a
     clear "build failed" message.
+
+    Refuses the build (raises ``SandboxError``) unless either
+    ``KATO_SANDBOX_BASE_IMAGE`` is digest-pinned or
+    ``KATO_SANDBOX_ALLOW_FLOATING_BASE_IMAGE=true`` is set — see
+    ``_validate_base_image_pin_or_refuse``.
     """
+    _validate_base_image_pin_or_refuse(env=env, logger=logger)
     if logger is not None:
         logger.info(
             'building Claude sandbox image %s — first run, may take ~1 min',
@@ -1023,21 +1113,54 @@ _SUSPICIOUS_PATH_SUFFIXES = (
 # the cap we stop scanning and warn that scan was truncated.
 _SECRET_SCAN_FILE_CAP = 20_000
 
+# Per-file size cap for the content-pattern scan. Anything bigger is
+# almost certainly a binary blob, generated artifact, or vendored
+# dependency — none of which are likely places for a hand-pasted
+# credential, and reading multi-megabyte files into memory for a
+# single grep is wasted work.
+_SECRET_SCAN_PER_FILE_BYTES_CAP = 1_048_576  # 1 MiB
+
+# Directories we skip during the content-pattern scan. They contain
+# generated artifacts, vendored deps, or VCS internals that legitimately
+# carry tokens (npm registry tarballs, git pack files); scanning them
+# produces noise without protecting against the actual leak path
+# (operator-written secrets in source files).
+_CONTENT_SCAN_SKIP_DIRS: frozenset[str] = frozenset({
+    '.git', 'node_modules', 'venv', '.venv', '__pycache__',
+    'dist', 'build', 'target', '.tox', '.pytest_cache', '.mypy_cache',
+})
+
 
 def scan_workspace_for_secrets(
     workspace_path: str,
     *,
     logger: logging.Logger | None = None,
 ) -> list[str]:
-    """Walk the workspace looking for files that smell like operator secrets.
+    """Walk the workspace looking for committed-secret signals.
+
+    Two signals are considered, in order of preference:
+
+      1. **File name match** — the file's name is one of the
+         ``_SUSPICIOUS_FILE_NAMES`` / ``_SUSPICIOUS_PATH_SUFFIXES``
+         patterns (e.g. ``.env``, ``id_rsa``, ``.aws/credentials``).
+         Cheap, broad, false-positive-prone; the operator override
+         exists for the false-positive cases.
+      2. **File content match** — the file contains a high-confidence
+         credential pattern (AWS key id, GitHub token, OpenAI key, …)
+         per ``kato.sandbox.credential_patterns``. Closes the case
+         where a secret is committed to a file with an innocuous
+         name (`config.yaml`, a migration, a README). Skipped for
+         binary files, files larger than 1 MiB, and directories
+         that are known to carry generated tokens (`.git`,
+         `node_modules`, `venv`, `dist`, `build`, …).
 
     Returns the list of relative paths that match (empty if none).
-    Doesn't *block* the spawn — Claude could legitimately be working
-    on a repo that ships test fixtures with these names — but logs a
-    visible warning so the operator knows what the agent will be able
-    to read. False-positive-prone by design; real secrets in a
-    workspace are a much bigger deal than a noisy warning.
+    Each match is annotated in the returned string: file-name matches
+    are bare paths; content matches carry a ``(content: <pattern>)``
+    suffix so the operator and the audit log can distinguish them.
     """
+    from kato.sandbox.credential_patterns import find_credential_patterns
+
     try:
         root = Path(workspace_path).resolve()
     except (OSError, RuntimeError):
@@ -1055,14 +1178,53 @@ def scan_workspace_for_secrets(
                 break
             if not entry.is_file():
                 continue
-            if entry.name in _SUSPICIOUS_FILE_NAMES:
-                findings.append(str(entry.relative_to(root)))
-                continue
             relative_str = str(entry.relative_to(root))
+            # File-name signal first — cheap, no I/O.
+            if entry.name in _SUSPICIOUS_FILE_NAMES:
+                findings.append(relative_str)
+                continue
+            matched_suffix = False
             for suffix in _SUSPICIOUS_PATH_SUFFIXES:
                 if relative_str == suffix or relative_str.endswith('/' + suffix):
                     findings.append(relative_str)
+                    matched_suffix = True
                     break
+            if matched_suffix:
+                continue
+            # Content signal — skip generated / vendored trees, binary
+            # files, and large files. Reads at most 1 MiB per file.
+            relative_parts = entry.relative_to(root).parts
+            if any(part in _CONTENT_SCAN_SKIP_DIRS for part in relative_parts):
+                continue
+            try:
+                if entry.stat().st_size > _SECRET_SCAN_PER_FILE_BYTES_CAP:
+                    continue
+            except OSError:
+                continue
+            try:
+                # ``errors='ignore'`` quietly drops bytes that aren't
+                # valid UTF-8 — credential patterns are ASCII so this
+                # cannot cause a false negative for the patterns we
+                # actually look for.
+                text = entry.read_text(encoding='utf-8', errors='ignore')
+            except (OSError, PermissionError):
+                continue
+            content_findings = find_credential_patterns(text)
+            if content_findings:
+                # One annotated line per (file, pattern_name) pair so
+                # the operator sees every distinct signal. The redacted
+                # preview is intentionally NOT included in the workspace
+                # findings list — the file path alone is enough to
+                # locate the leak; the pattern name is enough to know
+                # what was found.
+                seen_patterns: set[str] = set()
+                for finding in content_findings:
+                    if finding.pattern_name in seen_patterns:
+                        continue
+                    seen_patterns.add(finding.pattern_name)
+                    findings.append(
+                        f'{relative_str} (content: {finding.pattern_name})'
+                    )
     except (OSError, PermissionError):
         # Best-effort: if we can't traverse a subtree we just log
         # what we found so far and move on.

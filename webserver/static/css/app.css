@@ -180,6 +180,7 @@ header button:hover { color: #e5e5e5; border-color: #e5e5e5; }
 }
 
 .status-dot {
+  position: relative;
   width: 12px;
   height: 12px;
   border-radius: 50%;
@@ -203,7 +204,18 @@ header button:hover { color: #e5e5e5; border-color: #e5e5e5; }
 .status-terminated   { background: #6b7280; }   /* gray: stopped */
 .status-provisioning { background: #e5e5e5; }   /* white: cloning */
 .status-errored      { background: #b91c1c; }   /* red:   half-broken workspace */
-.status-attention    { background: #f59e0b; }   /* amber: needs your input */
+.status-attention    { background: #f97316; border-color: #7c2d12; } /* orange-red: needs approval */
+.status-dot.status-attention::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  background: conic-gradient(#ef4444, #f97316, transparent 58%, transparent);
+  animation: kato-status-spin 0.9s linear infinite;
+  pointer-events: none;
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 0);
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 0);
+}
 
 .status-dot.is-loading {
   position: relative;
@@ -224,15 +236,15 @@ header button:hover { color: #e5e5e5; border-color: #e5e5e5; }
 }
 
 .tab.needs-attention {
-  border-left-color: #f59e0b;
-  background: rgba(245, 158, 11, 0.08);
+  border-left-color: #f97316;
+  background: rgba(249, 115, 22, 0.11);
 }
 .tab.needs-attention .status-dot {
   animation: kato-attention-pulse 1.4s ease-in-out infinite;
 }
 @keyframes kato-attention-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.6); }
-  50%      { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.72); }
+  50%      { box-shadow: 0 0 0 7px rgba(249, 115, 22, 0); }
 }
 
 .empty {
@@ -397,6 +409,40 @@ header button:hover { color: #e5e5e5; border-color: #e5e5e5; }
   color: #fbbf24;
   animation: none;
 }
+.working-indicator.is-waiting-approval {
+  color: #fb923c;
+  font-style: normal;
+}
+.working-indicator.is-waiting-approval .working-indicator-glyph {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #1c1207;
+  background: #f97316;
+  font: 700 10px/1 ui-monospace, monospace;
+  animation: kato-attention-pop 1.2s ease-in-out infinite;
+}
+.working-indicator-progress {
+  position: relative;
+  display: inline-block;
+  width: 120px;
+  height: 3px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: #3b1d0b;
+}
+.working-indicator-progress::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 42px;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #f97316, #ef4444);
+  animation: kato-approval-progress 1.1s ease-in-out infinite;
+}
 @keyframes kato-working-spin {
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }
@@ -404,6 +450,14 @@ header button:hover { color: #e5e5e5; border-color: #e5e5e5; }
 @keyframes kato-working-pulse {
   0%, 100% { opacity: 0.3; }
   50%      { opacity: 1; }
+}
+@keyframes kato-attention-pop {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.14); }
+}
+@keyframes kato-approval-progress {
+  0%   { transform: translateX(-48px); }
+  100% { transform: translateX(128px); }
 }
 
 #message-form {
@@ -1001,6 +1055,11 @@ body.kato-resizing { user-select: none; cursor: col-resize; }
   color: #fde68a;
   border-color: #b45309;
   background: #1c1207;
+}
+.claude-status-approval {
+  color: #fed7aa;
+  border-color: #f97316;
+  background: #2a0f05;
 }
 .claude-status-idle,
 .claude-status-streaming {

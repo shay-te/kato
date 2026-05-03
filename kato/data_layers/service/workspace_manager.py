@@ -76,6 +76,7 @@ class WorkspaceRecord(object):
     repository_ids: list[str] = field(default_factory=list)
     claude_session_id: str = ''
     cwd: str = ''
+    resume_on_startup: bool = True
     created_at_epoch: float = field(default_factory=time.time)
     updated_at_epoch: float = field(default_factory=time.time)
 
@@ -95,6 +96,7 @@ class WorkspaceRecord(object):
             repository_ids=[str(rid) for rid in repository_ids if rid],
             claude_session_id=str(payload.get('claude_session_id', '') or ''),
             cwd=str(payload.get('cwd', '') or ''),
+            resume_on_startup=bool(payload.get('resume_on_startup', True)),
             created_at_epoch=float(
                 payload.get('created_at_epoch', time.time()) or time.time(),
             ),
@@ -195,6 +197,9 @@ class WorkspaceManager(object):
                 or (list(existing.repository_ids) if existing else []),
                 claude_session_id=(existing.claude_session_id if existing else ''),
                 cwd=(existing.cwd if existing else ''),
+                resume_on_startup=(
+                    existing.resume_on_startup if existing else True
+                ),
                 created_at_epoch=(
                     existing.created_at_epoch if existing else time.time()
                 ),
@@ -277,6 +282,23 @@ class WorkspaceManager(object):
                 record.claude_session_id = session_id
             if cwd_value:
                 record.cwd = cwd_value
+            record.updated_at_epoch = time.time()
+            self._write_metadata(workspace_dir, record)
+            return record
+
+    def update_resume_on_startup(
+        self,
+        task_id: str,
+        resume_on_startup: bool,
+    ) -> WorkspaceRecord | None:
+        with self._lock:
+            workspace_dir = self.workspace_path(task_id)
+            if not workspace_dir.is_dir():
+                return None
+            record = self._read_metadata(workspace_dir)
+            if record is None:
+                return None
+            record.resume_on_startup = bool(resume_on_startup)
             record.updated_at_epoch = time.time()
             self._write_metadata(workspace_dir, record)
             return record

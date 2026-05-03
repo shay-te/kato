@@ -395,7 +395,12 @@ class ClaudeCliClient(object):
 
     @classmethod
     def _execution_guardrails_text(cls) -> str:
-        return f'{agent_prompt_utils.security_guardrails_text()}\n\n{cls._tool_guardrails_text()}'
+        sections = [
+            agent_prompt_utils.security_guardrails_text(),
+            agent_prompt_utils.forbidden_repository_guardrails_text(),
+            cls._tool_guardrails_text(),
+        ]
+        return '\n\n'.join(section for section in sections if section)
 
     @staticmethod
     def _tool_guardrails_text() -> str:
@@ -656,6 +661,14 @@ class ClaudeCliClient(object):
             detail = result_text or stderr or 'unknown Claude CLI error'
             raise RuntimeError(f'Claude CLI reported an error: {detail}')
 
+        # Output-side credential scan — closes residual #18 on the
+        # detective side. The agent's response has already crossed to
+        # Anthropic by the time we see it, so this cannot UNDO the
+        # leak; it produces an auditable record so the operator knows
+        # to rotate. Pattern names + redacted previews only — full
+        # credential values are never logged.
+        self._scan_response_for_credentials(result_text, log_label=log_label)
+
         result: dict[str, str | bool] = {
             ImplementationFields.SUCCESS: success,
             Task.summary.key: result_text,
@@ -665,6 +678,59 @@ class ClaudeCliClient(object):
         if session_id_value:
             result[ImplementationFields.SESSION_ID] = session_id_value
         return result
+
+    def _scan_response_for_credentials(
+        self,
+        response_text: str,
+        *,
+        log_label: str,
+    ) -> None:
+        """Detective-side scan on the agent's response text.
+
+        Two pattern families fire:
+
+          * **Credential patterns** (residual #18) — pattern name +
+            redacted preview only; the full credential value is never
+            logged. Operators who see this should rotate the named
+            credential. The agent's text has already crossed to
+            Anthropic by the time the JSON payload returns, so this
+            is an audit trail not a block.
+          * **Phishing patterns** (residual #16, defense-in-depth) —
+            agent output that looks like an attempt to trick the
+            operator into running shell commands on their host
+            (``curl|bash``, ``sudo`` snippets, ``eval $(curl …)``).
+            Same audit-trail treatment.
+        """
+        from kato.sandbox.credential_patterns import (
+            find_credential_patterns,
+            find_phishing_patterns,
+            summarize_findings,
+        )
+
+        if not response_text:
+            return
+        cred_findings = find_credential_patterns(response_text)
+        if cred_findings:
+            self.logger.warning(
+                'CREDENTIAL PATTERN DETECTED in Claude response for %s: %s. '
+                'The agent response has already been transmitted to Anthropic; '
+                'rotate the named credential(s) immediately. See '
+                'BYPASS_PROTECTIONS.md residual #18.',
+                log_label,
+                summarize_findings(cred_findings),
+            )
+        phishing_findings = find_phishing_patterns(response_text)
+        if phishing_findings:
+            self.logger.warning(
+                'PHISHING PATTERN DETECTED in Claude response for %s: %s. '
+                'The agent appears to be instructing the operator to run '
+                'shell commands on their host. Kato handles infrastructure '
+                'operations; the agent has no legitimate reason to direct '
+                'the operator to execute commands. Treat the suggestion as '
+                'untrusted. See BYPASS_PROTECTIONS.md residual #16.',
+                log_label,
+                summarize_findings(phishing_findings),
+            )
 
     def _parse_json_payload(self, stdout: str) -> dict[str, object]:
         text = (stdout or '').strip()
