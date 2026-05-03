@@ -317,6 +317,26 @@ class StreamingClaudeSessionDockerModeTests(unittest.TestCase):
         session = StreamingClaudeSession(task_id='PROJ-1')
         self.assertFalse(session._docker_mode_on)
 
+    def test_docker_mode_off_does_not_append_sandbox_addendum(self) -> None:
+        session = StreamingClaudeSession(
+            task_id='PROJ-1',
+            docker_mode_on=False,
+        )
+        cmd = session._build_command()
+        self.assertNotIn('--append-system-prompt', cmd)
+
+    def test_docker_mode_on_appends_sandbox_addendum(self) -> None:
+        from kato.sandbox.system_prompt import SANDBOX_SYSTEM_PROMPT_ADDENDUM
+
+        session = StreamingClaudeSession(
+            task_id='PROJ-1',
+            docker_mode_on=True,
+        )
+        cmd = session._build_command()
+        self.assertIn('--append-system-prompt', cmd)
+        idx = cmd.index('--append-system-prompt')
+        self.assertEqual(cmd[idx + 1], SANDBOX_SYSTEM_PROMPT_ADDENDUM)
+
 
 if __name__ == '__main__':
     unittest.main()

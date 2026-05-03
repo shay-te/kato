@@ -417,6 +417,22 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
         self.assertTrue(client_b._docker_mode_on)
         self.assertTrue(client_b._bypass_permissions)
 
+    def test_docker_mode_off_does_not_append_sandbox_addendum(self) -> None:
+        client = ClaudeCliClient(binary='claude', docker_mode_on=False)
+        cmd = client._build_command(additional_dirs=[], session_id='')
+        # No --append-system-prompt at all when there's no architecture
+        # doc and docker mode is off.
+        self.assertNotIn('--append-system-prompt', cmd)
+
+    def test_docker_mode_on_appends_sandbox_addendum(self) -> None:
+        from kato.sandbox.system_prompt import SANDBOX_SYSTEM_PROMPT_ADDENDUM
+
+        client = ClaudeCliClient(binary='claude', docker_mode_on=True)
+        cmd = client._build_command(additional_dirs=[], session_id='')
+        self.assertIn('--append-system-prompt', cmd)
+        idx = cmd.index('--append-system-prompt')
+        self.assertEqual(cmd[idx + 1], SANDBOX_SYSTEM_PROMPT_ADDENDUM)
+
 
 if __name__ == '__main__':
     unittest.main()

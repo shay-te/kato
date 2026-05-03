@@ -540,8 +540,20 @@ class StreamingClaudeSession(object):
         architecture_doc = read_architecture_doc(
             self._architecture_doc_path, logger=self.logger,
         )
-        if architecture_doc:
-            command.extend(['--append-system-prompt', architecture_doc])
+        # When ``KATO_CLAUDE_DOCKER=true`` the agent gets a short
+        # description of the sandboxed environment appended to its
+        # system prompt — see ``kato.sandbox.system_prompt``. Composer
+        # joins the architecture doc and the addendum into one value
+        # because the Claude CLI takes a single
+        # ``--append-system-prompt``. Mirrors the wiring in
+        # ``ClaudeCliClient._build_command`` so streaming and one-shot
+        # spawns deliver identical guidance to the agent.
+        from kato.sandbox.system_prompt import compose_system_prompt
+        appended_system_prompt = compose_system_prompt(
+            architecture_doc, docker_mode_on=self._docker_mode_on,
+        )
+        if appended_system_prompt:
+            command.extend(['--append-system-prompt', appended_system_prompt])
         if self._resume_session_id:
             command.extend(['--resume', self._resume_session_id])
         else:
