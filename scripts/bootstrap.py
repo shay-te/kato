@@ -101,7 +101,7 @@ def main() -> int:
         'Next manual steps:\n'
         '  1. Fill the required secrets in .env\n'
         '  2. Run `make doctor` (POSIX) or '
-        '`python -m kato.validate_env --env-file .env --mode all` (any OS)\n'
+        '`python -m kato_core_lib.validate_env --env-file .env --mode all` (any OS)\n'
         '  3. Run `make run` / `make compose-up` for local execution,\n'
         '     or `python scripts/run_local.py` directly on Windows.\n'
     )

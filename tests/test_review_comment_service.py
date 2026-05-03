@@ -4,15 +4,15 @@ from unittest.mock import Mock
 
 from requests import HTTPError
 
-from kato.data_layers.data.fields import (
+from kato_core_lib.data_layers.data.fields import (
     ImplementationFields,
     PullRequestFields,
     ReviewCommentFields,
 )
-from kato.data_layers.data.review_comment import ReviewComment
-from kato.data_layers.service.agent_state_registry import AgentStateRegistry
-from kato.data_layers.service.review_comment_service import ReviewCommentService
-from kato.helpers.review_comment_utils import review_comment_fixed_comment
+from kato_core_lib.data_layers.data.review_comment import ReviewComment
+from kato_core_lib.data_layers.service.agent_state_registry import AgentStateRegistry
+from kato_core_lib.data_layers.service.review_comment_service import ReviewCommentService
+from kato_core_lib.helpers.review_comment_utils import review_comment_fixed_comment
 from utils import build_review_comment, build_task
 
 
@@ -120,7 +120,7 @@ class ReviewCommentServiceTests(unittest.TestCase):
             'PROJ-1',
             review_comment_fixed_comment(comment),
         )
-        from kato.helpers.mission_logging_utils import _CYAN, _GREEN, _RESET
+        from kato_core_lib.helpers.mission_logging_utils import _CYAN, _GREEN, _RESET
         self.assertEqual(
             self.service.logger.info.call_args_list[0].args,
             ('%s>> Mission %s: %s%s', _GREEN, 'PROJ-1', 'starting mission', _RESET),

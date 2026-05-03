@@ -19,8 +19,8 @@ import types
 import unittest
 from pathlib import Path
 
-from kato.data_layers.data.fields import RepositoryFields
-from kato.data_layers.service.repository_inventory_service import (
+from kato_core_lib.data_layers.data.fields import RepositoryFields
+from kato_core_lib.data_layers.service.repository_inventory_service import (
     RepositoryInventoryService,
 )
 from utils import build_task

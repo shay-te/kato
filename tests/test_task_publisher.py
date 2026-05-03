@@ -2,22 +2,22 @@ import types
 import unittest
 from unittest.mock import Mock
 
-from kato.data_layers.data.fields import (
+from kato_core_lib.data_layers.data.fields import (
     ImplementationFields,
     PullRequestFields,
     StatusFields,
 )
-from kato.data_layers.data.task import Task
-from kato.data_layers.service.agent_state_registry import AgentStateRegistry
-from kato.data_layers.service.notification_service import NotificationService
-from kato.data_layers.service.repository_service import (
+from kato_core_lib.data_layers.data.task import Task
+from kato_core_lib.data_layers.service.agent_state_registry import AgentStateRegistry
+from kato_core_lib.data_layers.service.notification_service import NotificationService
+from kato_core_lib.data_layers.service.repository_service import (
     RepositoryHasNoChangesError,
     RepositoryService,
 )
-from kato.data_layers.service.task_failure_handler import TaskFailureHandler
-from kato.data_layers.service.task_state_service import TaskStateService
-from kato.data_layers.service.task_publisher import TaskPublisher
-from kato.data_layers.service.task_service import TaskService
+from kato_core_lib.data_layers.service.task_failure_handler import TaskFailureHandler
+from kato_core_lib.data_layers.service.task_state_service import TaskStateService
+from kato_core_lib.data_layers.service.task_publisher import TaskPublisher
+from kato_core_lib.data_layers.service.task_service import TaskService
 from utils import build_task
 
 

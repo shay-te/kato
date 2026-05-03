@@ -107,7 +107,7 @@ The agent is designed to:
 ## Structure
 
 ```text
-kato/
+kato_core_lib/
   client/                        # external services kato talks to
     agent_client.py              # AgentClient Protocol — the contract
     retrying_client_base.py      # shared retry / HTTP plumbing
@@ -249,7 +249,7 @@ That separation matters because the service flow should read like the real agent
 
 ### Startup Flow
 
-1. `python -m kato.main`, `make run`, or the Docker entrypoint loads Hydra config and values from `.env`.
+1. `python -m kato_core_lib.main`, `make run`, or the Docker entrypoint loads Hydra config and values from `.env`.
 2. Environment validation runs before the application is built. Missing required values fail fast.
 3. `KatoCoreLib` builds the active issue-platform client, repository service, OpenHands implementation service, OpenHands testing service, notification service, task publisher, preflight service, and review-comment service.
 4. Startup dependency validation checks repository connections, the active issue-platform connection, the main OpenHands connection, and the testing OpenHands connection unless `OPENHANDS_SKIP_TESTING=true`.
@@ -674,11 +674,11 @@ The review-state target also comes from the active provider config:
 - Bitbucket Issues uses `kato.bitbucket_issues.review_state_field` and `kato.bitbucket_issues.review_state`.
 Processed task state, processed review-comment ids, and pull-request comment context are kept in memory during a run so the agent can skip already-completed work and poll for new review comments without writing local state.
 If email notifications are enabled, install the optional dependency set with `python -m pip install -e ".[notifications]"`.
-The email body text comes from [`completion_email.j2`](kato/templates/email/completion_email.j2) and [`failure_email.j2`](kato/templates/email/failure_email.j2), rendered with Jinja2 template variables at runtime.
+The email body text comes from [`completion_email.j2`](kato_core_lib/templates/email/completion_email.j2) and [`failure_email.j2`](kato_core_lib/templates/email/failure_email.j2), rendered with Jinja2 template variables at runtime.
 The Hydra config is registered through [`hydra_plugins/kato/kato_searchpath.py`](hydra_plugins/kato/kato_searchpath.py), so standard Hydra overrides work. Example:
 
 ```bash
-python -m kato.main kato.retry.max_retries=7
+python -m kato_core_lib.main kato.retry.max_retries=7
 ```
 
 ### Open Source Notes
@@ -828,7 +828,7 @@ pip install -e .
 
 2. Fill `.env` instead of exporting variables one by one. Start from `.env.example` and update the values you need there.
 
-3. Adjust `kato/config/kato_core_lib.yaml` only if you need settings beyond what `.env` exposes, such as extra repositories or retry tuning via `KATO_EXTERNAL_API_MAX_RETRIES`. Issue states, review columns, and review-ready email recipients can now be configured directly in `.env`.
+3. Adjust `kato_core_lib/config/kato_core_lib.yaml` only if you need settings beyond what `.env` exposes, such as extra repositories or retry tuning via `KATO_EXTERNAL_API_MAX_RETRIES`. Issue states, review columns, and review-ready email recipients can now be configured directly in `.env`.
 
 ```yaml
 kato:
@@ -889,7 +889,7 @@ kato:
 set -a
 source .env
 set +a
-python -m kato.main
+python -m kato_core_lib.main
 ```
 
 ### Docker Compose
@@ -909,7 +909,7 @@ What the compose stack does:
 - starts an `openhands` container on port `3000`
 - builds and starts an `kato` container from this repo
 - makes the agent wait until OpenHands is reachable at `http://openhands:3000`
-- then runs `python -m kato.main`
+- then runs `python -m kato_core_lib.main`
 
 The compose file uses the current official OpenHands container image pattern from the OpenHands docs:
 
@@ -982,7 +982,7 @@ For a normal Ctrl+C → `make compose-up` cycle there is nothing to clean. The t
 
 Kato hands large amounts of trust to the underlying agent (Claude / OpenHands): the agent reads the task description, decides which files to edit, and writes the changes. What kato actually does to contain a misbehaving agent today:
 
-- **Prompt-level guardrails** baked into every kato prompt ([cli_client.py](kato/client/claude/cli_client.py)) ask the agent not to touch credentials, escape the repository, or run git commands. These are advisory — a sufficiently determined or compromised model can ignore them.
+- **Prompt-level guardrails** baked into every kato prompt ([cli_client.py](kato_core_lib/client/claude/cli_client.py)) ask the agent not to touch credentials, escape the repository, or run git commands. These are advisory — a sufficiently determined or compromised model can ignore them.
 - **Per-tool permission prompts via the planning UI** when `KATO_CLAUDE_BYPASS_PERMISSIONS=false` (the default). Each Bash / write-style tool call fires a modal that you Approve / Deny by hand, and the decision is sent back to Claude before it can act. This is the real interactive safety layer; it only works when you're watching.
 - **Per-task workspace isolation on the filesystem.** Each task gets a fresh clone under `~/.kato/workspaces/<task-id>/`. Two parallel tasks don't share branch state. This is isolation between *tasks*, not between *the agent and your machine*.
 
@@ -999,7 +999,7 @@ What kato does **not** do today:
 - **Double-prompt on every interactive boot.** When stdin is a TTY, kato asks the operator twice with `prompt_yes_no` ("are you sure?" then "final confirmation, this disables every per-tool prompt for the entire session?"). Either no aborts startup. A fat-fingered Enter cannot slip through.
 - **Unmissable stderr banner** at every boot, written before logger configuration so log level cannot suppress it.
 - **Persistent red banner across the top of the planning UI** — every operator looking at the browser sees the bypass state.
-- **Configurator requires typing `I ACCEPT`** before writing the flag (`python -m kato.configure_project`).
+- **Configurator requires typing `I ACCEPT`** before writing the flag (`python -m kato_core_lib.configure_project`).
 - **Per-spawn `WARNING` log** on every Claude turn naming the loss of per-tool prompts.
 
 Only enable bypass when you've already locked the agent down at a different layer (devcontainer, dedicated VM, scoped credentials, egress firewall — see SECURITY.md).

@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import Mock, call, patch
 
 
-from kato.main import (
+from kato_core_lib.main import (
     _RESUME_CONTINUE_PROMPT,
     _RESUME_WAIT_PROMPT,
     _resume_prompt_for_workspace,
@@ -27,12 +27,12 @@ class MainTests(unittest.TestCase):
     def test_main_returns_zero_on_success(self) -> None:
         app = types.SimpleNamespace(logger=Mock())
 
-        with patch('kato.main.validate_environment') as mock_validate_environment, patch(
-            'kato.main.KatoInstance.init'
+        with patch('kato_core_lib.main.validate_environment') as mock_validate_environment, patch(
+            'kato_core_lib.main.KatoInstance.init'
         ) as mock_init, patch(
-            'kato.main.KatoInstance.get',
+            'kato_core_lib.main.KatoInstance.get',
             return_value=app,
-        ), patch('kato.main._run_task_scan_loop') as mock_run_loop:
+        ), patch('kato_core_lib.main._run_task_scan_loop') as mock_run_loop:
             result = main(self.cfg)
 
         self.assertEqual(result, 0)
@@ -49,14 +49,14 @@ class MainTests(unittest.TestCase):
         configured_logger = Mock()
         app = types.SimpleNamespace(logger=None)
 
-        with patch('kato.main.validate_environment'), patch(
-            'kato.main.configure_logger', return_value=configured_logger
+        with patch('kato_core_lib.main.validate_environment'), patch(
+            'kato_core_lib.main.configure_logger', return_value=configured_logger
         ), patch(
-            'kato.main.KatoInstance.init'
+            'kato_core_lib.main.KatoInstance.init'
         ), patch(
-            'kato.main.KatoInstance.get',
+            'kato_core_lib.main.KatoInstance.get',
             return_value=app,
-        ), patch('kato.main._run_task_scan_loop'):
+        ), patch('kato_core_lib.main._run_task_scan_loop'):
             main(self.cfg)
 
         self.assertIs(app.logger, configured_logger)
@@ -66,10 +66,10 @@ class MainTests(unittest.TestCase):
         job = Mock()
         job.run.side_effect = [None, None]
 
-        with patch('kato.main.ProcessAssignedTasksJob', return_value=job) as mock_job_cls, patch(
-            'kato.main.supports_inline_status',
+        with patch('kato_core_lib.main.ProcessAssignedTasksJob', return_value=job) as mock_job_cls, patch(
+            'kato_core_lib.main.supports_inline_status',
             return_value=False,
-        ), patch('kato.main.time.sleep') as mock_sleep:
+        ), patch('kato_core_lib.main.time.sleep') as mock_sleep:
             _run_task_scan_loop(
                 app,
                 startup_delay_seconds=30.0,
@@ -101,11 +101,11 @@ class MainTests(unittest.TestCase):
         job = Mock()
         job.run.side_effect = [None]
 
-        with patch('kato.main.ProcessAssignedTasksJob', return_value=job), patch(
-            'kato.main.supports_inline_status',
+        with patch('kato_core_lib.main.ProcessAssignedTasksJob', return_value=job), patch(
+            'kato_core_lib.main.supports_inline_status',
             return_value=True,
         ), patch(
-            'kato.main.sleep_with_warmup_countdown'
+            'kato_core_lib.main.sleep_with_warmup_countdown'
         ) as mock_warmup_countdown:
             _run_task_scan_loop(
                 app,
@@ -125,8 +125,8 @@ class MainTests(unittest.TestCase):
         job = Mock()
         job.run.side_effect = [RuntimeError('service down'), None]
 
-        with patch('kato.main.ProcessAssignedTasksJob', return_value=job), patch(
-            'kato.main.time.sleep'
+        with patch('kato_core_lib.main.ProcessAssignedTasksJob', return_value=job), patch(
+            'kato_core_lib.main.time.sleep'
         ) as mock_sleep:
             _run_task_scan_loop(
                 app,
@@ -231,11 +231,11 @@ class MainTests(unittest.TestCase):
         configured_logger = Mock()
         env_error = ValueError('unsupported issue platform: linear')
 
-        with patch('kato.main.configure_logger', return_value=configured_logger), patch(
-            'kato.main.validate_environment',
+        with patch('kato_core_lib.main.configure_logger', return_value=configured_logger), patch(
+            'kato_core_lib.main.validate_environment',
             side_effect=env_error,
         ), patch(
-            'kato.main.KatoInstance.init',
+            'kato_core_lib.main.KatoInstance.init',
         ) as mock_init:
             result = main(self.cfg)
 
@@ -253,28 +253,28 @@ class MainTests(unittest.TestCase):
         """
         app = types.SimpleNamespace(logger=Mock())
 
-        with patch('kato.main.validate_environment'), patch(
-            'kato.main.validate_bypass_permissions'
+        with patch('kato_core_lib.main.validate_environment'), patch(
+            'kato_core_lib.main.validate_bypass_permissions'
         ), patch(
-            'kato.main.print_security_posture'
+            'kato_core_lib.main.print_security_posture'
         ), patch(
-            'kato.main.KatoInstance.init'
+            'kato_core_lib.main.KatoInstance.init'
         ), patch(
-            'kato.main.KatoInstance.get', return_value=app,
+            'kato_core_lib.main.KatoInstance.get', return_value=app,
         ), patch(
-            'kato.main._run_task_scan_loop'
+            'kato_core_lib.main._run_task_scan_loop'
         ), patch(
-            'kato.validation.bypass_permissions_validator.is_docker_mode_enabled',
+            'kato_core_lib.validation.bypass_permissions_validator.is_docker_mode_enabled',
             return_value=True,
         ), patch(
-            'kato.sandbox.manager.check_docker_or_exit'
+            'kato_core_lib.sandbox.manager.check_docker_or_exit'
         ) as mock_check_docker, patch(
-            'kato.sandbox.manager.check_gvisor_or_exit'
+            'kato_core_lib.sandbox.manager.check_gvisor_or_exit'
         ) as mock_check_gvisor, patch(
-            'kato.sandbox.manager.gvisor_runtime_available',
+            'kato_core_lib.sandbox.manager.gvisor_runtime_available',
             return_value=True,
         ) as mock_gvisor_runtime, patch(
-            'kato.sandbox.manager.docker_running_rootless',
+            'kato_core_lib.sandbox.manager.docker_running_rootless',
             return_value=True,
         ) as mock_rootless:
             main(self.cfg)
@@ -293,27 +293,27 @@ class MainTests(unittest.TestCase):
         """
         app = types.SimpleNamespace(logger=Mock())
 
-        with patch('kato.main.validate_environment'), patch(
-            'kato.main.validate_bypass_permissions'
+        with patch('kato_core_lib.main.validate_environment'), patch(
+            'kato_core_lib.main.validate_bypass_permissions'
         ), patch(
-            'kato.main.print_security_posture'
+            'kato_core_lib.main.print_security_posture'
         ), patch(
-            'kato.main.KatoInstance.init'
+            'kato_core_lib.main.KatoInstance.init'
         ), patch(
-            'kato.main.KatoInstance.get', return_value=app,
+            'kato_core_lib.main.KatoInstance.get', return_value=app,
         ), patch(
-            'kato.main._run_task_scan_loop'
+            'kato_core_lib.main._run_task_scan_loop'
         ), patch(
-            'kato.validation.bypass_permissions_validator.is_docker_mode_enabled',
+            'kato_core_lib.validation.bypass_permissions_validator.is_docker_mode_enabled',
             return_value=False,
         ), patch(
-            'kato.sandbox.manager.check_docker_or_exit'
+            'kato_core_lib.sandbox.manager.check_docker_or_exit'
         ) as mock_check_docker, patch(
-            'kato.sandbox.manager.check_gvisor_or_exit'
+            'kato_core_lib.sandbox.manager.check_gvisor_or_exit'
         ) as mock_check_gvisor, patch(
-            'kato.sandbox.manager.gvisor_runtime_available'
+            'kato_core_lib.sandbox.manager.gvisor_runtime_available'
         ) as mock_gvisor_runtime, patch(
-            'kato.sandbox.manager.docker_running_rootless'
+            'kato_core_lib.sandbox.manager.docker_running_rootless'
         ) as mock_rootless:
             main(self.cfg)
 

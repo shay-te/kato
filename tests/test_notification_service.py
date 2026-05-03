@@ -2,8 +2,8 @@ import unittest
 from unittest.mock import Mock, patch
 
 
-from kato.data_layers.service.notification_service import NotificationService
-from kato.data_layers.data.fields import EmailFields, PullRequestFields
+from kato_core_lib.data_layers.service.notification_service import NotificationService
+from kato_core_lib.data_layers.data.fields import EmailFields, PullRequestFields
 from utils import build_task, build_test_cfg
 
 

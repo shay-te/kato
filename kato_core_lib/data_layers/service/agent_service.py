@@ -1,0 +1,1059 @@
+from __future__ import annotations
+
+import copy
+import logging
+from dataclasses import dataclass
+
+from core_lib.data_layers.service.service import Service
+
+from kato_core_lib.data_layers.service.agent_state_registry import AgentStateRegistry
+from kato_core_lib.data_layers.service.task_failure_handler import TaskFailureHandler
+from kato_core_lib.data_layers.service.review_comment_service import ReviewCommentService
+from kato_core_lib.data_layers.service.task_publisher import TaskPublisher
+from kato_core_lib.data_layers.service.task_state_service import TaskStateService
+from kato_core_lib.validation.repository_connections import (
+    RepositoryConnectionsValidator,
+)
+from kato_core_lib.validation.startup_dependency_validator import (
+    StartupDependencyValidator,
+)
+from kato_core_lib.helpers.logging_utils import configure_logger
+from kato_core_lib.helpers.mission_logging_utils import log_mission_step
+from kato_core_lib.data_layers.data.task import Task
+from kato_core_lib.data_layers.service.implementation_service import ImplementationService
+from kato_core_lib.helpers.task_context_utils import PreparedTaskContext, session_suffix
+from kato_core_lib.data_layers.service.notification_service import NotificationService
+from kato_core_lib.data_layers.service.repository_service import (
+    RepositoryHasNoChangesError,
+    RepositoryService,
+)
+from kato_core_lib.data_layers.service.task_preflight_service import (
+    TaskPreflightService,
+)
+from kato_core_lib.data_layers.service.task_service import TaskService
+from kato_core_lib.data_layers.service.testing_service import TestingService
+from kato_core_lib.data_layers.service.workspace_manager import (
+    WORKSPACE_STATUS_ACTIVE,
+    WORKSPACE_STATUS_ERRORED,
+    WORKSPACE_STATUS_PROVISIONING,
+    WORKSPACE_STATUS_REVIEW,
+)
+from kato_core_lib.data_layers.data.fields import (
+    ImplementationFields,
+    StatusFields,
+    TaskTags,
+)
+from kato_core_lib.data_layers.data.review_comment import ReviewComment
+from kato_core_lib.validation.branch_publishability import (
+    TaskBranchPublishabilityValidator,
+)
+from kato_core_lib.validation.branch_push import TaskBranchPushValidator
+from kato_core_lib.validation.model_access import TaskModelAccessValidator
+from kato_core_lib.helpers.task_execution_utils import (
+    apply_testing_message,
+    implementation_succeeded,
+    testing_failed_result,
+    testing_succeeded,
+)
+
+
+# ``RepositoryHasNoChangesError`` is the "no work to publish" outcome
+# from the publish path. With the per-repo ``branch_needs_push``
+# pre-filter in ``push_task`` we shouldn't trip it normally, but a
+# concurrent push or a workspace state change can still race us — log
+# those one-liners and move on instead of dumping a full stack trace.
+_ON_DEMAND_PUSH_EXPECTED_ERRORS = (RepositoryHasNoChangesError,)
+
+
+@dataclass(frozen=True)
+class _PublishTaskLite(object):
+    """Minimal Task-shaped object for on-demand push / PR-creation.
+
+    The repository service's ``build_branch_name`` and the publication
+    path only read ``.id`` and ``.summary``; carrying a full ``Task``
+    (with tags, comments, watchers, etc.) here would require re-fetching
+    from the ticket system on every button click.
+    """
+
+    id: str
+    summary: str = ''
+
+
+class AgentService(Service):
+    """Orchestrate the end-to-end task workflow and delegate specialized work to collaborators."""
+    # NOTE: Task and review coordination state is kept in memory only.
+    # It is not durable across process restarts.
+    def __init__(
+        self,
+        task_service: TaskService,
+        task_state_service: TaskStateService,
+        implementation_service: ImplementationService,
+        testing_service: TestingService,
+        repository_service: RepositoryService,
+        notification_service: NotificationService,
+        state_registry: AgentStateRegistry | None = None,
+        review_comment_service: ReviewCommentService | None = None,
+        task_failure_handler: TaskFailureHandler | None = None,
+        task_publisher: TaskPublisher | None = None,
+        repository_connections_validator: RepositoryConnectionsValidator | None = None,
+        startup_validator: StartupDependencyValidator | None = None,
+        task_preflight_service: TaskPreflightService | None = None,
+        skip_testing: bool = False,
+        planning_session_runner=None,
+        session_manager=None,
+        workspace_manager=None,
+        parallel_task_runner=None,
+        wait_planning_service=None,
+        triage_service=None,
+        review_workspace_ttl_seconds: float = 3600.0,
+        logger: logging.Logger | None = None,
+    ) -> None:
+        self.logger = logger or configure_logger(self.__class__.__name__)
+        if task_service is None:
+            raise ValueError('task_service is required')
+        if task_state_service is None:
+            raise ValueError('task_state_service is required')
+        if implementation_service is None:
+            raise ValueError('implementation_service is required')
+        if testing_service is None:
+            raise ValueError('testing_service is required')
+        if repository_service is None:
+            raise ValueError('repository_service is required')
+        if notification_service is None:
+            raise ValueError('notification_service is required')
+        if review_comment_service is not None:
+            review_state_registry = review_comment_service.state_registry
+            if state_registry is not None and review_state_registry is not state_registry:
+                raise ValueError(
+                    'state_registry must match review_comment_service.state_registry'
+                )
+            state_registry = state_registry or review_state_registry
+        self._task_service = task_service
+        self._task_state_service = task_state_service
+        self._implementation_service = implementation_service
+        self._testing_service = testing_service
+        self._repository_service = repository_service
+        self._notification_service = notification_service
+        self._skip_testing = bool(skip_testing)
+        self._planning_session_runner = planning_session_runner
+        self._session_manager = session_manager
+        self._workspace_manager = workspace_manager
+        self._parallel_task_runner = parallel_task_runner
+        self._wait_planning_service = wait_planning_service
+        self._triage_service = triage_service
+        self._review_workspace_ttl_seconds = max(
+            0.0, float(review_workspace_ttl_seconds or 0.0),
+        )
+        # `kato:wait-before-git-push` plumbing. The dict stashes the
+        # (task, prepared_task, execution) tuple after testing so the
+        # operator-triggered ``approve_push`` can resume publish without
+        # re-running the agent. In-memory only — a kato restart loses
+        # pending approvals (the workspace branch + commits survive on
+        # disk; operator can re-trigger by removing the tag and letting
+        # the next scan re-process the task).
+        # ``RLock`` rather than ``Lock`` so a future approve-flow callback
+        # that re-enters ``is_awaiting_push_approval`` from inside another
+        # critical section won't deadlock.
+        import threading as _threading
+        self._pending_publish_lock = _threading.RLock()
+        self._pending_publish: dict[str, tuple] = {}
+        self._state_registry = state_registry or AgentStateRegistry()
+        self._review_comment_service = review_comment_service or ReviewCommentService(
+            self._task_service,
+            self._implementation_service,
+            self._repository_service,
+            self._state_registry,
+        )
+        self._repository_connections_validator = (
+            repository_connections_validator
+            or RepositoryConnectionsValidator(self._repository_service)
+        )
+        self._task_failure_handler = task_failure_handler or TaskFailureHandler(
+            self._task_service,
+            self._task_state_service,
+            self._repository_service,
+            self._notification_service,
+        )
+        self._startup_validator = startup_validator or StartupDependencyValidator(
+            self._repository_connections_validator,
+            self._task_service,
+            self._implementation_service,
+            self._testing_service,
+            self._skip_testing,
+        )
+        self._task_preflight_service = task_preflight_service or TaskPreflightService(
+            task_model_access_validator=TaskModelAccessValidator(
+                self._implementation_service,
+            ),
+            task_service=self._task_service,
+            repository_service=self._repository_service,
+            task_branch_push_validator=TaskBranchPushValidator(
+                self._repository_service,
+            ),
+            task_branch_publishability_validator=TaskBranchPublishabilityValidator(
+                self._repository_service,
+            ),
+        )
+        self._task_publisher = task_publisher or TaskPublisher(
+            self._task_service,
+            self._task_state_service,
+            self._repository_service,
+            self._notification_service,
+            self._state_registry,
+            self._task_failure_handler,
+        )
+
+    @property
+    def notification_service(self) -> NotificationService:
+        return self._notification_service
+
+    def validate_connections(self) -> None:
+        self._startup_validator.validate(self.logger)
+
+    def shutdown(self) -> None:
+        """Tear down everything kato owns: pool, sessions, conversations.
+
+        Wired into the kato main process's signal handler. Each step is
+        guarded so a single failure can't block the rest of the cleanup.
+        Idempotent — safe to call twice.
+        """
+        if self._parallel_task_runner is not None:
+            try:
+                self._parallel_task_runner.shutdown(wait=True)
+            except Exception:
+                self.logger.exception('error during parallel-runner shutdown')
+        try:
+            self._implementation_service.stop_all_conversations()
+        except Exception:
+            self.logger.exception('error stopping implementation conversations')
+        try:
+            self._testing_service.stop_all_conversations()
+        except Exception:
+            self.logger.exception('error stopping testing conversations')
+        if self._session_manager is not None:
+            try:
+                self._session_manager.shutdown()
+            except Exception:
+                self.logger.exception('error tearing down planning sessions on shutdown')
+
+    def get_assigned_tasks(self) -> list[Task]:
+        return self._task_service.get_assigned_tasks()
+
+    @property
+    def parallel_task_runner(self):
+        """Worker pool used by the scan job to run tasks concurrently.
+
+        ``None`` when the runner wasn't wired (legacy / test setups).
+        Callers are expected to fall back to inline execution in that
+        case so the same code path works with and without the runner.
+        """
+        return self._parallel_task_runner
+
+    def get_new_pull_request_comments(self) -> list[ReviewComment]:
+        self._cleanup_done_task_conversations()
+        return self._review_comment_service.get_new_pull_request_comments()
+
+    def _cleanup_done_task_conversations(self) -> None:
+        """Delete conversation containers for tasks no longer in the review state.
+
+        When a reviewer merges a PR and moves the task to done, Kato detects
+        it is missing from the review-task list and removes the associated
+        agent-server container to avoid accumulation.
+        """
+        try:
+            current_review_task_ids = {
+                str(task.id) for task in self._task_service.get_review_tasks()
+            }
+        except Exception:
+            self.logger.warning(
+                'failed to fetch review tasks for conversation cleanup; skipping'
+            )
+            return
+
+        stale_task_ids = self._state_registry.tracked_task_ids() - current_review_task_ids
+        for task_id in stale_task_ids:
+            for session_id in self._state_registry.session_ids_for_task(task_id):
+                self.logger.info(
+                    'task %s is no longer in review; stopping conversation %s',
+                    task_id,
+                    session_id,
+                )
+                try:
+                    self._implementation_service.delete_conversation(session_id)
+                except Exception:
+                    self.logger.warning(
+                        'failed to stop conversation %s for done task %s',
+                        session_id,
+                        task_id,
+                    )
+            self._state_registry.forget_task(task_id)
+
+        self._cleanup_done_planning_sessions(current_review_task_ids)
+
+    def _cleanup_done_planning_sessions(
+        self,
+        current_review_task_ids: set[str],
+    ) -> None:
+        """Drop planning-UI tabs + workspaces whose ticket has moved to done/closed.
+
+        A streaming session and its workspace folder are kept on disk
+        while the ticket is in ``Open`` or in the configured review
+        states. Once the ticket leaves both buckets — i.e. the reviewer
+        marked it done or closed — we terminate the live subprocess (if
+        any), delete the persisted session record, and remove the
+        workspace folder. The tab disappears from the planning UI on
+        the next refresh.
+        """
+        if self._session_manager is None and self._workspace_manager is None:
+            return
+        try:
+            current_assigned_task_ids = {
+                str(task.id) for task in self._task_service.get_assigned_tasks()
+            }
+        except Exception:
+            self.logger.warning(
+                'failed to fetch assigned tasks for session cleanup; '
+                'leaving planning sessions in place this cycle'
+            )
+            return
+
+        live_task_ids = current_assigned_task_ids | current_review_task_ids
+        for task_id in self._stale_planning_task_ids(live_task_ids):
+            self.logger.info(
+                'task %s is no longer assigned or in review; '
+                'closing planning session tab + deleting workspace',
+                task_id,
+            )
+            self._terminate_session_silent(task_id)
+            self._delete_workspace_silent(task_id)
+
+    def _stale_planning_task_ids(self, live_task_ids: set[str]) -> set[str]:
+        """Union of task ids known to either manager that aren't live anymore.
+
+        Workspaces still in ``active`` or ``provisioning`` are protected from
+        cleanup even when the ticket has rotated out of the assigned state
+        bucket — kato moves the ticket to *In Progress* itself, which makes
+        it momentarily disappear from both ``get_assigned_tasks()`` and
+        ``get_review_tasks()``. Without this guard, the next scan tick
+        would wipe a workspace kato is actively driving.
+
+        Also: review-status workspaces older than
+        ``review_workspace_ttl_seconds`` are eligible for cleanup even
+        if the ticket is still in the review bucket. This keeps the local
+        workspace cache from accumulating stale clones for tickets sitting
+        in review for hours/days. Review-comment fix flow re-clones on
+        demand if a workspace was already cleaned.
+        """
+        import time as _time
+
+        candidates: set[str] = set()
+        in_flight_workspace_ids: set[str] = set()
+        review_ttl_expired: set[str] = set()
+        ttl = self._review_workspace_ttl_seconds
+        now_epoch = _time.time()
+        if self._session_manager is not None:
+            try:
+                candidates.update(
+                    record.task_id for record in self._session_manager.list_records()
+                )
+            except Exception:
+                self.logger.exception('failed to list planning session records')
+        if self._workspace_manager is not None:
+            try:
+                workspace_records = self._workspace_manager.list_workspaces()
+            except Exception:
+                self.logger.exception('failed to list workspaces')
+                workspace_records = []
+            for record in workspace_records:
+                candidates.add(record.task_id)
+                status = getattr(record, 'status', '')
+                if status in (WORKSPACE_STATUS_ACTIVE, WORKSPACE_STATUS_PROVISIONING):
+                    in_flight_workspace_ids.add(record.task_id)
+                elif status == WORKSPACE_STATUS_REVIEW and ttl > 0:
+                    updated = float(getattr(record, 'updated_at_epoch', 0.0) or 0.0)
+                    if updated > 0 and (now_epoch - updated) > ttl:
+                        review_ttl_expired.add(record.task_id)
+        return (candidates - live_task_ids - in_flight_workspace_ids) | (
+            review_ttl_expired - in_flight_workspace_ids
+        )
+
+    def _terminate_session_silent(self, task_id: str) -> None:
+        if self._session_manager is None:
+            return
+        try:
+            self._session_manager.terminate_session(task_id, remove_record=True)
+        except Exception:
+            self.logger.exception(
+                'failed to close planning session for task %s', task_id,
+            )
+
+    def _delete_workspace_silent(self, task_id: str) -> None:
+        if self._workspace_manager is None:
+            return
+        try:
+            self._workspace_manager.delete(task_id)
+        except Exception:
+            self.logger.exception(
+                'failed to delete workspace for task %s', task_id,
+            )
+
+    def _update_workspace_status_after_publish(
+        self,
+        task_id: str,
+        publish_result: dict[str, object] | None,
+    ) -> None:
+        if self._workspace_manager is None or not publish_result:
+            return
+        status = publish_result.get(StatusFields.STATUS)
+        if status == StatusFields.READY_FOR_REVIEW:
+            target = WORKSPACE_STATUS_REVIEW
+        elif status == StatusFields.PARTIAL_FAILURE:
+            target = WORKSPACE_STATUS_ERRORED
+        else:
+            return
+        try:
+            self._workspace_manager.update_status(str(task_id), target)
+        except Exception:
+            self.logger.exception(
+                'failed to update workspace status for task %s to %s',
+                task_id, target,
+            )
+
+    def handle_pull_request_comment(self, payload: dict) -> dict[str, str]:
+        return self._review_comment_service.handle_pull_request_comment(payload)
+
+    def process_review_comment(self, comment: ReviewComment) -> dict[str, str]:
+        return self._review_comment_service.process_review_comment(comment)
+
+    def process_assigned_task(self, task: Task) -> dict[str, object] | None:
+        # No in-memory "already processed" short-circuit. The ticket system
+        # (state + comments) is the single source of truth: successful tasks
+        # have already been moved out of the scanned states, and skipped/
+        # failed tasks carry comments that the gate and preflight read fresh
+        # on every scan. Remove the comment, the task is re-evaluated.
+
+        # `kato:triage:investigate` short-circuits the orchestration too,
+        # but for a different reason: instead of registering an
+        # interactive chat, kato spends one Claude turn classifying the
+        # task and writes back a kato:triage:<level> outcome tag. No
+        # implementation, no testing, no PR. Runs *before* wait-planning
+        # so a triage task that also carries the wait-planning tag
+        # still gets classified rather than opened as a chat tab.
+        if self._triage_service is not None:
+            triage_result = self._triage_service.handle_task(task)
+            if triage_result is not None:
+                return triage_result
+
+        # `kato:wait-planning` short-circuits the orchestration: register the
+        # planning tab so the human can chat with the agent in the UI, but
+        # do *no* implementation, testing, or publishing work. The user
+        # controls the conversation; remove the tag whenever they want
+        # autonomous execution to take over.
+        if self._wait_planning_service is not None:
+            planning_only_result = self._wait_planning_service.handle_task(task)
+            if planning_only_result is not None:
+                return planning_only_result
+
+        prepared_task = self._task_preflight_service.prepare_task_execution_context(
+            task,
+            task_failure_handler=self._task_failure_handler.handle_task_failure,
+            repository_resolution_failure_handler=(
+                self._task_failure_handler.handle_repository_resolution_failure
+            ),
+            repository_preparation_failure_handler=self._task_failure_handler.handle_task_failure,
+            task_definition_failure_handler=(
+                self._task_failure_handler.handle_task_definition_failure
+            ),
+            branch_preparation_failure_handler=self._task_failure_handler.handle_task_failure,
+            branch_push_failure_handler=self._task_failure_handler.handle_started_task_failure,
+        )
+        if prepared_task is None or isinstance(prepared_task, dict):
+            return prepared_task
+
+        if not self._start_task_processing(task, prepared_task):
+            return None
+        execution = self._run_task_implementation(task, prepared_task)
+        if execution is None:
+            return None
+        testing_succeeded, testing_result, execution = self._run_task_testing_validation(
+            task,
+            prepared_task,
+            execution,
+        )
+        if not testing_succeeded:
+            return testing_result
+        if self._task_has_wait_before_push_tag(task):
+            return self._pause_for_push_approval(task, prepared_task, execution)
+        publish_result = self._task_publisher.publish_task_execution(
+            task,
+            prepared_task,
+            execution,
+        )
+        self._update_workspace_status_after_publish(task.id, publish_result)
+        return publish_result
+
+    @staticmethod
+    def _task_has_wait_before_push_tag(task: Task) -> bool:
+        tags = getattr(task, 'tags', None) or []
+        target = TaskTags.WAIT_BEFORE_GIT_PUSH.lower()
+        for tag in tags:
+            if str(tag or '').strip().lower() == target:
+                return True
+        return False
+
+    def _pause_for_push_approval(
+        self,
+        task: Task,
+        prepared_task: PreparedTaskContext,
+        execution: dict,
+    ) -> dict[str, object]:
+        """Stash the post-test execution context and post a "waiting" comment.
+
+        The actual push happens via :meth:`approve_push` (called from the
+        planning UI's "Approve push" button). We do NOT post the
+        ``Kato completed task`` blocking-comment prefix here — that one
+        signals success and would prevent re-processing. Instead we use
+        a one-off informational comment that does not interfere with the
+        existing comment-driven blocker mechanism.
+        """
+        task_id = str(task.id)
+        with self._pending_publish_lock:
+            self._pending_publish[task_id] = (task, prepared_task, execution)
+        try:
+            self._task_service.add_comment(
+                task_id,
+                'Kato has finished implementation and testing for this task. '
+                'Push and PR creation are paused because '
+                f'`{TaskTags.WAIT_BEFORE_GIT_PUSH}` is set. To proceed, '
+                'click "Approve push" in the planning UI, or remove the '
+                f'`{TaskTags.WAIT_BEFORE_GIT_PUSH}` tag and re-trigger the '
+                'task. Kato — not the agent — performs the push.',
+            )
+        except Exception:
+            self.logger.exception(
+                'failed to post wait-before-push comment for task %s', task_id,
+            )
+        if self._workspace_manager is not None:
+            try:
+                self._workspace_manager.update_status(
+                    task_id, WORKSPACE_STATUS_REVIEW,
+                )
+            except Exception:
+                self.logger.exception(
+                    'failed to update workspace status for task %s', task_id,
+                )
+        self.logger.info(
+            'task %s implementation complete; awaiting push approval', task_id,
+        )
+        return {
+            StatusFields.STATUS: 'awaiting_push_approval',
+            'task_id': task_id,
+        }
+
+    def approve_push(self, task_id: str) -> dict[str, object] | None:
+        """Operator-triggered push for a task paused on ``kato:wait-before-git-push``.
+
+        Returns the publish result on success, or ``None`` when no pending
+        publish exists for the task (e.g. operator clicked the button on a
+        task that wasn't paused, or kato restarted and lost the in-memory
+        pending state).
+        """
+        normalized_task_id = str(task_id or '').strip()
+        if not normalized_task_id:
+            return None
+        with self._pending_publish_lock:
+            pending = self._pending_publish.pop(normalized_task_id, None)
+        if pending is None:
+            return None
+        task, prepared_task, execution = pending
+        self.logger.info(
+            'operator approved push for task %s; resuming publish',
+            normalized_task_id,
+        )
+        publish_result = self._task_publisher.publish_task_execution(
+            task,
+            prepared_task,
+            execution,
+        )
+        self._update_workspace_status_after_publish(task.id, publish_result)
+        return publish_result
+
+    def is_awaiting_push_approval(self, task_id: str) -> bool:
+        """True when ``approve_push`` has a pending publish for this task."""
+        normalized = str(task_id or '').strip()
+        if not normalized:
+            return False
+        with self._pending_publish_lock:
+            return normalized in self._pending_publish
+
+    # ----- on-demand push / PR (planning UI buttons) -----
+
+    def push_task(self, task_id: str) -> dict[str, object]:
+        """Commit + push the task branch for every repo in its workspace.
+
+        Used by the planning UI's ``Push`` button: surfaces the work-in-
+        progress branch on the remote without opening a pull request.
+        Idempotent — pushes again from where the workspace currently is.
+        """
+        normalized = str(task_id or '').strip()
+        if not normalized:
+            return {'pushed': False, 'task_id': task_id, 'error': 'empty task id'}
+        repos, _branch_name, _task = self._resolve_publish_context(normalized)
+        if not repos:
+            return {
+                'pushed': False,
+                'task_id': normalized,
+                'error': 'no workspace context for this task',
+            }
+        pushed_repositories: list[str] = []
+        skipped_repositories: list[dict[str, str]] = []
+        failed_repositories: list[dict[str, str]] = []
+        for repository in repos:
+            branch_name = self._repository_service.build_branch_name(_task, repository)
+            # Only act on repos that actually have unpushed work. The
+            # ``Push`` button is enabled when *any* repo on the task
+            # needs pushing — without this filter we would also call
+            # ``publish_review_fix`` on the in-sync repos and trip
+            # ``_assert_branch_checked_out`` (workspace on master) or
+            # ``RepositoryHasNoChangesError`` for them.
+            try:
+                needs_push = self._repository_service.branch_needs_push(
+                    repository, branch_name,
+                )
+            except Exception:
+                self.logger.exception(
+                    'branch-needs-push pre-check failed for task %s repository %s',
+                    normalized, repository.id,
+                )
+                needs_push = False
+            if not needs_push:
+                skipped_repositories.append({
+                    'repository_id': repository.id,
+                    'reason': 'nothing to push',
+                })
+                continue
+            try:
+                self._repository_service.publish_review_fix(
+                    repository,
+                    branch_name,
+                    commit_message=f'Update {normalized}',
+                )
+                pushed_repositories.append(repository.id)
+                self.logger.info(
+                    'on-demand push for task %s: pushed branch %s to %s',
+                    normalized, branch_name, repository.id,
+                )
+            except _ON_DEMAND_PUSH_EXPECTED_ERRORS as exc:
+                # Race fallback: state changed between the pre-check
+                # and the publish call (e.g. another agent pushed). One
+                # warning line, no traceback.
+                self.logger.warning(
+                    'on-demand push for task %s skipped repository %s: %s',
+                    normalized, repository.id, exc,
+                )
+                failed_repositories.append(
+                    {'repository_id': repository.id, 'error': str(exc)},
+                )
+                continue
+            except Exception as exc:
+                self.logger.exception(
+                    'on-demand push for task %s failed in repository %s',
+                    normalized, repository.id,
+                )
+                failed_repositories.append(
+                    {'repository_id': repository.id, 'error': str(exc)},
+                )
+        return {
+            'pushed': bool(pushed_repositories),
+            'task_id': normalized,
+            'pushed_repositories': pushed_repositories,
+            'skipped_repositories': skipped_repositories,
+            'failed_repositories': failed_repositories,
+        }
+
+    def create_pull_request_for_task(self, task_id: str) -> dict[str, object]:
+        """Open a PR for every repo of the task that doesn't already have one.
+
+        Push happens as part of PR creation (the publication path stages,
+        commits, and pushes before calling the host API). Repos that
+        already have an open PR for this branch are skipped — surfaced
+        in ``skipped_existing`` so the UI can show "PR already exists".
+        """
+        normalized = str(task_id or '').strip()
+        if not normalized:
+            return {'created': False, 'task_id': task_id, 'error': 'empty task id'}
+        repos, _branch_name, task_obj = self._resolve_publish_context(normalized)
+        if not repos:
+            return {
+                'created': False,
+                'task_id': normalized,
+                'error': 'no workspace context for this task',
+            }
+        created: list[dict[str, str]] = []
+        skipped: list[dict[str, str]] = []
+        failed: list[dict[str, str]] = []
+        for repository in repos:
+            branch_name = self._repository_service.build_branch_name(task_obj, repository)
+            try:
+                existing = self._repository_service.find_pull_requests(
+                    repository, source_branch=branch_name,
+                )
+            except Exception:
+                self.logger.exception(
+                    'on-demand PR for task %s: PR lookup failed in repository %s',
+                    normalized, repository.id,
+                )
+                existing = []
+            if existing:
+                first = existing[0] if isinstance(existing[0], dict) else {}
+                skipped.append({
+                    'repository_id': repository.id,
+                    'url': str(first.get('url', '') or ''),
+                })
+                continue
+            try:
+                # Reuse the canonical title builder so on-demand PRs
+                # match the autonomous flow's format: ``<id> <summary>``,
+                # not the older ``Implement <id>`` placeholder. Same
+                # helper task_publisher uses for the auto-published
+                # flow, so PR titles are consistent regardless of which
+                # path opened them.
+                from kato_core_lib.helpers.pull_request_utils import pull_request_title
+                title = pull_request_title(task_obj)
+                pull_request = self._repository_service.create_pull_request(
+                    repository,
+                    title=title,
+                    source_branch=branch_name,
+                    description=str(getattr(task_obj, 'summary', '') or ''),
+                    commit_message=title,
+                )
+                created.append({
+                    'repository_id': repository.id,
+                    'url': str(pull_request.get('url', '') or ''),
+                })
+                self.logger.info(
+                    'on-demand PR for task %s: opened %s in %s',
+                    normalized, pull_request.get('url', ''), repository.id,
+                )
+            except _ON_DEMAND_PUSH_EXPECTED_ERRORS as exc:
+                # "No changes to publish" race fallback — the workspace
+                # state shifted between the pre-check and the create
+                # call. One warning line, no traceback.
+                self.logger.warning(
+                    'on-demand PR for task %s skipped repository %s: %s',
+                    normalized, repository.id, exc,
+                )
+                failed.append(
+                    {'repository_id': repository.id, 'error': str(exc)},
+                )
+            except RuntimeError as exc:
+                # The publish path raises bare RuntimeError for two
+                # well-known cases: "expected branch X but found Y"
+                # (workspace drift — handled by the boot-time realigner
+                # and the diff-tab self-heal) and "remote rejected
+                # ... reference already exists" (Git push of a branch
+                # the remote already has at a different commit). Both
+                # are operator-visible state issues, not kato bugs —
+                # surface as a one-line warning, no stack trace.
+                if 'expected repository' in str(exc) or 'reference already exists' in str(exc):
+                    self.logger.warning(
+                        'on-demand PR for task %s skipped repository %s: %s',
+                        normalized, repository.id, exc,
+                    )
+                    failed.append(
+                        {'repository_id': repository.id, 'error': str(exc)},
+                    )
+                else:
+                    self.logger.exception(
+                        'on-demand PR for task %s failed in repository %s',
+                        normalized, repository.id,
+                    )
+                    failed.append(
+                        {'repository_id': repository.id, 'error': str(exc)},
+                    )
+            except Exception as exc:
+                self.logger.exception(
+                    'on-demand PR for task %s failed in repository %s',
+                    normalized, repository.id,
+                )
+                failed.append(
+                    {'repository_id': repository.id, 'error': str(exc)},
+                )
+        return {
+            'created': bool(created),
+            'task_id': normalized,
+            'created_pull_requests': created,
+            'skipped_existing': skipped,
+            'failed_repositories': failed,
+        }
+
+    def finish_task_planning_session(self, task_id: str) -> dict[str, object]:
+        """Finalize a wait-planning chat task in one call.
+
+        Equivalent to the operator clicking, in sequence: ``Push`` →
+        ``Pull request`` → manually moving the ticket to In Review on
+        the issue tracker. Idempotent: if everything is already pushed
+        and the PR already exists, only the ticket-state move runs.
+        Used by both the backend sentinel detector (Claude printed
+        ``<KATO_TASK_DONE>``) and the planning UI's ``Done`` button.
+
+        Returns a summary the UI can render — operator gets one
+        notification per repo with what happened.
+        """
+        normalized = str(task_id or '').strip()
+        if not normalized:
+            return {
+                'finished': False,
+                'task_id': task_id,
+                'error': 'empty task id',
+            }
+        push_result = self.push_task(normalized)
+        pr_result = self.create_pull_request_for_task(normalized)
+        moved_to_review = False
+        move_error = ''
+        try:
+            self._task_state_service.move_task_to_review(normalized)
+            moved_to_review = True
+            self.logger.info(
+                'finished planning session for task %s: moved to In Review',
+                normalized,
+            )
+        except Exception as exc:
+            move_error = str(exc) or exc.__class__.__name__
+            # Full traceback to the kato terminal so the operator can
+            # diagnose state-machine / auth / config issues. UI also
+            # surfaces the message inline via the /finish response.
+            self.logger.exception(
+                'failed to move task %s to In Review during finish',
+                normalized,
+            )
+        return {
+            'finished': moved_to_review,
+            'task_id': normalized,
+            'pushed': push_result,
+            'pull_request': pr_result,
+            'moved_to_review': moved_to_review,
+            'move_error': move_error,
+        }
+
+    def task_publish_state(self, task_id: str) -> dict[str, object]:
+        """Workspace + push-readiness + PR-existence summary for the UI.
+
+        Drives the disabled state of the planning UI's Push and Pull
+        request buttons:
+
+        - ``has_workspace=False``    → no workspace on disk yet; both
+          buttons stay disabled.
+        - ``has_changes_to_push``    → the Push button is enabled when
+          *any* repo has unpushed work (dirty tree, branch never pushed,
+          or local ahead of ``origin/<branch>``); disabled when every
+          repo is in sync with its remote.
+        - ``has_pull_request``       → the Pull request button is
+          disabled and the existing URL is surfaced as a hint.
+
+        Best-effort: any per-repo lookup failure is ignored so a
+        transient git/API hiccup doesn't lock the UI buttons forever.
+        """
+        normalized = str(task_id or '').strip()
+        if not normalized:
+            return {
+                'has_workspace': False,
+                'has_changes_to_push': False,
+                'has_pull_request': False,
+            }
+        repos, _branch_name, task_obj = self._resolve_publish_context(normalized)
+        if not repos:
+            return {
+                'has_workspace': False,
+                'has_changes_to_push': False,
+                'has_pull_request': False,
+            }
+        has_pull_request = False
+        has_changes_to_push = False
+        pull_request_urls: list[str] = []
+        for repository in repos:
+            branch_name = self._repository_service.build_branch_name(task_obj, repository)
+            if not has_changes_to_push:
+                try:
+                    if self._repository_service.branch_needs_push(
+                        repository, branch_name,
+                    ):
+                        has_changes_to_push = True
+                except Exception:
+                    self.logger.exception(
+                        'branch-needs-push check failed for task %s repository %s',
+                        normalized, repository.id,
+                    )
+            try:
+                existing = self._repository_service.find_pull_requests(
+                    repository, source_branch=branch_name,
+                )
+            except Exception:
+                self.logger.exception(
+                    'PR lookup failed for task %s repository %s',
+                    normalized, repository.id,
+                )
+                continue
+            if existing:
+                has_pull_request = True
+                first = existing[0] if isinstance(existing[0], dict) else {}
+                url = str(first.get('url', '') or '')
+                if url:
+                    pull_request_urls.append(url)
+        return {
+            'has_workspace': True,
+            'has_changes_to_push': has_changes_to_push,
+            'has_pull_request': has_pull_request,
+            'pull_request_urls': pull_request_urls,
+        }
+
+    def _resolve_publish_context(self, task_id: str):
+        """Build (repos-with-local-path, branch_name, task-lite) for ``task_id``.
+
+        Reads the workspace record + the inventory repositories, then
+        rewrites ``local_path`` on each repo to its workspace clone path
+        (the same shape :func:`provision_task_workspace_clones` produces
+        for the autonomous flow). Returns ``([], '', None)`` whenever the
+        task has no on-disk workspace — both UI buttons rely on that as
+        the "disable everything" signal.
+        """
+        if self._workspace_manager is None:
+            return [], '', None
+        workspace = self._workspace_manager.get(task_id)
+        if workspace is None:
+            return [], '', None
+        rewritten = []
+        for repository_id in workspace.repository_ids:
+            try:
+                inventory_repo = self._repository_service.get_repository(repository_id)
+            except ValueError:
+                self.logger.warning(
+                    'workspace for task %s references unknown repository %s; skipping',
+                    task_id, repository_id,
+                )
+                continue
+            clone_path = self._workspace_manager.repository_path(task_id, repository_id)
+            rewritten_repo = copy.copy(inventory_repo)
+            rewritten_repo.local_path = str(clone_path)
+            rewritten.append(rewritten_repo)
+        if not rewritten:
+            return [], '', None
+        task_lite = _PublishTaskLite(
+            id=task_id, summary=str(workspace.task_summary or ''),
+        )
+        # build_branch_name only reads ``id`` / ``summary`` so the lite
+        # object is a faithful stand-in here.
+        branch_name = self._repository_service.build_branch_name(task_lite, rewritten[0])
+        return rewritten, branch_name, task_lite
+
+    def _start_task_processing(self, task: Task, prepared_task: PreparedTaskContext) -> bool:
+        try:
+            self._log_task_step(task.id, 'moving issue to in progress')
+            self._task_state_service.move_task_to_in_progress(task.id)
+            self._log_task_step(task.id, 'moved issue to in progress')
+        except Exception as exc:
+            self._task_failure_handler.handle_task_failure(task, exc, prepared_task=prepared_task)
+            return False
+        self._task_publisher.comment_task_started(task, prepared_task.repositories)
+        return True
+
+    def _run_task_implementation(
+        self,
+        task: Task,
+        prepared_task: PreparedTaskContext,
+    ) -> dict[str, str | bool] | None:
+        self._log_task_step(task.id, 'starting implementation')
+        # ``kato:wait-planning`` is short-circuited earlier — by the time we
+        # get here the task is one we *will* execute. Route through the
+        # streaming runner when it's wired so the user can watch the work
+        # (and intercept permission prompts) in the planning UI. Permission
+        # modes are baked into the runner's defaults at construction time.
+        runner = self._planning_session_runner
+        try:
+            if runner is not None:
+                self._log_task_step(
+                    task.id,
+                    'streaming planning session (kato:wait-planning + bypass=false)',
+                )
+                execution = runner.implement_task(task, prepared_task=prepared_task) or {}
+            else:
+                execution = self._implementation_service.implement_task(
+                    task,
+                    prepared_task=prepared_task,
+                ) or {}
+        except Exception as exc:
+            self.logger.exception('implementation request failed for task %s', task.id)
+            self._task_failure_handler.handle_started_task_failure(
+                task,
+                exc,
+                prepared_task=prepared_task,
+            )
+            return None
+        if not implementation_succeeded(execution):
+            self._task_failure_handler.handle_implementation_failure(
+                task,
+                execution,
+                prepared_task=prepared_task,
+            )
+            return None
+        self._log_task_step(
+            task.id,
+            'implementation completed successfully%s',
+            session_suffix(execution),
+        )
+        return execution
+
+    def _run_task_testing_validation(
+        self,
+        task: Task,
+        prepared_task: PreparedTaskContext,
+        execution: dict[str, str | bool],
+    ) -> tuple[bool, dict | None, dict[str, str | bool]]:
+        if self._skip_testing:
+            execution = dict(execution)
+            execution.pop(ImplementationFields.MESSAGE, None)
+            self._log_task_step(task.id, 'testing validation skipped by configuration')
+            return True, None, execution
+        if not self._task_preflight_service.validate_task_branch_publishability(
+            task,
+            prepared_task,
+            failure_handler=self._task_failure_handler.handle_started_task_failure,
+        ):
+            return False, None, execution
+        self._log_task_step(task.id, 'task branches contain changes')
+        testing = self._request_testing_validation(task, prepared_task)
+        if testing is None:
+            return False, None, execution
+        if not testing_succeeded(testing):
+            self._task_failure_handler.handle_testing_failure(
+                task,
+                testing,
+                prepared_task=prepared_task,
+            )
+            return False, testing_failed_result(task.id), execution
+        execution = apply_testing_message(execution, testing)
+        self._log_task_step(task.id, 'testing validation passed')
+        return True, None, execution
+
+    def _request_testing_validation(
+        self,
+        task: Task,
+        prepared_task: PreparedTaskContext,
+    ) -> dict[str, str | bool] | None:
+        self._log_task_step(task.id, 'starting testing validation')
+        try:
+            return self._testing_service.test_task(
+                task,
+                prepared_task=prepared_task,
+            ) or {}
+        except Exception as exc:
+            self.logger.exception('testing request failed for task %s', task.id)
+            self._task_failure_handler.handle_started_task_failure(
+                task,
+                exc,
+                prepared_task=prepared_task,
+            )
+            return None
+
+    def _log_task_step(self, task_id: str, message: str, *args) -> None:
+        log_mission_step(self.logger, task_id, message, *args)

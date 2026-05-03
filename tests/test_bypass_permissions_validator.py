@@ -25,13 +25,14 @@ import sys
 import unittest
 from unittest.mock import patch
 
-from kato.validation.bypass_permissions_validator import (
+from kato_core_lib.validation.bypass_permissions_validator import (
     BYPASS_ENV_KEY,
     DOCKER_ENV_KEY,
     BypassPermissionsRefused,
     is_bypass_enabled,
     is_docker_mode_enabled,
     is_running_as_root,
+    print_security_posture,
     validate_bypass_permissions,
 )
 
@@ -340,6 +341,117 @@ class BypassValidatorTests(unittest.TestCase):
             finally:
                 if saved is not None:
                     os.geteuid = saved  # type: ignore[attr-defined]
+
+
+class SecurityPostureBannerVariantTests(unittest.TestCase):
+    """Content-lock the three boot-banner variants the doc names.
+
+    ``print_security_posture`` produces three distinct variants — one
+    per (docker, bypass) combination that's allowed:
+
+      * docker=false, bypass=false → Mode 1 (default + soft hint)
+      * docker=true,  bypass=false → Mode 2 (NEW: belt+suspenders)
+      * docker=true,  bypass=true  → Mode 3 (full bypass)
+
+    The fourth combination (docker=false, bypass=true) is refused
+    earlier so the banner doesn't print for it.
+
+    Without these locks, a reword that softens "the strongest combined
+    posture" or drops the operator-discoverable hints (the symmetric
+    cross-references between modes) ships without CI catching it.
+    """
+
+    def _capture(self, env: dict) -> str:
+        stderr = io.StringIO()
+        print_security_posture(env=env, stderr=stderr)
+        return stderr.getvalue()
+
+    # ---- always-on header (every mode prints these fields) ----
+
+    def test_header_lists_both_flag_states_in_every_mode(self) -> None:
+        # Default (Mode 1)
+        out = self._capture({})
+        self.assertIn('docker sandbox', out)
+        self.assertIn('bypass permissions', out)
+        # Docker-only (Mode 2)
+        out = self._capture({DOCKER_ENV_KEY: 'true'})
+        self.assertIn('docker sandbox', out)
+        self.assertIn('bypass permissions', out)
+        # Docker+bypass (Mode 3)
+        out = self._capture(_BYPASS_AND_DOCKER)
+        self.assertIn('docker sandbox', out)
+        self.assertIn('bypass permissions', out)
+
+    def test_header_includes_security_posture_title(self) -> None:
+        # Grep-anchor for operators scrolling boot output.
+        for env in ({}, {DOCKER_ENV_KEY: 'true'}, _BYPASS_AND_DOCKER):
+            out = self._capture(env)
+            self.assertIn('security posture at boot', out)
+
+    # ---- Mode 1: default (both off) — soft hint nudging toward docker ----
+
+    def test_mode1_default_recommends_docker(self) -> None:
+        out = self._capture({})
+        # The hint surfaces the path to stronger isolation without
+        # being prescriptive.
+        self.assertIn('export KATO_CLAUDE_DOCKER=true', out)
+        # Names what docker mode actually buys, so operators don't
+        # turn it on cargo-cult.
+        self.assertIn('hardened sandbox', out)
+
+    def test_mode1_does_not_emit_bypass_warning_text(self) -> None:
+        # Default mode shouldn't carry the bypass responsibility framing
+        # — that's specific to Mode 3.
+        out = self._capture({})
+        self.assertNotIn('responsibility', out.lower())
+        # No "containment layers remain active" line — that's Mode 3.
+        self.assertNotIn('containment layers remain active', out.lower())
+
+    # ---- Mode 2: docker-only (the NEW belt+suspenders mode) ----
+
+    def test_mode2_docker_only_lists_active_containment_layers(self) -> None:
+        out = self._capture({DOCKER_ENV_KEY: 'true'})
+        # Each layer the doc TL;DR promises is named in the boot banner.
+        self.assertIn('Active containment layers', out)
+        self.assertIn('Workspace bind-mount', out)
+        self.assertIn('default-DROP egress firewall', out)
+        self.assertIn('Capability drop ALL', out)
+        self.assertIn('Read-only rootfs', out)
+        self.assertIn('gVisor', out)
+        self.assertIn('Audit log', out)
+
+    def test_mode2_docker_only_names_the_doc_for_full_layer_breakdown(self) -> None:
+        out = self._capture({DOCKER_ENV_KEY: 'true'})
+        self.assertIn('BYPASS_PROTECTIONS.md', out)
+
+    def test_mode2_docker_only_symmetric_hint_about_bypass(self) -> None:
+        # The banner should mention bypass exists as an option, but
+        # without pushing the operator toward it. Symmetric discovery
+        # — operator on either flag learns about the other.
+        out = self._capture({DOCKER_ENV_KEY: 'true'})
+        self.assertIn('KATO_CLAUDE_BYPASS_PERMISSIONS', out)
+        # SECURITY.md is the right place to read before opting in.
+        self.assertIn('SECURITY.md', out)
+
+    # ---- Mode 3: docker+bypass (the original "bypass mode") ----
+
+    def test_mode3_docker_plus_bypass_carries_responsibility_framing(self) -> None:
+        out = self._capture(_BYPASS_AND_DOCKER)
+        # The agent-runs-without-asking warning.
+        self.assertIn('without asking', out)
+        # Operator-responsibility framing is the load-bearing bit —
+        # without it the banner reads like a status print, not an
+        # accountability checkpoint.
+        self.assertIn('responsibility', out.lower())
+
+    def test_mode3_docker_plus_bypass_explicitly_says_containment_remains(self) -> None:
+        # Operators in Mode 3 must understand bypass disables PROMPTS,
+        # not the SANDBOX. The banner says so explicitly so they don't
+        # think bypass turned everything off.
+        out = self._capture(_BYPASS_AND_DOCKER)
+        self.assertIn('Containment layers', out)
+        # The trio that the doc TL;DR also names as still-active.
+        self.assertIn('sandbox, firewall', out)
 
 
 if __name__ == '__main__':

@@ -5,4 +5,4 @@ from hydra.plugins.search_path_plugin import SearchPathPlugin
 class KatoSearchPathPlugin(SearchPathPlugin):
     def manipulate_search_path(self, search_path: ConfigSearchPath) -> None:
         assert isinstance(search_path, ConfigSearchPath)
-        search_path.append("kato", "pkg://kato.config")
+        search_path.append("kato_core_lib", "pkg://kato_core_lib.config")

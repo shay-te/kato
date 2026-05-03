@@ -1,6 +1,6 @@
 PYTHON ?= python3
 VENV_PYTHON = .venv/bin/python
-KATO_SOURCE_FINGERPRINT := $(shell $(PYTHON) -m kato.helpers.runtime_identity_utils --root .)
+KATO_SOURCE_FINGERPRINT := $(shell $(PYTHON) -m kato_core_lib.helpers.runtime_identity_utils --root .)
 
 .PHONY: bootstrap configure doctor doctor-agent doctor-openhands test run compose-up compose-up-docker sandbox-build sandbox-login sandbox-verify
 
@@ -15,13 +15,13 @@ configure:
 	$(VENV_PYTHON) scripts/generate_env.py --output .env
 
 doctor:
-	$(VENV_PYTHON) -m kato.validate_env --env-file .env --mode all
+	$(VENV_PYTHON) -m kato_core_lib.validate_env --env-file .env --mode all
 
 doctor-agent:
-	$(VENV_PYTHON) -m kato.validate_env --env-file .env --mode agent
+	$(VENV_PYTHON) -m kato_core_lib.validate_env --env-file .env --mode agent
 
 doctor-openhands:
-	$(VENV_PYTHON) -m kato.validate_env --env-file .env --mode openhands
+	$(VENV_PYTHON) -m kato_core_lib.validate_env --env-file .env --mode openhands
 
 test:
 	$(VENV_PYTHON) -m unittest discover -s tests
@@ -37,14 +37,14 @@ compose-up:
 # useful if you want to pre-warm the cache or surface build errors
 # before starting kato.
 sandbox-build:
-	$(VENV_PYTHON) -c "from kato.sandbox.manager import build_image; build_image()"
+	$(VENV_PYTHON) -c "from kato_core_lib.sandbox.manager import build_image; build_image()"
 
 # One-time interactive login for the sandbox. Seeds the persistent
 # ``kato-claude-config`` Docker volume with the operator's Claude
 # credentials so kato-spawned sandbox containers can reuse them.
 # Skip if you set ANTHROPIC_API_KEY in your shell instead.
 sandbox-login:
-	$(VENV_PYTHON) -c "from kato.sandbox.manager import ensure_image, login_command, stamp_auth_volume_manifest; import subprocess, sys; ensure_image(); rc = subprocess.call(login_command()); stamp_auth_volume_manifest() if rc == 0 else None; sys.exit(rc)"
+	$(VENV_PYTHON) -c "from kato_core_lib.sandbox.manager import ensure_image, login_command, stamp_auth_volume_manifest; import subprocess, sys; ensure_image(); rc = subprocess.call(login_command()); stamp_auth_volume_manifest() if rc == 0 else None; sys.exit(rc)"
 
 # End-to-end smoke test: builds the image, spins up a throwaway
 # container, asserts every protection (uid drop, cap drop, read-only
@@ -52,7 +52,7 @@ sandbox-login:
 # tears down. Run this before relying on the sandbox in production
 # and any time the Dockerfile / firewall script changes.
 sandbox-verify:
-	$(VENV_PYTHON) -m kato.sandbox.verify
+	$(VENV_PYTHON) -m kato_core_lib.sandbox.verify
 
 # Original docker-compose flow. Kept available for cases where you actually
 # need OpenHands containerized; the local Claude-backed path is `compose-up`.

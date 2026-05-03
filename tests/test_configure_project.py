@@ -5,8 +5,8 @@ from pathlib import Path
 import unittest
 from unittest.mock import Mock, patch
 
-import kato.configure_project as configure_project
-from kato.validate_env import _read_env_file, validate_agent_env, validate_openhands_env
+import kato_core_lib.configure_project as configure_project
+from kato_core_lib.validate_env import _read_env_file, validate_agent_env, validate_openhands_env
 
 
 class ConfigureProjectTests(unittest.TestCase):
@@ -381,7 +381,7 @@ class ConfigureProjectTests(unittest.TestCase):
     @staticmethod
     def _validate_agent_env(values: dict[str, str]) -> list[str]:
         with patch(
-            'kato.helpers.repository_discovery_utils.discover_git_repositories',
+            'kato_core_lib.helpers.repository_discovery_utils.discover_git_repositories',
             return_value=[],
         ):
             return validate_agent_env(values)

@@ -3,16 +3,16 @@ import unittest
 from unittest.mock import ANY, Mock, patch
 
 
-from kato.data_layers.data.review_comment import ReviewComment
-from kato.data_layers.data_access.task_data_access import TaskDataAccess
-from kato.data_layers.service.agent_service import AgentService
-from kato.data_layers.service.implementation_service import (
+from kato_core_lib.data_layers.data.review_comment import ReviewComment
+from kato_core_lib.data_layers.data_access.task_data_access import TaskDataAccess
+from kato_core_lib.data_layers.service.agent_service import AgentService
+from kato_core_lib.data_layers.service.implementation_service import (
     ImplementationService,
 )
-from kato.data_layers.service.notification_service import NotificationService
-from kato.data_layers.service.task_state_service import TaskStateService
-from kato.data_layers.service.task_service import TaskService
-from kato.data_layers.data.fields import (
+from kato_core_lib.data_layers.service.notification_service import NotificationService
+from kato_core_lib.data_layers.service.task_state_service import TaskStateService
+from kato_core_lib.data_layers.service.task_service import TaskService
+from kato_core_lib.data_layers.data.fields import (
     EmailFields,
     ImplementationFields,
     PullRequestFields,
@@ -21,7 +21,7 @@ from kato.data_layers.data.fields import (
     TaskFields,
     TaskCommentFields,
 )
-from kato.data_layers.service.testing_service import TestingService
+from kato_core_lib.data_layers.service.testing_service import TestingService
 from utils import build_review_comment_payload, build_task, build_test_cfg
 
 
@@ -867,7 +867,7 @@ class AgentServiceTests(unittest.TestCase):
 
     def test_process_assigned_task_with_planning_tag_registers_chat_and_skips_execution(self) -> None:
         from unittest.mock import MagicMock as _MagicMock
-        from kato.data_layers.service.wait_planning_service import WaitPlanningService
+        from kato_core_lib.data_layers.service.wait_planning_service import WaitPlanningService
         session_manager = _MagicMock()
         # No prior session — wait-planning short-circuits when one is alive
         # (so the scan loop doesn't respawn or spam logs every cycle).
@@ -921,7 +921,7 @@ class AgentServiceTests(unittest.TestCase):
         # "registered planning chat" lines and we risk re-injecting the
         # initial prompt into a live conversation.
         from unittest.mock import MagicMock as _MagicMock
-        from kato.data_layers.service.wait_planning_service import WaitPlanningService
+        from kato_core_lib.data_layers.service.wait_planning_service import WaitPlanningService
         session_manager = _MagicMock()
         live_session = _MagicMock()
         live_session.is_alive = True
@@ -950,7 +950,7 @@ class AgentServiceTests(unittest.TestCase):
 
     def test_wait_planning_marks_workspace_as_operator_driven_for_startup_resume(self) -> None:
         from unittest.mock import MagicMock as _MagicMock
-        from kato.data_layers.service.wait_planning_service import WaitPlanningService
+        from kato_core_lib.data_layers.service.wait_planning_service import WaitPlanningService
         session_manager = _MagicMock()
         session_manager.get_session.return_value = None
         workspace_manager = _MagicMock()

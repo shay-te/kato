@@ -2,9 +2,9 @@ import unittest
 from unittest.mock import patch
 
 
-from kato.client.jira.issues_client import JiraClient
-from kato.data_layers.data.task import Task
-from kato.data_layers.data.fields import JiraIssueFields, TaskCommentFields
+from kato_core_lib.client.jira.issues_client import JiraClient
+from kato_core_lib.data_layers.data.task import Task
+from kato_core_lib.data_layers.data.fields import JiraIssueFields, TaskCommentFields
 from utils import assert_client_headers_and_timeout, mock_response
 
 

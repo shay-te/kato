@@ -12,7 +12,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from kato.data_layers.service.workspace_manager import (
+from kato_core_lib.data_layers.service.workspace_manager import (
     WORKSPACE_STATUS_ACTIVE,
     WORKSPACE_STATUS_REVIEW,
 )
@@ -21,7 +21,7 @@ from kato.data_layers.service.workspace_manager import (
 def _import_agent_service():
     # Imported inside a helper so the test file doesn't pay the import cost
     # for unrelated agent_service collaborators when the suite runs.
-    from kato.data_layers.service.agent_service import AgentService
+    from kato_core_lib.data_layers.service.agent_service import AgentService
     return AgentService
 
 

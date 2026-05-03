@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from kato.data_layers.service.workspace_manager import (
+from kato_core_lib.data_layers.service.workspace_manager import (
     WORKSPACE_STATUS_ACTIVE,
     WORKSPACE_STATUS_DONE,
     WORKSPACE_STATUS_ERRORED,

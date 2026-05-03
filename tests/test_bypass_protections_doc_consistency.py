@@ -47,7 +47,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from kato.sandbox import manager
+from kato_core_lib.sandbox import manager
 
 
 _DOC_PATH = Path(__file__).resolve().parent.parent / 'BYPASS_PROTECTIONS.md'

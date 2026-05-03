@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import unittest
 
-from kato.sandbox.system_prompt import (
+from kato_core_lib.sandbox.system_prompt import (
     SANDBOX_SYSTEM_PROMPT_ADDENDUM,
     compose_system_prompt,
 )

@@ -1,6 +1,6 @@
 import unittest
 
-from kato.helpers.agent_prompt_utils import (
+from kato_core_lib.helpers.agent_prompt_utils import (
     forbidden_repository_guardrails_text,
     ignored_repository_folder_names,
     prepend_forbidden_repository_guardrails,

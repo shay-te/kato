@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import unittest
 
-from kato.client.claude.cli_client import ClaudeCliClient
+from kato_core_lib.client.claude.cli_client import ClaudeCliClient
 
 
 class GitDenylistMergeTests(unittest.TestCase):

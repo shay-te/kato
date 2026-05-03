@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import unittest
 
-from kato.data_layers.data.fields import PullRequestFields
-from kato.helpers.pull_request_utils import pull_request_summary_comment
+from kato_core_lib.data_layers.data.fields import PullRequestFields
+from kato_core_lib.helpers.pull_request_utils import pull_request_summary_comment
 from utils import build_task
 
 

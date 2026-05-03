@@ -14,19 +14,19 @@ from pathlib import Path
 import types
 
 
-from kato.data_layers.service.agent_service import AgentService
-from kato.data_layers.service.implementation_service import ImplementationService
-from kato.helpers.review_comment_utils import review_comment_from_payload
-from kato.data_layers.service.repository_service import RepositoryService
-from kato.data_layers.service.notification_service import NotificationService
-from kato.data_layers.service.task_state_service import TaskStateService
-from kato.data_layers.service.task_service import TaskService
-from kato.data_layers.service.testing_service import TestingService
-from kato.data_layers.data_access.task_data_access import TaskDataAccess
-from kato.data_layers.data.task import Task
-from kato.data_layers.data.review_comment import ReviewComment
-from kato.client.openhands.openhands_client import KatoClient
-from kato.data_layers.data.fields import (
+from kato_core_lib.data_layers.service.agent_service import AgentService
+from kato_core_lib.data_layers.service.implementation_service import ImplementationService
+from kato_core_lib.helpers.review_comment_utils import review_comment_from_payload
+from kato_core_lib.data_layers.service.repository_service import RepositoryService
+from kato_core_lib.data_layers.service.notification_service import NotificationService
+from kato_core_lib.data_layers.service.task_state_service import TaskStateService
+from kato_core_lib.data_layers.service.task_service import TaskService
+from kato_core_lib.data_layers.service.testing_service import TestingService
+from kato_core_lib.data_layers.data_access.task_data_access import TaskDataAccess
+from kato_core_lib.data_layers.data.task import Task
+from kato_core_lib.data_layers.data.review_comment import ReviewComment
+from kato_core_lib.client.openhands.openhands_client import KatoClient
+from kato_core_lib.data_layers.data.fields import (
     ImplementationFields,
     PullRequestFields,
     ReviewCommentFields,
@@ -520,7 +520,7 @@ class TestAgentEndToEndIntegration(unittest.TestCase):
         # Similar to the docker-compose pattern we've established
         
         # Create a realistic minimal config scenario
-        from kato.validate_env import validate_openhands_env, validate_agent_env
+        from kato_core_lib.validate_env import validate_openhands_env, validate_agent_env
         import os
         
         # Simulate what would be used in docker-compose context

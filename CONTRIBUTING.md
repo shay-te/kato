@@ -37,7 +37,7 @@ See AGENTS.md → "Code Style". Three things worth repeating:
 
 - Class declarations always state a base: `class Foo(object):` instead of `class Foo:`. Matches the rest of the codebase.
 - Snake-case filenames, CamelCase class names. The file and its primary class share a name (`StartupDependencyValidator` lives in `startup_dependency_validator.py`).
-- Constants from `kato/data_layers/data/fields.py` are preferred over free-text field names.
+- Constants from `kato_core_lib/data_layers/data/fields.py` are preferred over free-text field names.
 
 ## Recovering from git mistakes
 
@@ -45,7 +45,7 @@ One-paragraph entries per genuine incident — keep this section practical, not 
 
 ### Discarding uncommitted work via `git checkout --` (2026-05-02)
 
-Mid-sweep on the bypass-mode hardening, ran `git checkout -- BYPASS_PROTECTIONS.md kato/sandbox/manager.py` to revert what looked like a couple of small hunks before splitting commits. Both files held hours of uncommitted hardening work; that work was destroyed. `git checkout -- <file>` overwrites the working tree with the committed version — it does not move HEAD, is not in the reflog, and is not undoable from there.
+Mid-sweep on the bypass-mode hardening, ran `git checkout -- BYPASS_PROTECTIONS.md kato_core_lib/sandbox/manager.py` to revert what looked like a couple of small hunks before splitting commits. Both files held hours of uncommitted hardening work; that work was destroyed. `git checkout -- <file>` overwrites the working tree with the committed version — it does not move HEAD, is not in the reflog, and is not undoable from there.
 
 **Lesson:** capture before revert. Use `git stash` (which retains a reachable ref in `refs/stash` and can be popped) over `git checkout --` whenever the working tree contains anything uncommitted. After any recovery from a mistake of this shape, verify intent-equivalence — run the test suite and mutate the recovered code to confirm assertions still fire — before claiming the loss was clean.
 

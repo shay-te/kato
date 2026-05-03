@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from kato.client.claude.session_manager import (
+from kato_core_lib.client.claude.session_manager import (
     SESSION_STATUS_ACTIVE,
     SESSION_STATUS_DONE,
     ClaudeSessionManager,

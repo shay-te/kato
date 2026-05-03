@@ -41,14 +41,14 @@ of flags — kato is the sole component that runs git, full stop.
 
 | # | Layer | Where it lives |
 |---|---|---|
-| 1 | Single-flag startup gate + double terminal confirmation | [`bypass_permissions_validator.py`](kato/validation/bypass_permissions_validator.py) |
+| 1 | Single-flag startup gate + double terminal confirmation | [`bypass_permissions_validator.py`](kato_core_lib/validation/bypass_permissions_validator.py) |
 | 2 | Refusal when running as root | same file |
-| 3 | Hard requirement for Docker daemon | [`sandbox/manager.py`](kato/sandbox/manager.py), gated in [`main.py`](kato/main.py) |
-| 4 | Filesystem boundary (per-task workspace is the only host bind-mount) | [`sandbox/manager.py:wrap_command`](kato/sandbox/manager.py) |
-| 5 | Default-DROP egress firewall (allowlist = `api.anthropic.com` only) | [`sandbox/init-firewall.sh`](kato/sandbox/init-firewall.sh) |
-| 6 | Capability drop + non-root user inside the container | [`sandbox/entrypoint.sh`](kato/sandbox/entrypoint.sh), [`Dockerfile`](kato/sandbox/Dockerfile) |
-| 7 | In-prompt git denylist on every spawn | [`cli_client.py`](kato/client/claude/cli_client.py), [`streaming_session.py`](kato/client/claude/streaming_session.py) |
-| 8 | Always-on operator visibility (CLI banner, UI banner, logs) | [`bypass_permissions_validator.py`](kato/validation/bypass_permissions_validator.py), [`SafetyBanner.jsx`](webserver/ui/src/components/SafetyBanner.jsx) |
+| 3 | Hard requirement for Docker daemon | [`sandbox/manager.py`](kato_core_lib/sandbox/manager.py), gated in [`main.py`](kato_core_lib/main.py) |
+| 4 | Filesystem boundary (per-task workspace is the only host bind-mount) | [`sandbox/manager.py:wrap_command`](kato_core_lib/sandbox/manager.py) |
+| 5 | Default-DROP egress firewall (allowlist = `api.anthropic.com` only) | [`sandbox/init-firewall.sh`](kato_core_lib/sandbox/init-firewall.sh) |
+| 6 | Capability drop + non-root user inside the container | [`sandbox/entrypoint.sh`](kato_core_lib/sandbox/entrypoint.sh), [`Dockerfile`](kato_core_lib/sandbox/Dockerfile) |
+| 7 | In-prompt git denylist on every spawn | [`cli_client.py`](kato_core_lib/client/claude/cli_client.py), [`streaming_session.py`](kato_core_lib/client/claude/streaming_session.py) |
+| 8 | Always-on operator visibility (CLI banner, UI banner, logs) | [`bypass_permissions_validator.py`](kato_core_lib/validation/bypass_permissions_validator.py), [`SafetyBanner.jsx`](webserver/ui/src/components/SafetyBanner.jsx) |
 
 No single control is the sole defense for any class of attack. If one
 of these layers is weakened or bypassed, the remaining controls are
@@ -121,7 +121,7 @@ Per-OS layer status (see linked file:line for the determining code):
 | L1 double-prompt + non-TTY refusal | Active | Active | Active | Active | Active | **Refused at startup** | Unsupported |
 | L2 root refusal | Active | Active | Active | Active | Active | **Refused at startup** | Unsupported |
 | L3 Docker required | Active | Active | Active | Active | Active | **Refused at startup** | Unsupported |
-| L4 filesystem boundary + workspace validator | Active (Linux paths) | Active | Active | **Active + macOS-specific subtrees** in the forbidden list ([`manager.py:181-218`](kato/sandbox/manager.py)) | Active (WSL2 paths look like Linux) | **Refused** | Unsupported |
+| L4 filesystem boundary + workspace validator | Active (Linux paths) | Active | Active | **Active + macOS-specific subtrees** in the forbidden list ([`manager.py:181-218`](kato_core_lib/sandbox/manager.py)) | Active (WSL2 paths look like Linux) | **Refused** | Unsupported |
 | L5 default-DROP egress firewall | Active | Active | Active | Active inside LinuxKit VM | Active inside WSL2 | **Refused** | Unsupported |
 | L6 cap-drop ALL + setpriv bounding-set wipe | Active | Active | Active | Active | Active | **Refused** | Unsupported |
 | L6 AppArmor pin (`apparmor=docker-default`) | Active where AppArmor loaded (Ubuntu, Debian) | Active | Active | **Silently no-op** — Docker Desktop's LinuxKit base does not load AppArmor; the hypervisor + cap-drop + read-only rootfs are the substitute boundaries. | **Silently no-op** in WSL2 backend | Refused | Unsupported |
@@ -134,7 +134,7 @@ Per-OS layer status (see linked file:line for the determining code):
 | Auth volume invariants (RO `/auth-src`, tmpfs target, allowlist copy, bidirectional manifest) | Active | Active | Active | Active | Active | Refused | Unsupported |
 | Audit log hash chain + `flock` | Active | Active | Active | Active (`fcntl` on macOS) | Active inside WSL2 | **Refused** (no `fcntl` on native Windows; refusal sidesteps the degradation) | Unsupported |
 
-**Where the refusal fires:** [`bypass_permissions_validator.py:validate_bypass_permissions`](kato/validation/bypass_permissions_validator.py) — the platform check is decision step 2 in the module's docstring. See SECURITY.md for the full operator decision tree.
+**Where the refusal fires:** [`bypass_permissions_validator.py:validate_bypass_permissions`](kato_core_lib/validation/bypass_permissions_validator.py) — the platform check is decision step 2 in the module's docstring. See SECURITY.md for the full operator decision tree.
 
 **Substitute boundaries on macOS / WSL2 backend** — when AppArmor is no-op and gVisor is unavailable, the substitute is the **hypervisor + double-kernel separation**: the container runs in Docker Desktop's LinuxKit (or WSL2's lightweight VM) which has its own kernel, separated from the host (macOS / Windows) by a hypervisor (Apple `Hypervisor.framework` / Microsoft Hyper-V). This means a container escape on macOS / WSL2 backends has to break through a kernel boundary AND a hypervisor boundary to reach the host, which is why kato treats `KATO_SANDBOX_ALLOW_NO_GVISOR=true` as the intended path on those platforms. It is not equivalent to gVisor — gVisor's userspace kernel is a tighter syscall blockade — but it is materially better than no-gVisor on Linux native, where the host kernel is the only boundary.
 
@@ -297,9 +297,9 @@ accepted with named rationale, or out of scope by design.
 
 ## Why these specific surfaces — read before proposing a change
 
-The flags applied in [`wrap_command`](kato/sandbox/manager.py), the
-firewall allowlist in [`init-firewall.sh`](kato/sandbox/init-firewall.sh),
-the auth-volume mount semantics in [`entrypoint.sh`](kato/sandbox/entrypoint.sh),
+The flags applied in [`wrap_command`](kato_core_lib/sandbox/manager.py), the
+firewall allowlist in [`init-firewall.sh`](kato_core_lib/sandbox/init-firewall.sh),
+the auth-volume mount semantics in [`entrypoint.sh`](kato_core_lib/sandbox/entrypoint.sh),
 and the env-var pass-through list are deliberately narrow. Every common
 "can we just…" ergonomics improvement breaks a specific load-bearing
 property of the threat model. If you are proposing one of these, the
@@ -342,7 +342,7 @@ The five most common temptations and what each one breaks:
    `agents/` across tasks (i.e. extending the auth-volume copy-allowlist)** —
    the auth-volume isolation design is structurally undone. One poisoned
    task taints all subsequent tasks. This is the exact failure mode the
-   bidirectional manifest check in [`entrypoint.sh`](kato/sandbox/entrypoint.sh)
+   bidirectional manifest check in [`entrypoint.sh`](kato_core_lib/sandbox/entrypoint.sh)
    was added to catch; relaxing it re-opens risks #64–#66.
 
 If a change in any of those five categories looks worth doing, write
@@ -397,7 +397,7 @@ attacks to kato's specific countermeasure for each. Status legend:
 | 21 | Postinstall script execution | **M** | Same as #19 — install fetches blocked at firewall. Even if a script ran, it executes as uid 1000 with all capabilities dropped, in `--read-only` rootfs, under the full ulimit set (`nproc=128`, `nofile=1024`, `fsize=1g`, `msgqueue=0`, `sigpending=8192`, `locks=64`, `core=0`) and the resource caps (`memory=2g`, `pids-limit=256`, `cpus=2`, `shm-size=16m`). |
 | 22 | Build tool RCE (`make`, `cargo`, `setup.py`) | **B** | Claude can run these inside the container. Bounded by: cap drop, no privileges, `/workspace`-only writes, firewall-blocked egress, resource limits. Worst case: corrupted workspace files (#5). |
 | 23 | Test runner RCE (malicious test imports) | **B** | Same envelope as #22. Tests can write anywhere in /workspace, can't reach the host or the network beyond Anthropic. |
-| 24 | Pre-commit hook installation (fires on operator's next git op) | **M** | Kato's `_git_command()` always passes `-c core.hooksPath=/dev/null`. Every git command kato runs ignores `.git/hooks/`, so a hook Claude drops never fires on the host. Single funnel point in [`repository_service.py`](kato/data_layers/service/repository_service.py). |
+| 24 | Pre-commit hook installation (fires on operator's next git op) | **M** | Kato's `_git_command()` always passes `-c core.hooksPath=/dev/null`. Every git command kato runs ignores `.git/hooks/`, so a hook Claude drops never fires on the host. Single funnel point in [`repository_service.py`](kato_core_lib/data_layers/service/repository_service.py). |
 | 25 | `.bashrc` / shell rc poisoning | **M** | Container rootfs is `--read-only`, so Claude cannot write `/home/claude/.bashrc` or any other shell rc file at all. The per-task tmpfs at `/home/claude/.claude` is destroyed on container exit, the container itself is `--rm`, and the auth volume's allowlist does not carry rc files. No persistence path exists. |
 
 ### Network abuse (within the firewall allowlist)
@@ -650,7 +650,7 @@ from the terminal cannot unlock it.
 ## Layer 3 — hard requirement for Docker
 
 When `KATO_CLAUDE_DOCKER` is on, kato refuses to start unless
-`docker info` works. This is checked in [`main.py`](kato/main.py)
+`docker info` works. This is checked in [`main.py`](kato_core_lib/main.py)
 before any service comes up — gated on `is_docker_mode_enabled()`,
 not on bypass. The intent: opting into the sandbox layer means the
 Docker daemon must actually be available. We do not silently fall
@@ -680,7 +680,7 @@ descendants of `~/.kato` are allowed because that's where per-task
 workspaces legitimately live).
 
 The image itself gets a **cache sanity check** before each run: kato
-verifies the cached `kato/claude-sandbox:latest` carries an
+verifies the cached `kato_core_lib/claude-sandbox:latest` carries an
 `org.kato.sandbox=true` label, and a missing label triggers a forced
 rebuild. The label is **not cryptographic identity** — anyone with
 local Docker access can stamp the same label on a different image —
@@ -700,7 +700,7 @@ by digest via `KATO_SANDBOX_BASE_IMAGE`.
 
 ## Layer 5 — default-DROP egress firewall
 
-Inside the container, [`init-firewall.sh`](kato/sandbox/init-firewall.sh)
+Inside the container, [`init-firewall.sh`](kato_core_lib/sandbox/init-firewall.sh)
 applies an iptables policy with **default DROP** on `INPUT`, `FORWARD`,
 and `OUTPUT`, **fail-closed** at every step (any check that doesn't
 pass aborts the container before Claude is exec'd — see the
@@ -822,7 +822,7 @@ operators see their posture too.
   responsibility for any action the agent takes. Fires whenever
   bypass is active (the responsibility framing only applies when the
   agent runs without prompts).
-- **Configurator typing gate**: `python -m kato.configure_project`
+- **Configurator typing gate**: `python -m kato_core_lib.configure_project`
   requires the operator to type `I ACCEPT` literally before it will
   write `KATO_CLAUDE_BYPASS_PERMISSIONS=true` into `.env`.
   **Bypass-only.**
@@ -932,7 +932,7 @@ check and exits non-zero on any failure. Run before the first
 production session and any time the Dockerfile or firewall script
 changes.
 
-**Sandbox audit log** — `~/.kato/sandbox-audit.log` gets one JSON
+**Sandbox audit log** — `~/.kato_core_lib/sandbox-audit.log` gets one JSON
 line per sandboxed spawn: timestamp, task id, container name, image
 tag + digest, workspace path, and `prev_hash` (sha256 of the
 previous line's raw bytes — a hash chain so any single-entry edit
@@ -1067,7 +1067,7 @@ TLS layer prevents data flowing to a non-Anthropic endpoint.
 
 The blocks below are the canonical lists of security-relevant flags,
 mount roots, and named invariants. They are kept in lock-step with the
-constants of the same name in [`kato/sandbox/manager.py`](kato/sandbox/manager.py)
+constants of the same name in [`kato_core_lib/sandbox/manager.py`](kato_core_lib/sandbox/manager.py)
 by [`tests/test_bypass_protections_doc_consistency.py`](tests/test_bypass_protections_doc_consistency.py).
 
 If you add, remove, or rename anything inside an anchor block, the
@@ -1202,9 +1202,9 @@ workspaces under `$HOME` are typical). `~` denotes `Path.home()`.
 ### Auth-volume invariants
 
 Named tags for properties that the spawn / login flows guarantee.
-Mechanical enforcement lives in [`entrypoint.sh`](kato/sandbox/entrypoint.sh),
-[`wrap_command`](kato/sandbox/manager.py),
-[`login_command`](kato/sandbox/manager.py), and the
+Mechanical enforcement lives in [`entrypoint.sh`](kato_core_lib/sandbox/entrypoint.sh),
+[`wrap_command`](kato_core_lib/sandbox/manager.py),
+[`login_command`](kato_core_lib/sandbox/manager.py), and the
 [`Makefile`](Makefile) `sandbox-login` target. The drift guard
 ensures the named SET stays in sync with the code constant.
 
@@ -1232,7 +1232,7 @@ ensures the named SET stays in sync with the code constant.
 
 ### Firewall guarantees
 
-Named tags for properties of [`init-firewall.sh`](kato/sandbox/init-firewall.sh)
+Named tags for properties of [`init-firewall.sh`](kato_core_lib/sandbox/init-firewall.sh)
 plus the `--sysctl` / `--dns` flags in `wrap_command`. Drift guard
 keeps the named set in sync with the code constant.
 

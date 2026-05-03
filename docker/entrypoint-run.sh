@@ -41,4 +41,4 @@ if os.getenv("OPENHANDS_SKIP_TESTING", "").strip().lower() not in TRUE_VALUES an
     )
 PY
 
-exec python -m kato.main
+exec python -m kato_core_lib.main

@@ -17,9 +17,9 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from kato.data_layers.data.fields import StatusFields, TaskTags
-from kato.data_layers.data.task import Task
-from kato.data_layers.service.triage_service import (
+from kato_core_lib.data_layers.data.fields import StatusFields, TaskTags
+from kato_core_lib.data_layers.data.task import Task
+from kato_core_lib.data_layers.service.triage_service import (
     TRIAGE_STATUS_INCONCLUSIVE,
     TRIAGE_STATUS_TRIAGED,
     TRIAGE_STATUS_UNAVAILABLE,

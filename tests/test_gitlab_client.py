@@ -2,8 +2,8 @@ import unittest
 from unittest.mock import patch
 
 
-from kato.client.gitlab.client import GitLabClient
-from kato.data_layers.data.fields import PullRequestFields, ReviewCommentFields
+from kato_core_lib.client.gitlab.client import GitLabClient
+from kato_core_lib.data_layers.data.fields import PullRequestFields, ReviewCommentFields
 from utils import (
     ClientTimeout,
     assert_client_headers_and_timeout,

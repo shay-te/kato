@@ -2,9 +2,9 @@ import unittest
 from unittest.mock import patch
 
 
-from kato.client.youtrack.issues_client import YouTrackClient
-from kato.data_layers.data.task import Task
-from kato.data_layers.data.fields import (
+from kato_core_lib.client.youtrack.issues_client import YouTrackClient
+from kato_core_lib.data_layers.data.task import Task
+from kato_core_lib.data_layers.data.fields import (
     TaskCommentFields,
     YouTrackAttachmentFields,
     YouTrackCommentFields,

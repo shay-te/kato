@@ -3,12 +3,12 @@ import unittest
 from unittest.mock import Mock
 
 
-from kato.jobs.process_assigned_tasks import (
+from kato_core_lib.jobs.process_assigned_tasks import (
     ProcessAssignedTasksJob,
     collect_processing_results,
     format_processing_results,
 )
-from kato.kato_core_lib import KatoCoreLib
+from kato_core_lib.kato_core_lib import KatoCoreLib
 from utils import sync_create_start_core_lib
 
 

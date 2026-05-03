@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import unittest
 
-from kato.sandbox.credential_patterns import (
+from kato_core_lib.sandbox.credential_patterns import (
     PATTERN_NAMES,
     PHISHING_PATTERN_NAMES,
     CredentialFinding,

@@ -25,7 +25,7 @@ class DeploymentFilesTests(unittest.TestCase):
         compose_text = (REPO_ROOT / 'docker-compose.yaml').read_text(encoding='utf-8')
         makefile_text = (REPO_ROOT / 'Makefile').read_text(encoding='utf-8')
         env_example_text = (REPO_ROOT / '.env.example').read_text(encoding='utf-8')
-        core_lib_yaml_text = (REPO_ROOT / 'kato/config/kato_core_lib.yaml').read_text(
+        core_lib_yaml_text = (REPO_ROOT / 'kato_core_lib/config/kato_core_lib.yaml').read_text(
             encoding='utf-8'
         )
 
@@ -195,7 +195,7 @@ class DeploymentFilesTests(unittest.TestCase):
         )
         self.assertIn('OH_PERSISTENCE_DIR: /data', compose_text)
         self.assertIn(
-            'KATO_SOURCE_FINGERPRINT := $(shell $(PYTHON) -m kato.helpers.runtime_identity_utils --root .)',
+            'KATO_SOURCE_FINGERPRINT := $(shell $(PYTHON) -m kato_core_lib.helpers.runtime_identity_utils --root .)',
             makefile_text,
         )
         self.assertIn(
@@ -351,7 +351,7 @@ class DeploymentFilesTests(unittest.TestCase):
 
         self.assertIn('Keep orchestration logic in services.', agents_text)
         self.assertIn(
-            'Prefer constants from `kato/data_layers/data/fields.py` over free-text field names.',
+            'Prefer constants from `kato_core_lib/data_layers/data/fields.py` over free-text field names.',
             agents_text,
         )
         self.assertIn('Write tests for new behavior when possible.', agents_text)
@@ -362,14 +362,14 @@ class DeploymentFilesTests(unittest.TestCase):
         )
         self.assertNotIn('/Users/shaytessler/', readme_text)
         self.assertIn('make configure', readme_text)
-        self.assertFalse((REPO_ROOT / 'kato' / 'fields.py').exists())
-        self.assertFalse((REPO_ROOT / 'kato' / 'error_handling.py').exists())
+        self.assertFalse((REPO_ROOT / 'kato_core_lib' / 'fields.py').exists())
+        self.assertFalse((REPO_ROOT / 'kato_core_lib' / 'error_handling.py').exists())
         self.assertFalse(
-            any((REPO_ROOT / 'kato' / 'data_layers' / 'service' / 'validation').glob('*.py'))
+            any((REPO_ROOT / 'kato_core_lib' / 'data_layers' / 'service' / 'validation').glob('*.py'))
         )
 
     def test_helper_modules_use_utils_suffix(self) -> None:
-        helpers_dir = REPO_ROOT / 'kato' / 'helpers'
+        helpers_dir = REPO_ROOT / 'kato_core_lib' / 'helpers'
 
         helper_modules = [
             path
@@ -382,7 +382,7 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertEqual(non_utils_modules, [])
 
     def test_validation_modules_live_in_top_level_validation_package(self) -> None:
-        validation_dir = REPO_ROOT / 'kato' / 'validation'
+        validation_dir = REPO_ROOT / 'kato_core_lib' / 'validation'
 
         validation_modules = [
             path.name
@@ -407,7 +407,7 @@ class DeploymentFilesTests(unittest.TestCase):
             REPO_ROOT / 'docker' / 'entrypoint-run.sh'
         ).read_text(encoding='utf-8')
         config_text = (
-            REPO_ROOT / 'kato' / 'config' / 'kato_core_lib.yaml'
+            REPO_ROOT / 'kato_core_lib' / 'config' / 'kato_core_lib.yaml'
         ).read_text(encoding='utf-8')
         # install-python-deps.sh is now a thin POSIX wrapper around the
         # cross-platform Python script. Probe the canonical Python file
@@ -433,7 +433,7 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertNotIn('deps-only', install_deps_text)
         self.assertNotIn('--install-only', run_local_text)
         self.assertNotIn('kato.install', run_local_text)
-        self.assertNotIn('kato.validate_env --mode agent', run_local_text)
+        self.assertNotIn('kato_core_lib.validate_env --mode agent', run_local_text)
         self.assertIn('bootstrap:', makefile_text)
         self.assertIn('configure:', makefile_text)
         self.assertIn('scripts/generate_env.py --output .env', makefile_text)
@@ -533,7 +533,7 @@ class DeploymentFilesTests(unittest.TestCase):
 
     def test_repo_does_not_use_all_export_shims(self) -> None:
         forbidden_locations = []
-        for path in (REPO_ROOT / 'kato').rglob('*.py'):
+        for path in (REPO_ROOT / 'kato_core_lib').rglob('*.py'):
             text = path.read_text(encoding='utf-8')
             if '__all__ =' in text:
                 forbidden_locations.append(str(path.relative_to(REPO_ROOT)))

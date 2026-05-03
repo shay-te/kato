@@ -2,8 +2,8 @@ import types
 import unittest
 from unittest.mock import Mock
 
-from kato.data_layers.data_access.task_data_access import TaskDataAccess
-from kato.data_layers.service.task_state_service import TaskStateService
+from kato_core_lib.data_layers.data_access.task_data_access import TaskDataAccess
+from kato_core_lib.data_layers.service.task_state_service import TaskStateService
 
 
 class TaskStateServiceTests(unittest.TestCase):

@@ -8,9 +8,9 @@ from unittest.mock import Mock, patch
 from core_lib.core_lib import CoreLib
 from omegaconf import DictConfig, OmegaConf
 
-from kato.data_layers.data.review_comment import ReviewComment
-from kato.data_layers.data.task import Task
-from kato.data_layers.data.fields import ReviewCommentFields, TaskCommentFields
+from kato_core_lib.data_layers.data.review_comment import ReviewComment
+from kato_core_lib.data_layers.data.task import Task
+from kato_core_lib.data_layers.data.fields import ReviewCommentFields, TaskCommentFields
 thread_lock = threading.Lock()
 
 __test__ = False
@@ -230,12 +230,12 @@ def sync_create_start_core_lib() -> KatoCoreLib:
             [CoreLib.cache_registry.unregister(key) for key in CoreLib.cache_registry.registered()]
             [CoreLib.observer_registry.unregister(key) for key in CoreLib.observer_registry.registered()]
             from unittest.mock import patch
-            from kato.kato_core_lib import KatoCoreLib
+            from kato_core_lib.kato_core_lib import KatoCoreLib
 
             with patch(
-                'kato.kato_core_lib.EmailCoreLib'
+                'kato_core_lib.kato_core_lib.EmailCoreLib'
             ), patch(
-                'kato.kato_core_lib.AgentService.validate_connections'
+                'kato_core_lib.kato_core_lib.AgentService.validate_connections'
             ):
                 OblInstance.instance = KatoCoreLib(load_config())
             OblInstance.instance.start_core_lib()

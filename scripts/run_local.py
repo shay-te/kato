@@ -2,7 +2,7 @@
 
 Loads ``.env``, hands the variables to the kato process via the parent
 environment (no shell-only ``set -a; . .env``), and execs
-``python -m kato.main`` from the project venv. Works on Windows, macOS,
+``python -m kato_core_lib.main`` from the project venv. Works on Windows, macOS,
 and Linux.
 
 Usage:
@@ -39,7 +39,7 @@ def main() -> int:
     env.update(load_env_file(env_path))
 
     completed = subprocess.run(
-        [str(python_bin), '-m', 'kato.main'],
+        [str(python_bin), '-m', 'kato_core_lib.main'],
         cwd=REPO_ROOT,
         env=env,
     )

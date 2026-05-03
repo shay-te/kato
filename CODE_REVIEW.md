@@ -15,7 +15,7 @@ None known. The two real bugs found this session were fixed:
 ## Severity 2 — risky behavior worth a second look
 
 ### S2.1 — In-memory `_pending_publish` survives only the running process
-[`AgentService.approve_push`](kato/data_layers/service/agent_service.py) stashes the post-test execution context in a `dict` so the operator's "Approve push" button can resume publish without re-running the agent. **A kato restart loses every pending approval.** The branch + commits survive on disk; the operator's path to recovery is to remove the `kato:wait-before-git-push` tag and let kato re-process the task. That works but it forces the agent to re-run.
+[`AgentService.approve_push`](kato_core_lib/data_layers/service/agent_service.py) stashes the post-test execution context in a `dict` so the operator's "Approve push" button can resume publish without re-running the agent. **A kato restart loses every pending approval.** The branch + commits survive on disk; the operator's path to recovery is to remove the `kato:wait-before-git-push` tag and let kato re-process the task. That works but it forces the agent to re-run.
 
 **Fix options if this hits operators in practice:**
 - Persist the pending state to `~/.kato/pending-publish/<task-id>.json` with enough info to reconstruct (task, prepared_task summary, execution payload).
@@ -82,7 +82,7 @@ Two pieces of code map kinds to display strings. Today they don't conflict (`Bub
 Inconsistency, not a bug. If you adopt the lazy `_repositories=None` pattern across all test fixtures, you remove a class of "Mock not iterable" foot-guns when constructors change.
 
 ### S4.7 — `architecture.md` §5.1 references `repository_discovery_utils.py:45-50`
-Line numbers in code references rot fast. The actual line of the dir-pruning logic is whatever it is today; future edits will misdirect readers. **Fix:** drop the line range and link to the file only — `[repository_discovery_utils.py](kato/helpers/repository_discovery_utils.py)`. The reader can grep.
+Line numbers in code references rot fast. The actual line of the dir-pruning logic is whatever it is today; future edits will misdirect readers. **Fix:** drop the line range and link to the file only — `[repository_discovery_utils.py](kato_core_lib/helpers/repository_discovery_utils.py)`. The reader can grep.
 
 ---
 

@@ -10,7 +10,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from kato.validate_env import validate_environment
+from kato_core_lib.validate_env import validate_environment
 
 
 class TestDockerConfigValidation(unittest.TestCase):

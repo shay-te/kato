@@ -1,6 +1,6 @@
 import unittest
 
-from kato.helpers.kato_config_utils import (
+from kato_core_lib.helpers.kato_config_utils import (
     is_bedrock_model,
     is_openrouter_model,
     resolved_openhands_base_url,

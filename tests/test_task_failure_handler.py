@@ -2,15 +2,15 @@ import types
 import unittest
 from unittest.mock import Mock
 
-from kato.data_layers.data.task import Task
-from kato.data_layers.service.notification_service import NotificationService
-from kato.data_layers.service.repository_inventory_service import (
+from kato_core_lib.data_layers.data.task import Task
+from kato_core_lib.data_layers.service.notification_service import NotificationService
+from kato_core_lib.data_layers.service.repository_inventory_service import (
     RepositoryIgnoredByConfigError,
 )
-from kato.data_layers.service.repository_service import RepositoryService
-from kato.data_layers.service.task_failure_handler import TaskFailureHandler
-from kato.data_layers.service.task_state_service import TaskStateService
-from kato.data_layers.service.task_service import TaskService
+from kato_core_lib.data_layers.service.repository_service import RepositoryService
+from kato_core_lib.data_layers.service.task_failure_handler import TaskFailureHandler
+from kato_core_lib.data_layers.service.task_state_service import TaskStateService
+from kato_core_lib.data_layers.service.task_service import TaskService
 from utils import build_task
 
 

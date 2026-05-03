@@ -6,7 +6,7 @@ import threading
 import time
 import unittest
 
-from kato.data_layers.service.parallel_task_runner import ParallelTaskRunner
+from kato_core_lib.data_layers.service.parallel_task_runner import ParallelTaskRunner
 
 
 class ParallelTaskRunnerTests(unittest.TestCase):

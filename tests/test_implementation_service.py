@@ -2,7 +2,7 @@ import types
 import unittest
 from unittest.mock import Mock
 
-from kato.data_layers.service.implementation_service import (
+from kato_core_lib.data_layers.service.implementation_service import (
     ImplementationService,
 )
 from utils import build_task

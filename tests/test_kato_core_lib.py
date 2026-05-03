@@ -1,8 +1,8 @@
 import unittest
 from unittest.mock import ANY, Mock, patch
 
-from kato.kato_core_lib import KatoCoreLib
-from kato.data_layers.data.fields import PullRequestFields, StatusFields
+from kato_core_lib.kato_core_lib import KatoCoreLib
+from kato_core_lib.data_layers.data.fields import PullRequestFields, StatusFields
 from utils import build_task, build_test_cfg
 
 
@@ -63,15 +63,15 @@ class KatoCoreLibTests(unittest.TestCase):
         }
 
         with patch(
-            'kato.kato_core_lib.EmailCoreLib'
+            'kato_core_lib.kato_core_lib.EmailCoreLib'
         ) as mock_email_core_lib_cls, patch(
-            'kato.kato_core_lib.build_ticket_client',
+            'kato_core_lib.kato_core_lib.build_ticket_client',
         return_value=ticket_client,
         ), patch(
-            'kato.kato_core_lib.KatoClient',
+            'kato_core_lib.kato_core_lib.KatoClient',
             side_effect=[implementation_client, testing_client],
         ) as mock_kato_client_cls, patch(
-            'kato.kato_core_lib.RepositoryService',
+            'kato_core_lib.kato_core_lib.RepositoryService',
             return_value=repository_service,
         ):
             app = KatoCoreLib(cfg)
@@ -93,34 +93,34 @@ class KatoCoreLibTests(unittest.TestCase):
         testing_client = Mock(name='testing_kato_client')
 
         with patch(
-            'kato.kato_core_lib.EmailCoreLib'
+            'kato_core_lib.kato_core_lib.EmailCoreLib'
         ) as mock_email_core_lib_cls, patch(
-            'kato.kato_core_lib.build_ticket_client'
+            'kato_core_lib.kato_core_lib.build_ticket_client'
         ) as mock_build_ticket_client, patch(
-            'kato.kato_core_lib.KatoClient',
+            'kato_core_lib.kato_core_lib.KatoClient',
             side_effect=[implementation_client, testing_client],
         ) as mock_kato_client_cls, patch(
-            'kato.kato_core_lib.TaskDataAccess'
+            'kato_core_lib.kato_core_lib.TaskDataAccess'
         ) as mock_task_da_cls, patch(
-            'kato.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.TaskService'
         ) as mock_task_service_cls, patch(
-            'kato.kato_core_lib.TaskStateService'
+            'kato_core_lib.kato_core_lib.TaskStateService'
         ) as mock_task_state_service_cls, patch(
-            'kato.kato_core_lib.ImplementationService'
+            'kato_core_lib.kato_core_lib.ImplementationService'
         ) as mock_impl_service_cls, patch(
-            'kato.kato_core_lib.TestingService'
+            'kato_core_lib.kato_core_lib.TestingService'
         ) as mock_testing_service_cls, patch(
-            'kato.kato_core_lib.RepositoryService'
+            'kato_core_lib.kato_core_lib.RepositoryService'
         ) as mock_repository_service_cls, patch(
-            'kato.kato_core_lib.NotificationService'
+            'kato_core_lib.kato_core_lib.NotificationService'
         ) as mock_notification_service_cls, patch(
-            'kato.kato_core_lib.TaskPreflightService'
+            'kato_core_lib.kato_core_lib.TaskPreflightService'
         ) as mock_task_preflight_service_cls, patch(
-            'kato.kato_core_lib.TaskFailureHandler'
+            'kato_core_lib.kato_core_lib.TaskFailureHandler'
         ) as mock_task_failure_handler_cls, patch(
-            'kato.kato_core_lib.TaskPublisher'
+            'kato_core_lib.kato_core_lib.TaskPublisher'
         ) as mock_task_publisher_cls, patch(
-            'kato.kato_core_lib.AgentService'
+            'kato_core_lib.kato_core_lib.AgentService'
         ) as mock_service_cls:
             app = KatoCoreLib(self.cfg)
 
@@ -249,36 +249,36 @@ class KatoCoreLibTests(unittest.TestCase):
         cfg.kato.source_fingerprint = 'expected-fingerprint'
 
         with patch(
-            'kato.kato_core_lib.runtime_source_fingerprint',
+            'kato_core_lib.kato_core_lib.runtime_source_fingerprint',
             return_value='current-fingerprint',
         ), patch(
-            'kato.kato_core_lib.EmailCoreLib'
+            'kato_core_lib.kato_core_lib.EmailCoreLib'
         ), patch(
-            'kato.kato_core_lib.build_ticket_client'
+            'kato_core_lib.kato_core_lib.build_ticket_client'
         ), patch(
-            'kato.kato_core_lib.KatoClient'
+            'kato_core_lib.kato_core_lib.KatoClient'
         ), patch(
-            'kato.kato_core_lib.RepositoryService'
+            'kato_core_lib.kato_core_lib.RepositoryService'
         ), patch(
-            'kato.kato_core_lib.TaskDataAccess'
+            'kato_core_lib.kato_core_lib.TaskDataAccess'
         ), patch(
-            'kato.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.TaskService'
         ), patch(
-            'kato.kato_core_lib.TaskStateService'
+            'kato_core_lib.kato_core_lib.TaskStateService'
         ), patch(
-            'kato.kato_core_lib.ImplementationService'
+            'kato_core_lib.kato_core_lib.ImplementationService'
         ), patch(
-            'kato.kato_core_lib.TestingService'
+            'kato_core_lib.kato_core_lib.TestingService'
         ), patch(
-            'kato.kato_core_lib.NotificationService'
+            'kato_core_lib.kato_core_lib.NotificationService'
         ), patch(
-            'kato.kato_core_lib.TaskPreflightService'
+            'kato_core_lib.kato_core_lib.TaskPreflightService'
         ), patch(
-            'kato.kato_core_lib.TaskFailureHandler'
+            'kato_core_lib.kato_core_lib.TaskFailureHandler'
         ), patch(
-            'kato.kato_core_lib.TaskPublisher'
+            'kato_core_lib.kato_core_lib.TaskPublisher'
         ), patch(
-            'kato.kato_core_lib.AgentService'
+            'kato_core_lib.kato_core_lib.AgentService'
         ):
             with self.assertRaises(RuntimeError) as exc:
                 KatoCoreLib(cfg)
@@ -294,27 +294,27 @@ class KatoCoreLibTests(unittest.TestCase):
         cfg.kato.openhands.testing_llm_base_url = 'https://api.openai.com/v1'
 
         with patch(
-            'kato.kato_core_lib.EmailCoreLib'
+            'kato_core_lib.kato_core_lib.EmailCoreLib'
         ), patch(
-            'kato.kato_core_lib.build_ticket_client'
+            'kato_core_lib.kato_core_lib.build_ticket_client'
         ), patch(
-            'kato.kato_core_lib.KatoClient'
+            'kato_core_lib.kato_core_lib.KatoClient'
         ) as mock_kato_client_cls, patch(
-            'kato.kato_core_lib.RepositoryService'
+            'kato_core_lib.kato_core_lib.RepositoryService'
         ), patch(
-            'kato.kato_core_lib.TaskDataAccess'
+            'kato_core_lib.kato_core_lib.TaskDataAccess'
         ), patch(
-            'kato.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.TaskService'
         ), patch(
-            'kato.kato_core_lib.TaskStateService'
+            'kato_core_lib.kato_core_lib.TaskStateService'
         ), patch(
-            'kato.kato_core_lib.ImplementationService'
+            'kato_core_lib.kato_core_lib.ImplementationService'
         ), patch(
-            'kato.kato_core_lib.TestingService'
+            'kato_core_lib.kato_core_lib.TestingService'
         ), patch(
-            'kato.kato_core_lib.NotificationService'
+            'kato_core_lib.kato_core_lib.NotificationService'
         ), patch(
-            'kato.kato_core_lib.AgentService'
+            'kato_core_lib.kato_core_lib.AgentService'
         ):
             KatoCoreLib(cfg)
 
@@ -438,27 +438,27 @@ class KatoCoreLibTests(unittest.TestCase):
 
     def test_exposes_service_instance(self) -> None:
         with patch(
-            'kato.kato_core_lib.EmailCoreLib'
+            'kato_core_lib.kato_core_lib.EmailCoreLib'
         ), patch(
-            'kato.kato_core_lib.build_ticket_client'
+            'kato_core_lib.kato_core_lib.build_ticket_client'
         ), patch(
-            'kato.kato_core_lib.KatoClient'
+            'kato_core_lib.kato_core_lib.KatoClient'
         ), patch(
-            'kato.kato_core_lib.RepositoryService'
+            'kato_core_lib.kato_core_lib.RepositoryService'
         ), patch(
-            'kato.kato_core_lib.TaskDataAccess'
+            'kato_core_lib.kato_core_lib.TaskDataAccess'
         ), patch(
-            'kato.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.TaskService'
         ), patch(
-            'kato.kato_core_lib.TaskStateService'
+            'kato_core_lib.kato_core_lib.TaskStateService'
         ), patch(
-            'kato.kato_core_lib.ImplementationService'
+            'kato_core_lib.kato_core_lib.ImplementationService'
         ), patch(
-            'kato.kato_core_lib.TestingService'
+            'kato_core_lib.kato_core_lib.TestingService'
         ), patch(
-            'kato.kato_core_lib.NotificationService'
+            'kato_core_lib.kato_core_lib.NotificationService'
         ), patch(
-            'kato.kato_core_lib.AgentService'
+            'kato_core_lib.kato_core_lib.AgentService'
         ) as mock_service_cls:
             mock_service_cls.return_value.get_assigned_tasks.return_value = ["task-1"]
             mock_service_cls.return_value.process_assigned_task.return_value = {"id": "17"}
@@ -469,27 +469,27 @@ class KatoCoreLibTests(unittest.TestCase):
 
     def test_service_handles_comment_operations(self) -> None:
         with patch(
-            'kato.kato_core_lib.EmailCoreLib'
+            'kato_core_lib.kato_core_lib.EmailCoreLib'
         ), patch(
-            'kato.kato_core_lib.build_ticket_client'
+            'kato_core_lib.kato_core_lib.build_ticket_client'
         ), patch(
-            'kato.kato_core_lib.KatoClient'
+            'kato_core_lib.kato_core_lib.KatoClient'
         ), patch(
-            'kato.kato_core_lib.RepositoryService'
+            'kato_core_lib.kato_core_lib.RepositoryService'
         ), patch(
-            'kato.kato_core_lib.TaskDataAccess'
+            'kato_core_lib.kato_core_lib.TaskDataAccess'
         ), patch(
-            'kato.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.TaskService'
         ), patch(
-            'kato.kato_core_lib.TaskStateService'
+            'kato_core_lib.kato_core_lib.TaskStateService'
         ), patch(
-            'kato.kato_core_lib.ImplementationService'
+            'kato_core_lib.kato_core_lib.ImplementationService'
         ), patch(
-            'kato.kato_core_lib.TestingService'
+            'kato_core_lib.kato_core_lib.TestingService'
         ), patch(
-            'kato.kato_core_lib.NotificationService'
+            'kato_core_lib.kato_core_lib.NotificationService'
         ), patch(
-            'kato.kato_core_lib.AgentService'
+            'kato_core_lib.kato_core_lib.AgentService'
         ) as mock_service_cls:
             mock_service_cls.return_value.handle_pull_request_comment.return_value = {"status": "updated"}
             app = KatoCoreLib(self.cfg)
@@ -502,27 +502,27 @@ class KatoCoreLibTests(unittest.TestCase):
         cfg.kato.issue_platform = 'jira'
 
         with patch(
-            'kato.kato_core_lib.EmailCoreLib'
+            'kato_core_lib.kato_core_lib.EmailCoreLib'
         ), patch(
-            'kato.kato_core_lib.build_ticket_client'
+            'kato_core_lib.kato_core_lib.build_ticket_client'
         ) as mock_build_ticket_client, patch(
-            'kato.kato_core_lib.KatoClient'
+            'kato_core_lib.kato_core_lib.KatoClient'
         ), patch(
-            'kato.kato_core_lib.RepositoryService'
+            'kato_core_lib.kato_core_lib.RepositoryService'
         ), patch(
-            'kato.kato_core_lib.TaskDataAccess'
+            'kato_core_lib.kato_core_lib.TaskDataAccess'
         ), patch(
-            'kato.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.TaskService'
         ), patch(
-            'kato.kato_core_lib.TaskStateService'
+            'kato_core_lib.kato_core_lib.TaskStateService'
         ), patch(
-            'kato.kato_core_lib.ImplementationService'
+            'kato_core_lib.kato_core_lib.ImplementationService'
         ), patch(
-            'kato.kato_core_lib.TestingService'
+            'kato_core_lib.kato_core_lib.TestingService'
         ), patch(
-            'kato.kato_core_lib.NotificationService'
+            'kato_core_lib.kato_core_lib.NotificationService'
         ), patch(
-            'kato.kato_core_lib.AgentService'
+            'kato_core_lib.kato_core_lib.AgentService'
         ):
             KatoCoreLib(cfg)
 
@@ -547,29 +547,29 @@ class KatoCoreLibTests(unittest.TestCase):
         }
 
         with patch(
-            'kato.kato_core_lib.EmailCoreLib'
+            'kato_core_lib.kato_core_lib.EmailCoreLib'
         ), patch(
-            'kato.kato_core_lib.build_ticket_client'
+            'kato_core_lib.kato_core_lib.build_ticket_client'
         ), patch(
-            'kato.kato_core_lib.KatoClient'
+            'kato_core_lib.kato_core_lib.KatoClient'
         ) as mock_kato_client_cls, patch(
-            'kato.kato_core_lib.ClaudeCliClient'
+            'kato_core_lib.kato_core_lib.ClaudeCliClient'
         ) as mock_claude_client_cls, patch(
-            'kato.kato_core_lib.RepositoryService'
+            'kato_core_lib.kato_core_lib.RepositoryService'
         ), patch(
-            'kato.kato_core_lib.TaskDataAccess'
+            'kato_core_lib.kato_core_lib.TaskDataAccess'
         ), patch(
-            'kato.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.TaskService'
         ), patch(
-            'kato.kato_core_lib.TaskStateService'
+            'kato_core_lib.kato_core_lib.TaskStateService'
         ), patch(
-            'kato.kato_core_lib.ImplementationService'
+            'kato_core_lib.kato_core_lib.ImplementationService'
         ), patch(
-            'kato.kato_core_lib.TestingService'
+            'kato_core_lib.kato_core_lib.TestingService'
         ), patch(
-            'kato.kato_core_lib.NotificationService'
+            'kato_core_lib.kato_core_lib.NotificationService'
         ), patch(
-            'kato.kato_core_lib.AgentService'
+            'kato_core_lib.kato_core_lib.AgentService'
         ):
             KatoCoreLib(cfg)
 
@@ -597,33 +597,33 @@ class KatoCoreLibTests(unittest.TestCase):
         }
 
         with patch(
-            'kato.kato_core_lib.EmailCoreLib'
+            'kato_core_lib.kato_core_lib.EmailCoreLib'
         ), patch(
-            'kato.kato_core_lib.build_ticket_client'
+            'kato_core_lib.kato_core_lib.build_ticket_client'
         ), patch(
-            'kato.kato_core_lib.KatoClient'
+            'kato_core_lib.kato_core_lib.KatoClient'
         ), patch(
-            'kato.kato_core_lib.ClaudeCliClient'
+            'kato_core_lib.kato_core_lib.ClaudeCliClient'
         ) as mock_claude_client_cls, patch(
-            'kato.kato_core_lib.RepositoryService'
+            'kato_core_lib.kato_core_lib.RepositoryService'
         ), patch(
-            'kato.kato_core_lib.TaskDataAccess'
+            'kato_core_lib.kato_core_lib.TaskDataAccess'
         ), patch(
-            'kato.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.TaskService'
         ), patch(
-            'kato.kato_core_lib.TaskStateService'
+            'kato_core_lib.kato_core_lib.TaskStateService'
         ), patch(
-            'kato.kato_core_lib.ImplementationService'
+            'kato_core_lib.kato_core_lib.ImplementationService'
         ), patch(
-            'kato.kato_core_lib.TestingService'
+            'kato_core_lib.kato_core_lib.TestingService'
         ), patch(
-            'kato.kato_core_lib.NotificationService'
+            'kato_core_lib.kato_core_lib.NotificationService'
         ), patch(
-            'kato.kato_core_lib.AgentService'
+            'kato_core_lib.kato_core_lib.AgentService'
         ), patch(
-            'kato.kato_core_lib.PlanningSessionRunner'
+            'kato_core_lib.kato_core_lib.PlanningSessionRunner'
         ) as mock_runner_cls, patch(
-            'kato.kato_core_lib.is_docker_mode_enabled', return_value=True,
+            'kato_core_lib.kato_core_lib.is_docker_mode_enabled', return_value=True,
         ):
             KatoCoreLib(cfg)
 
@@ -649,31 +649,31 @@ class KatoCoreLibTests(unittest.TestCase):
         }
 
         with patch(
-            'kato.kato_core_lib.EmailCoreLib'
+            'kato_core_lib.kato_core_lib.EmailCoreLib'
         ), patch(
-            'kato.kato_core_lib.build_ticket_client'
+            'kato_core_lib.kato_core_lib.build_ticket_client'
         ), patch(
-            'kato.kato_core_lib.KatoClient'
+            'kato_core_lib.kato_core_lib.KatoClient'
         ), patch(
-            'kato.kato_core_lib.ClaudeCliClient'
+            'kato_core_lib.kato_core_lib.ClaudeCliClient'
         ) as mock_claude_client_cls, patch(
-            'kato.kato_core_lib.RepositoryService'
+            'kato_core_lib.kato_core_lib.RepositoryService'
         ), patch(
-            'kato.kato_core_lib.TaskDataAccess'
+            'kato_core_lib.kato_core_lib.TaskDataAccess'
         ), patch(
-            'kato.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.TaskService'
         ), patch(
-            'kato.kato_core_lib.TaskStateService'
+            'kato_core_lib.kato_core_lib.TaskStateService'
         ), patch(
-            'kato.kato_core_lib.ImplementationService'
+            'kato_core_lib.kato_core_lib.ImplementationService'
         ), patch(
-            'kato.kato_core_lib.TestingService'
+            'kato_core_lib.kato_core_lib.TestingService'
         ), patch(
-            'kato.kato_core_lib.NotificationService'
+            'kato_core_lib.kato_core_lib.NotificationService'
         ), patch(
-            'kato.kato_core_lib.AgentService'
+            'kato_core_lib.kato_core_lib.AgentService'
         ), patch(
-            'kato.kato_core_lib.is_docker_mode_enabled', return_value=False,
+            'kato_core_lib.kato_core_lib.is_docker_mode_enabled', return_value=False,
         ):
             KatoCoreLib(cfg)
 
@@ -695,9 +695,9 @@ class KatoCoreLibTests(unittest.TestCase):
         import os
         import subprocess
 
-        from kato.client.claude.cli_client import ClaudeCliClient
-        from kato.kato_core_lib import KatoCoreLib
-        from kato.validation.bypass_permissions_validator import (
+        from kato_core_lib.client.claude.cli_client import ClaudeCliClient
+        from kato_core_lib.kato_core_lib import KatoCoreLib
+        from kato_core_lib.validation.bypass_permissions_validator import (
             is_docker_mode_enabled,
         )
 
@@ -737,21 +737,21 @@ class KatoCoreLibTests(unittest.TestCase):
 
             # Trigger a per-task spawn and verify the docker wrap fires.
             with patch(
-                'kato.client.claude.cli_client.subprocess.run',
+                'kato_core_lib.client.claude.cli_client.subprocess.run',
                 return_value=completed,
             ) as mock_run, patch(
-                'kato.sandbox.manager.ensure_image',
+                'kato_core_lib.sandbox.manager.ensure_image',
             ), patch(
-                'kato.sandbox.manager.check_spawn_rate',
+                'kato_core_lib.sandbox.manager.check_spawn_rate',
             ), patch(
-                'kato.sandbox.manager.enforce_no_workspace_secrets',
+                'kato_core_lib.sandbox.manager.enforce_no_workspace_secrets',
             ), patch(
-                'kato.sandbox.manager.record_spawn',
+                'kato_core_lib.sandbox.manager.record_spawn',
             ), patch(
-                'kato.sandbox.manager.wrap_command',
+                'kato_core_lib.sandbox.manager.wrap_command',
                 return_value=['docker', 'run', '--rm', 'kato-sandbox', 'claude'],
             ) as mock_wrap, patch(
-                'kato.sandbox.manager.make_container_name',
+                'kato_core_lib.sandbox.manager.make_container_name',
                 return_value='kato-sandbox-PROJ-1-end2end',
             ):
                 client.test_task(build_task())
@@ -767,13 +767,13 @@ class KatoCoreLibTests(unittest.TestCase):
         cfg.kato.agent_backend = 'gemini'
 
         with patch(
-            'kato.kato_core_lib.EmailCoreLib'
+            'kato_core_lib.kato_core_lib.EmailCoreLib'
         ), patch(
-            'kato.kato_core_lib.build_ticket_client'
+            'kato_core_lib.kato_core_lib.build_ticket_client'
         ), patch(
-            'kato.kato_core_lib.KatoClient'
+            'kato_core_lib.kato_core_lib.KatoClient'
         ), patch(
-            'kato.kato_core_lib.RepositoryService'
+            'kato_core_lib.kato_core_lib.RepositoryService'
         ):
             with self.assertRaisesRegex(ValueError, 'unsupported KATO_AGENT_BACKEND'):
                 KatoCoreLib(cfg)
@@ -783,25 +783,25 @@ class KatoCoreLibTests(unittest.TestCase):
         delattr(cfg.core_lib, 'email_core_lib')
 
         with patch(
-            'kato.kato_core_lib.EmailCoreLib'
+            'kato_core_lib.kato_core_lib.EmailCoreLib'
         ) as mock_email_core_lib_cls, patch(
-            'kato.kato_core_lib.build_ticket_client'
+            'kato_core_lib.kato_core_lib.build_ticket_client'
         ), patch(
-            'kato.kato_core_lib.KatoClient'
+            'kato_core_lib.kato_core_lib.KatoClient'
         ), patch(
-            'kato.kato_core_lib.RepositoryService'
+            'kato_core_lib.kato_core_lib.RepositoryService'
         ), patch(
-            'kato.kato_core_lib.TaskDataAccess'
+            'kato_core_lib.kato_core_lib.TaskDataAccess'
         ), patch(
-            'kato.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.TaskService'
         ), patch(
-            'kato.kato_core_lib.ImplementationService'
+            'kato_core_lib.kato_core_lib.ImplementationService'
         ), patch(
-            'kato.kato_core_lib.TestingService'
+            'kato_core_lib.kato_core_lib.TestingService'
         ), patch(
-            'kato.kato_core_lib.NotificationService'
+            'kato_core_lib.kato_core_lib.NotificationService'
         ), patch(
-            'kato.kato_core_lib.AgentService'
+            'kato_core_lib.kato_core_lib.AgentService'
         ):
             KatoCoreLib(cfg)
 

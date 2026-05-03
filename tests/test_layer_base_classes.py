@@ -4,18 +4,18 @@ import unittest
 from core_lib.data_layers.data_access.data_access import DataAccess
 from core_lib.data_layers.service.service import Service
 
-from kato.data_layers.data_access.pull_request_data_access import (
+from kato_core_lib.data_layers.data_access.pull_request_data_access import (
     PullRequestDataAccess,
 )
-from kato.data_layers.data_access.task_data_access import TaskDataAccess
-from kato.data_layers.service.agent_service import AgentService
-from kato.data_layers.service.implementation_service import (
+from kato_core_lib.data_layers.data_access.task_data_access import TaskDataAccess
+from kato_core_lib.data_layers.service.agent_service import AgentService
+from kato_core_lib.data_layers.service.implementation_service import (
     ImplementationService,
 )
-from kato.data_layers.service.notification_service import NotificationService
-from kato.data_layers.service.repository_service import RepositoryService
-from kato.data_layers.service.task_service import TaskService
-from kato.data_layers.service.testing_service import TestingService
+from kato_core_lib.data_layers.service.notification_service import NotificationService
+from kato_core_lib.data_layers.service.repository_service import RepositoryService
+from kato_core_lib.data_layers.service.task_service import TaskService
+from kato_core_lib.data_layers.service.testing_service import TestingService
 
 
 class LayerBaseClassTests(unittest.TestCase):

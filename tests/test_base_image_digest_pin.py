@@ -22,9 +22,12 @@ from __future__ import annotations
 import logging
 import unittest
 
-from kato.sandbox.manager import (
+from unittest.mock import patch
+
+from kato_core_lib.sandbox.manager import (
     SandboxError,
     _validate_base_image_pin_or_refuse,
+    build_image,
 )
 
 
@@ -120,6 +123,45 @@ class BaseImageDigestPinValidationTests(unittest.TestCase):
         joined = ' '.join(cm.output)
         self.assertIn(pinned, joined)
         self.assertIn('digest-pinned', joined)
+
+
+class BuildImageInvokesValidatorTests(unittest.TestCase):
+    """Lock the integration: ``build_image`` MUST call the validator.
+
+    Without this assertion, a refactor that removes the validator call
+    from ``build_image`` would leave every unit test in
+    ``BaseImageDigestPinValidationTests`` green but ship a regression
+    that bypasses the strict-by-default refusal entirely. This is the
+    "all the unit tests pass but the call site was deleted" gap.
+    """
+
+    def test_build_image_refuses_when_validator_would_refuse(self) -> None:
+        """Strict-default refusal flows through build_image too."""
+        # Empty env triggers the refusal path the validator unit-tests
+        # cover. If build_image didn't call the validator, the refusal
+        # wouldn't fire and docker build would proceed unconstrained.
+        with self.assertRaises(SandboxError):
+            build_image(env={})
+
+    def test_build_image_passes_through_to_docker_when_validator_accepts(self) -> None:
+        """When the operator opts out, build_image proceeds to docker build.
+
+        We mock subprocess so the test doesn't actually run docker; the
+        assertion is that the validator returned silently and the
+        docker invocation was reached.
+        """
+        with patch(
+            'kato_core_lib.sandbox.manager.subprocess.run',
+            return_value=type('R', (), {'returncode': 0, 'stdout': '', 'stderr': ''})(),
+        ) as mock_run:
+            build_image(env={'KATO_SANDBOX_ALLOW_FLOATING_BASE_IMAGE': 'true'})
+
+        # docker build was invoked at least once — i.e. the validator
+        # didn't block the call.
+        self.assertTrue(mock_run.called)
+        # First arg is the docker build argv.
+        invoked_argv = mock_run.call_args.args[0]
+        self.assertEqual(invoked_argv[:2], ['docker', 'build'])
 
 
 if __name__ == '__main__':

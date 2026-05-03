@@ -2,8 +2,8 @@ import types
 import unittest
 from unittest.mock import Mock
 
-from kato.data_layers.data.fields import PullRequestFields, RepositoryFields
-from kato.data_layers.service.repository_publication_service import (
+from kato_core_lib.data_layers.data.fields import PullRequestFields, RepositoryFields
+from kato_core_lib.data_layers.service.repository_publication_service import (
     RepositoryPublicationService,
 )
 

@@ -162,7 +162,7 @@ Remove-Item -Recurse -Force .venv, .env, webserver\static\build -ErrorAction Sil
 Remove-Item -Recurse -Force $env:USERPROFILE\.kato\workspaces, $env:USERPROFILE\.kato\sessions -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force $env:USERPROFILE\.claude\projects -ErrorAction SilentlyContinue  # optional
 python scripts\bootstrap.py
-python -m kato.configure_project --output .env
+python -m kato_core_lib.configure_project --output .env
 python scripts\run_local.py
 ```
 
@@ -179,8 +179,8 @@ Every operator-facing entry point is a Python script under `scripts/`; the `.sh`
 | Action | macOS / Linux | Windows |
 |---|---|---|
 | Bootstrap | `make bootstrap` | `python scripts\bootstrap.py` |
-| Configure `.env` | `make configure` | `python -m kato.configure_project --output .env` |
-| Validate config | `make doctor` | `python -m kato.validate_env --env-file .env --mode all` |
+| Configure `.env` | `make configure` | `python -m kato_core_lib.configure_project --output .env` |
+| Validate config | `make doctor` | `python -m kato_core_lib.validate_env --env-file .env --mode all` |
 | Run kato | `make run` / `make compose-up` | `python scripts\run_local.py` |
 | Run the test suite | `make test` | `python -m unittest discover -s tests` |
 | Clean Docker resources | `./clean.sh` | `python scripts\clean.py` |

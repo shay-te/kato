@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import unittest
 
-from kato.helpers.status_broadcaster_utils import (
+from kato_core_lib.helpers.status_broadcaster_utils import (
     StatusBroadcaster,
     install_status_broadcast_handler,
 )
@@ -28,7 +28,7 @@ class WorkflowLoggerCaptureTests(unittest.TestCase):
         # Mirror what kato does: child loggers under ``kato.workflow``.
         # configure_logger sets ``kato.workflow.propagate = False``, so a
         # broadcaster on ROOT alone would never see these.
-        from kato.helpers.logging_utils import configure_logger
+        from kato_core_lib.helpers.logging_utils import configure_logger
         log = configure_logger('test_AgentService')
 
         log.info('Mission UNA-XYZ: starting mission: dummy')

@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 from unittest.mock import patch
 
-from kato.validate_env import (
+from kato_core_lib.validate_env import (
     validate_agent_env,
     validate_claude_env,
     validate_openhands_env,
@@ -496,18 +496,18 @@ class ValidateEnvTests(unittest.TestCase):
         )
 
     def test_validate_claude_env_passes_when_binary_exists(self) -> None:
-        with patch('kato.validate_env.which', return_value='/usr/local/bin/claude'):
+        with patch('kato_core_lib.validate_env.which', return_value='/usr/local/bin/claude'):
             errors = validate_claude_env({'KATO_CLAUDE_BINARY': 'claude'})
         self.assertEqual(errors, [])
 
     def test_validate_claude_env_reports_missing_binary(self) -> None:
-        with patch('kato.validate_env.which', return_value=None):
+        with patch('kato_core_lib.validate_env.which', return_value=None):
             errors = validate_claude_env({'KATO_CLAUDE_BINARY': 'claude-not-installed'})
         self.assertEqual(len(errors), 1)
         self.assertIn('Claude CLI binary', errors[0])
 
     def test_validate_claude_env_reports_invalid_timeout(self) -> None:
-        with patch('kato.validate_env.which', return_value='/usr/local/bin/claude'):
+        with patch('kato_core_lib.validate_env.which', return_value='/usr/local/bin/claude'):
             errors = validate_claude_env(
                 {
                     'KATO_CLAUDE_BINARY': 'claude',
@@ -517,7 +517,7 @@ class ValidateEnvTests(unittest.TestCase):
         self.assertEqual(errors, ['KATO_CLAUDE_TIMEOUT_SECONDS must be at least 60'])
 
     def test_validate_claude_env_reports_non_integer_max_turns(self) -> None:
-        with patch('kato.validate_env.which', return_value='/usr/local/bin/claude'):
+        with patch('kato_core_lib.validate_env.which', return_value='/usr/local/bin/claude'):
             errors = validate_claude_env(
                 {
                     'KATO_CLAUDE_BINARY': 'claude',

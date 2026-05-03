@@ -1,11 +1,11 @@
 import unittest
 
-from kato.data_layers.data.fields import (
+from kato_core_lib.data_layers.data.fields import (
     PullRequestFields,
     ReviewCommentFields,
 )
-from kato.data_layers.data.review_comment import ReviewComment
-from kato.helpers.review_comment_utils import (
+from kato_core_lib.data_layers.data.review_comment import ReviewComment
+from kato_core_lib.helpers.review_comment_utils import (
     normalize_comment_context,
     review_comment_from_payload,
 )

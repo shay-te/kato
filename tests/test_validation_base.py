@@ -1,19 +1,19 @@
 import unittest
 
-from kato.validation.base import ValidationBase
-from kato.validation.branch_publishability import (
+from kato_core_lib.validation.base import ValidationBase
+from kato_core_lib.validation.branch_publishability import (
     TaskBranchPublishabilityValidator,
 )
-from kato.validation.branch_push import (
+from kato_core_lib.validation.branch_push import (
     TaskBranchPushValidator,
 )
-from kato.validation.model_access import (
+from kato_core_lib.validation.model_access import (
     TaskModelAccessValidator,
 )
-from kato.validation.repository_connections import (
+from kato_core_lib.validation.repository_connections import (
     RepositoryConnectionsValidator,
 )
-from kato.validation.startup_dependency_validator import (
+from kato_core_lib.validation.startup_dependency_validator import (
     StartupDependencyValidator,
 )
 

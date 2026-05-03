@@ -38,7 +38,7 @@ from flask import (
     stream_with_context,
 )
 
-from kato.client.claude.wire_protocol import (
+from kato_core_lib.client.claude.wire_protocol import (
     CLAUDE_EVENT_CONTROL_REQUEST,
     CLAUDE_EVENT_PERMISSION_REQUEST,
     CLAUDE_EVENT_PERMISSION_RESPONSE,
@@ -268,7 +268,7 @@ def _register_http_routes(app: Flask) -> None:
 
     @app.get('/api/safety')
     def safety_state():
-        from kato.validation.bypass_permissions_validator import (
+        from kato_core_lib.validation.bypass_permissions_validator import (
             is_bypass_enabled,
             is_running_as_root,
         )
@@ -820,7 +820,7 @@ def _replay_history_from_disk(claude_session_id: str):
     if not claude_session_id:
         return
     try:
-        from kato.client.claude.session_history import load_history_events
+        from kato_core_lib.client.claude.session_history import load_history_events
     except ImportError:
         return
     try:
@@ -1070,7 +1070,7 @@ def _record_to_dict(record) -> dict[str, Any]:
 def _build_fallback_manager(fallback_state_dir: str):
     """Stand up a minimal manager so dev runs of the webserver don't crash."""
     try:
-        from kato.client.claude.session_manager import ClaudeSessionManager
+        from kato_core_lib.client.claude.session_manager import ClaudeSessionManager
     except ImportError:
         from kato_webserver.session_registry import SessionRegistry
 

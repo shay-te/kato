@@ -41,5 +41,5 @@ foreach ($line in Get-Content '.env') {
     [System.Environment]::SetEnvironmentVariable($key, $value, 'Process')
 }
 
-& $venvPython -m kato.main
+& $venvPython -m kato_core_lib.main
 exit $LASTEXITCODE

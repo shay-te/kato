@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from kato.validation.startup_dependency_validator import (
+from kato_core_lib.validation.startup_dependency_validator import (
     StartupDependencyValidator,
 )
 

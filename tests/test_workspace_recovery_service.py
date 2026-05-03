@@ -9,11 +9,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from kato.data_layers.service.workspace_manager import (
+from kato_core_lib.data_layers.service.workspace_manager import (
     WORKSPACE_STATUS_ACTIVE,
     WorkspaceManager,
 )
-from kato.data_layers.service.workspace_recovery_service import (
+from kato_core_lib.data_layers.service.workspace_recovery_service import (
     WorkspaceRecoveryService,
 )
 
@@ -131,7 +131,7 @@ class WorkspaceRecoveryServiceTests(unittest.TestCase):
             return 'claude-sess-recovered' if str(cwd) == str(repo_dir) else ''
 
         with _patch(
-            'kato.data_layers.service.workspace_recovery_service.find_session_id_for_cwd',
+            'kato_core_lib.data_layers.service.workspace_recovery_service.find_session_id_for_cwd',
             side_effect=fake_find,
         ):
             adopted = self.service.recover_orphan_workspaces()

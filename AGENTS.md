@@ -11,14 +11,14 @@ do not do any git commit or push. let me inspect the changes
 - Keep components free of heavy logic; move overlapping, reusable, or similar behavior into helpers or shared services instead of scattering it inside a component.
 - Keep external API calls inside clients and data-access layers.
 - When `AgentService` starts accumulating a second coherent workflow cluster, split it into a dedicated service and inject that service through the constructor instead of adding more private helper methods there. Preflight/startup logic such as model-access checks, blocking-comment retries, repository resolution, branch preparation, and push validation should live in a dedicated service rather than in `AgentService`.
-- **`kato/kato_core_lib.py` is composition-only.** Its job is to build the dependency graph (instantiate clients, services, validators) and inject them into `AgentService`. Do not add helper functions, prompt templates, config-key parsing, factory builders, or any other domain logic there. If a feature needs a small builder or parser, put it next to the feature: a classmethod on the owning service, a module-level helper in the service's file, or a `kato/helpers/*_utils.py` module. The only content `kato_core_lib.py` should grow when you add a feature is more constructor calls and more keyword arguments.
-- If a service starts collecting a grab-bag of pure helpers, formatting functions, or repeated logging wrappers, move them into `kato/helpers/*_utils.py` or split them into a smaller service instead of keeping one oversized file.
+- **`kato_core_lib/kato_core_lib.py` is composition-only.** Its job is to build the dependency graph (instantiate clients, services, validators) and inject them into `AgentService`. Do not add helper functions, prompt templates, config-key parsing, factory builders, or any other domain logic there. If a feature needs a small builder or parser, put it next to the feature: a classmethod on the owning service, a module-level helper in the service's file, or a `kato_core_lib/helpers/*_utils.py` module. The only content `kato_core_lib.py` should grow when you add a feature is more constructor calls and more keyword arguments.
+- If a service starts collecting a grab-bag of pure helpers, formatting functions, or repeated logging wrappers, move them into `kato_core_lib/helpers/*_utils.py` or split them into a smaller service instead of keeping one oversized file.
 - Do not add pass-through helper methods on `KatoCoreLib` when the service can be used directly.
-- Prefer constants from `kato/data_layers/data/fields.py` over free-text field names.
+- Prefer constants from `kato_core_lib/data_layers/data/fields.py` over free-text field names.
 - Reuse existing utilities before introducing duplicate helper logic.
 - Do not create compatibility shim modules, barrel exports, or `__all__` re-export files; import from the real module directly.
-- Put shared utility modules under `kato/helpers/` instead of scattering them across service or root packages, and name them with the `_utils.py` suffix.
-- Put validation rules under `kato/validation/` instead of `data_layers/service/validation/`.
+- Put shared utility modules under `kato_core_lib/helpers/` instead of scattering them across service or root packages, and name them with the `_utils.py` suffix.
+- Put validation rules under `kato_core_lib/validation/` instead of `data_layers/service/validation/`.
 - Give each service class a short responsibility comment or docstring. If the description clearly contains more than one job, split that class into smaller collaborators instead of letting it grow.
 
 ## Required Behavior
@@ -113,7 +113,7 @@ The goal is to keep the code:
 ### Class Declarations
 
 - Always declare a base class explicitly. When a class doesn't extend anything else, write `class Foo(object):` instead of the bare `class Foo:`. This applies to data containers, namespaces, and ordinary services alike.
-- The two are functionally identical in Python 3, but the explicit form makes it obvious at a glance that this is a new-style root class and matches the rest of the codebase. Files like `kato/data_layers/data/fields.py` and the streaming-session classes follow this pattern; new code should match.
+- The two are functionally identical in Python 3, but the explicit form makes it obvious at a glance that this is a new-style root class and matches the rest of the codebase. Files like `kato_core_lib/data_layers/data/fields.py` and the streaming-session classes follow this pattern; new code should match.
 
 ### Avoid Duplication
 

@@ -2,9 +2,9 @@ import unittest
 from unittest.mock import patch
 
 
-from kato.client.gitlab.issues_client import GitLabIssuesClient
-from kato.data_layers.data.task import Task
-from kato.data_layers.data.fields import GitLabCommentFields, GitLabIssueFields, TaskCommentFields
+from kato_core_lib.client.gitlab.issues_client import GitLabIssuesClient
+from kato_core_lib.data_layers.data.task import Task
+from kato_core_lib.data_layers.data.fields import GitLabCommentFields, GitLabIssueFields, TaskCommentFields
 from utils import mock_response
 
 

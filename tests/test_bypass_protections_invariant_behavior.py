@@ -38,7 +38,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from kato.sandbox import manager
+from kato_core_lib.sandbox import manager
 
 
 _DOC_PATH = Path(__file__).resolve().parent.parent / 'BYPASS_PROTECTIONS.md'
@@ -86,7 +86,7 @@ def _home_is_under_subtree_forbidden() -> Path | None:
     Skip cleanly in that case rather than confuse a future operator.
     """
     home = Path.home()
-    from kato.sandbox import manager as _m
+    from kato_core_lib.sandbox import manager as _m
     for p in _m._FORBIDDEN_MOUNT_SOURCES_SUBTREE:
         try:
             if home == p or home.is_relative_to(p):

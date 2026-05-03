@@ -1,8 +1,8 @@
 import unittest
 
-from kato.client.ticket_client_base import TicketClientBase
-from kato.data_layers.data.task import Task
-from kato.data_layers.data.fields import TaskCommentFields
+from kato_core_lib.client.ticket_client_base import TicketClientBase
+from kato_core_lib.data_layers.data.task import Task
+from kato_core_lib.data_layers.data.fields import TaskCommentFields
 
 
 class TicketClientBaseTests(unittest.TestCase):

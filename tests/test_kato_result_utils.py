@@ -1,7 +1,7 @@
 import unittest
 
-from kato.data_layers.data.fields import ImplementationFields
-from kato.helpers.kato_result_utils import (
+from kato_core_lib.data_layers.data.fields import ImplementationFields
+from kato_core_lib.helpers.kato_result_utils import (
     build_openhands_result,
     openhands_session_id,
     openhands_success_flag,

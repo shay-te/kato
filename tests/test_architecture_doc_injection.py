@@ -18,13 +18,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from kato.client.claude.cli_client import ClaudeCliClient
-from kato.client.claude.streaming_session import StreamingClaudeSession
-from kato.data_layers.service.planning_session_runner import (
+from kato_core_lib.client.claude.cli_client import ClaudeCliClient
+from kato_core_lib.client.claude.streaming_session import StreamingClaudeSession
+from kato_core_lib.data_layers.service.planning_session_runner import (
     PlanningSessionRunner,
     StreamingSessionDefaults,
 )
-from kato.helpers.architecture_doc_utils import read_architecture_doc
+from kato_core_lib.helpers.architecture_doc_utils import read_architecture_doc
 
 
 def _write(path: Path, content: str) -> None:

@@ -2,12 +2,12 @@ import types
 import unittest
 from unittest.mock import Mock, patch
 
-from kato.client.ticket_client_base import TicketClientBase
-from kato.data_layers.data.fields import PullRequestFields, StatusFields
-from kato.data_layers.service.task_preflight_service import (
+from kato_core_lib.client.ticket_client_base import TicketClientBase
+from kato_core_lib.data_layers.data.fields import PullRequestFields, StatusFields
+from kato_core_lib.data_layers.service.task_preflight_service import (
     TaskPreflightService,
 )
-from kato.helpers.task_context_utils import PreparedTaskContext
+from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
 from utils import build_task
 
 
