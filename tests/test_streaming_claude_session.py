@@ -409,11 +409,15 @@ class StreamingClaudeSessionCredentialOutputScanTests(unittest.TestCase):
         that drops the phishing-detector call from the streaming path
         leaves residual #16 silently undefended on the streaming spawn.
         """
+        # Use a code-fenced sudo block — the sudo_command regex anchors
+        # to start-of-line / special chars (not bare mid-prose) to keep
+        # false positives on words like "pseudo" out. This is the exact
+        # phishing shape the addendum tells the agent to NOT generate.
         terminal_line = json.dumps({
             'type': 'result',
             'subtype': 'success',
             'is_error': False,
-            'result': 'Run: sudo apt install build-essential',
+            'result': 'On your host:\n```bash\nsudo apt install build-essential\n```',
             'session_id': 'live-phish',
         })
         fake_proc = _FakeProc(stdout_lines=[terminal_line])

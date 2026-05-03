@@ -27,6 +27,7 @@ from unittest.mock import patch
 from kato_core_lib.sandbox.manager import (
     SandboxError,
     _validate_base_image_pin_or_refuse,
+    _validate_claude_cli_version_pin_or_refuse,
     build_image,
 )
 
@@ -144,24 +145,112 @@ class BuildImageInvokesValidatorTests(unittest.TestCase):
             build_image(env={})
 
     def test_build_image_passes_through_to_docker_when_validator_accepts(self) -> None:
-        """When the operator opts out, build_image proceeds to docker build.
+        """When the operator opts out of BOTH supply-chain pins, build_image proceeds.
 
         We mock subprocess so the test doesn't actually run docker; the
-        assertion is that the validator returned silently and the
-        docker invocation was reached.
+        assertion is that the validators returned silently and the
+        docker invocation was reached. Both opt-outs must be set
+        because both validators are now strict-by-default.
         """
         with patch(
             'kato_core_lib.sandbox.manager.subprocess.run',
             return_value=type('R', (), {'returncode': 0, 'stdout': '', 'stderr': ''})(),
         ) as mock_run:
-            build_image(env={'KATO_SANDBOX_ALLOW_FLOATING_BASE_IMAGE': 'true'})
+            build_image(env={
+                'KATO_SANDBOX_ALLOW_FLOATING_BASE_IMAGE': 'true',
+                'KATO_SANDBOX_ALLOW_FLOATING_CLAUDE_CLI': 'true',
+            })
 
-        # docker build was invoked at least once — i.e. the validator
-        # didn't block the call.
+        # docker build was invoked at least once — i.e. both validators
+        # returned silently.
         self.assertTrue(mock_run.called)
         # First arg is the docker build argv.
         invoked_argv = mock_run.call_args.args[0]
         self.assertEqual(invoked_argv[:2], ['docker', 'build'])
+
+    def test_build_image_refuses_when_only_base_image_opt_out_is_set(self) -> None:
+        """Both pins are independently strict — opting out of one isn't enough."""
+        with self.assertRaises(SandboxError) as cm:
+            build_image(env={'KATO_SANDBOX_ALLOW_FLOATING_BASE_IMAGE': 'true'})
+        # The CLI version validator should be the one refusing here.
+        message = str(cm.exception)
+        self.assertIn('Claude CLI version', message)
+
+
+class ClaudeCliVersionPinValidationTests(unittest.TestCase):
+    """Mirror of BaseImageDigestPinValidationTests for the npm-side pin.
+
+    Closes the npm-side slice of build-time supply chain (residual
+    #17) by changing the default. The previous behavior installed
+    ``@anthropic-ai/claude-code@latest`` — a malicious release pushed
+    between operator builds would land in the next built image.
+    """
+
+    def test_refuses_when_no_env_var_set(self) -> None:
+        with self.assertRaises(SandboxError) as cm:
+            _validate_claude_cli_version_pin_or_refuse(env={})
+        message = str(cm.exception)
+        # Both opt-paths named so the operator can pick.
+        self.assertIn('KATO_SANDBOX_CLAUDE_CLI_VERSION', message)
+        self.assertIn('KATO_SANDBOX_ALLOW_FLOATING_CLAUDE_CLI', message)
+        # Reason for the refusal is named so the operator understands
+        # why the previous default changed.
+        self.assertIn('supply chain', message.lower())
+        # Doc cross-reference.
+        self.assertIn('BYPASS_PROTECTIONS.md', message)
+
+    def test_accepts_pinned_version(self) -> None:
+        # No exception.
+        _validate_claude_cli_version_pin_or_refuse(
+            env={'KATO_SANDBOX_CLAUDE_CLI_VERSION': '2.1.5'},
+        )
+
+    def test_accepts_floating_with_explicit_optout(self) -> None:
+        # No exception.
+        _validate_claude_cli_version_pin_or_refuse(
+            env={'KATO_SANDBOX_ALLOW_FLOATING_CLAUDE_CLI': 'true'},
+        )
+
+    def test_optout_supports_common_truthy_values(self) -> None:
+        for truthy in ('true', 'TRUE', 'yes', '1', 'on'):
+            try:
+                _validate_claude_cli_version_pin_or_refuse(
+                    env={'KATO_SANDBOX_ALLOW_FLOATING_CLAUDE_CLI': truthy},
+                )
+            except SandboxError:
+                self.fail(f'opt-out should accept {truthy!r}')
+
+    def test_optout_does_not_match_falsy_or_partial_strings(self) -> None:
+        for falsy in ('false', '0', '', 'no', 'truthy', 'yes please'):
+            with self.assertRaises(
+                SandboxError,
+                msg=f'opt-out must NOT match {falsy!r}',
+            ):
+                _validate_claude_cli_version_pin_or_refuse(
+                    env={'KATO_SANDBOX_ALLOW_FLOATING_CLAUDE_CLI': falsy},
+                )
+
+    def test_optout_logs_warning_naming_the_residual(self) -> None:
+        logger = logging.getLogger('test_claude_cli_version_pin')
+        with self.assertLogs(logger=logger, level='WARNING') as cm:
+            _validate_claude_cli_version_pin_or_refuse(
+                env={'KATO_SANDBOX_ALLOW_FLOATING_CLAUDE_CLI': 'true'},
+                logger=logger,
+            )
+        joined = ' '.join(cm.output)
+        self.assertIn('FLOATING', joined)
+        self.assertIn('npm', joined.lower())
+
+    def test_pinned_path_logs_info_naming_the_pin(self) -> None:
+        logger = logging.getLogger('test_claude_cli_version_pin')
+        with self.assertLogs(logger=logger, level='INFO') as cm:
+            _validate_claude_cli_version_pin_or_refuse(
+                env={'KATO_SANDBOX_CLAUDE_CLI_VERSION': '2.1.5'},
+                logger=logger,
+            )
+        joined = ' '.join(cm.output)
+        self.assertIn('2.1.5', joined)
+        self.assertIn('pinned', joined)
 
 
 if __name__ == '__main__':

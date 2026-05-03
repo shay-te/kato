@@ -530,6 +530,8 @@ def image_built_by_kato(image_tag: str = SANDBOX_IMAGE_TAG) -> bool:
 
 _BASE_IMAGE_ENV_KEY = 'KATO_SANDBOX_BASE_IMAGE'
 _ALLOW_FLOATING_BASE_IMAGE_ENV_KEY = 'KATO_SANDBOX_ALLOW_FLOATING_BASE_IMAGE'
+_CLAUDE_CLI_VERSION_ENV_KEY = 'KATO_SANDBOX_CLAUDE_CLI_VERSION'
+_ALLOW_FLOATING_CLAUDE_CLI_ENV_KEY = 'KATO_SANDBOX_ALLOW_FLOATING_CLAUDE_CLI'
 
 
 def _validate_base_image_pin_or_refuse(
@@ -611,6 +613,71 @@ def _validate_base_image_pin_or_refuse(
     )
 
 
+def _validate_claude_cli_version_pin_or_refuse(
+    *,
+    env: dict | None = None,
+    logger: logging.Logger | None = None,
+) -> None:
+    """Refuse build unless the Claude CLI version is pinned (strict-by-default).
+
+    Closes the npm-side slice of build-time supply chain (residual
+    #17) by changing the default. Without a pin, the Dockerfile
+    runs ``npm install -g @anthropic-ai/claude-code`` which resolves
+    ``latest`` against the npm registry — a malicious tag pushed
+    between operator builds would land in the resulting image.
+
+    Operator paths:
+
+      1. **Recommended** — set ``KATO_SANDBOX_CLAUDE_CLI_VERSION``
+         to a specific version like ``2.1.5``. The build pins
+         ``@anthropic-ai/claude-code@<that version>`` instead of
+         ``latest``.
+      2. **Opt-out** — set ``KATO_SANDBOX_ALLOW_FLOATING_CLAUDE_CLI=true``
+         to acknowledge the residual and allow ``latest``.
+
+    Parallel to ``_validate_base_image_pin_or_refuse``: same shape,
+    same opt-out pattern, same operator-friendly error message
+    naming both fix paths.
+    """
+    source = env if env is not None else os.environ
+    pinned = str(source.get(_CLAUDE_CLI_VERSION_ENV_KEY, '') or '').strip()
+    allow_floating = str(
+        source.get(_ALLOW_FLOATING_CLAUDE_CLI_ENV_KEY, '') or ''
+    ).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+    if pinned:
+        if logger is not None:
+            logger.info(
+                'sandbox: building with pinned Claude CLI version %s (%s)',
+                pinned, _CLAUDE_CLI_VERSION_ENV_KEY,
+            )
+        return
+
+    if allow_floating:
+        if logger is not None:
+            logger.warning(
+                'sandbox: building with FLOATING Claude CLI version '
+                '(%s=true). A malicious npm release pushed between '
+                'operator builds could land in the resulting image. '
+                'Recommend %s=<specific-version>.',
+                _ALLOW_FLOATING_CLAUDE_CLI_ENV_KEY,
+                _CLAUDE_CLI_VERSION_ENV_KEY,
+            )
+        return
+
+    raise SandboxError(
+        'kato refuses to build the sandbox image without a pinned '
+        f'Claude CLI version. The previous default (``npm install -g '
+        f'@anthropic-ai/claude-code@latest``) left the npm-side of the '
+        f'build-time supply chain unbounded. Pick one:\n'
+        f'  1. Recommended: export {_CLAUDE_CLI_VERSION_ENV_KEY}=<version>\n'
+        f'     (e.g. 2.1.5; find current with: npm view @anthropic-ai/claude-code version)\n'
+        f'  2. Opt-out: export {_ALLOW_FLOATING_CLAUDE_CLI_ENV_KEY}=true\n'
+        f'     (operator accepts the residual; build proceeds with @latest)\n'
+        f'See BYPASS_PROTECTIONS.md "Build-time supply chain" for detail.'
+    )
+
+
 def build_image(
     *,
     image_tag: str = SANDBOX_IMAGE_TAG,
@@ -625,12 +692,20 @@ def build_image(
     the captured output on failure so the caller can surface a
     clear "build failed" message.
 
-    Refuses the build (raises ``SandboxError``) unless either
-    ``KATO_SANDBOX_BASE_IMAGE`` is digest-pinned or
-    ``KATO_SANDBOX_ALLOW_FLOATING_BASE_IMAGE=true`` is set — see
-    ``_validate_base_image_pin_or_refuse``.
+    Refuses the build (raises ``SandboxError``) unless BOTH supply-chain
+    pins are satisfied (or explicitly opted out via the matching
+    ``ALLOW_FLOATING_*`` env vars):
+
+      * ``KATO_SANDBOX_BASE_IMAGE`` digest-pinned —
+        see ``_validate_base_image_pin_or_refuse``.
+      * ``KATO_SANDBOX_CLAUDE_CLI_VERSION`` pinned —
+        see ``_validate_claude_cli_version_pin_or_refuse``.
+
+    Both validators run before any docker invocation so a refusal
+    fails fast without touching the registry.
     """
     _validate_base_image_pin_or_refuse(env=env, logger=logger)
+    _validate_claude_cli_version_pin_or_refuse(env=env, logger=logger)
     if logger is not None:
         logger.info(
             'building Claude sandbox image %s — first run, may take ~1 min',

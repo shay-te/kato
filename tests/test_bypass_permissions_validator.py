@@ -414,7 +414,7 @@ class SecurityPostureBannerVariantTests(unittest.TestCase):
         # Each layer the doc TL;DR promises is named in the boot banner.
         self.assertIn('Active containment layers', out)
         self.assertIn('Workspace bind-mount', out)
-        self.assertIn('default-DROP egress firewall', out)
+        self.assertIn('Default-DROP egress firewall', out)
         self.assertIn('Capability drop ALL', out)
         self.assertIn('Read-only rootfs', out)
         self.assertIn('gVisor', out)
