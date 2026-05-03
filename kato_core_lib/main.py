@@ -18,6 +18,10 @@ from kato_core_lib.helpers.status_broadcaster_utils import (
     StatusBroadcaster,
     install_status_broadcast_handler,
 )
+from kato_core_lib.sandbox.tls_pin import (
+    TlsPinError,
+    validate_anthropic_tls_pin_or_refuse,
+)
 from kato_core_lib.validate_env import validate_environment
 from kato_core_lib.validation.bypass_permissions_validator import (
     BypassPermissionsRefused,
@@ -70,6 +74,18 @@ def main(cfg: DictConfig) -> int:
     try:
         validate_bypass_permissions()
     except BypassPermissionsRefused as exc:
+        logger.error('%s', exc)
+        return 1
+    # OG4 — TLS pin validator for api.anthropic.com. Strict-by-default
+    # when ``KATO_SANDBOX_ANTHROPIC_TLS_PIN_SHA256`` is set; opt-out
+    # via ``KATO_SANDBOX_ALLOW_NO_TLS_PIN=true``. A network failure at
+    # boot does NOT promote to refusal (operator may be offline /
+    # in a build env without connectivity); only a successful
+    # connection with a pin mismatch fails-closed. See
+    # ``kato_core_lib.sandbox.tls_pin``.
+    try:
+        validate_anthropic_tls_pin_or_refuse(logger=logger)
+    except TlsPinError as exc:
         logger.error('%s', exc)
         return 1
     # Docker mode wraps every Claude spawn in the hardened sandbox

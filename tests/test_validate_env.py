@@ -131,39 +131,15 @@ class ValidateEnvTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
 
-    @unittest.skip(
-        'Obsolete: validate_agent_env no longer walks REPOSITORY_ROOT_PATH '
-        'eagerly. Provider-credential errors now surface at first lazy '
-        'repository use (per task, via the inventory tag fast-path).'
-    )
-    def test_validate_agent_env_requires_provider_token_for_discovered_bitbucket_repo(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            repo_path = Path(temp_dir) / 'project'
-            self._create_git_repository(
-                repo_path,
-                'git@bitbucket.org:workspace/project.git',
-            )
-
-            errors = validate_agent_env(
-                {
-                    'YOUTRACK_BASE_URL': 'https://youtrack.example',
-                    'YOUTRACK_TOKEN': 'yt-token',
-                    'YOUTRACK_PROJECT': 'PROJ',
-                    'YOUTRACK_ASSIGNEE': 'developer',
-                    'REPOSITORY_ROOT_PATH': str(repo_path),
-                    'OPENHANDS_BASE_URL': 'http://localhost:3000',
-                    'OPENHANDS_API_KEY': 'local',
-                }
-            )
-
-        self.assertIn(
-            'missing required repository provider env var: BITBUCKET_API_TOKEN',
-            errors,
-        )
-        self.assertIn(
-            'missing required repository provider env var: BITBUCKET_API_EMAIL',
-            errors,
-        )
+    # NOTE: ``test_validate_agent_env_requires_provider_token_for_discovered_bitbucket_repo``
+    # was removed when the eager ``REPOSITORY_ROOT_PATH`` walk in
+    # ``validate_agent_env`` was deliberately deleted (see
+    # ``_validate_repository_provider_env`` in
+    # ``kato_core_lib/validate_env.py`` — it's now a documented
+    # no-op hook). Provider-credential errors no longer surface at
+    # boot at all; they fire lazily on first per-task repository
+    # use. There's no equivalent boot-time assertion to lock — the
+    # behaviour was removed by design, not relocated.
 
     def test_validate_agent_env_skips_ignored_folders_during_provider_discovery(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

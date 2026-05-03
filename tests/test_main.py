@@ -1,3 +1,4 @@
+import os
 import types
 import unittest
 from unittest.mock import Mock, call, patch
@@ -19,7 +20,15 @@ class MainTests(unittest.TestCase):
         self.cfg = build_test_cfg()
         self._env_patch = patch.dict(
             'os.environ',
-            {'KATO_IGNORED_REPOSITORY_FOLDERS': ''},
+            {
+                'KATO_IGNORED_REPOSITORY_FOLDERS': '',
+                # OG4 — TLS pin validator is now strict-by-default in
+                # main(). Existing tests don't exercise pinning, so
+                # they opt out at the test-env level. The dedicated
+                # ``MainTlsPinIntegrationTests`` class below locks
+                # the actual integration behavior.
+                'KATO_SANDBOX_ALLOW_NO_TLS_PIN': 'true',
+            },
         )
         self._env_patch.start()
         self.addCleanup(self._env_patch.stop)
@@ -321,3 +330,94 @@ class MainTests(unittest.TestCase):
         mock_check_gvisor.assert_not_called()
         mock_gvisor_runtime.assert_not_called()
         mock_rootless.assert_not_called()
+
+
+class MainTlsPinIntegrationTests(unittest.TestCase):
+    """Locks the OG4 wiring: ``main()`` calls the TLS pin validator.
+
+    Without these tests, the validator module exists in isolation and
+    the doc claims OG4 is "Closed" — but a refactor that drops the
+    validator call from ``main()`` would silently make the protection
+    dead code in production. ``MainTests.setUp`` opts the test env
+    out of pinning so the unrelated tests don't depend on TLS state;
+    THIS class deliberately doesn't opt out and exercises the real
+    integration.
+    """
+
+    def setUp(self) -> None:
+        self.cfg = build_test_cfg()
+        # Clear any inherited opt-out so each test below sets the
+        # env explicitly. ``main()`` reads the live ``os.environ``.
+        self._env_patch = patch.dict(
+            'os.environ',
+            {'KATO_IGNORED_REPOSITORY_FOLDERS': ''},
+            clear=False,
+        )
+        self._env_patch.start()
+        self.addCleanup(self._env_patch.stop)
+        # Drop both env vars if a previous test or shell set them.
+        for key in (
+            'KATO_SANDBOX_ANTHROPIC_TLS_PIN_SHA256',
+            'KATO_SANDBOX_ALLOW_NO_TLS_PIN',
+        ):
+            if key in os.environ:
+                del os.environ[key]
+
+    def _run_main_with_other_validators_mocked(self) -> int:
+        """Run main with everything except the TLS pin validator mocked.
+
+        Lets the test focus on whether the TLS pin validator actually
+        fires, without setUp ordering / repository / job mocking
+        noise.
+        """
+        app = types.SimpleNamespace(logger=Mock())
+        with patch('kato_core_lib.main.validate_environment'), patch(
+            'kato_core_lib.main.validate_bypass_permissions'
+        ), patch(
+            'kato_core_lib.main.print_security_posture'
+        ), patch(
+            'kato_core_lib.main.KatoInstance.init'
+        ), patch(
+            'kato_core_lib.main.KatoInstance.get', return_value=app,
+        ), patch(
+            'kato_core_lib.main._run_task_scan_loop'
+        ):
+            return main(self.cfg)
+
+    def test_main_refuses_when_no_pin_and_no_optout(self) -> None:
+        """Strict-by-default: no env vars → main() returns 1.
+
+        Locks the production wiring. If a future refactor drops the
+        ``validate_anthropic_tls_pin_or_refuse`` call from main, this
+        test fails because main() returns 0 instead of 1.
+        """
+        # Both env vars are absent (setUp dropped them).
+        result = self._run_main_with_other_validators_mocked()
+        self.assertEqual(result, 1)
+
+    def test_main_proceeds_when_optout_is_set(self) -> None:
+        """``KATO_SANDBOX_ALLOW_NO_TLS_PIN=true`` opts out — main proceeds."""
+        os.environ['KATO_SANDBOX_ALLOW_NO_TLS_PIN'] = 'true'
+        try:
+            result = self._run_main_with_other_validators_mocked()
+        finally:
+            del os.environ['KATO_SANDBOX_ALLOW_NO_TLS_PIN']
+        self.assertEqual(result, 0)
+
+    def test_main_invokes_tls_pin_validator(self) -> None:
+        """Direct integration check: the validator function is called.
+
+        Even if both opt-in and opt-out env vars were absent, the
+        validator MUST be invoked — its absence would silently
+        disable the OG4 protection. Patches the validator at the
+        ``kato_core_lib.main`` module to verify the call site.
+        """
+        os.environ['KATO_SANDBOX_ALLOW_NO_TLS_PIN'] = 'true'
+        try:
+            with patch(
+                'kato_core_lib.main.validate_anthropic_tls_pin_or_refuse',
+            ) as mock_validator:
+                self._run_main_with_other_validators_mocked()
+        finally:
+            del os.environ['KATO_SANDBOX_ALLOW_NO_TLS_PIN']
+        mock_validator.assert_called_once()

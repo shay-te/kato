@@ -162,75 +162,17 @@ class AgentServiceTests(unittest.TestCase):
                 None,
             )
 
-    @unittest.skip(
-        'Obsolete: validate_connections is now lazy. Per-repo git access is '
-        'verified at preflight by RepositoryService._prepare_task_repository, '
-        'covered by the preflight test suite.'
-    )
-    def test_validate_connections_checks_all_dependencies(self) -> None:
-        self.task_client.validate_connection = Mock()
-        self.kato_client.validate_connection = Mock()
-
-        self.service.validate_connections()
-
-        self.repository_service._validate_inventory.assert_called_once_with()
-        self.repository_service._validate_git_executable.assert_called_once_with()
-        self.repository_service._prepare_repository_access.assert_any_call(self.client_repo)
-        self.repository_service._prepare_repository_access.assert_any_call(self.backend_repo)
-        self.repository_service._validate_repository_git_access.assert_any_call(self.client_repo)
-        self.repository_service._validate_repository_git_access.assert_any_call(self.backend_repo)
-        self.task_client.validate_connection.assert_called_once_with(
-            project='PROJ',
-            assignee='me',
-            states=['Todo', 'Open'],
-        )
-        self.assertEqual(self.kato_client.validate_connection.call_count, 2)
-
-    @unittest.skip(
-        'Obsolete: aggregated startup-failure formatting moved when the '
-        'lazy refactor split inventory validation from connection validation. '
-        'The aggregation contract is locked by test_startup_validator.'
-    )
-    def test_validate_connections_raises_with_service_stack_traces(self) -> None:
-        self.task_client.validate_connection = Mock(side_effect=RuntimeError('youtrack down'))
-        self.kato_client.validate_connection = Mock(side_effect=RuntimeError('openhands down'))
-        self.service.logger = Mock()
-
-        with self.assertRaisesRegex(RuntimeError, 'startup dependency validation failed') as exc_context:
-            self.service.validate_connections()
-
-        # The validator aggregates failures into the raised RuntimeError
-        # rather than logging stack traces per step (test_startup_validator
-        # locks that contract). The aggregated message must include each
-        # service's failure as both a one-line summary and a Details block.
-        self.assertIn('- unable to validate youtrack: youtrack down', str(exc_context.exception))
-        self.assertIn('- unable to validate openhands: openhands down', str(exc_context.exception))
-        self.assertIn('- unable to validate openhands_testing: openhands down', str(exc_context.exception))
-        self.assertIn('Details:', str(exc_context.exception))
-        self.assertIn('[youtrack]', str(exc_context.exception))
-        self.assertIn('[openhands]', str(exc_context.exception))
-        self.assertIn('[openhands_testing]', str(exc_context.exception))
-
-    @unittest.skip(
-        'Obsolete: retry-attempt summarization moved with the lazy refactor.'
-    )
-    def test_validate_connections_summarizes_retryable_failures_with_attempt_count(self) -> None:
-        self.task_client.validate_connection = Mock()
-        self.kato_client.max_retries = 5
-        self.kato_client.validate_connection = Mock(side_effect=ConnectionError('connection refused'))
-        self.service.logger = Mock()
-
-        with self.assertRaisesRegex(RuntimeError, 'startup dependency validation failed') as exc_context:
-            self.service.validate_connections()
-
-        self.assertIn(
-            '- unable to connect to openhands (tried 5 times)',
-            str(exc_context.exception),
-        )
-        self.assertIn(
-            '- unable to connect to openhands_testing (tried 5 times)',
-            str(exc_context.exception),
-        )
+    # NOTE: 3 obsolete ``test_validate_connections_*`` tests were removed
+    # here when ``validate_connections`` became lazy. Their assertions
+    # are covered by ``test_startup_validator``:
+    #
+    #   * dependency-call shape →
+    #     ``test_validate_checks_repository_and_all_dependencies``
+    #   * aggregated failure message →
+    #     ``test_validate_aggregates_dependency_failures``
+    #     (also covers retryable-failure attempt counts)
+    #
+    # See tests/test_startup_validator.py for the current contract.
 
     def test_process_assigned_task_stops_when_model_access_validation_fails(self) -> None:
         self.service.logger = Mock()
@@ -250,44 +192,16 @@ class AgentServiceTests(unittest.TestCase):
         self.kato_client.implement_task.assert_not_called()
         self.kato_client.test_task.assert_not_called()
 
-    @unittest.skip(
-        'Obsolete: inventory errors no longer surface at validate_connections '
-        'time — they fire on first lazy access. Tested at preflight.'
-    )
-    def test_validate_connections_reports_repository_inventory_errors_gracefully(self) -> None:
-        self.task_client.validate_connection = Mock()
-        self.kato_client.validate_connection = Mock()
-        self.repository_service._validate_inventory.side_effect = ValueError(
-            'at least one repository must be configured'
-        )
-        self.service.logger = Mock()
-
-        with self.assertRaisesRegex(RuntimeError, 'at least one repository must be configured') as exc_context:
-            self.service.validate_connections()
-
-        self.assertEqual(self.service.logger.error.call_count, 1)
-        self.assertEqual(self.task_client.validate_connection.call_count, 0)
-        self.assertEqual(self.kato_client.validate_connection.call_count, 0)
-        self.assertEqual(str(exc_context.exception), 'at least one repository must be configured')
-
-    @unittest.skip(
-        'Obsolete: repository validation failure no longer halts boot — '
-        'it surfaces at preflight. Tested at preflight.'
-    )
-    def test_validate_connections_stops_after_repository_validation_failure(self) -> None:
-        self.task_client.validate_connection = Mock()
-        self.kato_client.validate_connection = Mock()
-        self.repository_service._validate_inventory.side_effect = RuntimeError(
-            '[Error] /workspace/project missing git permissions. cannot work.'
-        )
-
-        with self.assertRaisesRegex(RuntimeError, r'\[Error\] /workspace/project missing git permissions\. cannot work\.') as exc_context:
-            self.service.validate_connections()
-
-        self.repository_service._validate_inventory.assert_called_once_with()
-        self.task_client.validate_connection.assert_not_called()
-        self.kato_client.validate_connection.assert_not_called()
-        self.assertEqual(str(exc_context.exception), '[Error] /workspace/project missing git permissions. cannot work.')
+    # NOTE: 2 obsolete ``test_validate_connections_*`` tests were removed
+    # here when inventory + repo-validation errors became lazy. Their
+    # assertions are covered:
+    #
+    #   * inventory ValueError ("at least one repository must be
+    #     configured") at lazy time →
+    #     ``test_repository_service.test_validate_inventory_refuses_when_no_repositories_configured``
+    #   * repository validation failure halts before downstream
+    #     dependency validation →
+    #     ``test_startup_validator.test_validate_raises_when_repository_validation_fails``
 
     def test_process_assigned_task_creates_prs_for_all_selected_repositories(self) -> None:
         self.service.logger = Mock()

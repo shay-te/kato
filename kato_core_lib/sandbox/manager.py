@@ -906,8 +906,10 @@ def _validate_workspace_path(workspace_path: str) -> str:
             'sandbox workspace path is empty — refusing to mount '
             'unspecified path into the container',
         )
-    resolved = Path(workspace_path).expanduser().resolve()
-    match = _forbidden_match(resolved)
+    expanded = Path(workspace_path).expanduser()
+    unresolved = expanded if expanded.is_absolute() else Path.cwd() / expanded
+    resolved = expanded.resolve()
+    match = _forbidden_match(unresolved) or _forbidden_match(resolved)
     if match is not None:
         if match == resolved:
             raise SandboxError(
@@ -1583,6 +1585,26 @@ def record_spawn(
         sys.stderr.flush()
         if logger is not None:
             logger.warning(msg)
+
+    # External audit-log shipping (OG2). Best-effort by default;
+    # operators who want fail-closed shipping set
+    # ``KATO_SANDBOX_AUDIT_SHIP_REQUIRED=true``. Runs AFTER the local
+    # write so the local log is the authoritative copy and a sink
+    # failure can never lose the entry. Closes the tail-truncation
+    # residual: an external sink is the operator's reference for
+    # "did the local file lose entries" verification.
+    from kato_core_lib.sandbox.audit_log_shipping import (
+        AuditShipError, ship_audit_entry,
+    )
+    try:
+        ship_audit_entry(entry, env=env, logger=logger)
+    except AuditShipError as exc:
+        # Only re-raised when ``KATO_SANDBOX_AUDIT_SHIP_REQUIRED=true`` —
+        # ``ship_audit_entry`` already swallows otherwise.
+        raise SandboxError(
+            f'audit-log shipping failed: {exc} — refusing to spawn '
+            f'(KATO_SANDBOX_AUDIT_SHIP_REQUIRED=true)'
+        ) from exc
 
 
 class _DigestLookupError(RuntimeError):

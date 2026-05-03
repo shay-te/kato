@@ -1183,7 +1183,11 @@ class RepositoryServiceTests(unittest.TestCase):
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'add', '-A'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'commit', '-m', 'Implement PROJ-1'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--verify', 'main'],
+                # ``-c core.hooksPath=/dev/null`` added by the security
+                # hardening for risk #24 (pre-commit hook installation).
+                # Every kato git command now disables hooks so a malicious
+                # ``.git/hooks/`` Claude drops never fires on the host.
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--verify', 'main'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-list', '--count', 'main..feature/proj-1/backend'],
             ],
         )
@@ -1278,7 +1282,8 @@ class RepositoryServiceTests(unittest.TestCase):
                     ['git', '-c', 'safe.directory=.', '-C', '.', 'add', '-A'],
                     ['git', '-c', 'safe.directory=.', '-C', '.', 'commit', '-m', 'Implement PROJ-1'],
                     ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
-                    ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--verify', 'main'],
+                    # ``core.hooksPath=/dev/null`` security hardening for risk #24.
+                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--verify', 'main'],
                     ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-list', '--count', 'main..feature/proj-1/backend'],
                 ],
         )
@@ -1564,150 +1569,20 @@ class RepositoryServiceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'missing local repository path'):
                 service.validate_connections()
 
-    @unittest.skip(
-        'Obsolete: validate_connections is now lazy. Per-repo git-access '
-        'checks fire at first resolve_task_repositories(), not at boot.'
-    )
-    def test_validate_connections_checks_git_access_for_single_repository_root(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            projects_root = Path(temp_dir)
-            repo_path = projects_root / 'project'
-            self._create_git_repository(
-                repo_path,
-                'https://bitbucket.org/workspace/project.git',
-            )
-            service = RepositoryService(
-                types.SimpleNamespace(
-                    repositories=[],
-                    repository_root_path=str(projects_root),
-                    github_issues=types.SimpleNamespace(base_url='', token=''),
-                    gitlab_issues=types.SimpleNamespace(base_url='', token=''),
-                    bitbucket_issues=types.SimpleNamespace(
-                        base_url='https://api.bitbucket.org/2.0',
-                        token='bb-token',
-                        username='bb-user',
-                        api_email='bb-api@example.com',
-                    ),
-                ),
-                3,
-            )
-            expected_header = 'Authorization: Basic ' + base64.b64encode(
-                b'bb-user:bb-token'
-            ).decode('ascii')
-
-            with patch(
-                'kato_core_lib.data_layers.service.repository_service.shutil.which',
-                return_value='/usr/bin/git',
-            ), patch(
-                'kato_core_lib.data_layers.service.repository_service.subprocess.run',
-                return_value=Mock(returncode=0, stdout='refs/heads/main\n', stderr=''),
-            ) as mock_run:
-                service.validate_connections()
-
-        self.assertEqual(
-            mock_run.call_args.args[0],
-            [
-                'git',
-                '-c',
-                f'safe.directory={repo_path.resolve()}',
-                '-C',
-                str(repo_path.resolve()),
-                'ls-remote',
-                '--heads',
-                'origin',
-            ],
-        )
-        self.assertEqual(mock_run.call_args.kwargs['env']['GIT_CONFIG_COUNT'], '1')
-        self.assertEqual(mock_run.call_args.kwargs['env']['GIT_CONFIG_KEY_0'], 'http.extraHeader')
-        self.assertEqual(
-            mock_run.call_args.kwargs['env']['GIT_CONFIG_VALUE_0'],
-            expected_header,
-        )
-        self.assertEqual(mock_run.call_args.kwargs['env']['GIT_TERMINAL_PROMPT'], '0')
-
-    @unittest.skip(
-        'Obsolete: validate_connections is now lazy. Auto-discovery + '
-        'per-repo git-access checks defer to first resolve_task_repositories(). '
-        'Per-repo access is exercised by preflight tests.'
-    )
-    def test_validate_connections_checks_git_access_for_each_repository_in_parent_root(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            projects_root = Path(temp_dir)
-            client_repo = projects_root / 'client-app'
-            backend_repo = projects_root / 'backend-service'
-            self._create_git_repository(
-                client_repo,
-                'https://bitbucket.org/workspace/client-app.git',
-            )
-            self._create_git_repository(
-                backend_repo,
-                'https://bitbucket.org/workspace/backend-service.git',
-            )
-            service = RepositoryService(
-                types.SimpleNamespace(
-                    repositories=[],
-                    repository_root_path=str(projects_root),
-                    github_issues=types.SimpleNamespace(base_url='', token=''),
-                    gitlab_issues=types.SimpleNamespace(base_url='', token=''),
-                    bitbucket_issues=types.SimpleNamespace(
-                        base_url='https://api.bitbucket.org/2.0',
-                        token='bb-token',
-                        username='workspace',
-                        api_email='bb-api@example.com',
-                    ),
-                ),
-                3,
-            )
-            expected_header = 'Authorization: Basic ' + base64.b64encode(
-                b'workspace:bb-token'
-            ).decode('ascii')
-
-            with patch(
-                'kato_core_lib.data_layers.service.repository_service.shutil.which',
-                return_value='/usr/bin/git',
-            ), patch(
-                'kato_core_lib.data_layers.service.repository_service.subprocess.run',
-                side_effect=[
-                    Mock(returncode=0, stdout='refs/heads/main\n', stderr=''),
-                    Mock(returncode=0, stdout='refs/heads/main\n', stderr=''),
-                ],
-            ) as mock_run:
-                service.validate_connections()
-
-        self.assertEqual(
-            [call.args[0] for call in mock_run.call_args_list],
-            [
-                [
-                    'git',
-                    '-c',
-                    f'safe.directory={backend_repo.resolve()}',
-                    '-C',
-                    str(backend_repo.resolve()),
-                    'ls-remote',
-                    '--heads',
-                    'origin',
-                ],
-                [
-                    'git',
-                    '-c',
-                    f'safe.directory={client_repo.resolve()}',
-                    '-C',
-                    str(client_repo.resolve()),
-                    'ls-remote',
-                    '--heads',
-                    'origin',
-                ],
-            ],
-        )
-        for call in mock_run.call_args_list:
-            self.assertEqual(call.kwargs['env']['GIT_CONFIG_COUNT'], '1')
-            self.assertEqual(call.kwargs['env']['GIT_CONFIG_KEY_0'], 'http.extraHeader')
-            self.assertEqual(call.kwargs['env']['GIT_CONFIG_VALUE_0'], expected_header)
-        self.assertEqual(
-            [call.kwargs['env']['GIT_TERMINAL_PROMPT'] for call in mock_run.call_args_list],
-            ['0', '0'],
-        )
-
+    # NOTE: 2 obsolete tests removed here when ``validate_connections``
+    # became lazy:
+    #
+    #   * ``test_validate_connections_checks_git_access_for_single_repository_root``
+    #   * ``test_validate_connections_checks_git_access_for_each_repository_in_parent_root``
+    #
+    # Both asserted the ``git ls-remote --heads origin`` argv shape
+    # plus the Authorization-header injection. That argv shape is
+    # now exercised at the lazy entry point by
+    # ``test_validate_repository_git_access_runs_ls_remote_with_auth_header``
+    # later in this file. The multi-repo variant (each repo gets its
+    # own call) is covered structurally by the loop in
+    # ``_ensure_repositories``, which calls
+    # ``_validate_repository_git_access`` per repo.
     def test_git_http_auth_header_uses_configured_bitbucket_username(self) -> None:
         repository = types.SimpleNamespace(
             provider='bitbucket',
@@ -1739,52 +1614,12 @@ class RepositoryServiceTests(unittest.TestCase):
         ).decode('ascii')
         self.assertEqual(header, expected_header)
 
-    @unittest.skip(
-        'Obsolete: validate_connections is now lazy. Per-repo git-permission '
-        'errors surface at preflight time (TaskPreflightService), not at boot.'
-    )
-    def test_validate_connections_stops_when_git_permissions_are_missing(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            projects_root = Path(temp_dir)
-            repo_path = projects_root / 'project'
-            self._create_git_repository(
-                repo_path,
-                'https://x-token-auth@bitbucket.org/workspace/project.git',
-            )
-            service = RepositoryService(
-                types.SimpleNamespace(
-                    repositories=[],
-                    repository_root_path=str(projects_root),
-                    github_issues=types.SimpleNamespace(base_url='', token=''),
-                    gitlab_issues=types.SimpleNamespace(base_url='', token=''),
-                    bitbucket_issues=types.SimpleNamespace(
-                        base_url='https://api.bitbucket.org/2.0',
-                        token='bb-token',
-                        api_email='bb-api@example.com',
-                    ),
-                ),
-                3,
-            )
-
-            with patch(
-                'kato_core_lib.data_layers.service.repository_service.shutil.which',
-                return_value='/usr/bin/git',
-            ), patch(
-                'kato_core_lib.data_layers.service.repository_service.subprocess.run',
-                return_value=Mock(
-                    returncode=128,
-                    stdout='',
-                    stderr=(
-                        "fatal: could not read Password for "
-                        "'https://x-token-auth@bitbucket.org': terminal prompts disabled"
-                    ),
-                ),
-            ):
-                with self.assertRaisesRegex(
-                    RuntimeError,
-                    r"\[Error\] .*/project missing git permissions\. cannot work\. fatal: could not read Password for 'https://x-token-auth@bitbucket.org': terminal prompts disabled",
-                ):
-                    service.validate_connections()
+    # NOTE: ``test_validate_connections_stops_when_git_permissions_are_missing``
+    # was removed when ``validate_connections`` became lazy. The
+    # ``[Error] X missing git permissions. cannot work.`` wrapping is
+    # now exercised at the lazy entry point by
+    # ``test_validate_repository_git_access_wraps_auth_failure_with_missing_permissions_error``
+    # later in this file.
 
     def test_prepare_task_repositories_raises_when_local_path_is_missing(self) -> None:
         service = RepositoryService(self.cfg.kato.repositories, 3)
@@ -2057,7 +1892,12 @@ class RepositoryServiceTests(unittest.TestCase):
                     'origin',
                     'UNA-2265:refs/remotes/origin/UNA-2265',
                 ],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--verify', 'origin/UNA-2265'],
+                # ``core.hooksPath=/dev/null`` security hardening for risk #24
+                # — applied to read-only verifications too so any
+                # ``post-checkout`` / ``post-rewrite`` hook Claude
+                # writes into ``.git/hooks/`` cannot fire on the host
+                # during kato's branch state checks.
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--verify', 'origin/UNA-2265'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'rebase', 'origin/UNA-2265'],
                 ['git', '-c', 'safe.directory=.', '-C', '.', 'push', '-u', 'origin', 'UNA-2265'],
             ],
@@ -2081,16 +1921,12 @@ class RepositoryServiceTests(unittest.TestCase):
             ):
                 service.prepare_task_repositories([self.cfg.kato.repositories[0]])
 
-    @unittest.skip(
-        'Obsolete: zero explicit repositories is now valid at boot — '
-        'auto-discovery via REPOSITORY_ROOT_PATH happens lazily on the first '
-        'task. The "no repos resolvable" error now surfaces at preflight.'
-    )
-    def test_validate_connections_requires_at_least_one_repository(self) -> None:
-        service = RepositoryService([], 3)
-
-        with self.assertRaisesRegex(ValueError, 'at least one repository must be configured'):
-            service.validate_connections()
+    # NOTE: ``test_validate_connections_requires_at_least_one_repository``
+    # was removed when ``validate_connections`` became lazy. The
+    # ``"at least one repository must be configured"`` ValueError is
+    # now exercised at the lazy entry point by
+    # ``test_validate_inventory_refuses_when_no_repositories_configured``
+    # later in this file.
 
     def test_list_pull_request_comments_uses_provider_api_when_configured(self) -> None:
         repository = self.cfg.kato.repositories[0]
@@ -2412,3 +2248,115 @@ class RepositoryServiceTests(unittest.TestCase):
             text=True,
         )
         return result.stdout.strip()
+
+    # ---- replacement coverage for the deleted ``validate_connections``
+    # tests. ``validate_connections`` itself was removed when per-repo
+    # access became lazy (now fires at first ``resolve_task_repositories``
+    # via ``_validate_repository_git_access`` on the inventory base
+    # class). The skipped tests asserted argv shape + error wrapping;
+    # these direct unit tests cover the same properties at the new
+    # location so the assertions don't disappear with the deletions.
+
+    def test_validate_repository_git_access_runs_ls_remote_with_auth_header(self) -> None:
+        """``_validate_repository_git_access`` runs ``ls-remote --heads origin``
+        and injects the provider Authorization header via env vars.
+
+        Was previously asserted by
+        ``test_validate_connections_checks_git_access_for_single_repository_root``
+        and its multi-repo sibling. Now exercised at the lazy-time
+        entry point ``_validate_repository_git_access`` directly.
+        """
+        service = RepositoryService([], 3)
+        # Hermetic repository fixture with the fields ``_run_git_subprocess``
+        # uses to inject the auth header. Same shape as the existing
+        # ``test_run_git_subprocess_uses_env_based_http_auth_and_timeout``.
+        repository = types.SimpleNamespace(
+            provider='github',
+            remote_url='https://github.example/acme/repo.git',
+            token='secret-token',
+            local_path='/tmp/acme/repo',
+        )
+
+        with patch(
+            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            return_value=Mock(returncode=0, stdout='refs/heads/main\n', stderr=''),
+        ) as mock_run:
+            service._validate_repository_git_access(repository)
+
+        argv = mock_run.call_args.args[0]
+        # The verification command must be ``ls-remote --heads origin`` —
+        # cheap, read-only, exercises authentication without mutating
+        # the repository.
+        self.assertIn('ls-remote', argv)
+        self.assertIn('--heads', argv)
+        self.assertIn('origin', argv)
+        # The auth header is injected via env vars, not argv (so it
+        # never lands in ``ps``-visible process state).
+        env = mock_run.call_args.kwargs['env']
+        self.assertEqual(env['GIT_CONFIG_KEY_0'], 'http.extraHeader')
+        self.assertTrue(
+            env['GIT_CONFIG_VALUE_0'].startswith('Authorization: '),
+            f'expected Authorization header in GIT_CONFIG_VALUE_0, got {env["GIT_CONFIG_VALUE_0"]!r}',
+        )
+        # Terminal prompt blocked so a missing-credential failure is
+        # a fast non-interactive error rather than a hanging prompt.
+        self.assertEqual(env['GIT_TERMINAL_PROMPT'], '0')
+
+    def test_validate_repository_git_access_wraps_auth_failure_with_missing_permissions_error(self) -> None:
+        """An auth failure surfaces as ``[Error] X missing git permissions. cannot work.``
+
+        The wrapping is the operator-facing contract — the raw
+        ``terminal prompts disabled`` error from git is cryptic.
+        Was previously asserted by
+        ``test_validate_connections_stops_when_git_permissions_are_missing``;
+        now exercised at the lazy-time entry point directly.
+        """
+        service = RepositoryService([], 3)
+        repository = types.SimpleNamespace(
+            provider='bitbucket',
+            remote_url='https://bitbucket.org/workspace/project.git',
+            token='bb-token',
+            username='workspace',
+            local_path='/tmp/workspace/project',
+        )
+
+        with patch(
+            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            return_value=Mock(
+                returncode=128,
+                stdout='',
+                stderr=(
+                    "fatal: could not read Password for "
+                    "'https://x-token-auth@bitbucket.org': terminal prompts disabled"
+                ),
+            ),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                r'\[Error\].*missing git permissions\. cannot work\.',
+            ):
+                service._validate_repository_git_access(repository)
+
+    def test_validate_inventory_refuses_when_no_repositories_configured(self) -> None:
+        """``_validate_inventory`` raises ``ValueError`` when no repos are configured.
+
+        Was previously asserted at boot via
+        ``test_validate_connections_requires_at_least_one_repository``.
+        Now ``_validate_inventory`` runs lazily on first read of
+        ``service.repositories``; the same error must surface. The
+        production code path emits the literal string operators search
+        for, so locking the exact message matters.
+        """
+        config = types.SimpleNamespace(
+            repositories=[],
+            repository_root_path='',
+            github_issues=types.SimpleNamespace(base_url='', token=''),
+            gitlab_issues=types.SimpleNamespace(base_url='', token=''),
+            bitbucket_issues=types.SimpleNamespace(base_url='', token=''),
+        )
+        service = RepositoryService(config, 3)
+
+        with self.assertRaisesRegex(
+            ValueError, 'at least one repository must be configured',
+        ):
+            service._validate_inventory()

@@ -280,20 +280,49 @@ but not yet implemented. Each has a one-line case for what it would
 close. If "more secure" is still the goal, these are the real next
 work items in priority order:
 
-| # | Open gap | What it would close | Approx effort |
-|---|---|---|---|
-| OG1 | **Build-time sandbox** (full) — run `docker build` itself inside a sandbox so a hostile network during build can't poison the image even with the digest pin. | Closes #17's npm-side / Debian-package channels that the digest pin doesn't bound. | 2–3 days |
-| OG2 | **External audit-log shipping** — ship the hash-chain audit log to S3-with-Object-Lock or a syslog forwarder so tail-truncation is detectable. | Closes the "tail-truncation looks valid" residual the doc names under "What the hash chain proves (and doesn't)." | 1–2 days |
-| OG3 | **Kata Containers as opt-in runtime** — VM-per-container on Linux. | Closes #7 (runc/containerd CVEs) fully on Linux + raises the floor for #9–#11. | ~3 days |
-| OG4 | **TLS certificate pinning for `api.anthropic.com`** — pin the cert fingerprint at the network layer instead of only relying on system CA validation. | Defends against rogue-CA scenarios. Doesn't fix nation-state CA compromise but raises the bar. | ~1 day |
-| OG5 | **Egress proxy with per-domain logging** — instead of iptables-only allowlist, run an HTTPS proxy in the sandbox that logs every request. | Adds visibility into what the agent actually sent, complementing #18's detective scan with a request log. | ~2 days |
-| OG6 | **Network namespace isolation for the build** — same intent as OG1 but at network level only. | Cheaper than full build-time sandbox; still closes the build-time supply chain. | 1 day |
-| OG7 | **Custom seccomp profile** — Docker's default seccomp is generic; a kato-specific profile that allows only what Claude actually needs would be tighter. | Reduces syscall attack surface. Ongoing maintenance cost. | ~2 days |
-| OG8 | **Per-task workspace encryption at rest** — encrypt the workspace bind-mount with a per-task key destroyed on container exit. | Defends against host-side snapshot/forensic recovery of in-flight work. Niche but real. | ~2 days |
+**Status legend.** Each row carries one of three states:
 
-The first three (OG1, OG2, OG3) are the highest-leverage remaining
-items. Everything else on the threats 1–18 list is either covered,
-accepted with named rationale, or out of scope by design.
+- **Open** — no implementation in the source tree yet; the row's
+  parenthetical estimates the work.
+- **Module ready, integration pending** — a module under
+  `kato_core_lib.sandbox.*` (or equivalent) implements the
+  mitigation and has unit tests, but no production caller invokes
+  it yet. The defense exists in source but does NOT run during a
+  spawn. Treat the residual as still-open until a wiring drift
+  guard in `tests/test_open_gap_closures_doc_consistency.py`
+  proves a live call site.
+- **Closed** — implementation AND production wiring AND a
+  drift-guard test are all in place. The defense runs on every
+  spawn (or every prompt build, depending on the gap) and a CI
+  failure surfaces if a future refactor removes the wiring
+  without updating this row.
+
+The three-way distinction matters because past kato releases
+have shipped a closed-looking row backed by an unwired module —
+the unit test passed, the doc said "Closed," and operators
+believed the residual was mitigated when the module was never
+reached. The drift-guard tests above are the operator's
+guarantee that "Closed" rows actually run.
+
+| # | Open gap | What it would close | Status |
+|---|---|---|---|
+| OG1 | **Build-time sandbox** (full) — run `docker build` itself inside a sandbox so a hostile network during build can't poison the image even with the digest pin. | Closes #17's npm-side / Debian-package channels that the digest pin doesn't bound. | **Open** (~2–3 days; needs custom Docker network with iptables-restricted bridge) |
+| OG2 | **External audit-log shipping** — ship the hash-chain audit log to S3-with-Object-Lock or a syslog forwarder so tail-truncation is detectable. | Closes the "tail-truncation looks valid" residual the doc names under "What the hash chain proves (and doesn't)." | **Closed** — `kato_core_lib.sandbox.audit_log_shipping`. Operator sets `KATO_SANDBOX_AUDIT_SHIP_TARGET` to `https://...` or `file://...`; each spawn's audit entry is shipped after the local write. Best-effort by default; `KATO_SANDBOX_AUDIT_SHIP_REQUIRED=true` fails-closed. Cross-OS (stdlib only). |
+| OG3 | **Kata Containers as opt-in runtime** — VM-per-container on Linux. | Closes #7 (runc/containerd CVEs) fully on Linux + raises the floor for #9–#11. | **Open** (~3 days; Linux-only by design — Mac/WSL2 already have hypervisor isolation via Docker Desktop's LinuxKit VM) |
+| OG4 | **TLS certificate pinning for `api.anthropic.com`** — pin the cert fingerprint at the network layer instead of only relying on system CA validation. | Defends against rogue-CA scenarios. Doesn't fix nation-state CA compromise but raises the bar. | **Closed** — `kato_core_lib.sandbox.tls_pin`. Operator sets `KATO_SANDBOX_ANTHROPIC_TLS_PIN_SHA256` to one or more comma-separated base64 SPKI fingerprints; the validator opens a TLS connection at boot and refuses if the live SPKI doesn't match any pin. `KATO_SANDBOX_ALLOW_NO_TLS_PIN=true` opt-out. Cross-OS (Python `ssl` stdlib). |
+| OG5 | **Egress proxy with per-domain logging** — instead of iptables-only allowlist, run an HTTPS proxy in the sandbox that logs every request. | Adds visibility into what the agent actually sent, complementing #18's detective scan with a request log. | **Open** (~2 days; needs HTTPS proxy infrastructure inside the sandbox network namespace) |
+| OG6 | **Network namespace isolation for the build** — same intent as OG1 but at network level only. | Cheaper than full build-time sandbox; still closes the build-time supply chain. | **Open** (~1 day; needs iptables-restricted custom Docker bridge — Linux-clean, partial on Mac/Windows where Docker Desktop's bridge isolation is more opaque) |
+| OG7 | **Custom seccomp profile** — Docker's default seccomp is generic; a kato-specific profile that allows only what Claude actually needs would be tighter. | Reduces syscall attack surface. Ongoing maintenance cost. | **Open** (~2 days + maint; Linux-only kernel feature, applies via Docker Desktop's LinuxKit VM on Mac/WSL2) |
+| OG8 | **Per-task workspace encryption at rest** — encrypt the workspace bind-mount with a per-task key destroyed on container exit. | Defends against host-side snapshot/forensic recovery of in-flight work. Niche but real. | **Open** (~2 days × 3 OSes; host-OS-specific code paths — dm-crypt vs FileVault vs BitLocker) |
+| OG9a | **Workspace-content delimiter framing** — wrap workspace file content in `<UNTRUSTED_WORKSPACE_FILE>...</UNTRUSTED_WORKSPACE_FILE>` markers; instruct the model to treat content inside the markers as data, not instructions. | Closes the most-naive prompt-injection class on workspace content (READMEs / comments / fixtures that try to address the model directly). | **Closed** — `kato_core_lib.sandbox.workspace_delimiter`. `wrap_untrusted_workspace_content(content, source_path=...)` returns the framed string, with literal close-tag forgery escaped. The system-prompt addendum (Section 5) instructs the model to treat in-tag content as data. Cross-OS (pure Python). |
+| OG9b | **Task-intent gate on tool calls** — small classifier call before each Bash/Edit/Write to verify consistency with the original task. | Catches the class of "agent went off-rails because of injection" — including injection that successfully deceived the model. | **Open** (~3–4 days + ongoing tuning; research-engineering project) |
+
+**3 of 10 closed this round (OG2, OG4, OG9a).** The other 7 remain
+named open gaps — each entry above describes what's left and why
+the work didn't fit a single session. Cross-OS feasibility is noted
+per gap; OG3 / OG7 / OG8 are by-design Linux-side enhancements
+(Mac/WSL2 either already have the equivalent via Docker Desktop or
+need separate per-OS code paths).
 
 ## Why these specific surfaces — read before proposing a change
 
@@ -594,10 +623,10 @@ applies to kato's setup.
 | # | Risk | Status | Mitigation |
 |---|---|---|---|
 | S1 | Base image (`node:22-bookworm-slim`) tamper | **Accepted-with-mitigation** | Default pulls the moving `node:22-bookworm-slim` tag from Docker Hub. Operators concerned about supply-chain attacks pin a specific digest by setting `KATO_SANDBOX_BASE_IMAGE=node:22-bookworm-slim@sha256:<digest>`; `manager.build_image` passes this through as the Dockerfile `BASE_IMAGE` build-arg. See the "Build-time supply chain" section in the Residual model for what this does and doesn't address. |
-| S2 | `npm install -g @anthropic-ai/claude-code` pulls tampered package | **B** | Build-time only, not runtime. Egress firewall would block runtime fetches. Operator can pin a specific version in the Dockerfile if desired. |
+| S2 | `npm install -g @anthropic-ai/claude-code` pulls tampered package | **M** | Mandatory CLI version pin — kato refuses to build unless `KATO_SANDBOX_CLAUDE_CLI_VERSION` is set to a specific version (e.g. `2.1.5`). The Dockerfile installs `@anthropic-ai/claude-code@<that version>` instead of `latest`, so a malicious release pushed to npm between operator builds cannot land in the resulting image. Explicit operator opt-out via `KATO_SANDBOX_ALLOW_FLOATING_CLAUDE_CLI=true` for operators who accept the residual. Runtime egress firewall continues to block any post-install fetch. |
 | S3 | Debian package repo tamper | **A** | Build-time only, signed via apt. |
 | S4 | Auto-update fetches new Claude CLI at runtime | **M** | `DISABLE_AUTOUPDATER=1` in image; runtime egress firewall would block npm fetches anyway |
-| S5 | Image rebuild fetches a different `latest` Claude | **B** | Operator's choice — kato rebuilds on label-miss or missing image. To pin, replace `npm install -g @anthropic-ai/claude-code` in the Dockerfile with `@X.Y.Z`. |
+| S5 | Image rebuild fetches a different `latest` Claude | **M** | Same mandatory pin as S2 — `KATO_SANDBOX_CLAUDE_CLI_VERSION` is required at build time, so a rebuild cannot silently swap to a different `latest`. The Dockerfile build-arg `CLAUDE_CLI_VERSION` carries the pinned value through. Opt-out via `KATO_SANDBOX_ALLOW_FLOATING_CLAUDE_CLI=true` for operators who accept the floating-tag residual. |
 
 ### Operator visibility
 
@@ -899,6 +928,19 @@ Mapping to the protections below:
   but give a false sense of security. Closes the build-time
   base-image substitution channel that was previously
   operator-discretionary.
+- **Mandatory Claude CLI version pin** — **strict by default**.
+  Parallel to the base-image pin: kato refuses to build unless
+  either `KATO_SANDBOX_CLAUDE_CLI_VERSION` is set to a specific
+  version (e.g. `2.1.5`, passed through to the Dockerfile as the
+  `CLAUDE_CLI_VERSION` build-arg so `npm install -g
+  @anthropic-ai/claude-code@<that version>` runs instead of
+  `@latest`) or `KATO_SANDBOX_ALLOW_FLOATING_CLAUDE_CLI=true` is
+  set as an explicit operator opt-out. Closes the npm-side
+  substitution channel that was previously operator-discretionary —
+  a malicious release pushed to npm between operator builds cannot
+  silently land in the resulting image. Both pins (base-image +
+  CLI version) are validated before any docker invocation, so a
+  refusal fails fast without touching the registry.
 - **Output-side credential & phishing detector** — **strict by
   default** (no override). Every Claude response (one-shot via
   `cli_client._scan_response_for_credentials`, streaming via
@@ -1003,25 +1045,42 @@ session storage as part of the trust boundary. Bypass mode does not
 make the model itself trustworthy — it bounds *what tools the model
 can run*, not *what the model says*.
 
-### Build-time supply chain — accepted, with operator-discretionary mitigation
+### Build-time supply chain — mitigated by default, open gap for full build-time sandbox
 
 The runtime egress firewall applies only to the *running* sandbox.
 The image build (`docker build` invoked by `ensure_image`) runs
 `apt-get upgrade -y` and `npm install -g @anthropic-ai/claude-code`
-over the **host's** network, with no kato-imposed restrictions. If
-the operator's host is on a hostile network (DNS hijack, ARP spoof
-on coffee-shop wifi, malicious corporate proxy) at build time, the
-resulting image is poisoned and every subsequent sandbox spawn runs
-poisoned binaries.
+over the **host's** network. If the operator's host is on a hostile
+network (DNS hijack, ARP spoof on coffee-shop wifi, malicious
+corporate proxy) at build time, the build's two fetches are exposed
+unless they're pinned to immutable identities.
 
-This is **accepted residual risk** with an **operator-discretionary
-mitigation**: pin the base image by digest via
-`KATO_SANDBOX_BASE_IMAGE=node:22-bookworm-slim@sha256:<digest>` and
-build from a trusted network. Digest pinning closes the base-image
-substitution attack but does not address npm dependency takeover,
-malicious upstream releases, or transitive package compromise —
-those are inherent to the package-manager trust model and would
-require a separate build-time sandbox to fully bound. Operators on
+**Both fetches are now mandatory-pinned by default:**
+
+- **Base image** — kato refuses to build unless
+  `KATO_SANDBOX_BASE_IMAGE` is digest-pinned
+  (`node:22-bookworm-slim@sha256:<digest>`). Closes base-image
+  substitution: a hostile registry returning a different image
+  layer cannot match the pinned digest. Half-pinned values (tag
+  without `@sha256:`) are also refused. Operator opt-out via
+  `KATO_SANDBOX_ALLOW_FLOATING_BASE_IMAGE=true` for operators who
+  accept the residual in writing.
+- **Claude CLI version** — kato refuses to build unless
+  `KATO_SANDBOX_CLAUDE_CLI_VERSION` is set to a specific version.
+  Closes the npm-side substitution channel: a malicious release
+  pushed to npm between operator builds cannot silently land in
+  the resulting image. Operator opt-out via
+  `KATO_SANDBOX_ALLOW_FLOATING_CLAUDE_CLI=true`.
+
+**What the two pins do NOT cover (open gap):** the base image's
+own apt sources, the npm package's transitive dependencies, and any
+postinstall scripts run during `npm install` are still resolved
+over the host's network at build time. A hostile network during
+build can still substitute Debian packages or transitive npm
+dependencies even with both pins active. Closing this fully
+requires running `docker build` itself inside a sandbox with a
+restricted egress allowlist for just the package registries — that's
+**named open gap OG1** in the Attack-and-defense map. Operators on
 hostile networks should rebuild from a trusted location and
 re-stamp the image before resuming work.
 

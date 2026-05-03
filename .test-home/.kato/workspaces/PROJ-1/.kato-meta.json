@@ -1,0 +1,13 @@
+{
+  "claude_session_id": "",
+  "created_at_epoch": 1777819932.910182,
+  "cwd": "",
+  "repository_ids": [
+    "client"
+  ],
+  "resume_on_startup": true,
+  "status": "review",
+  "task_id": "PROJ-1",
+  "task_summary": "Fix bug",
+  "updated_at_epoch": 1777819932.935613
+}
