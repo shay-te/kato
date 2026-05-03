@@ -104,6 +104,24 @@ def build_test_cfg() -> DictConfig:
                     'review_state': 'To Verify',
                     'issue_states': ['Todo', 'Open'],
                 },
+                'youtrack_core_lib': {
+                    'name': 'youtrack-core-lib-config',
+                    'provider_name': 'youtrack',
+                    'core_lib': {
+                        'youtrack_core_lib': {
+                            'base_url': 'https://youtrack.example',
+                            'token': 'yt-token',
+                            'project': 'PROJ',
+                            'assignee': 'me',
+                            'progress_state_field': 'State',
+                            'progress_state': 'In Progress',
+                            'review_state_field': 'State',
+                            'review_state': 'To Verify',
+                            'issue_states': ['Todo', 'Open'],
+                            'max_retries': 5,
+                        },
+                    },
+                },
                 'jira': {
                     'name': 'jira-config',
                     'provider_name': 'jira',

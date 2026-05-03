@@ -11,15 +11,17 @@ class TicketClientFactoryTests(unittest.TestCase):
     def test_builds_youtrack_client_by_default(self) -> None:
         cfg = build_test_cfg()
 
-        with patch('kato_core_lib.client.ticket_client_factory.YouTrackClient') as mock_client_cls:
+        with patch('kato_core_lib.client.ticket_client_factory.YouTrackCoreLib') as mock_core_lib:
             client = build_ticket_client('youtrack', cfg.kato.youtrack, 5)
 
-        self.assertIs(client, mock_client_cls.return_value)
-        mock_client_cls.assert_called_once_with(
-            cfg.kato.youtrack.base_url,
-            cfg.kato.youtrack.token,
-            5,
-        )
+        self.assertIs(client, mock_core_lib.return_value.issue)
+        mock_core_lib.assert_called_once()
+        passed_cfg = mock_core_lib.call_args.args[0]
+        self.assertEqual(passed_cfg.core_lib.youtrack_core_lib.base_url, cfg.kato.youtrack.base_url)
+        self.assertEqual(passed_cfg.core_lib.youtrack_core_lib.token, cfg.kato.youtrack.token)
+        self.assertEqual(passed_cfg.core_lib.youtrack_core_lib.project, cfg.kato.youtrack.project)
+        self.assertEqual(passed_cfg.core_lib.youtrack_core_lib.assignee, cfg.kato.youtrack.assignee)
+        self.assertEqual(passed_cfg.core_lib.youtrack_core_lib.max_retries, 5)
 
     def test_builds_jira_client(self) -> None:
         cfg = build_test_cfg()

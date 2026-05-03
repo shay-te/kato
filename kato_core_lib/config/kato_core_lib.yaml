@@ -1,5 +1,6 @@
 # @package _global_
 defaults:
+  - youtrack_core_lib: youtrack_core_lib
   - github_core_lib: github_core_lib
   - bitbucket_core_lib: bitbucket_core_lib
   - gitlab_core_lib: gitlab_core_lib
@@ -49,15 +50,16 @@ kato:
       name: ${oc.env:KATO_COMPLETION_EMAIL_SENDER_NAME,"Kato"}
       email: ${oc.env:KATO_COMPLETION_EMAIL_SENDER_EMAIL,"noreply@example.com"}
   youtrack:
-    base_url: ${oc.env:YOUTRACK_BASE_URL}
-    token: ${oc.env:YOUTRACK_TOKEN}
-    project: ${oc.env:YOUTRACK_PROJECT}
-    assignee: ${oc.env:YOUTRACK_ASSIGNEE,me}
-    progress_state_field: ${oc.env:YOUTRACK_PROGRESS_STATE_FIELD,"State"}
-    progress_state: ${oc.env:YOUTRACK_PROGRESS_STATE,"In Progress"}
-    review_state_field: ${oc.env:YOUTRACK_REVIEW_STATE_FIELD,"State"}
-    review_state: ${oc.env:YOUTRACK_REVIEW_STATE,"To Verify"}
-    issue_states: ${oc.env:YOUTRACK_ISSUE_STATES,"Todo,Open"}
+    base_url: ${core_lib.youtrack_core_lib.base_url}
+    token: ${core_lib.youtrack_core_lib.token}
+    project: ${core_lib.youtrack_core_lib.project}
+    assignee: ${core_lib.youtrack_core_lib.assignee}
+    progress_state_field: ${core_lib.youtrack_core_lib.progress_state_field}
+    progress_state: ${core_lib.youtrack_core_lib.progress_state}
+    review_state_field: ${core_lib.youtrack_core_lib.review_state_field}
+    review_state: ${core_lib.youtrack_core_lib.review_state}
+    issue_states: ${core_lib.youtrack_core_lib.issue_states}
+    max_retries: ${core_lib.youtrack_core_lib.max_retries}
   jira:
     base_url: ${core_lib.jira_core_lib.base_url}
     token: ${core_lib.jira_core_lib.token}

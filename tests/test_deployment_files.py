@@ -213,9 +213,13 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertNotIn('OPENHANDS_CONTAINER_AWS_SESSION_TOKEN', compose_text)
         self.assertNotIn('OPENHANDS_CONTAINER_AWS_DEFAULT_REGION', compose_text)
         self.assertIn(
-            'defaults:\n  - github_core_lib: github_core_lib\n  - bitbucket_core_lib: bitbucket_core_lib\n  - gitlab_core_lib: gitlab_core_lib\n  - jira_core_lib: jira_core_lib\n  - _self_',
+            'defaults:\n  - youtrack_core_lib: youtrack_core_lib\n  - github_core_lib: github_core_lib\n  - bitbucket_core_lib: bitbucket_core_lib\n  - gitlab_core_lib: gitlab_core_lib\n  - jira_core_lib: jira_core_lib\n  - _self_',
             core_lib_yaml_text,
         )
+        self.assertIn('base_url: ${core_lib.youtrack_core_lib.base_url}', core_lib_yaml_text)
+        self.assertIn('token: ${core_lib.youtrack_core_lib.token}', core_lib_yaml_text)
+        self.assertIn('project: ${core_lib.youtrack_core_lib.project}', core_lib_yaml_text)
+        self.assertIn('max_retries: ${core_lib.youtrack_core_lib.max_retries}', core_lib_yaml_text)
         self.assertIn(
             'base_url: ${core_lib.github_core_lib.base_url}',
             core_lib_yaml_text,
@@ -260,6 +264,7 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('JIRA_TOKEN=', env_example_text)
         self.assertIn('YOUTRACK_PROGRESS_STATE=', env_example_text)
         self.assertIn('YOUTRACK_ISSUE_STATES=', env_example_text)
+        self.assertIn('YOUTRACK_CORE_LIB_MAX_RETRIES=', env_example_text)
         self.assertIn('JIRA_PROGRESS_STATE=', env_example_text)
         self.assertIn('JIRA_ISSUE_STATES=', env_example_text)
         self.assertIn('GITHUB_ISSUES_BASE_URL=', env_example_text)
@@ -530,7 +535,7 @@ class DeploymentFilesTests(unittest.TestCase):
             compose_text,
         )
         self.assertIn('repositories:', config_text)
-        self.assertIn('YOUTRACK_ISSUE_STATES', config_text)
+        self.assertIn('issue_states: ${core_lib.youtrack_core_lib.issue_states}', config_text)
         self.assertIn('poll_interval_seconds:', config_text)
         self.assertIn('max_poll_attempts:', config_text)
         self.assertIn('skip_testing:', config_text)

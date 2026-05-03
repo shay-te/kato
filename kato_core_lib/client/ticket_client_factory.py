@@ -1,16 +1,26 @@
 from bitbucket_core_lib.bitbucket_core_lib.bitbucket_core_lib import BitbucketCoreLib
 from jira_core_lib.jira_core_lib.jira_core_lib import JiraCoreLib
 from gitlab_core_lib.gitlab_core_lib.gitlab_core_lib import GitLabCoreLib
-from kato_core_lib.client.youtrack.issues_client import YouTrackClient
 from omegaconf import OmegaConf
 
 from github_core_lib.github_core_lib.github_core_lib import GitHubCoreLib
+from youtrack_core_lib.youtrack_core_lib.youtrack_core_lib import YouTrackCoreLib
 
 
 def build_ticket_client(issue_platform: str, config, max_retries: int):
     normalized = str(issue_platform or 'youtrack').strip().lower()
     if normalized == 'youtrack':
-        return YouTrackClient(config.base_url, config.token, max_retries)
+        youtrack_config = OmegaConf.create(
+            {
+                'core_lib': {
+                    'youtrack_core_lib': OmegaConf.merge(
+                        config,
+                        {'max_retries': max_retries},
+                    ),
+                },
+            }
+        )
+        return YouTrackCoreLib(youtrack_config).issue
     if normalized == 'jira':
         jira_config = OmegaConf.create(
             {
