@@ -335,13 +335,16 @@ class MainTests(unittest.TestCase):
 class MainTlsPinIntegrationTests(unittest.TestCase):
     """Locks the OG4 wiring: ``main()`` calls the TLS pin validator.
 
-    Without these tests, the validator module exists in isolation and
-    the doc claims OG4 is "Closed" — but a refactor that drops the
-    validator call from ``main()`` would silently make the protection
-    dead code in production. ``MainTests.setUp`` opts the test env
-    out of pinning so the unrelated tests don't depend on TLS state;
-    THIS class deliberately doesn't opt out and exercises the real
-    integration.
+    The validator now implements a TOFU lifecycle (env var / opt-out
+    / first-run / subsequent-run); the lifecycle's own behavior is
+    tested in ``test_tls_pin.py``. This class only locks the
+    ``main()`` ↔ validator wiring: that ``main()`` invokes the
+    validator on every startup and propagates ``TlsPinError`` to a
+    non-zero exit code.
+
+    The opt-out path is the most convenient one to drive end-to-end
+    here: it returns silently without touching the network or the
+    filesystem, which keeps the test hermetic.
     """
 
     def setUp(self) -> None:
@@ -355,7 +358,7 @@ class MainTlsPinIntegrationTests(unittest.TestCase):
         )
         self._env_patch.start()
         self.addCleanup(self._env_patch.stop)
-        # Drop both env vars if a previous test or shell set them.
+        # Drop the TLS env vars if a previous test or shell set them.
         for key in (
             'KATO_SANDBOX_ANTHROPIC_TLS_PIN_SHA256',
             'KATO_SANDBOX_ALLOW_NO_TLS_PIN',
@@ -384,17 +387,6 @@ class MainTlsPinIntegrationTests(unittest.TestCase):
         ):
             return main(self.cfg)
 
-    def test_main_refuses_when_no_pin_and_no_optout(self) -> None:
-        """Strict-by-default: no env vars → main() returns 1.
-
-        Locks the production wiring. If a future refactor drops the
-        ``validate_anthropic_tls_pin_or_refuse`` call from main, this
-        test fails because main() returns 0 instead of 1.
-        """
-        # Both env vars are absent (setUp dropped them).
-        result = self._run_main_with_other_validators_mocked()
-        self.assertEqual(result, 1)
-
     def test_main_proceeds_when_optout_is_set(self) -> None:
         """``KATO_SANDBOX_ALLOW_NO_TLS_PIN=true`` opts out — main proceeds."""
         os.environ['KATO_SANDBOX_ALLOW_NO_TLS_PIN'] = 'true'
@@ -407,10 +399,10 @@ class MainTlsPinIntegrationTests(unittest.TestCase):
     def test_main_invokes_tls_pin_validator(self) -> None:
         """Direct integration check: the validator function is called.
 
-        Even if both opt-in and opt-out env vars were absent, the
-        validator MUST be invoked — its absence would silently
-        disable the OG4 protection. Patches the validator at the
-        ``kato_core_lib.main`` module to verify the call site.
+        Even when the validator's own decision is to return silently,
+        the call MUST happen on every startup — its absence would
+        silently disable the OG4 protection. Patches the validator
+        at the ``kato_core_lib.main`` module to verify the call site.
         """
         os.environ['KATO_SANDBOX_ALLOW_NO_TLS_PIN'] = 'true'
         try:
@@ -420,4 +412,117 @@ class MainTlsPinIntegrationTests(unittest.TestCase):
                 self._run_main_with_other_validators_mocked()
         finally:
             del os.environ['KATO_SANDBOX_ALLOW_NO_TLS_PIN']
+        mock_validator.assert_called_once()
+
+    def test_main_returns_one_when_validator_raises(self) -> None:
+        """Refusal path: a ``TlsPinError`` from the validator → exit 1.
+
+        Locks the error-propagation half of the wiring. If a future
+        refactor swallows the exception or returns 0 in the error
+        path, this test fails. Uses the env-var ambiguity case (both
+        env vars set → ``Pick one``) as the trigger because it's
+        deterministic and doesn't need network or file mocking.
+        """
+        os.environ['KATO_SANDBOX_ANTHROPIC_TLS_PIN_SHA256'] = (
+            'QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE='  # 32 'A' bytes
+        )
+        os.environ['KATO_SANDBOX_ALLOW_NO_TLS_PIN'] = 'true'
+        try:
+            result = self._run_main_with_other_validators_mocked()
+        finally:
+            del os.environ['KATO_SANDBOX_ANTHROPIC_TLS_PIN_SHA256']
+            del os.environ['KATO_SANDBOX_ALLOW_NO_TLS_PIN']
+        self.assertEqual(result, 1)
+
+
+class MainReadOnlyToolsIntegrationTests(unittest.TestCase):
+    """Locks the read-only-tools wiring: ``main()`` calls the gate.
+
+    Without this test, ``validate_read_only_tools_requires_docker``
+    is just a function in a module — a refactor that drops the call
+    from ``main()`` would silently let
+    ``KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS=true`` flow through to a
+    host-mode spawn where pre-approved ``grep`` reads the operator's
+    home directory.
+    """
+
+    def setUp(self) -> None:
+        self.cfg = build_test_cfg()
+        self._env_patch = patch.dict(
+            'os.environ',
+            {
+                'KATO_IGNORED_REPOSITORY_FOLDERS': '',
+                # Opt out of TLS pin so this class focuses on the
+                # read-only gate, not the OG4 gate.
+                'KATO_SANDBOX_ALLOW_NO_TLS_PIN': 'true',
+            },
+            clear=False,
+        )
+        self._env_patch.start()
+        self.addCleanup(self._env_patch.stop)
+        # Drop the read-only flag if a previous test or shell set it.
+        for key in (
+            'KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS',
+            'KATO_CLAUDE_DOCKER',
+        ):
+            if key in os.environ:
+                del os.environ[key]
+
+    def _run_main_with_other_validators_mocked(self) -> int:
+        app = types.SimpleNamespace(logger=Mock())
+        with patch('kato_core_lib.main.validate_environment'), patch(
+            'kato_core_lib.main.validate_bypass_permissions'
+        ), patch(
+            'kato_core_lib.main.print_security_posture'
+        ), patch(
+            'kato_core_lib.main.validate_anthropic_tls_pin_or_refuse'
+        ), patch(
+            'kato_core_lib.main.KatoInstance.init'
+        ), patch(
+            'kato_core_lib.main.KatoInstance.get', return_value=app,
+        ), patch(
+            'kato_core_lib.main._run_task_scan_loop'
+        ):
+            return main(self.cfg)
+
+    def test_main_refuses_when_read_only_set_without_docker(self) -> None:
+        """Strict gate: read-only=true alone -> main() returns 1."""
+        os.environ['KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS'] = 'true'
+        try:
+            result = self._run_main_with_other_validators_mocked()
+        finally:
+            del os.environ['KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS']
+        self.assertEqual(result, 1)
+
+    def test_main_proceeds_when_both_set(self) -> None:
+        """The valid combination: read-only=true + docker=true."""
+        os.environ['KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS'] = 'true'
+        os.environ['KATO_CLAUDE_DOCKER'] = 'true'
+        try:
+            # ``check_docker_or_exit`` would otherwise probe the
+            # daemon; patch it (and the gVisor probe) for the same
+            # reason the existing main tests do.
+            with patch(
+                'kato_core_lib.sandbox.manager.check_docker_or_exit'
+            ), patch(
+                'kato_core_lib.sandbox.manager.check_gvisor_or_exit'
+            ), patch(
+                'kato_core_lib.sandbox.manager.gvisor_runtime_available',
+                return_value=False,
+            ), patch(
+                'kato_core_lib.sandbox.manager.docker_running_rootless',
+                return_value=False,
+            ):
+                result = self._run_main_with_other_validators_mocked()
+        finally:
+            del os.environ['KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS']
+            del os.environ['KATO_CLAUDE_DOCKER']
+        self.assertEqual(result, 0)
+
+    def test_main_invokes_read_only_validator(self) -> None:
+        """Direct integration check: the validator function is called."""
+        with patch(
+            'kato_core_lib.main.validate_read_only_tools_requires_docker',
+        ) as mock_validator:
+            self._run_main_with_other_validators_mocked()
         mock_validator.assert_called_once()

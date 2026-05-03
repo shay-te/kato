@@ -191,11 +191,13 @@ class KatoClient(RetryingClientBase):
         prepared_task: PreparedTaskContext | None = None,
     ) -> str:
         repository_scope = self._repository_scope_text(task, prepared_task)
+        agents_instructions = agent_prompt_utils.agents_instructions_text(prepared_task)
         finish_instructions = self._finish_tool_instructions_text()
         return (
             f'Implement task {task.id}: {task.summary}\n\n'
             f'{task.description}\n\n'
             f'{repository_scope}\n\n'
+            f'{agents_instructions}\n\n'
             f'{self._execution_guardrails_text()}\n\n'
             'When you finish, use the finish tool.\n'
             '- Put the text that should become the pull request description in summary.\n'
@@ -222,11 +224,13 @@ class KatoClient(RetryingClientBase):
         prepared_task: PreparedTaskContext | None = None,
     ) -> str:
         repository_scope = self._repository_scope_text(task, prepared_task)
+        agents_instructions = agent_prompt_utils.agents_instructions_text(prepared_task)
         finish_instructions = self._finish_tool_instructions_text()
         return (
             f'Validate the implementation for task {task.id}: {task.summary}\n\n'
             f'{task.description}\n\n'
             f'{repository_scope}\n\n'
+            f'{agents_instructions}\n\n'
             f'{self._execution_guardrails_text()}\n\n'
             'Act as a separate testing agent.\n'
             'Write additional tests when needed, challenge the new code with edge cases, '

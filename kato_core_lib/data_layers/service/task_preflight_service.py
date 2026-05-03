@@ -18,6 +18,7 @@ from kato_core_lib.helpers.task_context_utils import (
     repository_ids_text,
     task_has_actionable_definition,
 )
+from kato_core_lib.helpers.agents_instruction_utils import repository_agents_instructions_text
 from kato_core_lib.helpers.task_execution_utils import skip_task_result
 from kato_core_lib.validation.branch_push import TaskBranchPushValidator
 from kato_core_lib.validation.model_access import TaskModelAccessValidator
@@ -510,6 +511,7 @@ class TaskPreflightService(Service):
             branch_name=next(iter(repository_branches.values()), ''),
             repositories=list(repositories),
             repository_branches=repository_branches,
+            agents_instructions=repository_agents_instructions_text(list(repositories)),
         )
 
     def _add_task_comment(

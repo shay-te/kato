@@ -17,6 +17,7 @@ import { useSessions } from './hooks/useSessions.js';
 import { useStatusFeed } from './hooks/useStatusFeed.js';
 import { useTaskAttention } from './hooks/useTaskAttention.js';
 import { CLAUDE_EVENT } from './constants/claudeEvent.js';
+import { appendComposerFragment } from './utils/chatComposerHelpers.js';
 import { mergePendingPermissionTaskIds } from './utils/sessionAttention.js';
 
 const RIGHT_PANE_DEFAULT_WIDTH = 380;
@@ -64,10 +65,8 @@ export default function App() {
   }, [activeTaskId]);
 
   const appendToInput = useCallback((fragment) => {
-    if (!fragment) { return; }
     setComposerValue((current) => {
-      const needsLeadingSpace = current && !/\s$/.test(current);
-      return current + (needsLeadingSpace ? ' ' : '') + fragment;
+      return appendComposerFragment(current, fragment);
     });
   }, []);
 

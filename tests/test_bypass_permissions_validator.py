@@ -28,6 +28,7 @@ from unittest.mock import patch
 from kato_core_lib.validation.bypass_permissions_validator import (
     BYPASS_ENV_KEY,
     DOCKER_ENV_KEY,
+    READ_ONLY_TOOLS_ENV_KEY,
     BypassPermissionsRefused,
     is_bypass_enabled,
     is_docker_mode_enabled,
@@ -452,6 +453,73 @@ class SecurityPostureBannerVariantTests(unittest.TestCase):
         self.assertIn('Containment layers', out)
         # The trio that the doc TL;DR also names as still-active.
         self.assertIn('sandbox, firewall', out)
+
+    # ---- read-only-tools row (NEW: surfaces the third flag) ----
+
+    def test_banner_includes_read_only_row_in_every_mode(self) -> None:
+        # Three flags now → three rows, all visible at boot. The
+        # operator scanning boot output must be able to tell what's
+        # on without grepping the env.
+        for env in ({}, {DOCKER_ENV_KEY: 'true'}, _BYPASS_AND_DOCKER):
+            out = self._capture(env)
+            self.assertIn(
+                'read-only pre-approval', out,
+                f'banner missing read-only row in env={env}',
+            )
+
+    def test_banner_read_only_row_shows_false_when_flag_off(self) -> None:
+        out = self._capture({DOCKER_ENV_KEY: 'true'})
+        # The row's value is "false" — locks the no-flag default
+        # so a future refactor can't silently flip the polarity.
+        # Match on the row prefix to avoid coincidental "false"
+        # elsewhere in the banner.
+        for line in out.splitlines():
+            if 'read-only pre-approval' in line:
+                self.assertIn('false', line)
+                # No suffix when the flag is off.
+                self.assertNotIn('grep/cat', line)
+                self.assertNotIn('redundant', line)
+                return
+        self.fail('read-only row not found in banner')
+
+    def test_banner_read_only_row_warns_when_active_without_bypass(self) -> None:
+        # Read-only on + bypass off: SOME prompts skipped (the
+        # read-only ones) while others still fire. The banner has
+        # to call this out — without the suffix, the operator's
+        # mental model from "bypass off = every tool prompts" is
+        # silently wrong.
+        out = self._capture({
+            DOCKER_ENV_KEY: 'true',
+            READ_ONLY_TOOLS_ENV_KEY: 'true',
+        })
+        for line in out.splitlines():
+            if 'read-only pre-approval' in line:
+                self.assertIn('true', line)
+                # Warning suffix names which tools no longer prompt
+                # so operators don't have to memorize the allowlist.
+                self.assertIn('no longer prompt', line)
+                # Spot-check tools the suffix should mention.
+                self.assertIn('grep', line)
+                self.assertIn('Read', line)
+                return
+        self.fail('read-only row not found in banner')
+
+    def test_banner_read_only_row_marks_redundant_when_bypass_also_on(self) -> None:
+        # Bypass disables ALL prompts, so read-only flag is a no-op
+        # in this mode. The banner says so explicitly — without
+        # this, an operator setting both could believe read-only
+        # is buying them additional protection.
+        out = self._capture({
+            DOCKER_ENV_KEY: 'true',
+            BYPASS_ENV_KEY: 'true',
+            READ_ONLY_TOOLS_ENV_KEY: 'true',
+        })
+        for line in out.splitlines():
+            if 'read-only pre-approval' in line:
+                self.assertIn('true', line)
+                self.assertIn('redundant', line)
+                return
+        self.fail('read-only row not found in banner')
 
 
 if __name__ == '__main__':

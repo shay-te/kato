@@ -162,6 +162,55 @@ class OG4TlsPinWiringTests(unittest.TestCase):
         # to the operator instead of being swallowed.
         self.assertIn('TlsPinError', source)
 
+    def test_doc_describes_tofu_lifecycle(self) -> None:
+        # The OG4 row was rewritten when the lifecycle moved from
+        # strict-by-default to TOFU. Lock that the doc still names
+        # the load-bearing pieces — without these, the row reads
+        # like the old strict-only description and operators can't
+        # tell which behaviour they should expect.
+        doc_text = _DOC_PATH.read_text(encoding='utf-8')
+        for phrase in (
+            'TOFU',
+            'KATO_SANDBOX_ANTHROPIC_TLS_PIN_SHA256',
+            'KATO_SANDBOX_ALLOW_NO_TLS_PIN',
+            'first run',
+            'subsequent run',
+            'rotation',
+        ):
+            self.assertIn(
+                phrase, doc_text,
+                f'BYPASS_PROTECTIONS.md OG4 description no longer mentions '
+                f'{phrase!r}. Either restore the doc text or update this '
+                f'drift-guard if the lifecycle has genuinely changed.',
+            )
+
+    def test_doc_pin_file_path_matches_source_default(self) -> None:
+        # The doc tells operators to ``rm ~/.kato/anthropic-tls-pin``
+        # on cert rotation. If the source code changes the default
+        # path without updating the doc (or vice versa), operators
+        # following the doc's recovery steps would do nothing
+        # (deleting a non-existent file) and stay broken. Lock the
+        # two together.
+        from kato_core_lib.sandbox.tls_pin import _default_pin_file_path
+
+        path = _default_pin_file_path()
+        # Render with ~ substitution the same way the runtime does.
+        try:
+            home = Path.home()
+            rel = path.resolve().relative_to(home.resolve())
+            display = f'~/{rel}'
+        except (ValueError, RuntimeError, KeyError):
+            display = str(path)
+
+        doc_text = _DOC_PATH.read_text(encoding='utf-8')
+        self.assertIn(
+            display, doc_text,
+            f'tls_pin._default_pin_file_path() resolves to {display!r} '
+            f'but BYPASS_PROTECTIONS.md does not mention this exact '
+            f'path. Operators following the doc recovery steps '
+            f'(``rm <path>``) would target the wrong file.',
+        )
+
 
 class OG9aWorkspaceDelimiterWiringTests(unittest.TestCase):
     """OG9a: every Claude prompt builder must wrap untrusted content."""
@@ -218,6 +267,105 @@ class OG9aWorkspaceDelimiterWiringTests(unittest.TestCase):
             SANDBOX_SYSTEM_PROMPT_ADDENDUM,
         )
         self.assertIn('UNTRUSTED_WORKSPACE_FILE', SANDBOX_SYSTEM_PROMPT_ADDENDUM)
+
+
+class ReadOnlyToolsAllowlistPinTests(unittest.TestCase):
+    """Drift guard: pin the exact membership of ``READ_ONLY_TOOLS_ALLOWLIST``.
+
+    The allowlist controls which Bash commands are pre-approved
+    when ``KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS=true``. Widening it
+    is a security decision (an operator can pick a command they
+    *think* is read-only but isn't — ``find -delete``, ``sed -i``,
+    ``tee``, ``dd``, ``curl > file``). This test pins the exact
+    set so adding an entry requires changing both the constant
+    and the test, which forces a code review on the widening.
+
+    The test is in this file (not in
+    ``test_read_only_tools_validator.py``) because it has the same
+    semantics as the other drift-guards: the doc says "X is the
+    allowlist", and this test makes the doc claim load-bearing.
+
+    To widen the allowlist:
+      1. Add the entry to
+         ``kato_core_lib.validation.bypass_permissions_validator.READ_ONLY_TOOLS_ALLOWLIST``.
+      2. Add the same entry to ``_PINNED_READ_ONLY_ALLOWLIST`` below.
+      3. Update the BYPASS_PROTECTIONS.md TL;DR + Recent changes
+         entry that enumerates the allowlist members.
+      4. Get a security review on the additions before merging.
+    """
+
+    # Keep this list in lock-step with
+    # ``kato_core_lib.validation.bypass_permissions_validator.READ_ONLY_TOOLS_ALLOWLIST``.
+    # Sorted so diff churn on additions is minimal.
+    _PINNED_READ_ONLY_ALLOWLIST = frozenset({
+        'Bash(cat:*)',
+        'Bash(file:*)',
+        'Bash(find:*)',
+        'Bash(grep:*)',
+        'Bash(head:*)',
+        'Bash(ls:*)',
+        'Bash(rg:*)',
+        'Bash(stat:*)',
+        'Bash(tail:*)',
+        'Bash(wc:*)',
+        'Read',
+    })
+
+    def test_allowlist_membership_matches_pin(self) -> None:
+        from kato_core_lib.validation.bypass_permissions_validator import (
+            READ_ONLY_TOOLS_ALLOWLIST,
+        )
+        self.assertEqual(
+            set(READ_ONLY_TOOLS_ALLOWLIST),
+            set(self._PINNED_READ_ONLY_ALLOWLIST),
+            'READ_ONLY_TOOLS_ALLOWLIST membership has drifted from the '
+            'pinned set in this test. Widening the allowlist is a '
+            'security decision — see the class docstring for the '
+            'required process (constant + this pin + doc + review).',
+        )
+
+    def test_doc_tldr_lists_each_allowlisted_command(self) -> None:
+        # The TL;DR enumerates the allowlist members so operators
+        # don't have to read source to know what's pre-approved.
+        # Lock that the doc claim matches the allowlist.
+        doc_text = _DOC_PATH.read_text(encoding='utf-8')
+        for entry in self._PINNED_READ_ONLY_ALLOWLIST:
+            # ``Bash(grep:*)`` -> ``grep`` for the doc check; the
+            # TL;DR uses bare command names with backticks.
+            if entry.startswith('Bash(') and entry.endswith(':*)'):
+                bare = entry[len('Bash('):-len(':*)')]
+                self.assertIn(
+                    f'`{bare}`', doc_text,
+                    f'BYPASS_PROTECTIONS.md TL;DR no longer mentions '
+                    f'pre-approved command {bare!r}. Update the doc to '
+                    f'match the allowlist or update the allowlist to '
+                    f'match the doc.',
+                )
+            else:
+                # ``Read`` is named verbatim in the doc.
+                self.assertIn(
+                    f'`{entry}`', doc_text,
+                    f'BYPASS_PROTECTIONS.md TL;DR no longer mentions '
+                    f'pre-approved tool {entry!r}.',
+                )
+
+    def test_cli_client_emits_pinned_allowlist_in_argv(self) -> None:
+        # End-to-end: when the read-only flag is on, the argv built
+        # by ``ClaudeCliClient._build_command`` contains every entry
+        # in the pinned allowlist. Locks the wiring from constant to
+        # subprocess invocation.
+        from kato_core_lib.client.claude.cli_client import ClaudeCliClient
+
+        client = ClaudeCliClient(binary='claude', read_only_tools_on=True)
+        cmd = client._build_command(additional_dirs=[], session_id='')
+        idx = cmd.index('--allowedTools')
+        argv_value = cmd[idx + 1]
+        for entry in self._PINNED_READ_ONLY_ALLOWLIST:
+            self.assertIn(
+                entry, argv_value,
+                f'pinned allowlist entry {entry!r} not present in '
+                f'--allowedTools argv: {argv_value}',
+            )
 
 
 if __name__ == '__main__':

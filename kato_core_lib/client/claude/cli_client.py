@@ -64,6 +64,7 @@ class ClaudeCliClient(object):
         disallowed_tools: str = '',
         bypass_permissions: bool = False,
         docker_mode_on: bool = False,
+        read_only_tools_on: bool = False,
         max_retries: int = 3,
         timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
         repository_root_path: str = '',
@@ -87,6 +88,18 @@ class ClaudeCliClient(object):
         # of ``bypass_permissions``: docker is containment, bypass is
         # the prompt layer.
         self._docker_mode_on = bool(docker_mode_on)
+        # Set from ``KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS`` at boot.
+        # When True (and only valid alongside docker mode — the
+        # ``validate_read_only_tools_requires_docker`` startup gate
+        # refuses the flag without docker), every spawn appends the
+        # hardcoded ``READ_ONLY_TOOLS_ALLOWLIST`` to ``--allowedTools``
+        # so the operator isn't prompted for grep / cat / ls / find /
+        # head / tail / wc / file / stat / rg / Read. Mutating tools
+        # (Edit, Write, Bash without an explicit pattern) still
+        # prompt as today. Independent of ``bypass_permissions``;
+        # bypass disables ALL prompts, this disables only the
+        # read-only ones.
+        self._read_only_tools_on = bool(read_only_tools_on)
         # When not bypassing, pre-approve a safe default tool list so the
         # agent does not stall asking for permission in headless `-p` mode.
         # Users can override or extend via KATO_CLAUDE_ALLOWED_TOOLS.
@@ -316,6 +329,7 @@ class ClaudeCliClient(object):
         prepared_task: PreparedTaskContext | None = None,
     ) -> str:
         repository_scope = agent_prompt_utils.repository_scope_text(task, prepared_task)
+        agents_instructions = agent_prompt_utils.agents_instructions_text(prepared_task)
         # OG9a: ``task.summary`` and ``task.description`` come from
         # the issue tracker (YouTrack / Bitbucket / etc.) and may
         # contain text written by anyone with comment access. Wrap
@@ -330,6 +344,7 @@ class ClaudeCliClient(object):
             f'Implement task {task.id}.\n\n'
             f'{untrusted_task_body}\n\n'
             f'{repository_scope}\n\n'
+            f'{agents_instructions}\n\n'
             f'{self._execution_guardrails_text()}\n\n'
             f'{self._completion_instructions_text()}\n\n'
             'The validation_report.md must list every changed file and, under each '
@@ -348,6 +363,7 @@ class ClaudeCliClient(object):
         prepared_task: PreparedTaskContext | None = None,
     ) -> str:
         repository_scope = agent_prompt_utils.repository_scope_text(task, prepared_task)
+        agents_instructions = agent_prompt_utils.agents_instructions_text(prepared_task)
         # OG9a: same reasoning as ``_build_implementation_prompt``;
         # the testing agent is also pointed at the same untrusted
         # issue text and needs the same framing.
@@ -359,6 +375,7 @@ class ClaudeCliClient(object):
             f'Validate the implementation for task {task.id}.\n\n'
             f'{untrusted_task_body}\n\n'
             f'{repository_scope}\n\n'
+            f'{agents_instructions}\n\n'
             f'{self._execution_guardrails_text()}\n\n'
             'Act as a separate testing agent.\n'
             'Write additional tests when needed, challenge the new code with edge cases, '
@@ -614,8 +631,9 @@ class ClaudeCliClient(object):
             command.extend(['--max-turns', str(self._max_turns)])
         if self._effort:
             command.extend(['--effort', self._effort])
-        if self._allowed_tools:
-            command.extend(['--allowedTools', self._allowed_tools])
+        merged_allowed = self._merge_allowed_with_read_only_allowlist(self._allowed_tools)
+        if merged_allowed:
+            command.extend(['--allowedTools', merged_allowed])
         merged_disallowed = self._merge_disallowed_with_git_deny(self._disallowed_tools)
         command.extend(['--disallowedTools', merged_disallowed])
         architecture_doc = read_architecture_doc(
@@ -642,6 +660,47 @@ class ClaudeCliClient(object):
                 command.extend(['--add-dir', normalized_dir])
         command.extend(self._extra_args)
         return command
+
+    def _merge_allowed_with_read_only_allowlist(self, operator_allowed: str) -> str:
+        """Append the hardcoded read-only allowlist when the flag is on.
+
+        When ``KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS=true`` (and docker
+        is on — the startup gate refuses the flag without docker),
+        every spawn pre-approves the entries in
+        ``READ_ONLY_TOOLS_ALLOWLIST`` so the operator is not prompted
+        for grep / rg / ls / cat / find / head / tail / wc / file /
+        stat / Read.
+
+        Operator extensions via ``KATO_CLAUDE_ALLOWED_TOOLS`` are
+        preserved; the read-only allowlist is unioned in (no
+        duplicates). When the flag is off, returns the operator
+        value unchanged.
+
+        The allowlist is hardcoded — the operator cannot widen it
+        via env var. Adding a tool here is a security decision
+        (an operator who picks the wrong "read-only" command silently
+        widens the agent's blast radius); code-level edits force a
+        review. The allowlist's exact membership is locked by a
+        drift-guard test.
+        """
+        if not self._read_only_tools_on:
+            return operator_allowed
+        from kato_core_lib.validation.bypass_permissions_validator import (
+            READ_ONLY_TOOLS_ALLOWLIST,
+        )
+        existing = [
+            entry.strip()
+            for entry in (operator_allowed or '').split(',')
+            if entry.strip()
+        ]
+        seen = {entry: True for entry in existing}
+        # Deterministic order so the resulting argv is stable across
+        # runs (helps when comparing logs / audit entries).
+        for pattern in sorted(READ_ONLY_TOOLS_ALLOWLIST):
+            if pattern not in seen:
+                existing.append(pattern)
+                seen[pattern] = True
+        return ','.join(existing)
 
     @classmethod
     def _merge_disallowed_with_git_deny(cls, operator_disallowed: str) -> str:

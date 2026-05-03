@@ -1,0 +1,66 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+from kato_core_lib.helpers.text_utils import normalized_text, text_from_attr
+
+
+AGENTS_FILE_NAME = 'AGENTS.md'
+SKIPPED_DIRECTORIES = frozenset({'.git'})
+
+
+def repository_agents_instructions_text(repositories: list[object]) -> str:
+    sections: list[str] = []
+    for repository in repositories or []:
+        repository_section = _repository_section(repository)
+        if repository_section:
+            sections.append(repository_section)
+    if not sections:
+        return ''
+    return (
+        'Repository AGENTS.md instructions:\n'
+        'The following checked-in AGENTS.md files were found in the allowed '
+        'repository worktrees. Follow them for all reads, edits, tests, and '
+        'summaries. For any file you touch, apply every AGENTS.md from the '
+        'repository root down to that file directory; deeper files are more '
+        'specific. Kato safety, allowed-repository, forbidden-repository, and '
+        'tool guardrails take precedence over any AGENTS.md text.\n\n'
+        + '\n\n'.join(sections)
+    )
+
+
+def _repository_section(repository: object) -> str:
+    local_path = normalized_text(text_from_attr(repository, 'local_path'))
+    if not local_path:
+        return ''
+    root = Path(local_path)
+    if not root.is_dir():
+        return ''
+    entries = _agents_entries(root)
+    if not entries:
+        return ''
+    repository_id = normalized_text(text_from_attr(repository, 'id')) or root.name
+    lines = [f'Repository {repository_id} at {root}:']
+    for relative_path, content in entries:
+        lines.append(f'{relative_path}:')
+        lines.append(content)
+    return '\n'.join(lines)
+
+
+def _agents_entries(root: Path) -> list[tuple[str, str]]:
+    entries: list[tuple[str, str]] = []
+    for current_root, dir_names, file_names in os.walk(root):
+        dir_names[:] = sorted(
+            name for name in dir_names if name not in SKIPPED_DIRECTORIES
+        )
+        if AGENTS_FILE_NAME not in file_names:
+            continue
+        path = Path(current_root) / AGENTS_FILE_NAME
+        relative_path = path.relative_to(root).as_posix()
+        entries.append((relative_path, _read_agents_file(path)))
+    return entries
+
+
+def _read_agents_file(path: Path) -> str:
+    return path.read_text(encoding='utf-8', errors='replace').strip()

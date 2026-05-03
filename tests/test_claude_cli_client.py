@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from kato_core_lib.client.claude.cli_client import ClaudeCliClient
 from kato_core_lib.data_layers.data.fields import ImplementationFields
+from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
 from utils import build_review_comment, build_task
 
 
@@ -276,6 +277,103 @@ class ClaudeCliClientTests(unittest.TestCase):
         self.assertNotIn('acceptEdits', cmd)
         # When bypassing, no implicit allowlist is injected.
         self.assertNotIn('--allowedTools', cmd)
+
+
+class ClaudeCliClientReadOnlyToolsTests(unittest.TestCase):
+    """``KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS=true`` plumbing.
+
+    When the operator sets the env var (and docker is on — the
+    startup gate refuses the flag without docker), every spawn
+    appends the hardcoded ``READ_ONLY_TOOLS_ALLOWLIST`` to
+    ``--allowedTools``. When the flag is off, the argv contains
+    only the safe-default allowlist (or the operator's value).
+    """
+
+    def _allowed_tools_argv_value(self, cmd: list[str]) -> str:
+        idx = cmd.index('--allowedTools')
+        return cmd[idx + 1]
+
+    def test_argv_contains_read_only_allowlist_when_flag_on(self) -> None:
+        client = ClaudeCliClient(binary='claude', read_only_tools_on=True)
+        cmd = client._build_command(additional_dirs=[], session_id='')
+        self.assertIn('--allowedTools', cmd)
+        value = self._allowed_tools_argv_value(cmd)
+        # Spot-check several entries from the hardcoded allowlist.
+        # The drift-guard test in
+        # ``test_open_gap_closures_doc_consistency.py`` (or the
+        # sibling pin test) locks the exact membership; here we
+        # just confirm the wiring reaches argv.
+        for expected in (
+            'Bash(grep:*)',
+            'Bash(rg:*)',
+            'Bash(cat:*)',
+            'Bash(find:*)',
+            'Bash(ls:*)',
+            'Read',
+        ):
+            self.assertIn(expected, value)
+
+    def test_argv_does_not_contain_read_only_allowlist_when_flag_off(self) -> None:
+        # Default: flag off. argv carries only the safe-default tools
+        # (Edit/Write/Read/Bash/Glob/Grep) — no Bash(grep:*) pattern.
+        client = ClaudeCliClient(binary='claude')
+        cmd = client._build_command(additional_dirs=[], session_id='')
+        value = self._allowed_tools_argv_value(cmd)
+        self.assertNotIn('Bash(grep:*)', value)
+        self.assertNotIn('Bash(rg:*)', value)
+        self.assertNotIn('Bash(cat:*)', value)
+
+    def test_read_only_allowlist_unions_with_operator_allowed_tools(self) -> None:
+        # When the operator extends the safe default via
+        # KATO_CLAUDE_ALLOWED_TOOLS, the read-only allowlist is
+        # unioned in (no duplicates, operator extension preserved).
+        client = ClaudeCliClient(
+            binary='claude',
+            allowed_tools='Edit,Write,Bash(make:*)',
+            read_only_tools_on=True,
+        )
+        cmd = client._build_command(additional_dirs=[], session_id='')
+        value = self._allowed_tools_argv_value(cmd)
+        # Operator extension preserved.
+        self.assertIn('Bash(make:*)', value)
+        # Read-only entries appended.
+        self.assertIn('Bash(grep:*)', value)
+        self.assertIn('Read', value)
+        # No duplicate Read (the safe default included Read; the
+        # operator value here did not — this test specifically uses
+        # an operator value without Read so the read-only allowlist
+        # adds it once).
+        self.assertEqual(value.count('Read'), 1)
+
+    def test_bypass_plus_read_only_emits_allowlist(self) -> None:
+        # Bypass disables ALL prompts so the allowlist is technically
+        # redundant. The flag is independent though — when the
+        # operator sets both, we still emit the read-only allowlist
+        # so the argv shape is uniform across modes (helps when
+        # comparing logs / audit entries).
+        client = ClaudeCliClient(
+            binary='claude',
+            bypass_permissions=True,
+            read_only_tools_on=True,
+        )
+        cmd = client._build_command(additional_dirs=[], session_id='')
+        # With bypass on, the safe default isn't injected — but the
+        # read-only allowlist still is.
+        self.assertIn('--allowedTools', cmd)
+        value = self._allowed_tools_argv_value(cmd)
+        self.assertIn('Bash(grep:*)', value)
+
+    def test_read_only_argv_is_deterministic(self) -> None:
+        # Two builds with the same inputs must produce the same
+        # --allowedTools value. Helps audit-log diffs stay tight.
+        client_a = ClaudeCliClient(binary='claude', read_only_tools_on=True)
+        client_b = ClaudeCliClient(binary='claude', read_only_tools_on=True)
+        cmd_a = client_a._build_command(additional_dirs=[], session_id='')
+        cmd_b = client_b._build_command(additional_dirs=[], session_id='')
+        self.assertEqual(
+            self._allowed_tools_argv_value(cmd_a),
+            self._allowed_tools_argv_value(cmd_b),
+        )
 
 
 class ClaudeCliClientDockerModeTests(unittest.TestCase):
@@ -673,6 +771,25 @@ class ClaudeCliClientWorkspaceDelimiterWiringTests(unittest.TestCase):
         self.assertIn(self._OPEN_MARKER, prompt)
         self.assertIn(self._CLOSE_MARKER, prompt)
         self.assertIn('source="task:PROJ-7"', prompt)
+
+    def test_implementation_prompt_includes_repository_agents_instructions(self) -> None:
+        client = ClaudeCliClient(binary='claude')
+        repository = _FakeRepo('client', '/workspace/client')
+        prepared_task = PreparedTaskContext(
+            branch_name='PROJ-7',
+            repositories=[repository],
+            repository_branches={'client': 'PROJ-7'},
+            agents_instructions='Repository AGENTS.md instructions:\nAGENTS.md:\nUse pnpm.',
+        )
+
+        prompt = client._build_implementation_prompt(build_task(), prepared_task)
+
+        self.assertIn('Repository AGENTS.md instructions:', prompt)
+        self.assertIn('Use pnpm.', prompt)
+        self.assertLess(
+            prompt.index('Repository AGENTS.md instructions:'),
+            prompt.index('Security guardrails:'),
+        )
 
     def test_review_prompt_wraps_comment_body(self) -> None:
         comment = build_review_comment(

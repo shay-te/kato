@@ -27,6 +27,7 @@ from kato_core_lib.validation.bypass_permissions_validator import (
     BypassPermissionsRefused,
     print_security_posture,
     validate_bypass_permissions,
+    validate_read_only_tools_requires_docker,
 )
 
 
@@ -73,6 +74,18 @@ def main(cfg: DictConfig) -> int:
         return 1
     try:
         validate_bypass_permissions()
+    except BypassPermissionsRefused as exc:
+        logger.error('%s', exc)
+        return 1
+    # Read-only-tools pre-approval requires the sandbox boundary.
+    # ``KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS=true`` without
+    # ``KATO_CLAUDE_DOCKER=true`` would let pre-approved ``grep``/
+    # ``cat``/``find`` run on the host with the operator's full
+    # file-system access — defeating the purpose of pre-approving
+    # only "safe" tools. Refused at startup the same way bypass
+    # without docker is.
+    try:
+        validate_read_only_tools_requires_docker()
     except BypassPermissionsRefused as exc:
         logger.error('%s', exc)
         return 1

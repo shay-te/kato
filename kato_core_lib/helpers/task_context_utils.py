@@ -12,6 +12,7 @@ class PreparedTaskContext(object):
     branch_name: str
     repositories: list[object]
     repository_branches: dict[str, str]
+    agents_instructions: str = ''
 
 
 def task_has_actionable_definition(task: Task) -> bool:

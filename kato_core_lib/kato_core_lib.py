@@ -41,7 +41,10 @@ from kato_core_lib.data_layers.service.workspace_recovery_service import (
     WorkspaceRecoveryService,
 )
 from kato_core_lib.helpers.runtime_identity_utils import runtime_source_fingerprint
-from kato_core_lib.validation.bypass_permissions_validator import is_docker_mode_enabled
+from kato_core_lib.validation.bypass_permissions_validator import (
+    is_docker_mode_enabled,
+    is_read_only_tools_enabled,
+)
 from kato_core_lib.validation.branch_publishability import (
     TaskBranchPublishabilityValidator,
 )
@@ -110,6 +113,14 @@ class KatoCoreLib(CoreLib):
         # the sandbox-wrap decision is uniform across one-shot and
         # streaming paths and survives a rename without a sweep.
         docker_mode_on = is_docker_mode_enabled()
+        # ``KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS`` — pre-approves the
+        # hardcoded read-only Bash allowlist so the operator isn't
+        # prompted for grep/cat/ls/etc. The startup gate has already
+        # refused the flag when docker is off (see
+        # ``validate_read_only_tools_requires_docker``); by the time
+        # this reads, an enabled read-only flag implies docker is on
+        # too. Threaded through the same fan-out as ``docker_mode_on``.
+        read_only_tools_on = is_read_only_tools_enabled()
         self.session_manager = ClaudeSessionManager.from_config(
             open_cfg, agent_backend,
         )
@@ -144,6 +155,7 @@ class KatoCoreLib(CoreLib):
                 open_cfg,
                 retry_cfg.max_retries,
                 docker_mode_on=docker_mode_on,
+                read_only_tools_on=read_only_tools_on,
             )
         )
         testing_service = TestingService(
@@ -152,6 +164,7 @@ class KatoCoreLib(CoreLib):
                 retry_cfg.max_retries,
                 testing=True,
                 docker_mode_on=docker_mode_on,
+                read_only_tools_on=read_only_tools_on,
             )
         )
         task_data_access = TaskDataAccess(ticket_cfg, ticket_client)
@@ -321,6 +334,7 @@ class KatoCoreLib(CoreLib):
         *,
         testing: bool = False,
         docker_mode_on: bool = False,
+        read_only_tools_on: bool = False,
     ) -> KatoClient | ClaudeCliClient:
         if is_claude_backend(open_cfg):
             return cls._build_claude_client(
@@ -328,6 +342,7 @@ class KatoCoreLib(CoreLib):
                 max_retries,
                 testing=testing,
                 docker_mode_on=docker_mode_on,
+                read_only_tools_on=read_only_tools_on,
             )
         return cls._build_kato_client(
             open_cfg.openhands,
@@ -365,6 +380,7 @@ class KatoCoreLib(CoreLib):
         *,
         testing: bool = False,
         docker_mode_on: bool = False,
+        read_only_tools_on: bool = False,
     ) -> ClaudeCliClient:
         claude_cfg = getattr(open_cfg, 'claude', None)
         if claude_cfg is None:
@@ -382,6 +398,7 @@ class KatoCoreLib(CoreLib):
             disallowed_tools=str(getattr(claude_cfg, 'disallowed_tools', '') or ''),
             bypass_permissions=bool(getattr(claude_cfg, 'bypass_permissions', False)),
             docker_mode_on=docker_mode_on,
+            read_only_tools_on=read_only_tools_on,
             timeout_seconds=int(getattr(claude_cfg, 'timeout_seconds', 1800) or 1800),
             max_retries=max_retries,
             repository_root_path=repository_root_path,

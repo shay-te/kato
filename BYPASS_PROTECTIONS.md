@@ -9,8 +9,8 @@ that for the threat model; read this for the concrete countermeasures.
 
 ## TL;DR
 
-Kato's containment for Claude is controlled by two independent flags
-with one constraint between them:
+Kato's containment for Claude is controlled by three independent
+flags with two constraints between them:
 
 - **`KATO_CLAUDE_DOCKER=true`** — wraps every Claude spawn in the
   hardened Docker sandbox: workspace bind-mount only, default-DROP
@@ -19,17 +19,43 @@ with one constraint between them:
 - **`KATO_CLAUDE_BYPASS_PERMISSIONS=true`** — disables the per-tool
   permission prompts (Bash, Edit, Write, ...). The agent runs every
   tool without asking. This is the *prompt* layer.
-- **Constraint:** bypass requires docker. Setting bypass without
-  docker is refused at startup — bypass removes the social bound
-  (prompts) and without docker there is no structural bound
-  (sandbox) either, so the agent would have neither.
+- **`KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS=true`** — pre-approves a
+  hardcoded allowlist of read-only Bash commands (`grep`, `rg`,
+  `ls`, `cat`, `find`, `head`, `tail`, `wc`, `file`, `stat`) plus
+  the `Read` tool, so the operator isn't prompted for them.
+  Mutating tools (`Edit`, `Write`, unrestricted `Bash`) still
+  prompt. This is the *partial-prompt-skip* layer; independent of
+  `KATO_CLAUDE_BYPASS_PERMISSIONS` (works whether bypass is on or off).
+- **Constraints:**
+  - Bypass requires docker. Setting bypass without docker is
+    refused at startup — bypass removes the social bound (prompts)
+    and without docker there is no structural bound (sandbox) either,
+    so the agent would have neither.
+  - **Read-only pre-approval requires docker.** Setting
+    `KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS=true` without
+    `KATO_CLAUDE_DOCKER=true` is refused at startup. Without the
+    sandbox, even pre-approved `grep` runs on the host with the
+    operator's full file-system access (`grep -r AWS_SECRET ~`
+    succeeds). The sandbox is the prerequisite for letting any
+    prompt be skipped.
 
-Three valid modes, plus the all-off default:
+Five valid mode combinations, plus the all-off default and two
+refused configurations. The two-axis matrix below covers
+docker × bypass; the read-only pre-approval is a third independent
+axis described in its own row beneath.
 
 | | `KATO_CLAUDE_BYPASS_PERMISSIONS=false` | `KATO_CLAUDE_BYPASS_PERMISSIONS=true` |
 |---|---|---|
 | **`KATO_CLAUDE_DOCKER=false`** | **Default.** Claude runs on the host. Per-tool prompts intercept every Bash / Edit / Write call. No containment. Suitable for trying kato on a small project where you want to see each tool call before it runs. | **Refused at startup.** Bypass disables prompts (the social bound); without docker there is no sandbox (the structural bound); the agent would have neither. The validator names the fix: `export KATO_CLAUDE_DOCKER=true`. |
 | **`KATO_CLAUDE_DOCKER=true`** | **Sandboxed + prompts on — the strongest posture.** Claude runs inside the hardened sandbox AND every tool call goes through a permission prompt. The operator gets two independent bounds: prompts catch unexpected access *socially* (operator clicks no), the sandbox catches it *structurally* (files outside the workspace are unreachable regardless of misclicks). Operators concerned about Claude scanning files they did not intend to share should run in this mode. | **Sandboxed + autonomous — the original "bypass mode".** Claude runs inside the hardened sandbox and runs every tool without asking. Suitable for long-running unattended automation where the operator has accepted that the sandbox is the only bound. |
+
+**Read-only pre-approval (orthogonal axis):**
+
+| | `KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS=false` (default) | `KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS=true` |
+|---|---|---|
+| **`KATO_CLAUDE_DOCKER=false`** | Default. Every tool prompts (or refused at startup if bypass is on). | **Refused at startup.** Pre-approval requires the sandbox boundary. The validator names the fix: `export KATO_CLAUDE_DOCKER=true`. |
+| **`KATO_CLAUDE_DOCKER=true`, bypass off** | Sandboxed; every tool prompts (the strongest posture). | Sandboxed; `grep` / `cat` / `ls` / `find` / `head` / `tail` / `wc` / `file` / `stat` / `rg` / `Read` no longer prompt; `Edit` / `Write` / unrestricted `Bash` still prompt. **Recommended for read-heavy investigation work where prompt fatigue otherwise pushes operators toward full bypass.** |
+| **`KATO_CLAUDE_DOCKER=true`, bypass on** | Original bypass mode. | **Redundant.** Bypass already disables every prompt; the read-only flag adds nothing. Banner marks it as such. |
 
 All eight layers below fire whenever `KATO_CLAUDE_DOCKER=true`.
 Layers 1, 2, 3, and 8 (the operator-protection layers — startup
@@ -57,6 +83,80 @@ layer 3 — Docker itself — so a Docker-daemon compromise affects them
 as a group; that's why kato refuses to start without Docker.)
 
 ## Recent changes
+
+2026-05-03 (latest) — OG4 (TLS pin) lifecycle rewritten as TOFU by
+default. Previously the validator was strict-by-default: no env-var
+pin AND no opt-out → refuse at startup. Operators hit the refusal
+on first run with no obvious recovery path (the only way forward
+was to set the env var with a fingerprint they had to compute
+themselves, or set the opt-out and accept the residual).
+
+The new lifecycle has four cases on every startup:
+
+  1. **Env-var pin** — `KATO_SANDBOX_ANTHROPIC_TLS_PIN_SHA256` set:
+     verify, refuse on mismatch (yellow refusal block names
+     saved + live fingerprints + recovery).
+  2. **Opt-out** — `KATO_SANDBOX_ALLOW_NO_TLS_PIN=true`: skip
+     pinning, print a yellow warning every startup so the operator
+     never forgets the residual.
+  3. **First run** (no env var, no file at
+     `~/.kato/anthropic-tls-pin`): connect, extract SPKI, save
+     (mode 0600, parent 0700), print a yellow informational box,
+     continue.
+  4. **Subsequent run** (file exists): verify against saved pin;
+     mismatch refuses with the same recovery framing as case 1.
+
+Edge cases (network unreachable on first/subsequent run, file
+unreadable, file malformed, parent dir uncreatable, both env vars
+set) refuse with operator-actionable messages — each names the
+fix verbatim. All TLS-pin lifecycle messages render in yellow
+(ANSI `\033[33m`) on TTY stderr, plain text on non-TTY (CI,
+pipes, log capture).
+
+Why TOFU: the strict-by-default UX produced an immediate refusal
+on every fresh kato install. New operators didn't know which env
+var to set or what fingerprint to use, and the friction was
+pushing them straight to the opt-out (the worst outcome from a
+security standpoint). TOFU pins on first run automatically — same
+threat model as SSH `~/.ssh/known_hosts` — and the operator only
+sees the lifecycle output when something *changes* (rotation,
+network issue, MITM). The tradeoff is the canonical TOFU one: a
+first connection on a compromised network can be MITM'd and the
+attacker's cert gets pinned; for that case the env-var pin path
+remains the deterministic option. See OG4 row + "Cert rotation —
+what operators see" sub-note for the full surface.
+
+2026-05-03 — `KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS=true` opt-in
+landed. Pre-approves a hardcoded allowlist of read-only Bash commands
+(`grep`, `rg`, `ls`, `cat`, `find`, `head`, `tail`, `wc`, `file`,
+`stat`) plus the `Read` tool, so the operator isn't prompted for
+them. Mutating tools (`Edit`, `Write`, unrestricted `Bash`) still
+prompt.
+
+The flag is a *read-heavy investigation* path: long sessions where
+the agent has to grep/cat/find through the workspace produced enough
+prompt fatigue that operators were turning on full bypass to escape
+it — losing both the social bound (prompts) and the per-tool review
+of mutating actions. The new flag carves out only the read surface,
+leaving every mutating prompt in place.
+
+Constrained: requires `KATO_CLAUDE_DOCKER=true`. Without the
+sandbox, even pre-approved `grep` runs on the host with the
+operator's full file-system access (`grep -r AWS_SECRET ~`
+succeeds). The startup gate
+(`validate_read_only_tools_requires_docker`) refuses
+read-only-without-docker the same way bypass-without-docker is
+refused, naming the fix.
+
+The allowlist is hardcoded in
+`kato_core_lib.validation.bypass_permissions_validator.READ_ONLY_TOOLS_ALLOWLIST`,
+not operator-extensible. Adding a tool is a security decision (an
+operator who picks the wrong "read-only" command silently widens
+the agent's blast radius); code-level edits force a review. The
+exact membership is locked by a drift-guard test in
+`tests/test_open_gap_closures_doc_consistency.py`. Independent of
+`KATO_CLAUDE_BYPASS_PERMISSIONS` — works whether bypass is on
+(redundant) or off (the recommended use case).
 
 2026-05-03 — Sandbox containment and bypass mode are now controlled
 by two independent flags. Previously a single
@@ -309,7 +409,7 @@ guarantee that "Closed" rows actually run.
 | OG1 | **Build-time sandbox** (full) — run `docker build` itself inside a sandbox so a hostile network during build can't poison the image even with the digest pin. | Closes #17's npm-side / Debian-package channels that the digest pin doesn't bound. | **Open** (~2–3 days; needs custom Docker network with iptables-restricted bridge) |
 | OG2 | **External audit-log shipping** — ship the hash-chain audit log to S3-with-Object-Lock or a syslog forwarder so tail-truncation is detectable. | Closes the "tail-truncation looks valid" residual the doc names under "What the hash chain proves (and doesn't)." | **Closed** — `kato_core_lib.sandbox.audit_log_shipping`. Operator sets `KATO_SANDBOX_AUDIT_SHIP_TARGET` to `https://...` or `file://...`; each spawn's audit entry is shipped after the local write. Best-effort by default; `KATO_SANDBOX_AUDIT_SHIP_REQUIRED=true` fails-closed. Cross-OS (stdlib only). |
 | OG3 | **Kata Containers as opt-in runtime** — VM-per-container on Linux. | Closes #7 (runc/containerd CVEs) fully on Linux + raises the floor for #9–#11. | **Open** (~3 days; Linux-only by design — Mac/WSL2 already have hypervisor isolation via Docker Desktop's LinuxKit VM) |
-| OG4 | **TLS certificate pinning for `api.anthropic.com`** — pin the cert fingerprint at the network layer instead of only relying on system CA validation. | Defends against rogue-CA scenarios. Doesn't fix nation-state CA compromise but raises the bar. | **Closed** — `kato_core_lib.sandbox.tls_pin`. Operator sets `KATO_SANDBOX_ANTHROPIC_TLS_PIN_SHA256` to one or more comma-separated base64 SPKI fingerprints; the validator opens a TLS connection at boot and refuses if the live SPKI doesn't match any pin. `KATO_SANDBOX_ALLOW_NO_TLS_PIN=true` opt-out. Cross-OS (Python `ssl` stdlib). |
+| OG4 | **TLS certificate pinning for `api.anthropic.com`** — pin the cert fingerprint at the network layer instead of only relying on system CA validation. | Defends against rogue-CA scenarios. Doesn't fix nation-state CA compromise but raises the bar. | **Closed (TOFU default)** — `kato_core_lib.sandbox.tls_pin`. Four-case lifecycle on every kato startup: (1) **env-var pin** — `KATO_SANDBOX_ANTHROPIC_TLS_PIN_SHA256=<comma-separated base64 SPKI fingerprints>` overrides; mismatch refuses with the saved+live fingerprints and recovery steps. (2) **opt-out** — `KATO_SANDBOX_ALLOW_NO_TLS_PIN=true` skips pinning and prints a yellow warning every startup so the operator never forgets the residual. (3) **first run** — no env var, no saved file: connect, extract SPKI, save to `~/.kato/anthropic-tls-pin` (mode 0600, parent 0700), print yellow informational box, continue. (4) **subsequent run** — file exists: read saved fingerprint, compare to live cert; match → silent, mismatch → refuse with a yellow box that names both fingerprints, the pin date, and the recovery (`rm ~/.kato/anthropic-tls-pin` to re-pin). Edge cases (network unreachable on first/subsequent run, file unreadable, file malformed, parent dir uncreatable, both env vars set) all refuse with operator-actionable messages. Cross-OS (Python `ssl` stdlib + `pathlib`). See "Cert rotation — what operators see" below. |
 | OG5 | **Egress proxy with per-domain logging** — instead of iptables-only allowlist, run an HTTPS proxy in the sandbox that logs every request. | Adds visibility into what the agent actually sent, complementing #18's detective scan with a request log. | **Open** (~2 days; needs HTTPS proxy infrastructure inside the sandbox network namespace) |
 | OG6 | **Network namespace isolation for the build** — same intent as OG1 but at network level only. | Cheaper than full build-time sandbox; still closes the build-time supply chain. | **Open** (~1 day; needs iptables-restricted custom Docker bridge — Linux-clean, partial on Mac/Windows where Docker Desktop's bridge isolation is more opaque) |
 | OG7 | **Custom seccomp profile** — Docker's default seccomp is generic; a kato-specific profile that allows only what Claude actually needs would be tighter. | Reduces syscall attack surface. Ongoing maintenance cost. | **Open** (~2 days + maint; Linux-only kernel feature, applies via Docker Desktop's LinuxKit VM on Mac/WSL2) |
@@ -323,6 +423,51 @@ the work didn't fit a single session. Cross-OS feasibility is noted
 per gap; OG3 / OG7 / OG8 are by-design Linux-side enhancements
 (Mac/WSL2 either already have the equivalent via Docker Desktop or
 need separate per-OS code paths).
+
+#### OG4 — Cert rotation: what operators see
+
+Anthropic rotates the `api.anthropic.com` certificate on a routine
+cadence (every few months — typical CA-issued cert lifetimes range
+from 90 days for Let's Encrypt to 12 months for paid CAs;
+Anthropic's pattern in practice has been a rotation every 2–4
+months). Because kato pins the SPKI (the public-key portion of the
+cert) and not the certificate itself, a rotation that re-uses the
+same key pair survives the pin silently — the operator sees
+nothing.
+
+When the rotation does include a new key pair, the pin breaks. The
+operator sees the Case 4 yellow refusal block at startup, which
+names:
+
+  - the saved fingerprint (from `~/.kato/anthropic-tls-pin`),
+  - the live fingerprint (from the current TLS handshake),
+  - the `# pinned: <ISO timestamp>` from the saved file (so the
+    operator can correlate "I pinned 4 months ago, that's about
+    when Anthropic rotates" vs "I pinned yesterday, this is
+    suspicious"),
+  - the recovery procedure for both interpretations.
+
+**Recovery procedure when the rotation is expected:**
+
+```
+rm ~/.kato/anthropic-tls-pin
+# re-run kato — TOFU re-pins to the new fingerprint
+```
+
+**When the rotation is NOT expected:** do not delete the file
+yet. The yellow block instructs the operator to verify the live
+fingerprint against an independent source (different network, the
+Anthropic status page, a colleague's machine, or the openssl
+recipe in the `tls_pin.py` docstring run from a known-clean
+machine) before deciding to re-pin. A cert change you can't
+explain is the exact symptom the pin is designed to surface.
+
+Operators who don't want any TOFU prompts at all can pin
+explicitly via `KATO_SANDBOX_ANTHROPIC_TLS_PIN_SHA256` (single or
+comma-separated for primary+backup); kato then ignores the saved
+file entirely. Operators who want neither the pin nor the
+warnings set `KATO_SANDBOX_ALLOW_NO_TLS_PIN=true` and accept the
+rogue-CA residual.
 
 ## Why these specific surfaces — read before proposing a change
 
@@ -638,25 +783,38 @@ applies to kato's setup.
 
 ## Layer 1 — single-flag startup gate + double terminal confirmation
 
-The validator (`validate_bypass_permissions`) runs whenever EITHER
-`KATO_CLAUDE_DOCKER=true` or `KATO_CLAUDE_BYPASS_PERMISSIONS=true` is
-set — it's the single funnel point where every refusal decision
-lives (bypass-without-docker refusal, native-Windows refusal, root
-refusal, non-TTY refusal, double-prompt). The double terminal
-confirmation is **bypass-only**: docker-only mode (the recommended
-"sandboxed + prompts on" posture) runs without the double prompt
+Two validators run at startup:
+
+- `validate_bypass_permissions` runs whenever EITHER
+  `KATO_CLAUDE_DOCKER=true` or `KATO_CLAUDE_BYPASS_PERMISSIONS=true`
+  is set — the single funnel for bypass-without-docker refusal,
+  native-Windows refusal, root refusal, non-TTY refusal, and the
+  double-prompt confirmation.
+- `validate_read_only_tools_requires_docker` runs whenever
+  `KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS=true` is set, and refuses
+  the flag without `KATO_CLAUDE_DOCKER=true`. Same shape as the
+  bypass-without-docker refusal — names the flag, names the fix
+  (`export KATO_CLAUDE_DOCKER=true`), names the threat in concrete
+  terms (`grep` / `cat` would run on the host with operator
+  file-system access).
+
+The double terminal confirmation is **bypass-only**: docker-only
+mode (the recommended "sandboxed + prompts on" posture) and
+read-only-pre-approval mode both run without the double prompt
 because the sandbox bounds blast radius without operator
 confirmation.
 
 Behaviour by combination:
 
-| `DOCKER` | `BYPASS` | Stdin TTY? | Result |
-|---|---|---|---|
-| false | false | — | Default. Host execution, per-tool prompts via the planning UI. Validator returns silently. |
-| true  | false | — | Sandbox active. No double prompt. Non-interactive runs allowed (CI / cron / systemd can use docker-only mode safely). |
-| false | true  | — | **Refused.** Bypass requires docker. The error names the fix (`export KATO_CLAUDE_DOCKER=true`). |
-| true  | true  | yes | Two y/n prompts via `prompt_yes_no` (loops on invalid input — Enter does not select default). Both must be yes. Either no aborts startup. |
-| true  | true  | no  | **Refused.** Non-interactive runs (CI, Docker, cron, systemd) cannot answer the prompts. Either run interactively to confirm, or use docker-only mode (which works on non-interactive runners). |
+| `DOCKER` | `BYPASS` | `READ_ONLY_TOOLS` | Stdin TTY? | Result |
+|---|---|---|---|---|
+| false | false | false | — | Default. Host execution, per-tool prompts via the planning UI. Both validators return silently. |
+| false | false | **true** | — | **Refused.** Read-only pre-approval requires docker. The error names the fix (`export KATO_CLAUDE_DOCKER=true`). |
+| true  | false | false | — | Sandbox active. No double prompt. Non-interactive runs allowed (CI / cron / systemd can use docker-only mode safely). |
+| true  | false | **true** | — | Sandbox active + grep/cat/ls/find/Read pre-approved. Mutating tools still prompt. No double prompt. Non-interactive runs allowed. |
+| false | true  | — | — | **Refused.** Bypass requires docker. The error names the fix (`export KATO_CLAUDE_DOCKER=true`). |
+| true  | true  | — | yes | Two y/n prompts via `prompt_yes_no` (loops on invalid input — Enter does not select default). Both must be yes. Either no aborts startup. The read-only flag is redundant in this mode (bypass already disables every prompt) and the banner says so. |
+| true  | true  | — | no  | **Refused.** Non-interactive runs (CI, Docker, cron, systemd) cannot answer the prompts. Either run interactively to confirm, or use docker-only mode (which works on non-interactive runners). |
 
 The double prompt exists so a fat-fingered Enter on the first
 question (e.g. operator typing into the wrong terminal) cannot
@@ -834,12 +992,24 @@ bypass-specific. The boot banner is always-on so docker-only mode
 operators see their posture too.
 
 - **Security-posture summary** at boot (`print_security_posture`):
-  backend, docker on/off, bypass on/off, root on/off, allowed-tools
-  widening, architecture doc path. **Always printed** — fires under
-  every combination of flags including the all-off default. Three
-  banner variants (default / docker-only / docker+bypass) call out
-  what's active and what the operator might want to discover; see
-  `print_security_posture` for the variant text.
+  backend, docker on/off, bypass on/off, **read-only pre-approval
+  on/off**, root on/off, allowed-tools widening, architecture doc
+  path. **Always printed** — fires under every combination of flags
+  including the all-off default. Three banner variants (default /
+  docker-only / docker+bypass) call out what's active and what the
+  operator might want to discover; the read-only row carries an
+  in-line annotation so the operator sees their actual posture at
+  a glance:
+  - flag off → `read-only pre-approval: false`
+  - flag on, bypass off → `read-only pre-approval: true   ⚠ grep/cat/ls/find/Read no longer prompt`
+    (the row warns that SOME prompts are skipped while others still
+    fire — without the suffix, the operator's mental model from
+    "bypass off = every tool prompts" is silently wrong)
+  - flag on, bypass on → `read-only pre-approval: true   (redundant: bypass disables ALL prompts)`
+    (locks the no-op nature in this mode so the operator doesn't
+    believe read-only is buying additional protection)
+
+  See `print_security_posture` for the variant text.
 - **CLI red banner** to stderr **before** logger configuration so
   log level cannot suppress it. Includes the literal
   `KATO_CLAUDE_BYPASS_PERMISSIONS` flag name. **Bypass-only** —

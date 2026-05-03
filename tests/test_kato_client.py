@@ -5,6 +5,7 @@ from unittest.mock import ANY, Mock, call, patch
 
 from kato_core_lib.client.openhands.openhands_client import KatoClient
 from kato_core_lib.data_layers.data.fields import ImplementationFields, ReviewCommentFields
+from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
 from utils import (
     ClientTimeout,
     assert_client_headers_and_timeout,
@@ -328,6 +329,29 @@ class KatoClientTests(unittest.TestCase):
         self.assertIn('the orchestration layer already prepared branch UNA-222 from main', prompt)
         self.assertIn('Stay on the current branch and do not run git checkout, git switch, git branch, git pull, git push, or git commit', prompt)
         self.assertIn('Do not create the pull request yourself', prompt)
+
+    def test_implementation_prompt_includes_repository_agents_instructions(self) -> None:
+        client = KatoClient('https://openhands.example', 'oh-token')
+        repository = types.SimpleNamespace(
+            id='client',
+            local_path='/workspace/project',
+            destination_branch='main',
+        )
+        prepared_task = PreparedTaskContext(
+            branch_name='UNA-222',
+            repositories=[repository],
+            repository_branches={'client': 'UNA-222'},
+            agents_instructions='Repository AGENTS.md instructions:\nAGENTS.md:\nUse pnpm.',
+        )
+
+        prompt = client._build_implementation_prompt(build_task(), prepared_task)
+
+        self.assertIn('Repository AGENTS.md instructions:', prompt)
+        self.assertIn('Use pnpm.', prompt)
+        self.assertLess(
+            prompt.index('Repository AGENTS.md instructions:'),
+            prompt.index('Security guardrails:'),
+        )
 
     def test_testing_prompt_describes_separate_testing_agent(self) -> None:
         client = KatoClient('https://openhands.example', 'oh-token')

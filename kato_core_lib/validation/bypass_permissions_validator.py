@@ -68,7 +68,49 @@ except (ImportError, ModuleNotFoundError):  # pragma: no cover - core-lib is req
 
 BYPASS_ENV_KEY = 'KATO_CLAUDE_BYPASS_PERMISSIONS'
 DOCKER_ENV_KEY = 'KATO_CLAUDE_DOCKER'
+READ_ONLY_TOOLS_ENV_KEY = 'KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS'
 TRUE_VALUES = frozenset({'1', 'true', 'yes', 'on'})
+
+
+# Hardcoded read-only Bash allowlist for the
+# ``KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS=true`` opt-in.
+#
+# Each entry is a Claude Code permission pattern. The shape
+# ``Bash(<cmd>:*)`` matches "any args to <cmd>". We restrict to
+# commands that read state (file contents, directory listings,
+# metadata) and never write — so pre-approving them inside the
+# sandbox can't mutate the workspace, the host (the workspace is
+# the only writable mount), or anything outside ``api.anthropic.com``
+# (the egress firewall blocks the rest).
+#
+# Why this is hardcoded, not operator-extensible:
+#   * Adding a tool here is a security decision: an operator who
+#     widens via env var can be wrong about what's read-only
+#     (``find -delete`` is not, ``sed -i`` is not, ``tee`` is not).
+#   * Code-level edits force a security review; an env-var-extensible
+#     allowlist degrades silently if the operator's mental model of
+#     "read-only" is wrong.
+#   * The sandbox is the structural backstop, but the allowlist is the
+#     narrowest of the protections — keeping it tight means a future
+#     sandbox bug (e.g. write-mount escape) doesn't multiply.
+#
+# This list is locked by a drift-guard test in
+# ``tests/test_open_gap_closures_doc_consistency.py`` (or a sibling
+# pin test) — widening it requires changing both the constant and
+# the test, which forces the change through review.
+READ_ONLY_TOOLS_ALLOWLIST = frozenset({
+    'Bash(grep:*)',
+    'Bash(rg:*)',
+    'Bash(ls:*)',
+    'Bash(cat:*)',
+    'Bash(find:*)',
+    'Bash(head:*)',
+    'Bash(tail:*)',
+    'Bash(wc:*)',
+    'Bash(file:*)',
+    'Bash(stat:*)',
+    'Read',
+})
 
 _BANNER_LINE = '!' * 78
 _BANNER = (
@@ -91,6 +133,23 @@ class BypassPermissionsRefused(RuntimeError):
 def is_bypass_enabled(env: dict | None = None) -> bool:
     source = env if env is not None else os.environ
     return str(source.get(BYPASS_ENV_KEY, '')).strip().lower() in TRUE_VALUES
+
+
+def is_read_only_tools_enabled(env: dict | None = None) -> bool:
+    """True when ``KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS=true``.
+
+    Pre-approves the hardcoded ``READ_ONLY_TOOLS_ALLOWLIST`` so the
+    operator isn't prompted for those specific Bash invocations.
+    Independent of ``KATO_CLAUDE_BYPASS_PERMISSIONS`` (this disables
+    only the read-only prompts; bypass disables ALL prompts).
+    Constrained: requires ``KATO_CLAUDE_DOCKER=true``. Without the
+    sandbox, even ``grep`` runs on the host and can read SSH keys
+    or any file the operator can read; the structural boundary is
+    the prerequisite for letting prompts be skipped at all.
+    Refused at startup; see ``validate_read_only_tools_requires_docker``.
+    """
+    source = env if env is not None else os.environ
+    return str(source.get(READ_ONLY_TOOLS_ENV_KEY, '')).strip().lower() in TRUE_VALUES
 
 
 def is_docker_mode_enabled(env: dict | None = None) -> bool:
@@ -300,6 +359,60 @@ def validate_bypass_permissions(
         )
 
 
+def validate_read_only_tools_requires_docker(*, env: dict | None = None) -> None:
+    """Refuse if ``KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS=true`` lacks docker.
+
+    Same constraint pattern as ``validate_bypass_permissions``'s
+    "bypass requires docker" gate: pre-approving any tool — even a
+    read-only one — only makes sense inside the sandbox boundary.
+    Without docker, ``grep ~/.ssh/id_rsa`` runs on the host and
+    succeeds. The sandbox bind-mounts only the per-task workspace
+    and drops capabilities, so the same ``grep`` reaches nothing
+    sensitive.
+
+    Decision order:
+
+      1. Read-only flag off -> return silently.
+      2. Read-only flag on AND docker on -> return silently (the
+         valid combination).
+      3. Read-only flag on AND docker off -> refuse with a message
+         that names the fix (``export KATO_CLAUDE_DOCKER=true``).
+    """
+    if not is_read_only_tools_enabled(env):
+        return
+    if is_docker_mode_enabled(env):
+        return
+    raise BypassPermissionsRefused(
+        f'{READ_ONLY_TOOLS_ENV_KEY}=true requires {DOCKER_ENV_KEY}=true.\n'
+        '\n'
+        f'{READ_ONLY_TOOLS_ENV_KEY} pre-approves a hardcoded list of '
+        'read-only Bash commands (grep, rg, ls, cat, find, head, tail, '
+        'wc, file, stat) plus the Read tool, so the operator is not '
+        'prompted for them. "Read-only" only means safe inside the '
+        'sandbox boundary:\n'
+        '\n'
+        '  - Without docker, grep / cat / find run on the host with '
+        'your file-system access. ``grep -r AWS_SECRET ~`` or '
+        '``cat ~/.ssh/id_rsa`` would succeed without prompting you.\n'
+        '  - With docker, the same commands run inside the sandbox '
+        'where only the per-task workspace is bind-mounted; everything '
+        'outside is structurally unreachable.\n'
+        '\n'
+        'The sandbox is the prerequisite for letting any prompt be '
+        'skipped, even for read-only tools.\n'
+        '\n'
+        'Pick one:\n'
+        f'  1. Add the sandbox: export {DOCKER_ENV_KEY}=true. '
+        'Read-only pre-approval activates and the structural boundary '
+        'bounds what the pre-approved tools can reach.\n'
+        f'  2. Drop the pre-approval: unset {READ_ONLY_TOOLS_ENV_KEY}. '
+        'Per-tool prompts continue to fire for every tool, including '
+        'the read-only ones.\n'
+        '\n'
+        'See BYPASS_PROTECTIONS.md for the full mode matrix.'
+    )
+
+
 _SAFE_DEFAULT_ALLOWED_TOOLS = frozenset({'Edit', 'Write', 'Read', 'Bash', 'Glob', 'Grep'})
 
 
@@ -326,6 +439,7 @@ def print_security_posture(*, env: dict | None = None, stderr=None) -> None:
 
     bypass = is_bypass_enabled(source)
     docker = is_docker_mode_enabled(source)
+    read_only = is_read_only_tools_enabled(source)
     running_root = is_running_as_root()
     allowed_tools = str(source.get('KATO_CLAUDE_ALLOWED_TOOLS', '')).strip()
     arch_doc = str(source.get('KATO_ARCHITECTURE_DOC_PATH', '')).strip()
@@ -339,6 +453,25 @@ def print_security_posture(*, env: dict | None = None, stderr=None) -> None:
                 extra_tools.append(normalized)
 
     bar = '=' * 78
+    # Three flags now means more banner lines. Show ``read-only
+    # pre-approval`` on its own row so the operator sees their actual
+    # posture at a glance — bypass-off + read-only-on means SOME
+    # prompts are skipped (the read-only ones) while others still
+    # fire. That distinction is invisible from the bypass row alone.
+    read_only_label = 'true' if read_only else 'false'
+    if read_only and not bypass:
+        # Read-only without bypass: prompts skipped only for the
+        # hardcoded read-only allowlist. Worth surfacing because
+        # the operator's mental model from "bypass off = every
+        # tool prompts" no longer holds.
+        read_only_suffix = '   ⚠ grep/cat/ls/find/Read no longer prompt'
+    elif read_only and bypass:
+        # Bypass-on already disables every prompt; the read-only
+        # flag is redundant here. Mark it as such so the operator
+        # knows it's not buying anything in this mode.
+        read_only_suffix = '   (redundant: bypass disables ALL prompts)'
+    else:
+        read_only_suffix = ''
     header = [
         '',
         bar,
@@ -348,6 +481,7 @@ def print_security_posture(*, env: dict | None = None, stderr=None) -> None:
         f'  docker sandbox        : {"true" if docker else "false"}',
         f'  bypass permissions    : {"true" if bypass else "false"}'
         + ('   ⚠ per-tool prompts OFF' if bypass else ''),
+        f'  read-only pre-approval: {read_only_label}{read_only_suffix}',
         f'  running as root       : {"yes" if running_root else "no"}',
         f'  architecture doc      : {arch_doc or "(not set)"}',
         f'  allowed-tools (extra) : {", ".join(extra_tools) if extra_tools else "(safe default only)"}',

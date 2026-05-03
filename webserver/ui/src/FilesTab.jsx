@@ -3,6 +3,7 @@ import { Tree } from 'react-arborist';
 import { fetchFileTree } from './api.js';
 import Icon from './components/Icon.jsx';
 import { useChatComposer } from './contexts/ChatComposerContext.jsx';
+import { activateTreeNode, attachIds, normalizeTrees } from './FilesTabHelpers.js';
 
 export default function FilesTab({ taskId, workspaceVersion = 0 }) {
   const { appendToInput } = useChatComposer();
@@ -126,36 +127,6 @@ export default function FilesTab({ taskId, workspaceVersion = 0 }) {
   );
 }
 
-// Normalize the multi-repo wire shape (with optional legacy single-repo
-// fallback) into a list of per-repo tree blocks.
-function normalizeTrees(payload) {
-  const trees = Array.isArray(payload?.trees) ? payload.trees : null;
-  if (trees && trees.length > 0) {
-    return trees.map((entry) => {
-      const cwd = String(entry?.cwd || '');
-      return {
-        repo_id: String(entry?.repo_id || '') || basenameOf(cwd),
-        cwd,
-        tree: entry?.tree || [],
-      };
-    });
-  }
-  // Legacy server: only ``cwd`` + ``tree`` at the top level.
-  const legacyCwd = String(payload?.cwd || '');
-  return [{
-    repo_id: basenameOf(legacyCwd),
-    cwd: legacyCwd,
-    tree: payload?.tree || [],
-  }];
-}
-
-function basenameOf(path) {
-  if (!path) { return ''; }
-  const trimmed = path.replace(/[\\/]+$/, '');
-  const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
-  return idx >= 0 ? trimmed.slice(idx + 1) : trimmed;
-}
-
 function RepoTree({ repoTree, width, collapsed, onToggle, onPickFile }) {
   const treeData = useMemo(() => {
     return attachIds(repoTree.tree, repoTree.cwd);
@@ -202,41 +173,10 @@ function RepoTree({ repoTree, width, collapsed, onToggle, onPickFile }) {
   );
 }
 
-function attachIds(nodes, cwd = '') {
-  if (!Array.isArray(nodes)) { return []; }
-  return nodes.map((node) => {
-    const next = {
-      ...node,
-      id: node.path,
-      relativePath: relativePathForRepo(node.path, cwd),
-    };
-    if (Array.isArray(node.children)) {
-      next.children = attachIds(node.children, cwd);
-    }
-    return next;
-  });
-}
-
-function relativePathForRepo(path, cwd) {
-  const normalizedPath = String(path || '').replace(/\\/g, '/');
-  const normalizedCwd = String(cwd || '').replace(/\\/g, '/').replace(/\/+$/, '');
-  const cwdPrefix = normalizedCwd + '/';
-  if (normalizedCwd && normalizedPath.startsWith(cwdPrefix)) {
-    return normalizedPath.slice(cwdPrefix.length);
-  }
-  return normalizedPath.replace(/^\/+/, '');
-}
-
 function Node({ node, style, onPickFile }) {
   const isFolder = node.isInternal;
   function onActivate() {
-    if (isFolder) {
-      node.toggle();
-      return;
-    }
-    if (typeof onPickFile === 'function') {
-      onPickFile(node.data.relativePath);
-    }
+    activateTreeNode(node, onPickFile);
   }
   const rowClass = 'tree-row' + (node.isSelected ? ' selected' : '');
   let iconName;

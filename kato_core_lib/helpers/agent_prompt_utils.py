@@ -122,6 +122,12 @@ def repository_scope_text(
     return f'Only modify these repositories:\n{lines}'
 
 
+def agents_instructions_text(prepared_task: PreparedTaskContext | None = None) -> str:
+    if prepared_task is None:
+        return ''
+    return normalized_text(getattr(prepared_task, 'agents_instructions', ''))
+
+
 def task_branch_name(
     task: Task,
     prepared_task: PreparedTaskContext | None = None,
