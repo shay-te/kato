@@ -1,21 +1,39 @@
-# Bypass-mode protections
+# Sandbox and bypass-mode protections
 
-What kato does to bound the agent when an operator turns on
-`KATO_CLAUDE_BYPASS_PERMISSIONS=true` (and acknowledges via the
-double terminal prompt at startup).
+What kato does to bound the agent across the two containment-related
+flags: `KATO_CLAUDE_DOCKER` (the sandbox) and
+`KATO_CLAUDE_BYPASS_PERMISSIONS` (the per-tool prompt opt-out).
 
 This is the operator-facing companion to [SECURITY.md](SECURITY.md). Read
 that for the threat model; read this for the concrete countermeasures.
 
 ## TL;DR
 
-Bypass mode means Claude runs with `--permission-mode bypassPermissions`
-— per-tool prompts (Bash, Edit, Write, …) are off. Without protection
-that would mean "Claude can run any command on the host." Kato replaces
-the permission-prompt layer with a Docker sandbox that limits *what*
-those commands can actually do, with eight numbered layers of defense
-plus strict-by-default gVisor hardening on hosts that support it (see
-"Second-tier hardening" for details and the override):
+Kato's containment for Claude is controlled by two independent flags
+with one constraint between them:
+
+- **`KATO_CLAUDE_DOCKER=true`** — wraps every Claude spawn in the
+  hardened Docker sandbox: workspace bind-mount only, default-DROP
+  egress firewall, capability drop, read-only rootfs, audit log,
+  gVisor on Linux. This is the *containment* layer.
+- **`KATO_CLAUDE_BYPASS_PERMISSIONS=true`** — disables the per-tool
+  permission prompts (Bash, Edit, Write, ...). The agent runs every
+  tool without asking. This is the *prompt* layer.
+- **Constraint:** bypass requires docker. Setting bypass without
+  docker is refused at startup — bypass removes the social bound
+  (prompts) and without docker there is no structural bound
+  (sandbox) either, so the agent would have neither.
+
+Three valid modes, plus the all-off default:
+
+| | `KATO_CLAUDE_BYPASS_PERMISSIONS=false` | `KATO_CLAUDE_BYPASS_PERMISSIONS=true` |
+|---|---|---|
+| **`KATO_CLAUDE_DOCKER=false`** | **Default.** Claude runs on the host. Per-tool prompts intercept every Bash / Edit / Write call. No containment. Suitable for trying kato on a small project where you want to see each tool call before it runs. | **Refused at startup.** Bypass disables prompts (the social bound); without docker there is no sandbox (the structural bound); the agent would have neither. The validator names the fix: `export KATO_CLAUDE_DOCKER=true`. |
+| **`KATO_CLAUDE_DOCKER=true`** | **Sandboxed + prompts on — the strongest posture.** Claude runs inside the hardened sandbox AND every tool call goes through a permission prompt. The operator gets two independent bounds: prompts catch unexpected access *socially* (operator clicks no), the sandbox catches it *structurally* (files outside the workspace are unreachable regardless of misclicks). Operators concerned about Claude scanning files they did not intend to share should run in this mode. | **Sandboxed + autonomous — the original "bypass mode".** Claude runs inside the hardened sandbox and runs every tool without asking. Suitable for long-running unattended automation where the operator has accepted that the sandbox is the only bound. |
+
+The eight-layer defense table below describes the sandbox itself —
+those layers fire whenever `KATO_CLAUDE_DOCKER=true`, independent of
+whether bypass is also on:
 
 | # | Layer | Where it lives |
 |---|---|---|
@@ -33,6 +51,20 @@ of these layers is weakened or bypassed, the remaining controls are
 designed to keep the blast radius bounded. (Layers 4–6 do depend on
 layer 3 — Docker itself — so a Docker-daemon compromise affects them
 as a group; that's why kato refuses to start without Docker.)
+
+## Recent changes
+
+2026-05-03 — Sandbox containment and bypass mode are now controlled
+by two independent flags. Previously a single
+`KATO_CLAUDE_BYPASS_PERMISSIONS=true` flag activated both the sandbox
+and the prompt-disabling — equating containment with autonomy. The
+new `KATO_CLAUDE_DOCKER=true` flag activates the sandbox alone,
+enabling a `docker=true, bypass=false` posture where the operator
+gets sandbox containment **and** per-tool permission prompts
+simultaneously. Existing `KATO_CLAUDE_BYPASS_PERMISSIONS=true`
+operators see no behavioral change — bypass continues to require
+docker (now enforced explicitly at startup) and the eight sandbox
+layers fire as before.
 
 ## Cross-OS support matrix
 
