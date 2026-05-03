@@ -32,7 +32,18 @@ class HydraPluginTests(unittest.TestCase):
             search_path.calls,
             [
                 ("kato_core_lib", "pkg://kato_core_lib.config"),
-                ("github_core_lib", "pkg://github_core_lib.config"),
-                ("bitbucket_core_lib", "pkg://bitbucket_core_lib.config"),
+                ("github_core_lib", "pkg://github_core_lib.github_core_lib.config"),
+                (
+                    "bitbucket_core_lib",
+                    "pkg://bitbucket_core_lib.bitbucket_core_lib.config",
+                ),
+                (
+                    "gitlab_core_lib",
+                    "pkg://gitlab_core_lib.gitlab_core_lib.config",
+                ),
+                (
+                    "jira_core_lib",
+                    "pkg://jira_core_lib.jira_core_lib.config",
+                ),
             ],
         )

@@ -3,7 +3,7 @@ from omegaconf import DictConfig
 from core_lib.data_layers.data_access.data_access import DataAccess
 from core_lib.rule_validator.rule_validator import RuleValidator, ValueRuleValidator
 
-from vcs_provider_contracts.pull_request_provider import PullRequestProvider
+from vcs_provider_contracts.vcs_provider_contracts.pull_request_provider import PullRequestProvider
 from kato_core_lib.data_layers.data.review_comment import ReviewComment
 from kato_core_lib.data_layers.data.fields import PullRequestFields, ReviewCommentFields
 

@@ -11,7 +11,7 @@ from kato_core_lib.data_layers.service.repository_service import RepositoryServi
 from kato_core_lib.data_layers.service.task_failure_handler import TaskFailureHandler
 from kato_core_lib.data_layers.service.task_state_service import TaskStateService
 from kato_core_lib.data_layers.service.task_service import TaskService
-from utils import build_task
+from tests.utils import build_task
 
 
 class TaskFailureHandlerTests(unittest.TestCase):

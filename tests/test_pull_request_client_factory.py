@@ -2,8 +2,7 @@ import unittest
 from unittest.mock import patch
 
 
-from kato_core_lib.client.gitlab.client import GitLabClient
-from github_core_lib.client.github_client import GitHubClient
+from github_core_lib.github_core_lib.client.github_client import GitHubClient
 from omegaconf import OmegaConf
 from kato_core_lib.client.pull_request_client_factory import (
     build_pull_request_client,
@@ -36,8 +35,23 @@ class PullRequestClientFactoryTests(unittest.TestCase):
         self.assertEqual(client.max_retries, 3)
 
     def test_builds_gitlab_client(self) -> None:
-        config = type('Config', (), {'base_url': 'https://gitlab.example/api/v4', 'token': 'gl-token'})
-        self.assertIsInstance(build_pull_request_client(config, 3), GitLabClient)
+        config = OmegaConf.create(
+            {
+                'base_url': 'https://gitlab.example/api/v4',
+                'token': 'gl-token',
+                'project': 'group/repo',
+            }
+        )
+        with patch('kato_core_lib.client.pull_request_client_factory.GitLabCoreLib') as mock_core_lib:
+            client = build_pull_request_client(config, 3)
+
+        self.assertIs(client, mock_core_lib.return_value.pull_request)
+        mock_core_lib.assert_called_once()
+        passed_cfg = mock_core_lib.call_args.args[0]
+        self.assertEqual(passed_cfg.core_lib.gitlab_core_lib.base_url, config.base_url)
+        self.assertEqual(passed_cfg.core_lib.gitlab_core_lib.token, config.token)
+        self.assertEqual(passed_cfg.core_lib.gitlab_core_lib.project, config.project)
+        self.assertEqual(passed_cfg.core_lib.gitlab_core_lib.max_retries, 3)
 
     def test_builds_bitbucket_client(self) -> None:
         config = type('Config', (), {'base_url': 'https://api.bitbucket.org/2.0', 'token': 'bb-token'})
@@ -47,9 +61,9 @@ class PullRequestClientFactoryTests(unittest.TestCase):
         self.assertIs(client, mock_core_lib.return_value.pull_request)
         mock_core_lib.assert_called_once()
         passed_cfg = mock_core_lib.call_args.args[0]
-        self.assertEqual(passed_cfg['core-lib']['bitbucket-core-lib'].base_url, config.base_url)
-        self.assertEqual(passed_cfg['core-lib']['bitbucket-core-lib'].token, config.token)
-        self.assertEqual(passed_cfg['core-lib']['bitbucket-core-lib'].max_retries, 3)
+        self.assertEqual(passed_cfg.core_lib.bitbucket_core_lib.base_url, config.base_url)
+        self.assertEqual(passed_cfg.core_lib.bitbucket_core_lib.token, config.token)
+        self.assertEqual(passed_cfg.core_lib.bitbucket_core_lib.max_retries, 3)
 
     def test_builds_bitbucket_client_with_username(self) -> None:
         config = type(
@@ -67,7 +81,7 @@ class PullRequestClientFactoryTests(unittest.TestCase):
         self.assertIs(client, mock_core_lib.return_value.pull_request)
         mock_core_lib.assert_called_once()
         passed_cfg = mock_core_lib.call_args.args[0]
-        self.assertEqual(passed_cfg['core-lib']['bitbucket-core-lib'].username, 'bb-user')
+        self.assertEqual(passed_cfg.core_lib.bitbucket_core_lib.username, 'bb-user')
 
     def test_builds_bitbucket_client_with_api_email(self) -> None:
         config = type(
@@ -86,6 +100,6 @@ class PullRequestClientFactoryTests(unittest.TestCase):
         mock_core_lib.assert_called_once()
         passed_cfg = mock_core_lib.call_args.args[0]
         self.assertEqual(
-            passed_cfg['core-lib']['bitbucket-core-lib'].api_email,
+            passed_cfg.core_lib.bitbucket_core_lib.api_email,
             'bb-user@example.com',
         )

@@ -121,8 +121,8 @@ def build_test_cfg() -> DictConfig:
                 'github_core_lib': {
                     'name': 'github-core-lib-config',
                     'provider_name': 'github',
-                    'core-lib': {
-                        'github-core-lib': {
+                    'core_lib': {
+                        'github_core_lib': {
                             'base_url': 'https://api.github.com',
                             'token': 'gh-core-token',
                             'owner': 'workspace',
@@ -134,8 +134,8 @@ def build_test_cfg() -> DictConfig:
                 'bitbucket_core_lib': {
                     'name': 'bitbucket-core-lib-config',
                     'provider_name': 'bitbucket',
-                    'core-lib': {
-                        'bitbucket-core-lib': {
+                    'core_lib': {
+                        'bitbucket_core_lib': {
                             'base_url': 'https://api.bitbucket.org/2.0',
                             'token': 'bb-core-token',
                             'username': 'bb-user',

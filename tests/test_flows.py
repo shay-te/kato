@@ -33,7 +33,7 @@ from kato_core_lib.data_layers.service.task_service import TaskService
 from kato_core_lib.data_layers.service.task_state_service import TaskStateService
 from kato_core_lib.data_layers.service.testing_service import TestingService
 from kato_core_lib.validation.startup_dependency_validator import StartupDependencyValidator
-from utils import build_review_comment, build_task, build_test_cfg
+from tests.utils import build_review_comment, build_task, build_test_cfg
 
 
 # ---------------------------------------------------------------------------

@@ -1,9 +1,9 @@
 import unittest
 
 
-from bitbucket_core_lib.client.bitbucket_client import BitbucketClient
-from github_core_lib.client.github_client import GitHubClient
-from kato_core_lib.client.gitlab.client import GitLabClient
+from bitbucket_core_lib.bitbucket_core_lib.client.bitbucket_client import BitbucketClient
+from github_core_lib.github_core_lib.client.github_client import GitHubClient
+from gitlab_core_lib.gitlab_core_lib.client.gitlab_client import GitLabClient
 from kato_core_lib.client.pull_request_client_base import PullRequestClientBase
 from kato_core_lib.data_layers.data.fields import PullRequestFields, ReviewCommentFields
 

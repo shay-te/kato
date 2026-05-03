@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from kato_core_lib.kato_core_lib import KatoCoreLib
-from utils import build_test_cfg
+from tests.utils import build_test_cfg
 
 
 class TestUna2427(unittest.TestCase):

@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from kato_core_lib.data_layers.service.wait_planning_service import WaitPlanningService
-from utils import build_task
+from tests.utils import build_task
 
 
 class WaitPlanningServicePromptTests(unittest.TestCase):

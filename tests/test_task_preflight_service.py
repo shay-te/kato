@@ -10,7 +10,7 @@ from kato_core_lib.data_layers.service.task_preflight_service import (
     TaskPreflightService,
 )
 from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
-from utils import build_task
+from tests.utils import build_task
 
 
 class TaskPreflightServiceTests(unittest.TestCase):

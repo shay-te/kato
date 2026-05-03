@@ -213,13 +213,32 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertNotIn('OPENHANDS_CONTAINER_AWS_SESSION_TOKEN', compose_text)
         self.assertNotIn('OPENHANDS_CONTAINER_AWS_DEFAULT_REGION', compose_text)
         self.assertIn(
-            'defaults:\n  - github_core_lib: github_core_lib\n  - bitbucket_core_lib: bitbucket_core_lib\n  - _self_',
+            'defaults:\n  - github_core_lib: github_core_lib\n  - bitbucket_core_lib: bitbucket_core_lib\n  - gitlab_core_lib: gitlab_core_lib\n  - jira_core_lib: jira_core_lib\n  - _self_',
             core_lib_yaml_text,
         )
-        self.assertIn('base_url: ${github_core_lib.core-lib.github-core-lib.base_url}', core_lib_yaml_text)
-        self.assertIn('max_retries: ${github_core_lib.core-lib.github-core-lib.max_retries}', core_lib_yaml_text)
-        self.assertIn('base_url: ${bitbucket_core_lib.core-lib.bitbucket-core-lib.base_url}', core_lib_yaml_text)
-        self.assertIn('max_retries: ${bitbucket_core_lib.core-lib.bitbucket-core-lib.max_retries}', core_lib_yaml_text)
+        self.assertIn(
+            'base_url: ${core_lib.github_core_lib.base_url}',
+            core_lib_yaml_text,
+        )
+        self.assertIn(
+            'max_retries: ${core_lib.github_core_lib.max_retries}',
+            core_lib_yaml_text,
+        )
+        self.assertIn(
+            'base_url: ${core_lib.bitbucket_core_lib.base_url}',
+            core_lib_yaml_text,
+        )
+        self.assertIn(
+            'max_retries: ${core_lib.bitbucket_core_lib.max_retries}',
+            core_lib_yaml_text,
+        )
+        self.assertIn('base_url: ${core_lib.gitlab_core_lib.base_url}', core_lib_yaml_text)
+        self.assertIn('project: ${core_lib.gitlab_core_lib.project}', core_lib_yaml_text)
+        self.assertIn('max_retries: ${core_lib.gitlab_core_lib.max_retries}', core_lib_yaml_text)
+        self.assertIn('base_url: ${core_lib.jira_core_lib.base_url}', core_lib_yaml_text)
+        self.assertIn('email: ${core_lib.jira_core_lib.email}', core_lib_yaml_text)
+        self.assertIn('project: ${core_lib.jira_core_lib.project}', core_lib_yaml_text)
+        self.assertIn('max_retries: ${core_lib.jira_core_lib.max_retries}', core_lib_yaml_text)
 
     def test_env_example_includes_openhands_llm_variables(self) -> None:
         env_example_text = (REPO_ROOT / '.env.example').read_text(encoding='utf-8')

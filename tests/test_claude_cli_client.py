@@ -8,7 +8,7 @@ from unittest.mock import patch
 from kato_core_lib.client.claude.cli_client import ClaudeCliClient
 from kato_core_lib.data_layers.data.fields import ImplementationFields
 from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
-from utils import build_review_comment, build_task
+from tests.utils import build_review_comment, build_task
 
 
 class _FakeRepo:

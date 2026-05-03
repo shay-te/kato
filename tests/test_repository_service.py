@@ -13,7 +13,7 @@ from kato_core_lib.data_layers.service.repository_inventory_service import (
 )
 from kato_core_lib.data_layers.service.repository_service import RepositoryService
 from kato_core_lib.data_layers.data.fields import PullRequestFields, ReviewCommentFields
-from utils import build_review_comment, build_task, build_test_cfg
+from tests.utils import build_review_comment, build_task, build_test_cfg
 
 
 class RepositoryServiceTests(unittest.TestCase):

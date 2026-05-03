@@ -13,7 +13,7 @@ from kato_core_lib.data_layers.data.review_comment import ReviewComment
 from kato_core_lib.data_layers.service.agent_state_registry import AgentStateRegistry
 from kato_core_lib.data_layers.service.review_comment_service import ReviewCommentService
 from kato_core_lib.helpers.review_comment_utils import review_comment_fixed_comment
-from utils import build_review_comment, build_task
+from tests.utils import build_review_comment, build_task
 
 
 class ReviewCommentServiceTests(unittest.TestCase):

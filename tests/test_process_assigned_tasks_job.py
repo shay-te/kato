@@ -9,7 +9,7 @@ from kato_core_lib.jobs.process_assigned_tasks import (
     format_processing_results,
 )
 from kato_core_lib.kato_core_lib import KatoCoreLib
-from utils import sync_create_start_core_lib
+from tests.utils import sync_create_start_core_lib
 
 
 class ProcessAssignedTasksJobTests(unittest.TestCase):

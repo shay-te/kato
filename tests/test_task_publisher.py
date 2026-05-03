@@ -18,7 +18,7 @@ from kato_core_lib.data_layers.service.task_failure_handler import TaskFailureHa
 from kato_core_lib.data_layers.service.task_state_service import TaskStateService
 from kato_core_lib.data_layers.service.task_publisher import TaskPublisher
 from kato_core_lib.data_layers.service.task_service import TaskService
-from utils import build_task
+from tests.utils import build_task
 
 
 class TaskPublisherTests(unittest.TestCase):

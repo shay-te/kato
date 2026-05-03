@@ -6,7 +6,7 @@ from unittest.mock import ANY, Mock, call, patch
 from kato_core_lib.client.openhands.openhands_client import KatoClient
 from kato_core_lib.data_layers.data.fields import ImplementationFields, ReviewCommentFields
 from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
-from utils import (
+from tests.utils import (
     ClientTimeout,
     assert_client_headers_and_timeout,
     build_review_comment,

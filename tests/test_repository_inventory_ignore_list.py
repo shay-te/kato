@@ -23,7 +23,7 @@ from kato_core_lib.data_layers.data.fields import RepositoryFields
 from kato_core_lib.data_layers.service.repository_inventory_service import (
     RepositoryInventoryService,
 )
-from utils import build_task
+from tests.utils import build_task
 
 
 REPO_TAG_PREFIX = RepositoryFields.REPOSITORY_TAG_PREFIX

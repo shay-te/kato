@@ -2,9 +2,9 @@ import unittest
 from unittest.mock import patch
 
 
-from github_core_lib.client.github_issues_client import GitHubIssuesClient
+from github_core_lib.github_core_lib.client.github_issues_client import GitHubIssuesClient
 from kato_core_lib.client.ticket_client_factory import build_ticket_client
-from utils import build_test_cfg
+from tests.utils import build_test_cfg
 
 
 class TicketClientFactoryTests(unittest.TestCase):
@@ -24,16 +24,17 @@ class TicketClientFactoryTests(unittest.TestCase):
     def test_builds_jira_client(self) -> None:
         cfg = build_test_cfg()
 
-        with patch('kato_core_lib.client.ticket_client_factory.JiraClient') as mock_client_cls:
+        with patch('kato_core_lib.client.ticket_client_factory.JiraCoreLib') as mock_core_lib:
             client = build_ticket_client('jira', cfg.kato.jira, 5)
 
-        self.assertIs(client, mock_client_cls.return_value)
-        mock_client_cls.assert_called_once_with(
-            cfg.kato.jira.base_url,
-            cfg.kato.jira.token,
-            cfg.kato.jira.email,
-            5,
-        )
+        self.assertIs(client, mock_core_lib.return_value.issue)
+        mock_core_lib.assert_called_once()
+        passed_cfg = mock_core_lib.call_args.args[0]
+        self.assertEqual(passed_cfg.core_lib.jira_core_lib.base_url, cfg.kato.jira.base_url)
+        self.assertEqual(passed_cfg.core_lib.jira_core_lib.token, cfg.kato.jira.token)
+        self.assertEqual(passed_cfg.core_lib.jira_core_lib.email, cfg.kato.jira.email)
+        self.assertEqual(passed_cfg.core_lib.jira_core_lib.project, cfg.kato.jira.project)
+        self.assertEqual(passed_cfg.core_lib.jira_core_lib.max_retries, 5)
 
     def test_builds_github_issues_client(self) -> None:
         cfg = build_test_cfg()
@@ -45,16 +46,16 @@ class TicketClientFactoryTests(unittest.TestCase):
     def test_builds_gitlab_issues_client(self) -> None:
         cfg = build_test_cfg()
 
-        with patch('kato_core_lib.client.ticket_client_factory.GitLabIssuesClient') as mock_client_cls:
+        with patch('kato_core_lib.client.ticket_client_factory.GitLabCoreLib') as mock_core_lib:
             client = build_ticket_client('gitlab', cfg.kato.gitlab_issues, 5)
 
-        self.assertIs(client, mock_client_cls.return_value)
-        mock_client_cls.assert_called_once_with(
-            cfg.kato.gitlab_issues.base_url,
-            cfg.kato.gitlab_issues.token,
-            cfg.kato.gitlab_issues.project,
-            5,
-        )
+        self.assertIs(client, mock_core_lib.return_value.issue)
+        mock_core_lib.assert_called_once()
+        passed_cfg = mock_core_lib.call_args.args[0]
+        self.assertEqual(passed_cfg.core_lib.gitlab_core_lib.base_url, cfg.kato.gitlab_issues.base_url)
+        self.assertEqual(passed_cfg.core_lib.gitlab_core_lib.token, cfg.kato.gitlab_issues.token)
+        self.assertEqual(passed_cfg.core_lib.gitlab_core_lib.project, cfg.kato.gitlab_issues.project)
+        self.assertEqual(passed_cfg.core_lib.gitlab_core_lib.max_retries, 5)
 
     def test_builds_bitbucket_issues_client(self) -> None:
         cfg = build_test_cfg()
@@ -65,9 +66,9 @@ class TicketClientFactoryTests(unittest.TestCase):
         self.assertIs(client, mock_core_lib.return_value.issue)
         mock_core_lib.assert_called_once()
         passed_cfg = mock_core_lib.call_args.args[0]
-        self.assertEqual(passed_cfg['core-lib']['bitbucket-core-lib'].base_url, cfg.kato.bitbucket_issues.base_url)
-        self.assertEqual(passed_cfg['core-lib']['bitbucket-core-lib'].workspace, cfg.kato.bitbucket_issues.workspace)
-        self.assertEqual(passed_cfg['core-lib']['bitbucket-core-lib'].max_retries, 5)
+        self.assertEqual(passed_cfg.core_lib.bitbucket_core_lib.base_url, cfg.kato.bitbucket_issues.base_url)
+        self.assertEqual(passed_cfg.core_lib.bitbucket_core_lib.workspace, cfg.kato.bitbucket_issues.workspace)
+        self.assertEqual(passed_cfg.core_lib.bitbucket_core_lib.max_retries, 5)
 
     def test_builds_bitbucket_issues_client_with_username(self) -> None:
         cfg = build_test_cfg()
@@ -79,7 +80,7 @@ class TicketClientFactoryTests(unittest.TestCase):
         self.assertIs(client, mock_core_lib.return_value.issue)
         mock_core_lib.assert_called_once()
         passed_cfg = mock_core_lib.call_args.args[0]
-        self.assertEqual(passed_cfg['core-lib']['bitbucket-core-lib'].username, 'bb-user')
+        self.assertEqual(passed_cfg.core_lib.bitbucket_core_lib.username, 'bb-user')
 
     def test_rejects_unknown_issue_platform(self) -> None:
         cfg = build_test_cfg()

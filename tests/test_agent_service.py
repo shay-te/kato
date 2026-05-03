@@ -22,7 +22,7 @@ from kato_core_lib.data_layers.data.fields import (
     TaskCommentFields,
 )
 from kato_core_lib.data_layers.service.testing_service import TestingService
-from utils import build_review_comment_payload, build_task, build_test_cfg
+from tests.utils import build_review_comment_payload, build_task, build_test_cfg
 
 
 class AgentServiceTests(unittest.TestCase):

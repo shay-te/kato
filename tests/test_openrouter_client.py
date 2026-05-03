@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from kato_core_lib.client.openrouter import OpenRouterClient
-from utils import assert_client_headers_and_timeout, mock_response
+from tests.utils import assert_client_headers_and_timeout, mock_response
 
 
 class OpenRouterClientTests(unittest.TestCase):

@@ -3,7 +3,7 @@ from unittest.mock import ANY, Mock, patch
 
 from kato_core_lib.kato_core_lib import KatoCoreLib
 from kato_core_lib.data_layers.data.fields import PullRequestFields, StatusFields
-from utils import build_task, build_test_cfg
+from tests.utils import build_task, build_test_cfg
 
 
 class KatoCoreLibTests(unittest.TestCase):

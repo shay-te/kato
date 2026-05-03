@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 
 from kato_core_lib.kato_instance import KatoInstance
-from utils import build_test_cfg
+from tests.utils import build_test_cfg
 
 
 class KatoInstanceTests(unittest.TestCase):

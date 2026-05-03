@@ -2,6 +2,8 @@
 defaults:
   - github_core_lib: github_core_lib
   - bitbucket_core_lib: bitbucket_core_lib
+  - gitlab_core_lib: gitlab_core_lib
+  - jira_core_lib: jira_core_lib
   - _self_
 
 core_lib:
@@ -57,21 +59,22 @@ kato:
     review_state: ${oc.env:YOUTRACK_REVIEW_STATE,"To Verify"}
     issue_states: ${oc.env:YOUTRACK_ISSUE_STATES,"Todo,Open"}
   jira:
-    base_url: ${oc.env:JIRA_BASE_URL,""}
-    token: ${oc.env:JIRA_TOKEN,""}
-    email: ${oc.env:JIRA_EMAIL,""}
-    project: ${oc.env:JIRA_PROJECT,""}
+    base_url: ${core_lib.jira_core_lib.base_url}
+    token: ${core_lib.jira_core_lib.token}
+    email: ${core_lib.jira_core_lib.email}
+    project: ${core_lib.jira_core_lib.project}
     assignee: ${oc.env:JIRA_ASSIGNEE,""}
     progress_state_field: ${oc.env:JIRA_PROGRESS_STATE_FIELD,"status"}
     progress_state: ${oc.env:JIRA_PROGRESS_STATE,"In Progress"}
     review_state_field: ${oc.env:JIRA_REVIEW_STATE_FIELD,"status"}
     review_state: ${oc.env:JIRA_REVIEW_STATE,"In Review"}
     issue_states: ${oc.env:JIRA_ISSUE_STATES,"To Do,Open"}
+    max_retries: ${core_lib.jira_core_lib.max_retries}
   github_issues:
-    base_url: ${github_core_lib.core-lib.github-core-lib.base_url}
-    token: ${github_core_lib.core-lib.github-core-lib.token}
-    owner: ${github_core_lib.core-lib.github-core-lib.owner}
-    repo: ${github_core_lib.core-lib.github-core-lib.repo}
+    base_url: ${core_lib.github_core_lib.base_url}
+    token: ${core_lib.github_core_lib.token}
+    owner: ${core_lib.github_core_lib.owner}
+    repo: ${core_lib.github_core_lib.repo}
     project: ${oc.env:GITHUB_ISSUES_REPO,""}
     assignee: ${oc.env:GITHUB_ISSUES_ASSIGNEE,""}
     progress_state_field: ${oc.env:GITHUB_ISSUES_PROGRESS_STATE_FIELD,"labels"}
@@ -79,32 +82,33 @@ kato:
     review_state_field: ${oc.env:GITHUB_ISSUES_REVIEW_STATE_FIELD,"labels"}
     review_state: ${oc.env:GITHUB_ISSUES_REVIEW_STATE,"In Review"}
     issue_states: ${oc.env:GITHUB_ISSUES_ISSUE_STATES,"open"}
-    max_retries: ${github_core_lib.core-lib.github-core-lib.max_retries}
+    max_retries: ${core_lib.github_core_lib.max_retries}
   gitlab_issues:
-    base_url: ${oc.env:GITLAB_ISSUES_BASE_URL,"https://gitlab.com/api/v4"}
-    token: ${oc.env:GITLAB_API_TOKEN,""}
-    project: ${oc.env:GITLAB_ISSUES_PROJECT,""}
+    base_url: ${core_lib.gitlab_core_lib.base_url}
+    token: ${core_lib.gitlab_core_lib.token}
+    project: ${core_lib.gitlab_core_lib.project}
     assignee: ${oc.env:GITLAB_ISSUES_ASSIGNEE,""}
     progress_state_field: ${oc.env:GITLAB_ISSUES_PROGRESS_STATE_FIELD,"labels"}
     progress_state: ${oc.env:GITLAB_ISSUES_PROGRESS_STATE,"In Progress"}
     review_state_field: ${oc.env:GITLAB_ISSUES_REVIEW_STATE_FIELD,"labels"}
     review_state: ${oc.env:GITLAB_ISSUES_REVIEW_STATE,"In Review"}
     issue_states: ${oc.env:GITLAB_ISSUES_ISSUE_STATES,"opened"}
+    max_retries: ${core_lib.gitlab_core_lib.max_retries}
   bitbucket_issues:
-    base_url: ${bitbucket_core_lib.core-lib.bitbucket-core-lib.base_url}
-    token: ${bitbucket_core_lib.core-lib.bitbucket-core-lib.token}
-    username: ${bitbucket_core_lib.core-lib.bitbucket-core-lib.username}
-    api_email: ${bitbucket_core_lib.core-lib.bitbucket-core-lib.api_email}
-    workspace: ${bitbucket_core_lib.core-lib.bitbucket-core-lib.workspace}
-    repo_slug: ${bitbucket_core_lib.core-lib.bitbucket-core-lib.repo_slug}
-    project: ${bitbucket_core_lib.core-lib.bitbucket-core-lib.repo_slug}
+    base_url: ${core_lib.bitbucket_core_lib.base_url}
+    token: ${core_lib.bitbucket_core_lib.token}
+    username: ${core_lib.bitbucket_core_lib.username}
+    api_email: ${core_lib.bitbucket_core_lib.api_email}
+    workspace: ${core_lib.bitbucket_core_lib.workspace}
+    repo_slug: ${core_lib.bitbucket_core_lib.repo_slug}
+    project: ${core_lib.bitbucket_core_lib.repo_slug}
     assignee: ${oc.env:BITBUCKET_ISSUES_ASSIGNEE,""}
     progress_state_field: ${oc.env:BITBUCKET_ISSUES_PROGRESS_STATE_FIELD,"state"}
     progress_state: ${oc.env:BITBUCKET_ISSUES_PROGRESS_STATE,"open"}
     review_state_field: ${oc.env:BITBUCKET_ISSUES_REVIEW_STATE_FIELD,"state"}
     review_state: ${oc.env:BITBUCKET_ISSUES_REVIEW_STATE,"resolved"}
     issue_states: ${oc.env:BITBUCKET_ISSUES_ISSUE_STATES,"new,open"}
-    max_retries: ${bitbucket_core_lib.core-lib.bitbucket-core-lib.max_retries}
+    max_retries: ${core_lib.bitbucket_core_lib.max_retries}
   repository_root_path: ${oc.env:REPOSITORY_ROOT_PATH,""}
   ignored_repository_folders: ${oc.env:KATO_IGNORED_REPOSITORY_FOLDERS,""}
   source_fingerprint: ${oc.env:KATO_SOURCE_FINGERPRINT,""}

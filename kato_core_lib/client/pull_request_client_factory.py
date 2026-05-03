@@ -2,10 +2,10 @@ from urllib.parse import urlparse
 
 from omegaconf import DictConfig, OmegaConf
 
-from bitbucket_core_lib.bitbucket_core_lib import BitbucketCoreLib
-from kato_core_lib.client.gitlab.client import GitLabClient
+from bitbucket_core_lib.bitbucket_core_lib.bitbucket_core_lib import BitbucketCoreLib
+from gitlab_core_lib.gitlab_core_lib.gitlab_core_lib import GitLabCoreLib
 from kato_core_lib.client.pull_request_client_base import PullRequestClientBase
-from github_core_lib.github_core_lib import GitHubCoreLib
+from github_core_lib.github_core_lib.github_core_lib import GitHubCoreLib
 
 
 def detect_pull_request_provider(base_url: str) -> str:
@@ -28,8 +28,8 @@ def build_pull_request_client(
     if provider == 'bitbucket':
         bitbucket_config = OmegaConf.create(
             {
-                'core-lib': {
-                    'bitbucket-core-lib': {
+                'core_lib': {
+                    'bitbucket_core_lib': {
                         'base_url': config.base_url,
                         'token': config.token,
                         'username': getattr(config, 'username', ''),
@@ -45,8 +45,8 @@ def build_pull_request_client(
     if provider == 'github':
         github_config = OmegaConf.create(
             {
-                'core-lib': {
-                    'github-core-lib': OmegaConf.merge(
+                'core_lib': {
+                    'github_core_lib': OmegaConf.merge(
                         config,
                         {'max_retries': max_retries},
                     ),
@@ -54,4 +54,14 @@ def build_pull_request_client(
             }
         )
         return GitHubCoreLib(github_config).pull_request
-    return GitLabClient(config.base_url, config.token, max_retries)
+    gitlab_config = OmegaConf.create(
+        {
+            'core_lib': {
+                'gitlab_core_lib': OmegaConf.merge(
+                    config,
+                    {'max_retries': max_retries},
+                ),
+            },
+        }
+    )
+    return GitLabCoreLib(gitlab_config).pull_request

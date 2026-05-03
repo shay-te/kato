@@ -11,7 +11,7 @@ from kato_core_lib.data_layers.data.fields import (
     YouTrackCustomFieldFields,
     YouTrackTagFields,
 )
-from utils import (
+from tests.utils import (
     ClientTimeout,
     add_pull_request_comment_with_defaults,
     assert_client_headers_and_timeout,

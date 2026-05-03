@@ -22,11 +22,15 @@ include = [
   "kato_core_lib*",
   "github_core_lib*",
   "bitbucket_core_lib*",
+  "gitlab_core_lib*",
+  "jira_core_lib*",
   "hydra_plugins*",
   "vcs_provider_contracts*",
 ]
 
 [tool.setuptools.package-data]
 "kato_core_lib.templates.email" = ["*.j2"]
-"github_core_lib.config" = ["*.yaml"]
-"bitbucket_core_lib.config" = ["*.yaml"]
+"github_core_lib.github_core_lib.config" = ["*.yaml"]
+"bitbucket_core_lib.bitbucket_core_lib.config" = ["*.yaml"]
+"gitlab_core_lib.gitlab_core_lib.config" = ["*.yaml"]
+"jira_core_lib.jira_core_lib.config" = ["*.yaml"]

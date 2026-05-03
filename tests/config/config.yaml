@@ -53,16 +53,16 @@ kato:
       - To Do
       - Open
   github_core_lib:
-    core-lib:
-      github-core-lib:
+    core_lib:
+      github_core_lib:
         base_url: https://api.github.com
         token: test-github-issues-token
         owner: test-owner
         repo: test-repo
         max_retries: 5
   bitbucket_core_lib:
-    core-lib:
-      bitbucket-core-lib:
+    core_lib:
+      bitbucket_core_lib:
         base_url: https://api.bitbucket.org/2.0
         token: test-bitbucket-token
         username: test-bitbucket-user
@@ -92,13 +92,13 @@ kato:
     issue_states:
       - opened
   bitbucket_issues:
-    base_url: ${bitbucket_core_lib.core-lib.bitbucket-core-lib.base_url}
-    token: ${bitbucket_core_lib.core-lib.bitbucket-core-lib.token}
-    username: ${bitbucket_core_lib.core-lib.bitbucket-core-lib.username}
-    api_email: ${bitbucket_core_lib.core-lib.bitbucket-core-lib.api_email}
-    workspace: ${bitbucket_core_lib.core-lib.bitbucket-core-lib.workspace}
-    repo_slug: ${bitbucket_core_lib.core-lib.bitbucket-core-lib.repo_slug}
-    project: ${bitbucket_core_lib.core-lib.bitbucket-core-lib.repo_slug}
+    base_url: ${core_lib.bitbucket_core_lib.base_url}
+    token: ${core_lib.bitbucket_core_lib.token}
+    username: ${core_lib.bitbucket_core_lib.username}
+    api_email: ${core_lib.bitbucket_core_lib.api_email}
+    workspace: ${core_lib.bitbucket_core_lib.workspace}
+    repo_slug: ${core_lib.bitbucket_core_lib.repo_slug}
+    project: ${core_lib.bitbucket_core_lib.repo_slug}
     assignee: reviewer
     review_state_field: state
     review_state: resolved

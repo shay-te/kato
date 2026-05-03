@@ -14,7 +14,7 @@ from kato_core_lib.data_layers.service.planning_session_runner import (
     PlanningSessionRunner,
     StreamingSessionDefaults,
 )
-from utils import build_task
+from tests.utils import build_task
 
 
 class _FakeRepo:
@@ -230,7 +230,7 @@ class PlanningSessionRunnerDockerModeTests(unittest.TestCase):
         could drop the forward on the review-fix path while leaving
         the implementation path correct.
         """
-        from utils import build_review_comment
+        from tests.utils import build_review_comment
 
         manager = _FakeManager(_terminal(result='fix done'))
         defaults = StreamingSessionDefaults(

@@ -5,7 +5,7 @@ from unittest.mock import Mock
 from kato_core_lib.data_layers.service.implementation_service import (
     ImplementationService,
 )
-from utils import build_task
+from tests.utils import build_task
 
 
 class ImplementationServiceTests(unittest.TestCase):

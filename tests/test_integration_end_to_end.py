@@ -33,7 +33,7 @@ from kato_core_lib.data_layers.data.fields import (
     StatusFields,
     TaskCommentFields,
 )
-from utils import build_review_comment, build_task, build_test_cfg
+from tests.utils import build_review_comment, build_task, build_test_cfg
 
 
 class InMemoryTicketClient(object):

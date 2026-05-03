@@ -12,7 +12,7 @@ from kato_core_lib.main import (
     _run_task_scan_loop,
     main,
 )
-from utils import build_test_cfg
+from tests.utils import build_test_cfg
 
 
 class MainTests(unittest.TestCase):

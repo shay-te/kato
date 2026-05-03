@@ -8,7 +8,7 @@ from kato_core_lib.data_layers.data_access.pull_request_data_access import (
 )
 from kato_core_lib.data_layers.data_access.task_data_access import TaskDataAccess
 from kato_core_lib.data_layers.data.fields import ReviewCommentFields
-from utils import build_review_comment
+from tests.utils import build_review_comment
 
 
 class TaskDataAccessTests(unittest.TestCase):

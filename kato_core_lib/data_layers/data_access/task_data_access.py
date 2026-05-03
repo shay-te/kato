@@ -4,7 +4,7 @@ from core_lib.data_layers.data_access.data_access import DataAccess
 from core_lib.rule_validator.rule_validator import RuleValidator, ValueRuleValidator
 
 from kato_core_lib.helpers.retry_utils import retry_count
-from vcs_provider_contracts.issue_provider import IssueProvider
+from vcs_provider_contracts.vcs_provider_contracts.issue_provider import IssueProvider
 from kato_core_lib.data_layers.data.task import Task
 
 

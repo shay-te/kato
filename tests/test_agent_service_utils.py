@@ -40,7 +40,7 @@ from kato_core_lib.data_layers.data.fields import (
     TaskFields,
 )
 from kato_core_lib.data_layers.data.task import Task
-from utils import build_review_comment, build_task
+from tests.utils import build_review_comment, build_task
 
 
 class AgentServiceUtilsTests(unittest.TestCase):

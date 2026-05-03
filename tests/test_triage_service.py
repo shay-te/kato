@@ -25,7 +25,7 @@ from kato_core_lib.data_layers.service.triage_service import (
     TRIAGE_STATUS_UNAVAILABLE,
     TriageService,
 )
-from utils import build_task
+from tests.utils import build_task
 
 
 def _task_with_tags(*tags: str):

@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 from kato_core_lib.data_layers.service.testing_service import TestingService
 from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
-from utils import build_task
+from tests.utils import build_task
 
 
 class TestingServiceTests(unittest.TestCase):
