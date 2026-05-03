@@ -433,6 +433,58 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
         idx = cmd.index('--append-system-prompt')
         self.assertEqual(cmd[idx + 1], SANDBOX_SYSTEM_PROMPT_ADDENDUM)
 
+    def test_docker_plus_bypass_does_NOT_wrap_validate_connection(self) -> None:
+        """docker=true AND bypass=true: boot-time validate_connection still on host.
+
+        Operators in the original "bypass mode" (docker+bypass) might assume
+        EVERYTHING gets sandbox-wrapped. The boot-time validators don't —
+        they have no workspace and no untrusted prompt, so wrapping them
+        adds startup latency for zero security benefit. Locks the design
+        choice for the docker+bypass combination specifically (the
+        docker-only case is locked by test_docker_mode_on_does_NOT_wrap_validate_connection).
+        """
+        client = ClaudeCliClient(
+            binary='claude', docker_mode_on=True, bypass_permissions=True,
+        )
+        with patch(
+            'kato.client.claude.cli_client.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ), patch(
+            'kato.client.claude.cli_client.subprocess.run',
+            return_value=_completed('claude 1.0.0\n'),
+        ) as mock_run, patch(
+            'kato.sandbox.manager.wrap_command',
+        ) as mock_wrap, patch.object(
+            ClaudeCliClient, '_running_inside_docker', return_value=False,
+        ):
+            client.validate_connection()
+
+        mock_wrap.assert_not_called()
+        spawn_argv = mock_run.call_args.args[0]
+        self.assertEqual(spawn_argv, ['claude', '--version'])
+
+    def test_docker_plus_bypass_does_NOT_wrap_model_access_validation(self) -> None:
+        """docker=true AND bypass=true: smoke-test prompt still on host.
+
+        Same reasoning as test_docker_plus_bypass_does_NOT_wrap_validate_connection
+        — the smoke test sends a fixed prompt with no tools enabled, so
+        wrapping it buys nothing. Locks the design choice for docker+bypass.
+        """
+        client = ClaudeCliClient(
+            binary='claude', docker_mode_on=True, bypass_permissions=True,
+        )
+        with patch(
+            'kato.client.claude.cli_client.subprocess.run',
+            return_value=_completed(json.dumps({'is_error': False, 'result': 'ok'})),
+        ) as mock_run, patch(
+            'kato.sandbox.manager.wrap_command',
+        ) as mock_wrap:
+            client._run_model_access_validation()
+
+        mock_wrap.assert_not_called()
+        spawn_argv = mock_run.call_args.args[0]
+        self.assertEqual(spawn_argv[0], 'claude')
+
 
 if __name__ == '__main__':
     unittest.main()

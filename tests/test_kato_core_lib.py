@@ -680,6 +680,88 @@ class KatoCoreLibTests(unittest.TestCase):
         for call in mock_claude_client_cls.call_args_list:
             self.assertIs(call.kwargs['docker_mode_on'], False)
 
+    def test_env_var_to_spawn_argv_end_to_end(self) -> None:
+        """End-to-end: ``KATO_CLAUDE_DOCKER=true`` env → ClaudeCliClient
+        spawn-argv contains the docker wrap.
+
+        Bridges the link-by-link chain tests (env-var detection,
+        kato_core_lib threading, ClaudeCliClient sandbox-wrap) with one
+        assertion that proves the chain actually produces a wrapped
+        spawn end-to-end. Catches the regression class where each layer
+        forwards correctly in isolation but the chain breaks at one
+        layer that was modified without its forwarding test being kept.
+        """
+        import json
+        import os
+        import subprocess
+
+        from kato.client.claude.cli_client import ClaudeCliClient
+        from kato.kato_core_lib import KatoCoreLib
+        from kato.validation.bypass_permissions_validator import (
+            is_docker_mode_enabled,
+        )
+
+        cfg = build_test_cfg()
+        cfg.kato.agent_backend = 'claude'
+        cfg.kato.claude = {
+            'binary': 'claude',
+            'model': 'claude-opus-4-7',
+            'max_turns': '',
+            'allowed_tools': '',
+            'disallowed_tools': '',
+            'bypass_permissions': False,
+            'timeout_seconds': 1800,
+            'model_smoke_test_enabled': False,
+        }
+
+        completed = subprocess.CompletedProcess(
+            args=['docker'],
+            returncode=0,
+            stdout=json.dumps({'is_error': False, 'result': 'ok', 'session_id': 's'}),
+            stderr='',
+        )
+
+        with patch.dict(os.environ, {'KATO_CLAUDE_DOCKER': 'true'}, clear=False):
+            # Read 1: validator helper sees the env var.
+            self.assertTrue(is_docker_mode_enabled())
+            # Build the ClaudeCliClient via the production builder
+            # (the same path KatoCoreLib uses) — this is the chain
+            # under test.
+            client = KatoCoreLib._build_claude_client(
+                cfg.kato,
+                cfg.kato.retry.max_retries,
+                docker_mode_on=is_docker_mode_enabled(),
+            )
+            self.assertIsInstance(client, ClaudeCliClient)
+            self.assertTrue(client._docker_mode_on)
+
+            # Trigger a per-task spawn and verify the docker wrap fires.
+            with patch(
+                'kato.client.claude.cli_client.subprocess.run',
+                return_value=completed,
+            ) as mock_run, patch(
+                'kato.sandbox.manager.ensure_image',
+            ), patch(
+                'kato.sandbox.manager.check_spawn_rate',
+            ), patch(
+                'kato.sandbox.manager.enforce_no_workspace_secrets',
+            ), patch(
+                'kato.sandbox.manager.record_spawn',
+            ), patch(
+                'kato.sandbox.manager.wrap_command',
+                return_value=['docker', 'run', '--rm', 'kato-sandbox', 'claude'],
+            ) as mock_wrap, patch(
+                'kato.sandbox.manager.make_container_name',
+                return_value='kato-sandbox-PROJ-1-end2end',
+            ):
+                client.test_task(build_task())
+
+        # End-to-end assertion: env var → builder → client → spawn-argv
+        # is a docker wrap, not a raw claude command.
+        mock_wrap.assert_called_once()
+        spawn_argv = mock_run.call_args.args[0]
+        self.assertEqual(spawn_argv[:2], ['docker', 'run'])
+
     def test_rejects_unsupported_agent_backend(self) -> None:
         cfg = build_test_cfg()
         cfg.kato.agent_backend = 'gemini'

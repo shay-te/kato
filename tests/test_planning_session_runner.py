@@ -63,6 +63,12 @@ class _FakeManager:
     def update_status(self, task_id: str, status: str) -> None:  # noqa: ARG002
         self.statuses.append(status)
 
+    def get_session(self, task_id: str):  # noqa: ARG002
+        # Return None so fix_review_comment skips its terminate-prior-session
+        # branch and goes straight to start_session — what the docker_mode_on
+        # forwarding test cares about.
+        return None
+
 
 def _terminal(*, is_error: bool = False, result: str = 'all done') -> SessionEvent:
     return SessionEvent(
@@ -176,6 +182,34 @@ class PlanningSessionRunnerDockerModeTests(unittest.TestCase):
         prepared = _FakePrepared([_FakeRepo('client', '/tmp/client')])
 
         runner.implement_task(build_task(), prepared_task=prepared)
+
+        self.assertIs(manager.start_kwargs['docker_mode_on'], True)
+
+    def test_fix_review_comment_forwards_docker_mode_on_to_session_manager(self) -> None:
+        """Review-fix spawn path also threads docker_mode_on.
+
+        ``fix_review_comment`` calls ``start_session`` independently of
+        ``implement_task``. Without this assertion, a future refactor
+        could drop the forward on the review-fix path while leaving
+        the implementation path correct.
+        """
+        from utils import build_review_comment
+
+        manager = _FakeManager(_terminal(result='fix done'))
+        defaults = StreamingSessionDefaults(
+            binary='claude',
+            permission_mode='acceptEdits',
+            docker_mode_on=True,
+        )
+        runner = PlanningSessionRunner(session_manager=manager, defaults=defaults)
+
+        runner.fix_review_comment(
+            build_review_comment(),
+            'feature/proj-1',
+            task_id='PROJ-1',
+            task_summary='wire the button',
+            repository_local_path='/tmp/client',
+        )
 
         self.assertIs(manager.start_kwargs['docker_mode_on'], True)
 

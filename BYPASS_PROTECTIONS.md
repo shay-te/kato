@@ -479,15 +479,25 @@ applies to kato's setup.
 
 ## Layer 1 — single-flag startup gate + double terminal confirmation
 
-`KATO_CLAUDE_BYPASS_PERMISSIONS=true` requires interactive
-acknowledgement at every kato boot. There is no second flag and no
-flag-only escape hatch. Behaviour by combination:
+The validator (`validate_bypass_permissions`) runs whenever EITHER
+`KATO_CLAUDE_DOCKER=true` or `KATO_CLAUDE_BYPASS_PERMISSIONS=true` is
+set — it's the single funnel point where every refusal decision
+lives (bypass-without-docker refusal, native-Windows refusal, root
+refusal, non-TTY refusal, double-prompt). The double terminal
+confirmation is **bypass-only**: docker-only mode (the recommended
+"sandboxed + prompts on" posture) runs without the double prompt
+because the sandbox bounds blast radius without operator
+confirmation.
 
-| `BYPASS` | Stdin TTY? | Result |
-|---|---|---|
-| unset / false | — | Normal mode. Per-tool prompts via the planning UI. |
-| true | yes | Two y/n prompts via `prompt_yes_no` (loops on invalid input — Enter does not select default). Both must be yes. Either no aborts startup. |
-| true | no | **Refused.** Non-interactive runs (CI, Docker, cron, systemd) cannot answer the prompts, so kato won't start. Run kato interactively to confirm, or unset the flag. |
+Behaviour by combination:
+
+| `DOCKER` | `BYPASS` | Stdin TTY? | Result |
+|---|---|---|---|
+| false | false | — | Default. Host execution, per-tool prompts via the planning UI. Validator returns silently. |
+| true  | false | — | Sandbox active. No double prompt. Non-interactive runs allowed (CI / cron / systemd can use docker-only mode safely). |
+| false | true  | — | **Refused.** Bypass requires docker. The error names the fix (`export KATO_CLAUDE_DOCKER=true`). |
+| true  | true  | yes | Two y/n prompts via `prompt_yes_no` (loops on invalid input — Enter does not select default). Both must be yes. Either no aborts startup. |
+| true  | true  | no  | **Refused.** Non-interactive runs (CI, Docker, cron, systemd) cannot answer the prompts. Either run interactively to confirm, or use docker-only mode (which works on non-interactive runners). |
 
 The double prompt exists so a fat-fingered Enter on the first
 question (e.g. operator typing into the wrong terminal) cannot
@@ -496,21 +506,31 @@ checkpoint with different wording.
 
 ## Layer 2 — refusal when running as root
 
-If `geteuid() == 0` and bypass is on, kato refuses to start, full stop.
-Root + bypass + an autonomous coding agent is the worst possible blast
-radius. There is no override for this — even an interactive yes from
-the terminal cannot unlock it.
+If `geteuid() == 0` and EITHER `KATO_CLAUDE_DOCKER` or
+`KATO_CLAUDE_BYPASS_PERMISSIONS` is on, kato refuses to start, full
+stop. Root + autonomous coding agent is the worst possible blast
+radius in either mode — root + bypass is catastrophic (no prompts AND
+full host privilege); root + docker-only is also bad (root inside the
+sandbox is a stronger attack surface even with caps dropped — the
+bounding-set wipe still applies, but defense-in-depth says don't
+combine root with the agent). The error message names whichever flag
+is active. There is no override for this — even an interactive yes
+from the terminal cannot unlock it.
 
 ## Layer 3 — hard requirement for Docker
 
-When bypass is on, kato refuses to start unless `docker info` works.
-This is checked in [`main.py`](kato/main.py) before any service comes
-up. The intent: bypass mode is **only** safe inside the sandbox. We do
-not silently fall back to host execution if Docker is missing.
+When `KATO_CLAUDE_DOCKER` is on, kato refuses to start unless
+`docker info` works. This is checked in [`main.py`](kato/main.py)
+before any service comes up — gated on `is_docker_mode_enabled()`,
+not on bypass. The intent: opting into the sandbox layer means the
+Docker daemon must actually be available. We do not silently fall
+back to host execution if Docker is missing. (Bypass requires docker
+by the Layer 1 constraint, so the gate covers both modes that need
+the sandbox.)
 
 ## Layer 4 — filesystem boundary
 
-Every Claude spawn under bypass runs as `docker run --rm -i …`. The
+Every Claude spawn under docker mode runs as `docker run --rm -i …`. The
 container can see exactly **one** directory from the host as a
 read-write bind mount: the per-task workspace folder, mounted at
 `/workspace`. The persistent auth volume is mounted **read-only** at
@@ -650,21 +670,32 @@ planning, not just its tool-call attempts.
 
 ## Layer 8 — operator visibility
 
-Bypass mode is never silent:
+Visibility differs by sub-feature: some always print, some are
+bypass-specific. The boot banner is always-on so docker-only mode
+operators see their posture too.
 
-- **CLI banner** to stderr **before** logger configuration so log level
-  cannot suppress it. Includes the literal flag name.
-- **Security-posture summary** at boot: backend, bypass on/off, root
-  on/off, allowed-tools widening, architecture doc path. Always
-  printed.
+- **Security-posture summary** at boot (`print_security_posture`):
+  backend, docker on/off, bypass on/off, root on/off, allowed-tools
+  widening, architecture doc path. **Always printed** — fires under
+  every combination of flags including the all-off default. Three
+  banner variants (default / docker-only / docker+bypass) call out
+  what's active and what the operator might want to discover; see
+  `print_security_posture` for the variant text.
+- **CLI red banner** to stderr **before** logger configuration so
+  log level cannot suppress it. Includes the literal
+  `KATO_CLAUDE_BYPASS_PERMISSIONS` flag name. **Bypass-only** —
+  fires from `_emit_banner` only when bypass is set.
 - **Persistent red banner** at the top of the planning UI
   ([`SafetyBanner.jsx`](webserver/ui/src/components/SafetyBanner.jsx))
-  whenever the server reports bypass is on.
+  whenever the server reports bypass is on. **Bypass-only.**
 - **`WARNING` log on every Claude spawn** naming the operator
-  responsibility for any action the agent takes.
+  responsibility for any action the agent takes. Fires whenever
+  bypass is active (the responsibility framing only applies when the
+  agent runs without prompts).
 - **Configurator typing gate**: `python -m kato.configure_project`
   requires the operator to type `I ACCEPT` literally before it will
-  write the flag into `.env`.
+  write `KATO_CLAUDE_BYPASS_PERMISSIONS=true` into `.env`.
+  **Bypass-only.**
 
 ## Second-tier hardening
 
@@ -687,9 +718,11 @@ elsewhere in this document:
 
 Mapping to the protections below:
 
-- **gVisor (`runsc`)** — **strict by default**. When bypass mode is
-  on, kato calls `check_gvisor_or_exit()` at startup and refuses to
-  proceed unless `runsc` is configured as a Docker runtime. gVisor is
+- **gVisor (`runsc`)** — **strict by default**. When
+  `KATO_CLAUDE_DOCKER` is on, kato calls `check_gvisor_or_exit()` at
+  startup and refuses to proceed unless `runsc` is configured as a
+  Docker runtime. Gates on docker mode (not bypass) — the gVisor
+  floor applies wherever the sandbox is active. gVisor is
   a userspace kernel sitting between the container and the host's
   Linux kernel, so most kernel-CVE escape paths require an attacker
   to break gVisor first. Install via
@@ -702,8 +735,10 @@ Mapping to the protections below:
 - **Rootless Docker** — recommended, not required. When the daemon
   runs in rootless mode, a container escape lands in the operator's
   user account, not in full host root. Kato logs a one-line info-
-  level recommendation at boot when bypass is on and the daemon is
-  rooted; it does not refuse to start. Documented at
+  level recommendation at boot when `KATO_CLAUDE_DOCKER` is on and
+  the daemon is rooted; it does not refuse to start. Gates on docker
+  mode (not bypass) — the recommendation applies wherever the
+  sandbox is active. Documented at
   https://docs.docker.com/engine/security/rootless/.
 - **Pre-spawn workspace secret scan** — **strict by default**. Before
   each sandboxed spawn, kato walks the workspace and refuses to
