@@ -7,3 +7,4 @@ class KatoSearchPathPlugin(SearchPathPlugin):
         assert isinstance(search_path, ConfigSearchPath)
         search_path.append("kato_core_lib", "pkg://kato_core_lib.config")
         search_path.append("github_core_lib", "pkg://github_core_lib.config")
+        search_path.append("bitbucket_core_lib", "pkg://bitbucket_core_lib.config")

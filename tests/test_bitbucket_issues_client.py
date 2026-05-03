@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 
 
-from kato_core_lib.client.bitbucket.issues_client import BitbucketIssuesClient
+from bitbucket_core_lib.client.bitbucket_issues_client import BitbucketIssuesClient
 from kato_core_lib.data_layers.data.task import Task
 from kato_core_lib.data_layers.data.fields import BitbucketIssueFields, TaskCommentFields
 from utils import assert_client_basic_auth_and_timeout, mock_response

@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 from urllib.parse import urlparse
 
-from kato_core_lib.client.bitbucket.auth import basic_auth_header
+from bitbucket_core_lib.client.auth import basic_auth_header
 from kato_core_lib.data_layers.data.task import Task
 from kato_core_lib.data_layers.data.fields import RepositoryFields
 from kato_core_lib.helpers.git_clean_utils import (

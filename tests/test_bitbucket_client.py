@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 
 
-from kato_core_lib.client.bitbucket.client import BITBUCKET_PAGE_LENGTH, BitbucketClient
+from bitbucket_core_lib.client.bitbucket_client import BITBUCKET_PAGE_LENGTH, BitbucketClient
 from kato_core_lib.data_layers.data.fields import PullRequestFields, ReviewCommentFields
 from utils import (
     ClientTimeout,

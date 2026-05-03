@@ -1,6 +1,9 @@
 import inspect
 import unittest
 
+from bitbucket_core_lib.bitbucket_core_lib import BitbucketCoreLib
+from bitbucket_core_lib.client.bitbucket_client import BitbucketClient
+from bitbucket_core_lib.client.bitbucket_issues_client import BitbucketIssuesClient
 from github_core_lib.client.github_client import GitHubClient
 from github_core_lib.client.github_issues_client import GitHubIssuesClient
 from github_core_lib.github_core_lib import GitHubCoreLib
@@ -86,10 +89,15 @@ class ContractIssueProvider(object):
 class VcsProviderContractsTests(unittest.TestCase):
     def test_pull_request_contract_runtime_check_accepts_matching_provider(self) -> None:
         self.assertIsInstance(ContractPullRequestProvider(), PullRequestProvider)
+        self.assertIsInstance(BitbucketClient('https://api.bitbucket.org/2.0', 'bb-token'), PullRequestProvider)
         self.assertIsInstance(GitHubClient('https://api.github.com', 'gh-token'), PullRequestProvider)
 
     def test_issue_contract_runtime_check_accepts_matching_provider(self) -> None:
         self.assertIsInstance(ContractIssueProvider(), IssueProvider)
+        self.assertIsInstance(
+            BitbucketIssuesClient('https://api.bitbucket.org/2.0', 'bb-token', 'workspace', 'repo'),
+            IssueProvider,
+        )
         self.assertIsInstance(
             GitHubIssuesClient('https://api.github.com', 'gh-token', 'workspace', 'repo'),
             IssueProvider,
@@ -180,3 +188,48 @@ class VcsProviderContractsTests(unittest.TestCase):
         self.assertIsInstance(github.pull_request, GitHubClient)
         self.assertIsInstance(github.issue, GitHubIssuesClient)
         self.assertEqual(github.issue.max_retries, 4)
+
+    def test_bitbucket_core_lib_composes_both_clients(self) -> None:
+        cfg = OmegaConf.create(
+            {
+                'core-lib': {
+                    'bitbucket-core-lib': {
+                        'base_url': 'https://api.bitbucket.org/2.0',
+                        'token': 'bb-token',
+                        'username': 'bb-user',
+                        'api_email': 'bb-api@example.com',
+                        'workspace': 'workspace',
+                        'repo_slug': 'repo',
+                        'max_retries': 3,
+                    },
+                },
+            }
+        )
+        bitbucket = BitbucketCoreLib(cfg)
+
+        self.assertIsInstance(bitbucket.pull_request, BitbucketClient)
+        self.assertIsInstance(bitbucket.issue, BitbucketIssuesClient)
+        self.assertEqual(bitbucket.pull_request.max_retries, 3)
+        self.assertEqual(bitbucket.issue.max_retries, 3)
+
+    def test_bitbucket_core_lib_accepts_repository_config_slug_name(self) -> None:
+        cfg = OmegaConf.create(
+            {
+                'core-lib': {
+                    'bitbucket-core-lib': {
+                        'base_url': 'https://api.bitbucket.org/2.0',
+                        'token': 'bb-token',
+                        'username': 'bb-user',
+                        'api_email': 'bb-api@example.com',
+                        'workspace': 'workspace',
+                        'repo_slug': 'repo',
+                        'max_retries': 4,
+                    },
+                },
+            }
+        )
+        bitbucket = BitbucketCoreLib(cfg)
+
+        self.assertIsInstance(bitbucket.pull_request, BitbucketClient)
+        self.assertIsInstance(bitbucket.issue, BitbucketIssuesClient)
+        self.assertEqual(bitbucket.issue.max_retries, 4)

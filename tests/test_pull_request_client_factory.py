@@ -1,7 +1,7 @@
 import unittest
+from unittest.mock import patch
 
 
-from kato_core_lib.client.bitbucket.client import BitbucketClient
 from kato_core_lib.client.gitlab.client import GitLabClient
 from github_core_lib.client.github_client import GitHubClient
 from omegaconf import OmegaConf
@@ -41,7 +41,15 @@ class PullRequestClientFactoryTests(unittest.TestCase):
 
     def test_builds_bitbucket_client(self) -> None:
         config = type('Config', (), {'base_url': 'https://api.bitbucket.org/2.0', 'token': 'bb-token'})
-        self.assertIsInstance(build_pull_request_client(config, 3), BitbucketClient)
+        with patch('kato_core_lib.client.pull_request_client_factory.BitbucketCoreLib') as mock_core_lib:
+            client = build_pull_request_client(config, 3)
+
+        self.assertIs(client, mock_core_lib.return_value.pull_request)
+        mock_core_lib.assert_called_once()
+        passed_cfg = mock_core_lib.call_args.args[0]
+        self.assertEqual(passed_cfg['core-lib']['bitbucket-core-lib'].base_url, config.base_url)
+        self.assertEqual(passed_cfg['core-lib']['bitbucket-core-lib'].token, config.token)
+        self.assertEqual(passed_cfg['core-lib']['bitbucket-core-lib'].max_retries, 3)
 
     def test_builds_bitbucket_client_with_username(self) -> None:
         config = type(
@@ -53,7 +61,13 @@ class PullRequestClientFactoryTests(unittest.TestCase):
                 'username': 'bb-user',
             },
         )
-        self.assertIsInstance(build_pull_request_client(config, 3), BitbucketClient)
+        with patch('kato_core_lib.client.pull_request_client_factory.BitbucketCoreLib') as mock_core_lib:
+            client = build_pull_request_client(config, 3)
+
+        self.assertIs(client, mock_core_lib.return_value.pull_request)
+        mock_core_lib.assert_called_once()
+        passed_cfg = mock_core_lib.call_args.args[0]
+        self.assertEqual(passed_cfg['core-lib']['bitbucket-core-lib'].username, 'bb-user')
 
     def test_builds_bitbucket_client_with_api_email(self) -> None:
         config = type(
@@ -65,4 +79,13 @@ class PullRequestClientFactoryTests(unittest.TestCase):
                 'api_email': 'bb-user@example.com',
             },
         )
-        self.assertIsInstance(build_pull_request_client(config, 3), BitbucketClient)
+        with patch('kato_core_lib.client.pull_request_client_factory.BitbucketCoreLib') as mock_core_lib:
+            client = build_pull_request_client(config, 3)
+
+        self.assertIs(client, mock_core_lib.return_value.pull_request)
+        mock_core_lib.assert_called_once()
+        passed_cfg = mock_core_lib.call_args.args[0]
+        self.assertEqual(
+            passed_cfg['core-lib']['bitbucket-core-lib'].api_email,
+            'bb-user@example.com',
+        )

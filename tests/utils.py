@@ -131,6 +131,21 @@ def build_test_cfg() -> DictConfig:
                         },
                     },
                 },
+                'bitbucket_core_lib': {
+                    'name': 'bitbucket-core-lib-config',
+                    'provider_name': 'bitbucket',
+                    'core-lib': {
+                        'bitbucket-core-lib': {
+                            'base_url': 'https://api.bitbucket.org/2.0',
+                            'token': 'bb-core-token',
+                            'username': 'bb-user',
+                            'api_email': 'bb-api@example.com',
+                            'workspace': 'workspace',
+                            'repo_slug': 'issues-repo',
+                            'max_retries': 5,
+                        },
+                    },
+                },
                 'github_issues': {
                     'name': 'github-issues-config',
                     'provider_name': 'github',
@@ -164,8 +179,8 @@ def build_test_cfg() -> DictConfig:
                     'name': 'bitbucket-issues-config',
                     'provider_name': 'bitbucket',
                     'base_url': 'https://api.bitbucket.org/2.0',
-                    'token': 'bb-issues-token',
-                    'username': '',
+                    'token': 'bb-core-token',
+                    'username': 'bb-user',
                     'api_email': 'bb-api@example.com',
                     'workspace': 'workspace',
                     'repo_slug': 'issues-repo',
@@ -176,6 +191,7 @@ def build_test_cfg() -> DictConfig:
                     'review_state_field': 'state',
                     'review_state': 'resolved',
                     'issue_states': ['new', 'open'],
+                    'max_retries': 5,
                 },
                 'openhands': {
                     'name': 'openhands-config',

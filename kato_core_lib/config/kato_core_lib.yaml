@@ -1,6 +1,7 @@
 # @package _global_
 defaults:
   - github_core_lib: github_core_lib
+  - bitbucket_core_lib: bitbucket_core_lib
   - _self_
 
 core_lib:
@@ -90,19 +91,20 @@ kato:
     review_state: ${oc.env:GITLAB_ISSUES_REVIEW_STATE,"In Review"}
     issue_states: ${oc.env:GITLAB_ISSUES_ISSUE_STATES,"opened"}
   bitbucket_issues:
-    base_url: ${oc.env:BITBUCKET_ISSUES_BASE_URL,"https://api.bitbucket.org/2.0"}
-    token: ${oc.env:BITBUCKET_API_TOKEN,""}
-    username: ${oc.env:BITBUCKET_USERNAME,""}
-    api_email: ${oc.env:BITBUCKET_API_EMAIL,""}
-    workspace: ${oc.env:BITBUCKET_ISSUES_WORKSPACE,""}
-    repo_slug: ${oc.env:BITBUCKET_ISSUES_REPO_SLUG,""}
-    project: ${oc.env:BITBUCKET_ISSUES_REPO_SLUG,""}
+    base_url: ${bitbucket_core_lib.core-lib.bitbucket-core-lib.base_url}
+    token: ${bitbucket_core_lib.core-lib.bitbucket-core-lib.token}
+    username: ${bitbucket_core_lib.core-lib.bitbucket-core-lib.username}
+    api_email: ${bitbucket_core_lib.core-lib.bitbucket-core-lib.api_email}
+    workspace: ${bitbucket_core_lib.core-lib.bitbucket-core-lib.workspace}
+    repo_slug: ${bitbucket_core_lib.core-lib.bitbucket-core-lib.repo_slug}
+    project: ${bitbucket_core_lib.core-lib.bitbucket-core-lib.repo_slug}
     assignee: ${oc.env:BITBUCKET_ISSUES_ASSIGNEE,""}
     progress_state_field: ${oc.env:BITBUCKET_ISSUES_PROGRESS_STATE_FIELD,"state"}
     progress_state: ${oc.env:BITBUCKET_ISSUES_PROGRESS_STATE,"open"}
     review_state_field: ${oc.env:BITBUCKET_ISSUES_REVIEW_STATE_FIELD,"state"}
     review_state: ${oc.env:BITBUCKET_ISSUES_REVIEW_STATE,"resolved"}
     issue_states: ${oc.env:BITBUCKET_ISSUES_ISSUE_STATES,"new,open"}
+    max_retries: ${bitbucket_core_lib.core-lib.bitbucket-core-lib.max_retries}
   repository_root_path: ${oc.env:REPOSITORY_ROOT_PATH,""}
   ignored_repository_folders: ${oc.env:KATO_IGNORED_REPOSITORY_FOLDERS,""}
   source_fingerprint: ${oc.env:KATO_SOURCE_FINGERPRINT,""}

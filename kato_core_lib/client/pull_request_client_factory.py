@@ -2,7 +2,7 @@ from urllib.parse import urlparse
 
 from omegaconf import DictConfig, OmegaConf
 
-from kato_core_lib.client.bitbucket.client import BitbucketClient
+from bitbucket_core_lib.bitbucket_core_lib import BitbucketCoreLib
 from kato_core_lib.client.gitlab.client import GitLabClient
 from kato_core_lib.client.pull_request_client_base import PullRequestClientBase
 from github_core_lib.github_core_lib import GitHubCoreLib
@@ -26,12 +26,22 @@ def build_pull_request_client(
 ) -> PullRequestClientBase:
     provider = detect_pull_request_provider(config.base_url)
     if provider == 'bitbucket':
-        return BitbucketClient(
-            config.base_url,
-            config.token,
-            max_retries,
-            username=getattr(config, 'api_email', '') or getattr(config, 'username', ''),
+        bitbucket_config = OmegaConf.create(
+            {
+                'core-lib': {
+                    'bitbucket-core-lib': {
+                        'base_url': config.base_url,
+                        'token': config.token,
+                        'username': getattr(config, 'username', ''),
+                        'api_email': getattr(config, 'api_email', ''),
+                        'workspace': getattr(config, 'workspace', ''),
+                        'repo_slug': getattr(config, 'repo_slug', ''),
+                        'max_retries': max_retries,
+                    },
+                },
+            }
         )
+        return BitbucketCoreLib(bitbucket_config).pull_request
     if provider == 'github':
         github_config = OmegaConf.create(
             {

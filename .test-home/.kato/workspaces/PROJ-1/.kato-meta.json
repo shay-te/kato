@@ -1,6 +1,6 @@
 {
   "claude_session_id": "",
-  "created_at_epoch": 1777826489.7672582,
+  "created_at_epoch": 1777827369.346074,
   "cwd": "",
   "repository_ids": [
     "client"
@@ -9,5 +9,5 @@
   "status": "review",
   "task_id": "PROJ-1",
   "task_summary": "Fix bug",
-  "updated_at_epoch": 1777826489.784956
+  "updated_at_epoch": 1777827369.363766
 }

@@ -59,35 +59,27 @@ class TicketClientFactoryTests(unittest.TestCase):
     def test_builds_bitbucket_issues_client(self) -> None:
         cfg = build_test_cfg()
 
-        with patch('kato_core_lib.client.ticket_client_factory.BitbucketIssuesClient') as mock_client_cls:
+        with patch('kato_core_lib.client.ticket_client_factory.BitbucketCoreLib') as mock_core_lib:
             client = build_ticket_client('bitbucket', cfg.kato.bitbucket_issues, 5)
 
-        self.assertIs(client, mock_client_cls.return_value)
-        mock_client_cls.assert_called_once_with(
-            cfg.kato.bitbucket_issues.base_url,
-            cfg.kato.bitbucket_issues.token,
-            cfg.kato.bitbucket_issues.workspace,
-            cfg.kato.bitbucket_issues.repo_slug,
-            5,
-            username='',
-        )
+        self.assertIs(client, mock_core_lib.return_value.issue)
+        mock_core_lib.assert_called_once()
+        passed_cfg = mock_core_lib.call_args.args[0]
+        self.assertEqual(passed_cfg['core-lib']['bitbucket-core-lib'].base_url, cfg.kato.bitbucket_issues.base_url)
+        self.assertEqual(passed_cfg['core-lib']['bitbucket-core-lib'].workspace, cfg.kato.bitbucket_issues.workspace)
+        self.assertEqual(passed_cfg['core-lib']['bitbucket-core-lib'].max_retries, 5)
 
     def test_builds_bitbucket_issues_client_with_username(self) -> None:
         cfg = build_test_cfg()
         cfg.kato.bitbucket_issues.username = 'bb-user'
 
-        with patch('kato_core_lib.client.ticket_client_factory.BitbucketIssuesClient') as mock_client_cls:
+        with patch('kato_core_lib.client.ticket_client_factory.BitbucketCoreLib') as mock_core_lib:
             client = build_ticket_client('bitbucket', cfg.kato.bitbucket_issues, 5)
 
-        self.assertIs(client, mock_client_cls.return_value)
-        mock_client_cls.assert_called_once_with(
-            cfg.kato.bitbucket_issues.base_url,
-            cfg.kato.bitbucket_issues.token,
-            cfg.kato.bitbucket_issues.workspace,
-            cfg.kato.bitbucket_issues.repo_slug,
-            5,
-            username='bb-user',
-        )
+        self.assertIs(client, mock_core_lib.return_value.issue)
+        mock_core_lib.assert_called_once()
+        passed_cfg = mock_core_lib.call_args.args[0]
+        self.assertEqual(passed_cfg['core-lib']['bitbucket-core-lib'].username, 'bb-user')
 
     def test_rejects_unknown_issue_platform(self) -> None:
         cfg = build_test_cfg()

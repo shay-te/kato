@@ -33,5 +33,6 @@ class HydraPluginTests(unittest.TestCase):
             [
                 ("kato_core_lib", "pkg://kato_core_lib.config"),
                 ("github_core_lib", "pkg://github_core_lib.config"),
+                ("bitbucket_core_lib", "pkg://bitbucket_core_lib.config"),
             ],
         )

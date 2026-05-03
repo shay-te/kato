@@ -2,11 +2,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from kato_core_lib.client.bitbucket.auth import bitbucket_basic_auth_header
+from bitbucket_core_lib.client.auth import bitbucket_basic_auth_header
 from kato_core_lib.client.pull_request_client_base import PullRequestClientBase
-from kato_core_lib.data_layers.data.review_comment import ReviewComment
 from kato_core_lib.data_layers.data.fields import PullRequestFields, ReviewCommentFields
-from kato_core_lib.helpers.text_utils import dict_from_mapping, list_from_mapping, normalized_text, text_from_attr
+from kato_core_lib.data_layers.data.review_comment import ReviewComment
+from kato_core_lib.helpers.text_utils import (
+    dict_from_mapping,
+    list_from_mapping,
+    normalized_text,
+    text_from_attr,
+)
 
 # Bitbucket rejected pagelen values around 100 in live API checks ("Invalid pagelen"),
 # so keep PR and PR-comment pagination at a smaller safe value.
@@ -144,12 +149,6 @@ class BitbucketClient(PullRequestClientBase):
             json=request_body,
         )
         if not response.ok:
-            # Bubble Bitbucket's actual response body up — the bare
-            # `requests.HTTPError` only carries the status code, which
-            # makes 400s impossible to debug. Common causes here:
-            # parent comment is itself a nested reply (Bitbucket forbids
-            # >1 level of nesting), parent comment was deleted, or the
-            # body is empty / too long.
             detail = ''
             try:
                 detail = response.text[:1000]

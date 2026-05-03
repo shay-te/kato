@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 from typing import Any
 
-from kato_core_lib.client.bitbucket.auth import bitbucket_basic_auth_header
+from bitbucket_core_lib.client.auth import bitbucket_basic_auth_header
 from kato_core_lib.client.ticket_client_base import TicketClientBase
 from kato_core_lib.data_layers.data.task import Task
 from kato_core_lib.data_layers.data.fields import (
