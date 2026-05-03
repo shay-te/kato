@@ -1,5 +1,14 @@
 """Drift guard: BYPASS_PROTECTIONS.md must match kato/sandbox/manager.py.
 
+NOTE: this filename is a holdover from the bypass-only era. Under the
+two-flag (``KATO_CLAUDE_DOCKER`` + ``KATO_CLAUDE_BYPASS_PERMISSIONS``)
+model, the doc this test guards covers the sandbox in general, not
+bypass mode specifically. The right name is
+``test_sandbox_protections_doc_consistency.py``. Renaming now would
+invalidate every existing reference (CI configs, prior PR
+descriptions, blame links); defer to the next test-file
+reorganization.
+
 Both files are security-relevant. If they drift apart, the documented
 threat model is no longer the implemented one — and the doc-as-control
 discipline silently breaks. This test catches drift the moment it

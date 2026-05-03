@@ -31,9 +31,13 @@ Three valid modes, plus the all-off default:
 | **`KATO_CLAUDE_DOCKER=false`** | **Default.** Claude runs on the host. Per-tool prompts intercept every Bash / Edit / Write call. No containment. Suitable for trying kato on a small project where you want to see each tool call before it runs. | **Refused at startup.** Bypass disables prompts (the social bound); without docker there is no sandbox (the structural bound); the agent would have neither. The validator names the fix: `export KATO_CLAUDE_DOCKER=true`. |
 | **`KATO_CLAUDE_DOCKER=true`** | **Sandboxed + prompts on — the strongest posture.** Claude runs inside the hardened sandbox AND every tool call goes through a permission prompt. The operator gets two independent bounds: prompts catch unexpected access *socially* (operator clicks no), the sandbox catches it *structurally* (files outside the workspace are unreachable regardless of misclicks). Operators concerned about Claude scanning files they did not intend to share should run in this mode. | **Sandboxed + autonomous — the original "bypass mode".** Claude runs inside the hardened sandbox and runs every tool without asking. Suitable for long-running unattended automation where the operator has accepted that the sandbox is the only bound. |
 
-The eight-layer defense table below describes the sandbox itself —
-those layers fire whenever `KATO_CLAUDE_DOCKER=true`, independent of
-whether bypass is also on:
+All eight layers below fire whenever `KATO_CLAUDE_DOCKER=true`.
+Layers 1, 2, 3, and 8 (the operator-protection layers — startup
+gate, root refusal, docker-required check, banner) also fire when
+bypass alone is set; in practice this means they always fire when
+bypass is on, since bypass-without-docker is refused at startup.
+Layer 7 (the git denylist) fires on every Claude spawn regardless
+of flags — kato is the sole component that runs git, full stop.
 
 | # | Layer | Where it lives |
 |---|---|---|
@@ -68,10 +72,11 @@ layers fire as before.
 
 ## Cross-OS support matrix
 
-Kato's bypass mode is first-class on Linux and on Docker Desktop's
+Kato's sandbox is first-class on Linux and on Docker Desktop's
 LinuxKit / WSL2 backends. **Native Windows Python is refused at
-startup** with a redirect to WSL2 — the sandbox image is Linux,
-the workspace path validator assumes POSIX semantics, and the
+startup whenever either `KATO_CLAUDE_DOCKER` or
+`KATO_CLAUDE_BYPASS_PERMISSIONS` is set** — the sandbox image is
+Linux, the workspace path validator assumes POSIX semantics, and the
 audit-chain `flock` requires `fcntl`. Native Windows containers are
 unsupported by image base.
 
