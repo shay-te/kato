@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Cross-platform entry point for kato (POSIX side).
+#
+# Mirrors what tools/kato/kato.py does, then hands off. Operators
+# type the same command on every platform:
+#
+#     ./kato up           (start kato)
+#     ./kato test         (run unit tests)
+#     ./kato sandbox-verify
+#
+# Windows operators use ``kato.exe`` instead, built once with
+# ``python tools\kato\build.py``. Both entry points dispatch to
+# the same Python source (tools/kato/kato.py).
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/tools/kato/kato.py" "$@"

@@ -46,9 +46,10 @@ class ClaudeCliClientTests(unittest.TestCase):
 
     def test_validate_connection_runs_version_probe(self) -> None:
         client = ClaudeCliClient(binary='claude')
+        resolved_binary = '/usr/local/bin/claude'
         with patch(
             'kato_core_lib.client.claude.cli_client.shutil.which',
-            return_value='/usr/local/bin/claude',
+            return_value=resolved_binary,
         ), patch(
             'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=_completed('claude 1.0.0\n'),
@@ -57,7 +58,30 @@ class ClaudeCliClientTests(unittest.TestCase):
 
         mock_run.assert_called_once()
         args, _ = mock_run.call_args
-        self.assertEqual(args[0], ['claude', '--version'])
+        self.assertEqual(args[0], [resolved_binary, '--version'])
+        self.assertEqual(
+            client._build_command(additional_dirs=[], session_id='')[0],
+            resolved_binary,
+        )
+
+    def test_validate_connection_uses_windows_npm_cmd_shim(self) -> None:
+        client = ClaudeCliClient(binary='claude')
+        resolved_binary = r'C:\Users\me\AppData\Roaming\npm\claude.cmd'
+        with patch(
+            'kato_core_lib.client.claude.cli_client.shutil.which',
+            return_value=resolved_binary,
+        ), patch(
+            'kato_core_lib.client.claude.cli_client.subprocess.run',
+            return_value=_completed('claude 1.0.0\n'),
+        ) as mock_run:
+            client.validate_connection()
+
+        args, _ = mock_run.call_args
+        self.assertEqual(args[0], [resolved_binary, '--version'])
+        self.assertEqual(
+            client._build_command(additional_dirs=[], session_id='')[0],
+            resolved_binary,
+        )
 
     def test_validate_connection_raises_when_version_probe_fails(self) -> None:
         client = ClaudeCliClient(binary='claude')
@@ -441,6 +465,48 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
         spawn_argv = mock_run.call_args.args[0]
         self.assertEqual(spawn_argv[:2], ['docker', 'run'])
 
+    def test_docker_mode_keeps_raw_inner_binary_after_host_validation(self) -> None:
+        client = ClaudeCliClient(
+            binary='claude',
+            docker_mode_on=True,
+            repository_root_path='/tmp/repo',
+        )
+        completed = _completed(
+            json.dumps({'is_error': False, 'result': 'ok', 'session_id': 's'}),
+        )
+        with patch(
+            'kato_core_lib.client.claude.cli_client.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ), patch(
+            'kato_core_lib.client.claude.cli_client.subprocess.run',
+            return_value=_completed('claude 1.0.0\n'),
+        ), patch.object(
+            ClaudeCliClient, '_running_inside_docker', return_value=False,
+        ):
+            client.validate_connection()
+        with patch(
+            'kato_core_lib.client.claude.cli_client.subprocess.run',
+            return_value=completed,
+        ), patch(
+            'kato_core_lib.sandbox.manager.ensure_image',
+        ), patch(
+            'kato_core_lib.sandbox.manager.check_spawn_rate',
+        ), patch(
+            'kato_core_lib.sandbox.manager.enforce_no_workspace_secrets',
+        ), patch(
+            'kato_core_lib.sandbox.manager.record_spawn',
+        ), patch(
+            'kato_core_lib.sandbox.manager.wrap_command',
+            return_value=['docker', 'run', '--rm', 'kato-sandbox', 'claude'],
+        ) as mock_wrap, patch(
+            'kato_core_lib.sandbox.manager.make_container_name',
+            return_value='kato-sandbox-PROJ-1-abcd1234',
+        ):
+            client.test_task(build_task())
+
+        inner_command = mock_wrap.call_args.args[0]
+        self.assertEqual(inner_command[0], 'claude')
+
     def test_docker_mode_on_wraps_investigate_with_triage_task_id(self) -> None:
         client = ClaudeCliClient(
             binary='claude',
@@ -481,9 +547,10 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
     def test_docker_mode_on_does_NOT_wrap_validate_connection(self) -> None:
         """Boot-time validator: no workspace, no untrusted prompt — host only."""
         client = ClaudeCliClient(binary='claude', docker_mode_on=True)
+        resolved_binary = '/usr/local/bin/claude'
         with patch(
             'kato_core_lib.client.claude.cli_client.shutil.which',
-            return_value='/usr/local/bin/claude',
+            return_value=resolved_binary,
         ), patch(
             'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=_completed('claude 1.0.0\n'),
@@ -495,9 +562,9 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
             client.validate_connection()
 
         mock_wrap.assert_not_called()
-        # Spawn argv is the raw ``claude --version``.
+        # Spawn argv is the resolved host ``claude --version``.
         spawn_argv = mock_run.call_args.args[0]
-        self.assertEqual(spawn_argv, ['claude', '--version'])
+        self.assertEqual(spawn_argv, [resolved_binary, '--version'])
 
     def test_docker_mode_on_does_NOT_wrap_model_access_validation(self) -> None:
         """Boot-time validator: fixed smoke-test prompt, no tools — host only."""
@@ -576,9 +643,10 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
         client = ClaudeCliClient(
             binary='claude', docker_mode_on=True, bypass_permissions=True,
         )
+        resolved_binary = '/usr/local/bin/claude'
         with patch(
             'kato_core_lib.client.claude.cli_client.shutil.which',
-            return_value='/usr/local/bin/claude',
+            return_value=resolved_binary,
         ), patch(
             'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=_completed('claude 1.0.0\n'),
@@ -591,7 +659,7 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
 
         mock_wrap.assert_not_called()
         spawn_argv = mock_run.call_args.args[0]
-        self.assertEqual(spawn_argv, ['claude', '--version'])
+        self.assertEqual(spawn_argv, [resolved_binary, '--version'])
 
     def test_docker_plus_bypass_does_NOT_wrap_model_access_validation(self) -> None:
         """docker=true AND bypass=true: smoke-test prompt still on host.

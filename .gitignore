@@ -21,3 +21,12 @@ docker_data
 
 docker-composebackup.txt
 mount_docker_data
+
+# Windows convenience binary built from tools/kato/. Source lives
+# in tools/kato/kato.py; each operator builds the binary on their
+# own machine via `python tools/kato/build.py`. The POSIX ``kato``
+# shell script at the repo root IS committed (it's a 5-line wrapper,
+# not a build artifact). Excluding only the .exe and the PyInstaller
+# work folder keeps both visible.
+/kato.exe
+build/kato/

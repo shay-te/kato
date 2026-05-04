@@ -76,6 +76,7 @@ class ClaudeCliClient(object):
     ) -> None:
         self.max_retries = max(1, int(max_retries or 1))
         self._binary = normalized_text(binary) or self.DEFAULT_BINARY
+        self._binary_path = ''
         self._model = normalized_text(model)
         self._max_turns = self._coerce_max_turns(max_turns)
         self._effort = self._coerce_effort(effort)
@@ -162,11 +163,29 @@ class ClaudeCliClient(object):
             )
         binary_path = shutil.which(self._binary)
         if not binary_path:
+            # Multi-line message printed by kato startup. Lead with
+            # the one-line install command (works on macOS / Linux /
+            # Windows) so the operator can fix this in 30 seconds
+            # without reading the docs page.
             raise RuntimeError(
-                f'Claude CLI binary "{self._binary}" was not found on PATH. '
-                'Install Claude Code from https://docs.claude.com/en/docs/claude-code/setup '
-                'and ensure the `claude` binary is on PATH, or set KATO_CLAUDE_BINARY.'
+                f'\n'
+                f'Claude CLI ("{self._binary}") was not found on PATH.\n'
+                f'\n'
+                f'Install Claude Code via npm (works on macOS, Linux, and Windows):\n'
+                f'\n'
+                f'    npm install -g @anthropic-ai/claude-code\n'
+                f'\n'
+                f'Prerequisite: Node.js 18+ (https://nodejs.org/). Verify with:\n'
+                f'\n'
+                f'    node --version\n'
+                f'    claude --version\n'
+                f'\n'
+                f'After install, the ``claude`` binary must be on PATH (npm puts it\n'
+                f'there automatically). If you installed it somewhere else, set\n'
+                f'KATO_CLAUDE_BINARY to the full path. Full setup docs:\n'
+                f'    https://docs.claude.com/en/docs/claude-code/setup\n'
             )
+        self._binary_path = binary_path
         # Boot-time validator: no workspace, no untrusted prompt — runs
         # ``claude --version`` only. Sandbox-wrap is intentionally
         # skipped even when ``KATO_CLAUDE_DOCKER=true``: nothing here for
@@ -174,7 +193,7 @@ class ClaudeCliClient(object):
         # every startup with zero security benefit.
         try:
             result = subprocess.run(
-                [self._binary, '--version'],
+                [self._host_binary(), '--version'],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -529,6 +548,7 @@ class ClaudeCliClient(object):
         command = self._build_command(
             additional_dirs=additional_dirs,
             session_id=session_id,
+            resolve_binary=not self._docker_mode_on,
         )
         env = self._build_subprocess_env()
         log_label = log_label or 'Claude CLI'
@@ -618,9 +638,10 @@ class ClaudeCliClient(object):
         *,
         additional_dirs: list[str],
         session_id: str,
+        resolve_binary: bool = True,
     ) -> list[str]:
         command: list[str] = [
-            self._binary,
+            self._host_binary() if resolve_binary else self._binary,
             '-p',
             '--output-format',
             'json',
@@ -950,6 +971,9 @@ class ClaudeCliClient(object):
             raise RuntimeError(f'Claude CLI smoke test reported an error: {detail}')
 
     # ----- helpers -----
+
+    def _host_binary(self) -> str:
+        return self._binary_path or self._binary
 
     @staticmethod
     def _coerce_max_turns(value: int | str | None) -> int | None:
