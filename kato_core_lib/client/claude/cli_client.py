@@ -639,6 +639,7 @@ class ClaudeCliClient(object):
         additional_dirs: list[str],
         session_id: str,
         resolve_binary: bool = True,
+        include_system_prompt: bool = True,
     ) -> list[str]:
         command: list[str] = [
             *(self._host_binary_argv() if resolve_binary else [self._binary]),
@@ -659,27 +660,36 @@ class ClaudeCliClient(object):
             command.extend(['--allowedTools', merged_allowed])
         merged_disallowed = self._merge_disallowed_with_git_deny(self._disallowed_tools)
         command.extend(['--disallowedTools', merged_disallowed])
-        architecture_doc = read_architecture_doc(
-            self._architecture_doc_path, logger=self.logger,
-        )
-        from kato_core_lib.helpers.lessons_doc_utils import read_lessons_file
-        lessons_text = read_lessons_file(
-            self._lessons_path, logger=self.logger,
-        )
-        # When ``KATO_CLAUDE_DOCKER=true`` the agent gets a short
-        # description of the sandboxed environment appended to its
-        # system prompt — see ``kato.sandbox.system_prompt``. Composer
-        # joins the architecture doc, learned lessons, and the
-        # addendum into one value because the Claude CLI takes a
-        # single ``--append-system-prompt``.
-        from kato_core_lib.sandbox.system_prompt import compose_system_prompt
-        appended_system_prompt = compose_system_prompt(
-            architecture_doc,
-            docker_mode_on=self._docker_mode_on,
-            lessons=lessons_text,
-        )
-        if appended_system_prompt:
-            command.extend(['--append-system-prompt', appended_system_prompt])
+        # ``include_system_prompt=False`` is for boot smoke-tests that
+        # only need to confirm model reachability ("Reply with: ok").
+        # Inlining the architecture doc + lessons there can push the
+        # command line past Windows' CreateProcess limit (~32K chars,
+        # less when the operator's PATH or env is unusual), surfacing
+        # as ``[WinError 206] The filename or extension is too long``.
+        # Real spawns still get the full system prompt — only the
+        # validator skips it.
+        if include_system_prompt:
+            architecture_doc = read_architecture_doc(
+                self._architecture_doc_path, logger=self.logger,
+            )
+            from kato_core_lib.helpers.lessons_doc_utils import read_lessons_file
+            lessons_text = read_lessons_file(
+                self._lessons_path, logger=self.logger,
+            )
+            # When ``KATO_CLAUDE_DOCKER=true`` the agent gets a short
+            # description of the sandboxed environment appended to its
+            # system prompt — see ``kato.sandbox.system_prompt``.
+            # Composer joins the architecture doc, learned lessons,
+            # and the addendum into one value because the Claude CLI
+            # takes a single ``--append-system-prompt``.
+            from kato_core_lib.sandbox.system_prompt import compose_system_prompt
+            appended_system_prompt = compose_system_prompt(
+                architecture_doc,
+                docker_mode_on=self._docker_mode_on,
+                lessons=lessons_text,
+            )
+            if appended_system_prompt:
+                command.extend(['--append-system-prompt', appended_system_prompt])
         normalized_session_id = normalized_text(session_id)
         if normalized_session_id:
             command.extend(['--resume', normalized_session_id])
@@ -938,7 +948,14 @@ class ClaudeCliClient(object):
 
     def _run_model_access_validation(self) -> None:
         self.logger.info('running Claude CLI model access validation')
-        command = self._build_command(additional_dirs=[], session_id='')
+        # Smoke test sends ``Reply with exactly: ok`` — no need for the
+        # architecture doc / lessons here. Skipping them keeps the
+        # boot command line short, which matters on Windows where
+        # CreateProcess caps total args at ~32K chars.
+        command = self._build_command(
+            additional_dirs=[], session_id='',
+            include_system_prompt=False,
+        )
         env = self._build_subprocess_env()
         # Boot-time validator: fixed ``SMOKE_TEST_PROMPT`` ("Reply with
         # exactly: ok"), no tools, no untrusted input. Sandbox-wrap is

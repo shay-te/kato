@@ -1,14 +1,19 @@
-"""Read an optional architecture/project-context doc for Claude prompts.
+"""Build a short pointer-directive for Claude's architecture doc.
 
-When ``KATO_ARCHITECTURE_DOC_PATH`` is set, kato appends the file's
-contents to Claude's system prompt on every spawn. This is fed via
-``claude -p --append-system-prompt <text>`` so it lands in the cached
-system-prompt slot and applies equally to fresh sessions and resumed
-ones (Claude rebuilds the system prompt on every process spawn).
+When ``KATO_ARCHITECTURE_DOC_PATH`` is set, kato appends a short
+directive to Claude's system prompt on every spawn instructing it
+to ``Read`` the file at the start of every task. We do **not**
+inline the file body — even moderate architecture docs (50KB+)
+push the spawn argv past Windows' CreateProcess limit (~32K
+chars) and trip ``[WinError 206] The filename or extension is too
+long``. Claude's ``Read`` tool fetches the content on demand; the
+trade-off is one extra read per session, which is cheap.
 
-The doc is re-read on every spawn so editing it takes effect on the
-next turn without restarting kato. Read errors are logged and treated
-as "no doc configured" — the orchestrator never blocks on this.
+The directive is recomputed on every spawn so editing the doc's
+*location* (env var change) takes effect on the next turn without
+restarting kato. Read errors at the path-existence check are
+logged and treated as "no doc configured" — the orchestrator
+never blocks on this.
 """
 
 from __future__ import annotations
@@ -19,27 +24,25 @@ from pathlib import Path
 from kato_core_lib.helpers.text_utils import normalized_text
 
 
-_MAX_BODY_CHARS = 200_000
-
-
 _LIVING_DOC_DIRECTIVE_TEMPLATE = (
-    'Project architecture document (location: {path}).\n'
-    'Treat this as a living document that you, Claude, are responsible '
-    'for keeping accurate. At the start of every task: re-read this '
-    'document and let it shape your plan. While working: if you discover '
-    'something about the project that is not in this document and would '
-    'help a future agent (a non-obvious convention, a hidden contract, a '
-    'gotcha, a layer boundary, a "why we do it this way"), update the '
-    'document via the Edit tool — append a new sub-section under the '
-    'most appropriate top-level section, or add a new section if none '
-    'fits. Do not duplicate content that is already documented; do not '
-    'restate what the code already shows. The document is a navigation '
-    'aid and a contract registry, not a mirror of the source. Kato '
-    'commits and pushes the file (you must NEVER run git); just edit.\n'
+    'Project architecture document: {path}\n'
+    'At the start of every task, use the Read tool to read this '
+    'file. It contains the canonical map of the workspace and any '
+    'non-obvious conventions, hidden contracts, gotchas, and layer '
+    'boundaries the project has accumulated. Let it shape your '
+    'plan.\n'
     '\n'
-    '--- BEGIN ARCHITECTURE DOCUMENT ---\n'
-    '{text}\n'
-    '--- END ARCHITECTURE DOCUMENT ---\n'
+    'Treat it as a living document you are responsible for keeping '
+    'accurate. While working, if you discover something not yet '
+    'documented that would help a future agent (a non-obvious '
+    'convention, a hidden contract, a gotcha, a layer boundary, a '
+    '"why we do it this way"), update the file via the Edit tool — '
+    'append a new sub-section under the most appropriate top-level '
+    'section, or add a new section if none fits. Do not duplicate '
+    'content already documented; do not restate what the code shows. '
+    'The document is a navigation aid and a contract registry, not '
+    'a mirror of the source. Kato commits and pushes the file (you '
+    'must NEVER run git); just edit.\n'
 )
 
 
@@ -48,17 +51,19 @@ def read_architecture_doc(
     *,
     logger: logging.Logger | None = None,
 ) -> str:
-    """Return the architecture-doc text, or '' when nothing is configured.
+    """Return the pointer directive, or '' when nothing is configured.
 
-    The body is trimmed and capped at ``_MAX_BODY_CHARS`` so a runaway
-    file can't blow the system-prompt budget. The wrapper directive adds
-    a fixed prefix + suffix on top of the body, so the final returned
-    string is slightly longer than the cap. ``path`` may be an empty
-    string (returns ''), a missing file (warns once + returns ''), or a
-    real file (returns content). When content is found, it is wrapped
-    in a "living document" directive instructing Claude to re-read it
-    at the start of every task and to update it (via Edit) when
-    discovering new project knowledge.
+    Returns a short fixed-size directive (~700 chars) telling Claude
+    to ``Read`` the architecture doc at the configured path. We do
+    **not** inline the file body — that historically pushed the
+    spawn argv past Windows' CreateProcess limit (~32K chars) for
+    any non-trivial doc.
+
+    ``path`` may be an empty string (returns ''), a missing file
+    (warns once + returns ''), or a real file (returns the
+    directive). The file content itself is never read here — only
+    its existence is checked, so kato fails fast if the operator
+    configured a stale path.
     """
     normalized = normalized_text(path)
     if not normalized:
@@ -71,20 +76,4 @@ def read_architecture_doc(
                 file_path,
             )
         return ''
-    try:
-        text = file_path.read_text(encoding='utf-8')
-    except OSError as exc:
-        if logger is not None:
-            logger.warning(
-                'failed to read architecture doc at %s: %s', file_path, exc,
-            )
-        return ''
-    text = text.strip()
-    if not text:
-        return ''
-    if len(text) > _MAX_BODY_CHARS:
-        text = text[:_MAX_BODY_CHARS]
-    return _LIVING_DOC_DIRECTIVE_TEMPLATE.format(
-        path=str(file_path),
-        text=text,
-    )
+    return _LIVING_DOC_DIRECTIVE_TEMPLATE.format(path=str(file_path))

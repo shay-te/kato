@@ -1,12 +1,15 @@
 """End-to-end coverage for the ``KATO_ARCHITECTURE_DOC_PATH`` flow.
 
 Pins down the contract: when an architecture-doc path is configured,
-kato reads the file on every Claude spawn and appends the contents to
-Claude's system prompt via ``--append-system-prompt <text>``. Both the
-one-shot client (``ClaudeCliClient``, used by the autonomous backend)
-and the long-lived streaming wrapper (``StreamingClaudeSession``,
-used by planning + chat respawn) must honor the flag identically so
-new and resumed conversations share the same project context.
+kato appends a short *pointer directive* (~700 chars) to Claude's
+system prompt instructing it to ``Read`` the file at the start of
+every task. The file body is **not** inlined into the directive —
+50K+ docs would push the spawn argv past Windows' CreateProcess
+limit (~32K chars). Both the one-shot client (``ClaudeCliClient``,
+used by the autonomous backend) and the long-lived streaming
+wrapper (``StreamingClaudeSession``, used by planning + chat
+respawn) must honor the flag identically so new and resumed
+conversations share the same project context.
 """
 
 from __future__ import annotations
@@ -32,7 +35,7 @@ def _write(path: Path, content: str) -> None:
 
 
 class ReadArchitectureDocTests(unittest.TestCase):
-    """Unit-level coverage for the file-reading helper."""
+    """Unit-level coverage for the directive-builder helper."""
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -62,37 +65,55 @@ class ReadArchitectureDocTests(unittest.TestCase):
             result = read_architecture_doc(str(self.tmp_root), logger=logger)
         self.assertEqual(result, '')
 
-    def test_reads_and_trims_real_file(self) -> None:
+    def test_directive_includes_path_and_read_tool_instruction(self) -> None:
+        """The directive points Claude at the file and tells it to ``Read``.
+
+        File body is NOT inlined — the prior contract (inlining the
+        whole doc into ``--append-system-prompt``) tripped Windows'
+        CreateProcess args limit on docs > ~30 KB.
+        """
         path = self.tmp_root / 'ARCHITECTURE.md'
-        _write(path, '\n\n# Kato architecture\n\nLayers ...\n\n')
+        _write(path, '# Kato architecture\n\nLayers ...\n')
 
         result = read_architecture_doc(str(path))
 
-        # File body is wrapped in a "living document" prompt directive so
-        # Claude knows to re-read + update it. Body content must appear
-        # inside the wrapped output, between the BEGIN/END markers.
-        self.assertIn('# Kato architecture', result)
-        self.assertIn('Layers ...', result)
-        self.assertIn('--- BEGIN ARCHITECTURE DOCUMENT ---', result)
-        self.assertIn('--- END ARCHITECTURE DOCUMENT ---', result)
+        self.assertIn(str(path), result)
+        self.assertIn('Read tool', result)
+        # The body must NOT be in the directive.
+        self.assertNotIn('# Kato architecture', result)
+        self.assertNotIn('Layers ...', result)
 
-    def test_returns_empty_for_whitespace_only_file(self) -> None:
+    def test_directive_size_is_bounded_regardless_of_file_size(self) -> None:
+        """The directive is fixed-size (~700 chars), not the doc size.
+
+        This is the core fix for the Windows CreateProcess overflow:
+        a 5 MB architecture doc and a 5 KB one produce the same-sized
+        ``--append-system-prompt`` value.
+        """
+        small = self.tmp_root / 'small.md'
+        large = self.tmp_root / 'large.md'
+        _write(small, 'x')
+        _write(large, 'x' * 5_000_000)  # 5 MB
+
+        small_directive = read_architecture_doc(str(small))
+        large_directive = read_architecture_doc(str(large))
+
+        # Path differs, total length differs by ~5 chars (filename
+        # difference). Both stay under 2 KB regardless of file size.
+        self.assertLess(len(small_directive), 2_000)
+        self.assertLess(len(large_directive), 2_000)
+
+    def test_returns_directive_even_for_empty_file(self) -> None:
+        """An empty doc still gets the directive — it exists, that's enough.
+
+        The body-trimming check that returned '' on empty content
+        was for the inline-the-body design; with the pointer-only
+        design, the file's existence is the only signal.
+        """
         path = self.tmp_root / 'ARCHITECTURE.md'
-        _write(path, '\n   \n\t\n')
+        _write(path, '')
 
-        self.assertEqual(read_architecture_doc(str(path)), '')
-
-    def test_caps_oversize_payloads(self) -> None:
-        path = self.tmp_root / 'ARCHITECTURE.md'
-        _write(path, 'x' * (300_000))  # well past the 200k cap
-
-        result = read_architecture_doc(str(path))
-
-        # Body is capped at 200k chars (the wrapper adds a fixed prefix +
-        # suffix on top, so the final string is longer but the embedded
-        # body is exactly 200k 'x's).
-        self.assertIn('x' * 200_000, result)
-        self.assertNotIn('x' * 200_001, result)
+        self.assertIn(str(path), read_architecture_doc(str(path)))
 
     def test_expands_tilde_in_path(self) -> None:
         # ``~/ARCHITECTURE.md`` should resolve to ``$HOME/ARCHITECTURE.md``.
@@ -106,7 +127,10 @@ class ReadArchitectureDocTests(unittest.TestCase):
 
         result = read_architecture_doc('~/ARCHITECTURE.md')
 
-        self.assertIn('# tilde-resolved', result)
+        # Tilde was expanded — the directive's path includes the real
+        # tmp_root, not the literal '~'.
+        self.assertIn(str(self.tmp_root / 'ARCHITECTURE.md'), result)
+        self.assertNotIn('~/', result)
 
     @staticmethod
     def _restore_home(original_home: str | None) -> None:
@@ -117,7 +141,7 @@ class ReadArchitectureDocTests(unittest.TestCase):
 
 
 class ClaudeCliClientArchitectureDocTests(unittest.TestCase):
-    """``ClaudeCliClient`` wires the doc into ``--append-system-prompt``."""
+    """``ClaudeCliClient`` wires the directive into ``--append-system-prompt``."""
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -151,7 +175,7 @@ class ClaudeCliClientArchitectureDocTests(unittest.TestCase):
         index = cmd.index('--append-system-prompt')
         self.assertIn('Workspace scope', cmd[index + 1])
 
-    def test_command_appends_doc_content_when_present(self) -> None:
+    def test_command_appends_directive_with_path_when_doc_exists(self) -> None:
         _write(self.doc_path, '# Kato architecture\n\nLayers...')
         client = ClaudeCliClient(
             binary='claude',
@@ -162,29 +186,29 @@ class ClaudeCliClientArchitectureDocTests(unittest.TestCase):
 
         self.assertIn('--append-system-prompt', cmd)
         index = cmd.index('--append-system-prompt')
-        # Doc content is wrapped in a "living document" directive so the
-        # value is the wrapped string, not just the raw file body.
-        self.assertIn('# Kato architecture', cmd[index + 1])
-        self.assertIn('Layers...', cmd[index + 1])
+        prompt = cmd[index + 1]
+        # Path is in the directive so Claude knows what to Read.
+        self.assertIn(str(self.doc_path), prompt)
+        # Doc body is NOT inlined (the whole point of the new contract).
+        self.assertNotIn('# Kato architecture', prompt)
+        self.assertNotIn('Layers...', prompt)
 
-    def test_doc_is_re_read_on_every_build(self) -> None:
-        # Editing the doc between spawns should land in the next
-        # subprocess without requiring a kato restart.
-        _write(self.doc_path, 'first version')
+    def test_smoke_test_command_skips_doc_directive(self) -> None:
+        """Boot-time smoke test omits the doc directive — see fix for
+        ``[WinError 206]`` on Windows. Real spawns still get it.
+        """
+        _write(self.doc_path, 'irrelevant')
         client = ClaudeCliClient(
             binary='claude',
             architecture_doc_path=str(self.doc_path),
         )
 
-        first = client._build_command(additional_dirs=[], session_id='')
-        _write(self.doc_path, 'second version')
-        second = client._build_command(additional_dirs=[], session_id='')
+        cmd = client._build_command(
+            additional_dirs=[], session_id='',
+            include_system_prompt=False,
+        )
 
-        first_idx = first.index('--append-system-prompt')
-        second_idx = second.index('--append-system-prompt')
-        self.assertIn('first version', first[first_idx + 1])
-        self.assertIn('second version', second[second_idx + 1])
-        self.assertNotIn('first version', second[second_idx + 1])
+        self.assertNotIn('--append-system-prompt', cmd)
 
 
 class StreamingClaudeSessionArchitectureDocTests(unittest.TestCase):
@@ -218,7 +242,7 @@ class StreamingClaudeSessionArchitectureDocTests(unittest.TestCase):
         index = cmd.index('--append-system-prompt')
         self.assertIn('Workspace scope', cmd[index + 1])
 
-    def test_command_appends_doc_content_when_present(self) -> None:
+    def test_command_appends_directive_with_path_when_doc_exists(self) -> None:
         _write(self.doc_path, '# Kato architecture\n\nLayers...')
         session = self._build_session(architecture_doc_path=str(self.doc_path))
 
@@ -226,24 +250,11 @@ class StreamingClaudeSessionArchitectureDocTests(unittest.TestCase):
 
         self.assertIn('--append-system-prompt', cmd)
         index = cmd.index('--append-system-prompt')
-        self.assertIn('# Kato architecture', cmd[index + 1])
-        self.assertIn('Layers...', cmd[index + 1])
-
-    def test_doc_is_re_read_on_every_build_for_streaming_sessions_too(self) -> None:
-        # Use distinctive tokens that can't accidentally appear inside the
-        # living-document directive wrapper.
-        _write(self.doc_path, 'token-FIRST-revision')
-        session = self._build_session(architecture_doc_path=str(self.doc_path))
-
-        first = session._build_command()
-        _write(self.doc_path, 'token-SECOND-revision')
-        second = session._build_command()
-
-        first_value = first[first.index('--append-system-prompt') + 1]
-        second_value = second[second.index('--append-system-prompt') + 1]
-        self.assertIn('token-FIRST-revision', first_value)
-        self.assertIn('token-SECOND-revision', second_value)
-        self.assertNotIn('token-FIRST-revision', second_value)
+        prompt = cmd[index + 1]
+        self.assertIn(str(self.doc_path), prompt)
+        # Body is not inlined.
+        self.assertNotIn('# Kato architecture', prompt)
+        self.assertNotIn('Layers...', prompt)
 
 
 class ResumedSessionStillReceivesDocTests(unittest.TestCase):
@@ -268,9 +279,9 @@ class ResumedSessionStillReceivesDocTests(unittest.TestCase):
         self.assertIn('--append-system-prompt', cmd)
         self.assertIn('--resume', cmd)
         self.assertIn('abc-123', cmd)
-        # Both flags should have a value following them.
+        # The directive points at the doc path; the body is not inlined.
         self.assertIn(
-            'shared context',
+            str(self.doc_path),
             cmd[cmd.index('--append-system-prompt') + 1],
         )
 
@@ -285,7 +296,7 @@ class ResumedSessionStillReceivesDocTests(unittest.TestCase):
         self.assertIn('--append-system-prompt', cmd)
         self.assertIn('--resume', cmd)
         self.assertIn(
-            'shared context',
+            str(self.doc_path),
             cmd[cmd.index('--append-system-prompt') + 1],
         )
 
