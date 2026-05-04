@@ -213,7 +213,7 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertNotIn('OPENHANDS_CONTAINER_AWS_SESSION_TOKEN', compose_text)
         self.assertNotIn('OPENHANDS_CONTAINER_AWS_DEFAULT_REGION', compose_text)
         self.assertIn(
-            'defaults:\n  - youtrack_core_lib/youtrack_core_lib\n  - github_core_lib/github_core_lib\n  - bitbucket_core_lib/bitbucket_core_lib\n  - gitlab_core_lib/gitlab_core_lib\n  - jira_core_lib/jira_core_lib\n  - _self_',
+            'defaults:\n  - youtrack_core_lib: youtrack_core_lib\n  - github_core_lib: github_core_lib\n  - bitbucket_core_lib: bitbucket_core_lib\n  - gitlab_core_lib: gitlab_core_lib\n  - jira_core_lib: jira_core_lib\n  - _self_',
             core_lib_yaml_text,
         )
         self.assertIn('base_url: ${core_lib.youtrack_core_lib.base_url}', core_lib_yaml_text)

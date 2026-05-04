@@ -1,10 +1,10 @@
 # @package _global_
 defaults:
-  - youtrack_core_lib/youtrack_core_lib
-  - github_core_lib/github_core_lib
-  - bitbucket_core_lib/bitbucket_core_lib
-  - gitlab_core_lib/gitlab_core_lib
-  - jira_core_lib/jira_core_lib
+  - youtrack_core_lib: youtrack_core_lib
+  - github_core_lib: github_core_lib
+  - bitbucket_core_lib: bitbucket_core_lib
+  - gitlab_core_lib: gitlab_core_lib
+  - jira_core_lib: jira_core_lib
   - _self_
 
 core_lib:
