@@ -99,11 +99,18 @@ def _run_tests() -> None:
 
 
 def main() -> int:
+    # ``--skip-tests`` opts out of the post-install sanity test run.
+    # The tests use synthetic fixtures (e.g. ``PROJ-1``) and on a slow
+    # machine they double the bootstrap time without telling you
+    # anything about *your* configuration. The deps + UI bundle are
+    # already installed before this point, so skipping is safe.
+    skip_tests = '--skip-tests' in sys.argv[1:]
     _ensure_env_file()
     _ensure_venv()
     _install_python_deps()
     _maybe_build_ui_bundle()
-    _run_tests()
+    if not skip_tests:
+        _run_tests()
     print(
         '\n'
         'Bootstrap complete.\n'
