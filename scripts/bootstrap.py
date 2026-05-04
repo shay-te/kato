@@ -69,15 +69,25 @@ def _maybe_build_ui_bundle() -> None:
         print('==> skipping webserver/ui build (npm not found; using committed bundle)')
         return
     ui_dir = REPO_ROOT / 'webserver' / 'ui'
-    npm_args_install = ['npm', '--prefix', str(ui_dir), 'install', '--no-audit', '--no-fund']
-    npm_args_build = ['npm', '--prefix', str(ui_dir), 'run', 'build']
+    # Drop ``npm --prefix <path>`` and use ``cwd=ui_dir`` instead.
+    # ``--prefix`` is unreliable on Windows: npm.cmd parses the prefix
+    # path through cmd.exe quoting and ends up looking for
+    # ``<repo_root>\package.json`` instead of ``<repo_root>\webserver
+    # \ui\package.json``. ``cwd`` is honored uniformly across platforms.
+    npm_args_install = ['npm', 'install', '--no-audit', '--no-fund']
+    npm_args_build = ['npm', 'run', 'build']
     # Windows: ``npm`` is delivered as ``npm.cmd``; subprocess.run can't
-    # find it without ``shell=True``. shutil.which already handled that
-    # above so we know npm is callable; we just need to let cmd resolve
-    # the right shim on Windows.
+    # find it without ``shell=True``. shutil.which already confirmed npm
+    # is on PATH; we just need cmd.exe to resolve the right shim.
     use_shell = sys.platform == 'win32'
-    run_step('npm install (planning UI)', npm_args_install, shell=use_shell)
-    run_step('npm run build (planning UI)', npm_args_build, shell=use_shell)
+    run_step(
+        'npm install (planning UI)',
+        npm_args_install, shell=use_shell, cwd=str(ui_dir),
+    )
+    run_step(
+        'npm run build (planning UI)',
+        npm_args_build, shell=use_shell, cwd=str(ui_dir),
+    )
 
 
 def _run_tests() -> None:

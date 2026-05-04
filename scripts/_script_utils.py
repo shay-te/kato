@@ -34,11 +34,15 @@ def run_step(label: str, command: list[str], **kwargs) -> None:
     """Echo a step and run it, exiting with the step's exit code on failure.
 
     Mirrors the run_step shell function from the original ``bootstrap.sh``
-    so the operator-visible output is the same on every platform.
+    so the operator-visible output is the same on every platform. Callers
+    can override ``cwd`` via kwargs (e.g. the planning-UI npm steps run
+    with ``cwd=webserver/ui`` on Windows where ``npm --prefix`` is
+    unreliable through cmd.exe).
     """
     print(f'==> {label}', flush=True)
+    kwargs.setdefault('cwd', REPO_ROOT)
     try:
-        subprocess.run(command, check=True, cwd=REPO_ROOT, **kwargs)
+        subprocess.run(command, check=True, **kwargs)
     except subprocess.CalledProcessError as exc:
         print(f'Step failed: {label}', file=sys.stderr)
         print(
