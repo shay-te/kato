@@ -22,11 +22,16 @@ class TaskClientFactory(object):
     def get(self, issue_platform: str) -> IssueProvider | None:
         normalized = str(issue_platform or 'youtrack').strip().lower()
         if normalized == 'youtrack':
+            # Create a config structure that matches what YouTrackCoreLib expects.
+            # Important: Don't reference self._config directly since it may contain
+            # interpolations like ${core_lib.youtrack_core_lib.base_url}.
+            # Instead, resolve those interpolations first by converting to a container.
+            config_dict = OmegaConf.to_container(self._config, resolve=True)
             youtrack_config = OmegaConf.create(
                 {
                     'core_lib': {
                         'youtrack_core_lib': OmegaConf.merge(
-                            self._config,
+                            config_dict,
                             {'max_retries': self._max_retries},
                         ),
                     },
