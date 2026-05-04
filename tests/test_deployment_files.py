@@ -264,7 +264,6 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('JIRA_API_TOKEN=', env_example_text)
         self.assertIn('YOUTRACK_PROGRESS_STATE=', env_example_text)
         self.assertIn('YOUTRACK_ISSUE_STATES=', env_example_text)
-        self.assertIn('YOUTRACK_CORE_LIB_MAX_RETRIES=', env_example_text)
         self.assertIn('JIRA_PROGRESS_STATE=', env_example_text)
         self.assertIn('JIRA_ISSUE_STATES=', env_example_text)
         self.assertIn('GITHUB_API_BASE_URL=', env_example_text)

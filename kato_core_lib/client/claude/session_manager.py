@@ -125,6 +125,12 @@ class ClaudeSessionManager(object):
         self._state_dir.mkdir(parents=True, exist_ok=True)
         self._session_factory = session_factory or StreamingClaudeSession
         self._lock = threading.RLock()
+        # Per-task spawn locks. Held during the (slow) Claude subprocess
+        # spawn so two concurrent spawns for the SAME task serialize, while
+        # spawns for DIFFERENT tasks run in parallel. The global ``_lock``
+        # protects the registry mutations only — never held across the
+        # spawn itself, which would serialize all parallel-runner workers.
+        self._spawn_locks: dict[str, threading.Lock] = {}
         self._sessions: dict[str, StreamingClaudeSession] = {}
         self._records: dict[str, PlanningSessionRecord] = {}
         self._workspace_manager = None
@@ -236,29 +242,42 @@ class ClaudeSessionManager(object):
             'docker_mode_on': docker_mode_on,
             'done_callback': self._done_callback,
         }
+        # Per-task spawn lock: get-or-create under the global lock, then
+        # hold the per-task lock (NOT the global lock) for the actual
+        # spawn. This is what lets parallel-runner workers spawn
+        # different-task sessions concurrently — earlier the global lock
+        # was held across the spawn and serialised everything.
         with self._lock:
-            existing = self._sessions.get(normalized_task_id)
-            if existing is not None and existing.is_alive:
-                return existing
-            previous_record = self._records.get(normalized_task_id)
-            resume_session_id = self._resume_id_for_spawn(
-                normalized_task_id, previous_record, existing,
+            spawn_lock = self._spawn_locks.setdefault(
+                normalized_task_id, threading.Lock(),
             )
+        with spawn_lock:
+            with self._lock:
+                existing = self._sessions.get(normalized_task_id)
+                if existing is not None and existing.is_alive:
+                    return existing
+                previous_record = self._records.get(normalized_task_id)
+                resume_session_id = self._resume_id_for_spawn(
+                    normalized_task_id, previous_record, existing,
+                )
+            # Spawn happens with NO global lock held — concurrent spawns
+            # for different task ids run in parallel.
             session = self._spawn_with_resume_self_heal(
                 normalized_task_id=normalized_task_id,
                 factory_kwargs=factory_kwargs,
                 initial_prompt=initial_prompt,
                 resume_session_id=resume_session_id,
             )
-            self._sessions[normalized_task_id] = session
-            self._record_session_metadata(
-                normalized_task_id=normalized_task_id,
-                session=session,
-                previous_record=previous_record,
-                task_summary=task_summary,
-                expected_branch=expected_branch,
-                resume_session_id=resume_session_id,
-            )
+            with self._lock:
+                self._sessions[normalized_task_id] = session
+                self._record_session_metadata(
+                    normalized_task_id=normalized_task_id,
+                    session=session,
+                    previous_record=previous_record,
+                    task_summary=task_summary,
+                    expected_branch=expected_branch,
+                    resume_session_id=resume_session_id,
+                )
             return session
 
     def _resume_id_for_spawn(

@@ -77,7 +77,7 @@ kato:
     token: ${core_lib.github_core_lib.token}
     owner: ${core_lib.github_core_lib.owner}
     repo: ${core_lib.github_core_lib.repo}
-    project: ${oc.env:GITHUB_REPO,""}
+    project: ${core_lib.github_core_lib.repo}
     assignee: ${oc.env:GITHUB_ASSIGNEE,""}
     progress_state_field: ${oc.env:GITHUB_PROGRESS_STATE_FIELD,"labels"}
     progress_state: ${oc.env:GITHUB_PROGRESS_STATE,"In Progress"}

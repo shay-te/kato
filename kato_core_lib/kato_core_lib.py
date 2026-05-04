@@ -235,6 +235,9 @@ class KatoCoreLib(CoreLib):
             # streaming runner is wired (Claude backend). The user's tag
             # decides what gets executed, not bypass mode.
             use_streaming_for_review_fixes=planning_session_runner is not None,
+            # Per-task workspace clones isolate parallel review-fix
+            # workers from each other's git state on the shared repo.
+            workspace_manager=self.workspace_manager,
         )
         # Stash recovery so main.py can invoke it once after startup
         # validation — adopting orphan workspace folders is opt-in, runs

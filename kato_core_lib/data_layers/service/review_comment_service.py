@@ -59,6 +59,7 @@ class ReviewCommentService(Service):
         logger=None,
         planning_session_runner=None,
         use_streaming_for_review_fixes: bool = False,
+        workspace_manager=None,
     ) -> None:
         self._task_service = task_service
         self._implementation_service = implementation_service
@@ -68,6 +69,12 @@ class ReviewCommentService(Service):
         self._use_streaming_for_review_fixes = bool(
             planning_session_runner is not None and use_streaming_for_review_fixes
         )
+        # When set, review-fix runs against per-task workspace clones
+        # instead of the operator's shared on-disk repository checkout.
+        # Prevents parallel review-fix workers from clobbering each
+        # other's git state (index.lock, half-finished rebases, branch
+        # switches) when multiple comments fire on the same scan tick.
+        self._workspace_manager = workspace_manager
         self.logger = logger or configure_logger(self.__class__.__name__)
 
     @property
@@ -93,6 +100,7 @@ class ReviewCommentService(Service):
             comment.comment_id,
         )
         repository = self._repository_service.get_repository(review_context.repository_id)
+        repository = self._provision_workspace_clone(repository, review_context)
         try:
             self._prepare_review_fix_branch(repository, review_context)
             execution = self._run_review_comment_fix(comment, review_context)
@@ -456,6 +464,47 @@ class ReviewCommentService(Service):
         if not execution.get(ImplementationFields.SUCCESS, False):
             raise RuntimeError(f'failed to address comment {comment.comment_id}')
         return execution
+
+    def _provision_workspace_clone(self, repository, review_context):
+        """Return a copy of ``repository`` re-pointed at the per-task clone.
+
+        Each in-flight review-fix gets its own workspace clone so parallel
+        workers can't corrupt each other's git state on the same on-disk
+        repo (index.lock collisions, half-finished rebases, branch flip-
+        flops between tasks). The original ``repository`` (the operator's
+        shared checkout) is never mutated.
+
+        Falls through to the original ``repository`` when no workspace
+        manager is configured — preserves the legacy single-repo
+        behaviour for setups that never opted into workspaces.
+        """
+        if self._workspace_manager is None:
+            return repository
+        try:
+            from types import SimpleNamespace
+
+            from kato_core_lib.data_layers.service.workspace_manager import (
+                provision_task_workspace_clones,
+            )
+
+            task = SimpleNamespace(
+                id=review_context.task_id,
+                summary=review_context.task_summary,
+            )
+            provisioned = provision_task_workspace_clones(
+                self._workspace_manager,
+                self._repository_service,
+                task,
+                [repository],
+            )
+            return provisioned[0] if provisioned else repository
+        except Exception:
+            self.logger.exception(
+                'failed to provision per-task workspace clone for review-fix '
+                'on task %s; falling back to shared repository checkout',
+                review_context.task_id,
+            )
+            return repository
 
     def _review_repository_local_path(
         self,

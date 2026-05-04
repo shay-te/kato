@@ -19,7 +19,16 @@ export default function FilesTab({ taskId, workspaceVersion = 0 }) {
   useEffect(() => {
     if (!taskId) { return; }
     let cancelled = false;
-    setState({ status: 'loading', trees: [], error: '' });
+    // Only flip to ``loading`` on the FIRST fetch for this taskId.
+    // Subsequent refetches (driven by workspaceVersion bumps every 1.2s
+    // during active tool use) keep the existing tree visible until the
+    // new payload arrives — otherwise the tab body flashes "Loading…"
+    // between every turn.
+    setState((prev) => (
+      prev.status === 'ready' || prev.status === 'error'
+        ? prev
+        : { status: 'loading', trees: [], error: '' }
+    ));
     fetchFileTree(taskId)
       .then((payload) => {
         if (cancelled) { return; }
@@ -31,10 +40,20 @@ export default function FilesTab({ taskId, workspaceVersion = 0 }) {
       })
       .catch((err) => {
         if (cancelled) { return; }
-        setState({ status: 'error', trees: [], error: String(err) });
+        setState((prev) => ({
+          status: 'error',
+          trees: prev.trees,
+          error: String(err),
+        }));
       });
     return () => { cancelled = true; };
   }, [taskId, workspaceVersion]);
+
+  // Blank state on task switch so we don't show stale data while
+  // the new fetch is in flight.
+  useEffect(() => {
+    setState({ status: 'loading', trees: [], error: '' });
+  }, [taskId]);
 
   useEffect(() => {
     const node = containerRef.current;

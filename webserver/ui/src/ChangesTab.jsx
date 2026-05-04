@@ -19,7 +19,16 @@ export default function ChangesTab({
   useEffect(() => {
     if (!taskId) { return; }
     let cancelled = false;
-    setState({ status: 'loading', diffs: [], workspaceStatus: '', error: '' });
+    // Only flip to ``loading`` on the FIRST fetch for this taskId — i.e.
+    // when there are no diffs to show yet. Subsequent refetches (driven
+    // by workspaceVersion bumps every 1.2s during active tool use) keep
+    // the previous diff visible until the new payload arrives, so the
+    // tab body doesn't flash "Computing diff…" between every turn.
+    setState((prev) => (
+      prev.status === 'ready' || prev.status === 'error'
+        ? prev
+        : { status: 'loading', diffs: [], workspaceStatus: '', error: '' }
+    ));
     fetchDiff(taskId)
       .then((payload) => {
         if (cancelled) { return; }
@@ -32,10 +41,24 @@ export default function ChangesTab({
       })
       .catch((err) => {
         if (cancelled) { return; }
-        setState({ status: 'error', diffs: [], workspaceStatus: '', error: String(err) });
+        setState((prev) => ({
+          // Preserve the previously-shown diff if we had one — a
+          // transient fetch error shouldn't blank the body.
+          status: 'error',
+          diffs: prev.diffs,
+          workspaceStatus: prev.workspaceStatus,
+          error: String(err),
+        }));
       });
     return () => { cancelled = true; };
   }, [taskId, workspaceVersion]);
+
+  // When the operator switches to a different task, blank the previous
+  // task's diff state so we don't show stale data while the new fetch
+  // is in flight.
+  useEffect(() => {
+    setState({ status: 'loading', diffs: [], workspaceStatus: '', error: '' });
+  }, [taskId]);
 
   const repoIds = useMemo(() => {
     return state.diffs.map((entry) => entry.repo_id || entry.cwd);
