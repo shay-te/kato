@@ -4,13 +4,15 @@ from enum import Enum
 from urllib.parse import urlparse
 
 
-class RepositoryType(str, Enum):
+class Platform(Enum):
+    """Repository platforms supported by repository_core_lib."""
+
     GITHUB = 'github'
     GITLAB = 'gitlab'
     BITBUCKET = 'bitbucket'
 
     @classmethod
-    def from_base_url(cls, base_url: str) -> RepositoryType:
+    def from_base_url(cls, base_url: str) -> Platform:
         parsed = urlparse(base_url)
         target = f'{parsed.netloc}{parsed.path}'.lower()
         if 'github' in target:

@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import Mock
 
 from repository_core_lib.repository_core_lib.pull_request_service import PullRequestService
-from repository_core_lib.repository_core_lib.repository_type import RepositoryType
+from repository_core_lib.repository_core_lib.platform import Platform
 
 
 class PullRequestServiceTests(unittest.TestCase):
@@ -12,12 +12,12 @@ class PullRequestServiceTests(unittest.TestCase):
         service, factory, client = self._service_with_client()
 
         service.validate_connection(
-            RepositoryType.GITHUB,
+            Platform.GITHUB,
             repo_owner='octo',
             repo_slug='repo',
         )
 
-        factory.get.assert_called_once_with(RepositoryType.GITHUB)
+        factory.get.assert_called_once_with(Platform.GITHUB)
         client.validate_connection.assert_called_once_with(
             repo_owner='octo',
             repo_slug='repo',
@@ -27,12 +27,12 @@ class PullRequestServiceTests(unittest.TestCase):
         service, factory, client = self._service_with_client()
 
         service.validate_connection(
-            RepositoryType.GITLAB,
+            Platform.GITLAB,
             repo_owner='group',
             repo_slug='repo',
         )
 
-        factory.get.assert_called_once_with(RepositoryType.GITLAB)
+        factory.get.assert_called_once_with(Platform.GITLAB)
         client.validate_connection.assert_called_once_with(
             repo_owner='group',
             repo_slug='repo',
@@ -42,12 +42,12 @@ class PullRequestServiceTests(unittest.TestCase):
         service, factory, client = self._service_with_client()
 
         service.validate_connection(
-            RepositoryType.BITBUCKET,
+            Platform.BITBUCKET,
             repo_owner='workspace',
             repo_slug='repo',
         )
 
-        factory.get.assert_called_once_with(RepositoryType.BITBUCKET)
+        factory.get.assert_called_once_with(Platform.BITBUCKET)
         client.validate_connection.assert_called_once_with(
             repo_owner='workspace',
             repo_slug='repo',
@@ -58,7 +58,7 @@ class PullRequestServiceTests(unittest.TestCase):
         client.create_pull_request.return_value = {'id': '17'}
 
         result = service.create_pull_request(
-            RepositoryType.GITHUB,
+            Platform.GITHUB,
             title='PROJ-1: Fix bug',
             source_branch='feature/proj-1',
             repo_owner='octo',
@@ -68,7 +68,7 @@ class PullRequestServiceTests(unittest.TestCase):
         )
 
         self.assertEqual(result, {'id': '17'})
-        factory.get.assert_called_once_with(RepositoryType.GITHUB)
+        factory.get.assert_called_once_with(Platform.GITHUB)
         client.create_pull_request.assert_called_once_with(
             title='PROJ-1: Fix bug',
             source_branch='feature/proj-1',
@@ -83,14 +83,14 @@ class PullRequestServiceTests(unittest.TestCase):
         client.list_pull_request_comments.return_value = ['comment']
 
         comments = service.list_pull_request_comments(
-            RepositoryType.GITLAB,
+            Platform.GITLAB,
             repo_owner='group',
             repo_slug='repo',
             pull_request_id='17',
         )
 
         self.assertEqual(comments, ['comment'])
-        factory.get.assert_called_once_with(RepositoryType.GITLAB)
+        factory.get.assert_called_once_with(Platform.GITLAB)
         client.list_pull_request_comments.assert_called_once_with(
             repo_owner='group',
             repo_slug='repo',
@@ -102,7 +102,7 @@ class PullRequestServiceTests(unittest.TestCase):
         client.find_pull_requests.return_value = ['pr']
 
         pull_requests = service.find_pull_requests(
-            RepositoryType.BITBUCKET,
+            Platform.BITBUCKET,
             repo_owner='workspace',
             repo_slug='repo',
             source_branch='feature/proj-1',
@@ -110,7 +110,7 @@ class PullRequestServiceTests(unittest.TestCase):
         )
 
         self.assertEqual(pull_requests, ['pr'])
-        factory.get.assert_called_once_with(RepositoryType.BITBUCKET)
+        factory.get.assert_called_once_with(Platform.BITBUCKET)
         client.find_pull_requests.assert_called_once_with(
             repo_owner='workspace',
             repo_slug='repo',
@@ -123,13 +123,13 @@ class PullRequestServiceTests(unittest.TestCase):
         comment = Mock()
 
         service.resolve_review_comment(
-            RepositoryType.BITBUCKET,
+            Platform.BITBUCKET,
             repo_owner='workspace',
             repo_slug='repo',
             comment=comment,
         )
 
-        factory.get.assert_called_once_with(RepositoryType.BITBUCKET)
+        factory.get.assert_called_once_with(Platform.BITBUCKET)
         client.resolve_review_comment.assert_called_once_with(
             repo_owner='workspace',
             repo_slug='repo',
@@ -141,14 +141,14 @@ class PullRequestServiceTests(unittest.TestCase):
         comment = Mock()
 
         service.reply_to_review_comment(
-            RepositoryType.GITHUB,
+            Platform.GITHUB,
             repo_owner='octo',
             repo_slug='repo',
             comment=comment,
             body='Done.',
         )
 
-        factory.get.assert_called_once_with(RepositoryType.GITHUB)
+        factory.get.assert_called_once_with(Platform.GITHUB)
         client.reply_to_review_comment.assert_called_once_with(
             repo_owner='octo',
             repo_slug='repo',
@@ -162,18 +162,18 @@ class PullRequestServiceTests(unittest.TestCase):
         factory.get.side_effect = [github_client, bitbucket_client]
 
         service.validate_connection(
-            RepositoryType.GITHUB,
+            Platform.GITHUB,
             repo_owner='octo',
             repo_slug='repo',
         )
         service.validate_connection(
-            RepositoryType.BITBUCKET,
+            Platform.BITBUCKET,
             repo_owner='octo',
             repo_slug='repo',
         )
 
-        factory.get.assert_any_call(RepositoryType.GITHUB)
-        factory.get.assert_any_call(RepositoryType.BITBUCKET)
+        factory.get.assert_any_call(Platform.GITHUB)
+        factory.get.assert_any_call(Platform.BITBUCKET)
         self.assertEqual(factory.get.call_count, 2)
 
     @staticmethod

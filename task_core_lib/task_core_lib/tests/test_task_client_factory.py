@@ -7,6 +7,7 @@ from omegaconf import OmegaConf
 
 from core_lib.error_handling.status_code_exception import StatusCodeException
 from task_core_lib.task_core_lib.client.task_client_factory import TaskClientFactory
+from task_core_lib.task_core_lib.platform import Platform
 from vcs_provider_contracts.vcs_provider_contracts.issue_provider import IssueProvider
 
 
@@ -24,7 +25,7 @@ class TaskClientFactoryTests(unittest.TestCase):
         with patch(
             'task_core_lib.task_core_lib.client.task_client_factory.YouTrackCoreLib',
         ) as mock_core_lib:
-            client = TaskClientFactory(cfg, 5).get('youtrack')
+            client = TaskClientFactory(cfg, 5).get(Platform.YOUTRACK)
 
         self.assertIs(client, mock_core_lib.return_value.issue)
         mock_core_lib.assert_called_once()
@@ -48,7 +49,7 @@ class TaskClientFactoryTests(unittest.TestCase):
         with patch(
             'task_core_lib.task_core_lib.client.task_client_factory.JiraCoreLib',
         ) as mock_core_lib:
-            client = TaskClientFactory(cfg, 5).get('jira')
+            client = TaskClientFactory(cfg, 5).get(Platform.JIRA)
 
         self.assertIs(client, mock_core_lib.return_value.issue)
         mock_core_lib.assert_called_once()
@@ -72,7 +73,7 @@ class TaskClientFactoryTests(unittest.TestCase):
         with patch(
             'task_core_lib.task_core_lib.client.task_client_factory.GitHubCoreLib',
         ) as mock_core_lib:
-            client = TaskClientFactory(cfg, 5).get('github')
+            client = TaskClientFactory(cfg, 5).get(Platform.GITHUB)
 
         self.assertIs(client, mock_core_lib.return_value.issue)
         mock_core_lib.assert_called_once()
@@ -95,7 +96,7 @@ class TaskClientFactoryTests(unittest.TestCase):
         with patch(
             'task_core_lib.task_core_lib.client.task_client_factory.GitLabCoreLib',
         ) as mock_core_lib:
-            client = TaskClientFactory(cfg, 5).get('gitlab')
+            client = TaskClientFactory(cfg, 5).get(Platform.GITLAB)
 
         self.assertIs(client, mock_core_lib.return_value.issue)
         mock_core_lib.assert_called_once()
@@ -119,7 +120,7 @@ class TaskClientFactoryTests(unittest.TestCase):
         with patch(
             'task_core_lib.task_core_lib.client.task_client_factory.BitbucketCoreLib',
         ) as mock_core_lib:
-            client = TaskClientFactory(cfg, 5).get('bitbucket')
+            client = TaskClientFactory(cfg, 5).get(Platform.BITBUCKET)
 
         self.assertIs(client, mock_core_lib.return_value.issue)
         mock_core_lib.assert_called_once()
@@ -143,7 +144,7 @@ class TaskClientFactoryTests(unittest.TestCase):
         with patch(
             'task_core_lib.task_core_lib.client.task_client_factory.BitbucketCoreLib',
         ) as mock_core_lib:
-            client = TaskClientFactory(cfg, 5).get('bitbucket')
+            client = TaskClientFactory(cfg, 5).get(Platform.BITBUCKET)
 
         self.assertIs(client, mock_core_lib.return_value.issue)
         passed_cfg = mock_core_lib.call_args.args[0]
@@ -163,27 +164,10 @@ class TaskClientFactoryTests(unittest.TestCase):
         with patch(
             'task_core_lib.task_core_lib.client.task_client_factory.GitHubCoreLib',
         ) as mock_core_lib:
-            self.assertIs(factory.get('github_issues'), mock_core_lib.return_value.issue)
-            self.assertIs(factory.get('github'), mock_core_lib.return_value.issue)
+            self.assertIs(factory.get(Platform.GITHUB_ISSUES), mock_core_lib.return_value.issue)
+            self.assertIs(factory.get(Platform.GITHUB), mock_core_lib.return_value.issue)
 
         self.assertEqual(mock_core_lib.call_count, 2)
-
-    def test_rejects_unknown_issue_platform(self) -> None:
-        cfg = OmegaConf.create(
-            {
-                'base_url': 'https://your-company.youtrack.cloud',
-                'token': 'yt-token',
-                'project': 'PROJ',
-                'assignee': 'me',
-            }
-        )
-
-        factory = TaskClientFactory(cfg, 5)
-
-        with self.assertRaisesRegex(StatusCodeException, 'unsupported issue platform') as ctx:
-            factory.get('linear')
-
-        self.assertEqual(ctx.exception.status_code, 404)
 
     def test_raw_get_returns_none_for_unsupported_issue_platform(self) -> None:
         cfg = OmegaConf.create(
@@ -213,7 +197,7 @@ class TaskClientFactoryTests(unittest.TestCase):
         with patch(
             'task_core_lib.task_core_lib.client.task_client_factory.YouTrackCoreLib',
         ) as mock_core_lib:
-            issue = TaskClientFactory(cfg, 5).get('youtrack')
+            issue = TaskClientFactory(cfg, 5).get(Platform.YOUTRACK)
 
         self.assertIsInstance(issue, IssueProvider)
         mock_core_lib.assert_called_once()

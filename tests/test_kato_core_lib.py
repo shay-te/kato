@@ -3,6 +3,7 @@ from unittest.mock import ANY, Mock, patch
 
 from kato_core_lib.kato_core_lib import KatoCoreLib
 from kato_core_lib.data_layers.data.fields import PullRequestFields, StatusFields
+from task_core_lib.task_core_lib.platform import Platform
 from tests.utils import build_task, build_test_cfg
 
 
@@ -127,7 +128,7 @@ class KatoCoreLibTests(unittest.TestCase):
 
         mock_email_core_lib_cls.assert_called_once_with(self.cfg)
         mock_TaskCoreLib.assert_called_once_with(
-            'youtrack',
+            Platform.YOUTRACK,
             self.cfg.kato.youtrack,
             self.cfg.kato.retry.max_retries,
         )
@@ -528,7 +529,7 @@ class KatoCoreLibTests(unittest.TestCase):
             KatoCoreLib(cfg)
 
         mock_TaskCoreLib.assert_called_once_with(
-            'jira',
+            Platform.JIRA,
             cfg.kato.jira,
             cfg.kato.retry.max_retries,
         )

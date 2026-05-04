@@ -6,7 +6,7 @@ from github_core_lib.github_core_lib.github_core_lib import GitHubCoreLib
 from kato_core_lib.client.pull_request_client_base import PullRequestClientBase
 from core_lib.error_handling.not_found_decorator import NotFoundErrorHandler
 from omegaconf import DictConfig, OmegaConf
-from repository_core_lib.repository_core_lib.repository_type import RepositoryType
+from repository_core_lib.repository_core_lib.platform import Platform
 
 
 class PullRequestClientFactory(object):
@@ -17,8 +17,8 @@ class PullRequestClientFactory(object):
         self._max_retries = max_retries
 
     @NotFoundErrorHandler('unsupported repository provider')
-    def get(self, repository_type: RepositoryType) -> PullRequestClientBase | None:
-        if repository_type == RepositoryType.BITBUCKET:
+    def get(self, platform: Platform) -> PullRequestClientBase | None:
+        if platform == Platform.BITBUCKET:
             bitbucket_config = OmegaConf.create(
                 {
                     'core_lib': {
@@ -35,7 +35,7 @@ class PullRequestClientFactory(object):
                 }
             )
             return BitbucketCoreLib(bitbucket_config).pull_request
-        if repository_type == RepositoryType.GITHUB:
+        if platform == Platform.GITHUB:
             github_config = OmegaConf.create(
                 {
                     'core_lib': {
@@ -47,7 +47,7 @@ class PullRequestClientFactory(object):
                 }
             )
             return GitHubCoreLib(github_config).pull_request
-        if repository_type == RepositoryType.GITLAB:
+        if platform == Platform.GITLAB:
             gitlab_config = OmegaConf.create(
                 {
                     'core_lib': {

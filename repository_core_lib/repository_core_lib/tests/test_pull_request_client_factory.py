@@ -8,7 +8,7 @@ from omegaconf import OmegaConf
 from repository_core_lib.repository_core_lib.client.pull_request_client_factory import (
     PullRequestClientFactory,
 )
-from repository_core_lib.repository_core_lib.repository_type import RepositoryType
+from repository_core_lib.repository_core_lib.platform import Platform
 from core_lib.error_handling.status_code_exception import StatusCodeException
 
 
@@ -29,7 +29,7 @@ class PullRequestClientFactoryTests(unittest.TestCase):
             mock_github_core_lib.return_value.pull_request = client
             factory = PullRequestClientFactory(cfg, 3)
 
-            result = factory.get(RepositoryType.GITHUB)
+            result = factory.get(Platform.GITHUB)
 
         self.assertIs(result, client)
         mock_github_core_lib.assert_called_once()
@@ -49,7 +49,7 @@ class PullRequestClientFactoryTests(unittest.TestCase):
             mock_gitlab_core_lib.return_value.pull_request = client
             factory = PullRequestClientFactory(cfg, 3)
 
-            result = factory.get(RepositoryType.GITLAB)
+            result = factory.get(Platform.GITLAB)
 
         self.assertIs(result, client)
         mock_gitlab_core_lib.assert_called_once()
@@ -71,7 +71,7 @@ class PullRequestClientFactoryTests(unittest.TestCase):
             mock_bitbucket_core_lib.return_value.pull_request = client
             factory = PullRequestClientFactory(cfg, 3)
 
-            result = factory.get(RepositoryType.BITBUCKET)
+            result = factory.get(Platform.BITBUCKET)
 
         self.assertIs(result, client)
         mock_bitbucket_core_lib.assert_called_once()

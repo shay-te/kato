@@ -3,7 +3,7 @@ from __future__ import annotations
 from repository_core_lib.repository_core_lib.client.pull_request_client_factory import (
     PullRequestClientFactory,
 )
-from repository_core_lib.repository_core_lib.repository_type import RepositoryType
+from repository_core_lib.repository_core_lib.platform import Platform
 
 
 class PullRequestService(object):
@@ -16,7 +16,7 @@ class PullRequestService(object):
 
     def validate_connection(
         self,
-        repository_type: RepositoryType,
+        repository_type: Platform,
         *,
         repo_owner: str,
         repo_slug: str,
@@ -29,7 +29,7 @@ class PullRequestService(object):
 
     def create_pull_request(
         self,
-        repository_type: RepositoryType,
+        repository_type: Platform,
         *,
         title: str,
         source_branch: str,
@@ -50,7 +50,7 @@ class PullRequestService(object):
 
     def list_pull_request_comments(
         self,
-        repository_type: RepositoryType,
+        repository_type: Platform,
         *,
         repo_owner: str,
         repo_slug: str,
@@ -65,7 +65,7 @@ class PullRequestService(object):
 
     def find_pull_requests(
         self,
-        repository_type: RepositoryType,
+        repository_type: Platform,
         *,
         repo_owner: str,
         repo_slug: str,
@@ -82,7 +82,7 @@ class PullRequestService(object):
 
     def reply_to_review_comment(
         self,
-        repository_type: RepositoryType,
+        repository_type: Platform,
         *,
         repo_owner: str,
         repo_slug: str,
@@ -99,7 +99,7 @@ class PullRequestService(object):
 
     def resolve_review_comment(
         self,
-        repository_type: RepositoryType,
+        repository_type: Platform,
         *,
         repo_owner: str,
         repo_slug: str,

@@ -6,7 +6,7 @@ from core_lib.rule_validator.rule_validator import RuleValidator, ValueRuleValid
 from kato_core_lib.data_layers.data.review_comment import ReviewComment
 from kato_core_lib.data_layers.data.fields import PullRequestFields, ReviewCommentFields
 from repository_core_lib.repository_core_lib.pull_request_service import PullRequestService
-from repository_core_lib.repository_core_lib.repository_type import RepositoryType
+from repository_core_lib.repository_core_lib.platform import Platform
 
 
 pull_request_rule_validator = RuleValidator(
@@ -50,7 +50,7 @@ class PullRequestDataAccess(DataAccess):
     def __init__(self, config: DictConfig, client: PullRequestService) -> None:
         self._config = config
         self._client = client
-        self._repository_type = RepositoryType.from_base_url(config.base_url)
+        self._repository_type = Platform.from_base_url(config.base_url)
 
     @property
     def provider_name(self) -> str:

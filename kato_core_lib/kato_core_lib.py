@@ -63,18 +63,19 @@ from kato_core_lib.helpers.kato_config_utils import (
     resolved_openhands_llm_settings,
     skip_testing_enabled,
 )
+from task_core_lib.task_core_lib.platform import Platform
 from task_core_lib.task_core_lib.task_core_lib import TaskCoreLib
 
 logger = configure_logger('KatoCoreLib')
 ISSUE_PLATFORM_CONFIG_NAMES = {
-    'youtrack': 'youtrack',
-    'jira': 'jira',
-    'github': 'github_issues',
-    'github_issues': 'github_issues',
-    'gitlab': 'gitlab_issues',
-    'gitlab_issues': 'gitlab_issues',
-    'bitbucket': 'bitbucket_issues',
-    'bitbucket_issues': 'bitbucket_issues',
+    Platform.YOUTRACK: 'youtrack',
+    Platform.JIRA: 'jira',
+    Platform.GITHUB: 'github_issues',
+    Platform.GITHUB_ISSUES: 'github_issues',
+    Platform.GITLAB: 'gitlab_issues',
+    Platform.GITLAB_ISSUES: 'gitlab_issues',
+    Platform.BITBUCKET: 'bitbucket_issues',
+    Platform.BITBUCKET_ISSUES: 'bitbucket_issues',
 }
 
 
@@ -293,13 +294,14 @@ class KatoCoreLib(CoreLib):
     @staticmethod
     def _resolve_ticket_platform_config(
         open_cfg: DictConfig,
-    ) -> tuple[str, DictConfig]:
-        issue_platform = str(open_cfg.issue_platform or 'youtrack').strip().lower()
-        config_name = ISSUE_PLATFORM_CONFIG_NAMES.get(issue_platform)
+    ) -> tuple[Platform, DictConfig]:
+        raw = str(open_cfg.issue_platform or 'youtrack').strip().lower()
+        platform = Platform(raw)
+        config_name = ISSUE_PLATFORM_CONFIG_NAMES.get(platform)
         ticket_cfg = getattr(open_cfg, config_name, None) if config_name else None
         if ticket_cfg is None:
-            raise ValueError(f'missing issue platform config for: {issue_platform}')
-        return issue_platform, ticket_cfg
+            raise ValueError(f'missing issue platform config for: {platform.value}')
+        return platform, ticket_cfg
 
     def _build_notification_service(self, open_cfg: DictConfig) -> NotificationService:
         return NotificationService(

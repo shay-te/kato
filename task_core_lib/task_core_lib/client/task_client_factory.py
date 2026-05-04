@@ -8,6 +8,7 @@ from jira_core_lib.jira_core_lib.jira_core_lib import JiraCoreLib
 from omegaconf import OmegaConf
 from youtrack_core_lib.youtrack_core_lib.youtrack_core_lib import YouTrackCoreLib
 
+from task_core_lib.task_core_lib.platform import Platform
 from vcs_provider_contracts.vcs_provider_contracts.issue_provider import IssueProvider
 
 
@@ -19,13 +20,9 @@ class TaskClientFactory(object):
         self._max_retries = max_retries
 
     @NotFoundErrorHandler('unsupported issue platform')
-    def get(self, issue_platform: str) -> IssueProvider | None:
-        normalized = str(issue_platform or 'youtrack').strip().lower()
-        if normalized == 'youtrack':
-            # Create a config structure that matches what YouTrackCoreLib expects.
-            # Important: Don't reference self._config directly since it may contain
-            # interpolations like ${core_lib.youtrack_core_lib.base_url}.
-            # Instead, resolve those interpolations first by converting to a container.
+    def get(self, platform: Platform) -> IssueProvider | None:
+        if platform == Platform.YOUTRACK:
+            # Resolve interpolations before wrapping to avoid circular references.
             config_dict = OmegaConf.to_container(self._config, resolve=True)
             youtrack_config = OmegaConf.create(
                 {
@@ -38,7 +35,7 @@ class TaskClientFactory(object):
                 }
             )
             return YouTrackCoreLib(youtrack_config).issue
-        if normalized == 'jira':
+        if platform == Platform.JIRA:
             jira_config = OmegaConf.create(
                 {
                     'core_lib': {
@@ -50,7 +47,7 @@ class TaskClientFactory(object):
                 }
             )
             return JiraCoreLib(jira_config).issue
-        if normalized in {'bitbucket', 'bitbucket_issues'}:
+        if platform in {Platform.BITBUCKET, Platform.BITBUCKET_ISSUES}:
             bitbucket_config = OmegaConf.create(
                 {
                     'core_lib': {
@@ -67,7 +64,7 @@ class TaskClientFactory(object):
                 }
             )
             return BitbucketCoreLib(bitbucket_config).issue
-        if normalized in {'github', 'github_issues'}:
+        if platform in {Platform.GITHUB, Platform.GITHUB_ISSUES}:
             github_config = OmegaConf.create(
                 {
                     'core_lib': {
@@ -79,7 +76,7 @@ class TaskClientFactory(object):
                 }
             )
             return GitHubCoreLib(github_config).issue
-        if normalized in {'gitlab', 'gitlab_issues'}:
+        if platform in {Platform.GITLAB, Platform.GITLAB_ISSUES}:
             gitlab_config = OmegaConf.create(
                 {
                     'core_lib': {
