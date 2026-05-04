@@ -193,7 +193,7 @@ class ClaudeCliClient(object):
         # every startup with zero security benefit.
         try:
             result = subprocess.run(
-                [self._host_binary(), '--version'],
+                [*self._host_binary_argv(), '--version'],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -641,7 +641,7 @@ class ClaudeCliClient(object):
         resolve_binary: bool = True,
     ) -> list[str]:
         command: list[str] = [
-            self._host_binary() if resolve_binary else self._binary,
+            *(self._host_binary_argv() if resolve_binary else [self._binary]),
             '-p',
             '--output-format',
             'json',
@@ -974,6 +974,73 @@ class ClaudeCliClient(object):
 
     def _host_binary(self) -> str:
         return self._binary_path or self._binary
+
+    def _host_binary_argv(self) -> list[str]:
+        """Argv prefix for invoking Claude on the host.
+
+        On most platforms this is ``[claude_path]``. On Windows it
+        may be ``[node.exe, cli.js]`` instead — the npm-installed
+        ``claude.cmd`` is a cmd.exe shim, and cmd.exe caps command
+        lines at ~8192 chars. Kato's ``--append-system-prompt``
+        carries the entire architecture doc inline, which overflows
+        that limit and raises ``[WinError 206] The filename or
+        extension is too long``. Invoking ``node.exe`` directly with
+        the underlying JS entry point sidesteps cmd.exe and bumps
+        the limit to the CreateProcess maximum (~32K chars).
+
+        Falls back to the resolved path on platforms / shim shapes
+        we don't recognise — the caller's behaviour is unchanged
+        when the override doesn't apply.
+        """
+        resolved = self._host_binary()
+        via_node = self._resolve_windows_node_invocation(resolved)
+        if via_node:
+            return via_node
+        return [resolved]
+
+    @staticmethod
+    def _resolve_windows_node_invocation(cmd_path: str) -> list[str] | None:
+        """If ``cmd_path`` is a Windows npm cmd-shim, return
+        ``[node.exe, script.js]`` to invoke directly. Returns None
+        on non-Windows hosts, on non-shim binaries, or when we
+        can't confidently parse the shim — caller falls back to
+        invoking ``cmd_path`` as-is, which works for short command
+        lines.
+        """
+        if os.name != 'nt':
+            return None
+        path = Path(cmd_path)
+        if path.suffix.lower() not in ('.cmd', '.bat'):
+            return None
+        try:
+            shim_text = path.read_text(encoding='utf-8', errors='replace')
+        except OSError:
+            return None
+        # Standard npm shim references the JS entry point as a
+        # quoted ``"...something.js"`` literal. Pull the first
+        # match — the shim has fallback branches with the same
+        # path, so the first one is enough.
+        import re
+        match = re.search(r'"([^"]+\.js)"', shim_text)
+        if not match:
+            return None
+        js_ref = match.group(1)
+        # npm shim uses ``%~dp0`` (the shim's own directory) as the
+        # path prefix. Resolve it to the shim's parent directory
+        # before checking the file exists.
+        js_ref = js_ref.replace('%~dp0\\', '').replace('%~dp0/', '').replace('%~dp0', '')
+        js_path = (path.parent / js_ref).resolve()
+        if not js_path.is_file():
+            return None
+        # Prefer the ``node.exe`` next to the shim (npm / nvm layout)
+        # so we use the same Node version the shim would have.
+        node_path = path.parent / 'node.exe'
+        if not node_path.is_file():
+            node_via_path = shutil.which('node')
+            if not node_via_path:
+                return None
+            node_path = Path(node_via_path)
+        return [str(node_path), str(js_path)]
 
     @staticmethod
     def _coerce_max_turns(value: int | str | None) -> int | None:
