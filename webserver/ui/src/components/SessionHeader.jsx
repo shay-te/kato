@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { finishTask, postSession } from '../api.js';
+import { finishTask, postSession, updateTaskSource } from '../api.js';
 import { TAB_STATUS } from '../constants/tabStatus.js';
 import { usePushApproval } from '../hooks/usePushApproval.js';
 import { useTaskPublish } from '../hooks/useTaskPublish.js';
@@ -16,6 +16,7 @@ export default function SessionHeader({
 }) {
   const [stopping, setStopping] = useState(false);
   const [finishing, setFinishing] = useState(false);
+  const [updatingSource, setUpdatingSource] = useState(false);
   const pushApproval = usePushApproval(session?.task_id || '');
   const taskPublish = useTaskPublish(session?.task_id || '');
   if (!session) { return null; }
@@ -30,6 +31,29 @@ export default function SessionHeader({
     if (typeof onStopped === 'function') {
       onStopped(result);
     }
+  }
+
+  async function onUpdateSource() {
+    if (updatingSource) { return; }
+    setUpdatingSource(true);
+    const result = await updateTaskSource(session.task_id);
+    setUpdatingSource(false);
+    if (typeof taskPublish.refresh === 'function') {
+      taskPublish.refresh();
+    }
+    const { title, message } = formatUpdateSourceResult(result);
+    const body = (result && result.body) || {};
+    const failed = (body.failed_repositories || []).length;
+    const updated = (body.updated_repositories || []).length;
+    const kind = !result.ok || failed > 0
+      ? (updated > 0 ? 'warning' : 'error')
+      : 'success';
+    toast.show({
+      kind,
+      title,
+      message,
+      durationMs: kind === 'error' ? 12000 : 8000,
+    });
   }
 
   async function onFinish() {
@@ -137,6 +161,15 @@ export default function SessionHeader({
         {taskPublish.prBusy ? 'Opening PR…' : 'Pull request'}
       </button>
       <button
+        id="session-update-source"
+        type="button"
+        data-tooltip="Update source — push the task branch, then for each repo under REPOSITORY_ROOT_PATH: fetch, checkout the task branch, and pull. Lets you test the task on your live running system. Refuses if a source repo has uncommitted changes."
+        onClick={onUpdateSource}
+        disabled={updatingSource}
+      >
+        {updatingSource ? 'Updating source…' : 'Update source'}
+      </button>
+      <button
         id="session-finish"
         type="button"
         data-tooltip="Done — push pending changes, open a PR if missing, and move the ticket to In Review. Same flow Claude can trigger by emitting <KATO_TASK_DONE>."
@@ -156,6 +189,55 @@ export default function SessionHeader({
       </button>
     </header>
   );
+}
+
+// Render the per-repo outcome of POST /update-source into a toast.
+// Tells the operator exactly which source clones now reflect the
+// task branch and which were skipped (dirty / missing) or failed.
+function formatUpdateSourceResult(result) {
+  const body = (result && result.body) || {};
+  if (!result || !result.ok) {
+    return {
+      title: 'Update source failed',
+      message: (result && result.error)
+        || body.error
+        || JSON.stringify(body, null, 2)
+        || 'unknown error',
+    };
+  }
+  const lines = [];
+  const push = body.pushed || {};
+  const pushedCount = (push.pushed_repositories || []).length;
+  const pushSkipped = (push.skipped_repositories || []).length;
+  const pushFailed = (push.failed_repositories || []).length;
+  if (pushedCount) {
+    lines.push(`✓ pushed ${pushedCount} repo(s) to remote`);
+  } else if (pushSkipped) {
+    lines.push(`• push skipped — already in sync (${pushSkipped} repo(s))`);
+  } else if (pushFailed) {
+    const errs = (push.failed_repositories || [])
+      .map((r) => `${r.repository_id}: ${r.error}`).join('; ');
+    lines.push(`✗ push failed: ${errs}`);
+  }
+  const updated = body.updated_repositories || [];
+  if (updated.length) {
+    lines.push(`✓ source updated for ${updated.length} repo(s): ${updated.join(', ')}`);
+  }
+  const skipped = body.skipped_repositories || [];
+  for (const entry of skipped) {
+    lines.push(`• skipped ${entry.repository_id}: ${entry.reason}`);
+  }
+  const failed = body.failed_repositories || [];
+  for (const entry of failed) {
+    lines.push(`✗ ${entry.repository_id}: ${entry.error}`);
+  }
+  if (!updated.length && !failed.length && !skipped.length) {
+    lines.push('• no source repositories updated');
+  }
+  const title = body.updated
+    ? (failed.length ? 'Source partially updated' : 'Source updated')
+    : 'Source not updated';
+  return { title, message: lines.join('\n') };
 }
 
 // Render the per-step outcome of POST /finish into a toast title +

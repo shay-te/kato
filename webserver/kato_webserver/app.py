@@ -448,6 +448,23 @@ def _register_http_routes(app: Flask) -> None:
             return jsonify(result), 404 if 'no workspace' in str(result['error']) else 500
         return jsonify(result)
 
+    @app.post('/api/sessions/<task_id>/update-source')
+    def update_task_source(task_id: str):
+        """Push + sync the operator's REPOSITORY_ROOT_PATH clones to the
+        task branch. Pure git plumbing — no AI involvement. Drives the
+        planning UI's ``Update source`` button.
+        """
+        agent_service = app.config.get('AGENT_SERVICE')
+        if agent_service is None:
+            return jsonify({'error': 'agent service not wired'}), 503
+        update = getattr(agent_service, 'update_source_for_task', None)
+        if not callable(update):
+            return jsonify({'error': 'agent service does not support source-update'}), 501
+        result = update(task_id) or {}
+        if result.get('error') and not result.get('updated'):
+            return jsonify(result), 404 if 'no workspace' in str(result['error']) else 500
+        return jsonify(result)
+
     @app.post('/api/sessions/<task_id>/finish')
     def finish_task(task_id: str):
         """Operator-triggered "I'm done" — same flow Claude triggers via

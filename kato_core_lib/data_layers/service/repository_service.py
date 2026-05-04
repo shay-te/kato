@@ -194,6 +194,76 @@ class RepositoryService(RepositoryInventoryService):
             commit_message=commit_message,
         )
 
+    def update_source_to_task_branch(
+        self,
+        repository,
+        branch_name: str,
+    ) -> None:
+        """Switch the source-folder clone of ``repository`` to ``branch_name``.
+
+        For the planning UI's "Update source" button: after a per-task
+        clone has pushed its branch to the remote, the operator's
+        live / running system (which lives at ``repository.local_path``
+        in the inventory, NOT in the per-task workspace) needs to be
+        on that branch and up-to-date so it can be tested end-to-end.
+
+        Steps:
+          1. Refuse if the source clone has uncommitted changes
+             (operator's running system — never silently overwrite).
+          2. ``git fetch origin``
+          3. ``git checkout <branch_name>`` (auto-creates a tracking
+             branch from ``origin/<branch_name>`` if no local branch
+             exists yet — modern git default).
+          4. ``git pull --ff-only`` (no merge surprises; if the source
+             has diverged from origin, the operator gets a clean
+             error instead of an auto-merge commit).
+
+        Raises ``RuntimeError`` on any git failure with a message
+        suitable for surfacing back to the operator.
+        """
+        local_path = str(getattr(repository, 'local_path', '') or '').strip()
+        if not local_path:
+            raise RuntimeError(
+                f'repository {repository.id} has no local_path set; '
+                'cannot update source folder',
+            )
+        if not (Path(local_path) / '.git').is_dir():
+            raise RuntimeError(
+                f'source folder for repository {repository.id} at '
+                f'{local_path} is not a git repository',
+            )
+        # Step 1: refuse on dirty tree.
+        try:
+            status_output = self._working_tree_status(local_path)
+        except Exception as exc:
+            raise RuntimeError(
+                f'failed to inspect source folder for {repository.id}: {exc}',
+            ) from exc
+        if status_output.strip():
+            raise RuntimeError(
+                f'source folder for {repository.id} at {local_path} has '
+                f'uncommitted changes — refusing to switch branches and '
+                f'pull. Stash, commit, or discard them first.',
+            )
+        # Step 2-4: fetch / checkout / pull.
+        self._run_git(
+            local_path,
+            ['fetch', 'origin', '--prune'],
+            f'failed to fetch origin for {repository.id} source folder',
+        )
+        self._run_git(
+            local_path,
+            ['checkout', branch_name],
+            f'failed to checkout branch {branch_name} in {repository.id} '
+            f'source folder',
+        )
+        self._run_git(
+            local_path,
+            ['pull', '--ff-only', 'origin', branch_name],
+            f'failed to fast-forward {branch_name} in {repository.id} '
+            f'source folder',
+        )
+
     def publish_review_fix(
         self,
         repository,

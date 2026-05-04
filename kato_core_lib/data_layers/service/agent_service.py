@@ -593,6 +593,113 @@ class AgentService(Service):
 
     # ----- on-demand push / PR (planning UI buttons) -----
 
+    def update_source_for_task(self, task_id: str) -> dict[str, object]:
+        """Push + sync the operator's REPOSITORY_ROOT_PATH clones to the task branch.
+
+        Drives the planning UI's "Update source" button. Pure git
+        plumbing — no AI involvement. Two phases:
+
+        1. ``push_task(task_id)`` — pushes the per-task workspace
+           clone's branch to origin so the remote has the latest
+           commits to pull from.
+        2. For each repository the task touches, locate the
+           corresponding clone under ``REPOSITORY_ROOT_PATH``
+           (the inventory's ``local_path``) and switch it to the
+           task branch via fetch / checkout / ``pull --ff-only``.
+           Refuses to update a source clone that has uncommitted
+           changes — the operator's running system, not a kato
+           scratch space.
+
+        Returns a per-repo summary the UI renders in the toast.
+        """
+        normalized = str(task_id or '').strip()
+        if not normalized:
+            return {
+                'updated': False,
+                'task_id': task_id,
+                'error': 'empty task id',
+            }
+        push_result = self.push_task(normalized)
+        # Even if push partially failed, attempt to update the
+        # source for the repos that DID push — partial success is
+        # still useful (tester can see whatever made it to origin).
+        repos, _branch, task_obj = self._resolve_publish_context(normalized)
+        if not repos:
+            return {
+                'updated': False,
+                'task_id': normalized,
+                'pushed': push_result,
+                'error': 'no workspace context for this task',
+            }
+        updated_repositories: list[str] = []
+        skipped_repositories: list[dict[str, str]] = []
+        failed_repositories: list[dict[str, str]] = []
+        for repository in repos:
+            branch_name = self._repository_service.build_branch_name(
+                task_obj, repository,
+            )
+            # Resolve the SOURCE-side repository (inventory ``local_path``,
+            # i.e. the operator's running-system clone under
+            # REPOSITORY_ROOT_PATH) — NOT the per-task workspace clone.
+            try:
+                source_repo = self._repository_service.get_repository(
+                    repository.id,
+                )
+            except ValueError as exc:
+                skipped_repositories.append({
+                    'repository_id': repository.id,
+                    'reason': str(exc),
+                })
+                continue
+            source_path = str(getattr(source_repo, 'local_path', '') or '').strip()
+            if not source_path:
+                skipped_repositories.append({
+                    'repository_id': repository.id,
+                    'reason': 'inventory entry has no local_path '
+                              '(REPOSITORY_ROOT_PATH not configured?)',
+                })
+                continue
+            try:
+                self._repository_service.update_source_to_task_branch(
+                    source_repo, branch_name,
+                )
+                updated_repositories.append(repository.id)
+                self.logger.info(
+                    'update-source for task %s: %s @ %s now on %s',
+                    normalized, repository.id, source_path, branch_name,
+                )
+            except RuntimeError as exc:
+                # ``update_source_to_task_branch`` raises with a
+                # operator-readable message (dirty tree, fetch
+                # failed, fast-forward refused, etc.). Surface as
+                # one-line warning, no traceback — these are
+                # operator-state issues, not kato bugs.
+                self.logger.warning(
+                    'update-source for task %s failed for repository %s: %s',
+                    normalized, repository.id, exc,
+                )
+                failed_repositories.append({
+                    'repository_id': repository.id,
+                    'error': str(exc),
+                })
+            except Exception as exc:
+                self.logger.exception(
+                    'update-source for task %s crashed in repository %s',
+                    normalized, repository.id,
+                )
+                failed_repositories.append({
+                    'repository_id': repository.id,
+                    'error': str(exc),
+                })
+        return {
+            'updated': bool(updated_repositories),
+            'task_id': normalized,
+            'pushed': push_result,
+            'updated_repositories': updated_repositories,
+            'skipped_repositories': skipped_repositories,
+            'failed_repositories': failed_repositories,
+        }
+
     def push_task(self, task_id: str) -> dict[str, object]:
         """Commit + push the task branch for every repo in its workspace.
 

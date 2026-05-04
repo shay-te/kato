@@ -67,6 +67,20 @@ export async function pushTask(taskId) {
   }
 }
 
+export async function updateTaskSource(taskId) {
+  if (!taskId) { return { ok: false, error: 'no task id' }; }
+  try {
+    const response = await fetch(
+      `/api/sessions/${encodeURIComponent(taskId)}/update-source`,
+      { method: 'POST' },
+    );
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
 export async function finishTask(taskId) {
   if (!taskId) { return { ok: false, error: 'no task id' }; }
   try {

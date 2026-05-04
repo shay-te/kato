@@ -1001,7 +1001,8 @@ body.kato-resizing { user-select: none; cursor: col-resize; }
 }
 
 #session-push,
-#session-pull-request {
+#session-pull-request,
+#session-update-source {
   background: #1e3a8a;
   color: #dbeafe;
   border: 1px solid #2563eb;
@@ -1012,9 +1013,11 @@ body.kato-resizing { user-select: none; cursor: col-resize; }
   flex-shrink: 0;
 }
 #session-push:hover,
-#session-pull-request:hover { background: #2563eb; color: #fff; }
+#session-pull-request:hover,
+#session-update-source:hover { background: #2563eb; color: #fff; }
 #session-push:disabled,
-#session-pull-request:disabled {
+#session-pull-request:disabled,
+#session-update-source:disabled {
   background: #262626;
   border-color: #262626;
   color: #525252;
