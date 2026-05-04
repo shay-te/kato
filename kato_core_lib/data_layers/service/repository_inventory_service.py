@@ -25,6 +25,7 @@ from kato_core_lib.helpers.text_utils import (
     normalized_text,
     text_from_attr,
 )
+from kato_core_lib.validation.repository_denylist import denied_ids
 
 
 class RepositoryIgnoredByConfigError(ValueError):
@@ -82,9 +83,34 @@ class RepositoryInventoryService(Service):
         if self._repositories is None:
             self._repositories = self._load_repositories(self._repositories_config)
         if not self._inventory_validated:
+            self._repositories = self._filter_denied_repositories(self._repositories)
             self._validate_inventory()
             self._inventory_validated = True
         return self._repositories
+
+    def _filter_denied_repositories(self, repositories: list[object]) -> list[object]:
+        """Drop entries whose id appears in ``KATO_REPOSITORY_DENYLIST``.
+
+        Filtering is the last step before validation so it applies to
+        both explicit ``kato.repositories`` config and root-walk
+        discovery. Each removal is logged at WARNING with the repo id —
+        operator needs visible evidence the policy fired, otherwise a
+        missing repo looks like a config bug.
+        """
+        denied = denied_ids()
+        if not denied:
+            return repositories
+        kept: list[object] = []
+        for repository in repositories:
+            repo_id = normalized_lower_text(text_from_attr(repository, 'id'))
+            if repo_id and repo_id in denied:
+                self.logger.warning(
+                    'repository "%s" filtered out by KATO_REPOSITORY_DENYLIST',
+                    repo_id,
+                )
+                continue
+            kept.append(repository)
+        return kept
 
     def validate_connections(self) -> None:
         # Auto-discovery and per-repo git-access checks are deferred to

@@ -6,6 +6,29 @@
 
 Welcome to Kato! This repository is structured as a [`core-lib`](https://shay-te.github.io/core-lib/) application and follows the documented `core-lib` package layout.
 
+> **🛡 Security layers.** Three gates run before any agent touches a
+> repository:
+>
+> - **Repository denylist** (`KATO_REPOSITORY_DENYLIST`) — repos
+>   matched against this list are dropped from kato's inventory at
+>   load time. There is no override; if a repo id is on the denylist,
+>   kato will not see it.
+> - **Pre-execution security scanner** — every per-task workspace
+>   clone is scanned by `detect-secrets`, `bandit`, `safety`, `npm
+>   audit`, and a `.env`-file checker before the agent spawns. Real
+>   secrets / CVEs / dangerous patterns block the task with a ticket
+>   comment.
+> - **Restricted Execution Protocol (REP)** — kato refuses to run
+>   an agent against any repository the operator hasn't explicitly
+>   approved (`./kato approve-repo <id> --remote <url>`). REP is
+>   always on. There is no off switch. New repos start in
+>   `restricted` mode; the operator elevates to `trusted` after
+>   reviewing the first agent run.
+>
+> Combined, these catch the most common breach patterns in
+> small-team codebases — committed `.env` files, vulnerable deps,
+> and misrouted task tags.
+
 ## Why Kato
 
 The name comes from Kato, the Green Hornet's sidekick, famously played by Bruce Lee. That makes it a fitting name for this project: a helper that works alongside the main mission, stays useful in the background, and helps get important work done.

@@ -214,6 +214,35 @@ class KatoCoreLib(CoreLib):
             if self.workspace_manager is not None
             else None
         )
+        # Pre-execution security scanner. Reads its config from the
+        # ``security_scanner`` block; falls back to defaults when the
+        # block is missing so existing operator deployments keep
+        # working without yaml edits.
+        security_scanner_service = self._build_security_scanner_service(open_cfg)
+        # Restricted Execution Protocol gate. Default-on; opt-out via
+        # ``KATO_RESTRICTED_EXECUTION_PROTOCOL_ENABLED=false``. The
+        # service consults a per-operator JSON sidecar at
+        # ``~/.kato/approved-repositories.json`` so first-time agent
+        # runs against a previously-unseen repo require explicit
+        # approval (``./kato approve-repo <id> --remote <url>``).
+        repository_approval_service = self._build_repository_approval_service(open_cfg)
+        # Posture supplier — captures the *current* global posture so
+        # the REP gate can refuse RESTRICTED-mode repos when the
+        # operator runs with weaker-than-required defaults. Read at
+        # gate-time (not boot-time) so an operator who restarts kato
+        # with safer settings doesn't have to also re-instantiate
+        # services to pick up the change.
+        claude_cfg_for_posture = getattr(open_cfg, 'claude', None)
+        bypass_at_boot = bool(
+            getattr(claude_cfg_for_posture, 'bypass_permissions', False)
+            if claude_cfg_for_posture is not None
+            else False
+        )
+        runtime_posture_supplier = self._build_runtime_posture_supplier(
+            security_scanner_service=security_scanner_service,
+            bypass_permissions=bypass_at_boot,
+            docker_mode_on=docker_mode_on,
+        )
         task_preflight_service = TaskPreflightService(
             task_model_access_validator=task_model_access_validator,
             task_service=task_service,
@@ -221,6 +250,9 @@ class KatoCoreLib(CoreLib):
             task_branch_push_validator=task_branch_push_validator,
             task_branch_publishability_validator=task_branch_publishability_validator,
             workspace_provisioner=workspace_provisioner,
+            security_scanner_service=security_scanner_service,
+            repository_approval_service=repository_approval_service,
+            runtime_posture_supplier=runtime_posture_supplier,
         )
         task_failure_handler = TaskFailureHandler(
             task_service=task_service,
@@ -306,6 +338,137 @@ class KatoCoreLib(CoreLib):
             lessons_service=self.lessons_service,
         )
 
+
+    def _build_security_scanner_service(self, open_cfg):
+        """Construct the ``SecurityScannerService`` from operator config.
+
+        Falls through to ``default_config()`` when no ``security_scanner``
+        block is set — keeps deployments that haven't yet adopted the
+        new yaml block working with sane defaults (all runners on,
+        block on critical/high). When the block sets ``enabled: false``,
+        we still construct a service (so the wiring stays uniform) but
+        with no runners — calls to ``scan_workspace`` short-circuit.
+        """
+        from kato_core_lib.data_layers.data.security_finding import Severity
+        from kato_core_lib.data_layers.service.security_scanner_service import (
+            RunnerConfig,
+            SecurityScannerConfig,
+            SecurityScannerService,
+            default_config,
+        )
+
+        scanner_cfg = getattr(open_cfg, 'security_scanner', None)
+        if scanner_cfg is None:
+            # Operator hasn't opted in; default-on with the standard
+            # block-on-critical/high threshold matches the security
+            # posture documented in BYPASS_PROTECTIONS.md.
+            return SecurityScannerService(default_config())
+        enabled = bool(getattr(scanner_cfg, 'enabled', True))
+        block_severities_raw = getattr(scanner_cfg, 'block_on_severity', None)
+        if block_severities_raw is None:
+            block_on_severity = (Severity.CRITICAL, Severity.HIGH)
+        else:
+            block_on_severity = tuple(
+                Severity.from_string(str(s)) for s in block_severities_raw
+            )
+        # Honour per-runner enable flags. We rebuild the runner list
+        # off the default set, dropping anything turned off.
+        runner_toggles = getattr(scanner_cfg, 'runners', None)
+        toggles = {}
+        if runner_toggles is not None:
+            for name in (
+                'env_file', 'detect_secrets', 'bandit', 'safety', 'npm_audit',
+            ):
+                toggles[name.replace('_', '-')] = bool(
+                    getattr(runner_toggles, name, True),
+                )
+        timeouts = getattr(scanner_cfg, 'timeouts', None)
+        timeout_overrides = {}
+        if timeouts is not None:
+            for kato_name, runner_name in (
+                ('secrets', 'detect-secrets'),
+                ('dependencies', 'safety'),
+                ('code_patterns', 'bandit'),
+            ):
+                value = getattr(timeouts, kato_name, None)
+                if value is not None:
+                    timeout_overrides[runner_name] = int(value)
+            # ``dependencies`` covers both safety + npm-audit.
+            if 'safety' in timeout_overrides:
+                timeout_overrides.setdefault(
+                    'npm-audit', timeout_overrides['safety'],
+                )
+        runners = []
+        for runner in default_config().runners:
+            if not toggles.get(runner.name, True):
+                continue
+            runners.append(RunnerConfig(
+                name=runner.name,
+                fn=runner.fn,
+                timeout_seconds=timeout_overrides.get(
+                    runner.name, runner.timeout_seconds,
+                ),
+                enabled=True,
+            ))
+        config = SecurityScannerConfig(
+            enabled=enabled,
+            block_on_severity=block_on_severity,
+            runners=runners,
+        )
+        return SecurityScannerService(config)
+
+    @staticmethod
+    def _build_runtime_posture_supplier(
+        *,
+        security_scanner_service,
+        bypass_permissions: bool,
+        docker_mode_on: bool,
+    ):
+        """Return a ``() -> RuntimePosture`` callable for the REP gate.
+
+        Snapshot of the boot-time posture knobs; the gate reads it
+        every task so a kato restart with stricter env vars takes
+        effect on the next scan tick.
+
+        ``security_scanner_service`` may be ``None`` in legacy
+        deployments — in that case the scanner-blocks-at-medium check
+        is treated as failing (the operator opted out of the scanner,
+        so we cannot guarantee MEDIUM-severity blocks).
+        """
+        from kato_core_lib.data_layers.data.security_finding import Severity
+        from kato_core_lib.data_layers.service.repository_approval_service import (
+            RuntimePosture,
+        )
+
+        def supplier() -> RuntimePosture:
+            scanner_blocks_at_medium = False
+            if security_scanner_service is not None:
+                config = getattr(security_scanner_service, '_config', None)
+                if config is not None:
+                    block_list = getattr(config, 'block_on_severity', ())
+                    scanner_blocks_at_medium = Severity.MEDIUM in block_list
+            return RuntimePosture(
+                bypass_permissions=bool(bypass_permissions),
+                docker_mode_on=bool(docker_mode_on),
+                scanner_blocks_at_medium=bool(scanner_blocks_at_medium),
+            )
+
+        return supplier
+
+    def _build_repository_approval_service(self, open_cfg):
+        """Construct the ``RepositoryApprovalService`` for REP.
+
+        REP is always on — there is no toggle. The only knob is
+        ``storage_path``, sourced from yaml or
+        ``KATO_APPROVED_REPOSITORIES_PATH`` (used by tests).
+        """
+        from kato_core_lib.data_layers.service.repository_approval_service import (
+            RepositoryApprovalService,
+        )
+
+        rep_cfg = getattr(open_cfg, 'restricted_execution', None)
+        storage_path = getattr(rep_cfg, 'storage_path', None) if rep_cfg is not None else None
+        return RepositoryApprovalService(storage_path=storage_path or None)
 
     @staticmethod
     def _resolve_ticket_platform_config(

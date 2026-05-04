@@ -49,6 +49,27 @@ kato:
     sender:
       name: ${oc.env:KATO_COMPLETION_EMAIL_SENDER_NAME,"Kato"}
       email: ${oc.env:KATO_COMPLETION_EMAIL_SENDER_EMAIL,"noreply@example.com"}
+  # Pre-execution security scanner. Walks the per-task workspace
+  # before the agent runs, looking for committed secrets, vulnerable
+  # dependencies, and dangerous code patterns. Blocks the task on
+  # CRITICAL/HIGH findings (configurable).
+  security_scanner:
+    enabled: ${oc.decode:${oc.env:KATO_SECURITY_SCANNER_ENABLED,"true"}}
+    # Severities that abort the task. Operators can tighten to also
+    # block on MEDIUM, or loosen to only CRITICAL.
+    block_on_severity:
+      - critical
+      - high
+    runners:
+      env_file: ${oc.decode:${oc.env:KATO_SECURITY_RUNNER_ENV_FILE,"true"}}
+      detect_secrets: ${oc.decode:${oc.env:KATO_SECURITY_RUNNER_DETECT_SECRETS,"true"}}
+      bandit: ${oc.decode:${oc.env:KATO_SECURITY_RUNNER_BANDIT,"true"}}
+      safety: ${oc.decode:${oc.env:KATO_SECURITY_RUNNER_SAFETY,"true"}}
+      npm_audit: ${oc.decode:${oc.env:KATO_SECURITY_RUNNER_NPM_AUDIT,"true"}}
+    timeouts:
+      secrets: ${oc.decode:${oc.env:KATO_SECURITY_TIMEOUT_SECRETS,"60"}}
+      dependencies: ${oc.decode:${oc.env:KATO_SECURITY_TIMEOUT_DEPENDENCIES,"120"}}
+      code_patterns: ${oc.decode:${oc.env:KATO_SECURITY_TIMEOUT_CODE_PATTERNS,"120"}}
   youtrack:
     base_url: ${core_lib.youtrack_core_lib.base_url}
     token: ${core_lib.youtrack_core_lib.token}

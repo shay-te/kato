@@ -37,6 +37,9 @@ class TaskPreflightService(Service):
         task_branch_push_validator: TaskBranchPushValidator,
         task_branch_publishability_validator: TaskBranchPublishabilityValidator,
         workspace_provisioner: Callable[[Task, list], list] | None = None,
+        security_scanner_service=None,
+        repository_approval_service=None,
+        runtime_posture_supplier: Callable[[], object] | None = None,
         logger=None,
     ) -> None:
         self._task_model_access_validator = task_model_access_validator
@@ -50,6 +53,26 @@ class TaskPreflightService(Service):
         # Plumbing-only here — agent_service owns the actual workspace
         # logic so this service stays free of WorkspaceManager coupling.
         self._workspace_provisioner = workspace_provisioner
+        # Optional pre-execution security scanner. When wired, it runs
+        # after workspace clones land on disk and before any prepare /
+        # branch / push step. ``CRITICAL``/``HIGH`` findings raise
+        # ``SecurityScanBlocked`` which the existing failure-handler
+        # chain catches; ``MEDIUM``/``LOW`` findings are logged and
+        # the task proceeds.
+        self._security_scanner_service = security_scanner_service
+        # Restricted Execution Protocol gate. Refuses tasks that
+        # touch repos the operator hasn't explicitly approved. Runs
+        # right after repository resolution so unapproved repos never
+        # get cloned to the per-task workspace. There is no off
+        # switch — REP is a required gate, not an optional one.
+        self._repository_approval_service = repository_approval_service
+        # Optional ``() -> RuntimePosture`` callable. When wired, the
+        # REP gate also checks that RESTRICTED-mode approved repos
+        # never run with a weaker-than-required posture (docker-off,
+        # bypass-on, lenient scanner threshold). Called at gate time
+        # so flipping env vars and restarting kato takes effect on
+        # the next task without reinstantiating this service.
+        self._runtime_posture_supplier = runtime_posture_supplier
         self._active_blocking_comment_log_state: dict[str, str] = {}
         self.logger = logger or configure_logger(self.__class__.__name__)
 
@@ -178,11 +201,31 @@ class TaskPreflightService(Service):
         )
         if repositories is None:
             return None
+        # Restricted Execution Protocol — refuse the task before any
+        # workspace clone or agent spawn if the operator has not
+        # explicitly approved every repo this task touches. Failure
+        # handler posts the operator-facing comment + moves the
+        # ticket back to Open via the existing chain.
+        if not self._enforce_restricted_execution_protocol(
+            task, repositories,
+            failure_handler=repository_resolution_failure_handler,
+        ):
+            return None
         # Workspace mode: clone per-task isolated copies before any
         # ``prepare`` runs, so prepare/branch/push all operate on the
         # task's own checkout, not a shared local clone. No-op when
         # workspace_manager isn't wired (legacy single-clone setups).
         repositories = self._provision_workspace_clones(task, repositories)
+        # Pre-execution security scan. Runs after workspace clones land
+        # on disk (so files exist) and before any branch/prepare logic
+        # (so blocking aborts cleanly). On block, raises
+        # ``SecurityScanBlocked`` and the next failure handler in the
+        # chain catches it; on warn, logs and proceeds.
+        if not self._run_security_scan(
+            task, repositories,
+            failure_handler=repository_preparation_failure_handler,
+        ):
+            return None
         repositories = self._prepare_task_repositories_for_start(
             task,
             repositories,
@@ -242,6 +285,192 @@ class TaskPreflightService(Service):
                 task.id,
             )
             return repositories
+
+    def _enforce_restricted_execution_protocol(
+        self,
+        task: Task,
+        repositories: list[object],
+        *,
+        failure_handler: Callable[[Task, Exception, PreparedTaskContext | None], None] | None = None,
+    ) -> bool:
+        """Refuse the task if any repository lacks an approval record.
+
+        Two-stage gate:
+
+        1. Refuse if any repo isn't approved (``RestrictedExecutionRefusal``).
+        2. If every repo IS approved, refuse if any RESTRICTED-mode
+           approval is paired with a weaker-than-required global
+           posture (``RestrictedModePostureViolation``). Operators
+           opt out per-repo by elevating to TRUSTED after review.
+
+        Returns ``True`` to proceed, ``False`` to abort. No-op when
+        the approval service is not wired or REP is globally
+        disabled.
+        """
+        from kato_core_lib.data_layers.service.repository_approval_service import (
+            RestrictedExecutionRefusal,
+            RestrictedModePostureViolation,
+            restricted_mode_posture_violations,
+        )
+
+        if self._repository_approval_service is None:
+            return True
+        if not repositories:
+            return True
+        unapproved = self._repository_approval_service.unapproved_repository_ids(repositories)
+        if unapproved:
+            self._log_task_step(
+                task.id,
+                'restricted execution protocol: refusing task — '
+                'unapproved repository id(s): %s',
+                ', '.join(unapproved),
+            )
+            exc = RestrictedExecutionRefusal(unapproved)
+            if failure_handler is not None:
+                failure_handler(task, exc, None)
+            else:
+                self.logger.error(
+                    'restricted execution protocol refused task %s but no '
+                    'failure handler is wired; aborting silently',
+                    task.id,
+                )
+            return False
+
+        # Posture gate. Skipped when no supplier is wired (tests /
+        # legacy callers that don't care about runtime posture).
+        if self._runtime_posture_supplier is None:
+            return True
+        restricted_ids = self._repository_approval_service.restricted_mode_repository_ids(
+            repositories,
+        )
+        if not restricted_ids:
+            return True
+        try:
+            posture = self._runtime_posture_supplier()
+        except Exception:
+            self.logger.exception(
+                'failed to read runtime posture for task %s; '
+                'allowing task to proceed (REP posture gate is '
+                'fail-open by design — the approval gate above '
+                'already refused unapproved repos)',
+                task.id,
+            )
+            return True
+        violations = restricted_mode_posture_violations(posture)
+        if not violations:
+            return True
+        self._log_task_step(
+            task.id,
+            'restricted execution protocol: refusing task — '
+            'restricted-mode repo(s) %s cannot run under current '
+            'posture: %s',
+            ', '.join(restricted_ids),
+            '; '.join(violations),
+        )
+        exc = RestrictedModePostureViolation(restricted_ids, violations)
+        if failure_handler is not None:
+            failure_handler(task, exc, None)
+        else:
+            self.logger.error(
+                'restricted execution protocol refused task %s on '
+                'posture grounds but no failure handler is wired; '
+                'aborting silently',
+                task.id,
+            )
+        return False
+
+    def _run_security_scan(
+        self,
+        task: Task,
+        repositories: list[object],
+        *,
+        failure_handler: Callable[[Task, Exception, PreparedTaskContext | None], None] | None = None,
+    ) -> bool:
+        """Run the security scanner against every per-repo workspace clone.
+
+        Returns ``True`` to proceed, ``False`` to abort. Aborts when
+        the aggregated report is blocking (CRITICAL/HIGH at default
+        threshold). MEDIUM/LOW findings produce a one-line log warning
+        but proceed.
+
+        The scanner is workspace-path-based — we run it once per repo
+        clone and union the reports. Running it once over the whole
+        ``~/.kato/workspaces/<task_id>/`` parent would also work, but
+        per-repo gives us cleaner per-repo paths in the findings list,
+        which matters when the operator scans the resulting ticket
+        comment.
+
+        No-op when no scanner is wired or no repositories were
+        resolved (e.g. inventory-less single-clone setups).
+        """
+        from kato_core_lib.data_layers.service.security_scanner_service import (
+            SecurityScanBlocked,
+        )
+
+        if self._security_scanner_service is None:
+            return True
+        if not getattr(self._security_scanner_service, 'enabled', False):
+            return True
+        if not repositories:
+            return True
+        merged_findings: list = []
+        merged_runner_errors: list = []
+        block_threshold = None
+        for repository in repositories:
+            workspace_path = str(getattr(repository, 'local_path', '') or '').strip()
+            if not workspace_path:
+                continue
+            try:
+                report = self._security_scanner_service.scan_workspace(workspace_path)
+            except Exception:
+                self.logger.exception(
+                    'security scan crashed for task %s repository %s; '
+                    'allowing task to proceed (infrastructure flake, '
+                    'not a security finding)',
+                    task.id, getattr(repository, 'id', '?'),
+                )
+                continue
+            merged_findings.extend(report.findings)
+            merged_runner_errors.extend(report.runner_errors)
+            block_threshold = report.block_threshold
+        if block_threshold is None:
+            return True
+        from kato_core_lib.data_layers.data.security_finding import ScanReport
+        aggregate = ScanReport(
+            findings=tuple(merged_findings),
+            blocking=any(
+                f.severity.is_at_least(block_threshold) for f in merged_findings
+            ),
+            block_threshold=block_threshold,
+            runner_errors=tuple(merged_runner_errors),
+        )
+        if not aggregate.blocking:
+            if aggregate.findings:
+                self._log_task_step(
+                    task.id,
+                    'security scan: %d non-blocking finding(s); proceeding',
+                    len(aggregate.findings),
+                )
+            return True
+        # Blocking: raise into the configured failure handler so the
+        # ticket comment + repo-restore + move-to-Open all flow through
+        # the existing error path.
+        self._log_task_step(
+            task.id,
+            'security scan: blocking on %d critical/high finding(s)',
+            sum(1 for f in aggregate.findings if f.severity.is_at_least(block_threshold)),
+        )
+        exc = SecurityScanBlocked(aggregate)
+        if failure_handler is not None:
+            failure_handler(task, exc, None)
+        else:
+            # No handler wired (tests / legacy callers) — just log.
+            self.logger.error(
+                'security scan blocked task %s but no failure handler '
+                'is wired; aborting silently',
+                task.id,
+            )
+        return False
 
     def _resolve_task_repositories(
         self,

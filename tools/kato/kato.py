@@ -117,6 +117,22 @@ _TARGETS: dict[str, tuple[str, bool, list[str]]] = {
             'sys.exit(subprocess.call(login_command()))',
         ],
     ),
+    'approve-repo': (
+        'Approve a repository for kato use (REP). '
+        'Args: <repo_id> --remote <url> [--trusted]',
+        True,
+        ['scripts/approve_repository.py', 'approve'],
+    ),
+    'revoke-repo': (
+        'Remove an entry from the REP approval list. Args: <repo_id>',
+        True,
+        ['scripts/approve_repository.py', 'revoke'],
+    ),
+    'list-approved-repos': (
+        'List repositories on the REP approval list',
+        True,
+        ['scripts/approve_repository.py', 'list'],
+    ),
 }
 
 

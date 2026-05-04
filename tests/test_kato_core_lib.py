@@ -64,6 +64,15 @@ class KatoCoreLibTests(unittest.TestCase):
             PullRequestFields.DESTINATION_BRANCH: 'main',
         }
 
+        # The Restricted Execution Protocol gate would refuse the
+        # synthetic test repos because they're not on any approval
+        # sidecar. These tests cover workflow routing, not REP, so
+        # patch the service to a stub that pretends every repo is
+        # already approved.
+        approval_service_stub = Mock()
+        approval_service_stub.unapproved_repository_ids.return_value = []
+        approval_service_stub.restricted_mode_repository_ids.return_value = []
+
         with patch(
             'kato_core_lib.kato_core_lib.EmailCoreLib'
         ) as mock_email_core_lib_cls, patch(
@@ -75,6 +84,10 @@ class KatoCoreLibTests(unittest.TestCase):
         ) as mock_kato_client_cls, patch(
             'kato_core_lib.kato_core_lib.RepositoryService',
             return_value=repository_service,
+        ), patch.object(
+            KatoCoreLib,
+            '_build_repository_approval_service',
+            return_value=approval_service_stub,
         ):
             app = KatoCoreLib(cfg)
 
@@ -184,6 +197,9 @@ class KatoCoreLibTests(unittest.TestCase):
             task_branch_push_validator=ANY,
             task_branch_publishability_validator=ANY,
             workspace_provisioner=ANY,
+            security_scanner_service=ANY,
+            repository_approval_service=ANY,
+            runtime_posture_supplier=ANY,
         )
         mock_task_failure_handler_cls.assert_called_once_with(
             task_service=mock_task_service_cls.return_value,
