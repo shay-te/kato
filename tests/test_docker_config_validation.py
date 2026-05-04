@@ -29,8 +29,8 @@ class TestDockerConfigValidation(unittest.TestCase):
     def test_validate_environment_with_minimal_valid_config(self):
         """Test validation with minimal but valid configuration."""
         # Set up minimal valid environment
-        os.environ['YOUTRACK_BASE_URL'] = 'https://example.youtrack.cloud'
-        os.environ['YOUTRACK_TOKEN'] = 'test-token'
+        os.environ['YOUTRACK_API_BASE_URL'] = 'https://example.youtrack.cloud'
+        os.environ['YOUTRACK_API_TOKEN'] = 'test-token'
         os.environ['YOUTRACK_PROJECT'] = 'TEST'
         os.environ['YOUTRACK_ASSIGNEE'] = 'developer'
         os.environ['KATO_ISSUE_PLATFORM'] = 'youtrack'
@@ -49,8 +49,8 @@ class TestDockerConfigValidation(unittest.TestCase):
     def test_validate_environment_missing_required_variables(self):
         """Test validation fails when required variables are missing."""
         # Only set partial environment
-        os.environ['YOUTRACK_BASE_URL'] = 'https://example.youtrack.cloud'
-        # Missing YOUTRACK_TOKEN, YOUTRACK_PROJECT
+        os.environ['YOUTRACK_API_BASE_URL'] = 'https://example.youtrack.cloud'
+        # Missing YOUTRACK_API_TOKEN, YOUTRACK_PROJECT
         
         # Should raise ValueError since required fields are missing
         with self.assertRaises(ValueError):

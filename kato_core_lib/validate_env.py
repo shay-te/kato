@@ -19,7 +19,7 @@ from kato_core_lib.helpers.text_utils import (
 
 
 TRUE_VALUES = {'1', 'true', 'yes', 'on'}
-GITHUB_TOKEN_KEYS = ('GITHUB_API_TOKEN',)
+GITHUB_TOKEN_KEYS = ('GITHUB_API_TOKEN', 'GITHUB_API_TOKEN')
 GITLAB_TOKEN_KEYS = ('GITLAB_API_TOKEN',)
 BITBUCKET_TOKEN_KEYS = ('BITBUCKET_API_TOKEN',)
 BITBUCKET_REPOSITORY_REQUIRED_KEYS = (
@@ -41,33 +41,33 @@ OPENHANDS_REQUIRED_AGENT_KEYS = (
 SUPPORTED_AGENT_BACKENDS = ('openhands', 'claude')
 REQUIRED_AGENT_KEYS_BY_PLATFORM = {
     'youtrack': (
-        'YOUTRACK_BASE_URL',
-        'YOUTRACK_TOKEN',
+        'YOUTRACK_API_BASE_URL',
+        'YOUTRACK_API_TOKEN',
         'YOUTRACK_PROJECT',
         'YOUTRACK_ASSIGNEE',
     ),
     'jira': (
-        'JIRA_BASE_URL',
-        'JIRA_TOKEN',
+        'JIRA_API_BASE_URL',
+        'JIRA_API_TOKEN',
         'JIRA_PROJECT',
         'JIRA_ASSIGNEE',
     ),
     'github': (
-        'GITHUB_ISSUES_BASE_URL',
-        'GITHUB_ISSUES_OWNER',
-        'GITHUB_ISSUES_REPO',
-        'GITHUB_ISSUES_ASSIGNEE',
+        'GITHUB_API_BASE_URL',
+        'GITHUB_OWNER',
+        'GITHUB_REPO',
+        'GITHUB_ASSIGNEE',
     ),
     'gitlab': (
-        'GITLAB_ISSUES_BASE_URL',
-        'GITLAB_ISSUES_PROJECT',
-        'GITLAB_ISSUES_ASSIGNEE',
+        'GITLAB_API_BASE_URL',
+        'GITLAB_PROJECT',
+        'GITLAB_ASSIGNEE',
     ),
     'bitbucket': (
-        'BITBUCKET_ISSUES_BASE_URL',
-        'BITBUCKET_ISSUES_WORKSPACE',
-        'BITBUCKET_ISSUES_REPO_SLUG',
-        'BITBUCKET_ISSUES_ASSIGNEE',
+        'BITBUCKET_API_BASE_URL',
+        'BITBUCKET_WORKSPACE',
+        'BITBUCKET_REPO_SLUG',
+        'BITBUCKET_ASSIGNEE',
         'BITBUCKET_API_EMAIL',
     ),
 }

@@ -132,27 +132,27 @@ class DeploymentFilesTests(unittest.TestCase):
             compose_text,
         )
         self.assertIn(
-            'GITHUB_ISSUES_ISSUE_STATES: ${GITHUB_ISSUES_ISSUE_STATES:-open}',
+            'GITHUB_ISSUE_STATES: ${GITHUB_ISSUE_STATES:-open}',
             compose_text,
         )
         self.assertIn(
-            'GITHUB_ISSUES_PROGRESS_STATE: ${GITHUB_ISSUES_PROGRESS_STATE:-In Progress}',
+            'GITHUB_PROGRESS_STATE: ${GITHUB_PROGRESS_STATE:-In Progress}',
             compose_text,
         )
         self.assertIn(
-            'GITLAB_ISSUES_ISSUE_STATES: ${GITLAB_ISSUES_ISSUE_STATES:-opened}',
+            'GITLAB_ISSUE_STATES: ${GITLAB_ISSUE_STATES:-opened}',
             compose_text,
         )
         self.assertIn(
-            'GITLAB_ISSUES_PROGRESS_STATE: ${GITLAB_ISSUES_PROGRESS_STATE:-In Progress}',
+            'GITLAB_PROGRESS_STATE: ${GITLAB_PROGRESS_STATE:-In Progress}',
             compose_text,
         )
         self.assertIn(
-            'BITBUCKET_ISSUES_ISSUE_STATES: ${BITBUCKET_ISSUES_ISSUE_STATES:-new,open}',
+            'BITBUCKET_ISSUE_STATES: ${BITBUCKET_ISSUE_STATES:-new,open}',
             compose_text,
         )
         self.assertIn(
-            'BITBUCKET_ISSUES_PROGRESS_STATE: ${BITBUCKET_ISSUES_PROGRESS_STATE:-open}',
+            'BITBUCKET_PROGRESS_STATE: ${BITBUCKET_PROGRESS_STATE:-open}',
             compose_text,
         )
         self.assertIn('GITHUB_API_TOKEN: ${GITHUB_API_TOKEN:-}', compose_text)
@@ -257,30 +257,30 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('KATO_COMPLETION_EMAIL_ENABLED=', env_example_text)
         self.assertIn('KATO_AGENT_SERVER_IMAGE_REPOSITORY=', env_example_text)
         self.assertIn('KATO_AGENT_SERVER_IMAGE_TAG=', env_example_text)
-        self.assertLess(env_example_text.index('KATO_ISSUE_PLATFORM='), env_example_text.index('YOUTRACK_BASE_URL='))
-        self.assertLess(env_example_text.index('KATO_AGENT_SERVER_IMAGE_TAG='), env_example_text.index('YOUTRACK_BASE_URL='))
+        self.assertLess(env_example_text.index('KATO_ISSUE_PLATFORM='), env_example_text.index('YOUTRACK_API_BASE_URL='))
+        self.assertLess(env_example_text.index('KATO_AGENT_SERVER_IMAGE_TAG='), env_example_text.index('YOUTRACK_API_BASE_URL='))
         self.assertIn('REPOSITORY_ROOT_PATH=', env_example_text)
-        self.assertIn('JIRA_BASE_URL=', env_example_text)
-        self.assertIn('JIRA_TOKEN=', env_example_text)
+        self.assertIn('JIRA_API_BASE_URL=', env_example_text)
+        self.assertIn('JIRA_API_TOKEN=', env_example_text)
         self.assertIn('YOUTRACK_PROGRESS_STATE=', env_example_text)
         self.assertIn('YOUTRACK_ISSUE_STATES=', env_example_text)
         self.assertIn('YOUTRACK_CORE_LIB_MAX_RETRIES=', env_example_text)
         self.assertIn('JIRA_PROGRESS_STATE=', env_example_text)
         self.assertIn('JIRA_ISSUE_STATES=', env_example_text)
-        self.assertIn('GITHUB_ISSUES_BASE_URL=', env_example_text)
+        self.assertIn('GITHUB_API_BASE_URL=', env_example_text)
         self.assertIn('GITHUB_API_TOKEN=', env_example_text)
-        self.assertIn('GITHUB_ISSUES_PROGRESS_STATE=', env_example_text)
-        self.assertIn('GITHUB_ISSUES_ISSUE_STATES=', env_example_text)
-        self.assertIn('GITLAB_ISSUES_BASE_URL=', env_example_text)
+        self.assertIn('GITHUB_PROGRESS_STATE=', env_example_text)
+        self.assertIn('GITHUB_ISSUE_STATES=', env_example_text)
+        self.assertIn('GITLAB_API_BASE_URL=', env_example_text)
         self.assertIn('GITLAB_API_TOKEN=', env_example_text)
-        self.assertIn('GITLAB_ISSUES_PROGRESS_STATE=', env_example_text)
-        self.assertIn('GITLAB_ISSUES_ISSUE_STATES=', env_example_text)
-        self.assertIn('BITBUCKET_ISSUES_BASE_URL=', env_example_text)
+        self.assertIn('GITLAB_PROGRESS_STATE=', env_example_text)
+        self.assertIn('GITLAB_ISSUE_STATES=', env_example_text)
+        self.assertIn('BITBUCKET_API_BASE_URL=', env_example_text)
         self.assertIn('BITBUCKET_API_TOKEN=', env_example_text)
         self.assertIn('BITBUCKET_USERNAME=', env_example_text)
         self.assertIn('BITBUCKET_API_EMAIL=', env_example_text)
-        self.assertIn('BITBUCKET_ISSUES_PROGRESS_STATE=', env_example_text)
-        self.assertIn('BITBUCKET_ISSUES_ISSUE_STATES=', env_example_text)
+        self.assertIn('BITBUCKET_PROGRESS_STATE=', env_example_text)
+        self.assertIn('BITBUCKET_ISSUE_STATES=', env_example_text)
         self.assertIn('OPENHANDS_BASE_URL=', env_example_text)
         self.assertIn('OPENHANDS_SKIP_TESTING=', env_example_text)
         self.assertIn('OPENHANDS_TESTING_CONTAINER_ENABLED=', env_example_text)

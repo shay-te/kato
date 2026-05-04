@@ -1,7 +1,7 @@
 # @package core_lib
 youtrack_core_lib:
-    base_url: ${oc.env:YOUTRACK_BASE_URL,"https://your-company.youtrack.cloud"}
-    token: ${oc.env:YOUTRACK_TOKEN,""}
+    base_url: ${oc.env:YOUTRACK_API_BASE_URL,"https://your-company.youtrack.cloud"}
+    token: ${oc.env:YOUTRACK_API_TOKEN,""}
     project: ${oc.env:YOUTRACK_PROJECT,""}
     assignee: ${oc.env:YOUTRACK_ASSIGNEE,"me"}
     progress_state_field: ${oc.env:YOUTRACK_PROGRESS_STATE_FIELD,"State"}

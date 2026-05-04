@@ -69,7 +69,7 @@ The following protections do not exist in kato today. Operators who need them mu
 - **Network isolation for the agent.** The agent has the same network reach as the kato process — DNS, outbound HTTP(S), SSH to git remotes, anything else.
 - **Filesystem sandboxing.** The agent can read anything the kato process can read. That includes `~/.ssh/`, `~/.aws/`, `~/.npmrc`, `.env` files outside the workspace, and any file the operator's user has access to.
 - **Per-task containerization.** Each task is isolated by *folder*, not by *container*. A successful escape from the working-directory convention reaches the host.
-- **Secret-scope reduction.** Tokens passed via env vars (YOUTRACK_TOKEN, GITHUB_API_TOKEN, JIRA_TOKEN, ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, etc.) are visible to the agent backend's environment. There is no token-vending layer that hands the agent narrower-scope credentials.
+- **Secret-scope reduction.** Tokens passed via env vars (YOUTRACK_API_TOKEN, GITHUB_API_TOKEN, JIRA_API_TOKEN, ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, etc.) are visible to the agent backend's environment. There is no token-vending layer that hands the agent narrower-scope credentials.
 - **Audit trail beyond stdout/stderr.** Kato logs to its configured logger. There is no tamper-resistant audit log.
 - **Compliance properties.** Kato makes no claims of SOC 2, HIPAA, GDPR, ISO 27001, FedRAMP, or any other compliance posture. If your use case requires one, you must add the controls yourself.
 

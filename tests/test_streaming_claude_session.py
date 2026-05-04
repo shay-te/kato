@@ -318,15 +318,27 @@ class StreamingClaudeSessionDockerModeTests(unittest.TestCase):
         self.assertFalse(session._docker_mode_on)
 
     def test_docker_mode_off_does_not_append_sandbox_addendum(self) -> None:
+        from kato_core_lib.sandbox.system_prompt import (
+            SANDBOX_SYSTEM_PROMPT_ADDENDUM,
+            WORKSPACE_SCOPE_ADDENDUM,
+        )
+
         session = StreamingClaudeSession(
             task_id='PROJ-1',
             docker_mode_on=False,
         )
         cmd = session._build_command()
-        self.assertNotIn('--append-system-prompt', cmd)
+        # Workspace addendum is always appended; sandbox is only added in docker mode.
+        self.assertIn('--append-system-prompt', cmd)
+        idx = cmd.index('--append-system-prompt')
+        self.assertEqual(cmd[idx + 1], WORKSPACE_SCOPE_ADDENDUM)
+        self.assertNotIn(SANDBOX_SYSTEM_PROMPT_ADDENDUM, cmd[idx + 1])
 
     def test_docker_mode_on_appends_sandbox_addendum(self) -> None:
-        from kato_core_lib.sandbox.system_prompt import SANDBOX_SYSTEM_PROMPT_ADDENDUM
+        from kato_core_lib.sandbox.system_prompt import (
+            SANDBOX_SYSTEM_PROMPT_ADDENDUM,
+            WORKSPACE_SCOPE_ADDENDUM,
+        )
 
         session = StreamingClaudeSession(
             task_id='PROJ-1',
@@ -335,7 +347,10 @@ class StreamingClaudeSessionDockerModeTests(unittest.TestCase):
         cmd = session._build_command()
         self.assertIn('--append-system-prompt', cmd)
         idx = cmd.index('--append-system-prompt')
-        self.assertEqual(cmd[idx + 1], SANDBOX_SYSTEM_PROMPT_ADDENDUM)
+        self.assertEqual(
+            cmd[idx + 1],
+            f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{SANDBOX_SYSTEM_PROMPT_ADDENDUM}',
+        )
 
 
 class StreamingClaudeSessionCredentialOutputScanTests(unittest.TestCase):

@@ -26,6 +26,25 @@ around the agent, not what the agent is allowed to do.
 from __future__ import annotations
 
 
+# Always appended (independent of docker mode). Targets a specific failure
+# mode we've observed: Claude running ``find /`` / ``grep -r /`` / ``find ~``
+# style whole-filesystem scans when looking for something it could trivially
+# find under the working directory. These commands take many minutes to run
+# (or never terminate) and trigger kato's stall detector while making no
+# progress on the task.
+WORKSPACE_SCOPE_ADDENDUM = (
+    '# Workspace scope\n'
+    '\n'
+    'Scope all filesystem search to the working directory tree. Do not run\n'
+    'whole-filesystem scans like ``find /``, ``find ~``, ``grep -r /``,\n'
+    "``locate``, or ``mdfind`` — they don't find what you need (the relevant\n"
+    'code is in the working directory), they take many minutes to run, and\n'
+    "they trigger the kato stall detector. Use ``rg`` / ``grep`` / ``find``\n"
+    "from ``.`` instead. If you genuinely need something outside the working\n"
+    "directory, ask in the reply rather than scanning blindly.\n"
+)
+
+
 SANDBOX_SYSTEM_PROMPT_ADDENDUM = (
     '# Sandboxed execution environment\n'
     '\n'
@@ -110,8 +129,7 @@ def compose_system_prompt(
     ``--append-system-prompt`` flag entirely.
     """
     arch = architecture_doc or ''
+    parts = [p for p in (arch, WORKSPACE_SCOPE_ADDENDUM) if p]
     if docker_mode_on:
-        if arch:
-            return f'{arch}\n\n{SANDBOX_SYSTEM_PROMPT_ADDENDUM}'
-        return SANDBOX_SYSTEM_PROMPT_ADDENDUM
-    return arch
+        parts.append(SANDBOX_SYSTEM_PROMPT_ADDENDUM)
+    return '\n\n'.join(parts)

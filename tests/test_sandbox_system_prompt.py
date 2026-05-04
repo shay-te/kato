@@ -1,11 +1,10 @@
 """Unit tests for ``kato.sandbox.system_prompt``.
 
-Locks the four-state composition contract:
+Composition contract:
 
-  * docker off, no architecture doc -> ``''``
-  * docker off, architecture doc    -> the architecture doc verbatim
-  * docker on,  no architecture doc -> the addendum verbatim
-  * docker on,  architecture doc    -> arch + blank line + addendum
+  * Workspace-scope addendum is always appended (independent of docker mode)
+  * Sandbox addendum is appended only when docker is on
+  * Architecture doc, when present, comes first (operator content not buried)
 
 Plus a content lock on each load-bearing claim in the addendum so a
 silent reword can't happen without the test failing first. The wording
@@ -19,51 +18,68 @@ import unittest
 
 from kato_core_lib.sandbox.system_prompt import (
     SANDBOX_SYSTEM_PROMPT_ADDENDUM,
+    WORKSPACE_SCOPE_ADDENDUM,
     compose_system_prompt,
 )
 
 
 class ComposeSystemPromptTests(unittest.TestCase):
-    def test_off_with_no_arch_doc_returns_empty(self) -> None:
+    def test_off_with_no_arch_doc_returns_workspace_addendum(self) -> None:
         self.assertEqual(
             compose_system_prompt('', docker_mode_on=False),
-            '',
+            WORKSPACE_SCOPE_ADDENDUM,
         )
 
-    def test_off_with_arch_doc_returns_arch_verbatim(self) -> None:
+    def test_off_with_arch_doc_joins_arch_then_workspace(self) -> None:
         arch = 'Architecture: services A, B, C with kafka in between.'
+        result = compose_system_prompt(arch, docker_mode_on=False)
+        self.assertTrue(result.startswith(arch))
+        self.assertIn(WORKSPACE_SCOPE_ADDENDUM, result)
+        self.assertEqual(result, f'{arch}\n\n{WORKSPACE_SCOPE_ADDENDUM}')
+
+    def test_on_with_no_arch_doc_appends_workspace_then_sandbox(self) -> None:
+        result = compose_system_prompt('', docker_mode_on=True)
         self.assertEqual(
-            compose_system_prompt(arch, docker_mode_on=False),
-            arch,
+            result,
+            f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{SANDBOX_SYSTEM_PROMPT_ADDENDUM}',
         )
 
-    def test_on_with_no_arch_doc_returns_addendum_verbatim(self) -> None:
-        self.assertEqual(
-            compose_system_prompt('', docker_mode_on=True),
-            SANDBOX_SYSTEM_PROMPT_ADDENDUM,
-        )
-
-    def test_on_with_arch_doc_joins_with_blank_line(self) -> None:
+    def test_on_with_arch_doc_joins_arch_workspace_sandbox(self) -> None:
         arch = 'Architecture: services A, B, C with kafka in between.'
         result = compose_system_prompt(arch, docker_mode_on=True)
         # Architecture comes first so the operator-authored content is
         # not buried below boilerplate.
         self.assertTrue(result.startswith(arch))
         self.assertTrue(result.endswith(SANDBOX_SYSTEM_PROMPT_ADDENDUM))
-        # Joined with one blank line separating the two sections.
-        self.assertIn(f'{arch}\n\n{SANDBOX_SYSTEM_PROMPT_ADDENDUM}', result)
+        self.assertIn(WORKSPACE_SCOPE_ADDENDUM, result)
+        self.assertEqual(
+            result,
+            f'{arch}\n\n{WORKSPACE_SCOPE_ADDENDUM}\n\n{SANDBOX_SYSTEM_PROMPT_ADDENDUM}',
+        )
 
     def test_none_arch_doc_treated_as_empty(self) -> None:
         # ``read_architecture_doc`` may return ``''`` or ``None`` —
         # the composer must accept both without raising.
         self.assertEqual(
             compose_system_prompt(None, docker_mode_on=False),  # type: ignore[arg-type]
-            '',
+            WORKSPACE_SCOPE_ADDENDUM,
         )
         self.assertEqual(
             compose_system_prompt(None, docker_mode_on=True),  # type: ignore[arg-type]
-            SANDBOX_SYSTEM_PROMPT_ADDENDUM,
+            f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{SANDBOX_SYSTEM_PROMPT_ADDENDUM}',
         )
+
+
+class WorkspaceScopeAddendumTests(unittest.TestCase):
+    def test_names_the_failing_command_shapes(self) -> None:
+        for shape in ('find /', 'find ~', 'grep -r /', 'locate', 'mdfind'):
+            self.assertIn(shape, WORKSPACE_SCOPE_ADDENDUM)
+
+    def test_directs_agent_to_use_relative_search(self) -> None:
+        self.assertIn('working directory', WORKSPACE_SCOPE_ADDENDUM)
+
+    def test_explains_why(self) -> None:
+        self.assertIn('stall detector', WORKSPACE_SCOPE_ADDENDUM)
 
 
 class AddendumWordingLockTests(unittest.TestCase):

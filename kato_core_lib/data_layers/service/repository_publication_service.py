@@ -13,6 +13,11 @@ class RepositoryPublicationService(Service):
         self._repository_service = repository_service
         self._max_retries = max_retries
         self.logger = logger or configure_logger(self.__class__.__name__)
+        # Repos that have already failed pull-request API setup are remembered
+        # here so the per-scan polling loop doesn't re-log the same skip
+        # message every cycle. Cleared only on process restart, which is fine
+        # — operator config changes need a restart anyway.
+        self._pr_api_skipped_repos: set[str] = set()
 
     def create_pull_request(
         self,
@@ -96,14 +101,7 @@ class RepositoryPublicationService(Service):
         repository,
         pull_request_id: str,
     ) -> list[dict[str, str]]:
-        try:
-            self._repository_service._prepare_pull_request_api(repository)
-        except Exception as exc:
-            self.logger.info(
-                'skipping pull request comment polling for repository %s: %s',
-                repository.id,
-                exc,
-            )
+        if not self._ensure_pr_api_or_log_once(repository, 'comment polling'):
             return []
         return self._repository_service._pull_request_data_access(
             repository,
@@ -116,14 +114,7 @@ class RepositoryPublicationService(Service):
         source_branch: str = '',
         title_prefix: str = '',
     ) -> list[dict[str, str]]:
-        try:
-            self._repository_service._prepare_pull_request_api(repository)
-        except Exception as exc:
-            self.logger.info(
-                'skipping pull request lookup for repository %s: %s',
-                repository.id,
-                exc,
-            )
+        if not self._ensure_pr_api_or_log_once(repository, 'lookup'):
             return []
         return self._repository_service._pull_request_data_access(
             repository,
@@ -131,6 +122,29 @@ class RepositoryPublicationService(Service):
             source_branch=source_branch,
             title_prefix=title_prefix,
         )
+
+    def _ensure_pr_api_or_log_once(self, repository, operation: str) -> bool:
+        """Prepare the PR API for ``repository`` or log+remember the skip.
+
+        Returns True on success, False if the API can't be prepared. The skip
+        is logged at most once per repository per process — repeated failures
+        on subsequent scan ticks stay silent so a workspace with many repos
+        that don't have PR tokens (e.g. dependency repos like email-core-lib)
+        doesn't flood the logs every poll cycle.
+        """
+        try:
+            self._repository_service._prepare_pull_request_api(repository)
+        except Exception as exc:
+            if repository.id not in self._pr_api_skipped_repos:
+                self._pr_api_skipped_repos.add(repository.id)
+                self.logger.info(
+                    'skipping pull request %s for repository %s: %s',
+                    operation,
+                    repository.id,
+                    exc,
+                )
+            return False
+        return True
 
     def resolve_review_comment(self, repository, comment) -> None:
         self._repository_service._prepare_pull_request_api(repository)

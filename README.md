@@ -381,8 +381,8 @@ Use this when tasks are coming from YouTrack:
 
 ```env
 KATO_ISSUE_PLATFORM=youtrack
-YOUTRACK_BASE_URL=https://your-company.youtrack.cloud
-YOUTRACK_TOKEN=...
+YOUTRACK_API_BASE_URL=https://your-company.youtrack.cloud
+YOUTRACK_API_TOKEN=...
 YOUTRACK_PROJECT=PROJ
 YOUTRACK_ASSIGNEE=your-youtrack-login
 YOUTRACK_ISSUE_STATES=Todo,Open
@@ -400,8 +400,8 @@ Use this when tasks are coming from Jira:
 
 ```env
 KATO_ISSUE_PLATFORM=jira
-JIRA_BASE_URL=https://your-company.atlassian.net
-JIRA_TOKEN=...
+JIRA_API_BASE_URL=https://your-company.atlassian.net
+JIRA_API_TOKEN=...
 JIRA_EMAIL=you@example.com
 JIRA_PROJECT=PROJ
 JIRA_ASSIGNEE=assignee-account-id-or-username
@@ -412,7 +412,7 @@ JIRA_REVIEW_STATE_FIELD=status
 JIRA_REVIEW_STATE=In Review
 ```
 
-`JIRA_TOKEN` is the API token. Keep `JIRA_EMAIL` set for Atlassian authentication flows that need the account email.
+`JIRA_API_TOKEN` is the API token. Keep `JIRA_EMAIL` set for Atlassian authentication flows that need the account email.
 
 ### Setting Up GitHub Issues
 
@@ -420,16 +420,16 @@ Use this when tasks are coming from GitHub Issues:
 
 ```env
 KATO_ISSUE_PLATFORM=github
-GITHUB_ISSUES_BASE_URL=https://api.github.com
+GITHUB_API_BASE_URL=https://api.github.com
 GITHUB_API_TOKEN=...
-GITHUB_ISSUES_OWNER=owner-or-org
-GITHUB_ISSUES_REPO=repo-name
-GITHUB_ISSUES_ASSIGNEE=assignee-login
-GITHUB_ISSUES_ISSUE_STATES=open
-GITHUB_ISSUES_PROGRESS_STATE_FIELD=labels
-GITHUB_ISSUES_PROGRESS_STATE=In Progress
-GITHUB_ISSUES_REVIEW_STATE_FIELD=labels
-GITHUB_ISSUES_REVIEW_STATE=In Review
+GITHUB_OWNER=owner-or-org
+GITHUB_REPO=repo-name
+GITHUB_ASSIGNEE=assignee-login
+GITHUB_ISSUE_STATES=open
+GITHUB_PROGRESS_STATE_FIELD=labels
+GITHUB_PROGRESS_STATE=In Progress
+GITHUB_REVIEW_STATE_FIELD=labels
+GITHUB_REVIEW_STATE=In Review
 ```
 
 `GITHUB_API_TOKEN` is also used for GitHub git push and pull request creation when discovered repositories live on GitHub.
@@ -440,15 +440,15 @@ Use this when tasks are coming from GitLab Issues:
 
 ```env
 KATO_ISSUE_PLATFORM=gitlab
-GITLAB_ISSUES_BASE_URL=https://gitlab.com/api/v4
+GITLAB_API_BASE_URL=https://gitlab.com/api/v4
 GITLAB_API_TOKEN=...
-GITLAB_ISSUES_PROJECT=group/project
-GITLAB_ISSUES_ASSIGNEE=assignee-username
-GITLAB_ISSUES_ISSUE_STATES=opened
-GITLAB_ISSUES_PROGRESS_STATE_FIELD=labels
-GITLAB_ISSUES_PROGRESS_STATE=In Progress
-GITLAB_ISSUES_REVIEW_STATE_FIELD=labels
-GITLAB_ISSUES_REVIEW_STATE=In Review
+GITLAB_PROJECT=group/project
+GITLAB_ASSIGNEE=assignee-username
+GITLAB_ISSUE_STATES=opened
+GITLAB_PROGRESS_STATE_FIELD=labels
+GITLAB_PROGRESS_STATE=In Progress
+GITLAB_REVIEW_STATE_FIELD=labels
+GITLAB_REVIEW_STATE=In Review
 ```
 
 `GITLAB_API_TOKEN` is also used for GitLab git push and merge request creation when discovered repositories live on GitLab.
@@ -459,18 +459,18 @@ Use this when tasks are coming from Bitbucket Issues:
 
 ```env
 KATO_ISSUE_PLATFORM=bitbucket
-BITBUCKET_ISSUES_BASE_URL=https://api.bitbucket.org/2.0
+BITBUCKET_API_BASE_URL=https://api.bitbucket.org/2.0
 BITBUCKET_API_TOKEN=...
 BITBUCKET_USERNAME=bitbucket-username
 BITBUCKET_API_EMAIL=you@example.com
-BITBUCKET_ISSUES_WORKSPACE=workspace
-BITBUCKET_ISSUES_REPO_SLUG=repo-slug
-BITBUCKET_ISSUES_ASSIGNEE=assignee-username
-BITBUCKET_ISSUES_ISSUE_STATES=new,open
-BITBUCKET_ISSUES_PROGRESS_STATE_FIELD=state
-BITBUCKET_ISSUES_PROGRESS_STATE=open
-BITBUCKET_ISSUES_REVIEW_STATE_FIELD=state
-BITBUCKET_ISSUES_REVIEW_STATE=resolved
+BITBUCKET_WORKSPACE=workspace
+BITBUCKET_REPO_SLUG=repo-slug
+BITBUCKET_ASSIGNEE=assignee-username
+BITBUCKET_ISSUE_STATES=new,open
+BITBUCKET_PROGRESS_STATE_FIELD=state
+BITBUCKET_PROGRESS_STATE=open
+BITBUCKET_REVIEW_STATE_FIELD=state
+BITBUCKET_REVIEW_STATE=resolved
 ```
 
 `BITBUCKET_API_TOKEN` is used for Bitbucket git auth and REST API calls. `BITBUCKET_API_EMAIL` is required for Bitbucket pull request API auth.
@@ -524,8 +524,8 @@ The list below mirrors `.env.example`.
 | --- | --- |
 | `KATO_ISSUE_PLATFORM` | Selects the active issue platform. Supported values are `youtrack`, `jira`, `github`, `gitlab`, and `bitbucket`. |
 | `KATO_AGENT_BACKEND` | Selects the active agent backend. Supported values are `openhands` (default) and `claude`. |
-| `YOUTRACK_BASE_URL` | YouTrack API base URL. |
-| `YOUTRACK_TOKEN` | YouTrack API token. |
+| `YOUTRACK_API_BASE_URL` | YouTrack API base URL. |
+| `YOUTRACK_API_TOKEN` | YouTrack API token. |
 | `YOUTRACK_PROJECT` | YouTrack project key used to fetch tasks. |
 | `YOUTRACK_ASSIGNEE` | YouTrack assignee to scan for tasks. |
 | `YOUTRACK_PROGRESS_STATE_FIELD` | YouTrack field used for the in-progress transition. |
@@ -533,8 +533,8 @@ The list below mirrors `.env.example`.
 | `YOUTRACK_REVIEW_STATE_FIELD` | YouTrack field used for the review transition. |
 | `YOUTRACK_REVIEW_STATE` | YouTrack value used for the review transition. |
 | `YOUTRACK_ISSUE_STATES` | YouTrack issue states that qualify for processing. |
-| `JIRA_BASE_URL` | Jira API base URL. |
-| `JIRA_TOKEN` | Jira API token. |
+| `JIRA_API_BASE_URL` | Jira API base URL. |
+| `JIRA_API_TOKEN` | Jira API token. |
 | `JIRA_EMAIL` | Jira user email for authentication. |
 | `JIRA_PROJECT` | Jira project key used to fetch tasks. |
 | `JIRA_ASSIGNEE` | Jira assignee to scan for tasks. |
@@ -543,37 +543,37 @@ The list below mirrors `.env.example`.
 | `JIRA_REVIEW_STATE_FIELD` | Jira field used for the review transition. |
 | `JIRA_REVIEW_STATE` | Jira value used for the review transition. |
 | `JIRA_ISSUE_STATES` | Jira issue states that qualify for processing. |
-| `GITHUB_ISSUES_BASE_URL` | GitHub Issues API base URL. |
+| `GITHUB_API_BASE_URL` | GitHub Issues API base URL. |
 | `GITHUB_API_TOKEN` | GitHub API token. Also used for GitHub git push and PR creation when needed. |
-| `GITHUB_ISSUES_OWNER` | GitHub repository owner used to scope issues. |
-| `GITHUB_ISSUES_REPO` | GitHub repository name used to scope issues. |
-| `GITHUB_ISSUES_ASSIGNEE` | GitHub assignee to scan for tasks. |
-| `GITHUB_ISSUES_PROGRESS_STATE_FIELD` | GitHub Issues field used for the in-progress transition. |
-| `GITHUB_ISSUES_PROGRESS_STATE` | GitHub Issues value used for the in-progress transition. |
-| `GITHUB_ISSUES_REVIEW_STATE_FIELD` | GitHub Issues field used for the review transition. |
-| `GITHUB_ISSUES_REVIEW_STATE` | GitHub Issues value used for the review transition. |
-| `GITHUB_ISSUES_ISSUE_STATES` | GitHub Issues states that qualify for processing. |
-| `GITLAB_ISSUES_BASE_URL` | GitLab Issues API base URL. |
+| `GITHUB_OWNER` | GitHub repository owner used to scope issues. |
+| `GITHUB_REPO` | GitHub repository name used to scope issues. |
+| `GITHUB_ASSIGNEE` | GitHub assignee to scan for tasks. |
+| `GITHUB_PROGRESS_STATE_FIELD` | GitHub Issues field used for the in-progress transition. |
+| `GITHUB_PROGRESS_STATE` | GitHub Issues value used for the in-progress transition. |
+| `GITHUB_REVIEW_STATE_FIELD` | GitHub Issues field used for the review transition. |
+| `GITHUB_REVIEW_STATE` | GitHub Issues value used for the review transition. |
+| `GITHUB_ISSUE_STATES` | GitHub Issues states that qualify for processing. |
+| `GITLAB_API_BASE_URL` | GitLab Issues API base URL. |
 | `GITLAB_API_TOKEN` | GitLab API token. Also used for GitLab git push and merge request creation when needed. |
-| `GITLAB_ISSUES_PROJECT` | GitLab project path used to scope issues. |
-| `GITLAB_ISSUES_ASSIGNEE` | GitLab assignee to scan for tasks. |
-| `GITLAB_ISSUES_PROGRESS_STATE_FIELD` | GitLab Issues field used for the in-progress transition. |
-| `GITLAB_ISSUES_PROGRESS_STATE` | GitLab Issues value used for the in-progress transition. |
-| `GITLAB_ISSUES_REVIEW_STATE_FIELD` | GitLab Issues field used for the review transition. |
-| `GITLAB_ISSUES_REVIEW_STATE` | GitLab Issues value used for the review transition. |
-| `GITLAB_ISSUES_ISSUE_STATES` | GitLab Issues states that qualify for processing. |
-| `BITBUCKET_ISSUES_BASE_URL` | Bitbucket Issues API base URL. |
+| `GITLAB_PROJECT` | GitLab project path used to scope issues. |
+| `GITLAB_ASSIGNEE` | GitLab assignee to scan for tasks. |
+| `GITLAB_PROGRESS_STATE_FIELD` | GitLab Issues field used for the in-progress transition. |
+| `GITLAB_PROGRESS_STATE` | GitLab Issues value used for the in-progress transition. |
+| `GITLAB_REVIEW_STATE_FIELD` | GitLab Issues field used for the review transition. |
+| `GITLAB_REVIEW_STATE` | GitLab Issues value used for the review transition. |
+| `GITLAB_ISSUE_STATES` | GitLab Issues states that qualify for processing. |
+| `BITBUCKET_API_BASE_URL` | Bitbucket Issues API base URL. |
 | `BITBUCKET_API_TOKEN` | Bitbucket API token. Used as the password for Bitbucket git auth and Bitbucket REST API auth. |
 | `BITBUCKET_USERNAME` | Bitbucket username used for git push auth. |
 | `BITBUCKET_API_EMAIL` | Atlassian account email used for Bitbucket REST API auth with API tokens. |
-| `BITBUCKET_ISSUES_WORKSPACE` | Bitbucket workspace used to scope issues. |
-| `BITBUCKET_ISSUES_REPO_SLUG` | Bitbucket repository slug used to scope issues. |
-| `BITBUCKET_ISSUES_ASSIGNEE` | Bitbucket assignee to scan for tasks. |
-| `BITBUCKET_ISSUES_PROGRESS_STATE_FIELD` | Bitbucket Issues field used for the in-progress transition. |
-| `BITBUCKET_ISSUES_PROGRESS_STATE` | Bitbucket Issues value used for the in-progress transition. |
-| `BITBUCKET_ISSUES_REVIEW_STATE_FIELD` | Bitbucket Issues field used for the review transition. |
-| `BITBUCKET_ISSUES_REVIEW_STATE` | Bitbucket Issues value used for the review transition. |
-| `BITBUCKET_ISSUES_ISSUE_STATES` | Bitbucket Issues states that qualify for processing. |
+| `BITBUCKET_WORKSPACE` | Bitbucket workspace used to scope issues. |
+| `BITBUCKET_REPO_SLUG` | Bitbucket repository slug used to scope issues. |
+| `BITBUCKET_ASSIGNEE` | Bitbucket assignee to scan for tasks. |
+| `BITBUCKET_PROGRESS_STATE_FIELD` | Bitbucket Issues field used for the in-progress transition. |
+| `BITBUCKET_PROGRESS_STATE` | Bitbucket Issues value used for the in-progress transition. |
+| `BITBUCKET_REVIEW_STATE_FIELD` | Bitbucket Issues field used for the review transition. |
+| `BITBUCKET_REVIEW_STATE` | Bitbucket Issues value used for the review transition. |
+| `BITBUCKET_ISSUE_STATES` | Bitbucket Issues states that qualify for processing. |
 | `REPOSITORY_ROOT_PATH` | Root folder where the agent scans for checked-out repositories. |
 | `MOUNT_DOCKER_DATA_ROOT` | Host folder that holds all Docker bind-mounted data under one parent directory. |
 | `KATO_IGNORED_REPOSITORY_FOLDERS` | Comma-separated folder names to exclude from repository auto-discovery. |
@@ -665,7 +665,7 @@ The `openhands` container reuses the same `OPENHANDS_LLM_*` and `AWS_*` values f
 | `KATO_WORKSPACE_REVIEW_TTL_SECONDS` | How long a workspace in `review` state persists before the cleanup loop deletes it, regardless of whether the ticket is still in the review bucket. Default `3600` (1 hour). Set to `0` to disable TTL-based cleanup (legacy behavior: workspace persists until the ticket leaves both assigned and review). Review-comment processing for cleaned tickets re-clones on demand. |
 
 The active issue provider comes from `kato.issue_platform`, which defaults to `youtrack`.
-Issue states can be configured directly in `.env` with `YOUTRACK_ISSUE_STATES`, `JIRA_ISSUE_STATES`, `GITHUB_ISSUES_ISSUE_STATES`, `GITLAB_ISSUES_ISSUE_STATES`, and `BITBUCKET_ISSUES_ISSUE_STATES`.
+Issue states can be configured directly in `.env` with `YOUTRACK_ISSUE_STATES`, `JIRA_ISSUE_STATES`, `GITHUB_ISSUE_STATES`, `GITLAB_ISSUE_STATES`, and `BITBUCKET_ISSUE_STATES`.
 The review-state target also comes from the active provider config:
 - YouTrack uses `kato.youtrack.review_state_field` and `kato.youtrack.review_state`.
 - Jira uses `kato.jira.review_state_field` and `kato.jira.review_state`.

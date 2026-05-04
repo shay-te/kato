@@ -14,8 +14,8 @@ class ValidateEnvTests(unittest.TestCase):
     def test_validate_agent_env_accepts_complete_configuration(self) -> None:
         errors = self._validate_agent_env(
             {
-                'YOUTRACK_BASE_URL': 'https://youtrack.example',
-                'YOUTRACK_TOKEN': 'yt-token',
+                'YOUTRACK_API_BASE_URL': 'https://youtrack.example',
+                'YOUTRACK_API_TOKEN': 'yt-token',
                 'YOUTRACK_PROJECT': 'PROJ',
                 'YOUTRACK_ASSIGNEE': 'developer',
                 'REPOSITORY_ROOT_PATH': '.',
@@ -29,8 +29,8 @@ class ValidateEnvTests(unittest.TestCase):
     def test_validate_agent_env_requires_email_fields_when_enabled(self) -> None:
         errors = self._validate_agent_env(
             {
-                'YOUTRACK_BASE_URL': 'https://youtrack.example',
-                'YOUTRACK_TOKEN': 'yt-token',
+                'YOUTRACK_API_BASE_URL': 'https://youtrack.example',
+                'YOUTRACK_API_TOKEN': 'yt-token',
                 'YOUTRACK_PROJECT': 'PROJ',
                 'YOUTRACK_ASSIGNEE': 'developer',
                 'REPOSITORY_ROOT_PATH': '.',
@@ -52,8 +52,8 @@ class ValidateEnvTests(unittest.TestCase):
     def test_validate_agent_env_requires_youtrack_assignee(self) -> None:
         errors = self._validate_agent_env(
             {
-                'YOUTRACK_BASE_URL': 'https://youtrack.example',
-                'YOUTRACK_TOKEN': 'yt-token',
+                'YOUTRACK_API_BASE_URL': 'https://youtrack.example',
+                'YOUTRACK_API_TOKEN': 'yt-token',
                 'YOUTRACK_PROJECT': 'PROJ',
                 'REPOSITORY_ROOT_PATH': '.',
                 'OPENHANDS_BASE_URL': 'http://localhost:3000',
@@ -67,8 +67,8 @@ class ValidateEnvTests(unittest.TestCase):
         errors = self._validate_agent_env(
             {
                 'KATO_ISSUE_PLATFORM': 'jira',
-                'JIRA_BASE_URL': 'https://jira.example',
-                'JIRA_TOKEN': 'jira-token',
+                'JIRA_API_BASE_URL': 'https://jira.example',
+                'JIRA_API_TOKEN': 'jira-token',
                 'JIRA_PROJECT': 'PROJ',
                 'JIRA_ASSIGNEE': 'developer',
                 'REPOSITORY_ROOT_PATH': '.',
@@ -83,11 +83,28 @@ class ValidateEnvTests(unittest.TestCase):
         errors = self._validate_agent_env(
             {
                 'KATO_ISSUE_PLATFORM': 'github',
-                'GITHUB_ISSUES_BASE_URL': 'https://api.github.com',
+                'GITHUB_API_BASE_URL': 'https://api.github.com',
                 'GITHUB_API_TOKEN': 'gh-token',
-                'GITHUB_ISSUES_OWNER': 'workspace',
-                'GITHUB_ISSUES_REPO': 'repo',
-                'GITHUB_ISSUES_ASSIGNEE': 'octocat',
+                'GITHUB_OWNER': 'workspace',
+                'GITHUB_REPO': 'repo',
+                'GITHUB_ASSIGNEE': 'octocat',
+                'REPOSITORY_ROOT_PATH': '.',
+                'OPENHANDS_BASE_URL': 'http://localhost:3000',
+                'OPENHANDS_API_KEY': 'local',
+            }
+        )
+
+        self.assertEqual(errors, [])
+
+    def test_validate_agent_env_accepts_github_core_lib_token(self) -> None:
+        errors = self._validate_agent_env(
+            {
+                'KATO_ISSUE_PLATFORM': 'github',
+                'GITHUB_API_BASE_URL': 'https://api.github.com',
+                'GITHUB_API_TOKEN': 'gh-token',
+                'GITHUB_OWNER': 'workspace',
+                'GITHUB_REPO': 'repo',
+                'GITHUB_ASSIGNEE': 'octocat',
                 'REPOSITORY_ROOT_PATH': '.',
                 'OPENHANDS_BASE_URL': 'http://localhost:3000',
                 'OPENHANDS_API_KEY': 'local',
@@ -100,10 +117,10 @@ class ValidateEnvTests(unittest.TestCase):
         errors = self._validate_agent_env(
             {
                 'KATO_ISSUE_PLATFORM': 'gitlab',
-                'GITLAB_ISSUES_BASE_URL': 'https://gitlab.example/api/v4',
+                'GITLAB_API_BASE_URL': 'https://gitlab.example/api/v4',
                 'GITLAB_API_TOKEN': 'gl-token',
-                'GITLAB_ISSUES_PROJECT': 'group/repo',
-                'GITLAB_ISSUES_ASSIGNEE': 'developer',
+                'GITLAB_PROJECT': 'group/repo',
+                'GITLAB_ASSIGNEE': 'developer',
                 'REPOSITORY_ROOT_PATH': '.',
                 'OPENHANDS_BASE_URL': 'http://localhost:3000',
                 'OPENHANDS_API_KEY': 'local',
@@ -116,13 +133,13 @@ class ValidateEnvTests(unittest.TestCase):
         errors = self._validate_agent_env(
             {
                 'KATO_ISSUE_PLATFORM': 'bitbucket',
-                'BITBUCKET_ISSUES_BASE_URL': 'https://api.bitbucket.org/2.0',
+                'BITBUCKET_API_BASE_URL': 'https://api.bitbucket.org/2.0',
                 'BITBUCKET_API_TOKEN': 'bb-token',
                 'BITBUCKET_USERNAME': 'bb-user',
                 'BITBUCKET_API_EMAIL': 'bb-user@example.com',
-                'BITBUCKET_ISSUES_WORKSPACE': 'workspace',
-                'BITBUCKET_ISSUES_REPO_SLUG': 'repo',
-                'BITBUCKET_ISSUES_ASSIGNEE': 'reviewer',
+                'BITBUCKET_WORKSPACE': 'workspace',
+                'BITBUCKET_REPO_SLUG': 'repo',
+                'BITBUCKET_ASSIGNEE': 'reviewer',
                 'REPOSITORY_ROOT_PATH': '.',
                 'OPENHANDS_BASE_URL': 'http://localhost:3000',
                 'OPENHANDS_API_KEY': 'local',
@@ -155,8 +172,8 @@ class ValidateEnvTests(unittest.TestCase):
 
             errors = validate_agent_env(
                 {
-                    'YOUTRACK_BASE_URL': 'https://youtrack.example',
-                    'YOUTRACK_TOKEN': 'yt-token',
+                    'YOUTRACK_API_BASE_URL': 'https://youtrack.example',
+                    'YOUTRACK_API_TOKEN': 'yt-token',
                     'YOUTRACK_PROJECT': 'PROJ',
                     'YOUTRACK_ASSIGNEE': 'developer',
                     'REPOSITORY_ROOT_PATH': str(root),
@@ -181,8 +198,8 @@ class ValidateEnvTests(unittest.TestCase):
 
             errors = validate_agent_env(
                 {
-                    'YOUTRACK_BASE_URL': 'https://youtrack.example',
-                    'YOUTRACK_TOKEN': 'yt-token',
+                    'YOUTRACK_API_BASE_URL': 'https://youtrack.example',
+                    'YOUTRACK_API_TOKEN': 'yt-token',
                     'YOUTRACK_PROJECT': 'PROJ',
                     'YOUTRACK_ASSIGNEE': 'developer',
                     'REPOSITORY_ROOT_PATH': str(repo_path),
@@ -200,10 +217,10 @@ class ValidateEnvTests(unittest.TestCase):
         errors = self._validate_agent_env(
             {
                 'KATO_ISSUE_PLATFORM': 'github',
-                'GITHUB_ISSUES_BASE_URL': 'https://api.github.com',
-                'GITHUB_ISSUES_OWNER': 'workspace',
-                'GITHUB_ISSUES_REPO': 'repo',
-                'GITHUB_ISSUES_ASSIGNEE': 'octocat',
+                'GITHUB_API_BASE_URL': 'https://api.github.com',
+                'GITHUB_OWNER': 'workspace',
+                'GITHUB_REPO': 'repo',
+                'GITHUB_ASSIGNEE': 'octocat',
                 'REPOSITORY_ROOT_PATH': '.',
                 'OPENHANDS_BASE_URL': 'http://localhost:3000',
                 'OPENHANDS_API_KEY': 'local',
@@ -215,8 +232,8 @@ class ValidateEnvTests(unittest.TestCase):
     def test_validate_agent_env_rejects_progress_and_review_states_in_issue_queue(self) -> None:
         errors = self._validate_agent_env(
             {
-                'YOUTRACK_BASE_URL': 'https://youtrack.example',
-                'YOUTRACK_TOKEN': 'yt-token',
+                'YOUTRACK_API_BASE_URL': 'https://youtrack.example',
+                'YOUTRACK_API_TOKEN': 'yt-token',
                 'YOUTRACK_PROJECT': 'PROJ',
                 'YOUTRACK_ASSIGNEE': 'developer',
                 'YOUTRACK_PROGRESS_STATE': 'In Progress',
@@ -237,9 +254,9 @@ class ValidateEnvTests(unittest.TestCase):
         errors = self._validate_agent_env(
             {
                 'KATO_ISSUE_PLATFORM': 'gitlab',
-                'GITLAB_ISSUES_BASE_URL': 'https://gitlab.example/api/v4',
-                'GITLAB_ISSUES_PROJECT': 'group/repo',
-                'GITLAB_ISSUES_ASSIGNEE': 'developer',
+                'GITLAB_API_BASE_URL': 'https://gitlab.example/api/v4',
+                'GITLAB_PROJECT': 'group/repo',
+                'GITLAB_ASSIGNEE': 'developer',
                 'REPOSITORY_ROOT_PATH': '.',
                 'OPENHANDS_BASE_URL': 'http://localhost:3000',
                 'OPENHANDS_API_KEY': 'local',
@@ -442,8 +459,8 @@ class ValidateEnvTests(unittest.TestCase):
         errors = self._validate_agent_env(
             {
                 'KATO_AGENT_BACKEND': 'claude',
-                'YOUTRACK_BASE_URL': 'https://youtrack.example',
-                'YOUTRACK_TOKEN': 'yt-token',
+                'YOUTRACK_API_BASE_URL': 'https://youtrack.example',
+                'YOUTRACK_API_TOKEN': 'yt-token',
                 'YOUTRACK_PROJECT': 'PROJ',
                 'YOUTRACK_ASSIGNEE': 'developer',
                 'REPOSITORY_ROOT_PATH': '.',
@@ -456,8 +473,8 @@ class ValidateEnvTests(unittest.TestCase):
         errors = self._validate_agent_env(
             {
                 'KATO_AGENT_BACKEND': 'gemini',
-                'YOUTRACK_BASE_URL': 'https://youtrack.example',
-                'YOUTRACK_TOKEN': 'yt-token',
+                'YOUTRACK_API_BASE_URL': 'https://youtrack.example',
+                'YOUTRACK_API_TOKEN': 'yt-token',
                 'YOUTRACK_PROJECT': 'PROJ',
                 'YOUTRACK_ASSIGNEE': 'developer',
                 'REPOSITORY_ROOT_PATH': '.',

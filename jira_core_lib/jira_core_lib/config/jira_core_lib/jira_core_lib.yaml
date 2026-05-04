@@ -1,7 +1,7 @@
 # @package core_lib
 jira_core_lib:
-    base_url: ${oc.env:JIRA_BASE_URL,"https://your-company.atlassian.net"}
-    token: ${oc.env:JIRA_TOKEN,""}
+    base_url: ${oc.env:JIRA_API_BASE_URL,"https://your-company.atlassian.net"}
+    token: ${oc.env:JIRA_API_TOKEN,""}
     email: ${oc.env:JIRA_EMAIL,""}
     project: ${oc.env:JIRA_PROJECT,""}
     max_retries: ${oc.decode:${oc.env:JIRA_CORE_LIB_MAX_RETRIES,"3"}}

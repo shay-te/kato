@@ -1,7 +1,7 @@
 # @package core_lib
 github_core_lib:
-    base_url: ${oc.env:GITHUB_CORE_LIB_BASE_URL,"https://api.github.com"}
-    token: ${oc.env:GITHUB_CORE_LIB_TOKEN,""}
-    owner: ${oc.env:GITHUB_CORE_LIB_OWNER,""}
-    repo: ${oc.env:GITHUB_CORE_LIB_REPO,""}
+    base_url: ${oc.env:GITHUB_API_BASE_URL,"https://api.github.com"}
+    token: ${oc.env:GITHUB_API_TOKEN,""}
+    owner: ${oc.env:GITHUB_OWNER,""}
+    repo: ${oc.env:GITHUB_REPO,""}
     max_retries: ${oc.decode:${oc.env:GITHUB_CORE_LIB_MAX_RETRIES,"3"}}

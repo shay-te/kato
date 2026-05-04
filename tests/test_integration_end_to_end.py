@@ -531,8 +531,8 @@ class TestAgentEndToEndIntegration(unittest.TestCase):
             'OPENHANDS_BASE_URL': 'http://openhands:3000',
             'OPENHANDS_API_KEY': 'test-api-key',
             'REPOSITORY_ROOT_PATH': '/tmp/repos',
-            'YOUTRACK_BASE_URL': 'https://example.youtrack.cloud',
-            'YOUTRACK_TOKEN': 'test-youtrack-token',
+            'YOUTRACK_API_BASE_URL': 'https://example.youtrack.cloud',
+            'YOUTRACK_API_TOKEN': 'test-youtrack-token',
             'YOUTRACK_PROJECT': 'TEST',
             'YOUTRACK_ASSIGNEE': 'developer',
         }

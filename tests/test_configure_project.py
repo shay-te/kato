@@ -202,8 +202,8 @@ class ConfigureProjectTests(unittest.TestCase):
         self.assertEqual(values['BITBUCKET_USERNAME'], 'bb-user')
         self.assertEqual(values['BITBUCKET_API_EMAIL'], 'bb-user@example.com')
         self.assertEqual(values['BITBUCKET_API_TOKEN'], 'bb-token')
-        self.assertEqual(values['BITBUCKET_ISSUES_WORKSPACE'], 'workspace')
-        self.assertEqual(values['BITBUCKET_ISSUES_REPO_SLUG'], 'repo')
+        self.assertEqual(values['BITBUCKET_WORKSPACE'], 'workspace')
+        self.assertEqual(values['BITBUCKET_REPO_SLUG'], 'repo')
         self.assertEqual(self._validate_agent_env(values), [])
         self.assertEqual(validate_openhands_env(values), [])
 
@@ -393,8 +393,8 @@ class ConfigureProjectTests(unittest.TestCase):
             output_path = temp_path / '.env'
             template_path.write_text(
                 'KATO_ISSUE_PLATFORM=youtrack\n'
-                'YOUTRACK_BASE_URL=\n'
-                'YOUTRACK_TOKEN=\n'
+                'YOUTRACK_API_BASE_URL=\n'
+                'YOUTRACK_API_TOKEN=\n'
                 'YOUTRACK_PROJECT=\n'
                 'YOUTRACK_ASSIGNEE=\n'
                 'YOUTRACK_PROGRESS_STATE_FIELD=State\n'
@@ -489,8 +489,8 @@ class ConfigureProjectTests(unittest.TestCase):
             output_path = temp_path / '.env'
             template_path.write_text(
                 'KATO_ISSUE_PLATFORM=youtrack\n'
-                'YOUTRACK_BASE_URL=\n'
-                'YOUTRACK_TOKEN=\n'
+                'YOUTRACK_API_BASE_URL=\n'
+                'YOUTRACK_API_TOKEN=\n'
                 'YOUTRACK_PROJECT=\n'
                 'YOUTRACK_ASSIGNEE=\n'
                 'YOUTRACK_PROGRESS_STATE_FIELD=State\n'

@@ -425,6 +425,9 @@ class AgentService(Service):
     def process_review_comment(self, comment: ReviewComment) -> dict[str, str]:
         return self._review_comment_service.process_review_comment(comment)
 
+    def task_id_for_review_comment(self, comment: ReviewComment) -> str | None:
+        return self._review_comment_service.task_id_for_comment(comment)
+
     def process_assigned_task(self, task: Task) -> dict[str, object] | None:
         # No in-memory "already processed" short-circuit. The ticket system
         # (state + comments) is the single source of truth: successful tasks

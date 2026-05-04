@@ -15,13 +15,12 @@ def collect_processing_results(service) -> list[dict]:
     tasks run concurrently up to ``KATO_MAX_PARALLEL_TASKS``. The scan
     loop itself stays single-threaded — it polls the ticket system,
     decides which tasks to start, and submits them. Review comments
-    stay sync because each one is fast and shouldn't queue up.
+    fan out the same way: each comment's review-fix is submitted under
+    its task id, so cross-task fixes run concurrently while same-task
+    fixes serialize via the runner's per-task dedup lock.
     """
     results = _dispatch_assigned_tasks(service)
-    for comment in service.get_new_pull_request_comments():
-        result = _process_review_comment_best_effort(service, comment)
-        if result is not None:
-            results.append(result)
+    results.extend(_dispatch_review_comments(service))
     return results
 
 
@@ -102,6 +101,58 @@ def _process_review_comment_best_effort(service, comment) -> dict | None:
         return service.process_review_comment(comment)
     except Exception:
         return None
+
+
+def _dispatch_review_comments(service) -> list[dict]:
+    """Submit each review comment to the parallel runner under its task id.
+
+    Without a real parallel runner we fall back to the legacy inline path
+    (one comment fully processed before the next) to preserve the
+    behaviour single-worker / mocked-test setups depend on.
+
+    With a real runner: each comment is submitted under
+    ``task_id_for_review_comment``. The runner's per-task dedup lock
+    means two comments on the same task serialize naturally (the second
+    submit returns ``None`` and we'll retry on the next scan), while
+    comments on different tasks run concurrently.
+    """
+    runner = getattr(service, 'parallel_task_runner', None)
+    comments = service.get_new_pull_request_comments()
+    if not _runner_has_real_concurrency(runner):
+        results: list[dict] = []
+        for comment in comments:
+            result = _process_review_comment_best_effort(service, comment)
+            if result is not None:
+                results.append(result)
+        return results
+    submitted_futures = []
+    for comment in comments:
+        task_id = service.task_id_for_review_comment(comment)
+        if not task_id:
+            # Fall back to inline for comments we can't key — can't safely
+            # run them through the runner without a dedup key.
+            result = _process_review_comment_best_effort(service, comment)
+            if result is not None:
+                submitted_futures.append(_completed_future(result))
+            continue
+        if runner.is_in_flight(task_id):
+            continue
+        future = runner.submit(
+            task_id,
+            (lambda c=comment: _process_review_comment_best_effort(service, c)),
+        )
+        if future is not None:
+            submitted_futures.append(future)
+    return _drain_finished_futures(submitted_futures)
+
+
+def _completed_future(value):
+    """Wrap an already-computed value in a Future so the drain code stays uniform."""
+    from concurrent.futures import Future
+
+    future: Future = Future()
+    future.set_result(value)
+    return future
 
 
 class ProcessAssignedTasksJob(Job):

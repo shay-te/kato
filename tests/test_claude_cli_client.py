@@ -534,20 +534,34 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
         self.assertTrue(client_b._bypass_permissions)
 
     def test_docker_mode_off_does_not_append_sandbox_addendum(self) -> None:
+        from kato_core_lib.sandbox.system_prompt import (
+            SANDBOX_SYSTEM_PROMPT_ADDENDUM,
+            WORKSPACE_SCOPE_ADDENDUM,
+        )
+
         client = ClaudeCliClient(binary='claude', docker_mode_on=False)
         cmd = client._build_command(additional_dirs=[], session_id='')
-        # No --append-system-prompt at all when there's no architecture
-        # doc and docker mode is off.
-        self.assertNotIn('--append-system-prompt', cmd)
+        # Workspace addendum is always appended (independent of docker mode)
+        # so the flag is present, but the sandbox-specific addendum is not.
+        self.assertIn('--append-system-prompt', cmd)
+        idx = cmd.index('--append-system-prompt')
+        self.assertEqual(cmd[idx + 1], WORKSPACE_SCOPE_ADDENDUM)
+        self.assertNotIn(SANDBOX_SYSTEM_PROMPT_ADDENDUM, cmd[idx + 1])
 
     def test_docker_mode_on_appends_sandbox_addendum(self) -> None:
-        from kato_core_lib.sandbox.system_prompt import SANDBOX_SYSTEM_PROMPT_ADDENDUM
+        from kato_core_lib.sandbox.system_prompt import (
+            SANDBOX_SYSTEM_PROMPT_ADDENDUM,
+            WORKSPACE_SCOPE_ADDENDUM,
+        )
 
         client = ClaudeCliClient(binary='claude', docker_mode_on=True)
         cmd = client._build_command(additional_dirs=[], session_id='')
         self.assertIn('--append-system-prompt', cmd)
         idx = cmd.index('--append-system-prompt')
-        self.assertEqual(cmd[idx + 1], SANDBOX_SYSTEM_PROMPT_ADDENDUM)
+        self.assertEqual(
+            cmd[idx + 1],
+            f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{SANDBOX_SYSTEM_PROMPT_ADDENDUM}',
+        )
 
     def test_docker_plus_bypass_does_NOT_wrap_validate_connection(self) -> None:
         """docker=true AND bypass=true: boot-time validate_connection still on host.

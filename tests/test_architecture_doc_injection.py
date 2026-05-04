@@ -124,14 +124,19 @@ class ClaudeCliClientArchitectureDocTests(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.doc_path = Path(self._tmp.name) / 'ARCHITECTURE.md'
 
-    def test_command_omits_flag_when_no_path_configured(self) -> None:
+    def test_command_includes_only_workspace_addendum_when_no_path_configured(self) -> None:
+        # The workspace-scope addendum is always appended (it's not
+        # operator-configurable), so the flag is always present even
+        # without an arch doc.
         client = ClaudeCliClient(binary='claude')
 
         cmd = client._build_command(additional_dirs=[], session_id='')
 
-        self.assertNotIn('--append-system-prompt', cmd)
+        self.assertIn('--append-system-prompt', cmd)
+        index = cmd.index('--append-system-prompt')
+        self.assertIn('Workspace scope', cmd[index + 1])
 
-    def test_command_omits_flag_when_doc_file_is_missing(self) -> None:
+    def test_command_includes_only_workspace_addendum_when_doc_file_is_missing(self) -> None:
         # Path set but file doesn't exist on disk: behaves the same as
         # "no path configured" — we don't fail the spawn just because
         # the operator pointed at a doc that hasn't been created yet.
@@ -142,7 +147,9 @@ class ClaudeCliClientArchitectureDocTests(unittest.TestCase):
 
         cmd = client._build_command(additional_dirs=[], session_id='')
 
-        self.assertNotIn('--append-system-prompt', cmd)
+        self.assertIn('--append-system-prompt', cmd)
+        index = cmd.index('--append-system-prompt')
+        self.assertIn('Workspace scope', cmd[index + 1])
 
     def test_command_appends_doc_content_when_present(self) -> None:
         _write(self.doc_path, '# Kato architecture\n\nLayers...')
@@ -193,19 +200,23 @@ class StreamingClaudeSessionArchitectureDocTests(unittest.TestCase):
         kwargs.update(overrides)
         return StreamingClaudeSession(**kwargs)
 
-    def test_command_omits_flag_when_no_path_configured(self) -> None:
+    def test_command_includes_only_workspace_addendum_when_no_path_configured(self) -> None:
         session = self._build_session()
 
         cmd = session._build_command()
 
-        self.assertNotIn('--append-system-prompt', cmd)
+        self.assertIn('--append-system-prompt', cmd)
+        index = cmd.index('--append-system-prompt')
+        self.assertIn('Workspace scope', cmd[index + 1])
 
-    def test_command_omits_flag_when_doc_file_is_missing(self) -> None:
+    def test_command_includes_only_workspace_addendum_when_doc_file_is_missing(self) -> None:
         session = self._build_session(architecture_doc_path=str(self.doc_path))
 
         cmd = session._build_command()
 
-        self.assertNotIn('--append-system-prompt', cmd)
+        self.assertIn('--append-system-prompt', cmd)
+        index = cmd.index('--append-system-prompt')
+        self.assertIn('Workspace scope', cmd[index + 1])
 
     def test_command_appends_doc_content_when_present(self) -> None:
         _write(self.doc_path, '# Kato architecture\n\nLayers...')

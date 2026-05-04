@@ -383,6 +383,27 @@ class ReviewCommentService(Service):
         setattr(comment, PullRequestFields.REPOSITORY_ID, review_context.repository_id)
         return review_context
 
+    def task_id_for_comment(self, comment: ReviewComment) -> str | None:
+        """Return the task id this comment will be processed under, or None.
+
+        Exposed so the scan loop can use it as a parallel-runner dedup key
+        without having to call ``_review_fix_context`` (which mutates the
+        comment). Used to ensure same-task review fixes serialize while
+        cross-task fixes run concurrently.
+        """
+        repository_id = text_from_attr(comment, PullRequestFields.REPOSITORY_ID)
+        context = self._state_registry.pull_request_context(
+            comment.pull_request_id,
+            repository_id,
+        )
+        if context is None:
+            return None
+        task_id = context.get('task_id') if isinstance(context, dict) else getattr(
+            context, 'task_id', None,
+        )
+        normalized = str(task_id or '').strip()
+        return normalized or None
+
     @staticmethod
     def _review_pull_request_display_name(
         comment: ReviewComment,
