@@ -112,24 +112,26 @@ def compose_system_prompt(
     architecture_doc: str,
     *,
     docker_mode_on: bool,
+    lessons: str = '',
 ) -> str:
-    """Combine the architecture doc and the sandbox addendum.
+    """Combine architecture doc, learned lessons, workspace-scope, and sandbox.
 
     The Claude CLI accepts a single ``--append-system-prompt`` value;
-    when both pieces are present they are joined with a blank-line
-    separator so the agent reads two distinct sections rather than a
-    smushed paragraph. Either piece may be empty:
+    we join the present pieces with a blank-line separator so the
+    agent reads each as a distinct section. Order matters — operator-
+    authored content first (most authoritative), then kato-curated
+    learnings, then always-on guidance, then sandbox boilerplate
+    (docker only). Any piece may be empty.
 
-      * docker off, no architecture doc -> ``''``
-      * docker off, architecture doc    -> the architecture doc verbatim
-      * docker on,  no architecture doc -> the addendum verbatim
-      * docker on,  architecture doc    -> ``arch + '\\n\\n' + addendum``
-
-    Returning ``''`` when both are empty lets callers skip the
-    ``--append-system-prompt`` flag entirely.
+    Order:
+      1. Architecture doc          (operator-authored)
+      2. Lessons                   (kato-curated, learned over time)
+      3. Workspace-scope addendum  (always)
+      4. Sandbox addendum          (docker only)
     """
     arch = architecture_doc or ''
-    parts = [p for p in (arch, WORKSPACE_SCOPE_ADDENDUM) if p]
+    lesson_text = lessons or ''
+    parts = [p for p in (arch, lesson_text, WORKSPACE_SCOPE_ADDENDUM) if p]
     if docker_mode_on:
         parts.append(SANDBOX_SYSTEM_PROMPT_ADDENDUM)
     return '\n\n'.join(parts)

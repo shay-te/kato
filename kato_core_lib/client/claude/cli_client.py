@@ -72,6 +72,7 @@ class ClaudeCliClient(object):
         extra_args: list[str] | None = None,
         effort: str = '',
         architecture_doc_path: str = '',
+        lessons_path: str = '',
     ) -> None:
         self.max_retries = max(1, int(max_retries or 1))
         self._binary = normalized_text(binary) or self.DEFAULT_BINARY
@@ -116,6 +117,7 @@ class ClaudeCliClient(object):
         self._model_access_smoke_test_ran = False
         self._extra_args = list(extra_args or [])
         self._architecture_doc_path = normalized_text(architecture_doc_path)
+        self._lessons_path = normalized_text(lessons_path)
         self.logger = configure_logger(self.__class__.__name__)
         if self._bypass_permissions:
             self.logger.warning(
@@ -639,15 +641,21 @@ class ClaudeCliClient(object):
         architecture_doc = read_architecture_doc(
             self._architecture_doc_path, logger=self.logger,
         )
+        from kato_core_lib.helpers.lessons_doc_utils import read_lessons_file
+        lessons_text = read_lessons_file(
+            self._lessons_path, logger=self.logger,
+        )
         # When ``KATO_CLAUDE_DOCKER=true`` the agent gets a short
         # description of the sandboxed environment appended to its
         # system prompt — see ``kato.sandbox.system_prompt``. Composer
-        # joins the architecture doc and the addendum into one value
-        # because the Claude CLI takes a single
-        # ``--append-system-prompt``.
+        # joins the architecture doc, learned lessons, and the
+        # addendum into one value because the Claude CLI takes a
+        # single ``--append-system-prompt``.
         from kato_core_lib.sandbox.system_prompt import compose_system_prompt
         appended_system_prompt = compose_system_prompt(
-            architecture_doc, docker_mode_on=self._docker_mode_on,
+            architecture_doc,
+            docker_mode_on=self._docker_mode_on,
+            lessons=lessons_text,
         )
         if appended_system_prompt:
             command.extend(['--append-system-prompt', appended_system_prompt])

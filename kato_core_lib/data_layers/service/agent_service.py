@@ -106,6 +106,7 @@ class AgentService(Service):
         wait_planning_service=None,
         triage_service=None,
         review_workspace_ttl_seconds: float = 3600.0,
+        lessons_service=None,
         logger: logging.Logger | None = None,
     ) -> None:
         self.logger = logger or configure_logger(self.__class__.__name__)
@@ -144,6 +145,7 @@ class AgentService(Service):
         self._review_workspace_ttl_seconds = max(
             0.0, float(review_workspace_ttl_seconds or 0.0),
         )
+        self._lessons_service = lessons_service
         # `kato:wait-before-git-push` plumbing. The dict stashes the
         # (task, prepared_task, execution) tuple after testing so the
         # operator-triggered ``approve_push`` can resume publish without
@@ -830,6 +832,12 @@ class AgentService(Service):
                 'failed to move task %s to In Review during finish',
                 normalized,
             )
+        # Lesson capture (best-effort, non-blocking). When configured,
+        # ``LessonsService`` extracts a one-line rule from the task and
+        # writes it to the per-task lesson file. Runs in a background
+        # thread so the finish call's response time isn't tied to an
+        # LLM round-trip; failures stay inside the worker.
+        self._kick_lesson_extraction(normalized, push_result, pr_result)
         return {
             'finished': moved_to_review,
             'task_id': normalized,
@@ -838,6 +846,53 @@ class AgentService(Service):
             'moved_to_review': moved_to_review,
             'move_error': move_error,
         }
+
+    def _kick_lesson_extraction(
+        self,
+        task_id: str,
+        push_result,
+        pr_result,
+    ) -> None:
+        """Fire lesson extraction for a just-finished task in a worker thread.
+
+        Context handed to the LLM is intentionally compact: task id,
+        task summary (when retrievable), and a short trail of what
+        publish did. The extractor is constrained to output a single
+        concrete rule or NO_LESSON — long context isn't useful.
+        """
+        if self._lessons_service is None:
+            return
+        import threading
+
+        try:
+            task = self._task_service.get_task(task_id)
+            task_summary = str(getattr(task, 'summary', '') or '')
+            task_description = str(getattr(task, 'description', '') or '')
+        except Exception:
+            task_summary = ''
+            task_description = ''
+
+        context_parts = [f'Task summary: {task_summary or "(none)"}']
+        if task_description:
+            context_parts.append(f'Task description:\n{task_description}')
+        context_parts.append(f'Push result: {push_result!r}')
+        context_parts.append(f'Pull request result: {pr_result!r}')
+        task_context = '\n\n'.join(context_parts)
+
+        def _run() -> None:
+            try:
+                self._lessons_service.extract_and_save(task_id, task_context)
+            except Exception:
+                # Service already logs; swallow so the worker thread
+                # never crashes anything visible to the operator.
+                pass
+
+        worker = threading.Thread(
+            target=_run,
+            name=f'kato-lesson-extract-{task_id}',
+            daemon=True,
+        )
+        worker.start()
 
     def task_publish_state(self, task_id: str) -> dict[str, object]:
         """Workspace + push-readiness + PR-existence summary for the UI.

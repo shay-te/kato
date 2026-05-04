@@ -145,6 +145,11 @@ kato:
     # kato appends to Claude's system prompt on every spawn (autonomous
     # runs, planning sessions, and review-fix retries). Empty disables.
     architecture_doc_path: ${oc.env:KATO_ARCHITECTURE_DOC_PATH,""}
+    # Path to the global compacted lessons file. Re-read on every
+    # Claude spawn so newly-extracted lessons (after a "done" click or
+    # a periodic compact) take effect on the next turn without
+    # restarting kato. Empty falls back to ``~/.kato/lessons.md``.
+    lessons_path: ${oc.env:KATO_LESSONS_PATH,""}
   task_scan:
     startup_delay_seconds: ${oc.decode:${oc.env:OPENHANDS_TASK_SCAN_STARTUP_DELAY_SECONDS,"5"}}
     scan_interval_seconds: ${oc.decode:${oc.env:OPENHANDS_TASK_SCAN_INTERVAL_SECONDS,"60"}}

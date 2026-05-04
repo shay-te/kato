@@ -39,6 +39,11 @@ from kato_core_lib.data_layers.service.workspace_manager import (
 from kato_core_lib.data_layers.service.workspace_recovery_service import (
     WorkspaceRecoveryService,
 )
+from kato_core_lib.data_layers.data_access.lessons_data_access import (
+    LessonsDataAccess,
+)
+from kato_core_lib.data_layers.service.lessons_service import LessonsService
+from kato_core_lib.helpers.claude_one_shot_utils import make_claude_one_shot
 from kato_core_lib.helpers.runtime_identity_utils import runtime_source_fingerprint
 from kato_core_lib.validation.bypass_permissions_validator import (
     is_docker_mode_enabled,
@@ -131,6 +136,13 @@ class KatoCoreLib(CoreLib):
         self.workspace_manager = WorkspaceManager.from_config(
             open_cfg, agent_backend,
         )
+        # Lessons subsystem: per-task lesson capture + periodic compact.
+        # The Claude clients re-read ``lessons_path`` on every spawn so
+        # newly-extracted or freshly-compacted lessons take effect on
+        # the next turn without restarting kato. ``LessonsService`` is
+        # also handed to ``AgentService`` so the done-callback can
+        # extract a lesson when the operator marks a task done.
+        self.lessons_service = self._build_lessons_service(open_cfg)
         if self.session_manager is not None and self.workspace_manager is not None:
             self.session_manager.attach_workspace_manager(self.workspace_manager)
         # Worker pool sized to KATO_MAX_PARALLEL_TASKS. With max=1 the
@@ -291,6 +303,7 @@ class KatoCoreLib(CoreLib):
             review_workspace_ttl_seconds=float(
                 getattr(open_cfg, 'review_workspace_ttl_seconds', 3600)
             ),
+            lessons_service=self.lessons_service,
         )
 
 
@@ -313,6 +326,67 @@ class KatoCoreLib(CoreLib):
             failure_email_cfg=open_cfg.failure_email,
             completion_email_cfg=open_cfg.completion_email,
         )
+
+    def _build_lessons_service(self, open_cfg: DictConfig) -> LessonsService:
+        """Construct ``LessonsService`` and kick off a startup compact if due.
+
+        Resolves the lessons file path: explicit ``KATO_LESSONS_PATH``
+        wins, else defaults to ``~/.kato/lessons.md``. The state-dir
+        for per-task pending files is the parent of that file.
+        ``KATO_CLAUDE_BINARY`` and ``KATO_CLAUDE_MODEL`` thread into
+        the one-shot LLM helper so extract / compact reuse the
+        operator-configured Claude install.
+        """
+        from pathlib import Path
+
+        claude_cfg = getattr(open_cfg, 'claude', None)
+        configured = ''
+        if claude_cfg is not None:
+            configured = str(getattr(claude_cfg, 'lessons_path', '') or '').strip()
+        lessons_path = Path(configured).expanduser() if configured else (
+            Path.home() / '.kato' / 'lessons.md'
+        )
+        state_dir = lessons_path.parent
+        data_access = LessonsDataAccess(state_dir)
+        binary = ''
+        model = ''
+        if claude_cfg is not None:
+            binary = str(getattr(claude_cfg, 'binary', '') or '').strip() or 'claude'
+            model = str(getattr(claude_cfg, 'model', '') or '').strip()
+        else:
+            binary = 'claude'
+        llm_one_shot = make_claude_one_shot(binary=binary, model=model)
+        service = LessonsService(data_access, llm_one_shot)
+        self._kick_startup_compact(service)
+        return service
+
+    @staticmethod
+    def _kick_startup_compact(service: LessonsService) -> None:
+        """Run a compact in the background if one is due.
+
+        Non-blocking: kato boot finishes regardless. If the compact
+        fails the previous lessons file is preserved (the service
+        catches its own exceptions).
+        """
+        import threading
+
+        if not service.should_compact():
+            return
+
+        def _run() -> None:
+            try:
+                service.compact()
+            except Exception:
+                # Service already logs; swallow so the worker thread
+                # never crashes the orchestrator.
+                pass
+
+        worker = threading.Thread(
+            target=_run,
+            name='kato-lessons-startup-compact',
+            daemon=True,
+        )
+        worker.start()
 
     def _validate_runtime_source_fingerprint(self, open_cfg: DictConfig) -> None:
         expected_source_fingerprint = str(open_cfg.get('source_fingerprint', '') or '').strip()
@@ -413,6 +487,9 @@ class KatoCoreLib(CoreLib):
             ),
             architecture_doc_path=str(
                 getattr(claude_cfg, 'architecture_doc_path', '') or ''
+            ),
+            lessons_path=str(
+                getattr(claude_cfg, 'lessons_path', '') or ''
             ),
         )
 

@@ -116,6 +116,7 @@ class StreamingClaudeSession(object):
         env: dict[str, str] | None = None,
         effort: str = '',
         architecture_doc_path: str = '',
+        lessons_path: str = '',
         docker_mode_on: bool = False,
         done_callback=None,
     ) -> None:
@@ -142,6 +143,7 @@ class StreamingClaudeSession(object):
         self._effort = normalized_text(effort).lower()
         self._resume_session_id = normalized_text(resume_session_id)
         self._architecture_doc_path = normalized_text(architecture_doc_path)
+        self._lessons_path = normalized_text(lessons_path)
         # Set from ``KATO_CLAUDE_DOCKER`` at boot, threaded down through
         # the session manager. Independent of ``permission_mode``: docker
         # is the *containment* layer (sandbox), permission_mode is the
@@ -540,17 +542,23 @@ class StreamingClaudeSession(object):
         architecture_doc = read_architecture_doc(
             self._architecture_doc_path, logger=self.logger,
         )
+        from kato_core_lib.helpers.lessons_doc_utils import read_lessons_file
+        lessons_text = read_lessons_file(
+            self._lessons_path, logger=self.logger,
+        )
         # When ``KATO_CLAUDE_DOCKER=true`` the agent gets a short
         # description of the sandboxed environment appended to its
         # system prompt — see ``kato.sandbox.system_prompt``. Composer
-        # joins the architecture doc and the addendum into one value
-        # because the Claude CLI takes a single
-        # ``--append-system-prompt``. Mirrors the wiring in
+        # joins the architecture doc, learned lessons, and the
+        # addendum into one value because the Claude CLI takes a
+        # single ``--append-system-prompt``. Mirrors the wiring in
         # ``ClaudeCliClient._build_command`` so streaming and one-shot
         # spawns deliver identical guidance to the agent.
         from kato_core_lib.sandbox.system_prompt import compose_system_prompt
         appended_system_prompt = compose_system_prompt(
-            architecture_doc, docker_mode_on=self._docker_mode_on,
+            architecture_doc,
+            docker_mode_on=self._docker_mode_on,
+            lessons=lessons_text,
         )
         if appended_system_prompt:
             command.extend(['--append-system-prompt', appended_system_prompt])

@@ -60,6 +60,7 @@ class StreamingSessionDefaults(object):
     max_turns: int | None = None
     effort: str = ''
     architecture_doc_path: str = ''
+    lessons_path: str = ''
     # Set from ``KATO_CLAUDE_DOCKER`` at boot. When True, every spawned
     # streaming session wraps the Claude subprocess in the hardened
     # Docker sandbox. Independent of ``permission_mode`` — docker is
@@ -121,6 +122,7 @@ class PlanningSessionRunner(object):
             max_turns=_coerce_optional_int(getattr(claude_cfg, 'max_turns', None)),
             effort=str(getattr(claude_cfg, 'effort', '') or ''),
             architecture_doc_path=str(getattr(claude_cfg, 'architecture_doc_path', '') or ''),
+            lessons_path=str(getattr(claude_cfg, 'lessons_path', '') or ''),
             docker_mode_on=bool(docker_mode_on),
         )
 
@@ -184,6 +186,7 @@ class PlanningSessionRunner(object):
             effort=self._defaults.effort,
             expected_branch='',
             architecture_doc_path=self._defaults.architecture_doc_path,
+            lessons_path=self._defaults.lessons_path,
             docker_mode_on=self._defaults.docker_mode_on,
         )
 
@@ -313,6 +316,7 @@ class PlanningSessionRunner(object):
             effort=self._defaults.effort,
             expected_branch=branch_name,
             architecture_doc_path=self._defaults.architecture_doc_path,
+            lessons_path=self._defaults.lessons_path,
             docker_mode_on=self._defaults.docker_mode_on,
         )
 

@@ -242,6 +242,7 @@ class KatoCoreLibTests(unittest.TestCase):
             wait_planning_service=ANY,
             triage_service=ANY,
             review_workspace_ttl_seconds=ANY,
+            lessons_service=ANY,
         )
         mock_service_cls.return_value.validate_connections.assert_called_once_with()
         self.assertIs(app.service, mock_service_cls.return_value)
