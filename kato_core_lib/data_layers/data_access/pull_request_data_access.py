@@ -3,9 +3,10 @@ from omegaconf import DictConfig
 from core_lib.data_layers.data_access.data_access import DataAccess
 from core_lib.rule_validator.rule_validator import RuleValidator, ValueRuleValidator
 
-from vcs_provider_contracts.vcs_provider_contracts.pull_request_provider import PullRequestProvider
 from kato_core_lib.data_layers.data.review_comment import ReviewComment
 from kato_core_lib.data_layers.data.fields import PullRequestFields, ReviewCommentFields
+from repository_core_lib.repository_core_lib.pull_request_service import PullRequestService
+from repository_core_lib.repository_core_lib.repository_type import RepositoryType
 
 
 pull_request_rule_validator = RuleValidator(
@@ -46,9 +47,10 @@ review_comment_reply_rule_validator = RuleValidator(
 )
 
 class PullRequestDataAccess(DataAccess):
-    def __init__(self, config: DictConfig, client: PullRequestProvider) -> None:
+    def __init__(self, config: DictConfig, client: PullRequestService) -> None:
         self._config = config
         self._client = client
+        self._repository_type = RepositoryType.from_base_url(config.base_url)
 
     @property
     def provider_name(self) -> str:
@@ -56,6 +58,7 @@ class PullRequestDataAccess(DataAccess):
 
     def validate_connection(self) -> None:
         self._client.validate_connection(
+            self._repository_type,
             **self._repository_kwargs(),
         )
 
@@ -75,6 +78,7 @@ class PullRequestDataAccess(DataAccess):
             }
         )
         return self._client.create_pull_request(
+            self._repository_type,
             title=title,
             source_branch=source_branch,
             **self._repository_kwargs(),
@@ -89,6 +93,7 @@ class PullRequestDataAccess(DataAccess):
             }
         )
         return self._client.list_pull_request_comments(
+            self._repository_type,
             **self._repository_kwargs(),
             pull_request_id=pull_request_id,
         )
@@ -106,6 +111,7 @@ class PullRequestDataAccess(DataAccess):
             }
         )
         return self._client.find_pull_requests(
+            self._repository_type,
             **self._repository_kwargs(),
             source_branch=source_branch,
             title_prefix=title_prefix,
@@ -119,6 +125,7 @@ class PullRequestDataAccess(DataAccess):
             }
         )
         self._client.resolve_review_comment(
+            self._repository_type,
             **self._repository_kwargs(),
             comment=comment,
         )
@@ -132,6 +139,7 @@ class PullRequestDataAccess(DataAccess):
             }
         )
         self._client.reply_to_review_comment(
+            self._repository_type,
             **self._repository_kwargs(),
             comment=comment,
             body=body,

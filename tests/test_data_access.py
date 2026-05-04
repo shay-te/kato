@@ -8,6 +8,7 @@ from kato_core_lib.data_layers.data_access.pull_request_data_access import (
 )
 from kato_core_lib.data_layers.data_access.task_data_access import TaskDataAccess
 from kato_core_lib.data_layers.data.fields import ReviewCommentFields
+from repository_core_lib.repository_core_lib.repository_type import RepositoryType
 from tests.utils import build_review_comment
 
 
@@ -95,6 +96,7 @@ class PullRequestDataAccessTests(unittest.TestCase):
 
         client = types.SimpleNamespace(
             provider_name='bitbucket',
+            repository_type=RepositoryType.BITBUCKET,
             create_pull_request=Mock(),
         )
 
@@ -107,6 +109,7 @@ class PullRequestDataAccessTests(unittest.TestCase):
         )
 
         client.create_pull_request.assert_called_once_with(
+            RepositoryType.BITBUCKET,
             title='PROJ-1: Fix bug',
             source_branch='feature/proj-1',
             repo_owner='workspace',
@@ -126,6 +129,7 @@ class PullRequestDataAccessTests(unittest.TestCase):
         data_access = PullRequestDataAccess(
             config,
             types.SimpleNamespace(
+                repository_type=RepositoryType.BITBUCKET,
                 create_pull_request=Mock(),
             ),
         )
@@ -172,6 +176,7 @@ class PullRequestDataAccessTests(unittest.TestCase):
         )
         client = types.SimpleNamespace(
             provider_name='bitbucket',
+            repository_type=RepositoryType.BITBUCKET,
             create_pull_request=Mock(),
         )
 
@@ -184,6 +189,7 @@ class PullRequestDataAccessTests(unittest.TestCase):
         )
 
         client.create_pull_request.assert_called_once_with(
+            RepositoryType.BITBUCKET,
             title='PROJ-1: Fix bug',
             source_branch='feature/proj-1',
             repo_owner='workspace',
@@ -202,6 +208,7 @@ class PullRequestDataAccessTests(unittest.TestCase):
         )
         client = types.SimpleNamespace(
             provider_name='bitbucket',
+            repository_type=RepositoryType.BITBUCKET,
             list_pull_request_comments=Mock(return_value=['comment']),
         )
 
@@ -210,6 +217,7 @@ class PullRequestDataAccessTests(unittest.TestCase):
 
         self.assertEqual(comments, ['comment'])
         client.list_pull_request_comments.assert_called_once_with(
+            RepositoryType.BITBUCKET,
             repo_owner='workspace',
             repo_slug='repo',
             pull_request_id='17',
@@ -225,6 +233,7 @@ class PullRequestDataAccessTests(unittest.TestCase):
         )
         client = types.SimpleNamespace(
             provider_name='bitbucket',
+            repository_type=RepositoryType.BITBUCKET,
             find_pull_requests=Mock(return_value=['pr']),
         )
 
@@ -236,6 +245,7 @@ class PullRequestDataAccessTests(unittest.TestCase):
 
         self.assertEqual(pull_requests, ['pr'])
         client.find_pull_requests.assert_called_once_with(
+            RepositoryType.BITBUCKET,
             repo_owner='workspace',
             repo_slug='repo',
             source_branch='PROJ-1',
@@ -257,6 +267,7 @@ class PullRequestDataAccessTests(unittest.TestCase):
         )
         client = types.SimpleNamespace(
             provider_name='bitbucket',
+            repository_type=RepositoryType.BITBUCKET,
             resolve_review_comment=Mock(),
         )
 
@@ -264,6 +275,7 @@ class PullRequestDataAccessTests(unittest.TestCase):
         data_access.resolve_review_comment(comment)
 
         client.resolve_review_comment.assert_called_once_with(
+            RepositoryType.BITBUCKET,
             repo_owner='workspace',
             repo_slug='repo',
             comment=comment,
@@ -280,6 +292,7 @@ class PullRequestDataAccessTests(unittest.TestCase):
         comment = build_review_comment()
         client = types.SimpleNamespace(
             provider_name='bitbucket',
+            repository_type=RepositoryType.BITBUCKET,
             reply_to_review_comment=Mock(),
         )
 
@@ -290,6 +303,7 @@ class PullRequestDataAccessTests(unittest.TestCase):
         )
 
         client.reply_to_review_comment.assert_called_once_with(
+            RepositoryType.BITBUCKET,
             repo_owner='workspace',
             repo_slug='repo',
             comment=comment,
@@ -307,6 +321,7 @@ class PullRequestDataAccessTests(unittest.TestCase):
         data_access = PullRequestDataAccess(
             config,
             types.SimpleNamespace(
+                repository_type=RepositoryType.BITBUCKET,
                 resolve_review_comment=Mock(),
             ),
         )
@@ -327,6 +342,7 @@ class PullRequestDataAccessTests(unittest.TestCase):
         data_access = PullRequestDataAccess(
             config,
             types.SimpleNamespace(
+                repository_type=RepositoryType.BITBUCKET,
                 reply_to_review_comment=Mock(),
             ),
         )

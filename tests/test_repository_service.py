@@ -2021,19 +2021,20 @@ class RepositoryServiceTests(unittest.TestCase):
             bitbucket_api_email='bb-user@example.com',
             username='legacy-user',
         )
-        service = RepositoryInventoryService([repository])
+        service = RepositoryInventoryService([repository], 3)
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_inventory_service.build_pull_request_client',
+            'kato_core_lib.data_layers.service.repository_inventory_service.RepositoryCoreLib',
             return_value=Mock(),
         ) as mock_build:
             service._pull_request_data_access(repository)
 
-        config = mock_build.call_args.args[0]
+        config, max_retries = mock_build.call_args.args
         self.assertEqual(config.base_url, 'https://api.bitbucket.org/2.0')
         self.assertEqual(config.token, 'bb-token')
         self.assertEqual(config.get('api_email'), 'bb-user@example.com')
         self.assertIsNone(config.get('username'))
+        self.assertEqual(max_retries, 3)
 
     def test_validation_report_text_reads_and_trims_file_content(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -15,7 +15,7 @@ class TestUna2427(unittest.TestCase):
         """Test that CoreLib initializes correctly with default configurations"""
         # This validates basic initialization of the CoreLib component
         with patch('kato_core_lib.kato_core_lib.EmailCoreLib'), \
-             patch('kato_core_lib.kato_core_lib.build_ticket_client'), \
+             patch('kato_core_lib.kato_core_lib.TaskCoreLib'), \
              patch('kato_core_lib.kato_core_lib.KatoClient'), \
              patch('kato_core_lib.kato_core_lib.RepositoryService'), \
              patch('kato_core_lib.kato_core_lib.TaskDataAccess'), \
@@ -37,7 +37,7 @@ class TestUna2427(unittest.TestCase):
         cfg_copy = build_test_cfg()
         
         with patch('kato_core_lib.kato_core_lib.EmailCoreLib'), \
-             patch('kato_core_lib.kato_core_lib.build_ticket_client'), \
+             patch('kato_core_lib.kato_core_lib.TaskCoreLib'), \
              patch('kato_core_lib.kato_core_lib.KatoClient'), \
              patch('kato_core_lib.kato_core_lib.RepositoryService'), \
              patch('kato_core_lib.kato_core_lib.TaskDataAccess'), \

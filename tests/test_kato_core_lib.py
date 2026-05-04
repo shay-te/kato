@@ -23,6 +23,7 @@ class KatoCoreLibTests(unittest.TestCase):
         ticket_client.provider_name = 'youtrack'
         ticket_client.max_retries = cfg.kato.retry.max_retries
         ticket_client.get_assigned_tasks.return_value = [task]
+        ticket_client.issue = ticket_client
 
         implementation_client = Mock(name='implementation_kato_client')
         implementation_client.max_retries = cfg.kato.retry.max_retries
@@ -65,7 +66,7 @@ class KatoCoreLibTests(unittest.TestCase):
         with patch(
             'kato_core_lib.kato_core_lib.EmailCoreLib'
         ) as mock_email_core_lib_cls, patch(
-            'kato_core_lib.kato_core_lib.build_ticket_client',
+            'kato_core_lib.kato_core_lib.TaskCoreLib',
         return_value=ticket_client,
         ), patch(
             'kato_core_lib.kato_core_lib.KatoClient',
@@ -95,8 +96,8 @@ class KatoCoreLibTests(unittest.TestCase):
         with patch(
             'kato_core_lib.kato_core_lib.EmailCoreLib'
         ) as mock_email_core_lib_cls, patch(
-            'kato_core_lib.kato_core_lib.build_ticket_client'
-        ) as mock_build_ticket_client, patch(
+            'kato_core_lib.kato_core_lib.TaskCoreLib'
+        ) as mock_TaskCoreLib, patch(
             'kato_core_lib.kato_core_lib.KatoClient',
             side_effect=[implementation_client, testing_client],
         ) as mock_kato_client_cls, patch(
@@ -125,7 +126,7 @@ class KatoCoreLibTests(unittest.TestCase):
             app = KatoCoreLib(self.cfg)
 
         mock_email_core_lib_cls.assert_called_once_with(self.cfg)
-        mock_build_ticket_client.assert_called_once_with(
+        mock_TaskCoreLib.assert_called_once_with(
             'youtrack',
             self.cfg.kato.youtrack,
             self.cfg.kato.retry.max_retries,
@@ -200,7 +201,7 @@ class KatoCoreLibTests(unittest.TestCase):
         )
         mock_task_da_cls.assert_called_once_with(
             self.cfg.kato.youtrack,
-            mock_build_ticket_client.return_value,
+            mock_TaskCoreLib.return_value.issue,
         )
         mock_task_service_cls.assert_called_once_with(
             self.cfg.kato.youtrack,
@@ -254,7 +255,7 @@ class KatoCoreLibTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.kato_core_lib.EmailCoreLib'
         ), patch(
-            'kato_core_lib.kato_core_lib.build_ticket_client'
+            'kato_core_lib.kato_core_lib.TaskCoreLib'
         ), patch(
             'kato_core_lib.kato_core_lib.KatoClient'
         ), patch(
@@ -296,7 +297,7 @@ class KatoCoreLibTests(unittest.TestCase):
         with patch(
             'kato_core_lib.kato_core_lib.EmailCoreLib'
         ), patch(
-            'kato_core_lib.kato_core_lib.build_ticket_client'
+            'kato_core_lib.kato_core_lib.TaskCoreLib'
         ), patch(
             'kato_core_lib.kato_core_lib.KatoClient'
         ) as mock_kato_client_cls, patch(
@@ -347,7 +348,7 @@ class KatoCoreLibTests(unittest.TestCase):
             mock_kato_client_cls,
         ) = self._build_workflow_app(testing_container_enabled=True)
 
-        assigned_task = app.service.get_assigned_tasks()[0]
+        assigned_task = _task
         result = app.service.process_assigned_task(assigned_task)
 
         self.assertEqual(
@@ -400,7 +401,7 @@ class KatoCoreLibTests(unittest.TestCase):
             mock_kato_client_cls,
         ) = self._build_workflow_app(testing_container_enabled=False)
 
-        assigned_task = app.service.get_assigned_tasks()[0]
+        assigned_task = _task
         result = app.service.process_assigned_task(assigned_task)
 
         self.assertEqual(
@@ -440,7 +441,7 @@ class KatoCoreLibTests(unittest.TestCase):
         with patch(
             'kato_core_lib.kato_core_lib.EmailCoreLib'
         ), patch(
-            'kato_core_lib.kato_core_lib.build_ticket_client'
+            'kato_core_lib.kato_core_lib.TaskCoreLib'
         ), patch(
             'kato_core_lib.kato_core_lib.KatoClient'
         ), patch(
@@ -471,7 +472,7 @@ class KatoCoreLibTests(unittest.TestCase):
         with patch(
             'kato_core_lib.kato_core_lib.EmailCoreLib'
         ), patch(
-            'kato_core_lib.kato_core_lib.build_ticket_client'
+            'kato_core_lib.kato_core_lib.TaskCoreLib'
         ), patch(
             'kato_core_lib.kato_core_lib.KatoClient'
         ), patch(
@@ -504,8 +505,8 @@ class KatoCoreLibTests(unittest.TestCase):
         with patch(
             'kato_core_lib.kato_core_lib.EmailCoreLib'
         ), patch(
-            'kato_core_lib.kato_core_lib.build_ticket_client'
-        ) as mock_build_ticket_client, patch(
+            'kato_core_lib.kato_core_lib.TaskCoreLib'
+        ) as mock_TaskCoreLib, patch(
             'kato_core_lib.kato_core_lib.KatoClient'
         ), patch(
             'kato_core_lib.kato_core_lib.RepositoryService'
@@ -526,7 +527,7 @@ class KatoCoreLibTests(unittest.TestCase):
         ):
             KatoCoreLib(cfg)
 
-        mock_build_ticket_client.assert_called_once_with(
+        mock_TaskCoreLib.assert_called_once_with(
             'jira',
             cfg.kato.jira,
             cfg.kato.retry.max_retries,
@@ -549,7 +550,7 @@ class KatoCoreLibTests(unittest.TestCase):
         with patch(
             'kato_core_lib.kato_core_lib.EmailCoreLib'
         ), patch(
-            'kato_core_lib.kato_core_lib.build_ticket_client'
+            'kato_core_lib.kato_core_lib.TaskCoreLib'
         ), patch(
             'kato_core_lib.kato_core_lib.KatoClient'
         ) as mock_kato_client_cls, patch(
@@ -599,7 +600,7 @@ class KatoCoreLibTests(unittest.TestCase):
         with patch(
             'kato_core_lib.kato_core_lib.EmailCoreLib'
         ), patch(
-            'kato_core_lib.kato_core_lib.build_ticket_client'
+            'kato_core_lib.kato_core_lib.TaskCoreLib'
         ), patch(
             'kato_core_lib.kato_core_lib.KatoClient'
         ), patch(
@@ -651,7 +652,7 @@ class KatoCoreLibTests(unittest.TestCase):
         with patch(
             'kato_core_lib.kato_core_lib.EmailCoreLib'
         ), patch(
-            'kato_core_lib.kato_core_lib.build_ticket_client'
+            'kato_core_lib.kato_core_lib.TaskCoreLib'
         ), patch(
             'kato_core_lib.kato_core_lib.KatoClient'
         ), patch(
@@ -769,7 +770,7 @@ class KatoCoreLibTests(unittest.TestCase):
         with patch(
             'kato_core_lib.kato_core_lib.EmailCoreLib'
         ), patch(
-            'kato_core_lib.kato_core_lib.build_ticket_client'
+            'kato_core_lib.kato_core_lib.TaskCoreLib'
         ), patch(
             'kato_core_lib.kato_core_lib.KatoClient'
         ), patch(
@@ -785,7 +786,7 @@ class KatoCoreLibTests(unittest.TestCase):
         with patch(
             'kato_core_lib.kato_core_lib.EmailCoreLib'
         ) as mock_email_core_lib_cls, patch(
-            'kato_core_lib.kato_core_lib.build_ticket_client'
+            'kato_core_lib.kato_core_lib.TaskCoreLib'
         ), patch(
             'kato_core_lib.kato_core_lib.KatoClient'
         ), patch(

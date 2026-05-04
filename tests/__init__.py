@@ -9,6 +9,8 @@ def load_tests(loader: unittest.TestLoader, tests: unittest.TestSuite, pattern: 
     suite.addTests(tests)
     repo_root = Path(__file__).resolve().parents[1]
     for tests_dir in [
+        repo_root / 'repository_core_lib' / 'repository_core_lib' / 'tests',
+        repo_root / 'task_core_lib' / 'task_core_lib' / 'tests',
         repo_root / 'youtrack_core_lib' / 'youtrack_core_lib' / 'tests',
         repo_root / 'github_core_lib' / 'github_core_lib' / 'tests',
         repo_root / 'bitbucket_core_lib' / 'bitbucket_core_lib' / 'tests',

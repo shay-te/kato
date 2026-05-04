@@ -8,7 +8,6 @@ from urllib.parse import urlparse
 from core_lib.data_layers.service.service import Service
 from omegaconf import OmegaConf
 
-from kato_core_lib.client.pull_request_client_factory import build_pull_request_client
 from kato_core_lib.data_layers.data.fields import RepositoryFields
 from kato_core_lib.data_layers.data_access.pull_request_data_access import PullRequestDataAccess
 from kato_core_lib.helpers.logging_utils import configure_logger
@@ -20,6 +19,7 @@ from kato_core_lib.helpers.repository_discovery_utils import (
     repository_id_from_name,
     review_url_for_remote,
 )
+from repository_core_lib.repository_core_lib.repository_core_lib import RepositoryCoreLib
 from kato_core_lib.helpers.text_utils import (
     normalized_lower_text,
     normalized_text,
@@ -600,6 +600,7 @@ class RepositoryInventoryService(Service):
             setattr(repository, RepositoryFields.BITBUCKET_API_EMAIL, api_email)
 
     def _pull_request_data_access(self, repository) -> PullRequestDataAccess:
+        provider = self._resolved_pull_request_provider(repository)
         provider_base_url = text_from_attr(repository, RepositoryFields.PROVIDER_BASE_URL)
         owner = text_from_attr(repository, RepositoryFields.OWNER)
         repo_slug = text_from_attr(repository, RepositoryFields.REPO_SLUG)
@@ -624,7 +625,7 @@ class RepositoryInventoryService(Service):
                 RepositoryFields.DESTINATION_BRANCH: destination_branch,
             }
         )
-        client = build_pull_request_client(config, self._max_retries)
+        client = RepositoryCoreLib(config, self._max_retries).pull_request
         return PullRequestDataAccess(config, client)
 
     def _review_url(self, repository, source_branch: str, destination_branch: str) -> str:

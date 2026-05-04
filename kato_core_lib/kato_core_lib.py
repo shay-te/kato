@@ -4,7 +4,6 @@ from core_lib.core_lib import CoreLib
 
 from kato_core_lib.client.claude import ClaudeCliClient, ClaudeSessionManager
 from kato_core_lib.client.openhands import KatoClient
-from kato_core_lib.client.ticket_client_factory import build_ticket_client
 from kato_core_lib.data_layers.data_access.task_data_access import TaskDataAccess
 from kato_core_lib.data_layers.service.agent_service import AgentService
 from kato_core_lib.data_layers.service.agent_state_registry import AgentStateRegistry
@@ -64,6 +63,7 @@ from kato_core_lib.helpers.kato_config_utils import (
     resolved_openhands_llm_settings,
     skip_testing_enabled,
 )
+from task_core_lib.task_core_lib.task_core_lib import TaskCoreLib
 
 logger = configure_logger('KatoCoreLib')
 ISSUE_PLATFORM_CONFIG_NAMES = {
@@ -145,11 +145,11 @@ class KatoCoreLib(CoreLib):
         self.planning_session_runner = planning_session_runner
         self.logger.info('using agent backend: %s', agent_backend)
         issue_platform, ticket_cfg = self._resolve_ticket_platform_config(open_cfg)
-        ticket_client = build_ticket_client(
+        ticket_client = TaskCoreLib(
             issue_platform,
             ticket_cfg,
             retry_cfg.max_retries,
-        )
+        ).issue
         implementation_service = ImplementationService(
             self._build_agent_client(
                 open_cfg,
