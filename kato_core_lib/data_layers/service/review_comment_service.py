@@ -173,7 +173,9 @@ class ReviewCommentService(Service):
                 head_sha_fn(repository) if callable(head_sha_fn) else ''
             )
             execution = self._run_review_comments_batch_fix(
-                comments, review_context, mode=('answer' if question_only else 'fix'),
+                comments, review_context,
+                mode=('answer' if question_only else 'fix'),
+                repository=repository,
             )
             if question_only:
                 self._publish_review_comment_answers(
@@ -570,14 +572,20 @@ class ReviewCommentService(Service):
         self,
         comment: ReviewComment,
         review_context: ReviewFixContext,
+        *,
+        repository=None,
     ) -> dict[str, str | bool]:
-        return self._run_review_comments_batch_fix([comment], review_context)
+        return self._run_review_comments_batch_fix(
+            [comment], review_context, repository=repository,
+        )
 
     def _run_review_comments_batch_fix(
         self,
         comments: list[ReviewComment],
         review_context: ReviewFixContext,
         mode: str = 'fix',
+        *,
+        repository=None,
     ) -> dict[str, str | bool]:
         """One agent spawn covering every comment in ``comments``.
 
@@ -612,6 +620,7 @@ class ReviewCommentService(Service):
                 review_context,
                 streaming=True,
                 mode=mode,
+                repository=repository,
             )
         else:
             execution = self._call_fix_review_comments_or_fanout(
@@ -620,6 +629,7 @@ class ReviewCommentService(Service):
                 review_context,
                 streaming=False,
                 mode=mode,
+                repository=repository,
             )
         if not execution.get(ImplementationFields.SUCCESS, False):
             comment_ids = ', '.join(c.comment_id for c in comments)
@@ -636,14 +646,27 @@ class ReviewCommentService(Service):
         *,
         streaming: bool,
         mode: str = 'fix',
+        repository=None,
     ) -> dict[str, str | bool]:
         if streaming:
+            # Spawn cwd for the streaming agent. MUST be the workspace
+            # clone's path (under ``KATO_WORKSPACES_ROOT``), NOT the
+            # inventory entry's ``local_path`` (under
+            # ``REPOSITORY_ROOT_PATH``). When ``repository`` is the
+            # already-provisioned workspace clone (the caller's job),
+            # use it directly. Falling back to the inventory lookup
+            # was the source of the "kato cloned the repo but edited
+            # my dev-una checkout" bug — the clone happened, but the
+            # agent ran somewhere else.
+            spawn_cwd = (
+                normalized_text(getattr(repository, 'local_path', '') or '')
+                if repository is not None
+                else self._review_repository_local_path(review_context)
+            )
             kwargs = dict(
                 task_id=review_context.task_id,
                 task_summary=review_context.task_summary,
-                repository_local_path=self._review_repository_local_path(
-                    review_context,
-                ),
+                repository_local_path=spawn_cwd,
             )
             singular_args = lambda c: (c, review_context.branch_name)  # noqa: E731
         else:

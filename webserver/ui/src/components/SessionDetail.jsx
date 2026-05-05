@@ -18,10 +18,15 @@ export default function SessionDetail({
   needsAttention = false,
   composerValue = '',
   onComposerChange,
+  toolMemory: providedToolMemory = null,
 }) {
   const taskId = session?.task_id;
   const stream = useSessionStream(taskId, onActivity);
-  const memory = useToolMemory();
+  // Prefer the App-level toolMemory when passed (so the same recall
+  // function powers both this modal AND the tab-attention filter);
+  // fall back to a local instance for tests / standalone usage.
+  const localToolMemory = useToolMemory();
+  const memory = providedToolMemory || localToolMemory;
   const updateComposer = typeof onComposerChange === 'function' ? onComposerChange : noop;
 
   useEffect(() => {

@@ -17,6 +17,7 @@ import { useSessions } from './hooks/useSessions.js';
 import { clearTaskStreamCache } from './hooks/useSessionStream.js';
 import { useStatusFeed } from './hooks/useStatusFeed.js';
 import { useTaskAttention } from './hooks/useTaskAttention.js';
+import { useToolMemory } from './hooks/useToolMemory.js';
 import { CLAUDE_EVENT } from './constants/claudeEvent.js';
 import { appendComposerFragment } from './utils/chatComposerHelpers.js';
 import { mergePendingPermissionTaskIds } from './utils/sessionAttention.js';
@@ -31,6 +32,12 @@ export default function App() {
   const [composerValue, setComposerValue] = useState('');
   const { sessions, refresh } = useSessions();
   const attention = useTaskAttention();
+  // Lifted from SessionDetail so the same recall function powers
+  // both the permission modal AND the tab-attention filter. Without
+  // this lift, the server's "has_pending_permission" poll would
+  // re-mark a tab orange between auto-allow turns even though the
+  // modal correctly suppressed itself.
+  const toolMemory = useToolMemory();
   const [workspaceVersion, setWorkspaceVersion] = useState(() => ({}));
   // Tracks whether the operator has manually picked a tab. We auto-focus
   // the live task on the *first* event arrival, but only when the operator
@@ -116,7 +123,20 @@ export default function App() {
     if (!raw?.type || !taskId) { return; }
     if (raw.type === CLAUDE_EVENT.PERMISSION_REQUEST
         || raw.type === CLAUDE_EVENT.CONTROL_REQUEST) {
-      attention.mark(taskId);
+      // Skip the attention mark when the operator has already
+      // remembered a decision for this tool — the auto-handler in
+      // PermissionDecisionContainer will dispatch silently and a
+      // tab-orange flash would be misleading. Without this gate,
+      // rapid-fire Bash requests (the screenshotted symptom) make
+      // the tab strobe orange even though no UI prompt is needed.
+      const toolName = String(
+        raw.tool_name || raw.tool
+        || raw.request?.tool_name || raw.request?.tool || '',
+      ).trim();
+      const decision = toolName ? toolMemory.recall(toolName) : null;
+      if (decision !== 'allow' && decision !== 'deny') {
+        attention.mark(taskId);
+      }
     } else if (raw.type === CLAUDE_EVENT.PERMISSION_RESPONSE
         || raw.type === CLAUDE_EVENT.RESULT) {
       attention.clear(taskId);
@@ -142,7 +162,7 @@ export default function App() {
         && taskId !== activeTaskId) {
       setActiveTaskIdState(taskId);
     }
-  }, [routing, attention, bumpWorkspaceVersion, refresh, activeTaskId]);
+  }, [routing, attention, bumpWorkspaceVersion, refresh, activeTaskId, toolMemory]);
 
   const status = useStatusFeed(handleStatusEntry);
   const safetyState = useSafetyState();
@@ -157,8 +177,10 @@ export default function App() {
 
   const activeSession = sessions.find((s) => s.task_id === activeTaskId) || null;
   const attentionTaskIds = useMemo(() => {
-    return mergePendingPermissionTaskIds(attention.taskIds, sessions);
-  }, [attention.taskIds, sessions]);
+    return mergePendingPermissionTaskIds(
+      attention.taskIds, sessions, toolMemory.recall,
+    );
+  }, [attention.taskIds, sessions, toolMemory.recall]);
   const activeNeedsAttention = !!activeTaskId && attentionTaskIds.has(activeTaskId);
   const activeSessionKey = activeTaskId || '__none__';
   const activeWorkspaceVersion = workspaceVersion[activeTaskId] || 0;
@@ -184,6 +206,7 @@ export default function App() {
           onPendingPermissionChange={handlePendingPermissionChange}
           composerValue={composerValue}
           onComposerChange={setComposerValue}
+          toolMemory={toolMemory}
         />
       }
       right={

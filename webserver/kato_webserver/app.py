@@ -1204,7 +1204,8 @@ def _records_as_dicts(
     """
     live_session_ids = _live_session_ids(session_manager)
     working_session_ids = _working_session_ids(session_manager)
-    pending_permission_session_ids = _pending_permission_session_ids(session_manager)
+    pending_permission_tool_by_task = _pending_permission_tool_by_task(session_manager)
+    pending_permission_session_ids = set(pending_permission_tool_by_task.keys())
     if workspace_manager is None:
         return [
             _session_record_to_dict(
@@ -1212,6 +1213,7 @@ def _records_as_dicts(
                 live_session_ids,
                 working_session_ids,
                 pending_permission_session_ids,
+                pending_permission_tool_by_task,
             )
             for record in session_manager.list_records()
         ]
@@ -1226,6 +1228,7 @@ def _records_as_dicts(
             awaiting_push,
             working_session_ids=working_session_ids,
             pending_permission_session_ids=pending_permission_session_ids,
+            pending_permission_tool_by_task=pending_permission_tool_by_task,
         )
         for record in workspace_records
     ]
@@ -1236,12 +1239,19 @@ def _session_record_to_dict(
     live_session_ids: set[str],
     working_session_ids: set[str],
     pending_permission_session_ids: set[str],
+    pending_permission_tool_by_task: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     payload = _record_to_dict(record)
     task_id = str(payload.get('task_id') or getattr(record, 'task_id', '') or '')
     payload['live'] = task_id in live_session_ids
     payload['working'] = task_id in working_session_ids
     payload['has_pending_permission'] = task_id in pending_permission_session_ids
+    # The tool name on the most recent un-answered request — empty
+    # string when nothing is pending. Lets the UI suppress tab
+    # orange when the operator has a remembered "Allow always"
+    # decision for that tool (auto-allow path will handle silently;
+    # showing orange would be misleading).
+    payload['pending_permission_tool_name'] = (pending_permission_tool_by_task or {}).get(task_id, '')
     return payload
 
 
@@ -1285,24 +1295,58 @@ def _working_session_ids(session_manager) -> set[str]:
 
 def _pending_permission_session_ids(session_manager) -> set[str]:
     """Task ids whose live session is paused on an unanswered approval."""
+    return set(_pending_permission_tool_by_task(session_manager).keys())
+
+
+def _pending_permission_tool_by_task(session_manager) -> dict[str, str]:
+    """Per-task ``{task_id: pending_tool_name}`` for the tab-attention path.
+
+    Returns the tool name on the most recent unanswered permission
+    request so the UI can decide whether to mark the tab orange. The
+    tool name is the load-bearing piece: when the operator has a
+    remembered "Allow always" decision for that tool, kato's
+    PermissionDecisionContainer auto-submits silently and the tab
+    SHOULDN'T go orange — without the tool name, the UI can't tell
+    "Bash auto-handled" apart from "Edit waiting on a real ask" and
+    flashes orange on every rapid-fire Bash request, which is the
+    confused-operator UX in the reported screenshot.
+    """
     if session_manager is None:
-        return set()
+        return {}
     try:
         records = session_manager.list_records()
     except Exception:
-        return set()
-    pending: set[str] = set()
+        return {}
+    pending: dict[str, str] = {}
     for record in records:
         try:
             session = session_manager.get_session(record.task_id)
         except Exception:
             continue
-        if session is not None and _session_has_pending_permission(session):
-            pending.add(record.task_id)
+        if session is None:
+            continue
+        tool_name = _session_pending_permission_tool(session)
+        if tool_name:
+            # Empty-string tool name still marks pending (legacy
+            # callers + back-compat) — the UI's filter just can't
+            # match it to a remembered decision.
+            pending[record.task_id] = tool_name
     return pending
 
 
 def _session_has_pending_permission(session) -> bool:
+    return bool(_session_pending_permission_tool(session))
+
+
+def _session_pending_permission_tool(session) -> str:
+    """Tool name on the most recent un-answered permission request, or ''.
+
+    Walks ``recent_events`` newest-first looking for the first
+    permission/control request not yet followed by a response /
+    result. Returns the tool name from the request payload (or
+    a fallback marker so callers can still treat the task as
+    pending without crashing on a malformed envelope).
+    """
     for event in reversed(session.recent_events()):
         raw = getattr(event, 'raw', {}) or {}
         event_type = raw.get('type') if isinstance(raw, dict) else ''
@@ -1310,10 +1354,16 @@ def _session_has_pending_permission(session) -> bool:
             CLAUDE_EVENT_PERMISSION_REQUEST,
             CLAUDE_EVENT_CONTROL_REQUEST,
         ):
-            return True
+            # Both shapes: ``permission_request`` flat ``tool_name``,
+            # ``control_request`` nested under ``request``.
+            tool_name = raw.get('tool_name') or raw.get('tool') or ''
+            if not tool_name and isinstance(raw.get('request'), dict):
+                nested = raw['request']
+                tool_name = nested.get('tool_name') or nested.get('tool') or ''
+            return str(tool_name or '<unknown>')
         if event_type in (CLAUDE_EVENT_PERMISSION_RESPONSE, CLAUDE_EVENT_RESULT):
-            return False
-    return False
+            return ''
+    return ''
 
 
 def _live_session_ids(session_manager) -> set[str]:
@@ -1343,6 +1393,7 @@ def _workspace_record_to_dict(
     *,
     working_session_ids: set[str] | None = None,
     pending_permission_session_ids: set[str] | None = None,
+    pending_permission_tool_by_task: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     payload = record.to_dict() if hasattr(record, 'to_dict') else dict(record)
     payload['live'] = record.task_id in live_session_ids
@@ -1353,6 +1404,9 @@ def _workspace_record_to_dict(
     payload['has_pending_permission'] = (
         record.task_id in pending_permission_session_ids
         if pending_permission_session_ids is not None else False
+    )
+    payload['pending_permission_tool_name'] = (
+        (pending_permission_tool_by_task or {}).get(record.task_id, '')
     )
     if not payload.get('claude_session_id') and session_ids_by_task:
         backfilled = session_ids_by_task.get(record.task_id, '')

@@ -61,6 +61,106 @@ class ReviewCommentServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'unknown pull request id: 17'):
             self.service.process_review_comment(comment)
 
+    def test_review_fix_streaming_runner_spawns_at_workspace_clone_not_inventory(self) -> None:
+        # Regression: the review-fix streaming runner used to look
+        # up the spawn ``repository_local_path`` from the inventory
+        # via ``get_repository(repository_id)`` — which returns the
+        # operator's REPOSITORY_ROOT_PATH checkout, NOT the per-task
+        # workspace clone. So Claude cloned the repo into
+        # ``KATO_WORKSPACES_ROOT`` (good) and then edited the
+        # operator's dev-una checkout (very bad). This test pins the
+        # spawn cwd to the workspace clone's ``local_path`` that
+        # ``_provision_workspace_clone`` produced.
+        from kato_core_lib.data_layers.service.review_comment_service import (
+            ReviewFixContext,
+        )
+        from pathlib import Path
+
+        # Inventory entry — operator's local checkout.
+        inventory_repo = types.SimpleNamespace(
+            id='admin-client',
+            owner='workspace',
+            repo_slug='repo',
+            local_path='C:/Codes/dev-una/admin-client',  # <-- DO NOT spawn here
+            provider_base_url='https://api.bitbucket.org/2.0',
+        )
+        # Workspace clone — what kato should actually spawn against.
+        workspace_clone_path = 'C:/Codes/dev-kato/PROJ-9/admin-client'
+        self.repository_service.get_repository = Mock(return_value=inventory_repo)
+        self.repository_service.resolve_task_repositories = Mock(
+            return_value=[inventory_repo],
+        )
+        self.repository_service.ensure_clone = Mock()
+        # Stub a workspace_manager that produces the workspace
+        # clone path; ``provision_task_workspace_clones`` rewrites
+        # ``local_path`` on a copy of inventory_repo to this path.
+        workspace_manager = Mock()
+        workspace_manager.repository_path = Mock(
+            side_effect=lambda task_id, repo_id: Path(workspace_clone_path),
+        )
+        # Streaming runner that records the spawn cwd it was given.
+        recorded = {}
+        def _capture(*args, **kwargs):
+            recorded.update(kwargs)
+            return {ImplementationFields.SUCCESS: True}
+        runner = types.SimpleNamespace(fix_review_comment=Mock(side_effect=_capture))
+
+        service = ReviewCommentService(
+            self.task_service,
+            self.implementation_service,
+            self.repository_service,
+            self.state_registry,
+            planning_session_runner=runner,
+            use_streaming_for_review_fixes=True,
+            workspace_manager=workspace_manager,
+        )
+        # Bypass the change-detection gate (a separate test) so we
+        # can focus on the spawn cwd.
+        self.repository_service.current_head_sha = Mock(
+            side_effect=['head-before', 'head-after'],
+        )
+        self.repository_service.has_dirty_working_tree = Mock(return_value=False)
+
+        comment = ReviewComment(
+            pull_request_id='17',
+            comment_id='99',
+            author='reviewer',
+            body='please rename this variable',
+        )
+        self.state_registry.remember_pull_request_context(
+            {
+                PullRequestFields.REPOSITORY_ID: 'admin-client',
+                PullRequestFields.ID: '17',
+                PullRequestFields.TITLE: 'PROJ-9 thing',
+            },
+            'feature/proj-9/admin-client',
+            session_id='conv-1',
+            task_id='PROJ-9',
+            task_summary='thing',
+        )
+        # ``build_branch_name`` needs to be callable for both inventory
+        # repos and workspace-clone copies — return the branch name
+        # unconditionally for the test.
+        self.repository_service.build_branch_name = Mock(
+            return_value='feature/proj-9/admin-client',
+        )
+
+        service.process_review_comment(comment)
+
+        # The spawn cwd MUST be the workspace clone path, not the
+        # inventory's REPOSITORY_ROOT_PATH local_path. The exact
+        # spelling matters: a forward-slashes "C:/Codes/dev-kato/..."
+        # is what ``Path(workspace_clone_path)`` stringifies to.
+        self.assertIn('repository_local_path', recorded)
+        self.assertEqual(
+            recorded['repository_local_path'],
+            workspace_clone_path,
+        )
+        self.assertNotEqual(
+            recorded['repository_local_path'],
+            'C:/Codes/dev-una/admin-client',
+        )
+
     def test_process_review_comment_refuses_when_agent_made_no_changes(self) -> None:
         # Regression: previously, when Claude ran but committed
         # nothing AND left a clean tree, kato still posted "Kato
