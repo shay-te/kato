@@ -3,18 +3,26 @@ export function normalizeTrees(payload) {
   if (trees && trees.length > 0) {
     return trees.map((entry) => {
       const cwd = String(entry?.cwd || '');
+      const conflicts = Array.isArray(entry?.conflicted_files)
+        ? entry.conflicted_files.map(String)
+        : [];
       return {
         repo_id: String(entry?.repo_id || '') || basenameOf(cwd),
         cwd,
         tree: entry?.tree || [],
+        conflictedFiles: new Set(conflicts),
       };
     });
   }
   const legacyCwd = String(payload?.cwd || '');
+  const legacyConflicts = Array.isArray(payload?.conflicted_files)
+    ? payload.conflicted_files.map(String)
+    : [];
   return [{
     repo_id: basenameOf(legacyCwd),
     cwd: legacyCwd,
     tree: payload?.tree || [],
+    conflictedFiles: new Set(legacyConflicts),
   }];
 }
 

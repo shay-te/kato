@@ -3,6 +3,7 @@ import { parseDiff, Diff, Hunk } from 'react-diff-view';
 import 'react-diff-view/style/index.css';
 import { fetchDiff } from './api.js';
 import Icon from './components/Icon.jsx';
+import { tokenizeHunks } from './utils/diffSyntax.js';
 
 export default function ChangesTab({
   taskId,
@@ -172,6 +173,9 @@ function normalizeDiff(entry) {
   // Older server responses don't carry repo_id; derive from the cwd's
   // last path segment so the accordion still has a meaningful heading.
   const repoId = String(entry?.repo_id || '') || basenameOf(cwd);
+  const conflicts = Array.isArray(entry?.conflicted_files)
+    ? entry.conflicted_files.map(String)
+    : [];
   return {
     repo_id: repoId,
     cwd,
@@ -179,6 +183,7 @@ function normalizeDiff(entry) {
     head: String(entry?.head || ''),
     error: String(entry?.error || ''),
     files: raw ? parseDiff(raw) : [],
+    conflictedFiles: new Set(conflicts),
   };
 }
 
@@ -215,7 +220,11 @@ function RepoDiff({ repoDiff, collapsed, onToggle }) {
             </p>
           )}
           {!repoDiff.error && repoDiff.files.map((file) => (
-            <DiffFile key={diffFileKey(file)} file={file} />
+            <DiffFile
+              key={diffFileKey(file)}
+              file={file}
+              conflicted={isFileConflicted(file, repoDiff.conflictedFiles)}
+            />
           ))}
         </div>
       )}
@@ -229,19 +238,47 @@ function diffFileKey(file) {
   return `${file.type}:${oldPath}->${newPath}`;
 }
 
-function DiffFile({ file }) {
+function DiffFile({ file, conflicted = false }) {
   const path = file.newPath || file.oldPath || '(unknown)';
+  // Run intra-line edit highlighting (markEdits enhancer). Memoized
+  // on the hunks reference + path so workspace-poll re-renders
+  // don't re-tokenize.
+  const tokens = useMemo(
+    () => tokenizeHunks(file.hunks || [], path),
+    [file.hunks, path],
+  );
   return (
     <section className="diff-file">
       <header className="diff-file-header">
         <span className="diff-file-type">{file.type}</span>
         <span className="diff-file-path">{path}</span>
+        {conflicted && (
+          <span
+            className="diff-file-conflicted"
+            title="This file has merge conflicts that must be resolved before it can be merged."
+          >
+            CONFLICTED
+          </span>
+        )}
       </header>
-      <Diff viewType="unified" diffType={file.type} hunks={file.hunks || []}>
+      <Diff
+        viewType="unified"
+        diffType={file.type}
+        hunks={file.hunks || []}
+        tokens={tokens}
+      >
         {(hunks) => hunks.map((hunk) => (
           <Hunk key={hunk.content} hunk={hunk} />
         ))}
       </Diff>
     </section>
   );
+}
+
+
+function isFileConflicted(file, conflictedSet) {
+  if (!conflictedSet || conflictedSet.size === 0) { return false; }
+  const oldPath = file.oldPath || '';
+  const newPath = file.newPath || '';
+  return conflictedSet.has(oldPath) || conflictedSet.has(newPath);
 }

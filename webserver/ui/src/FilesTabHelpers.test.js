@@ -105,3 +105,43 @@ test('matchTreeNode tolerates missing data fields', function () {
   assert.equal(matchTreeNode(null, 'anything'), false);
   assert.equal(matchTreeNode({ data: {} }, ''), true);
 });
+
+
+// ----- conflict surfacing through normalizeTrees -----
+
+test('normalizeTrees carries conflicted_files into a Set on each tree', function () {
+  const normalized = normalizeTrees({
+    trees: [
+      {
+        repo_id: 'client',
+        cwd: '/workspace/client',
+        tree: [],
+        conflicted_files: ['src/auth.py', 'src/cache.py'],
+      },
+    ],
+  });
+  assert.equal(normalized[0].conflictedFiles instanceof Set, true);
+  assert.equal(normalized[0].conflictedFiles.has('src/auth.py'), true);
+  assert.equal(normalized[0].conflictedFiles.has('src/cache.py'), true);
+  assert.equal(normalized[0].conflictedFiles.has('src/other.py'), false);
+});
+
+test('normalizeTrees defaults conflictedFiles to an empty Set when missing', function () {
+  const normalized = normalizeTrees({
+    trees: [
+      { repo_id: 'client', cwd: '/workspace/client', tree: [] },
+    ],
+  });
+  assert.equal(normalized[0].conflictedFiles instanceof Set, true);
+  assert.equal(normalized[0].conflictedFiles.size, 0);
+});
+
+test('normalizeTrees handles legacy single-repo payload with conflicted_files', function () {
+  const normalized = normalizeTrees({
+    cwd: '/workspace/client',
+    tree: [],
+    conflicted_files: ['src/legacy.py'],
+  });
+  assert.equal(normalized.length, 1);
+  assert.equal(normalized[0].conflictedFiles.has('src/legacy.py'), true);
+});

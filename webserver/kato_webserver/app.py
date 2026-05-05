@@ -54,6 +54,7 @@ from kato_core_lib.client.claude.wire_protocol import (
     SSE_EVENT_STATUS_ENTRY,
 )
 from kato_webserver.git_diff_utils import (
+    conflicted_paths,
     current_branch,
     detect_default_branch,
     diff_against_base,
@@ -162,12 +163,17 @@ def _compute_repo_diff(
             'diff': '',
             'error': 'could not detect default branch',
         }
+    # Conflicted file list — surfaces in the Changes tab as a yellow
+    # CONFLICTED badge and in the Files tree as a warning icon. Best-
+    # effort: an empty list is the common (no-conflict) case AND the
+    # error case; the rest of the payload is unaffected either way.
     return {
         'repo_id': repo_id,
         'cwd': cwd,
         'base': base,
         'head': current_branch(cwd),
         'diff': diff_against_base(cwd, f'origin/{base}'),
+        'conflicted_files': conflicted_paths(cwd),
         'error': '',
     }
 
@@ -405,6 +411,10 @@ def _register_http_routes(app: Flask) -> None:
                     'repo_id': repo_id,
                     'cwd': cwd,
                     'tree': tracked_file_tree(cwd),
+                    # Conflict markers — same source as the Changes
+                    # tab. UI marks each path with a warning icon so
+                    # the operator spots merge conflicts at a glance.
+                    'conflicted_files': conflicted_paths(cwd),
                 })
             if trees:
                 return jsonify({
@@ -418,11 +428,17 @@ def _register_http_routes(app: Flask) -> None:
         cwd = _record_cwd_or_none(manager, task_id)
         if cwd is None:
             return jsonify({'error': 'session not found'}), 404
+        legacy_tree = tracked_file_tree(cwd)
+        legacy_conflicts = conflicted_paths(cwd)
         return jsonify({
             'repository_ids': [],
-            'trees': [{'repo_id': '', 'cwd': cwd, 'tree': tracked_file_tree(cwd)}],
+            'trees': [{
+                'repo_id': '', 'cwd': cwd, 'tree': legacy_tree,
+                'conflicted_files': legacy_conflicts,
+            }],
             'cwd': cwd,
-            'tree': tracked_file_tree(cwd),
+            'tree': legacy_tree,
+            'conflicted_files': legacy_conflicts,
         })
 
     @app.get('/api/sessions/<task_id>/diff')

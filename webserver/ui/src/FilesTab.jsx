@@ -159,6 +159,7 @@ export default function FilesTab({
           onToggle={() => toggleRepo(repoKey)}
           onPickFile={appendToInput}
           searchTerm={query}
+          conflictedFiles={repoTree.conflictedFiles}
         />
       );
     });
@@ -208,7 +209,10 @@ export default function FilesTab({
   );
 }
 
-function RepoTree({ repoTree, width, collapsed, onToggle, onPickFile, searchTerm = '' }) {
+function RepoTree({
+  repoTree, width, collapsed, onToggle, onPickFile,
+  searchTerm = '', conflictedFiles,
+}) {
   const treeData = useMemo(() => {
     return attachIds(repoTree.tree, repoTree.cwd);
   }, [repoTree.tree, repoTree.cwd]);
@@ -238,7 +242,13 @@ function RepoTree({ repoTree, width, collapsed, onToggle, onPickFile, searchTerm
         disableDrop
         disableEdit
       >
-        {(props) => <Node {...props} onPickFile={onPickFile} />}
+        {(props) => (
+          <Node
+            {...props}
+            onPickFile={onPickFile}
+            conflictedFiles={conflictedFiles}
+          />
+        )}
       </Tree>
     );
   }
@@ -259,12 +269,20 @@ function RepoTree({ repoTree, width, collapsed, onToggle, onPickFile, searchTerm
   );
 }
 
-function Node({ node, style, onPickFile }) {
+function Node({ node, style, onPickFile, conflictedFiles }) {
   const isFolder = node.isInternal;
   function onActivate() {
     activateTreeNode(node, onPickFile);
   }
-  const rowClass = 'tree-row' + (node.isSelected ? ' selected' : '');
+  const isConflicted = !isFolder
+    && conflictedFiles
+    && conflictedFiles.size > 0
+    && conflictedFiles.has(node.data.relativePath);
+  const rowClass = [
+    'tree-row',
+    node.isSelected ? 'selected' : '',
+    isConflicted ? 'conflicted' : '',
+  ].filter(Boolean).join(' ');
   let iconName;
   if (!isFolder) {
     iconName = 'file';
@@ -278,9 +296,13 @@ function Node({ node, style, onPickFile }) {
       className={rowClass}
       style={style}
       onClick={onActivate}
+      title={isConflicted ? 'Merge conflict — needs resolution' : undefined}
     >
       <span className="tree-row-icon"><Icon name={iconName} /></span>
       <span className="tree-row-name">{node.data.name}</span>
+      {isConflicted && (
+        <span className="tree-row-conflict" aria-label="merge conflict">⚠</span>
+      )}
     </div>
   );
 }

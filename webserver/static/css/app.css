@@ -977,6 +977,29 @@ body.kato-resizing { user-select: none; cursor: col-resize; }
   font-size: 12px;
   font-family: ui-monospace, monospace;
 }
+.diff-file-conflicted {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: #fde68a;
+  color: #78350f;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.tree-row.conflicted .tree-row-name {
+  color: #fbbf24;
+}
+.tree-row-conflict {
+  margin-left: auto;
+  margin-right: 6px;
+  color: #fbbf24;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
 .diff-file-type {
   text-transform: uppercase;
   color: #a3a3a3;
@@ -986,22 +1009,59 @@ body.kato-resizing { user-select: none; cursor: col-resize; }
 .diff-file-path { color: #e5e5e5; }
 
 /* react-diff-view dark-theme via the library's own CSS variables — robust
- * to stylesheet load order, since variables resolve at use-time. */
+ * to stylesheet load order, since variables resolve at use-time.
+ * Tints tuned to match Bitbucket's contrast: brighter line tint with
+ * a darker gutter so the diff's vertical structure stays readable
+ * but the line content jumps out. */
 .diff-file {
   --diff-background-color: #050505;
   --diff-text-color: #e5e5e5;
   --diff-font-family: ui-monospace, monospace;
-  --diff-gutter-insert-background-color: #052e1f;
-  --diff-gutter-delete-background-color: #3b0a0a;
-  --diff-code-insert-background-color: #052e1f;
-  --diff-code-delete-background-color: #3b0a0a;
-  --diff-code-insert-edit-background-color: #047857;
+  --diff-gutter-insert-background-color: #0d3d28;
+  --diff-gutter-delete-background-color: #5a1414;
+  --diff-code-insert-background-color: #0a4d2e;
+  --diff-code-delete-background-color: #5d1818;
+  --diff-code-insert-edit-background-color: #0e7a48;
   --diff-code-delete-edit-background-color: #b91c1c;
   --diff-gutter-selected-background-color: #262626;
   --diff-code-selected-background-color: #262626;
 }
-.diff-file .diff-gutter { color: #404040; }
+.diff-file .diff-gutter { color: #525252; }
 .diff-file .diff { font-size: 12px; }
+
+/* Syntax highlighting for tokens produced by ``tokenizeHunks``
+ * (refractor / Prism token classes). Palette tuned for the same
+ * dark background we already use; matches the colours an operator
+ * gets in the planning UI's Files tree and the code snippet block
+ * in review-fix prompts. Only the most common token types are
+ * styled — anything unrecognised renders as default text. */
+.diff-file .token.comment,
+.diff-file .token.prolog,
+.diff-file .token.cdata { color: #6b7280; font-style: italic; }
+.diff-file .token.keyword,
+.diff-file .token.boolean,
+.diff-file .token.constant,
+.diff-file .token.atrule,
+.diff-file .token.tag { color: #c084fc; }
+.diff-file .token.string,
+.diff-file .token.attr-value,
+.diff-file .token.template-string { color: #86efac; }
+.diff-file .token.number,
+.diff-file .token.unit { color: #fcd34d; }
+.diff-file .token.function,
+.diff-file .token.class-name { color: #facc15; }
+.diff-file .token.attr-name,
+.diff-file .token.property,
+.diff-file .token.variable { color: #93c5fd; }
+.diff-file .token.operator,
+.diff-file .token.punctuation { color: #cbd5e1; }
+.diff-file .token.regex { color: #f472b6; }
+.diff-file .token.builtin,
+.diff-file .token.symbol { color: #67e8f9; }
+.diff-file .token.deleted { color: #fca5a5; }
+.diff-file .token.inserted { color: #86efac; }
+.diff-file .token.italic { font-style: italic; }
+.diff-file .token.bold { font-weight: 600; }
 
 /* Bypass-permissions safety banner — visible at the very top of the page
  * whenever KATO_CLAUDE_BYPASS_PERMISSIONS=true. Red so the operator cannot

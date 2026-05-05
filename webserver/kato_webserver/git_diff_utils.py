@@ -141,6 +141,32 @@ def tracked_file_tree(cwd: str) -> list[dict[str, Any]]:
     return _paths_to_tree(paths)
 
 
+def conflicted_paths(cwd: str) -> list[str]:
+    """Return repo-relative paths of files with unmerged (conflicted) entries.
+
+    ``git ls-files --unmerged`` emits one line per conflicted-stage
+    entry — typically three per file (stages 1/2/3). We dedupe by
+    path and sort for stable output.
+
+    Empty list when the repo has no conflicts (the common case),
+    when the directory isn't a git repo, or when ``git`` isn't on
+    PATH. Best-effort: a failure here must not block the diff
+    payload from rendering.
+    """
+    output = run_git(cwd, ['ls-files', '--unmerged'], timeout=10)
+    if not output:
+        return []
+    paths: set[str] = set()
+    for line in output.splitlines():
+        # Format: ``<mode> <hash> <stage>\t<path>``
+        if '\t' not in line:
+            continue
+        path = line.split('\t', 1)[1].strip()
+        if path:
+            paths.add(path)
+    return sorted(paths)
+
+
 def diff_against_base(cwd: str, base_ref: str) -> str:
     """Unified diff that surfaces committed AND uncommitted work vs ``base_ref``.
 
