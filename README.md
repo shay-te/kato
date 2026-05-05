@@ -4,6 +4,12 @@
 
 # Kato
 
+<p align="center">
+  <img src="./docs/img/bruce-lee-kato.jpg" alt="Bruce Lee as Kato in The Green Hornet (1966)" width="180" />
+  <br />
+  <em>Kato will help you kick all your tasks.</em>
+</p>
+
 Welcome to Kato! This repository is structured as a [`core-lib`](https://shay-te.github.io/core-lib/) application and follows the documented `core-lib` package layout.
 
 > **🛡 Security layers.** Three gates run before any agent touches a
@@ -20,7 +26,9 @@ Welcome to Kato! This repository is structured as a [`core-lib`](https://shay-te
 >   comment.
 > - **Restricted Execution Protocol (REP)** — kato refuses to run
 >   an agent against any repository the operator hasn't explicitly
->   approved (`./kato approve-repo <id> --remote <url>`). REP is
+>   approved. Run `./kato approve-repo` to open the picker — it
+>   shows every repo kato can find with `[x]` next to the ones
+>   already approved; toggle indices, press Enter to apply. REP is
 >   always on. There is no off switch. New repos start in
 >   `restricted` mode; the operator elevates to `trusted` after
 >   reviewing the first agent run.
