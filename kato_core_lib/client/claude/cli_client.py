@@ -400,6 +400,9 @@ class ClaudeCliClient(object):
         task: Task,
         prepared_task: PreparedTaskContext | None = None,
     ) -> str:
+        scope_block = agent_prompt_utils.workspace_scope_block(
+            _repository_local_paths(prepared_task),
+        )
         repository_scope = agent_prompt_utils.repository_scope_text(task, prepared_task)
         agents_instructions = agent_prompt_utils.agents_instructions_text(prepared_task)
         # OG9a: ``task.summary`` and ``task.description`` come from
@@ -412,7 +415,9 @@ class ClaudeCliClient(object):
             f'{task.summary}\n\n{task.description}',
             source_path=f'task:{task.id}',
         )
+        scope_prefix = f'{scope_block}\n' if scope_block else ''
         return (
+            f'{scope_prefix}'
             f'Implement task {task.id}.\n\n'
             f'{untrusted_task_body}\n\n'
             f'{repository_scope}\n\n'
@@ -522,8 +527,13 @@ class ClaudeCliClient(object):
             if review_context
             else ''
         )
+        scope_block = agent_prompt_utils.workspace_scope_block(
+            [workspace_path] if workspace_path else [],
+        )
+        scope_prefix = f'{scope_block}\n' if scope_block else ''
         if mode == 'answer':
             return (
+                f'{scope_prefix}'
                 f'The following pull request review questions are on branch '
                 f'{branch_name}{repository_context}.\n\n'
                 f'{batch_text}'
@@ -544,6 +554,7 @@ class ClaudeCliClient(object):
                 'posted as the reply to each question.\n'
             )
         return (
+            f'{scope_prefix}'
             f'Address the following pull request review comments on branch '
             f'{branch_name}{repository_context}.\n\n'
             f'{batch_text}'
@@ -601,8 +612,13 @@ class ClaudeCliClient(object):
         )
         location_block = f'{location_text}\n' if location_text else ''
         snippet_block = f'{snippet_text}\n' if snippet_text else ''
+        scope_block = agent_prompt_utils.workspace_scope_block(
+            [workspace_path] if workspace_path else [],
+        )
+        scope_prefix = f'{scope_block}\n' if scope_block else ''
         if mode == 'answer':
             return (
+                f'{scope_prefix}'
                 f'A pull request reviewer asked a QUESTION on branch '
                 f'{branch_name}{repository_context}.\n'
                 f'{location_block}'
@@ -622,6 +638,7 @@ class ClaudeCliClient(object):
                 'question.\n'
             )
         return (
+            f'{scope_prefix}'
             f'Address pull request comment on branch {branch_name}{repository_context}.\n'
             f'{location_block}'
             f'{snippet_block}'
@@ -1277,3 +1294,21 @@ class ClaudeCliClient(object):
                 f'expected one of {sorted(cls.SUPPORTED_EFFORT_LEVELS)} or empty'
             )
         return normalized
+
+
+def _repository_local_paths(prepared_task) -> list[str]:
+    """Pull the per-task workspace clone paths off ``prepared_task``.
+
+    Used to render the ``workspace_scope_block`` at the top of every
+    agent prompt — operator wants the agent to know exactly which
+    paths it may touch and nothing else.
+    """
+    if prepared_task is None:
+        return []
+    repos = getattr(prepared_task, 'repositories', None) or []
+    paths: list[str] = []
+    for repo in repos:
+        path = str(getattr(repo, 'local_path', '') or '').strip()
+        if path:
+            paths.append(path)
+    return paths

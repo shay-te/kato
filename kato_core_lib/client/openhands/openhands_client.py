@@ -223,8 +223,13 @@ class KatoClient(RetryingClientBase):
             comments, workspace_path=workspace_path,
         )
         review_context = cls._review_comment_context_text(first)
+        scope_block = agent_prompt_utils.workspace_scope_block(
+            [workspace_path] if workspace_path else [],
+        )
+        scope_prefix = f'{scope_block}\n' if scope_block else ''
         if mode == 'answer':
             return (
+                f'{scope_prefix}'
                 f'The following pull request review questions are on branch '
                 f'{branch_name}{repository_context}.\n\n'
                 f'{batch_text}'
@@ -239,6 +244,7 @@ class KatoClient(RetryingClientBase):
                 'genuinely needed.\n'
             )
         return (
+            f'{scope_prefix}'
             f'Address the following pull request review comments on branch '
             f'{branch_name}{repository_context}.\n\n'
             f'{batch_text}'
@@ -277,10 +283,15 @@ class KatoClient(RetryingClientBase):
         task: Task,
         prepared_task: PreparedTaskContext | None = None,
     ) -> str:
+        scope_block = agent_prompt_utils.workspace_scope_block(
+            self._repository_local_paths(prepared_task),
+        )
         repository_scope = self._repository_scope_text(task, prepared_task)
         agents_instructions = agent_prompt_utils.agents_instructions_text(prepared_task)
         finish_instructions = self._finish_tool_instructions_text()
+        scope_prefix = f'{scope_block}\n' if scope_block else ''
         return (
+            f'{scope_prefix}'
             f'Implement task {task.id}: {task.summary}\n\n'
             f'{task.description}\n\n'
             f'{repository_scope}\n\n'
@@ -352,7 +363,19 @@ class KatoClient(RetryingClientBase):
         return agent_prompt_utils.task_branch_name(task, prepared_task)
 
     @staticmethod
+    def _repository_local_paths(prepared_task) -> list[str]:
+        if prepared_task is None:
+            return []
+        repos = getattr(prepared_task, 'repositories', None) or []
+        paths: list[str] = []
+        for repo in repos:
+            path = str(getattr(repo, 'local_path', '') or '').strip()
+            if path:
+                paths.append(path)
+        return paths
+
     def _repository_scope_text(
+        self,
         task: Task,
         prepared_task: PreparedTaskContext | None = None,
     ) -> str:
@@ -376,8 +399,13 @@ class KatoClient(RetryingClientBase):
         )
         location_block = f'{location_text}\n' if location_text else ''
         snippet_block = f'{snippet_text}\n' if snippet_text else ''
+        scope_block = agent_prompt_utils.workspace_scope_block(
+            [workspace_path] if workspace_path else [],
+        )
+        scope_prefix = f'{scope_block}\n' if scope_block else ''
         if mode == 'answer':
             return (
+                f'{scope_prefix}'
                 f'A pull request reviewer asked a QUESTION on branch '
                 f'{branch_name}{repository_context}.\n'
                 f'{location_block}'
@@ -392,6 +420,7 @@ class KatoClient(RetryingClientBase):
                 'plain-text answer in summary.\n'
             )
         return (
+            f'{scope_prefix}'
             f'Address pull request comment on branch {branch_name}{repository_context}.\n'
             f'{location_block}'
             f'{snippet_block}'

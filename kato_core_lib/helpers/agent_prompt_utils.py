@@ -79,6 +79,64 @@ def security_guardrails_text() -> str:
     )
 
 
+def workspace_scope_block(allowed_paths) -> str:
+    """Render the unmissable scope-boundary block placed at the top of every agent prompt.
+
+    Why this exists: kato spawns each task / review-fix in a per-
+    task workspace clone (under ``~/.kato/workspaces/<task_id>/``).
+    The agent must NEVER touch files outside that clone — not other
+    workspaces, not the operator's shared source checkouts at
+    ``REPOSITORY_ROOT_PATH``, not anything else on the host. The
+    repository-scope text further down the prompt names *which
+    repos* the task touches but doesn't enforce a hard boundary
+    against the rest of the filesystem; this block does.
+
+    The block goes FIRST in the prompt so it primes Claude's
+    context before any task description / review comment / code
+    snippet that might reference paths outside scope. Paths the
+    task description happens to mention are treated as context
+    only and never modified.
+
+    Empty / non-list input returns ``''`` so callers without a
+    resolved path set don't emit a malformed boundary.
+    """
+    paths: list[str] = []
+    for raw in allowed_paths or []:
+        if not raw:
+            continue
+        normalized = os.path.normpath(str(raw)).rstrip(os.sep)
+        if normalized and normalized != '.':
+            paths.append(normalized)
+    if not paths:
+        return ''
+    bullet_lines = '\n'.join(f'  - {p}' for p in paths)
+    return (
+        'WORKSPACE SCOPE — STRICT BOUNDARY (read this first):\n'
+        'You may only read or modify files inside the workspace paths '
+        'below. These are per-task clones; touching anything outside '
+        'them corrupts other tasks or the operator\'s source repos.\n'
+        f'\n{bullet_lines}\n\n'
+        'Forbidden:\n'
+        '- Do NOT read or modify any file outside the paths above. '
+        'Bash, Edit, Write, MultiEdit, NotebookEdit, Read, Grep, Glob '
+        'must all stay inside.\n'
+        '- Do NOT touch other tasks\' workspaces under '
+        '``~/.kato/workspaces/`` (or the operator\'s ``KATO_WORKSPACES_ROOT``).\n'
+        '- Do NOT touch the operator\'s shared source clones at '
+        '``REPOSITORY_ROOT_PATH`` — even if a path under it appears '
+        'in the task description, treat it as reference text only.\n'
+        '- Do NOT ``cd`` out, do not follow symlinks out, do not '
+        'write to ``/tmp`` or ``$HOME`` without an explicit need '
+        'documented in your reasoning.\n'
+        '\n'
+        'If the task description, ticket comment, or code snippet '
+        'references a path outside this scope, treat it as CONTEXT '
+        'ONLY — do not open or edit it. If you genuinely need '
+        'something outside scope, stop and report it instead of '
+        'reaching for it.\n'
+    )
+
+
 def repository_scope_text(
     task: Task,
     prepared_task: PreparedTaskContext | None = None,
