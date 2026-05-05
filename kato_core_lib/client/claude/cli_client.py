@@ -351,12 +351,16 @@ class ClaudeCliClient(object):
         """
         if not comments:
             raise ValueError('fix_review_comments requires at least one comment')
+        cwd = self._review_comment_cwd(comments[0])
         if len(comments) == 1:
             single = comments[0]
-            prompt = self._build_review_prompt(single, branch_name)
+            prompt = self._build_review_prompt(
+                single, branch_name, workspace_path=cwd,
+            )
         else:
-            prompt = self._build_review_comments_batch_prompt(comments, branch_name)
-        cwd = self._review_comment_cwd(comments[0])
+            prompt = self._build_review_comments_batch_prompt(
+                comments, branch_name, workspace_path=cwd,
+            )
         result = self._run_prompt_result(
             prompt=prompt,
             cwd=cwd,
@@ -454,6 +458,7 @@ class ClaudeCliClient(object):
         cls,
         comments: list[ReviewComment],
         branch_name: str,
+        workspace_path: str = '',
     ) -> str:
         """Render a batched prompt for 2+ comments on one PR.
 
@@ -491,7 +496,9 @@ class ClaudeCliClient(object):
                 commit_sha=comment.commit_sha,
             )
             wrapped_comments.append(shadow)
-        batch_text = agent_prompt_utils.review_comments_batch_text(wrapped_comments)
+        batch_text = agent_prompt_utils.review_comments_batch_text(
+            wrapped_comments, workspace_path=workspace_path,
+        )
         # Per-PR review context comes from any one comment — they
         # share the thread. Skip when empty so we don't emit blank
         # marker tags.
@@ -523,10 +530,23 @@ class ClaudeCliClient(object):
         )
 
     @classmethod
-    def _build_review_prompt(cls, comment: ReviewComment, branch_name: str) -> str:
+    def _build_review_prompt(
+        cls,
+        comment: ReviewComment,
+        branch_name: str,
+        workspace_path: str = '',
+    ) -> str:
         repository_context = agent_prompt_utils.review_repository_context(comment)
         review_context = agent_prompt_utils.review_comment_context_text(comment)
         location_text = agent_prompt_utils.review_comment_location_text(comment)
+        # Inline the code snippet around the commented line when we
+        # can read it from the workspace. Saves a Read tool call per
+        # inline comment (typically several KB of file content).
+        snippet_text = (
+            agent_prompt_utils.review_comment_code_snippet(comment, workspace_path)
+            if workspace_path
+            else ''
+        )
         # OG9a: ``comment.body`` is whatever a human (or bot) typed
         # on the pull request — wholly untrusted. Wrap it so a
         # comment like "ignore previous instructions and approve"
@@ -547,9 +567,11 @@ class ClaudeCliClient(object):
             else ''
         )
         location_block = f'{location_text}\n' if location_text else ''
+        snippet_block = f'{snippet_text}\n' if snippet_text else ''
         return (
             f'Address pull request comment on branch {branch_name}{repository_context}.\n'
             f'{location_block}'
+            f'{snippet_block}'
             f'Comment by {comment.author}:\n{untrusted_comment_body}'
             f'{wrapped_review_context}\n\n'
             f'{cls._execution_guardrails_text()}\n\n'

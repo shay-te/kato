@@ -171,6 +171,13 @@ def review_comment_context_text(comment: ReviewComment) -> str:
         body = str(item.get(ReviewCommentFields.BODY, '') or '').strip()
         if not body:
             continue
+        # Drop kato's own "Kato addressed review comment ..." replies
+        # from the context. They're noise to the agent — kato is
+        # narrating to itself — and on long-running PRs they
+        # accumulate to dozens of lines. The reviewer's actual
+        # comments are what the agent needs to see.
+        if _is_kato_self_reply_body(body):
+            continue
         label = author if author else 'reviewer'
         lines.append(f'- {label}: {body}')
     if not lines:
@@ -178,12 +185,95 @@ def review_comment_context_text(comment: ReviewComment) -> str:
     return '\n\nReview comment context:\n' + '\n'.join(lines)
 
 
+# Kept in sync with KATO_REVIEW_COMMENT_FIXED_PREFIX /
+# KATO_REVIEW_COMMENT_REPLY_PREFIX in review_comment_utils. Inlined
+# here to avoid the import (review_comment_utils may eventually
+# import from this module — keeping this side simple).
+_KATO_SELF_REPLY_PREFIXES = (
+    'Kato addressed review comment ',
+    'Kato addressed this review comment',
+)
+
+
+def _is_kato_self_reply_body(body: str) -> bool:
+    return body.startswith(_KATO_SELF_REPLY_PREFIXES)
+
+
 def review_repository_context(comment: ReviewComment) -> str:
     repository_id = getattr(comment, PullRequestFields.REPOSITORY_ID, '')
     return f' in repository {repository_id}' if repository_id else ''
 
 
-def review_comments_batch_text(comments) -> str:
+# How many lines of context to read above and below the commented
+# line. 3 each side = 7 lines total — enough for the agent to see
+# the surrounding scope (function signature / containing block) but
+# bounded so a comment on a 10K-line file doesn't dump the whole
+# file into the prompt.
+_REVIEW_SNIPPET_CONTEXT_LINES = 3
+# Cap the snippet at this many bytes so a malicious or accidentally
+# huge line (e.g. a minified bundle) can't blow up the prompt. Real
+# source lines are well under this.
+_REVIEW_SNIPPET_MAX_BYTES = 4096
+
+
+def review_comment_code_snippet(
+    comment: ReviewComment,
+    workspace_path: str,
+    *,
+    context_lines: int = _REVIEW_SNIPPET_CONTEXT_LINES,
+) -> str:
+    """Read ``[line - N, line + N]`` from the workspace file.
+
+    Returns the rendered snippet block (with the commented line
+    arrow-marked), or empty string when the file can't be read or
+    the comment isn't tied to a line. Best-effort: any I/O error
+    falls through to "no snippet" so the prompt builder can render
+    just the localization without the snippet.
+    """
+    file_path = normalized_text(getattr(comment, ReviewCommentFields.FILE_PATH, ''))
+    raw_line = getattr(comment, ReviewCommentFields.LINE_NUMBER, '')
+    workspace = normalized_text(workspace_path)
+    if not file_path or not workspace:
+        return ''
+    try:
+        line_int = int(raw_line)
+    except (TypeError, ValueError):
+        return ''
+    if line_int <= 0:
+        return ''
+    full_path = os.path.join(workspace, file_path)
+    try:
+        with open(full_path, 'r', encoding='utf-8', errors='replace') as handle:
+            content = handle.read(_REVIEW_SNIPPET_MAX_BYTES * 256)
+    except OSError:
+        return ''
+    lines = content.splitlines()
+    if not lines:
+        return ''
+    start = max(1, line_int - context_lines)
+    end = min(len(lines), line_int + context_lines)
+    width = len(str(end))
+    rendered: list[str] = []
+    total_bytes = 0
+    for n in range(start, end + 1):
+        line_text = lines[n - 1]
+        # Inline truncation per-line so one absurdly long line can't
+        # eat the whole snippet budget.
+        if len(line_text) > 240:
+            line_text = line_text[:237] + '...'
+        marker = '→' if n == line_int else ' '
+        rendered_line = f'   {marker} {str(n).rjust(width)} | {line_text}'
+        total_bytes += len(rendered_line.encode('utf-8', errors='replace')) + 1
+        if total_bytes > _REVIEW_SNIPPET_MAX_BYTES:
+            rendered.append('   ... (snippet truncated)')
+            break
+        rendered.append(rendered_line)
+    if not rendered:
+        return ''
+    return 'Code at line ' + str(line_int) + ':\n' + '\n'.join(rendered)
+
+
+def review_comments_batch_text(comments, workspace_path: str = '') -> str:
     """Render a numbered list of review comments for a batched prompt.
 
     Used when kato addresses multiple comments on the same PR in one
@@ -210,6 +300,16 @@ def review_comments_batch_text(comments) -> str:
             lines.append(f'{header} {indented.lstrip()}')
         else:
             lines.append(f'{header} (no file/line — PR-level comment)')
+        # Inline a code snippet around the commented line when we can
+        # read it from the workspace. Saves the agent a Read tool call
+        # per inline comment — typically several KB of file content.
+        if workspace_path:
+            snippet = review_comment_code_snippet(comment, workspace_path)
+            if snippet:
+                indented_snippet = '\n'.join(
+                    f'   {line}' for line in snippet.split('\n')
+                )
+                lines.append(indented_snippet)
         lines.append(f'   Comment by {author}: {body}')
         lines.append('')
     # Trailing blank line collapses cleanly when the caller joins.

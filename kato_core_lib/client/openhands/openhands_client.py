@@ -167,10 +167,15 @@ class KatoClient(RetryingClientBase):
     ) -> dict[str, str | bool]:
         if not comments:
             raise ValueError('fix_review_comments requires at least one comment')
+        workspace_path = self._review_workspace_path(comments[0])
         if len(comments) == 1:
-            prompt = self._build_review_prompt(comments[0], branch_name)
+            prompt = self._build_review_prompt(
+                comments[0], branch_name, workspace_path=workspace_path,
+            )
         else:
-            prompt = self._build_review_comments_batch_prompt(comments, branch_name)
+            prompt = self._build_review_comments_batch_prompt(
+                comments, branch_name, workspace_path=workspace_path,
+            )
         result = self._run_prompt_result(
             prompt=prompt,
             title=self._review_conversation_title(
@@ -190,15 +195,31 @@ class KatoClient(RetryingClientBase):
         )
         return result
 
+    @staticmethod
+    def _review_workspace_path(comment: ReviewComment) -> str:
+        """Best-effort path to the workspace clone for snippet reading.
+
+        Reads ``repository_local_path`` attribute when present (set
+        by the planning-session streaming path before calling).
+        Returns empty string when not set — the prompt builder skips
+        the snippet block in that case, no harm done.
+        """
+        from kato_core_lib.helpers.text_utils import normalized_text, text_from_attr
+
+        return normalized_text(text_from_attr(comment, 'repository_local_path'))
+
     @classmethod
     def _build_review_comments_batch_prompt(
         cls,
         comments: list[ReviewComment],
         branch_name: str,
+        workspace_path: str = '',
     ) -> str:
         first = comments[0]
         repository_context = agent_prompt_utils.review_repository_context(first)
-        batch_text = agent_prompt_utils.review_comments_batch_text(comments)
+        batch_text = agent_prompt_utils.review_comments_batch_text(
+            comments, workspace_path=workspace_path,
+        )
         review_context = cls._review_comment_context_text(first)
         return (
             f'Address the following pull request review comments on branch '
@@ -321,14 +342,26 @@ class KatoClient(RetryingClientBase):
         return agent_prompt_utils.repository_scope_text(task, prepared_task)
 
     @classmethod
-    def _build_review_prompt(cls, comment: ReviewComment, branch_name: str) -> str:
+    def _build_review_prompt(
+        cls,
+        comment: ReviewComment,
+        branch_name: str,
+        workspace_path: str = '',
+    ) -> str:
         repository_context = agent_prompt_utils.review_repository_context(comment)
         review_context = cls._review_comment_context_text(comment)
         location_text = agent_prompt_utils.review_comment_location_text(comment)
+        snippet_text = (
+            agent_prompt_utils.review_comment_code_snippet(comment, workspace_path)
+            if workspace_path
+            else ''
+        )
         location_block = f'{location_text}\n' if location_text else ''
+        snippet_block = f'{snippet_text}\n' if snippet_text else ''
         return (
             f'Address pull request comment on branch {branch_name}{repository_context}.\n'
             f'{location_block}'
+            f'{snippet_block}'
             f'Comment by {comment.author}: {comment.body}'
             f'{review_context}\n\n'
             f'{cls._execution_guardrails_text()}\n\n'

@@ -253,10 +253,15 @@ class PlanningSessionRunner(object):
             raise ValueError('task_id is required to fix review comments')
         if self._session_manager.get_session(normalized_task_id) is not None:
             self._session_manager.terminate_session(normalized_task_id)
+        workspace = normalized_text(repository_local_path)
         prompt = (
-            self._build_review_prompt(comments[0], branch_name)
+            self._build_review_prompt(
+                comments[0], branch_name, workspace_path=workspace,
+            )
             if len(comments) == 1
-            else self._build_review_comments_batch_prompt(comments, branch_name)
+            else self._build_review_comments_batch_prompt(
+                comments, branch_name, workspace_path=workspace,
+            )
         )
         return self._run_to_terminal(
             task_id=normalized_task_id,
@@ -364,21 +369,29 @@ class PlanningSessionRunner(object):
         return result_text
 
     @staticmethod
-    def _build_review_prompt(comment: ReviewComment, branch_name: str) -> str:
+    def _build_review_prompt(
+        comment: ReviewComment,
+        branch_name: str,
+        workspace_path: str = '',
+    ) -> str:
         # Reuse the one-shot client's prompt so streaming and one-shot
         # paths show identical guardrails.
         from kato_core_lib.client.claude.cli_client import ClaudeCliClient
 
-        return ClaudeCliClient._build_review_prompt(comment, branch_name)
+        return ClaudeCliClient._build_review_prompt(
+            comment, branch_name, workspace_path=workspace_path,
+        )
 
     @staticmethod
     def _build_review_comments_batch_prompt(
-        comments: list[ReviewComment], branch_name: str,
+        comments: list[ReviewComment],
+        branch_name: str,
+        workspace_path: str = '',
     ) -> str:
         from kato_core_lib.client.claude.cli_client import ClaudeCliClient
 
         return ClaudeCliClient._build_review_comments_batch_prompt(
-            comments, branch_name,
+            comments, branch_name, workspace_path=workspace_path,
         )
 
     def _wait_for_terminal_event(self, session, *, task_id: str):
