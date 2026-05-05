@@ -198,7 +198,7 @@ class RepositoryService(RepositoryInventoryService):
         self,
         repository,
         branch_name: str,
-    ) -> None:
+    ) -> dict[str, object]:
         """Switch the source-folder clone of ``repository`` to ``branch_name``.
 
         For the planning UI's "Update source" button: after a per-task
@@ -208,18 +208,33 @@ class RepositoryService(RepositoryInventoryService):
         on that branch and up-to-date so it can be tested end-to-end.
 
         Steps:
-          1. Refuse if the source clone has uncommitted changes
-             (operator's running system — never silently overwrite).
-          2. ``git fetch origin``
+          1. ``git fetch origin --prune``
+          2. If the working tree has uncommitted changes, ``git stash
+             push --include-untracked`` so the switch+pull doesn't
+             collide with them. The operator's work is preserved —
+             we never silently throw it away.
           3. ``git checkout <branch_name>`` (auto-creates a tracking
-             branch from ``origin/<branch_name>`` if no local branch
-             exists yet — modern git default).
-          4. ``git pull --ff-only`` (no merge surprises; if the source
-             has diverged from origin, the operator gets a clean
-             error instead of an auto-merge commit).
+             branch from ``origin/<branch_name>`` when needed).
+          4. ``git pull --ff-only origin <branch_name>``.
+          5. If we stashed in step 2, ``git stash pop`` to put the
+             operator's changes back on top of the new branch. A
+             pop conflict is **not** a failure — the operator gets
+             conflict markers in the working tree to resolve when
+             they're ready, and the warning surfaces in the
+             returned status dict.
 
-        Raises ``RuntimeError`` on any git failure with a message
-        suitable for surfacing back to the operator.
+        Returns a status dict:
+            {
+              'updated': True,
+              'stashed': bool,
+              'stash_reapplied': bool,
+              'stash_conflict': bool,
+              'warning': str,  # operator-readable note, may be empty
+            }
+
+        Raises ``RuntimeError`` only on truly catastrophic failures
+        (missing local_path, not a git repo, fetch / checkout / pull
+        failed against origin). Dirty tree is **not** a failure.
         """
         local_path = str(getattr(repository, 'local_path', '') or '').strip()
         if not local_path:
@@ -232,20 +247,27 @@ class RepositoryService(RepositoryInventoryService):
                 f'source folder for repository {repository.id} at '
                 f'{local_path} is not a git repository',
             )
-        # Step 1: refuse on dirty tree.
+        # Inspect the tree. Dirty → stash so the upcoming switch+pull
+        # doesn't collide with the operator's in-progress work.
         try:
             status_output = self._working_tree_status(local_path)
         except Exception as exc:
             raise RuntimeError(
                 f'failed to inspect source folder for {repository.id}: {exc}',
             ) from exc
-        if status_output.strip():
-            raise RuntimeError(
-                f'source folder for {repository.id} at {local_path} has '
-                f'uncommitted changes — refusing to switch branches and '
-                f'pull. Stash, commit, or discard them first.',
+        stashed = bool(status_output.strip())
+        if stashed:
+            self._run_git(
+                local_path,
+                [
+                    'stash', 'push',
+                    '--include-untracked',
+                    '--message', f'kato: pre-update-source {branch_name}',
+                ],
+                f'failed to stash uncommitted changes in {repository.id} '
+                f'source folder before switching branches',
             )
-        # Step 2-4: fetch / checkout / pull.
+        # Step 1-4: fetch / checkout / pull.
         self._run_git(
             local_path,
             ['fetch', 'origin', '--prune'],
@@ -263,6 +285,46 @@ class RepositoryService(RepositoryInventoryService):
             f'failed to fast-forward {branch_name} in {repository.id} '
             f'source folder',
         )
+        stash_reapplied = False
+        stash_conflict = False
+        warning = ''
+        if stashed:
+            # Pop is best-effort: a conflict leaves the operator's
+            # changes in the working tree as conflict markers, which
+            # is exactly what we want — visible, fixable, no data
+            # loss. We do NOT raise.
+            try:
+                self._run_git(
+                    local_path,
+                    ['stash', 'pop'],
+                    'stash pop failed',
+                )
+                stash_reapplied = True
+                warning = (
+                    f'switched to {branch_name} in {repository.id} source '
+                    f'folder and reapplied your uncommitted changes via stash'
+                )
+            except RuntimeError as exc:
+                stash_conflict = True
+                warning = (
+                    f'switched to {branch_name} in {repository.id} source '
+                    f'folder; your uncommitted changes are in the stash but '
+                    f'reapplying produced conflicts. Resolve them in '
+                    f'{local_path} (or run ``git stash drop`` to discard). '
+                    f'Detail: {exc}'
+                )
+                self.logger.warning(
+                    'update-source: stash pop in %s failed (%s); '
+                    'changes preserved in the stash for manual resolution',
+                    local_path, exc,
+                )
+        return {
+            'updated': True,
+            'stashed': stashed,
+            'stash_reapplied': stash_reapplied,
+            'stash_conflict': stash_conflict,
+            'warning': warning,
+        }
 
     def publish_review_fix(
         self,

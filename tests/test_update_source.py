@@ -139,39 +139,72 @@ class UpdateSourceToTaskBranchTests(unittest.TestCase):
 
         self.assertEqual(_current_branch(self.source), 'UNA-1234')
 
-    def test_refuses_when_source_has_uncommitted_changes(self) -> None:
-        # Dirty file in the source clone. Kato must NOT switch
-        # branches — that would dump the file into the merge stash
-        # or block checkout. Either way, operator's running system
-        # in a confused state. We refuse upfront with a clear
-        # operator-readable message.
-        (self.source / 'unfinished.txt').write_text('wip\n', encoding='utf-8')
+    def test_dirty_tree_stashed_switched_and_reapplied(self) -> None:
+        # Operator's running system has a tracked-but-modified file.
+        # Kato stashes it, switches to the task branch, pulls, and
+        # pops the stash so the operator's work lands on top of the
+        # new branch. Result dict reports the stash dance + warning
+        # so the UI can surface "your changes were carried over".
+        (self.source / 'unfinished.txt').write_text(
+            'wip\n', encoding='utf-8',
+        )
         _git(self.source, 'add', 'unfinished.txt')
         repo = _RepoStub('myrepo', self.source)
 
-        with self.assertRaises(RuntimeError) as cm:
-            self.service.update_source_to_task_branch(repo, 'UNA-1234')
+        result = self.service.update_source_to_task_branch(repo, 'UNA-1234')
 
-        msg = str(cm.exception)
-        self.assertIn('uncommitted changes', msg)
-        self.assertIn(str(self.source), msg)
-        self.assertIn('myrepo', msg)
-        # Source stayed on master — the dirty file is untouched.
-        self.assertEqual(_current_branch(self.source), 'master')
+        self.assertEqual(_current_branch(self.source), 'UNA-1234')
         self.assertTrue((self.source / 'unfinished.txt').is_file())
+        self.assertTrue(result['updated'])
+        self.assertTrue(result['stashed'])
+        self.assertTrue(result['stash_reapplied'])
+        self.assertFalse(result['stash_conflict'])
+        self.assertIn('reapplied', result['warning'])
 
-    def test_refuses_when_source_has_untracked_files(self) -> None:
-        # Untracked files also count as dirty — git checkout would
-        # silently carry them into the new branch, which is rarely
-        # what the operator wants.
-        (self.source / 'scratch.log').write_text('debug\n', encoding='utf-8')
+    def test_dirty_untracked_files_carried_across_branch_switch(self) -> None:
+        # Untracked files also count as dirty. ``stash --include-
+        # untracked`` carries them across the switch and pops them
+        # back on the new branch.
+        (self.source / 'scratch.log').write_text(
+            'debug\n', encoding='utf-8',
+        )
         repo = _RepoStub('myrepo', self.source)
 
-        with self.assertRaises(RuntimeError) as cm:
-            self.service.update_source_to_task_branch(repo, 'UNA-1234')
+        result = self.service.update_source_to_task_branch(repo, 'UNA-1234')
 
-        self.assertIn('uncommitted changes', str(cm.exception))
-        self.assertEqual(_current_branch(self.source), 'master')
+        self.assertEqual(_current_branch(self.source), 'UNA-1234')
+        self.assertTrue((self.source / 'scratch.log').is_file())
+        self.assertTrue(result['stashed'])
+        self.assertTrue(result['stash_reapplied'])
+
+    def test_stash_pop_conflict_does_not_fail_the_update(self) -> None:
+        # The operator has a local edit to ``feature.txt`` (which
+        # the task branch ALSO modifies). Stash carries the local
+        # edit; switch + pull lands the task branch's version;
+        # stash pop tries to reapply and conflicts. Per the user's
+        # contract, this is NOT a failure — the operator gets
+        # conflict markers and a clear warning, the source is on
+        # the task branch, the update is reported as "updated".
+        # Pre-condition: feature.txt exists on the task branch
+        # (created in setUp). Add a local edit on master that
+        # changes the same file content the task branch will
+        # introduce, guaranteeing a stash pop conflict.
+        (self.source / 'feature.txt').write_text(
+            'local-only different content\n', encoding='utf-8',
+        )
+        _git(self.source, 'add', 'feature.txt')
+        repo = _RepoStub('myrepo', self.source)
+
+        result = self.service.update_source_to_task_branch(repo, 'UNA-1234')
+
+        # Update succeeded — branch switched.
+        self.assertEqual(_current_branch(self.source), 'UNA-1234')
+        self.assertTrue(result['updated'])
+        self.assertTrue(result['stashed'])
+        # Pop hit a conflict — flagged, but the call did not raise.
+        self.assertTrue(result['stash_conflict'])
+        self.assertFalse(result['stash_reapplied'])
+        self.assertIn('conflicts', result['warning'].lower())
 
     def test_raises_on_missing_local_path(self) -> None:
         repo = _RepoStub('myrepo', Path(''))

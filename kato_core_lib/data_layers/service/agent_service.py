@@ -639,6 +639,11 @@ class AgentService(Service):
         updated_repositories: list[str] = []
         skipped_repositories: list[dict[str, str]] = []
         failed_repositories: list[dict[str, str]] = []
+        # Per-repo warnings produced by ``update_source_to_task_branch``
+        # — e.g. "stashed your changes and reapplied with conflicts".
+        # Surfaced to the UI toast so the operator knows the repo did
+        # update but they have something to clean up.
+        warnings_per_repo: list[dict[str, object]] = []
         for repository in repos:
             branch_name = self._repository_service.build_branch_name(
                 task_obj, repository,
@@ -665,13 +670,23 @@ class AgentService(Service):
                 })
                 continue
             try:
-                self._repository_service.update_source_to_task_branch(
+                update_result = self._repository_service.update_source_to_task_branch(
                     source_repo, branch_name,
-                )
+                ) or {}
                 updated_repositories.append(repository.id)
+                warning = str(update_result.get('warning', '') or '').strip()
+                if warning:
+                    warnings_per_repo.append({
+                        'repository_id': repository.id,
+                        'warning': warning,
+                        'stash_conflict': bool(
+                            update_result.get('stash_conflict', False),
+                        ),
+                    })
                 self.logger.info(
-                    'update-source for task %s: %s @ %s now on %s',
+                    'update-source for task %s: %s @ %s now on %s%s',
                     normalized, repository.id, source_path, branch_name,
+                    f' ({warning})' if warning else '',
                 )
             except RuntimeError as exc:
                 # ``update_source_to_task_branch`` raises with a
@@ -703,6 +718,7 @@ class AgentService(Service):
             'updated_repositories': updated_repositories,
             'skipped_repositories': skipped_repositories,
             'failed_repositories': failed_repositories,
+            'warnings': warnings_per_repo,
         }
 
     def push_task(self, task_id: str) -> dict[str, object]:

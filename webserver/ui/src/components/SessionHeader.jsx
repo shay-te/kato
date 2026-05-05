@@ -47,9 +47,19 @@ export default function SessionHeader({
     const body = (result && result.body) || {};
     const failed = (body.failed_repositories || []).length;
     const updated = (body.updated_repositories || []).length;
-    const kind = !result.ok || failed > 0
-      ? (updated > 0 ? 'warning' : 'error')
-      : 'success';
+    const warnings = body.warnings || [];
+    // Stash conflicts (or any warning) downgrade success → warning
+    // so the toast is yellow, not green — operator should see it
+    // and act on the conflict markers in the working tree.
+    const hasWarnings = warnings.length > 0;
+    let kind;
+    if (!result.ok || failed > 0) {
+      kind = updated > 0 ? 'warning' : 'error';
+    } else if (hasWarnings) {
+      kind = 'warning';
+    } else {
+      kind = 'success';
+    }
     toast.show({
       kind,
       title,
@@ -241,6 +251,17 @@ function formatUpdateSourceResult(result) {
   const updated = body.updated_repositories || [];
   if (updated.length) {
     lines.push(`✓ source updated for ${updated.length} repo(s): ${updated.join(', ')}`);
+  }
+  // Per-repo warnings (e.g. "stashed your changes; reapplied with
+  // conflicts"). Each warning means the repo DID update, but the
+  // operator needs to look at it.
+  const warnings = body.warnings || [];
+  for (const entry of warnings) {
+    const marker = entry.stash_conflict ? '⚠' : '•';
+    const text = String(entry.warning || '').trim();
+    if (text) {
+      lines.push(`${marker} ${text}`);
+    }
   }
   const skipped = body.skipped_repositories || [];
   for (const entry of skipped) {
