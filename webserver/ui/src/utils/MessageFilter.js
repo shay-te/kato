@@ -3,6 +3,7 @@
 // one of these methods. Adding a new noise pattern? It belongs here, not
 // scattered across hooks and components.
 
+import { BUBBLE_KIND } from '../constants/bubbleKind.js';
 import { CLAUDE_EVENT, CLAUDE_SYSTEM_SUBTYPE } from '../constants/claudeEvent.js';
 import { ENTRY_SOURCE } from '../constants/entrySource.js';
 import { NOTIFICATION_KIND } from '../constants/notificationKind.js';
@@ -92,6 +93,39 @@ export class MessageFilter {
     return result;
   }
 
+  // Drop server ``user`` echoes that duplicate an immediately-preceding
+  // local user bubble.
+  //
+  // Why: when the operator types in the composer, ``SessionDetail``
+  // appends a local ``USER`` bubble for instant feedback, then POSTs
+  // to kato which forwards to Claude. Claude echoes the message back
+  // as a server ``user`` event. Without dedupe the operator sees
+  // "their" message twice.
+  //
+  // We DO want to render server user events that *don't* match a
+  // recent local bubble — those are kato-injected prompts (initial
+  // implementation, review-fix) the operator should see, since they
+  // explain "why did Claude just start doing X?".
+  //
+  // Match rule: a server user event with text identical to the most
+  // recent local user bubble within the last 4 entries gets dropped.
+  // Bounded lookback so a server echo only suppresses ITS local twin,
+  // not random matching text deeper in the transcript.
+  static dedupeUserEchoes(entries) {
+    const LOOKBACK = 4;
+    const result = [];
+    for (const entry of entries) {
+      if (_isServerUserEntry(entry)) {
+        const serverText = _userEventText(entry);
+        if (serverText && _hasMatchingLocalUser(result, serverText, LOOKBACK)) {
+          continue;
+        }
+      }
+      result.push(entry);
+    }
+    return result;
+  }
+
   // ----- browser notifications -----
 
   // Decides whether a `notify()` call for `(taskId, kind)` should fire.
@@ -176,6 +210,34 @@ function classifyRateLimitEntry(entry) {
 
 function isRateLimitText(text) {
   return String(text || '').trim().startsWith(RATE_LIMIT_TEXT_PREFIX);
+}
+
+function _isServerUserEntry(entry) {
+  if (!entry || entry.source === ENTRY_SOURCE.LOCAL) { return false; }
+  const raw = entry.raw;
+  return !!raw && raw.type === CLAUDE_EVENT.USER;
+}
+
+function _userEventText(entry) {
+  const message = entry?.raw?.message || {};
+  const content = Array.isArray(message.content) ? message.content : [];
+  const pieces = content
+    .filter((b) => b && b.type === 'text' && b.text)
+    .map((b) => String(b.text));
+  return pieces.join('\n').trim();
+}
+
+function _hasMatchingLocalUser(recentEntries, serverText, lookback) {
+  const start = Math.max(0, recentEntries.length - lookback);
+  for (let i = recentEntries.length - 1; i >= start; i -= 1) {
+    const entry = recentEntries[i];
+    if (entry?.source !== ENTRY_SOURCE.LOCAL) { continue; }
+    if (entry.kind !== BUBBLE_KIND.USER) { continue; }
+    if (String(entry.text || '').trim() === serverText) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // Re-exports for tests and outside consumers that just want the constants.

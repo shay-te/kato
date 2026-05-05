@@ -9,7 +9,9 @@ import { MessageFilter } from '../utils/MessageFilter.js';
 
 export default function EventLog({ entries, banner }) {
   const containerRef = useRef(null);
-  const visibleEntries = MessageFilter.dedupeRateLimitCycles(entries);
+  const visibleEntries = MessageFilter.dedupeUserEchoes(
+    MessageFilter.dedupeRateLimitCycles(entries),
+  );
   useEffect(() => {
     const node = containerRef.current;
     if (node) { node.scrollTop = node.scrollHeight; }
@@ -29,9 +31,14 @@ export default function EventLog({ entries, banner }) {
 
 function bubblesFor(entry, index) {
   if (entry?.source === ENTRY_SOURCE.LOCAL) {
+    const text = entry.text || '';
+    const count = Number(entry.imageCount || 0);
+    const display = count > 0
+      ? `${text}${text ? '\n' : ''}(${count} image${count === 1 ? '' : 's'} attached)`
+      : text;
     return [
       <Bubble key={`local-${index}`} kind={entry.kind || BUBBLE_KIND.SYSTEM}>
-        {entry.text}
+        {display}
       </Bubble>,
     ];
   }
@@ -57,11 +64,14 @@ function serverBubblesFor(raw, index, isHistory = false) {
     case CLAUDE_EVENT.ASSISTANT:
       return assistantBubbles(raw, index);
     case CLAUDE_EVENT.USER:
-      // Live `user` echoes get filtered (we show the local bubble instead),
-      // but in *history* there was no local echo — so replay user text as
-      // a user bubble so the chat reads as a conversation.
-      if (isHistory) { return historyUserBubbles(raw, index); }
-      return [];
+      // Render every ``user`` envelope kato sent to Claude — typed
+      // messages, kato-injected initial prompts (implementation /
+      // review-fix), and history replay all flow through here. The
+      // operator wants visibility into "what caused Claude to do
+      // X", so kato's prompts must show up in the chat just like
+      // typed messages do. Duplicate echoes of typed messages are
+      // suppressed upstream by ``MessageFilter.dedupeUserEchoes``.
+      return userBubbles(raw, index);
     case CLAUDE_EVENT.STREAM_EVENT:
       return [];
     case CLAUDE_EVENT.RESULT:
@@ -122,16 +132,23 @@ function assistantBubbles(raw, index) {
   ];
 }
 
-function historyUserBubbles(raw, index) {
+function userBubbles(raw, index) {
   const message = raw.message || {};
   const content = Array.isArray(message.content) ? message.content : [];
   const textPieces = content
     .filter((b) => b && b.type === 'text' && b.text)
     .map((b) => b.text);
-  if (textPieces.length === 0) { return []; }
+  // Show image-bearing user envelopes too — surface the image count
+  // inline so the operator can confirm their attachment landed.
+  const imageCount = content.filter((b) => b && b.type === 'image').length;
+  if (textPieces.length === 0 && imageCount === 0) { return []; }
+  const text = textPieces.join('\n');
+  const display = imageCount > 0
+    ? `${text}${text ? '\n' : ''}(${imageCount} image${imageCount === 1 ? '' : 's'} attached)`
+    : text;
   return [
-    <Bubble key={keyOf(raw, index, 'history-user')} kind={BUBBLE_KIND.USER}>
-      {textPieces.join('\n')}
+    <Bubble key={keyOf(raw, index, 'user')} kind={BUBBLE_KIND.USER}>
+      {display}
     </Bubble>,
   ];
 }

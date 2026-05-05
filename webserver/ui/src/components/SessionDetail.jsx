@@ -40,10 +40,19 @@ export default function SessionDetail({
   }
 
   async function onSendMessage(text, images = []) {
-    const userText = images.length > 0
-      ? `${text || ''}${text ? '\n' : ''}(${images.length} image${images.length === 1 ? '' : 's'} attached)`
-      : text;
-    stream.appendLocalEvent({ source: ENTRY_SOURCE.LOCAL, kind: BUBBLE_KIND.USER, text: userText });
+    // Append a clean local USER bubble for instant feedback. The
+    // server echoes this back as a ``user`` event shortly after; the
+    // dedupe filter (MessageFilter.dedupeUserEchoes) compares clean
+    // text so the local + server pair collapses to one bubble. Image
+    // attachments are surfaced via the ``imageCount`` field, which
+    // the renderer appends as a "(N attached)" suffix at display
+    // time without polluting the dedupe key.
+    stream.appendLocalEvent({
+      source: ENTRY_SOURCE.LOCAL,
+      kind: BUBBLE_KIND.USER,
+      text,
+      imageCount: images.length,
+    });
     stream.markTurnBusy(true);
     const result = await postChatMessage(taskId, text, images);
     if (result.ok) {
