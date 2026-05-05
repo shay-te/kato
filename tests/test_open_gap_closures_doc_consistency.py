@@ -47,7 +47,7 @@ from kato_core_lib.client.claude import cli_client as cli_client_module
 from sandbox_core_lib.sandbox_core_lib import manager as sandbox_manager
 
 
-_DOC_PATH = Path(__file__).resolve().parent.parent.parent / 'SANDBOX_PROTECTIONS.md'
+_DOC_PATH = Path(__file__).resolve().parent.parent / 'sandbox_core_lib' / 'SANDBOX_PROTECTIONS.md'
 
 
 def _doc_status_for(og_id: str) -> str:
