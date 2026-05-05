@@ -81,6 +81,25 @@ export async function updateTaskSource(taskId) {
   }
 }
 
+// Add any task repositories missing from the workspace. Pure additive
+// — repos already cloned, and repos no longer on the task, stay on
+// disk untouched. The Files-tab sync icon calls this when the
+// operator's added a ``kato:repo:<name>`` tag in YouTrack and wants
+// kato to fetch the new repo without re-running the whole task.
+export async function syncTaskRepositories(taskId) {
+  if (!taskId) { return { ok: false, error: 'no task id' }; }
+  try {
+    const response = await fetch(
+      `/api/sessions/${encodeURIComponent(taskId)}/sync-repositories`,
+      { method: 'POST' },
+    );
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
 export async function finishTask(taskId) {
   if (!taskId) { return { ok: false, error: 'no task id' }; }
   try {

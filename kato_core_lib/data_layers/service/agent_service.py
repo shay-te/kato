@@ -721,6 +721,145 @@ class AgentService(Service):
             'warnings': warnings_per_repo,
         }
 
+    def sync_task_repositories(self, task_id: str) -> dict[str, object]:
+        """Add any task repos missing from the workspace; never remove.
+
+        Drives the planning UI's "Sync repositories" icon on the Files
+        tab. The flow:
+
+          1. Fetch the live task from the ticket platform — needed for
+             tags + description, which drive
+             ``RepositoryService.resolve_task_repositories``.
+          2. Resolve the full repo set the task touches.
+          3. Compare against the workspace's current
+             ``repository_ids``; anything in the task set but not in
+             the workspace is "missing".
+          4. Provision clones for the missing ones (mirrors the
+             initial-task path).
+
+        Never removes repos from the workspace — repos that were
+        cloned but are no longer on the task stay on disk so the
+        operator can still inspect / commit them. Returns a per-repo
+        summary the UI renders in the toast.
+        """
+        normalized = str(task_id or '').strip()
+        if not normalized:
+            return {
+                'synced': False,
+                'task_id': task_id,
+                'error': 'empty task id',
+            }
+        if self._workspace_manager is None:
+            return {
+                'synced': False,
+                'task_id': normalized,
+                'error': 'workspace manager not wired',
+            }
+        workspace = self._workspace_manager.get(normalized)
+        if workspace is None:
+            return {
+                'synced': False,
+                'task_id': normalized,
+                'error': 'no workspace exists for this task yet',
+            }
+        task_obj = self._lookup_task_for_sync(normalized)
+        if task_obj is None:
+            return {
+                'synced': False,
+                'task_id': normalized,
+                'error': (
+                    'could not load task from the ticket platform — '
+                    'no tags / description available to resolve repositories'
+                ),
+            }
+        try:
+            task_repos = self._repository_service.resolve_task_repositories(task_obj)
+        except Exception as exc:
+            return {
+                'synced': False,
+                'task_id': normalized,
+                'error': f'failed to resolve task repositories: {exc}',
+            }
+        existing_ids = {
+            str(rid).lower()
+            for rid in (workspace.repository_ids or [])
+        }
+        missing_repos = [
+            r for r in task_repos
+            if str(getattr(r, 'id', '') or '').lower() not in existing_ids
+        ]
+        already_present = [
+            str(getattr(r, 'id', '') or '')
+            for r in task_repos
+            if str(getattr(r, 'id', '') or '').lower() in existing_ids
+        ]
+        if not missing_repos:
+            return {
+                'synced': True,
+                'task_id': normalized,
+                'added_repositories': [],
+                'already_present': already_present,
+                'failed_repositories': [],
+            }
+        # Provision the missing clones. ``provision_task_workspace_clones``
+        # extends the workspace's ``repository_ids`` and clones each
+        # repo idempotently — passing the FULL task set lets it both
+        # update the metadata and skip the already-cloned ones with
+        # the existing dedupe in ``WorkspaceManager.create``.
+        from kato_core_lib.data_layers.service.workspace_manager import (
+            provision_task_workspace_clones,
+        )
+        added: list[str] = []
+        failed: list[dict[str, str]] = []
+        try:
+            provision_task_workspace_clones(
+                self._workspace_manager,
+                self._repository_service,
+                task_obj,
+                task_repos,
+            )
+            added = [str(getattr(r, 'id', '') or '') for r in missing_repos]
+        except Exception as exc:
+            self.logger.exception(
+                'failed to sync repositories for task %s', normalized,
+            )
+            failed = [
+                {'repository_id': str(getattr(r, 'id', '') or ''), 'error': str(exc)}
+                for r in missing_repos
+            ]
+        return {
+            'synced': bool(added) and not failed,
+            'task_id': normalized,
+            'added_repositories': added,
+            'already_present': already_present,
+            'failed_repositories': failed,
+        }
+
+    def _lookup_task_for_sync(self, task_id: str):
+        """Return the live Task for ``task_id`` (or ``None``).
+
+        ``resolve_task_repositories`` needs the real Task — the
+        workspace's ``task_summary`` stub doesn't carry tags or
+        description, which are what drive multi-repo resolution. We
+        look across both queues (assigned + review) so the sync icon
+        works while a task is in either lifecycle state.
+        """
+        try:
+            queues = (
+                self._task_service.get_assigned_tasks(),
+                self._task_service.get_review_tasks(),
+            )
+        except Exception:
+            self.logger.exception(
+                'failed to load tasks for repository sync (task %s)', task_id,
+            )
+            return None
+        for queue in queues:
+            for task in queue or []:
+                if str(getattr(task, 'id', '') or '').strip() == task_id:
+                    return task
+        return None
+
     def push_task(self, task_id: str) -> dict[str, object]:
         """Commit + push the task branch for every repo in its workspace.
 

@@ -17,6 +17,7 @@ Endpoints:
     POST /api/sessions/<task_id>/messages               — body: {"text", "images": [{media_type, data}]}
     POST /api/sessions/<task_id>/permission             — body: {"request_id", "allow", "rationale"}
     POST /api/sessions/<task_id>/adopt-claude-session   — body: {"claude_session_id"}
+    POST /api/sessions/<task_id>/sync-repositories      — clone task repos missing from workspace
     GET  /api/claude/sessions                           — list adoptable Claude Code sessions
     GET  /api/status/recent                             — recent kato-process log entries
     GET  /api/status/events                             — SSE: live kato-process log feed
@@ -572,6 +573,30 @@ def _register_http_routes(app: Flask) -> None:
         result = update(task_id) or {}
         if result.get('error') and not result.get('updated'):
             return jsonify(result), 404 if 'no workspace' in str(result['error']) else 500
+        return jsonify(result)
+
+    @app.post('/api/sessions/<task_id>/sync-repositories')
+    def sync_task_repositories(task_id: str):
+        """Add any task repos missing from the workspace; never remove.
+
+        Drives the Files-tab "Sync repositories" icon. Reads the
+        ticket platform's view of the task (its tags + description),
+        resolves the full repo set, and clones any that aren't yet
+        on disk. Already-cloned repos and repos that are on disk but
+        no longer on the task are LEFT ALONE — sync is purely
+        additive.
+        """
+        agent_service = app.config.get('AGENT_SERVICE')
+        if agent_service is None:
+            return jsonify({'error': 'agent service not wired'}), 503
+        sync = getattr(agent_service, 'sync_task_repositories', None)
+        if not callable(sync):
+            return jsonify({'error': 'agent service does not support repo sync'}), 501
+        result = sync(task_id) or {}
+        if result.get('error') and not result.get('synced'):
+            err = str(result.get('error', ''))
+            status = 404 if 'no workspace' in err else 500
+            return jsonify(result), status
         return jsonify(result)
 
     @app.post('/api/sessions/<task_id>/finish')

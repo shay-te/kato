@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Tree } from 'react-arborist';
-import { fetchFileTree } from './api.js';
+import { fetchFileTree, syncTaskRepositories } from './api.js';
 import Icon from './components/Icon.jsx';
 import { useChatComposer } from './contexts/ChatComposerContext.jsx';
+import { toast } from './stores/toastStore.js';
 import {
   activateTreeNode,
   attachIds,
@@ -23,6 +24,11 @@ export default function FilesTab({
   });
   const [collapsed, setCollapsed] = useState(() => new Set());
   const [query, setQuery] = useState('');
+  // Bumped after a successful repo-sync so the file tree re-fetches
+  // and the newly-cloned folders appear without waiting for the
+  // next tool-result-driven workspaceVersion bump.
+  const [syncTick, setSyncTick] = useState(0);
+  const [syncing, setSyncing] = useState(false);
   const containerRef = useRef(null);
   const filterInputRef = useRef(null);
   const [size, setSize] = useState({ width: 320, height: 480 });
@@ -79,7 +85,7 @@ export default function FilesTab({
         }));
       });
     return () => { cancelled = true; };
-  }, [taskId, workspaceVersion]);
+  }, [taskId, workspaceVersion, syncTick]);
 
   // Blank state on task switch so we don't show stale data while
   // the new fetch is in flight.
@@ -116,27 +122,69 @@ export default function FilesTab({
   function collapseAll() { setCollapsed(new Set(repoIds)); }
   function expandAll() { setCollapsed(new Set()); }
 
-  const showToolbar = repoIds.length > 1;
-  const toolbar = showToolbar && (
+  // Sync icon: re-resolve the task's repositories from YouTrack /
+  // Jira / etc. tags + description, and clone any that aren't yet on
+  // disk. Pure additive — repos already cloned (or repos no longer
+  // on the task) stay untouched. Lets the operator add a
+  // ``kato:repo:<name>`` tag and pull the new repo into the
+  // workspace from the UI without re-running the whole task.
+  async function onSyncRepositories() {
+    if (!taskId || syncing) { return; }
+    setSyncing(true);
+    const result = await syncTaskRepositories(taskId);
+    setSyncing(false);
+    const { title, message, kind } = formatSyncResult(result);
+    toast.show({
+      kind,
+      title,
+      message,
+      durationMs: kind === 'error' ? 12000 : 7000,
+    });
+    // Bump the local sync-tick so the file tree refetches and any
+    // newly-cloned repos render. Even on a no-op sync the refetch
+    // is harmless and keeps the tree in sync with disk.
+    if (result.ok) { setSyncTick((n) => n + 1); }
+  }
+
+  const toolbar = (
     <span className="files-tab-toolbar">
       <button
         type="button"
         className="files-tab-icon-btn"
-        data-tooltip="Expand all repositories — show every file in every workspace."
-        aria-label="Expand all repositories"
-        onClick={expandAll}
+        data-tooltip={
+          'Sync repositories — clone any repos this task touches '
+          + 'that aren’t in the workspace yet (driven by '
+          + '``kato:repo:<name>`` tags + description). Never removes '
+          + 'a repo from disk; purely additive.'
+        }
+        aria-label="Sync task repositories"
+        onClick={onSyncRepositories}
+        disabled={syncing || !taskId}
       >
-        <Icon name="plus" />
+        <Icon name="refresh" spin={syncing} />
       </button>
-      <button
-        type="button"
-        className="files-tab-icon-btn"
-        data-tooltip="Collapse all repositories — keep only the repository names visible."
-        aria-label="Collapse all repositories"
-        onClick={collapseAll}
-      >
-        <Icon name="minus" />
-      </button>
+      {repoIds.length > 1 && (
+        <>
+          <button
+            type="button"
+            className="files-tab-icon-btn"
+            data-tooltip="Expand all repositories — show every file in every workspace."
+            aria-label="Expand all repositories"
+            onClick={expandAll}
+          >
+            <Icon name="plus" />
+          </button>
+          <button
+            type="button"
+            className="files-tab-icon-btn"
+            data-tooltip="Collapse all repositories — keep only the repository names visible."
+            aria-label="Collapse all repositories"
+            onClick={collapseAll}
+          >
+            <Icon name="minus" />
+          </button>
+        </>
+      )}
     </span>
   );
 
@@ -208,6 +256,50 @@ export default function FilesTab({
     </div>
   );
 }
+
+// Render the sync-repos result into a toast title + message. Three
+// outcomes the operator cares about, mapped to kind / wording:
+//   * already in sync — green, "no missing repos"
+//   * added N — green, lists the names so the operator can see what
+//     showed up in the tree
+//   * partial / failed — red or amber, surfaces the error
+function formatSyncResult(result) {
+  const body = (result && result.body) || {};
+  if (!result || !result.ok) {
+    return {
+      kind: 'error',
+      title: 'Sync repositories failed',
+      message: (result && result.error) || body.error || 'unknown error',
+    };
+  }
+  const added = body.added_repositories || [];
+  const failed = body.failed_repositories || [];
+  if (failed.length) {
+    const errs = failed
+      .map((entry) => `${entry.repository_id}: ${entry.error}`)
+      .join('\n');
+    return {
+      kind: added.length ? 'warning' : 'error',
+      title: added.length ? 'Sync partially succeeded' : 'Sync failed',
+      message: added.length
+        ? `✓ added ${added.length} repo(s): ${added.join(', ')}\n✗ ${errs}`
+        : `✗ ${errs}`,
+    };
+  }
+  if (added.length === 0) {
+    return {
+      kind: 'success',
+      title: 'Repositories already in sync',
+      message: 'No missing repositories — the workspace already has every repo this task touches.',
+    };
+  }
+  return {
+    kind: 'success',
+    title: `Added ${added.length} repository(ies)`,
+    message: `✓ cloned: ${added.join(', ')}`,
+  };
+}
+
 
 function RepoTree({
   repoTree, width, collapsed, onToggle, onPickFile,
