@@ -251,12 +251,23 @@ def _clip_preview(text: str) -> str:
 _logger = logging.getLogger(__name__)
 
 
+_PROJECT_DIR_ENCODE_CHARS = ('\\', '/', ':')
+
+
 def claude_project_dir_for_cwd(cwd: str) -> Path:
     """Return Claude Code's per-project session directory for ``cwd``.
 
     Claude Code stores every session as
-    ``~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`` where the
-    encoded form is the absolute path with ``/`` replaced by ``-``.
+    ``~/.claude/projects/<encoded-cwd>/<session-id>.jsonl``. The
+    encoded form replaces every path separator AND the Windows drive
+    colon with ``-``: on POSIX ``/Users/me/proj`` becomes
+    ``-Users-me-proj``; on Windows ``C:\\Codes\\proj`` becomes
+    ``C--Codes-proj`` (drive colon + backslash both flatten to a
+    single dash neighbour pair). Replacing only ``os.sep`` was a bug
+    on Windows — it left the drive colon intact, so kato's migrated
+    JSONL landed under ``C:-Codes-proj`` while ``claude --resume``
+    looked under ``C--Codes-proj`` and started fresh.
+
     Looking sessions up via ``claude --resume <id>`` is cwd-keyed —
     spawning at a different cwd than the session's original cwd
     means the resume lookup misses and Claude starts fresh.
@@ -267,7 +278,9 @@ def claude_project_dir_for_cwd(cwd: str) -> Path:
     available to operator-facing tooling that needs the same answer.
     """
     abs_cwd = os.path.abspath(os.path.expanduser(str(cwd or '')))
-    encoded = abs_cwd.replace(os.sep, '-')
+    encoded = abs_cwd
+    for ch in _PROJECT_DIR_ENCODE_CHARS:
+        encoded = encoded.replace(ch, '-')
     root = Path(os.environ.get(CLAUDE_SESSIONS_ROOT_ENV_KEY, '')).expanduser()
     if str(root) and root.is_dir():
         return root / encoded

@@ -348,6 +348,21 @@ class ProjectDirEncodingTests(unittest.TestCase):
         result = claude_project_dir_for_cwd('/x/y')
         self.assertTrue(str(result).startswith(self._tmp.name))
 
+    def test_encodes_windows_cwd_collapsing_drive_colon_and_backslashes(
+        self,
+    ) -> None:
+        # On Windows Claude Code flattens both the drive colon AND each
+        # backslash to ``-`` — ``C:\Codes\proj`` becomes
+        # ``C--Codes-proj`` (the consecutive ``:\`` produces two dashes
+        # in a row). Replacing only ``os.sep`` left the colon intact so
+        # the migrated JSONL was unreachable from --resume.
+        with patch('os.path.abspath', side_effect=lambda p: p):
+            result = claude_project_dir_for_cwd(r'C:\Codes\UNA-2489-proj')
+        self.assertEqual(
+            result.name,
+            'C--Codes-UNA-2489-proj',
+        )
+
 
 class MigrateSessionToWorkspaceTests(unittest.TestCase):
     """``migrate_session_to_workspace`` copies the JSONL to the target cwd's project dir."""
