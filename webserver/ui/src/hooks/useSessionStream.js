@@ -115,13 +115,19 @@ function appendEntryIfNew(state, entry) {
   if (state.eventKeys.has(key)) {
     return { state, appended: false };
   }
-  const eventKeys = new Set(state.eventKeys);
-  eventKeys.add(key);
+  // Mutate the existing Set in place. ``eventKeys`` is internal to
+  // the reducer and is never read by React's render path (only the
+  // ``events`` array is); React only checks the outer ``state``
+  // object's identity, which we DO replace below. Skipping the
+  // ``new Set(state.eventKeys)`` clone removes an O(N) copy from
+  // every appended event — significant on long-lived sessions
+  // where N reaches the low thousands.
+  state.eventKeys.add(key);
   return {
     state: {
       ...state,
       events: [...state.events, entry],
-      eventKeys,
+      eventKeys: state.eventKeys,
     },
     appended: true,
   };

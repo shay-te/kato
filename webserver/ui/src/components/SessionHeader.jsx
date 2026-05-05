@@ -7,6 +7,11 @@ import { deriveTabStatus, resolveTabStatus, tabStatusTitle } from '../utils/tabS
 import { SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
 import { toast } from '../stores/toastStore.js';
 import AdoptSessionModal from './AdoptSessionModal.jsx';
+import {
+  formatFinishResult,
+  formatPullResult,
+  formatUpdateSourceResult,
+} from './sessionHeaderFormatters.js';
 
 export default function SessionHeader({
   session,
@@ -310,188 +315,12 @@ export default function SessionHeader({
   );
 }
 
-// Render the per-repo outcome of POST /update-source into a toast.
-// Tells the operator exactly which source clones now reflect the
-// task branch and which were skipped (dirty / missing) or failed.
-function formatUpdateSourceResult(result) {
-  const body = (result && result.body) || {};
-  if (!result || !result.ok) {
-    return {
-      title: 'Update source failed',
-      message: (result && result.error)
-        || body.error
-        || JSON.stringify(body, null, 2)
-        || 'unknown error',
-    };
-  }
-  const lines = [];
-  const push = body.pushed || {};
-  const pushedCount = (push.pushed_repositories || []).length;
-  const pushSkipped = (push.skipped_repositories || []).length;
-  const pushFailed = (push.failed_repositories || []).length;
-  if (pushedCount) {
-    lines.push(`✓ pushed ${pushedCount} repo(s) to remote`);
-  } else if (pushSkipped) {
-    lines.push(`• push skipped — already in sync (${pushSkipped} repo(s))`);
-  } else if (pushFailed) {
-    const errs = (push.failed_repositories || [])
-      .map((r) => `${r.repository_id}: ${r.error}`).join('; ');
-    lines.push(`✗ push failed: ${errs}`);
-  }
-  const updated = body.updated_repositories || [];
-  if (updated.length) {
-    lines.push(`✓ source updated for ${updated.length} repo(s): ${updated.join(', ')}`);
-  }
-  // Per-repo warnings (e.g. "stashed your changes; reapplied with
-  // conflicts"). Each warning means the repo DID update, but the
-  // operator needs to look at it.
-  const warnings = body.warnings || [];
-  for (const entry of warnings) {
-    const marker = entry.stash_conflict ? '⚠' : '•';
-    const text = String(entry.warning || '').trim();
-    if (text) {
-      lines.push(`${marker} ${text}`);
-    }
-  }
-  const skipped = body.skipped_repositories || [];
-  for (const entry of skipped) {
-    lines.push(`• skipped ${entry.repository_id}: ${entry.reason}`);
-  }
-  const failed = body.failed_repositories || [];
-  for (const entry of failed) {
-    lines.push(`✗ ${entry.repository_id}: ${entry.error}`);
-  }
-  if (!updated.length && !failed.length && !skipped.length) {
-    lines.push('• no source repositories updated');
-  }
-  const title = body.updated
-    ? (failed.length ? 'Source partially updated' : 'Source updated')
-    : 'Source not updated';
-  return { title, message: lines.join('\n') };
-}
-
-// Render the per-step outcome of POST /finish into a toast title +
-// multi-line message. Goal: never leave the operator guessing
-// whether *anything* happened — every step (push, PR, move-to-review)
-// gets one line, with the failure reason inline when a step didn't
-// run or errored.
-function formatFinishResult(result) {
-  const body = (result && result.body) || {};
-  if (!result || !result.ok) {
-    return {
-      title: 'Finish request failed',
-      message: (result && result.error)
-        || JSON.stringify(body, null, 2)
-        || 'unknown error',
-    };
-  }
-  const lines = [];
-  const push = body.pushed || {};
-  const pushedCount = (push.pushed_repositories || []).length;
-  const pushSkipped = (push.skipped_repositories || []).length;
-  const pushFailed = (push.failed_repositories || []).length;
-  if (pushedCount) {
-    lines.push(`✓ pushed ${pushedCount} repo(s): ${(push.pushed_repositories || []).join(', ')}`);
-  } else if (pushSkipped) {
-    lines.push(`• push skipped — nothing to push (${pushSkipped} repo(s) already in sync)`);
-  } else if (pushFailed) {
-    const errs = (push.failed_repositories || [])
-      .map((r) => `${r.repository_id}: ${r.error}`).join('; ');
-    lines.push(`✗ push failed: ${errs}`);
-  } else {
-    lines.push(`• push: ${push.error || 'no action'}`);
-  }
-  const pr = body.pull_request || {};
-  const prCreated = (pr.created_pull_requests || []).length;
-  const prSkipped = (pr.skipped_existing || []).length;
-  const prFailed = (pr.failed_repositories || []).length;
-  if (prCreated) {
-    const urls = (pr.created_pull_requests || [])
-      .map((r) => r.url || r.repository_id).join(', ');
-    lines.push(`✓ opened ${prCreated} pull request(s): ${urls}`);
-  } else if (prSkipped) {
-    lines.push(`• PR skipped — already exists for ${prSkipped} repo(s)`);
-  } else if (prFailed) {
-    const errs = (pr.failed_repositories || [])
-      .map((r) => `${r.repository_id}: ${r.error}`).join('; ');
-    lines.push(`✗ PR failed: ${errs}`);
-  } else {
-    lines.push(`• pull request: ${pr.error || 'no action'}`);
-  }
-  if (body.moved_to_review) {
-    lines.push('✓ ticket moved to In Review');
-  } else {
-    const why = body.move_error || 'unknown reason — check kato logs';
-    lines.push(`✗ ticket did NOT move to In Review: ${why}`);
-  }
-  return {
-    title: body.finished
-      ? 'Done — task finalised'
-      : 'Done — partial completion',
-    message: lines.join('\n'),
-  };
-}
-
 function pullTitleFor(state) {
   if (state.pullBusy) { return 'Pull in progress…'; }
   if (!state.hasWorkspace) {
     return 'Nothing to pull — kato has not provisioned a workspace for this task yet.';
   }
   return 'Fast-forward the workspace clone(s) from origin. Refuses if the working tree is dirty.';
-}
-
-// Render the per-repo outcome of POST /pull into a toast title +
-// message + kind. Mirrors ``formatUpdateSourceResult`` — every
-// repo gets a line so the operator never has to wonder whether the
-// click did anything.
-function formatPullResult(result) {
-  const body = (result && result.body) || {};
-  if (!result || !result.ok) {
-    return {
-      title: 'Pull failed',
-      kind: 'error',
-      message: (result && result.error) || body.error || 'unknown error',
-    };
-  }
-  const lines = [];
-  const pulled = body.pulled_repositories || [];
-  const skipped = body.skipped_repositories || [];
-  const failed = body.failed_repositories || [];
-  for (const entry of pulled) {
-    const count = Number(entry.commits_pulled || 0);
-    lines.push(`✓ ${entry.repository_id}: pulled ${count} commit(s)`);
-  }
-  for (const entry of skipped) {
-    const reason = entry.reason || 'no_change';
-    const detail = entry.detail || '';
-    if (reason === 'already_in_sync' || reason === 'remote_branch_missing') {
-      lines.push(`• ${entry.repository_id}: nothing to pull`);
-    } else if (reason === 'dirty_working_tree') {
-      lines.push(`⚠ ${entry.repository_id}: ${detail || 'dirty working tree'}`);
-    } else {
-      lines.push(`• ${entry.repository_id}: ${detail || reason}`);
-    }
-  }
-  for (const entry of failed) {
-    lines.push(`✗ ${entry.repository_id}: ${entry.error}`);
-  }
-  if (!pulled.length && !skipped.length && !failed.length) {
-    lines.push('• no repositories in workspace');
-  }
-  let kind;
-  if (failed.length > 0) {
-    kind = pulled.length > 0 ? 'warning' : 'error';
-  } else if (skipped.some((s) => s.reason === 'dirty_working_tree')) {
-    kind = pulled.length > 0 ? 'warning' : 'warning';
-  } else if (!pulled.length) {
-    kind = 'success';
-  } else {
-    kind = 'success';
-  }
-  const title = pulled.length
-    ? (failed.length ? 'Pull partially completed' : 'Pulled')
-    : 'Nothing to pull';
-  return { title, kind, message: lines.join('\n') };
 }
 
 function pushTitleFor(state) {

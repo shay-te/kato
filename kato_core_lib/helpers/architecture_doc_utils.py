@@ -9,29 +9,16 @@ chars) and trip ``[WinError 206] The filename or extension is too
 long``. Claude's ``Read`` tool fetches the content on demand; the
 trade-off is one extra read per session, which is cheap.
 
-The directive is recomputed on every spawn so editing the doc's
-*location* (env var change) takes effect on the next turn without
-restarting kato. Read errors at the path-existence check are
-logged and treated as "no doc configured" — the orchestrator
-never blocks on this.
+Read errors at the path-existence check are logged and treated as
+"no doc configured" — the orchestrator never blocks on this.
 """
 
 from __future__ import annotations
 
 import logging
-import threading
 from pathlib import Path
 
-from kato_core_lib.helpers.text_utils import normalized_text
-
-
-# Process-local cache for the directive string keyed on (path, mtime,
-# size). Streaming spawns hit this once per Claude turn — the doc
-# location is environment-config-frozen, so 99% of spawns return the
-# same directive. The mtime+size check keeps cache invalidation
-# automatic when an operator edits or deletes the file.
-_DIRECTIVE_CACHE: dict[str, tuple[float, int, str]] = {}
-_DIRECTIVE_CACHE_LOCK = threading.Lock()
+from kato_core_lib.helpers.file_cache_utils import stat_keyed_cache
 
 
 _LIVING_DOC_DIRECTIVE_TEMPLATE = (
@@ -55,6 +42,14 @@ _LIVING_DOC_DIRECTIVE_TEMPLATE = (
     'must NEVER run git); just edit.\n'
 )
 
+# Process-local cache for the directive string. Streaming spawns hit
+# this once per Claude turn — the doc location is environment-config
+# frozen, so 99% of spawns return the same directive. Shared cache
+# helper keeps invalidation behaviour identical to the lessons
+# reader; see ``file_cache_utils`` for the (path, mtime, size)
+# strategy.
+_load_cached, _reset_cache = stat_keyed_cache()
+
 
 def read_architecture_doc(
     path: str,
@@ -75,31 +70,19 @@ def read_architecture_doc(
     its existence is checked, so kato fails fast if the operator
     configured a stale path.
     """
-    normalized = normalized_text(path)
-    if not normalized:
-        return ''
-    file_path = Path(normalized).expanduser()
-    try:
-        stat = file_path.stat()
-        is_file = file_path.is_file()
-    except (FileNotFoundError, OSError):
-        stat = None
-        is_file = False
-    if stat is None or not is_file:
-        if logger is not None:
-            logger.warning(
-                'architecture doc path %s is not a file; skipping context injection',
-                file_path,
-            )
-        return ''
-    cache_key = str(file_path)
-    cached_mtime = stat.st_mtime
-    cached_size = stat.st_size
-    with _DIRECTIVE_CACHE_LOCK:
-        cached = _DIRECTIVE_CACHE.get(cache_key)
-        if cached is not None and cached[0] == cached_mtime and cached[1] == cached_size:
-            return cached[2]
-    directive = _LIVING_DOC_DIRECTIVE_TEMPLATE.format(path=str(file_path))
-    with _DIRECTIVE_CACHE_LOCK:
-        _DIRECTIVE_CACHE[cache_key] = (cached_mtime, cached_size, directive)
-    return directive
+    cached = _load_cached(path, _build_directive)
+    if cached is not None:
+        return cached
+    # Cache miss path returns None for empty/missing/unreadable
+    # paths; surface the warning here so the existing operator-
+    # diagnostic behaviour is preserved.
+    if (path or '').strip() and logger is not None:
+        logger.warning(
+            'architecture doc path %s is not a file; skipping context injection',
+            Path(path).expanduser(),
+        )
+    return ''
+
+
+def _build_directive(file_path: Path) -> str:
+    return _LIVING_DOC_DIRECTIVE_TEMPLATE.format(path=str(file_path))

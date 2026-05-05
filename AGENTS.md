@@ -192,6 +192,19 @@ The `&&` and `?:` operators inside JSX *are* logic. Extract them.
 - **What stays in the component:** state (`useState`, `useReducer`), refs, effect wiring, call sites for helpers, prop plumbing, and JSX. Nothing else.
 - **What specifically moves out:** `new Set()`/`new Map()` builders, `.forEach`/`.filter`/`.reduce` over props or derived data, boolean derivations beyond a single `&&`/ternary, loops that produce strings or objects for downstream use.
 
+### Single Responsibility Principle for components
+
+**One component does one thing.** A component renders one feature; it does not also contain three sibling features wedged into the same file.
+
+Concrete checks before adding code to an existing component:
+
+- **Does the new code share state with what's already there?** If no — it belongs in its own component, not bolted onto this one.
+- **Could a future reader summarise the component in one sentence after the change?** If "renders the chat header AND formats four kinds of toasts AND owns the adopt-session modal AND…" — the component is doing too much; split.
+- **Are the new computations testable on their own?** If yes, extract them to a sibling helper (see "Component logic extraction" above) so the component stays small and the logic gets covered by node-only tests.
+- **Is the file growing past ~200 lines of JSX + handlers?** That is a signal — not a hard rule, but worth pausing — to check whether the component has accumulated multiple responsibilities.
+
+When in doubt, prefer two small components over one branching component. The render path of each stays cheap; the diff of each future change stays small.
+
 ### Arrow functions
 
 Always use curly braces `{}` and an explicit `return` in arrow functions. Never use the implicit-return (expression body) form.

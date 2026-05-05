@@ -485,6 +485,28 @@ header button:hover { color: #e5e5e5; border-color: #e5e5e5; }
   color: #e5e5e5;
   border-color: #525252;
 }
+.event-log-show-older {
+  display: block;
+  margin: 8px auto;
+  padding: 4px 12px;
+  font-size: 11px;
+  font-family: inherit;
+  color: #a3a3a3;
+  background: transparent;
+  border: 1px solid #404040;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.event-log-show-older:hover {
+  color: #e5e5e5;
+  border-color: #525252;
+}
+.bubble-tool-details-overflow {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: #d97706;
+  font-style: italic;
+}
 .bubble.system .bubble-dot { background: #404040; }
 .bubble.system .bubble-content {
   color: #a3a3a3;

@@ -41,45 +41,15 @@ from kato_core_lib.data_layers.data.repository_approval import ApprovalMode
 from kato_core_lib.data_layers.service.repository_approval_service import (
     RepositoryApprovalService,
 )
+from kato_core_lib.helpers.dotenv_utils import load_dotenv_into_environ
 
-
-def _bootstrap_env_from_dotenv() -> None:
-    """Load ``<repo>/.env`` into ``os.environ`` if not already loaded.
-
-    The ``tools/kato/kato.py`` dispatcher does this before invoking
-    us, but a developer running ``python scripts/approve_repository.py``
-    bypasses the dispatcher and would otherwise see a bare environment
-    on Windows (where the operator's shell almost never carries
-    kato's vars). Real env vars still win — see the same loader in
-    the dispatcher for the reasoning.
-    """
-    repo_root = Path(__file__).resolve().parents[1]
-    env_path = repo_root / '.env'
-    if not env_path.is_file():
-        return
-    try:
-        text = env_path.read_text(encoding='utf-8')
-    except OSError:
-        return
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith('#'):
-            continue
-        if line.startswith('export '):
-            line = line[len('export '):].lstrip()
-        if '=' not in line:
-            continue
-        key, _, value = line.partition('=')
-        key = key.strip()
-        if not key or key in os.environ:
-            continue
-        value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
-            value = value[1:-1]
-        os.environ[key] = value
-
-
-_bootstrap_env_from_dotenv()
+# Belt-and-suspenders: when this script is invoked through the
+# ``tools/kato/kato.py`` dispatcher (the normal path) the dispatcher
+# has already loaded ``.env``. Developers who run
+# ``python scripts/approve_repository.py`` directly skip the
+# dispatcher entirely, so we re-run the same loader here. Real env
+# vars still win — see ``dotenv_utils`` for the parser semantics.
+load_dotenv_into_environ(Path(__file__).resolve().parents[1] / '.env')
 
 
 @dataclass(frozen=True)

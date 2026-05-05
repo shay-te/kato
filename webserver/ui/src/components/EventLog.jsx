@@ -6,9 +6,16 @@ import { ENTRY_SOURCE } from '../constants/entrySource.js';
 import { stringifyShort } from '../utils/dom.js';
 import { formatToolUse } from '../utils/formatToolUse.js';
 import { MessageFilter } from '../utils/MessageFilter.js';
+import {
+  TOOL_DETAILS_HARD_CAP,
+  computeEventLogWindow,
+  computeToolDetailsRender,
+  computeToolDetailsToggleLabel,
+} from './eventLogTruncation.js';
 
 export default function EventLog({ entries, banner }) {
   const containerRef = useRef(null);
+  const [showAll, setShowAll] = useState(false);
   // Dedupe is O(N) over the entire event list; without memoization
   // it re-runs every time the parent re-renders (tab switches,
   // workspace bumps, attention flips), even though ``entries`` is
@@ -18,19 +25,34 @@ export default function EventLog({ entries, banner }) {
     () => MessageFilter.dedupeUserEchoes(MessageFilter.dedupeRateLimitCycles(entries)),
     [entries],
   );
+  const window = useMemo(
+    () => computeEventLogWindow(visibleEntries, showAll),
+    [visibleEntries, showAll],
+  );
   useEffect(() => {
     const node = containerRef.current;
     if (node) { node.scrollTop = node.scrollHeight; }
-  }, [visibleEntries.length, banner]);
+  }, [window.visible.length, banner]);
 
   const bannerBubble = banner && <Bubble kind={BUBBLE_KIND.SYSTEM}>{banner}</Bubble>;
   const eventBubbles = useMemo(
-    () => visibleEntries.flatMap((entry, index) => bubblesFor(entry, index)),
-    [visibleEntries],
+    () => window.visible.flatMap((entry, index) => bubblesFor(entry, index)),
+    [window.visible],
   );
+  const hiddenCount = window.hidden;
+  const showOlderButton = hiddenCount > 0 ? (
+    <button
+      type="button"
+      className="event-log-show-older"
+      onClick={() => setShowAll(true)}
+    >
+      {`Show ${hiddenCount} earlier event${hiddenCount === 1 ? '' : 's'}`}
+    </button>
+  ) : null;
   return (
     <div id="event-log" ref={containerRef}>
       {bannerBubble}
+      {showOlderButton}
       {eventBubbles}
     </div>
   );
@@ -207,24 +229,39 @@ function keyOf(raw, index, slot) {
 
 
 // Render the monospace tool-details block, collapsed when the
-// payload is huge. A single Write/Edit on a 5000-line file used to
-// emit one <span> per line directly into the bubble — thousands of
-// DOM nodes for one tool call. We now show the head of the payload
-// inline and stash the rest behind a one-click toggle so the
-// transcript doesn't blow up the layout for big I/O.
-const TOOL_DETAILS_COLLAPSE_THRESHOLD = 40;
+// payload is huge. The truncation rules + thresholds live in the
+// sibling ``eventLogTruncation.js`` so the rendering and the rules
+// can evolve independently and stay testable without a JSX
+// transformer.
 
 function ToolDetails({ details }) {
   const [expanded, setExpanded] = useState(false);
   const lines = useMemo(() => details.split('\n'), [details]);
-  const truncated = !expanded && lines.length > TOOL_DETAILS_COLLAPSE_THRESHOLD;
-  const visible = truncated
-    ? lines.slice(0, TOOL_DETAILS_COLLAPSE_THRESHOLD)
-    : lines;
+  const renderInfo = useMemo(
+    () => computeToolDetailsRender(lines, expanded),
+    [lines, expanded],
+  );
+  const toggleLabel = computeToolDetailsToggleLabel(lines.length, expanded);
+  const overflowNotice = renderInfo.overflowed ? (
+    <p className="bubble-tool-details-overflow">
+      {`Output truncated at ${TOOL_DETAILS_HARD_CAP.toLocaleString()} lines `
+       + `(${(lines.length - TOOL_DETAILS_HARD_CAP).toLocaleString()} more `
+       + `not shown). Inspect the agent transcript on disk for the full body.`}
+    </p>
+  ) : null;
+  const toggleButton = lines.length > TOOL_DETAILS_COLLAPSE_THRESHOLD ? (
+    <button
+      type="button"
+      className="bubble-tool-details-toggle"
+      onClick={() => setExpanded((current) => !current)}
+    >
+      {toggleLabel}
+    </button>
+  ) : null;
   return (
     <>
       <pre className="bubble-tool-details">
-        {visible.map((line, lineIdx) => (
+        {renderInfo.visible.map((line, lineIdx) => (
           <span
             key={lineIdx}
             className={`bubble-tool-details-line ${_diffLineKind(line)}`}
@@ -234,19 +271,8 @@ function ToolDetails({ details }) {
           </span>
         ))}
       </pre>
-      {lines.length > TOOL_DETAILS_COLLAPSE_THRESHOLD && (
-        <button
-          type="button"
-          className="bubble-tool-details-toggle"
-          onClick={() => setExpanded((current) => !current)}
-        >
-          {expanded
-            ? 'Hide full output'
-            : `Show ${lines.length - TOOL_DETAILS_COLLAPSE_THRESHOLD} more line${
-              lines.length - TOOL_DETAILS_COLLAPSE_THRESHOLD === 1 ? '' : 's'
-            }`}
-        </button>
-      )}
+      {overflowNotice}
+      {toggleButton}
     </>
   );
 }

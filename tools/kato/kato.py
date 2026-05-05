@@ -16,59 +16,20 @@ import subprocess
 import sys
 from pathlib import Path
 
-
-def _load_env_file_into_environ(env_path: Path) -> int:
-    """Read ``KEY=VALUE`` lines from ``env_path`` into ``os.environ``.
-
-    Real env vars win — values already present in the parent
-    environment are NOT overwritten, so an operator who sets
-    ``KATO_WORKSPACES_ROOT`` in their shell still wins over a stale
-    line in ``.env``. Returns the number of new keys actually added.
-
-    Why this is in the dispatcher and not the individual scripts:
-    every kato CLI subcommand needs the same env (``REPOSITORY_ROOT_PATH``,
-    ``KATO_WORKSPACES_ROOT``, ``KATO_CONFIG``, ``BITBUCKET_*``, etc.).
-    Putting the loader here means scripts under ``scripts/`` can keep
-    using ``os.environ.get(...)`` and Just Work whether they're
-    invoked through ``./kato`` / ``kato.exe`` from any directory.
-
-    Best-effort: a malformed line is skipped, not raised. Operators
-    have hit "kato won't start because line 47 of .env has a stray
-    quote" before; we'd rather load 23 of 24 valid lines than fail
-    the whole dispatcher.
-    """
-    if not env_path.is_file():
-        return 0
-    try:
-        text = env_path.read_text(encoding='utf-8')
-    except OSError:
-        return 0
-    added = 0
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith('#'):
-            continue
-        # Strip an optional ``export `` prefix so files written for
-        # ``source .env`` Bash usage still parse here.
-        if line.startswith('export '):
-            line = line[len('export '):].lstrip()
-        if '=' not in line:
-            continue
-        key, _, value = line.partition('=')
-        key = key.strip()
-        if not key:
-            continue
-        value = value.strip()
-        # Drop a single matched pair of surrounding quotes — covers
-        # both ``KEY='value'`` and ``KEY="value"`` styles. Embedded
-        # quotes are preserved.
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
-            value = value[1:-1]
-        if key in os.environ:
-            continue
-        os.environ[key] = value
-        added += 1
-    return added
+# ``.env`` parsing is shared with ``scripts/approve_repository.py``
+# (the belt-and-suspenders loader for direct script invocations).
+# Both go through this helper so a future tweak (new quote style,
+# multi-line values, …) lands in lockstep.
+#
+# The dispatcher must work BEFORE the venv exists (``bootstrap``
+# subcommand) — that's why we resolve ``kato_core_lib`` via the
+# repo root rather than relying on it being on ``sys.path`` in a
+# regular install. PyInstaller's ``--onefile`` packager walks
+# imports from this file and bundles ``dotenv_utils`` (and only
+# ``dotenv_utils``, since the helpers package's ``__init__`` is
+# empty), so the resulting ``kato.exe`` stays the same size.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from kato_core_lib.helpers.dotenv_utils import load_dotenv_into_environ  # noqa: E402
 
 # This file lives at ``<repo>/tools/make/make.py``, so the repo root
 # is two parents up. PyInstaller-frozen builds use ``sys._MEIPASS``
@@ -219,8 +180,9 @@ def main(argv: list[str]) -> int:
     # bare shell environment — which on Windows almost never
     # carries kato's vars — and default to ``~/.kato/workspaces``,
     # silently scoping to the wrong location. Real env vars still
-    # win over ``.env``; see ``_load_env_file_into_environ`` above.
-    _load_env_file_into_environ(repo_root / '.env')
+    # win over ``.env``; see ``kato_core_lib.helpers.dotenv_utils``
+    # for the parser semantics.
+    load_dotenv_into_environ(repo_root / '.env')
     python = _resolve_python(prefer_venv=prefer_venv, repo_root=repo_root)
     cmd = [python, *base_args, *extra]
     try:
