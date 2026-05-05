@@ -6,18 +6,20 @@ plus regular POST endpoints (browser→server) instead of WebSockets — same
 functional surface, but reliable on Werkzeug's dev server.
 
 Endpoints:
-    GET  /                                  — HTML shell
-    GET  /healthz                           — liveness
-    GET  /logo.png                          — kato logo
-    GET  /api/sessions                      — list all session records
-    GET  /api/sessions/<task_id>            — one record + recent events
-    GET  /api/sessions/<task_id>/events     — SSE: live agent events
-    GET  /api/sessions/<task_id>/files      — repo file tree (Files tab)
-    GET  /api/sessions/<task_id>/diff       — committed + uncommitted diff
-    POST /api/sessions/<task_id>/messages   — body: {"text": "..."}
-    POST /api/sessions/<task_id>/permission — body: {"request_id", "allow", "rationale"}
-    GET  /api/status/recent                 — recent kato-process log entries
-    GET  /api/status/events                 — SSE: live kato-process log feed
+    GET  /                                              — HTML shell
+    GET  /healthz                                       — liveness
+    GET  /logo.png                                      — kato logo
+    GET  /api/sessions                                  — list all session records
+    GET  /api/sessions/<task_id>                        — one record + recent events
+    GET  /api/sessions/<task_id>/events                 — SSE: live agent events
+    GET  /api/sessions/<task_id>/files                  — repo file tree (Files tab)
+    GET  /api/sessions/<task_id>/diff                   — committed + uncommitted diff
+    POST /api/sessions/<task_id>/messages               — body: {"text": "..."}
+    POST /api/sessions/<task_id>/permission             — body: {"request_id", "allow", "rationale"}
+    POST /api/sessions/<task_id>/adopt-claude-session   — body: {"claude_session_id"}
+    GET  /api/claude/sessions                           — list adoptable Claude Code sessions
+    GET  /api/status/recent                             — recent kato-process log entries
+    GET  /api/status/events                             — SSE: live kato-process log feed
 """
 
 from __future__ import annotations
@@ -261,6 +263,83 @@ def _register_http_routes(app: Flask) -> None:
         else:
             payload['recent_events'] = []
         return jsonify(payload)
+
+    @app.get('/api/claude/sessions')
+    def list_claude_sessions():
+        """List Claude Code sessions available for adoption.
+
+        Reads ``~/.claude/projects/`` (or ``KATO_CLAUDE_SESSIONS_ROOT``
+        for tests) and returns every transcript with metadata: cwd,
+        last-modified epoch, turn count, and first/last user-message
+        previews. The UI dropdown sorts by recency and lets the
+        operator pick one to adopt for a task.
+
+        Query string ``q=<text>`` filters by case-insensitive substring
+        match against cwd and either preview. Empty ``q`` returns all
+        (capped server-side).
+        """
+        from kato_core_lib.data_layers.service.claude_session_index import (
+            list_sessions as list_claude_session_metadata,
+        )
+
+        query = request.args.get('q', '') or ''
+        rows = list_claude_session_metadata(query=query)
+        # Mark sessions already adopted by a kato task so the UI can
+        # warn before re-adoption. Cheap O(N*M) — N = sessions on
+        # disk, M = task records — both small in practice.
+        manager = app.config['SESSION_MANAGER']
+        adopted_by: dict[str, str] = {}
+        try:
+            for record in manager.list_records():
+                sid = str(getattr(record, 'claude_session_id', '') or '').strip()
+                if sid and sid not in adopted_by:
+                    adopted_by[sid] = record.task_id
+        except Exception:  # pragma: no cover — defensive
+            adopted_by = {}
+        return jsonify({
+            'sessions': [
+                {
+                    **row.to_dict(),
+                    'adopted_by_task_id': adopted_by.get(row.session_id, ''),
+                }
+                for row in rows
+            ],
+        })
+
+    @app.post('/api/sessions/<task_id>/adopt-claude-session')
+    def adopt_claude_session(task_id: str):
+        """Bind an existing Claude Code session id to ``task_id``.
+
+        Body: ``{"claude_session_id": "<uuid>"}``. The next agent
+        spawn for ``task_id`` will ``--resume`` that session instead
+        of starting a fresh conversation. Refuses when a live session
+        is already running for ``task_id`` — the operator must close
+        it first to avoid two writers on the same record.
+        """
+        payload = request.get_json(silent=True) or {}
+        claude_session_id = str(payload.get('claude_session_id', '') or '').strip()
+        if not claude_session_id:
+            return jsonify({'error': 'claude_session_id is required'}), 400
+        manager = app.config['SESSION_MANAGER']
+        live_session = manager.get_session(task_id)
+        if live_session is not None and live_session.is_alive:
+            return jsonify({
+                'error': (
+                    'a live planning session is already running for this task; '
+                    'stop it before adopting a different Claude session'
+                ),
+            }), 409
+        try:
+            record = manager.adopt_session_id(
+                task_id,
+                claude_session_id=claude_session_id,
+            )
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+        return jsonify({
+            'task_id': record.task_id,
+            'claude_session_id': record.claude_session_id,
+        })
 
     @app.get('/healthz')
     def healthz():

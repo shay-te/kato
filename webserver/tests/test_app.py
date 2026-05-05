@@ -126,6 +126,125 @@ class WebserverAppTests(unittest.TestCase):
         response = self.client.get('/api/sessions/PROJ-99')
         self.assertEqual(response.status_code, 404)
 
+    def test_claude_sessions_endpoint_lists_metadata_from_disk(self):
+        # Stand up a temp Claude sessions root with one transcript
+        # the endpoint can discover. Stub the session manager to
+        # report no existing kato adoption so the response shape is
+        # the simple case.
+        import json, os, tempfile, unittest.mock as _mock
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project_dir = root / '-Users-dev-myproj'
+            project_dir.mkdir()
+            (project_dir / 'sess-1.jsonl').write_text(
+                json.dumps({
+                    'type': 'user',
+                    'sessionId': 'sess-1',
+                    'cwd': '/Users/dev/myproj',
+                    'message': {'content': 'help with auth'},
+                }) + '\n',
+                encoding='utf-8',
+            )
+            with _mock.patch.dict(
+                os.environ,
+                {'KATO_CLAUDE_SESSIONS_ROOT': str(root)},
+                clear=False,
+            ):
+                response = self.client.get('/api/claude/sessions')
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(len(payload['sessions']), 1)
+        row = payload['sessions'][0]
+        self.assertEqual(row['session_id'], 'sess-1')
+        self.assertEqual(row['cwd'], '/Users/dev/myproj')
+        self.assertEqual(row['first_user_message'], 'help with auth')
+        # No kato task has adopted this session id.
+        self.assertEqual(row['adopted_by_task_id'], '')
+
+    def test_claude_sessions_endpoint_marks_adopted_sessions(self):
+        # PROJ-1 in the fixture already has claude_session_id='abc'.
+        # If we put a transcript with that id on disk, the endpoint
+        # should report it as adopted by PROJ-1.
+        import json, os, tempfile, unittest.mock as _mock
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project_dir = root / '-proj'
+            project_dir.mkdir()
+            (project_dir / 'abc.jsonl').write_text(
+                json.dumps({
+                    'type': 'user',
+                    'sessionId': 'abc',
+                    'cwd': '/proj',
+                    'message': {'content': 'hello'},
+                }) + '\n',
+                encoding='utf-8',
+            )
+            with _mock.patch.dict(
+                os.environ,
+                {'KATO_CLAUDE_SESSIONS_ROOT': str(root)},
+                clear=False,
+            ):
+                response = self.client.get('/api/claude/sessions')
+        self.assertEqual(response.status_code, 200)
+        rows = response.get_json()['sessions']
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['adopted_by_task_id'], 'PROJ-1')
+
+    def test_adopt_claude_session_endpoint_calls_manager(self):
+        adopted: list[tuple[str, str]] = []
+
+        class _RecordingManager(_FakeManager):
+            def adopt_session_id(self, task_id, *, claude_session_id, task_summary=''):
+                adopted.append((task_id, claude_session_id))
+                return _FakeRecord(
+                    task_id=task_id,
+                    claude_session_id=claude_session_id,
+                )
+
+        manager = _RecordingManager()
+        app = create_app(session_manager=manager)
+        response = app.test_client().post(
+            '/api/sessions/PROJ-7/adopt-claude-session',
+            json={'claude_session_id': 'imported-sess-id'},
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload['task_id'], 'PROJ-7')
+        self.assertEqual(payload['claude_session_id'], 'imported-sess-id')
+        self.assertEqual(adopted, [('PROJ-7', 'imported-sess-id')])
+
+    def test_adopt_claude_session_endpoint_rejects_empty_id(self):
+        response = self.client.post(
+            '/api/sessions/PROJ-1/adopt-claude-session',
+            json={'claude_session_id': '   '},
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_adopt_claude_session_endpoint_refuses_when_session_alive(self):
+        live = MagicMock()
+        live.is_alive = True
+
+        class _LiveManager(_FakeManager):
+            def get_session(self, task_id):
+                return live if task_id == 'PROJ-1' else None
+
+            def adopt_session_id(self, *args, **kwargs):  # pragma: no cover
+                raise AssertionError('should not be called when live')
+
+        manager = _LiveManager(records=[
+            _FakeRecord(task_id='PROJ-1', claude_session_id='existing'),
+        ])
+        app = create_app(session_manager=manager)
+        response = app.test_client().post(
+            '/api/sessions/PROJ-1/adopt-claude-session',
+            json={'claude_session_id': 'new'},
+        )
+        self.assertEqual(response.status_code, 409)
+
     def test_live_stream_does_not_skip_event_created_between_backlog_and_follow(self):
         session = _RaceyLiveSession()
         backlog = _replay_session_backlog(session)

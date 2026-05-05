@@ -133,6 +133,32 @@ export function fetchDiff(taskId, { repoId = '' } = {}) {
   return fetchJson(`${url}${query}`);
 }
 
+export function fetchClaudeSessions(query = '') {
+  const qs = query ? `?q=${encodeURIComponent(query)}` : '';
+  return fetchJson(`/api/claude/sessions${qs}`);
+}
+
+export async function adoptClaudeSession(taskId, claudeSessionId) {
+  if (!taskId) { return { ok: false, error: 'no task id' }; }
+  if (!claudeSessionId) {
+    return { ok: false, error: 'no claude session id' };
+  }
+  try {
+    const response = await fetch(
+      `/api/sessions/${encodeURIComponent(taskId)}/adopt-claude-session`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ claude_session_id: claudeSessionId }),
+      },
+    );
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
 export async function postSession(taskId, endpoint, body) {
   if (!taskId) {
     return { ok: false, status: 0, error: 'no active task' };

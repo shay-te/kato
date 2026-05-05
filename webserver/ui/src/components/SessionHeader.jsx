@@ -6,6 +6,7 @@ import { useTaskPublish } from '../hooks/useTaskPublish.js';
 import { deriveTabStatus, resolveTabStatus, tabStatusTitle } from '../utils/tabStatus.js';
 import { SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
 import { toast } from '../stores/toastStore.js';
+import AdoptSessionModal from './AdoptSessionModal.jsx';
 
 export default function SessionHeader({
   session,
@@ -17,6 +18,7 @@ export default function SessionHeader({
   const [stopping, setStopping] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [updatingSource, setUpdatingSource] = useState(false);
+  const [adoptModalOpen, setAdoptModalOpen] = useState(false);
   const pushApproval = usePushApproval(session?.task_id || '');
   const taskPublish = useTaskPublish(session?.task_id || '');
   if (!session) { return null; }
@@ -179,6 +181,15 @@ export default function SessionHeader({
         {finishing ? 'Finishing…' : 'Done'}
       </button>
       <button
+        id="session-adopt-claude"
+        type="button"
+        data-tooltip="Adopt an existing Claude Code session for this task — e.g. a chat you already started in the VS Code extension. Kato will --resume that session on the next agent spawn instead of starting fresh."
+        onClick={() => setAdoptModalOpen(true)}
+        disabled={baseStatus === TAB_STATUS.ACTIVE}
+      >
+        Adopt session
+      </button>
+      <button
         id="session-stop"
         type="button"
         data-tooltip="Stop the live Claude subprocess for this task. The chat history is preserved; kato can respawn Claude when you send the next message."
@@ -187,6 +198,13 @@ export default function SessionHeader({
       >
         {stopLabel}
       </button>
+      {adoptModalOpen && (
+        <AdoptSessionModal
+          taskId={session.task_id}
+          onClose={() => setAdoptModalOpen(false)}
+          onAdopted={() => setAdoptModalOpen(false)}
+        />
+      )}
     </header>
   );
 }

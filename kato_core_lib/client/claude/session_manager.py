@@ -400,6 +400,51 @@ class ClaudeSessionManager(object):
                 for record in self._records.values()
             ]
 
+    def adopt_session_id(
+        self,
+        task_id: str,
+        *,
+        claude_session_id: str,
+        task_summary: str = '',
+    ) -> PlanningSessionRecord:
+        """Bind ``claude_session_id`` to ``task_id`` so the next spawn resumes it.
+
+        Used by the planning UI when an operator picks an existing
+        Claude Code session (e.g. a VS Code extension chat) to hand
+        off to kato. The next ``start_session`` for ``task_id`` will
+        ``--resume <claude_session_id>`` instead of starting a fresh
+        conversation.
+
+        The adopted id is mirrored to the workspace metadata so it
+        survives a kato restart, and persisted to the per-task record
+        so an in-process reader sees it immediately. If a live session
+        is already running for ``task_id`` the caller is expected to
+        terminate it first — adoption doesn't tear down a running
+        subprocess on its own (that would be a confusing implicit
+        side-effect).
+        """
+        new_id = str(claude_session_id or '').strip()
+        if not new_id:
+            raise ValueError('claude_session_id must be non-empty')
+        normalized_task_id = self._normalize_task_id(task_id)
+        now = time.time()
+        with self._lock:
+            record = self._records.get(normalized_task_id)
+            if record is None:
+                record = PlanningSessionRecord(
+                    task_id=normalized_task_id,
+                    task_summary=str(task_summary or ''),
+                    status=SESSION_STATUS_TERMINATED,
+                )
+                self._records[normalized_task_id] = record
+            record.claude_session_id = new_id
+            if task_summary and not record.task_summary:
+                record.task_summary = str(task_summary)
+            record.updated_at_epoch = now
+            self._persist_record(record)
+            self._mirror_to_workspace_metadata(record)
+            return record
+
     def update_status(self, task_id: str, status: str) -> None:
         if status not in SUPPORTED_SESSION_STATUSES:
             raise ValueError(
