@@ -122,26 +122,93 @@ def workspace_inventory_block(cwd: str, additional_dirs) -> str:
     return '\n'.join(lines)
 
 
+def chat_continuity_ground_truth_block(*, is_resumed_session: bool) -> str:
+    """Per-prompt nudge that biases Claude away from defensive re-grounding.
+
+    The system-prompt-level RESUMED_SESSION_ADDENDUM was the first
+    pass at this. In practice it's too easily out-weighted by the
+    operator's own wording ("verify the changes" → Claude treats
+    that as license to fan out into ``git log`` / ``git diff`` /
+    ``git show`` even when the conversation already records what
+    was edited). A per-prompt prefix sits in the *user* message
+    slot, which the model weights more strongly as ground truth
+    than a system addendum, and reliably stops the git storm we
+    saw in production.
+
+    Wording rules, in case this needs adjusting:
+
+    * "Trust the conversation" — the load-bearing instruction.
+    * Name the inspections the model defaults to (``git log``,
+      ``git diff``, ``git show``, whole-file Read) so the rule is
+      concrete, not abstract.
+    * Spell out the three legitimate escape hatches (operator
+      asks, external changes mentioned, history insufficient) so
+      "must trust history" doesn't read as "never use git".
+    * Conservative wording on the resumed case so the same block
+      can be emitted on fresh tasks too — there's no harm in
+      telling Claude to trust an empty history.
+
+    Returns '' when ``is_resumed_session`` is False AND we don't
+    want to emit anything for fresh-task respawns; today we always
+    emit so the prefix becomes part of every chat-respawn prompt.
+    """
+    return (
+        'Continuity instruction (read first):\n'
+        'The conversation history above is the authoritative record '
+        'of what files you have edited and what shell commands you '
+        'have run for this task. Trust it. When the operator asks '
+        '"what changed", "what did you do", "verify the changes", '
+        '"summarize", or any similar continuity question, answer '
+        'from existing tool_use entries in the conversation rather '
+        'than re-running ``git log`` / ``git diff`` / ``git show`` '
+        'or re-Reading whole files. Reach for git or the filesystem '
+        'ONLY when one of these is true:\n'
+        '\n'
+        '  * the operator explicitly asks you to inspect git or '
+        're-read a file,\n'
+        '  * the operator mentions external changes (a manual edit, '
+        "a ``git pull``, another developer's commit), or\n"
+        '  * the conversation history is genuinely insufficient '
+        'for a truthful answer — and in that case lead your reply '
+        'with one sentence stating WHY the history was insufficient.\n'
+        '\n'
+        'Replaying inspections the conversation already records '
+        "wastes operator time and blurs the answer. If you don't "
+        'know, say so.'
+    )
+
+
 def prepend_chat_workspace_context(
     prompt: str,
     *,
     cwd: str = '',
     additional_dirs=None,
     raw_ignored_value: object = None,
+    is_resumed_session: bool = True,
 ) -> str:
-    """Front-load workspace inventory + forbidden guardrails on a chat message.
+    """Front-load continuity + workspace inventory + forbidden guardrails.
 
-    Order matters: the inventory comes FIRST so Claude reads "these
-    are the repos that exist" before the forbidden list. Otherwise
-    the model sometimes starts from the forbidden block and tries to
-    map the operator's wording onto a forbidden name. With the
-    inventory leading, the forbidden block becomes "and don't go
-    looking outside this list" — which is what it's actually meant
-    to enforce.
+    Block order is deliberate, narrow → narrower:
+
+      1. Continuity (session-level: trust the conversation history)
+      2. Inventory  (task-level: these are the repos that exist)
+      3. Forbidden  (operational: don't go outside the list)
+      4. The operator's actual message
+
+    With (1) leading, the model commits to "answer from history"
+    before it hits the inventory or forbidden blocks. Without (1),
+    the operator's "verify the changes" wording would race the
+    addendum and usually win — that's the git-storm we saw on
+    adopted sessions. Empty blocks are dropped silently so a
+    minimal-config kato (no forbidden list, no extras) still
+    produces a clean prompt.
     """
+    continuity = chat_continuity_ground_truth_block(
+        is_resumed_session=is_resumed_session,
+    )
     inventory = workspace_inventory_block(cwd, additional_dirs)
     forbidden = forbidden_repository_guardrails_text(raw_ignored_value)
-    parts = [block for block in (inventory, forbidden) if block]
+    parts = [block for block in (continuity, inventory, forbidden) if block]
     if not parts:
         return prompt
     return '\n\n'.join([*parts, prompt])

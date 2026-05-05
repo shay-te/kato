@@ -1,6 +1,7 @@
 import unittest
 
 from kato_core_lib.helpers.agent_prompt_utils import (
+    chat_continuity_ground_truth_block,
     forbidden_repository_guardrails_text,
     ignored_repository_folder_names,
     prepend_chat_workspace_context,
@@ -79,31 +80,57 @@ class AgentPromptUtilsTests(unittest.TestCase):
             1,
         )
 
-    def test_prepend_chat_workspace_context_orders_inventory_before_forbidden(self) -> None:
-        # Inventory FIRST, forbidden SECOND, then the operator
-        # message. Order matters: with inventory leading, the
-        # forbidden block reads as "and don't go looking outside
-        # this list" rather than "the frontend is forbidden".
+    def test_prepend_chat_workspace_context_orders_continuity_inventory_forbidden(self) -> None:
+        # Continuity FIRST (session-level: trust the conversation
+        # history), inventory SECOND (task-level: these are the
+        # repos), forbidden THIRD (operational: don't go outside),
+        # operator message LAST. The continuity block has to lead
+        # so the model commits to "answer from history" before the
+        # operator's "verify the changes" wording races it into the
+        # git storm we saw on adopted sessions.
         result = prepend_chat_workspace_context(
             'verify the front end',
             cwd='/wks/UNA-2489/ob-love-admin-backend',
             additional_dirs=['/wks/UNA-2489/ob-love-admin-client'],
             raw_ignored_value='ob-love-admin-client-new',
         )
+        continuity_pos = result.find('Continuity instruction (read first):')
         inventory_pos = result.find('Repositories available in this workspace:')
         forbidden_pos = result.find('Forbidden repository folders')
         message_pos = result.find('verify the front end')
-        self.assertGreater(inventory_pos, -1)
+        self.assertGreater(continuity_pos, -1)
+        self.assertGreater(inventory_pos, continuity_pos)
         self.assertGreater(forbidden_pos, inventory_pos)
         self.assertGreater(message_pos, forbidden_pos)
 
-    def test_prepend_chat_workspace_context_skips_blocks_when_empty(self) -> None:
-        # No inventory + no forbidden config → original message
-        # passes through untouched.
-        self.assertEqual(
-            prepend_chat_workspace_context('hello', cwd='', additional_dirs=None, raw_ignored_value=''),
-            'hello',
+    def test_prepend_chat_workspace_context_emits_continuity_even_with_no_other_blocks(self) -> None:
+        # No inventory + no forbidden config → the continuity
+        # block alone still leads the prompt, because biasing
+        # against defensive git inspection is the load-bearing
+        # behaviour change and applies on every chat-respawn,
+        # including the simplest single-repo task.
+        result = prepend_chat_workspace_context(
+            'hello', cwd='', additional_dirs=None, raw_ignored_value='',
         )
+        self.assertIn('Continuity instruction', result)
+        self.assertTrue(result.endswith('hello'))
+
+    def test_chat_continuity_block_names_the_failure_modes(self) -> None:
+        # Concrete inspection names ("git log", "git diff", "git
+        # show") so the rule is unambiguous, plus the three escape
+        # hatches so "trust history" doesn't read as "never use
+        # git". This wording was deliberately picked after watching
+        # adopted sessions fan out into 8+ git commands per turn;
+        # treat changes as a content review, not a string nit.
+        block = chat_continuity_ground_truth_block(is_resumed_session=True)
+        self.assertIn('Trust it', block)
+        self.assertIn('git log', block)
+        self.assertIn('git diff', block)
+        self.assertIn('git show', block)
+        # Escape hatches.
+        self.assertIn('explicitly asks', block)
+        self.assertIn('external changes', block)
+        self.assertIn('insufficient', block)
 
 
 if __name__ == '__main__':
