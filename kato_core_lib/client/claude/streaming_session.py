@@ -634,7 +634,20 @@ class StreamingClaudeSession(object):
         if appended_system_prompt:
             command.extend(['--append-system-prompt', appended_system_prompt])
         if self._resume_session_id:
+            # Pass BOTH ``--resume`` and ``--session-id`` with the same id
+            # so Claude reads the prior JSONL AND continues writing to it,
+            # instead of forking a fresh session_id per spawn. Without
+            # ``--session-id``, every respawn (Stop → Resume, rate-limit
+            # retry, Claude crash + restart) leaves a new orphan transcript
+            # under a different id and the operator sees the chip flip
+            # constantly. With ``--session-id`` pinned, the id is stable
+            # for the lifetime of the task — one session, one JSONL,
+            # adoption survives respawns. Pinning up front also lets
+            # callers query ``claude_session_id`` before the first
+            # ``system { subtype: init }`` event arrives.
+            self._claude_session_id = self._resume_session_id
             command.extend(['--resume', self._resume_session_id])
+            command.extend(['--session-id', self._resume_session_id])
         else:
             # Pin a session-id up front so callers can resume after restart
             # without waiting for the system event to arrive.

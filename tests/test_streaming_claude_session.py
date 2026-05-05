@@ -85,12 +85,19 @@ class StreamingClaudeSessionTests(unittest.TestCase):
         pinned = cmd[cmd.index('--session-id') + 1]
         self.assertEqual(session.claude_session_id, pinned)
 
-    def test_start_with_resume_id_does_not_pin_a_new_session_id(self) -> None:
+    def test_start_with_resume_id_pins_session_to_resumed_id(self) -> None:
+        # When resuming, kato passes BOTH ``--resume`` and ``--session-id``
+        # with the same id so Claude continues writing to the same JSONL
+        # instead of forking a fresh id per spawn (which used to leave
+        # orphan transcripts and a constantly-changing session chip in
+        # the UI). The resumed id is also captured as
+        # ``claude_session_id`` synchronously, before the first system
+        # event arrives.
         fake_proc = _FakeProc()
         with patch(
             'kato_core_lib.client.claude.streaming_session.subprocess.Popen',
             return_value=fake_proc,
-        ), patch(
+        ) as mock_popen, patch(
             'kato_core_lib.client.claude.streaming_session.shutil.which',
             return_value='/usr/local/bin/claude',
         ):
@@ -99,7 +106,18 @@ class StreamingClaudeSessionTests(unittest.TestCase):
                 resume_session_id='earlier-session-uuid',
             )
             session.start()
-        self.assertEqual(session.claude_session_id, '')
+        cmd = mock_popen.call_args.args[0]
+        self.assertEqual(session.claude_session_id, 'earlier-session-uuid')
+        self.assertIn('--resume', cmd)
+        self.assertEqual(
+            cmd[cmd.index('--resume') + 1],
+            'earlier-session-uuid',
+        )
+        self.assertIn('--session-id', cmd)
+        self.assertEqual(
+            cmd[cmd.index('--session-id') + 1],
+            'earlier-session-uuid',
+        )
 
     def test_send_user_message_writes_ndjson_envelope(self) -> None:
         fake_proc = _FakeProc()

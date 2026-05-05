@@ -920,7 +920,14 @@ class ClaudeCliClient(object):
                 command.extend(['--append-system-prompt', appended_system_prompt])
         normalized_session_id = normalized_text(session_id)
         if normalized_session_id:
+            # Pin the session-id to the resumed id so Claude continues
+            # writing to the same JSONL on each respawn — same reason
+            # as ``StreamingClaudeSession._build_command``: without
+            # ``--session-id``, Claude forks a new session_id per spawn
+            # and the operator sees a constantly-changing id even
+            # though they're notionally on one conversation.
             command.extend(['--resume', normalized_session_id])
+            command.extend(['--session-id', normalized_session_id])
         for directory in additional_dirs:
             normalized_dir = normalized_text(directory)
             if normalized_dir:
