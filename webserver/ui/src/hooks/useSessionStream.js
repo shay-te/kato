@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useState } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
 import { CLAUDE_EVENT } from '../constants/claudeEvent.js';
 import { ENTRY_SOURCE } from '../constants/entrySource.js';
 import { safeParseJSON } from '../utils/sse.js';
@@ -11,7 +11,7 @@ export const SESSION_LIFECYCLE = {
   MISSING: 'missing',     // server has no record for this task
 };
 
-const ACTION_RESET = 'reset';
+const ACTION_HYDRATE = 'hydrate';
 const ACTION_INCOMING_EVENT = 'incoming_event';
 const ACTION_INCOMING_HISTORY = 'incoming_history';
 const ACTION_LIFECYCLE = 'lifecycle';
@@ -19,9 +19,24 @@ const ACTION_LOCAL_EVENT = 'local_event';
 const ACTION_DISMISS_PERMISSION = 'dismiss_permission';
 const ACTION_MARK_TURN_BUSY = 'mark_turn_busy';
 
-function initialState() {
+// Per-task chat state lives in this module-level Map so it survives the
+// SessionDetail unmount/remount cycle that React triggers on tab switch
+// (see App.jsx `<SessionDetail key={activeSessionKey} />`). Without this
+// cache, switching tabs blows away every LOCAL bubble ("✓ delivered",
+// "✗ session stopped", in-flight typed messages) plus any kato-injected
+// synthetic event that lives only in the server's `recent_events`
+// buffer — the operator sees the chat "shrink" by however many of
+// those entries had accumulated. Hydrating from the cache restores the
+// previously-seen entries; dedupe on incoming SSE replay (history +
+// backlog) prevents the server from doubling them.
+const TASK_STREAM_CACHE = new Map();
+
+let _localEventCounter = 0;
+
+function emptyTaskState() {
   return {
     events: [],
+    eventKeys: new Set(),
     lifecycle: SESSION_LIFECYCLE.CONNECTING,
     turnInFlight: false,
     pendingPermission: null,
@@ -29,16 +44,68 @@ function initialState() {
   };
 }
 
+function readCachedState(taskId) {
+  if (!taskId) { return emptyTaskState(); }
+  let entry = TASK_STREAM_CACHE.get(taskId);
+  if (!entry) {
+    entry = emptyTaskState();
+    TASK_STREAM_CACHE.set(taskId, entry);
+  }
+  return entry;
+}
+
+function writeCachedState(taskId, state) {
+  if (!taskId) { return; }
+  TASK_STREAM_CACHE.set(taskId, state);
+}
+
+function entryDedupeKey(entry) {
+  // LOCAL entries get a synthetic monotonic id at creation; we can
+  // never confuse a local bubble with a server replay, so the id alone
+  // is enough.
+  if (entry.source === ENTRY_SOURCE.LOCAL) {
+    return `local:${entry.localId}`;
+  }
+  // SERVER and HISTORY entries are keyed by content. The server emits
+  // identical raw payloads on each replay (history-from-disk reads the
+  // same JSONL lines; recent_events backlog is the same in-memory
+  // list) so JSON.stringify of `raw` is a stable identity. We
+  // deliberately ignore `received_at_epoch` because history replay
+  // uses 0 for every event — including it would defeat dedupe.
+  try {
+    return `${entry.source}:${JSON.stringify(entry.raw)}`;
+  } catch (_) {
+    return `${entry.source}:unserialisable:${Math.random()}`;
+  }
+}
+
+function appendEntryIfNew(state, entry) {
+  const key = entryDedupeKey(entry);
+  if (state.eventKeys.has(key)) {
+    return state;
+  }
+  const eventKeys = new Set(state.eventKeys);
+  eventKeys.add(key);
+  return {
+    ...state,
+    events: [...state.events, entry],
+    eventKeys,
+  };
+}
+
 function reducer(state, action) {
   switch (action.type) {
-    case ACTION_RESET:
-      return initialState();
+    case ACTION_HYDRATE:
+      return action.value;
     case ACTION_INCOMING_EVENT:
       return reduceIncomingEvent(state, action.event);
     case ACTION_INCOMING_HISTORY:
       return reduceIncomingHistory(state, action.event);
-    case ACTION_LOCAL_EVENT:
-      return { ...state, events: [...state.events, action.event] };
+    case ACTION_LOCAL_EVENT: {
+      _localEventCounter += 1;
+      const enriched = { ...action.event, localId: _localEventCounter };
+      return appendEntryIfNew(state, enriched);
+    }
     case ACTION_LIFECYCLE:
       // CLOSED / IDLE / MISSING all mean "nothing live is waiting for input"
       // — drop any stale permission so the modal doesn't pop on a finished tab.
@@ -58,11 +125,13 @@ function reducer(state, action) {
 }
 
 function reduceIncomingEvent(state, raw) {
-  const events = [...state.events, { source: ENTRY_SOURCE.SERVER, raw }];
+  const entry = { source: ENTRY_SOURCE.SERVER, raw };
+  const next = appendEntryIfNew(state, entry);
+  if (next === state) { return state; }
   // Every server event — including ``stream_event`` token chunks that
   // never produce a chat bubble — resets the activity clock so the UI
   // can distinguish "Claude is working" from "Claude is stuck".
-  let next = { ...state, events, lastEventAt: Date.now() };
+  next.lastEventAt = Date.now();
   switch (raw?.type) {
     case CLAUDE_EVENT.ASSISTANT:
       next.turnInFlight = true;
@@ -90,8 +159,9 @@ function reduceIncomingEvent(state, raw) {
 }
 
 function reduceIncomingHistory(state, raw) {
-  const events = [...state.events, { source: ENTRY_SOURCE.HISTORY, raw }];
-  let next = { ...state, events };
+  const entry = { source: ENTRY_SOURCE.HISTORY, raw };
+  const next = appendEntryIfNew(state, entry);
+  if (next === state) { return state; }
   switch (raw?.type) {
     case CLAUDE_EVENT.PERMISSION_REQUEST:
     case CLAUDE_EVENT.CONTROL_REQUEST:
@@ -125,12 +195,34 @@ function pendingRequestId(pending) {
 }
 
 export function useSessionStream(taskId, onIncomingEvent) {
-  const [state, dispatch] = useReducer(reducer, undefined, initialState);
+  const [state, dispatch] = useReducer(
+    reducer,
+    taskId,
+    (id) => readCachedState(id),
+  );
   const [streamGeneration, setStreamGeneration] = useState(0);
+  const taskIdRef = useRef(taskId);
+
+  // Persist every state transition into the module-level cache so a
+  // remount (tab switch) sees the latest events when it hydrates.
+  useEffect(() => {
+    if (state && taskIdRef.current) {
+      writeCachedState(taskIdRef.current, state);
+    }
+  }, [state]);
 
   useEffect(() => {
     if (!taskId) { return undefined; }
-    dispatch({ type: ACTION_RESET });
+    // Hydrate the reducer from the cache when taskId changes (or on
+    // first mount). This is what restores pre-existing entries before
+    // the new SSE connection starts replaying — without it, a remount
+    // would render an empty list until the server's history catches
+    // up.
+    taskIdRef.current = taskId;
+    dispatch({
+      type: ACTION_HYDRATE,
+      value: { ...readCachedState(taskId), lifecycle: SESSION_LIFECYCLE.CONNECTING },
+    });
 
     const stream = new EventSource(
       `/api/sessions/${encodeURIComponent(taskId)}/events`,
@@ -186,4 +278,14 @@ export function useSessionStream(taskId, onIncomingEvent) {
     dismissPermission: () => dispatch({ type: ACTION_DISMISS_PERMISSION }),
     reconnect: () => setStreamGeneration((n) => n + 1),
   };
+}
+
+// Drop the cached chat state for a task — used when the operator
+// "forgets" the workspace. Future mounts for that task start fresh.
+export function clearTaskStreamCache(taskId) {
+  if (!taskId) {
+    TASK_STREAM_CACHE.clear();
+    return;
+  }
+  TASK_STREAM_CACHE.delete(taskId);
 }

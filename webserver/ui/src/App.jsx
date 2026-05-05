@@ -14,6 +14,7 @@ import { useNotificationRouting } from './hooks/useNotificationRouting.js';
 import { useResizable } from './hooks/useResizable.js';
 import { useSafetyState } from './hooks/useSafetyState.js';
 import { useSessions } from './hooks/useSessions.js';
+import { clearTaskStreamCache } from './hooks/useSessionStream.js';
 import { useStatusFeed } from './hooks/useStatusFeed.js';
 import { useTaskAttention } from './hooks/useTaskAttention.js';
 import { CLAUDE_EVENT } from './constants/claudeEvent.js';
@@ -79,6 +80,7 @@ export default function App() {
   const handleForgetTask = useCallback(async (taskId) => {
     if (!taskId) { return; }
     await forgetTaskWorkspace(taskId);
+    clearTaskStreamCache(taskId);
     if (activeTaskId === taskId) {
       setActiveTaskIdState('');
       userPickedTabRef.current = false;
