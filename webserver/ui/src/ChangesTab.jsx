@@ -1,9 +1,20 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { parseDiff, Diff, Hunk } from 'react-diff-view';
 import 'react-diff-view/style/index.css';
 import { fetchDiff } from './api.js';
 import Icon from './components/Icon.jsx';
 import { tokenizeHunks } from './utils/diffSyntax.js';
+
+
+// While the tab is open, re-poll the diff endpoint at this cadence
+// even when no Claude tool events fire. The operator sees changes
+// from external sources (manual edits, ``git pull``, the new sync
+// icon) without having to click anything. Skipped when the document
+// is hidden (background tab) so we don't burn server cycles when no
+// one's looking. 5 seconds is the eyeball-noticeable threshold —
+// faster makes git churn for no perceived benefit.
+const AUTO_POLL_INTERVAL_MS = 5000;
+
 
 export default function ChangesTab({
   taskId,
@@ -16,15 +27,27 @@ export default function ChangesTab({
     error: '',
   });
   const [collapsed, setCollapsed] = useState(() => new Set());
+  // Bumped by the manual refresh button + the auto-poll interval.
+  // Independent of ``workspaceVersion`` so neither path blocks the
+  // other; the fetch effect just watches for any change.
+  const [refreshTick, setRefreshTick] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  // Block overlapping fetches: if a previous poll is still in
+  // flight when the next interval fires, skip — we'd rather miss
+  // a tick than have two ``git diff`` runs racing against each
+  // other and the response order being non-deterministic.
+  const inFlightRef = useRef(false);
 
   useEffect(() => {
     if (!taskId) { return; }
     let cancelled = false;
+    inFlightRef.current = true;
     // Only flip to ``loading`` on the FIRST fetch for this taskId — i.e.
     // when there are no diffs to show yet. Subsequent refetches (driven
-    // by workspaceVersion bumps every 1.2s during active tool use) keep
-    // the previous diff visible until the new payload arrives, so the
-    // tab body doesn't flash "Computing diff…" between every turn.
+    // by workspaceVersion bumps every 1.2s during active tool use, or
+    // the auto-poll, or the refresh button) keep the previous diff
+    // visible until the new payload arrives, so the tab body doesn't
+    // flash "Computing diff…" between every turn.
     setState((prev) => (
       prev.status === 'ready' || prev.status === 'error'
         ? prev
@@ -50,9 +73,38 @@ export default function ChangesTab({
           workspaceStatus: prev.workspaceStatus,
           error: String(err),
         }));
+      })
+      .finally(() => {
+        if (cancelled) { return; }
+        inFlightRef.current = false;
+        setRefreshing(false);
       });
     return () => { cancelled = true; };
-  }, [taskId, workspaceVersion]);
+  }, [taskId, workspaceVersion, refreshTick]);
+
+  // Auto-poll while the tab is mounted. Bumps ``refreshTick`` which
+  // triggers the fetch effect above. Honors document visibility so a
+  // background kato tab doesn't keep hammering the server. Cleared on
+  // unmount and on taskId change.
+  useEffect(() => {
+    if (!taskId || typeof window === 'undefined') { return undefined; }
+    let timerId = null;
+    function tick() {
+      if (typeof document !== 'undefined' && document.hidden) { return; }
+      if (inFlightRef.current) { return; }
+      setRefreshTick((n) => n + 1);
+    }
+    timerId = window.setInterval(tick, AUTO_POLL_INTERVAL_MS);
+    return () => {
+      if (timerId !== null) { window.clearInterval(timerId); }
+    };
+  }, [taskId]);
+
+  function onRefresh() {
+    if (!taskId || refreshing || inFlightRef.current) { return; }
+    setRefreshing(true);
+    setRefreshTick((n) => n + 1);
+  }
 
   // When the operator switches to a different task, blank the previous
   // task's diff state so we don't show stale data while the new fetch
@@ -76,27 +128,44 @@ export default function ChangesTab({
   function expandAll() { setCollapsed(new Set()); }
 
   const diffLabel = diffLabelForStatus(state.workspaceStatus);
-  const showToolbar = repoIds.length > 1;
-  const toolbar = showToolbar && (
+  const toolbar = (
     <span className="changes-tab-toolbar">
       <button
         type="button"
         className="changes-tab-icon-btn"
-        data-tooltip="Expand all repositories — show every changed file in every workspace."
-        aria-label="Expand all repositories"
-        onClick={expandAll}
+        data-tooltip={
+          'Refresh diff — re-runs ``git diff`` against origin/<base> '
+          + 'in every repo. Auto-polls every 5s while the tab is '
+          + 'open; click to force a refresh now.'
+        }
+        aria-label="Refresh diff"
+        onClick={onRefresh}
+        disabled={refreshing || !taskId}
       >
-        <Icon name="plus" />
+        <Icon name="refresh" spin={refreshing} />
       </button>
-      <button
-        type="button"
-        className="changes-tab-icon-btn"
-        data-tooltip="Collapse all repositories — keep only the repository names visible."
-        aria-label="Collapse all repositories"
-        onClick={collapseAll}
-      >
-        <Icon name="minus" />
-      </button>
+      {repoIds.length > 1 && (
+        <>
+          <button
+            type="button"
+            className="changes-tab-icon-btn"
+            data-tooltip="Expand all repositories — show every changed file in every workspace."
+            aria-label="Expand all repositories"
+            onClick={expandAll}
+          >
+            <Icon name="plus" />
+          </button>
+          <button
+            type="button"
+            className="changes-tab-icon-btn"
+            data-tooltip="Collapse all repositories — keep only the repository names visible."
+            aria-label="Collapse all repositories"
+            onClick={collapseAll}
+          >
+            <Icon name="minus" />
+          </button>
+        </>
+      )}
     </span>
   );
 
@@ -121,8 +190,10 @@ export default function ChangesTab({
     });
   }
 
-  const showHeader = !!diffLabel || showToolbar;
-  const header = showHeader && (
+  // Header is always rendered now — even on a single-repo task
+  // the operator wants the refresh icon, and the diff label
+  // (when present) gives at-a-glance branch context.
+  const header = (
     <header className="changes-tab-header">
       <span>{diffLabel}</span>
       {toolbar}

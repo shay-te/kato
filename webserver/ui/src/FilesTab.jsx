@@ -11,6 +11,13 @@ import {
   normalizeTrees,
 } from './FilesTabHelpers.js';
 
+
+// Same auto-poll cadence as ChangesTab. Keeps the file tree in sync
+// with disk when files change outside of Claude's tool flow (manual
+// edits, pulls, syncs). Honors document visibility so a background
+// kato tab doesn't keep hammering the server.
+const AUTO_POLL_INTERVAL_MS = 5000;
+
 export default function FilesTab({
   taskId,
   workspaceVersion = 0,
@@ -24,11 +31,12 @@ export default function FilesTab({
   });
   const [collapsed, setCollapsed] = useState(() => new Set());
   const [query, setQuery] = useState('');
-  // Bumped after a successful repo-sync so the file tree re-fetches
-  // and the newly-cloned folders appear without waiting for the
-  // next tool-result-driven workspaceVersion bump.
+  // Bumped after a successful repo-sync OR the auto-poll. Both
+  // funnel into the fetch effect's dep array so the tree re-renders
+  // when either fires.
   const [syncTick, setSyncTick] = useState(0);
   const [syncing, setSyncing] = useState(false);
+  const inFlightRef = useRef(false);
   const containerRef = useRef(null);
   const filterInputRef = useRef(null);
   const [size, setSize] = useState({ width: 320, height: 480 });
@@ -57,10 +65,12 @@ export default function FilesTab({
   useEffect(() => {
     if (!taskId) { return; }
     let cancelled = false;
+    inFlightRef.current = true;
     // Only flip to ``loading`` on the FIRST fetch for this taskId.
     // Subsequent refetches (driven by workspaceVersion bumps every 1.2s
-    // during active tool use) keep the existing tree visible until the
-    // new payload arrives — otherwise the tab body flashes "Loading…"
+    // during active tool use, or the auto-poll every 5s, or the
+    // refresh button) keep the existing tree visible until the new
+    // payload arrives — otherwise the tab body flashes "Loading…"
     // between every turn.
     setState((prev) => (
       prev.status === 'ready' || prev.status === 'error'
@@ -83,9 +93,33 @@ export default function FilesTab({
           trees: prev.trees,
           error: String(err),
         }));
+      })
+      .finally(() => {
+        if (cancelled) { return; }
+        inFlightRef.current = false;
       });
     return () => { cancelled = true; };
   }, [taskId, workspaceVersion, syncTick]);
+
+  // Auto-poll while the tab is mounted so external changes (manual
+  // edits, pulls, the sync button on a different kato tab) appear
+  // without waiting for a Claude tool event to bump
+  // ``workspaceVersion``. Visibility-aware so a background tab
+  // doesn't keep churning the file walker on the server.
+  useEffect(() => {
+    if (!taskId || typeof window === 'undefined') { return undefined; }
+    let timerId = null;
+    function tick() {
+      if (typeof document !== 'undefined' && document.hidden) { return; }
+      if (inFlightRef.current) { return; }
+      setSyncTick((n) => n + 1);
+    }
+    timerId = window.setInterval(tick, AUTO_POLL_INTERVAL_MS);
+    return () => {
+      if (timerId !== null) { window.clearInterval(timerId); }
+    };
+  }, [taskId]);
+
 
   // Blank state on task switch so we don't show stale data while
   // the new fetch is in flight.
