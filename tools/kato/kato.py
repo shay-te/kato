@@ -16,6 +16,60 @@ import subprocess
 import sys
 from pathlib import Path
 
+
+def _load_env_file_into_environ(env_path: Path) -> int:
+    """Read ``KEY=VALUE`` lines from ``env_path`` into ``os.environ``.
+
+    Real env vars win — values already present in the parent
+    environment are NOT overwritten, so an operator who sets
+    ``KATO_WORKSPACES_ROOT`` in their shell still wins over a stale
+    line in ``.env``. Returns the number of new keys actually added.
+
+    Why this is in the dispatcher and not the individual scripts:
+    every kato CLI subcommand needs the same env (``REPOSITORY_ROOT_PATH``,
+    ``KATO_WORKSPACES_ROOT``, ``KATO_CONFIG``, ``BITBUCKET_*``, etc.).
+    Putting the loader here means scripts under ``scripts/`` can keep
+    using ``os.environ.get(...)`` and Just Work whether they're
+    invoked through ``./kato`` / ``kato.exe`` from any directory.
+
+    Best-effort: a malformed line is skipped, not raised. Operators
+    have hit "kato won't start because line 47 of .env has a stray
+    quote" before; we'd rather load 23 of 24 valid lines than fail
+    the whole dispatcher.
+    """
+    if not env_path.is_file():
+        return 0
+    try:
+        text = env_path.read_text(encoding='utf-8')
+    except OSError:
+        return 0
+    added = 0
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith('#'):
+            continue
+        # Strip an optional ``export `` prefix so files written for
+        # ``source .env`` Bash usage still parse here.
+        if line.startswith('export '):
+            line = line[len('export '):].lstrip()
+        if '=' not in line:
+            continue
+        key, _, value = line.partition('=')
+        key = key.strip()
+        if not key:
+            continue
+        value = value.strip()
+        # Drop a single matched pair of surrounding quotes — covers
+        # both ``KEY='value'`` and ``KEY="value"`` styles. Embedded
+        # quotes are preserved.
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+            value = value[1:-1]
+        if key in os.environ:
+            continue
+        os.environ[key] = value
+        added += 1
+    return added
+
 # This file lives at ``<repo>/tools/make/make.py``, so the repo root
 # is two parents up. PyInstaller-frozen builds use ``sys._MEIPASS``
 # /the executable's location for resources, but for *running*
@@ -118,26 +172,31 @@ _TARGETS: dict[str, tuple[str, bool, list[str]]] = {
         ],
     ),
     'approve-repo': (
-        'Approve a repository for kato use (REP). '
-        'No args = interactive picker (lists every repo in your kato '
-        'config + every workspace clone, you pick, kato writes the '
-        'approval). Scripted form: ``approve-repo approve <id> '
-        '--remote <url> [--trusted]``.',
+        'Manage the REP approval list. '
+        'No args = unified picker that shows every repo (from your '
+        'kato config, your kato workspaces, AND your '
+        'REPOSITORY_ROOT_PATH checkouts). Approved repos start '
+        'pre-checked; type indices like ``1,3,5-7`` to toggle, '
+        'press Enter to apply. One command for add+edit+remove. '
+        'Scripted form (CI): ``approve-repo approve <id> --remote '
+        '<url> [--trusted]``, ``approve-repo revoke <id>``, '
+        '``approve-repo list``.',
         True,
-        # Pass NO forced subcommand so ``kato approve-repo`` with no
-        # args drops into the interactive picker. Scripted callers
-        # tack ``approve <id> --remote <url>`` after; the picker
-        # invokes that same script with the same flags it always
-        # accepted, so CI/automation usage is unchanged.
         ['scripts/approve_repository.py'],
     ),
     'revoke-repo': (
-        'Remove an entry from the REP approval list. Args: <repo_id>',
+        'Remove an entry from the REP approval list (scripted '
+        'form). Args: ``<repo_id>``. For interactive use prefer '
+        '``approve-repo`` — that picker handles add+edit+remove '
+        'in one screen.',
         True,
         ['scripts/approve_repository.py', 'revoke'],
     ),
     'list-approved-repos': (
-        'List repositories on the REP approval list',
+        'Print the REP approval list (scripted form). For '
+        'interactive use prefer ``approve-repo`` — its picker '
+        'shows the same list with ``[x]`` markers and lets you '
+        'edit it in place.',
         True,
         ['scripts/approve_repository.py', 'list'],
     ),
@@ -172,6 +231,14 @@ def main(argv: list[str]) -> int:
         return 1
     _desc, prefer_venv, base_args = _TARGETS[target]
     repo_root = _runtime_repo_root()
+    # Load ``<repo_root>/.env`` into the environment BEFORE we hand
+    # off to the subcommand. Without this, scripts like
+    # ``approve_repository.py`` that consult ``os.environ`` get the
+    # bare shell environment — which on Windows almost never
+    # carries kato's vars — and default to ``~/.kato/workspaces``,
+    # silently scoping to the wrong location. Real env vars still
+    # win over ``.env``; see ``_load_env_file_into_environ`` above.
+    _load_env_file_into_environ(repo_root / '.env')
     python = _resolve_python(prefer_venv=prefer_venv, repo_root=repo_root)
     cmd = [python, *base_args, *extra]
     try:
