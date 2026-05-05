@@ -28,8 +28,8 @@ from __future__ import annotations
 
 import unittest
 
-from kato_core_lib.sandbox.system_prompt import SANDBOX_SYSTEM_PROMPT_ADDENDUM
-from kato_core_lib.sandbox.workspace_delimiter import (
+from sandbox_core_lib.sandbox_core_lib.system_prompt import SANDBOX_SYSTEM_PROMPT_ADDENDUM
+from sandbox_core_lib.sandbox_core_lib.workspace_delimiter import (
     CLOSE_TAG,
     OPEN_TAG,
     wrap_untrusted_workspace_content,

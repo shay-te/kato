@@ -103,9 +103,9 @@ _TARGETS: dict[str, tuple[str, bool, list[str]]] = {
         ['-m', 'kato.validate_env', '--env-file', '.env', '--mode', 'openhands'],
     ),
     'test': (
-        'Run the unit-test suite',
+        'Run the unit-test suite (kato + every owned core-lib)',
         True,
-        ['-m', 'unittest', 'discover', '-s', 'tests'],
+        ['scripts/run_all_tests.py'],
     ),
     'up': (
         'Start kato',

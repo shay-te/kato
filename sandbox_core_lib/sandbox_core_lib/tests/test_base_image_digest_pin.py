@@ -24,7 +24,7 @@ import unittest
 
 from unittest.mock import patch
 
-from kato_core_lib.sandbox.manager import (
+from sandbox_core_lib.sandbox_core_lib.manager import (
     SandboxError,
     _validate_base_image_pin_or_refuse,
     _validate_claude_cli_version_pin_or_refuse,
@@ -153,7 +153,7 @@ class BuildImageInvokesValidatorTests(unittest.TestCase):
         because both validators are now strict-by-default.
         """
         with patch(
-            'kato_core_lib.sandbox.manager.subprocess.run',
+            'sandbox_core_lib.sandbox_core_lib.manager.subprocess.run',
             return_value=type('R', (), {'returncode': 0, 'stdout': '', 'stderr': ''})(),
         ) as mock_run:
             build_image(env={

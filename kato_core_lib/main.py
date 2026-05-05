@@ -18,12 +18,12 @@ from kato_core_lib.helpers.status_broadcaster_utils import (
     StatusBroadcaster,
     install_status_broadcast_handler,
 )
-from kato_core_lib.sandbox.tls_pin import (
+from sandbox_core_lib.sandbox_core_lib.tls_pin import (
     TlsPinError,
     validate_anthropic_tls_pin_or_refuse,
 )
 from kato_core_lib.validate_env import validate_environment
-from kato_core_lib.validation.bypass_permissions_validator import (
+from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (
     BypassPermissionsRefused,
     print_security_posture,
     validate_bypass_permissions,
@@ -95,7 +95,7 @@ def main(cfg: DictConfig) -> int:
     # boot does NOT promote to refusal (operator may be offline /
     # in a build env without connectivity); only a successful
     # connection with a pin mismatch fails-closed. See
-    # ``kato_core_lib.sandbox.tls_pin``.
+    # ``sandbox_core_lib.sandbox_core_lib.tls_pin``.
     try:
         validate_anthropic_tls_pin_or_refuse(logger=logger)
     except TlsPinError as exc:
@@ -112,9 +112,9 @@ def main(cfg: DictConfig) -> int:
     # by the time this gate runs, bypass-without-docker has already
     # been refused, so checking ``is_docker_mode_enabled()`` alone
     # is sufficient.
-    from kato_core_lib.validation.bypass_permissions_validator import is_docker_mode_enabled
+    from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import is_docker_mode_enabled
     if is_docker_mode_enabled():
-        from kato_core_lib.sandbox.manager import (
+        from sandbox_core_lib.sandbox_core_lib.manager import (
             check_docker_or_exit,
             check_gvisor_or_exit,
             docker_running_rootless,

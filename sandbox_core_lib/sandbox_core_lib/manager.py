@@ -1252,7 +1252,7 @@ def scan_workspace_for_secrets(
     are bare paths; content matches carry a ``(content: <pattern>)``
     suffix so the operator and the audit log can distinguish them.
     """
-    from kato_core_lib.sandbox.credential_patterns import find_credential_patterns
+    from sandbox_core_lib.sandbox_core_lib.credential_patterns import find_credential_patterns
 
     try:
         root = Path(workspace_path).resolve()
@@ -1609,7 +1609,7 @@ def record_spawn(
     # failure can never lose the entry. Closes the tail-truncation
     # residual: an external sink is the operator's reference for
     # "did the local file lose entries" verification.
-    from kato_core_lib.sandbox.audit_log_shipping import (
+    from sandbox_core_lib.sandbox_core_lib.audit_log_shipping import (
         AuditShipError, ship_audit_entry,
     )
     try:

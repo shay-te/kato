@@ -36,7 +36,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from kato_core_lib.sandbox.tls_pin import (
+from sandbox_core_lib.sandbox_core_lib.tls_pin import (
     TlsPinError,
     _read_pin_file,
     _save_pin_file,

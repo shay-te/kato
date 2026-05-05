@@ -25,7 +25,7 @@ import sys
 import unittest
 from unittest.mock import patch
 
-from kato_core_lib.validation.bypass_permissions_validator import (
+from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (
     BYPASS_ENV_KEY,
     DOCKER_ENV_KEY,
     READ_ONLY_TOOLS_ENV_KEY,

@@ -80,7 +80,7 @@ debugging a "Claude is acting weird after adoption" report.
    started; trust the conversation's tool history; don't re-run
    ``git log`` / ``git diff`` / Reads on broad continuity questions."
    See `RESUMED_SESSION_ADDENDUM` in
-   `kato_core_lib/sandbox/system_prompt.py`. It's a nudge, not a
+   `sandbox_core_lib/sandbox_core_lib/system_prompt.py`. It's a nudge, not a
    block — Claude still uses git when there's a real reason.
 
 2. **Workspace inventory block on every chat message.** The first

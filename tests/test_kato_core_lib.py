@@ -716,7 +716,7 @@ class KatoCoreLibTests(unittest.TestCase):
 
         from kato_core_lib.client.claude.cli_client import ClaudeCliClient
         from kato_core_lib.kato_core_lib import KatoCoreLib
-        from kato_core_lib.validation.bypass_permissions_validator import (
+        from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (
             is_docker_mode_enabled,
         )
 
@@ -759,18 +759,18 @@ class KatoCoreLibTests(unittest.TestCase):
                 'kato_core_lib.client.claude.cli_client.subprocess.run',
                 return_value=completed,
             ) as mock_run, patch(
-                'kato_core_lib.sandbox.manager.ensure_image',
+                'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
             ), patch(
-                'kato_core_lib.sandbox.manager.check_spawn_rate',
+                'sandbox_core_lib.sandbox_core_lib.manager.check_spawn_rate',
             ), patch(
-                'kato_core_lib.sandbox.manager.enforce_no_workspace_secrets',
+                'sandbox_core_lib.sandbox_core_lib.manager.enforce_no_workspace_secrets',
             ), patch(
-                'kato_core_lib.sandbox.manager.record_spawn',
+                'sandbox_core_lib.sandbox_core_lib.manager.record_spawn',
             ), patch(
-                'kato_core_lib.sandbox.manager.wrap_command',
+                'sandbox_core_lib.sandbox_core_lib.manager.wrap_command',
                 return_value=['docker', 'run', '--rm', 'kato-sandbox', 'claude'],
             ) as mock_wrap, patch(
-                'kato_core_lib.sandbox.manager.make_container_name',
+                'sandbox_core_lib.sandbox_core_lib.manager.make_container_name',
                 return_value='kato-sandbox-PROJ-1-end2end',
             ):
                 client.test_task(build_task())

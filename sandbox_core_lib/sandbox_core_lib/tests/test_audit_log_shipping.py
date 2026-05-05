@@ -32,7 +32,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from kato_core_lib.sandbox.audit_log_shipping import (
+from sandbox_core_lib.sandbox_core_lib.audit_log_shipping import (
     AuditShipError,
     is_shipping_enabled,
     ship_audit_entry,
@@ -95,7 +95,7 @@ class ShipAuditEntryNoOpTests(unittest.TestCase):
 
     def test_no_target_does_not_call_urlopen(self) -> None:
         with patch(
-            'kato_core_lib.sandbox.audit_log_shipping.urlopen',
+            'sandbox_core_lib.sandbox_core_lib.audit_log_shipping.urlopen',
         ) as mock_urlopen:
             ship_audit_entry(_FAKE_ENTRY, env={})
         mock_urlopen.assert_not_called()
@@ -108,7 +108,7 @@ class HttpsShippingTests(unittest.TestCase):
         mock_response.__enter__.return_value = mock_response
         mock_response.__exit__.return_value = False
         with patch(
-            'kato_core_lib.sandbox.audit_log_shipping.urlopen',
+            'sandbox_core_lib.sandbox_core_lib.audit_log_shipping.urlopen',
             return_value=mock_response,
         ) as mock_urlopen:
             ship_audit_entry(
@@ -131,7 +131,7 @@ class HttpsShippingTests(unittest.TestCase):
         # sensitive. Operators who genuinely need plaintext run a
         # forwarder.
         with patch(
-            'kato_core_lib.sandbox.audit_log_shipping.urlopen',
+            'sandbox_core_lib.sandbox_core_lib.audit_log_shipping.urlopen',
         ) as mock_urlopen, self.assertRaises(AuditShipError) as cm:
             ship_audit_entry(
                 _FAKE_ENTRY,
@@ -154,7 +154,7 @@ class HttpsShippingTests(unittest.TestCase):
         mock_response.__enter__.return_value = mock_response
         mock_response.__exit__.return_value = False
         with patch(
-            'kato_core_lib.sandbox.audit_log_shipping.urlopen',
+            'sandbox_core_lib.sandbox_core_lib.audit_log_shipping.urlopen',
             return_value=mock_response,
         ), self.assertRaises(AuditShipError) as cm:
             ship_audit_entry(
@@ -168,7 +168,7 @@ class HttpsShippingTests(unittest.TestCase):
 
     def test_https_network_failure_raises_when_required(self) -> None:
         with patch(
-            'kato_core_lib.sandbox.audit_log_shipping.urlopen',
+            'sandbox_core_lib.sandbox_core_lib.audit_log_shipping.urlopen',
             side_effect=OSError('connection refused'),
         ), self.assertRaises(AuditShipError) as cm:
             ship_audit_entry(
@@ -228,7 +228,7 @@ class BestEffortByDefaultTests(unittest.TestCase):
 
     def test_failure_without_required_flag_does_not_raise(self) -> None:
         with patch(
-            'kato_core_lib.sandbox.audit_log_shipping.urlopen',
+            'sandbox_core_lib.sandbox_core_lib.audit_log_shipping.urlopen',
             side_effect=OSError('connection refused'),
         ):
             # No exception — best-effort.
@@ -240,7 +240,7 @@ class BestEffortByDefaultTests(unittest.TestCase):
     def test_failure_without_required_flag_logs_warning(self) -> None:
         logger = logging.getLogger('test_audit_log_shipping')
         with patch(
-            'kato_core_lib.sandbox.audit_log_shipping.urlopen',
+            'sandbox_core_lib.sandbox_core_lib.audit_log_shipping.urlopen',
             side_effect=OSError('connection refused'),
         ), self.assertLogs(logger=logger, level='WARNING') as cm:
             ship_audit_entry(
@@ -297,10 +297,10 @@ class RecordSpawnIntegrationTests(unittest.TestCase):
         self.audit_path = Path(self._tmp.name) / 'sandbox-audit.log'
 
     def _spawn(self, *, env: dict | None = None) -> None:
-        from kato_core_lib.sandbox.manager import record_spawn
+        from sandbox_core_lib.sandbox_core_lib.manager import record_spawn
 
         with patch(
-            'kato_core_lib.sandbox.manager._image_digest',
+            'sandbox_core_lib.sandbox_core_lib.manager._image_digest',
             return_value='sha256:' + 'd' * 64,
         ):
             record_spawn(
@@ -313,10 +313,10 @@ class RecordSpawnIntegrationTests(unittest.TestCase):
 
     def test_record_spawn_calls_ship_audit_entry_after_local_write(self) -> None:
         # The deferred import inside ``record_spawn`` resolves
-        # ``ship_audit_entry`` from ``kato_core_lib.sandbox.audit_log_shipping``.
+        # ``ship_audit_entry`` from ``sandbox_core_lib.sandbox_core_lib.audit_log_shipping``.
         # Patch there so the real module is what we're locking.
         with patch(
-            'kato_core_lib.sandbox.audit_log_shipping.ship_audit_entry',
+            'sandbox_core_lib.sandbox_core_lib.audit_log_shipping.ship_audit_entry',
         ) as mock_ship:
             self._spawn(env={'PATH': '/usr/bin'})
 
@@ -341,10 +341,10 @@ class RecordSpawnIntegrationTests(unittest.TestCase):
         # an ``AuditShipError`` from the shipper must surface as a
         # ``SandboxError`` so callers refuse the spawn. Without this,
         # the "fail-closed" promise in the doc is decorative.
-        from kato_core_lib.sandbox.manager import SandboxError
+        from sandbox_core_lib.sandbox_core_lib.manager import SandboxError
 
         with patch(
-            'kato_core_lib.sandbox.audit_log_shipping.ship_audit_entry',
+            'sandbox_core_lib.sandbox_core_lib.audit_log_shipping.ship_audit_entry',
             side_effect=AuditShipError('sink unreachable'),
         ):
             with self.assertRaises(SandboxError) as cm:

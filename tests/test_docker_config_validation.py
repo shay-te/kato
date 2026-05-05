@@ -17,9 +17,15 @@ class TestDockerConfigValidation(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        # Save original environment variables
+        # Save original environment variables.
         self.original_env = dict(os.environ)
-        
+        # Wipe slate clean. The kato dispatcher loads ``.env`` into
+        # the parent process before invoking the test runner, so any
+        # ``YOUTRACK_*`` / ``OPENHANDS_*`` / etc. value present in
+        # the operator's ``.env`` would otherwise leak into tests
+        # that rely on env vars being absent.
+        os.environ.clear()
+
     def tearDown(self):
         """Restore original environment."""
         # Restore original environment

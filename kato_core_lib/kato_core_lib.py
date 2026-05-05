@@ -45,7 +45,7 @@ from kato_core_lib.data_layers.data_access.lessons_data_access import (
 from kato_core_lib.data_layers.service.lessons_service import LessonsService
 from kato_core_lib.helpers.claude_one_shot_utils import make_claude_one_shot
 from kato_core_lib.helpers.runtime_identity_utils import runtime_source_fingerprint
-from kato_core_lib.validation.bypass_permissions_validator import (
+from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (
     is_docker_mode_enabled,
     is_read_only_tools_enabled,
 )

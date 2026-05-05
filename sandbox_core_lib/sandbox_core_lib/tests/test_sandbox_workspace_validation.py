@@ -27,7 +27,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from kato_core_lib.sandbox import manager
+from sandbox_core_lib.sandbox_core_lib import manager
 
 
 class _WorkspacePathTests(unittest.TestCase):

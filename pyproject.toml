@@ -30,6 +30,7 @@ build-backend = "setuptools.build_meta"
 include = [
   "kato_core_lib*",
   "repository_core_lib*",
+  "sandbox_core_lib*",
   "task_core_lib*",
   "youtrack_core_lib*",
   "github_core_lib*",
@@ -42,6 +43,10 @@ include = [
 
 [tool.setuptools.package-data]
 "kato_core_lib.templates.email" = ["*.j2"]
+# Dockerfile + entrypoint scripts ship with the sandbox image
+# build path; without this they would not be installed when
+# sandbox_core_lib is consumed via wheel.
+"sandbox_core_lib.sandbox_core_lib" = ["Dockerfile", "*.sh"]
 "youtrack_core_lib.youtrack_core_lib.config" = ["*.yaml"]
 "github_core_lib.github_core_lib.config" = ["*.yaml"]
 "bitbucket_core_lib.bitbucket_core_lib.config" = ["*.yaml"]

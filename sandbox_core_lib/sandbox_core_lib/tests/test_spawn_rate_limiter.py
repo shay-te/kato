@@ -28,7 +28,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from kato_core_lib.sandbox.manager import (
+from sandbox_core_lib.sandbox_core_lib.manager import (
     _SPAWN_RATE_LIMIT,
     _SPAWN_RATE_WINDOW_SEC,
     SandboxError,
@@ -156,7 +156,7 @@ class RecordSpawnEnforcesRateLimitTests(unittest.TestCase):
 
     def _record(self) -> None:
         with patch(
-            'kato_core_lib.sandbox.manager._image_digest',
+            'sandbox_core_lib.sandbox_core_lib.manager._image_digest',
             return_value='sha256:' + 'd' * 64,
         ):
             record_spawn(

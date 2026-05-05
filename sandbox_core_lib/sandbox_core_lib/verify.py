@@ -35,7 +35,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from kato_core_lib.sandbox.manager import (
+from sandbox_core_lib.sandbox_core_lib.manager import (
     SANDBOX_IMAGE_TAG,
     SandboxError,
     docker_available,

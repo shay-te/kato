@@ -33,7 +33,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from kato_core_lib.sandbox.manager import (
+from sandbox_core_lib.sandbox_core_lib.manager import (
     _AUDIT_GENESIS_HASH,
     _last_audit_chain_hash,
     record_spawn,
@@ -63,7 +63,7 @@ class AuditChainIntegrityTests(unittest.TestCase):
     def _spawn(self, *, task_id: str, container_name: str) -> None:
         """Wrapper that mocks the image-digest lookup so no Docker is needed."""
         with patch(
-            'kato_core_lib.sandbox.manager._image_digest',
+            'sandbox_core_lib.sandbox_core_lib.manager._image_digest',
             return_value='sha256:' + 'd' * 64,
         ):
             record_spawn(

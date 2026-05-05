@@ -476,7 +476,7 @@ def _register_http_routes(app: Flask) -> None:
 
     @app.get('/api/safety')
     def safety_state():
-        from kato_core_lib.validation.bypass_permissions_validator import (
+        from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (
             is_bypass_enabled,
             is_running_as_root,
         )

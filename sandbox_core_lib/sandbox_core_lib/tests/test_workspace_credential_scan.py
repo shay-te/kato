@@ -26,7 +26,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from kato_core_lib.sandbox.manager import (
+from sandbox_core_lib.sandbox_core_lib.manager import (
     SandboxError,
     enforce_no_workspace_secrets,
     scan_workspace_for_secrets,

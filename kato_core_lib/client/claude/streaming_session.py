@@ -340,7 +340,7 @@ class StreamingClaudeSession(object):
             # prompts (the recommended posture).
             spawn_cwd: str | None = self._cwd
             if self._docker_mode_on:
-                from kato_core_lib.sandbox.manager import (
+                from sandbox_core_lib.sandbox_core_lib.manager import (
                     SandboxError,
                     check_spawn_rate,
                     ensure_image,
@@ -368,7 +368,7 @@ class StreamingClaudeSession(object):
                 # committed credentials. Operator can override via
                 # KATO_SANDBOX_ALLOW_WORKSPACE_SECRETS=true if these
                 # are intentional repo fixtures.
-                from kato_core_lib.sandbox.manager import enforce_no_workspace_secrets
+                from sandbox_core_lib.sandbox_core_lib.manager import enforce_no_workspace_secrets
                 try:
                     enforce_no_workspace_secrets(self._cwd, logger=self.logger)
                 except SandboxError as exc:
@@ -715,7 +715,7 @@ class StreamingClaudeSession(object):
         # single ``--append-system-prompt``. Mirrors the wiring in
         # ``ClaudeCliClient._build_command`` so streaming and one-shot
         # spawns deliver identical guidance to the agent.
-        from kato_core_lib.sandbox.system_prompt import compose_system_prompt
+        from sandbox_core_lib.sandbox_core_lib.system_prompt import compose_system_prompt
         appended_system_prompt = compose_system_prompt(
             architecture_doc,
             docker_mode_on=self._docker_mode_on,
@@ -807,7 +807,7 @@ class StreamingClaudeSession(object):
         signal. See ``BYPASS_PROTECTIONS.md`` residuals #16 (phishing)
         and #18 (credential exfil).
         """
-        from kato_core_lib.sandbox.credential_patterns import (
+        from sandbox_core_lib.sandbox_core_lib.credential_patterns import (
             find_credential_patterns,
             find_phishing_patterns,
             summarize_findings,

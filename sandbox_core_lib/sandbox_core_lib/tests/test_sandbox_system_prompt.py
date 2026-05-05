@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import unittest
 
-from kato_core_lib.sandbox.system_prompt import (
+from sandbox_core_lib.sandbox_core_lib.system_prompt import (
     RESUMED_SESSION_ADDENDUM,
     SANDBOX_SYSTEM_PROMPT_ADDENDUM,
     WORKSPACE_SCOPE_ADDENDUM,

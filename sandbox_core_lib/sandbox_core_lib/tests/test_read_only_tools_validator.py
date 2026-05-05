@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import unittest
 
-from kato_core_lib.validation.bypass_permissions_validator import (
+from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (
     BypassPermissionsRefused,
     READ_ONLY_TOOLS_ALLOWLIST,
     READ_ONLY_TOOLS_ENV_KEY,

@@ -423,7 +423,7 @@ class StreamingClaudeSessionDockerModeTests(unittest.TestCase):
             'kato_core_lib.client.claude.streaming_session.shutil.which',
             return_value='/usr/local/bin/claude',
         ), patch(
-            'kato_core_lib.sandbox.manager.wrap_command',
+            'sandbox_core_lib.sandbox_core_lib.manager.wrap_command',
         ) as mock_wrap:
             session = StreamingClaudeSession(
                 task_id='PROJ-1',
@@ -447,18 +447,18 @@ class StreamingClaudeSessionDockerModeTests(unittest.TestCase):
             'kato_core_lib.client.claude.streaming_session.shutil.which',
             return_value='/usr/local/bin/claude',
         ), patch(
-            'kato_core_lib.sandbox.manager.ensure_image',
+            'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
         ), patch(
-            'kato_core_lib.sandbox.manager.check_spawn_rate',
+            'sandbox_core_lib.sandbox_core_lib.manager.check_spawn_rate',
         ), patch(
-            'kato_core_lib.sandbox.manager.enforce_no_workspace_secrets',
+            'sandbox_core_lib.sandbox_core_lib.manager.enforce_no_workspace_secrets',
         ), patch(
-            'kato_core_lib.sandbox.manager.record_spawn',
+            'sandbox_core_lib.sandbox_core_lib.manager.record_spawn',
         ) as mock_record, patch(
-            'kato_core_lib.sandbox.manager.wrap_command',
+            'sandbox_core_lib.sandbox_core_lib.manager.wrap_command',
             return_value=['docker', 'run', '--rm', 'kato-sandbox', 'claude'],
         ) as mock_wrap, patch(
-            'kato_core_lib.sandbox.manager.make_container_name',
+            'sandbox_core_lib.sandbox_core_lib.manager.make_container_name',
             return_value='kato-sandbox-PROJ-1-abcd1234',
         ):
             session = StreamingClaudeSession(
@@ -482,7 +482,7 @@ class StreamingClaudeSessionDockerModeTests(unittest.TestCase):
         self.assertFalse(session._docker_mode_on)
 
     def test_docker_mode_off_does_not_append_sandbox_addendum(self) -> None:
-        from kato_core_lib.sandbox.system_prompt import (
+        from sandbox_core_lib.sandbox_core_lib.system_prompt import (
             RESUMED_SESSION_ADDENDUM,
             SANDBOX_SYSTEM_PROMPT_ADDENDUM,
             WORKSPACE_SCOPE_ADDENDUM,
@@ -504,7 +504,7 @@ class StreamingClaudeSessionDockerModeTests(unittest.TestCase):
         self.assertNotIn(SANDBOX_SYSTEM_PROMPT_ADDENDUM, cmd[idx + 1])
 
     def test_docker_mode_on_appends_sandbox_addendum(self) -> None:
-        from kato_core_lib.sandbox.system_prompt import (
+        from sandbox_core_lib.sandbox_core_lib.system_prompt import (
             RESUMED_SESSION_ADDENDUM,
             SANDBOX_SYSTEM_PROMPT_ADDENDUM,
             WORKSPACE_SCOPE_ADDENDUM,

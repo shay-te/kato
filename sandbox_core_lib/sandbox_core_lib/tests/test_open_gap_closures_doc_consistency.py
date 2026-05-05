@@ -3,7 +3,7 @@
 The "Named open gaps" table in ``BYPASS_PROTECTIONS.md`` marks each
 gap as **Open** or **Closed**. A gap is **Closed** only when:
 
-  1. A module in ``kato_core_lib.sandbox.*`` implements the
+  1. A module in ``sandbox_core_lib.sandbox_core_lib.*`` implements the
      mitigation, AND
   2. A *production* call site in ``kato_core_lib.*`` actually
      invokes it on the relevant code path.
@@ -44,10 +44,10 @@ from pathlib import Path
 
 from kato_core_lib import main as kato_main
 from kato_core_lib.client.claude import cli_client as cli_client_module
-from kato_core_lib.sandbox import manager as sandbox_manager
+from sandbox_core_lib.sandbox_core_lib import manager as sandbox_manager
 
 
-_DOC_PATH = Path(__file__).resolve().parent.parent / 'BYPASS_PROTECTIONS.md'
+_DOC_PATH = Path(__file__).resolve().parent.parent.parent / 'SANDBOX_PROTECTIONS.md'
 
 
 def _doc_status_for(og_id: str) -> str:
@@ -101,7 +101,7 @@ class OG2AuditShippingWiringTests(unittest.TestCase):
         source = inspect.getsource(sandbox_manager.record_spawn)
         # Deferred import line is the canonical wiring signal.
         self.assertIn(
-            'from kato_core_lib.sandbox.audit_log_shipping import',
+            'from sandbox_core_lib.sandbox_core_lib.audit_log_shipping import',
             source,
             'record_spawn no longer imports audit_log_shipping — '
             'OG2 closure is broken; either restore the import or '
@@ -191,7 +191,7 @@ class OG4TlsPinWiringTests(unittest.TestCase):
         # following the doc's recovery steps would do nothing
         # (deleting a non-existent file) and stay broken. Lock the
         # two together.
-        from kato_core_lib.sandbox.tls_pin import _default_pin_file_path
+        from sandbox_core_lib.sandbox_core_lib.tls_pin import _default_pin_file_path
 
         path = _default_pin_file_path()
         # Render with ~ substitution the same way the runtime does.
@@ -263,7 +263,7 @@ class OG9aWorkspaceDelimiterWiringTests(unittest.TestCase):
         # decoder. If the addendum stops describing the marker,
         # OG9a is decorative — the model sees the tags but has no
         # rule to treat in-tag content as data.
-        from kato_core_lib.sandbox.system_prompt import (
+        from sandbox_core_lib.sandbox_core_lib.system_prompt import (
             SANDBOX_SYSTEM_PROMPT_ADDENDUM,
         )
         self.assertIn('UNTRUSTED_WORKSPACE_FILE', SANDBOX_SYSTEM_PROMPT_ADDENDUM)
@@ -287,7 +287,7 @@ class ReadOnlyToolsAllowlistPinTests(unittest.TestCase):
 
     To widen the allowlist:
       1. Add the entry to
-         ``kato_core_lib.validation.bypass_permissions_validator.READ_ONLY_TOOLS_ALLOWLIST``.
+         ``sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator.READ_ONLY_TOOLS_ALLOWLIST``.
       2. Add the same entry to ``_PINNED_READ_ONLY_ALLOWLIST`` below.
       3. Update the BYPASS_PROTECTIONS.md TL;DR + Recent changes
          entry that enumerates the allowlist members.
@@ -295,7 +295,7 @@ class ReadOnlyToolsAllowlistPinTests(unittest.TestCase):
     """
 
     # Keep this list in lock-step with
-    # ``kato_core_lib.validation.bypass_permissions_validator.READ_ONLY_TOOLS_ALLOWLIST``.
+    # ``sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator.READ_ONLY_TOOLS_ALLOWLIST``.
     # Sorted so diff churn on additions is minimal.
     _PINNED_READ_ONLY_ALLOWLIST = frozenset({
         'Bash(cat:*)',
@@ -312,7 +312,7 @@ class ReadOnlyToolsAllowlistPinTests(unittest.TestCase):
     })
 
     def test_allowlist_membership_matches_pin(self) -> None:
-        from kato_core_lib.validation.bypass_permissions_validator import (
+        from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (
             READ_ONLY_TOOLS_ALLOWLIST,
         )
         self.assertEqual(

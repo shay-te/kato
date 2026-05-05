@@ -417,7 +417,7 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
             'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=completed,
         ) as mock_run, patch(
-            'kato_core_lib.sandbox.manager.wrap_command',
+            'sandbox_core_lib.sandbox_core_lib.manager.wrap_command',
         ) as mock_wrap:
             client.test_task(build_task())
 
@@ -439,18 +439,18 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
             'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=completed,
         ) as mock_run, patch(
-            'kato_core_lib.sandbox.manager.ensure_image',
+            'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
         ), patch(
-            'kato_core_lib.sandbox.manager.check_spawn_rate',
+            'sandbox_core_lib.sandbox_core_lib.manager.check_spawn_rate',
         ), patch(
-            'kato_core_lib.sandbox.manager.enforce_no_workspace_secrets',
+            'sandbox_core_lib.sandbox_core_lib.manager.enforce_no_workspace_secrets',
         ), patch(
-            'kato_core_lib.sandbox.manager.record_spawn',
+            'sandbox_core_lib.sandbox_core_lib.manager.record_spawn',
         ) as mock_record, patch(
-            'kato_core_lib.sandbox.manager.wrap_command',
+            'sandbox_core_lib.sandbox_core_lib.manager.wrap_command',
             return_value=['docker', 'run', '--rm', 'kato-sandbox', 'claude'],
         ) as mock_wrap, patch(
-            'kato_core_lib.sandbox.manager.make_container_name',
+            'sandbox_core_lib.sandbox_core_lib.manager.make_container_name',
             return_value='kato-sandbox-PROJ-1-abcd1234',
         ):
             client.test_task(build_task())
@@ -488,18 +488,18 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
             'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=completed,
         ), patch(
-            'kato_core_lib.sandbox.manager.ensure_image',
+            'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
         ), patch(
-            'kato_core_lib.sandbox.manager.check_spawn_rate',
+            'sandbox_core_lib.sandbox_core_lib.manager.check_spawn_rate',
         ), patch(
-            'kato_core_lib.sandbox.manager.enforce_no_workspace_secrets',
+            'sandbox_core_lib.sandbox_core_lib.manager.enforce_no_workspace_secrets',
         ), patch(
-            'kato_core_lib.sandbox.manager.record_spawn',
+            'sandbox_core_lib.sandbox_core_lib.manager.record_spawn',
         ), patch(
-            'kato_core_lib.sandbox.manager.wrap_command',
+            'sandbox_core_lib.sandbox_core_lib.manager.wrap_command',
             return_value=['docker', 'run', '--rm', 'kato-sandbox', 'claude'],
         ) as mock_wrap, patch(
-            'kato_core_lib.sandbox.manager.make_container_name',
+            'sandbox_core_lib.sandbox_core_lib.manager.make_container_name',
             return_value='kato-sandbox-PROJ-1-abcd1234',
         ):
             client.test_task(build_task())
@@ -520,18 +520,18 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
             'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=completed,
         ), patch(
-            'kato_core_lib.sandbox.manager.ensure_image',
+            'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
         ), patch(
-            'kato_core_lib.sandbox.manager.check_spawn_rate',
+            'sandbox_core_lib.sandbox_core_lib.manager.check_spawn_rate',
         ), patch(
-            'kato_core_lib.sandbox.manager.enforce_no_workspace_secrets',
+            'sandbox_core_lib.sandbox_core_lib.manager.enforce_no_workspace_secrets',
         ), patch(
-            'kato_core_lib.sandbox.manager.record_spawn',
+            'sandbox_core_lib.sandbox_core_lib.manager.record_spawn',
         ) as mock_record, patch(
-            'kato_core_lib.sandbox.manager.wrap_command',
+            'sandbox_core_lib.sandbox_core_lib.manager.wrap_command',
             return_value=['docker', 'run', '--rm', 'kato-sandbox', 'claude'],
         ) as mock_wrap, patch(
-            'kato_core_lib.sandbox.manager.make_container_name',
+            'sandbox_core_lib.sandbox_core_lib.manager.make_container_name',
             return_value='kato-sandbox-triage-abcd1234',
         ) as mock_name:
             client.investigate('classify this task', cwd='/tmp/repo')
@@ -555,7 +555,7 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
             'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=_completed('claude 1.0.0\n'),
         ) as mock_run, patch(
-            'kato_core_lib.sandbox.manager.wrap_command',
+            'sandbox_core_lib.sandbox_core_lib.manager.wrap_command',
         ) as mock_wrap, patch.object(
             ClaudeCliClient, '_running_inside_docker', return_value=False,
         ):
@@ -573,7 +573,7 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
             'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=_completed(json.dumps({'is_error': False, 'result': 'ok'})),
         ) as mock_run, patch(
-            'kato_core_lib.sandbox.manager.wrap_command',
+            'sandbox_core_lib.sandbox_core_lib.manager.wrap_command',
         ) as mock_wrap:
             client._run_model_access_validation()
 
@@ -601,7 +601,7 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
         self.assertTrue(client_b._bypass_permissions)
 
     def test_docker_mode_off_does_not_append_sandbox_addendum(self) -> None:
-        from kato_core_lib.sandbox.system_prompt import (
+        from sandbox_core_lib.sandbox_core_lib.system_prompt import (
             RESUMED_SESSION_ADDENDUM,
             SANDBOX_SYSTEM_PROMPT_ADDENDUM,
             WORKSPACE_SCOPE_ADDENDUM,
@@ -621,7 +621,7 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
         self.assertNotIn(SANDBOX_SYSTEM_PROMPT_ADDENDUM, cmd[idx + 1])
 
     def test_docker_mode_on_appends_sandbox_addendum(self) -> None:
-        from kato_core_lib.sandbox.system_prompt import (
+        from sandbox_core_lib.sandbox_core_lib.system_prompt import (
             RESUMED_SESSION_ADDENDUM,
             SANDBOX_SYSTEM_PROMPT_ADDENDUM,
             WORKSPACE_SCOPE_ADDENDUM,
@@ -660,7 +660,7 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
             'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=_completed('claude 1.0.0\n'),
         ) as mock_run, patch(
-            'kato_core_lib.sandbox.manager.wrap_command',
+            'sandbox_core_lib.sandbox_core_lib.manager.wrap_command',
         ) as mock_wrap, patch.object(
             ClaudeCliClient, '_running_inside_docker', return_value=False,
         ):
@@ -684,7 +684,7 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
             'kato_core_lib.client.claude.cli_client.subprocess.run',
             return_value=_completed(json.dumps({'is_error': False, 'result': 'ok'})),
         ) as mock_run, patch(
-            'kato_core_lib.sandbox.manager.wrap_command',
+            'sandbox_core_lib.sandbox_core_lib.manager.wrap_command',
         ) as mock_wrap:
             client._run_model_access_validation()
 

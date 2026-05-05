@@ -33,7 +33,7 @@ from pathlib import Path
 
 
 _DOC_PATH = (
-    Path(__file__).resolve().parent.parent / 'BYPASS_PROTECTIONS.md'
+    Path(__file__).resolve().parent.parent.parent / 'SANDBOX_PROTECTIONS.md'
 )
 
 

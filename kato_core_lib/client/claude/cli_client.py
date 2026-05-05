@@ -20,7 +20,7 @@ from kato_core_lib.helpers.text_utils import (
     text_from_attr,
     text_from_mapping,
 )
-from kato_core_lib.sandbox.workspace_delimiter import (
+from sandbox_core_lib.sandbox_core_lib.workspace_delimiter import (
     wrap_untrusted_workspace_content,
 )
 
@@ -791,7 +791,7 @@ class ClaudeCliClient(object):
         # the prompt layer.
         spawn_cwd: str | None = cwd or None
         if self._docker_mode_on:
-            from kato_core_lib.sandbox.manager import (
+            from sandbox_core_lib.sandbox_core_lib.manager import (
                 SandboxError,
                 check_spawn_rate,
                 ensure_image,
@@ -914,7 +914,7 @@ class ClaudeCliClient(object):
             # Composer joins the architecture doc, learned lessons,
             # and the addendum into one value because the Claude CLI
             # takes a single ``--append-system-prompt``.
-            from kato_core_lib.sandbox.system_prompt import compose_system_prompt
+            from sandbox_core_lib.sandbox_core_lib.system_prompt import compose_system_prompt
             appended_system_prompt = compose_system_prompt(
                 architecture_doc,
                 docker_mode_on=self._docker_mode_on,
@@ -956,7 +956,7 @@ class ClaudeCliClient(object):
         """
         if not self._read_only_tools_on:
             return operator_allowed
-        from kato_core_lib.validation.bypass_permissions_validator import (
+        from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (
             READ_ONLY_TOOLS_ALLOWLIST,
         )
         existing = [
@@ -1070,7 +1070,7 @@ class ClaudeCliClient(object):
             (``curl|bash``, ``sudo`` snippets, ``eval $(curl …)``).
             Same audit-trail treatment.
         """
-        from kato_core_lib.sandbox.credential_patterns import (
+        from sandbox_core_lib.sandbox_core_lib.credential_patterns import (
             find_credential_patterns,
             find_phishing_patterns,
             summarize_findings,

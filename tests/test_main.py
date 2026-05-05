@@ -273,17 +273,17 @@ class MainTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.main._run_task_scan_loop'
         ), patch(
-            'kato_core_lib.validation.bypass_permissions_validator.is_docker_mode_enabled',
+            'sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator.is_docker_mode_enabled',
             return_value=True,
         ), patch(
-            'kato_core_lib.sandbox.manager.check_docker_or_exit'
+            'sandbox_core_lib.sandbox_core_lib.manager.check_docker_or_exit'
         ) as mock_check_docker, patch(
-            'kato_core_lib.sandbox.manager.check_gvisor_or_exit'
+            'sandbox_core_lib.sandbox_core_lib.manager.check_gvisor_or_exit'
         ) as mock_check_gvisor, patch(
-            'kato_core_lib.sandbox.manager.gvisor_runtime_available',
+            'sandbox_core_lib.sandbox_core_lib.manager.gvisor_runtime_available',
             return_value=True,
         ) as mock_gvisor_runtime, patch(
-            'kato_core_lib.sandbox.manager.docker_running_rootless',
+            'sandbox_core_lib.sandbox_core_lib.manager.docker_running_rootless',
             return_value=True,
         ) as mock_rootless:
             main(self.cfg)
@@ -313,16 +313,16 @@ class MainTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.main._run_task_scan_loop'
         ), patch(
-            'kato_core_lib.validation.bypass_permissions_validator.is_docker_mode_enabled',
+            'sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator.is_docker_mode_enabled',
             return_value=False,
         ), patch(
-            'kato_core_lib.sandbox.manager.check_docker_or_exit'
+            'sandbox_core_lib.sandbox_core_lib.manager.check_docker_or_exit'
         ) as mock_check_docker, patch(
-            'kato_core_lib.sandbox.manager.check_gvisor_or_exit'
+            'sandbox_core_lib.sandbox_core_lib.manager.check_gvisor_or_exit'
         ) as mock_check_gvisor, patch(
-            'kato_core_lib.sandbox.manager.gvisor_runtime_available'
+            'sandbox_core_lib.sandbox_core_lib.manager.gvisor_runtime_available'
         ) as mock_gvisor_runtime, patch(
-            'kato_core_lib.sandbox.manager.docker_running_rootless'
+            'sandbox_core_lib.sandbox_core_lib.manager.docker_running_rootless'
         ) as mock_rootless:
             main(self.cfg)
 
@@ -503,14 +503,14 @@ class MainReadOnlyToolsIntegrationTests(unittest.TestCase):
             # daemon; patch it (and the gVisor probe) for the same
             # reason the existing main tests do.
             with patch(
-                'kato_core_lib.sandbox.manager.check_docker_or_exit'
+                'sandbox_core_lib.sandbox_core_lib.manager.check_docker_or_exit'
             ), patch(
-                'kato_core_lib.sandbox.manager.check_gvisor_or_exit'
+                'sandbox_core_lib.sandbox_core_lib.manager.check_gvisor_or_exit'
             ), patch(
-                'kato_core_lib.sandbox.manager.gvisor_runtime_available',
+                'sandbox_core_lib.sandbox_core_lib.manager.gvisor_runtime_available',
                 return_value=False,
             ), patch(
-                'kato_core_lib.sandbox.manager.docker_running_rootless',
+                'sandbox_core_lib.sandbox_core_lib.manager.docker_running_rootless',
                 return_value=False,
             ):
                 result = self._run_main_with_other_validators_mocked()

@@ -47,10 +47,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from kato_core_lib.sandbox import manager
+from sandbox_core_lib.sandbox_core_lib import manager
 
 
-_DOC_PATH = Path(__file__).resolve().parent.parent / 'BYPASS_PROTECTIONS.md'
+_DOC_PATH = Path(__file__).resolve().parent.parent.parent / 'SANDBOX_PROTECTIONS.md'
 
 _ANCHOR_RE = re.compile(
     r'<!--\s*SECURITY-INVARIANTS:(?P<group>[a-z0-9-]+):BEGIN\s*-->\s*\n'
