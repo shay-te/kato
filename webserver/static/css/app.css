@@ -295,6 +295,19 @@ header button:hover { color: #e5e5e5; border-color: #e5e5e5; }
 #session-stop:hover { background: #b91c1c; color: #fff; }
 #session-stop:disabled { background: #262626; border-color: #262626; color: #525252; cursor: not-allowed; }
 
+#session-resume {
+  background: #78350f;
+  color: #fef3c7;
+  border: 1px solid #d97706;
+  border-radius: 4px;
+  padding: 4px 12px;
+  font: 12px/1 inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+#session-resume:hover { background: #d97706; color: #fff; }
+#session-resume:disabled { background: #262626; border-color: #262626; color: #525252; cursor: not-allowed; }
+
 #event-log {
   flex: 1;
   overflow-y: auto;

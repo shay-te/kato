@@ -12,10 +12,12 @@ export default function SessionHeader({
   session,
   needsAttention = false,
   onStopped,
+  onResume,
   streamLifecycle,
   turnInFlight = false,
 }) {
   const [stopping, setStopping] = useState(false);
+  const [resuming, setResuming] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [updatingSource, setUpdatingSource] = useState(false);
   const [adoptModalOpen, setAdoptModalOpen] = useState(false);
@@ -25,6 +27,17 @@ export default function SessionHeader({
   const baseStatus = deriveTabStatus(session);
   const status = resolveTabStatus(session, needsAttention);
   const isLoading = baseStatus === TAB_STATUS.PROVISIONING;
+  // Session is "resumable" when the streaming subprocess isn't
+  // running — the operator stopped it, it ended on its own, or the
+  // tab loaded against a record with no live process. In those
+  // states the Stop button morphs into Resume so the operator has
+  // an explicit way to respawn (instead of typing "please continue"
+  // into the chat as a workaround).
+  const isResumable = (
+    streamLifecycle === SESSION_LIFECYCLE.CLOSED
+    || streamLifecycle === SESSION_LIFECYCLE.IDLE
+    || streamLifecycle === SESSION_LIFECYCLE.MISSING
+  );
 
   async function onStop() {
     setStopping(true);
@@ -32,6 +45,17 @@ export default function SessionHeader({
     setStopping(false);
     if (typeof onStopped === 'function') {
       onStopped(result);
+    }
+  }
+
+  async function onResumeClick() {
+    if (resuming) { return; }
+    if (typeof onResume !== 'function') { return; }
+    setResuming(true);
+    try {
+      await onResume();
+    } finally {
+      setResuming(false);
     }
   }
 
@@ -106,6 +130,7 @@ export default function SessionHeader({
     idleAlive ? 'is-idle-alive' : '',
   ].filter(Boolean).join(' ');
   const stopLabel = stopping ? 'Stopping…' : 'Stop';
+  const resumeLabel = resuming ? 'Resuming…' : 'Resume';
   const pushLabel = pushApproval.busy ? 'Pushing…' : 'Approve push';
   const approvePushButton = pushApproval.awaiting && (
     <button
@@ -199,15 +224,27 @@ export default function SessionHeader({
         >
           Adopt session
         </button>
-        <button
-          id="session-stop"
-          type="button"
-          data-tooltip="Stop the live Claude subprocess for this task. The chat history is preserved; kato can respawn Claude when you send the next message."
-          onClick={onStop}
-          disabled={stopping || baseStatus !== TAB_STATUS.ACTIVE}
-        >
-          {stopLabel}
-        </button>
+        {isResumable ? (
+          <button
+            id="session-resume"
+            type="button"
+            data-tooltip="Resume the Claude session — kato will respawn the subprocess and ask Claude to pick up where it left off."
+            onClick={onResumeClick}
+            disabled={resuming || typeof onResume !== 'function'}
+          >
+            {resumeLabel}
+          </button>
+        ) : (
+          <button
+            id="session-stop"
+            type="button"
+            data-tooltip="Stop the live Claude subprocess for this task. The chat history is preserved; you can resume from this header when the subprocess has ended."
+            onClick={onStop}
+            disabled={stopping || baseStatus !== TAB_STATUS.ACTIVE}
+          >
+            {stopLabel}
+          </button>
+        )}
       </header>
       {adoptModalOpen && (
         <AdoptSessionModal

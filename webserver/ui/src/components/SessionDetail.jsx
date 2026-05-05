@@ -101,6 +101,14 @@ export default function SessionDetail({
     );
   }
 
+  // Resume: respawn the Claude subprocess and tell it to keep going.
+  // We send a real message ("Please continue…") rather than a no-op so
+  // Claude has something to react to — the spawn path requires a user
+  // turn to anchor the resumed conversation.
+  async function onResume() {
+    await onSendMessage('Please continue from where you left off.');
+  }
+
   const banner = lifecycleBanner(
     stream.lifecycle,
     taskId,
@@ -115,6 +123,7 @@ export default function SessionDetail({
           session={session}
           needsAttention={needsAttention}
           onStopped={onStopped}
+          onResume={onResume}
           streamLifecycle={stream.lifecycle}
           turnInFlight={stream.turnInFlight}
         />
