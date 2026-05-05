@@ -798,17 +798,36 @@ class ReviewCommentService(Service):
         platform lookup fails. The fallback only resolves correctly via
         the tag path or the single-repo short-circuit — multi-repo
         description matching needs the full description string.
+
+        Walks BOTH the assigned queue and the review queue. The
+        original implementation only looked at the review queue,
+        which broke this exact symptom: a task still flagged "in
+        progress" (not yet "in review") that fires a review comment
+        was never matched here, the SimpleNamespace fallback kicked
+        in with empty tags, and ``resolve_task_repositories``
+        single-repo-short-circuited to the comment's repo. The agent
+        then ran with only that repo cloned, even though the task
+        was tagged for several.
         """
-        try:
-            for task in self._task_service.get_review_tasks():
+        candidate_queues = (
+            ('assigned', getattr(self._task_service, 'get_assigned_tasks', None)),
+            ('review', getattr(self._task_service, 'get_review_tasks', None)),
+        )
+        for queue_name, fetch in candidate_queues:
+            if not callable(fetch):
+                continue
+            try:
+                tasks = fetch() or []
+            except Exception:
+                self.logger.exception(
+                    'failed to load %s tasks for workspace-clone resolution '
+                    '(task %s); will try other queues / stub task',
+                    queue_name, review_context.task_id,
+                )
+                continue
+            for task in tasks:
                 if str(getattr(task, 'id', '') or '').strip() == review_context.task_id:
                     return task
-        except Exception:
-            self.logger.exception(
-                'failed to load review tasks for workspace-clone resolution '
-                '(task %s); using stub task',
-                review_context.task_id,
-            )
         from types import SimpleNamespace
         return SimpleNamespace(
             id=review_context.task_id,

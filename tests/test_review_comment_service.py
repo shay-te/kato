@@ -429,6 +429,75 @@ class ReviewCommentServiceTests(unittest.TestCase):
         self.assertEqual(result.id, 'admin-client')
         self.assertEqual(result.local_path, '/wks/PROJ-9/admin-client')
 
+    def test_provision_workspace_clone_finds_task_in_assigned_queue_too(self) -> None:
+        # Regression: ``_task_for_workspace_clone`` only looked at
+        # ``get_review_tasks``. If a comment fired while the task
+        # was still ``in progress`` (not yet ``in review``) the
+        # task was never found, the SimpleNamespace fallback ran
+        # with empty tags, ``resolve_task_repositories``
+        # single-repo-short-circuited to the comment's repo, and
+        # only that one repo got cloned. Mirror of the earlier
+        # multi-repo test, but with the task in the assigned queue.
+        from kato_core_lib.data_layers.service.review_comment_service import (
+            ReviewFixContext,
+        )
+        from pathlib import Path
+
+        repo_client = types.SimpleNamespace(id='admin-client', local_path='/inv/admin-client')
+        repo_backend = types.SimpleNamespace(id='admin-backend', local_path='/inv/admin-backend')
+        repo_core = types.SimpleNamespace(id='core-lib', local_path='/inv/core-lib')
+        all_task_repos = [repo_client, repo_backend, repo_core]
+        self.repository_service.resolve_task_repositories = Mock(
+            return_value=all_task_repos,
+        )
+        task = build_task(
+            task_id='PROJ-12',
+            summary='Cross-repo work in progress',
+            description='Touches admin-client, admin-backend, core-lib',
+        )
+        # Task is in the ASSIGNED queue, NOT review. The old code
+        # missed this case. Empty review queue + populated assigned
+        # queue is the production shape: the operator commented on
+        # a draft PR while still actively working the task.
+        self.task_service.get_assigned_tasks = Mock(return_value=[task])
+        self.task_service.get_review_tasks = Mock(return_value=[])
+
+        workspace_manager = Mock()
+        workspace_manager.repository_path = Mock(
+            side_effect=lambda task_id, repo_id: Path(f'/wks/{task_id}/{repo_id}'),
+        )
+        self.repository_service.ensure_clone = Mock()
+
+        service = ReviewCommentService(
+            self.task_service,
+            self.implementation_service,
+            self.repository_service,
+            self.state_registry,
+            workspace_manager=workspace_manager,
+        )
+
+        review_context = ReviewFixContext(
+            task_id='PROJ-12',
+            task_summary='Cross-repo work in progress',
+            repository_id='admin-client',
+            branch_name='feature/PROJ-12',
+            session_id='conv-1',
+            pull_request_title='PROJ-12 thing',
+        )
+
+        result = service._provision_workspace_clone(repo_client, review_context)
+
+        # All three repos cloned even though the task was in the
+        # assigned queue, not the review queue.
+        workspace_manager.create.assert_called_once()
+        kwargs = workspace_manager.create.call_args.kwargs
+        self.assertEqual(
+            sorted(kwargs['repository_ids']),
+            ['admin-backend', 'admin-client', 'core-lib'],
+        )
+        self.assertEqual(result.id, 'admin-client')
+        self.assertEqual(result.local_path, '/wks/PROJ-12/admin-client')
+
     def test_process_review_comment_treats_resolution_conflict_as_non_fatal(self) -> None:
         self.service.logger = Mock()
         self.repository_service.resolve_review_comment.side_effect = HTTPError(
