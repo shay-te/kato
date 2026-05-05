@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { parseDiff, Diff, Hunk } from 'react-diff-view';
 import 'react-diff-view/style/index.css';
-import { fetchDiff } from './api.js';
+import { fetchDiff, syncTaskComments } from './api.js';
+import DiffFileComments from './components/DiffFileComments.jsx';
 import Icon from './components/Icon.jsx';
 import { useChatComposer } from './contexts/ChatComposerContext.jsx';
+import { toast } from './stores/toastStore.js';
 import { buildChatFragmentFromSelection } from './utils/diffSelectionPrompt.js';
 import { tokenizeHunks } from './utils/diffSyntax.js';
 
@@ -22,6 +24,9 @@ export default function ChangesTab({
   taskId,
   workspaceVersion = 0,
 }) {
+  // Bumped on successful comment sync so DiffFileComments
+  // re-fetches without waiting for the next workspace bump.
+  const [commentsRefreshTick, setCommentsRefreshTick] = useState(0);
   const { appendToInput } = useChatComposer();
   const [state, setState] = useState({
     status: 'loading',
@@ -189,6 +194,9 @@ export default function ChangesTab({
           collapsed={collapsed.has(repoKey)}
           onToggle={() => toggleRepo(repoKey)}
           onAddToChat={appendToInput}
+          taskId={taskId}
+          commentsRefreshTick={commentsRefreshTick}
+          onCommentsSynced={() => setCommentsRefreshTick((n) => n + 1)}
         />
       );
     });
@@ -269,9 +277,43 @@ function basenameOf(path) {
   return idx >= 0 ? trimmed.slice(idx + 1) : trimmed;
 }
 
-function RepoDiff({ repoDiff, collapsed, onToggle, onAddToChat }) {
+function RepoDiff({
+  repoDiff, collapsed, onToggle, onAddToChat,
+  taskId = '', commentsRefreshTick = 0, onCommentsSynced,
+}) {
   const heading = repoDiff.repo_id || repoDiff.cwd || 'repo';
   const chevronName = collapsed ? 'chevron-right' : 'chevron-down';
+  const [syncing, setSyncing] = useState(false);
+
+  async function onSyncRemoteComments(event) {
+    event.stopPropagation();  // don't toggle the repo header
+    if (!taskId || !repoDiff.repo_id || syncing) { return; }
+    setSyncing(true);
+    const result = await syncTaskComments(taskId, repoDiff.repo_id);
+    setSyncing(false);
+    if (!result.ok) {
+      toast.show({
+        kind: 'error', title: 'Sync remote comments failed',
+        message: (result.body && result.body.error) || result.error || '',
+        durationMs: 10000,
+      });
+      return;
+    }
+    const synced = (result.body && result.body.synced) || [];
+    const note = result.body && result.body.note;
+    toast.show({
+      kind: 'success',
+      title: 'Remote comments synced',
+      message: synced.length
+        ? `✓ git pull + ${synced.length} comment(s) merged into the local store`
+        : (note || '✓ git pull complete; no remote comments to merge'),
+      durationMs: 6000,
+    });
+    if (typeof onCommentsSynced === 'function') {
+      onCommentsSynced();
+    }
+  }
+
   return (
     <section className="diff-repo">
       <header className="diff-repo-header" onClick={onToggle}>
@@ -281,6 +323,18 @@ function RepoDiff({ repoDiff, collapsed, onToggle, onAddToChat }) {
           <span className="diff-repo-range">
             <code>{repoDiff.base}</code> … <code>{repoDiff.head}</code>
           </span>
+        )}
+        {repoDiff.repo_id && taskId && (
+          <button
+            type="button"
+            className="diff-repo-sync-comments"
+            onClick={onSyncRemoteComments}
+            disabled={syncing}
+            data-tooltip="Pull review comments from the source git platform AND ``git pull`` the workspace clone so line numbers in remote comments line up with the local diff."
+            aria-label={`Sync remote comments for ${heading}`}
+          >
+            {syncing ? '⟳ syncing…' : '⇣ sync remote comments'}
+          </button>
         )}
       </header>
       {!collapsed && (
@@ -301,6 +355,8 @@ function RepoDiff({ repoDiff, collapsed, onToggle, onAddToChat }) {
               conflicted={isFileConflicted(file, repoDiff.conflictedFiles)}
               repoId={repoDiff.repo_id}
               onAddToChat={onAddToChat}
+              taskId={taskId}
+              commentsRefreshTick={commentsRefreshTick}
             />
           ))}
         </div>
@@ -315,7 +371,10 @@ function diffFileKey(file) {
   return `${file.type}:${oldPath}->${newPath}`;
 }
 
-function DiffFile({ file, conflicted = false, repoId = '', onAddToChat }) {
+function DiffFile({
+  file, conflicted = false, repoId = '', onAddToChat,
+  taskId = '', commentsRefreshTick = 0,
+}) {
   const path = file.newPath || file.oldPath || '(unknown)';
   // Run intra-line edit highlighting (markEdits enhancer). Memoized
   // on the hunks reference + path so workspace-poll re-renders
@@ -374,6 +433,14 @@ function DiffFile({ file, conflicted = false, repoId = '', onAddToChat }) {
           <Hunk key={hunk.content} hunk={hunk} />
         ))}
       </Diff>
+      {taskId && repoId && (
+        <DiffFileComments
+          taskId={taskId}
+          repoId={repoId}
+          filePath={path}
+          refreshTick={commentsRefreshTick}
+        />
+      )}
     </section>
   );
 }

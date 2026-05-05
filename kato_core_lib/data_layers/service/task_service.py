@@ -15,6 +15,11 @@ class TaskService(Service):
     _STATE_VALUE_DEFAULTS = {
         'progress': 'In Progress',
         'review': 'In Review',
+        # Used by ``list_all_assigned_tasks`` (operator-driven
+        # task picker) so completed tickets show up alongside
+        # in-flight ones. The autonomous queue path doesn't
+        # query for this state; only the picker does.
+        'done': 'Done',
     }
 
     def __init__(self, config: DictConfig, task_data_access: TaskDataAccess) -> None:
@@ -50,6 +55,48 @@ class TaskService(Service):
             assignee=assignee,
             states=[self._configured_state_value('review')],
         )
+
+    def list_all_assigned_tasks(
+        self,
+        assignee: str | None = None,
+    ) -> list[Task]:
+        """Every task assigned to ``assignee``, regardless of state.
+
+        Drives the planning UI's "+ Add task" picker — the operator
+        sees their full backlog (open, in-progress, in-review, done)
+        and can drop any of them into kato to clone the repos and
+        start a new tab. Distinct from ``get_assigned_tasks`` which
+        respects the kato config's queue-state filter (used by the
+        autonomous scan to decide what to *automatically* pick up).
+
+        Implementation: union the queue states with the progress /
+        review / done states so the underlying ticket-platform
+        client returns one bag of tasks across the whole lifecycle.
+        Deduped by id with first-seen-wins ordering so a task that
+        somehow appears in multiple state buckets only renders once
+        in the picker.
+        """
+        states = list(self._configured_issue_states())
+        for key in ('progress', 'review', 'done'):
+            value = self._configured_state_value(key)
+            if value and value not in states:
+                states.append(value)
+        if not states:
+            # No states configured at all → nothing to query, and
+            # the data access validator would reject an empty list
+            # anyway. Return empty so the picker shows "no tasks"
+            # instead of crashing.
+            return []
+        tasks = self.get_assigned_tasks(assignee=assignee, states=states)
+        seen_ids: set[str] = set()
+        deduped: list[Task] = []
+        for task in tasks:
+            task_id = str(getattr(task, 'id', '') or '').strip()
+            if not task_id or task_id in seen_ids:
+                continue
+            seen_ids.add(task_id)
+            deduped.append(task)
+        return deduped
 
     def add_comment(self, issue_id: str, comment: str) -> None:
         self._task_data_access.add_comment(issue_id, comment)

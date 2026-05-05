@@ -81,6 +81,137 @@ export async function updateTaskSource(taskId) {
   }
 }
 
+// Diff-tab review comments: list / create / resolve / reopen /
+// delete + sync from the source git platform.
+export async function fetchTaskComments(taskId, repoId = '') {
+  if (!taskId) { return { ok: false, error: 'no task id' }; }
+  const params = repoId ? `?repo=${encodeURIComponent(repoId)}` : '';
+  try {
+    const response = await fetch(
+      `/api/sessions/${encodeURIComponent(taskId)}/comments${params}`,
+    );
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return { ok: false, status: response.status, error: body.error || response.statusText };
+    }
+    return { ok: true, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+export async function createTaskComment(taskId, comment) {
+  if (!taskId) { return { ok: false, error: 'no task id' }; }
+  try {
+    const response = await fetch(
+      `/api/sessions/${encodeURIComponent(taskId)}/comments`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(comment || {}),
+      },
+    );
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+export async function resolveTaskComment(taskId, commentId) {
+  if (!taskId || !commentId) { return { ok: false, error: 'no ids' }; }
+  try {
+    const response = await fetch(
+      `/api/sessions/${encodeURIComponent(taskId)}/comments/${encodeURIComponent(commentId)}/resolve`,
+      { method: 'POST' },
+    );
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+export async function reopenTaskComment(taskId, commentId) {
+  if (!taskId || !commentId) { return { ok: false, error: 'no ids' }; }
+  try {
+    const response = await fetch(
+      `/api/sessions/${encodeURIComponent(taskId)}/comments/${encodeURIComponent(commentId)}/reopen`,
+      { method: 'POST' },
+    );
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+export async function deleteTaskComment(taskId, commentId) {
+  if (!taskId || !commentId) { return { ok: false, error: 'no ids' }; }
+  try {
+    const response = await fetch(
+      `/api/sessions/${encodeURIComponent(taskId)}/comments/${encodeURIComponent(commentId)}`,
+      { method: 'DELETE' },
+    );
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+export async function syncTaskComments(taskId, repoId) {
+  if (!taskId || !repoId) { return { ok: false, error: 'no ids' }; }
+  try {
+    const response = await fetch(
+      `/api/sessions/${encodeURIComponent(taskId)}/comments/sync`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ repo: repoId }),
+      },
+    );
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+
+// Every task assigned to the configured kato user — open, in
+// progress, in review, done. Drives the left-panel "+ Add task"
+// picker.
+export async function fetchAllAssignedTasks() {
+  try {
+    const response = await fetch('/api/tasks');
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return { ok: false, status: response.status, error: body.error || response.statusText };
+    }
+    return { ok: true, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+// Adopt an existing assigned task — provision the workspace + clone
+// every repo the task touches. No agent spawn; operator drives that
+// from the chat tab once the workspace lands.
+export async function adoptTask(taskId) {
+  if (!taskId) { return { ok: false, error: 'no task id' }; }
+  try {
+    const response = await fetch(
+      `/api/tasks/${encodeURIComponent(taskId)}/adopt`,
+      { method: 'POST' },
+    );
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
 // Recent commits on a repo's task branch (newest first). Drives the
 // Files-tab per-repo "view commit" dropdown. ``limit`` is optional
 // (server caps it at 200); ``repoId`` is required.

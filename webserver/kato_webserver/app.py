@@ -22,6 +22,14 @@ Endpoints:
     POST /api/sessions/<task_id>/sync-repositories      — clone task repos missing from workspace
     POST /api/sessions/<task_id>/add-repository         — body: {"repository_id"} — tag + clone
     GET  /api/repositories                              — list inventory repos for the chooser
+    GET  /api/tasks                                     — every task assigned to kato (all states)
+    POST /api/tasks/<task_id>/adopt                     — provision workspace + clones for a picked task
+    GET  /api/sessions/<task_id>/comments?repo=<id>     — list local + synced-remote diff comments
+    POST /api/sessions/<task_id>/comments               — add comment, immediately queue/run kato
+    POST /api/sessions/<task_id>/comments/<id>/resolve  — mark thread resolved
+    POST /api/sessions/<task_id>/comments/<id>/reopen   — re-open a resolved thread
+    DEL  /api/sessions/<task_id>/comments/<id>          — delete comment + replies
+    POST /api/sessions/<task_id>/comments/sync          — git pull + pull remote PR comments
     GET  /api/claude/sessions                           — list adoptable Claude Code sessions
     GET  /api/status/recent                             — recent kato-process log entries
     GET  /api/status/events                             — SSE: live kato-process log feed
@@ -640,6 +648,139 @@ def _register_http_routes(app: Flask) -> None:
         result = update(task_id) or {}
         if result.get('error') and not result.get('updated'):
             return jsonify(result), 404 if 'no workspace' in str(result['error']) else 500
+        return jsonify(result)
+
+    @app.get('/api/sessions/<task_id>/comments')
+    def list_task_comments(task_id: str):
+        """Every comment on the task workspace (optionally per-repo)."""
+        agent_service = app.config.get('AGENT_SERVICE')
+        if agent_service is None:
+            return jsonify({'error': 'agent service not wired'}), 503
+        list_comments = getattr(agent_service, 'list_task_comments', None)
+        if not callable(list_comments):
+            return jsonify({'comments': []})
+        repo_id = (request.args.get('repo') or '').strip()
+        return jsonify({'comments': list_comments(task_id, repo_id)})
+
+    @app.post('/api/sessions/<task_id>/comments')
+    def create_task_comment(task_id: str):
+        """Add a local comment + immediately kick / queue kato.
+
+        Body: ``{repo, file_path, line?, body, parent_id?}``. ``line``
+        defaults to -1 (file-level). ``parent_id`` makes this a reply
+        — replies don't kick the agent (they're additional context;
+        kato runs on top-of-thread).
+        """
+        agent_service = app.config.get('AGENT_SERVICE')
+        if agent_service is None:
+            return jsonify({'error': 'agent service not wired'}), 503
+        add_comment = getattr(agent_service, 'add_task_comment', None)
+        if not callable(add_comment):
+            return jsonify({'error': 'comments not supported'}), 501
+        payload = request.get_json(silent=True) or {}
+        result = add_comment(
+            task_id,
+            repo_id=str(payload.get('repo') or '').strip(),
+            file_path=str(payload.get('file_path') or '').strip(),
+            line=int(payload.get('line', -1) or -1),
+            body=str(payload.get('body') or ''),
+            parent_id=str(payload.get('parent_id') or ''),
+            author=str(payload.get('author') or ''),
+        ) or {}
+        if not result.get('ok'):
+            err = str(result.get('error', 'add failed'))
+            status = 404 if 'no workspace' in err else 400
+            return jsonify(result), status
+        return jsonify(result)
+
+    @app.post('/api/sessions/<task_id>/comments/<comment_id>/resolve')
+    def resolve_task_comment(task_id: str, comment_id: str):
+        agent_service = app.config.get('AGENT_SERVICE')
+        if agent_service is None:
+            return jsonify({'error': 'agent service not wired'}), 503
+        resolve = getattr(agent_service, 'resolve_task_comment', None)
+        if not callable(resolve):
+            return jsonify({'error': 'comments not supported'}), 501
+        payload = request.get_json(silent=True) or {}
+        return jsonify(resolve(
+            task_id, comment_id,
+            resolved_by=str(payload.get('resolved_by') or ''),
+        ))
+
+    @app.post('/api/sessions/<task_id>/comments/<comment_id>/reopen')
+    def reopen_task_comment(task_id: str, comment_id: str):
+        agent_service = app.config.get('AGENT_SERVICE')
+        if agent_service is None:
+            return jsonify({'error': 'agent service not wired'}), 503
+        reopen = getattr(agent_service, 'reopen_task_comment', None)
+        if not callable(reopen):
+            return jsonify({'error': 'comments not supported'}), 501
+        return jsonify(reopen(task_id, comment_id))
+
+    @app.delete('/api/sessions/<task_id>/comments/<comment_id>')
+    def delete_task_comment(task_id: str, comment_id: str):
+        agent_service = app.config.get('AGENT_SERVICE')
+        if agent_service is None:
+            return jsonify({'error': 'agent service not wired'}), 503
+        delete = getattr(agent_service, 'delete_task_comment', None)
+        if not callable(delete):
+            return jsonify({'error': 'comments not supported'}), 501
+        return jsonify(delete(task_id, comment_id))
+
+    @app.post('/api/sessions/<task_id>/comments/sync')
+    def sync_task_comments(task_id: str):
+        """Pull remote PR comments + ``git pull`` the workspace clone."""
+        agent_service = app.config.get('AGENT_SERVICE')
+        if agent_service is None:
+            return jsonify({'error': 'agent service not wired'}), 503
+        sync = getattr(agent_service, 'sync_remote_comments', None)
+        if not callable(sync):
+            return jsonify({'error': 'comments not supported'}), 501
+        payload = request.get_json(silent=True) or {}
+        repo_id = str(payload.get('repo') or '').strip()
+        if not repo_id:
+            return jsonify({'ok': False, 'error': 'repo is required'}), 400
+        return jsonify(sync(task_id, repo_id))
+
+    @app.get('/api/tasks')
+    def list_all_tasks():
+        """Every task assigned to kato, regardless of state.
+
+        Drives the planning UI's "+ Add task" picker on the left
+        panel. Includes open / in-progress / in-review / done so
+        the operator can pick anything they own.
+        """
+        agent_service = app.config.get('AGENT_SERVICE')
+        if agent_service is None:
+            return jsonify({'error': 'agent service not wired'}), 503
+        list_tasks = getattr(agent_service, 'list_all_assigned_tasks', None)
+        if not callable(list_tasks):
+            return jsonify({'tasks': []})
+        return jsonify({'tasks': list_tasks()})
+
+    @app.post('/api/tasks/<task_id>/adopt')
+    def adopt_task(task_id: str):
+        """Pull a task into kato: provision a workspace + clones.
+
+        Mirrors the autonomous initial-task path's first three
+        steps (resolve repos → REP gate → workspace clones) so the
+        adopted task lands with the same on-disk shape kato's queue
+        scan would produce. No agent spawn — the operator types
+        into the chat tab when ready.
+        """
+        agent_service = app.config.get('AGENT_SERVICE')
+        if agent_service is None:
+            return jsonify({'error': 'agent service not wired'}), 503
+        adopt = getattr(agent_service, 'adopt_task', None)
+        if not callable(adopt):
+            return jsonify({'error': 'agent service does not support adopt_task'}), 501
+        result = adopt(task_id) or {}
+        if result.get('error') and not result.get('adopted'):
+            err = str(result.get('error', ''))
+            status = 404 if 'not assigned' in err else 500
+            if 'restricted execution protocol' in err:
+                status = 403
+            return jsonify(result), status
         return jsonify(result)
 
     @app.get('/api/repositories')

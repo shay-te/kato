@@ -129,8 +129,36 @@ header button:hover { color: #e5e5e5; border-color: #e5e5e5; }
 #tabs-pane {
   border-right: 1px solid #171717;
   overflow-y: auto;
-  padding: 12px 0;
+  padding: 0 0 12px;
+  display: flex;
+  flex-direction: column;
 }
+
+#tabs-pane-header {
+  padding: 10px 12px;
+  border-bottom: 1px solid #171717;
+  background: #0f0f0f;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+#tabs-add-task {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #1d4ed8;
+  color: #eff6ff;
+  border: 1px solid #2563eb;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font: 12px/1 inherit;
+  cursor: pointer;
+  width: 100%;
+  justify-content: center;
+}
+#tabs-add-task:hover { background: #2563eb; color: #fff; }
+#tabs-add-task svg { width: 10px; height: 10px; }
 
 #tab-list {
   list-style: none;
@@ -1017,6 +1045,175 @@ body.kato-resizing { user-select: none; cursor: col-resize; }
   color: #737373;
   font-size: 11px;
 }
+
+/* Diff-tab inline comments. Bitbucket-style: thread per file
+ * (per-line gutter widgets are a follow-up), source-tagged badges,
+ * resolve / reopen / delete inline. */
+.diff-file-comments {
+  border-top: 1px solid #262626;
+  padding: 12px;
+  background: #0f0f0f;
+}
+.diff-file-comments-empty {
+  color: #737373;
+  font-size: 12px;
+  margin: 0 0 12px;
+}
+.diff-file-comments-empty.error { color: #f87171; }
+
+.diff-file-comment-thread {
+  border: 1px solid #262626;
+  border-radius: 4px;
+  margin-bottom: 12px;
+  background: #161616;
+}
+.diff-file-comment-thread.is-resolved { opacity: 0.85; }
+.diff-file-comment-resolved-banner {
+  padding: 6px 10px;
+  background: #1e3a8a;
+  color: #dbeafe;
+  font: 11px/1.4 inherit;
+}
+
+.diff-file-comment {
+  padding: 10px 12px;
+  border-bottom: 1px solid #262626;
+}
+.diff-file-comment:last-child { border-bottom: 0; }
+.diff-file-comment.is-reply {
+  margin-left: 24px;
+  border-left: 2px solid #404040;
+  background: #131313;
+}
+
+.diff-file-comment-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 11px;
+}
+.diff-file-comment-author { font-weight: 600; color: #e5e5e5; }
+.diff-file-comment-source {
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.diff-file-comment-source.is-local {
+  background: #1d4ed8;
+  color: #eff6ff;
+}
+.diff-file-comment-source.is-remote {
+  background: #047857;
+  color: #ecfdf5;
+}
+.diff-file-comment-ago { color: #737373; }
+.diff-file-comment-kato-status {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+}
+.diff-file-comment-kato-status.is-queued { background: #78350f; color: #fef3c7; }
+.diff-file-comment-kato-status.is-in_progress { background: #b45309; color: #fff7ed; }
+.diff-file-comment-kato-status.is-addressed { background: #166534; color: #ecfdf5; }
+.diff-file-comment-kato-status.is-failed { background: #7f1d1d; color: #fee2e2; }
+
+.diff-file-comment-body {
+  color: #d4d4d4;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.diff-file-comment-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+}
+.diff-file-comment-action {
+  background: transparent;
+  border: 0;
+  color: #93c5fd;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+}
+.diff-file-comment-action:hover { text-decoration: underline; }
+.diff-file-comment-action.danger { color: #fca5a5; }
+
+.diff-file-comments-form {
+  border: 1px solid #262626;
+  border-radius: 4px;
+  padding: 8px;
+  background: #131313;
+}
+.diff-file-comments-reply-hint {
+  font-size: 11px;
+  color: #737373;
+  margin-bottom: 6px;
+}
+.diff-file-comments-cancel-reply {
+  background: transparent;
+  border: 0;
+  color: #93c5fd;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+.diff-file-comments-textarea {
+  width: 100%;
+  min-height: 64px;
+  background: #0f0f0f;
+  border: 1px solid #404040;
+  border-radius: 3px;
+  color: #e5e5e5;
+  padding: 8px;
+  font: 12px/1.5 ui-monospace, monospace;
+  resize: vertical;
+  box-sizing: border-box;
+}
+.diff-file-comments-textarea:focus {
+  outline: none;
+  border-color: #2563eb;
+}
+.diff-file-comments-form-actions {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
+}
+.diff-file-comments-submit {
+  background: #1d4ed8;
+  color: #eff6ff;
+  border: 1px solid #2563eb;
+  border-radius: 3px;
+  padding: 4px 14px;
+  font: 12px/1 inherit;
+  cursor: pointer;
+}
+.diff-file-comments-submit:hover:not(:disabled) { background: #2563eb; }
+.diff-file-comments-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Per-repo "sync remote comments" button on the diff repo header. */
+.diff-repo-sync-comments {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid #404040;
+  border-radius: 3px;
+  color: #a3a3a3;
+  padding: 2px 10px;
+  font: 11px/1 inherit;
+  cursor: pointer;
+}
+.diff-repo-sync-comments:hover { background: #262626; color: #e5e5e5; }
+.diff-repo-sync-comments:disabled { opacity: 0.6; cursor: not-allowed; }
 
 /* Commit-diff modal — wider scrim than the adopt-session modal so
  * file diffs don't squash horizontally. */

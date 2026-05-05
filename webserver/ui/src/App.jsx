@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import AdoptTaskModal from './components/AdoptTaskModal.jsx';
 import Header from './components/Header.jsx';
 import Layout from './components/Layout.jsx';
 import RightPane from './components/RightPane.jsx';
@@ -38,6 +39,10 @@ export default function App() {
   // re-mark a tab orange between auto-allow turns even though the
   // modal correctly suppressed itself.
   const toolMemory = useToolMemory();
+  // "+ Add task" picker open/closed state — owned by App so the
+  // modal sits above the layout (not inside TabList) and can fire
+  // a ``refresh()`` of the session list once an adoption succeeds.
+  const [addTaskModalOpen, setAddTaskModalOpen] = useState(false);
   const [workspaceVersion, setWorkspaceVersion] = useState(() => ({}));
   // Tracks whether the operator has manually picked a tab. We auto-focus
   // the live task on the *first* event arrival, but only when the operator
@@ -195,6 +200,7 @@ export default function App() {
             attentionTaskIds={attentionTaskIds}
           onSelect={setActiveTaskId}
           onForget={handleForgetTask}
+          onOpenAddTask={() => setAddTaskModalOpen(true)}
         />
       }
       center={
@@ -242,6 +248,20 @@ export default function App() {
       <ChatComposerContext.Provider value={composerContextValue}>
         {layout}
       </ChatComposerContext.Provider>
+      {addTaskModalOpen && (
+        <AdoptTaskModal
+          alreadyAdoptedIds={new Set(sessions.map((s) => s.task_id))}
+          onClose={() => setAddTaskModalOpen(false)}
+          onAdopted={(body) => {
+            // Refresh the session list so the adopted task's tab
+            // appears, then auto-select it so the operator lands
+            // on the new chat without an extra click.
+            refresh();
+            const adoptedId = String(body?.task_id || '').trim();
+            if (adoptedId) { setActiveTaskId(adoptedId); }
+          }}
+        />
+      )}
     </>
   );
 }

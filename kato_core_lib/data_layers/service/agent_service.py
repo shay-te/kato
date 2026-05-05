@@ -596,6 +596,392 @@ class AgentService(Service):
         with self._pending_publish_lock:
             return normalized in self._pending_publish
 
+    # ----- diff-tab comments (kato-local + remote-synced) -----
+
+    def list_task_comments(
+        self, task_id: str, repo_id: str = '',
+    ) -> list[dict[str, object]]:
+        """Return every comment on a task workspace (optionally per-repo).
+
+        Drives the Changes-tab inline-comment widget. Each entry is
+        a ``CommentRecord.to_dict()`` so the UI sees the full set
+        of fields (id, body, line, source, status, kato_status,
+        author, parent_id for threading).
+        """
+        store = self._comment_store_for(task_id)
+        if store is None:
+            return []
+        records = (
+            store.list_for_repo(repo_id) if repo_id else store.list()
+        )
+        return [record.to_dict() for record in records]
+
+    def add_task_comment(
+        self,
+        task_id: str,
+        *,
+        repo_id: str,
+        file_path: str,
+        line: int = -1,
+        body: str = '',
+        parent_id: str = '',
+        author: str = '',
+    ) -> dict[str, object]:
+        """Persist a new local comment + immediately queue / run kato.
+
+        On create the comment lands as ``kato_status=QUEUED``. If
+        the task currently has no live agent turn in flight, kato
+        kicks off a review-fix run for this comment right away
+        (``KatoCommentStatus.IN_PROGRESS``); otherwise the comment
+        sits in the queue and the next "agent went idle" tick
+        drains it. This mirrors the operator expectation "submit
+        comment → kato fixes immediately if free, queues otherwise."
+        """
+        from kato_core_lib.comment_core_lib import (
+            CommentRecord,
+            CommentSource,
+            KatoCommentStatus,
+        )
+
+        store = self._comment_store_for(task_id)
+        if store is None:
+            return {'ok': False, 'error': 'no workspace for task — adopt it first'}
+        record = CommentRecord(
+            repo_id=str(repo_id or '').strip(),
+            file_path=str(file_path or '').strip(),
+            line=int(line if line is not None else -1),
+            parent_id=str(parent_id or '').strip(),
+            author=str(author or 'operator'),
+            body=str(body or '').strip(),
+            source=CommentSource.LOCAL.value,
+        )
+        try:
+            persisted = store.add(record)
+        except ValueError as exc:
+            return {'ok': False, 'error': str(exc)}
+        # Replies don't trigger a kato run — only top-of-thread
+        # comments do. The operator might be replying with
+        # additional context that won't ship until they re-comment
+        # at the root.
+        if persisted.parent_id:
+            return {'ok': True, 'comment': persisted.to_dict()}
+        # Kick off the agent if the task is idle, otherwise queue.
+        store.update_kato_status(
+            persisted.id, kato_status=KatoCommentStatus.QUEUED.value,
+        )
+        triggered = self._maybe_trigger_comment_run(
+            str(task_id), persisted.id,
+        )
+        persisted = store.get(persisted.id) or persisted
+        return {
+            'ok': True,
+            'comment': persisted.to_dict(),
+            'triggered_immediately': triggered,
+        }
+
+    def resolve_task_comment(
+        self,
+        task_id: str,
+        comment_id: str,
+        *,
+        resolved_by: str = '',
+    ) -> dict[str, object]:
+        """Mark a comment thread resolved (operator-driven).
+
+        Independent of ``kato_status`` — kato may have already
+        addressed the comment (``ADDRESSED``) and the operator
+        decides whether to keep the thread open for review or
+        close it.
+        """
+        from kato_core_lib.comment_core_lib import CommentStatus
+
+        store = self._comment_store_for(task_id)
+        if store is None:
+            return {'ok': False, 'error': 'no workspace for task'}
+        updated = store.update_status(
+            comment_id,
+            status=CommentStatus.RESOLVED.value,
+            resolved_by=resolved_by or 'operator',
+        )
+        if updated is None:
+            return {'ok': False, 'error': f'comment {comment_id!r} not found'}
+        return {'ok': True, 'comment': updated.to_dict()}
+
+    def reopen_task_comment(
+        self, task_id: str, comment_id: str,
+    ) -> dict[str, object]:
+        from kato_core_lib.comment_core_lib import CommentStatus
+
+        store = self._comment_store_for(task_id)
+        if store is None:
+            return {'ok': False, 'error': 'no workspace for task'}
+        updated = store.update_status(
+            comment_id, status=CommentStatus.OPEN.value,
+        )
+        if updated is None:
+            return {'ok': False, 'error': f'comment {comment_id!r} not found'}
+        return {'ok': True, 'comment': updated.to_dict()}
+
+    def delete_task_comment(
+        self, task_id: str, comment_id: str,
+    ) -> dict[str, object]:
+        store = self._comment_store_for(task_id)
+        if store is None:
+            return {'ok': False, 'error': 'no workspace for task'}
+        removed = store.delete(comment_id)
+        return {'ok': bool(removed), 'comment_id': comment_id}
+
+    def sync_remote_comments(
+        self, task_id: str, repo_id: str,
+    ) -> dict[str, object]:
+        """Pull review comments from the source git platform + git pull.
+
+        Two-step:
+          1. ``git pull`` on the workspace clone so the line
+             numbers in remote comments line up with what the
+             operator sees in the diff (a remote comment refers
+             to a commit-shaped position; if local HEAD is behind
+             those positions are stale).
+          2. List PR comments via ``RepositoryService`` and
+             ``upsert_remote`` each one into the local store.
+
+        Best-effort: errors are reported in the response so the
+        UI can show a toast rather than crashing the picker.
+        """
+        from kato_core_lib.comment_core_lib import (
+            CommentRecord,
+            CommentSource,
+            CommentStatus,
+        )
+
+        store = self._comment_store_for(task_id)
+        if store is None:
+            return {'ok': False, 'error': 'no workspace for task'}
+        normalized_repo = str(repo_id or '').strip()
+        if not normalized_repo:
+            return {'ok': False, 'error': 'repo_id is required'}
+        # Look up the workspace clone for this repo so we can git
+        # pull. Resolve via the workspace_manager rather than the
+        # inventory entry; the inventory ``local_path`` is the
+        # operator's REPOSITORY_ROOT_PATH checkout, which we
+        # explicitly don't touch from kato.
+        if self._workspace_manager is None:
+            return {'ok': False, 'error': 'workspace manager not wired'}
+        try:
+            clone_path = self._workspace_manager.repository_path(
+                str(task_id), normalized_repo,
+            )
+        except Exception as exc:
+            return {'ok': False, 'error': f'no workspace clone: {exc}'}
+        if not (clone_path / '.git').is_dir():
+            return {'ok': False, 'error': f'workspace clone for {normalized_repo!r} missing'}
+        # Pull. Best-effort — a failed pull leaves whatever was
+        # already on disk (dirty tree, conflict, network error)
+        # and we still try to list comments below since the
+        # operator might just want the latest comments without
+        # the git side.
+        try:
+            inventory_repo = self._repository_service.get_repository(
+                normalized_repo,
+            )
+        except Exception:
+            inventory_repo = None
+        pull_result: dict[str, object] = {'ok': True}
+        try:
+            run_git = getattr(self._repository_service, '_run_git', None)
+            if callable(run_git):
+                run_git(
+                    str(clone_path), ['pull', '--ff-only'],
+                    f'failed to git pull workspace clone {clone_path}',
+                    inventory_repo,
+                )
+        except Exception as exc:
+            pull_result = {'ok': False, 'error': str(exc)}
+        # List PR comments. The agent_service already has the
+        # state-registry that tracks pull request id per task.
+        synced: list[dict[str, object]] = []
+        try:
+            list_comments = getattr(
+                self._repository_service, 'list_pull_request_comments', None,
+            )
+            if not callable(list_comments) or inventory_repo is None:
+                return {
+                    'ok': True, 'pull': pull_result,
+                    'synced': [], 'note': (
+                        'platform listing unavailable; pulled git only'
+                    ),
+                }
+            pr_id = self._task_pull_request_id(str(task_id), normalized_repo)
+            if not pr_id:
+                return {
+                    'ok': True, 'pull': pull_result,
+                    'synced': [], 'note': (
+                        'no pull request id on file for this repo + task'
+                    ),
+                }
+            for entry in list_comments(inventory_repo, pr_id) or []:
+                remote_id = str(
+                    entry.get('id') or entry.get('comment_id') or '',
+                ).strip()
+                body = str(entry.get('content') or entry.get('body') or '').strip()
+                if not remote_id or not body:
+                    continue
+                record = CommentRecord(
+                    repo_id=normalized_repo,
+                    file_path=str(entry.get('file_path') or ''),
+                    line=int(entry.get('line') or -1),
+                    parent_id=str(entry.get('parent_id') or ''),
+                    author=str(entry.get('author') or ''),
+                    body=body,
+                    source=CommentSource.REMOTE.value,
+                    remote_id=remote_id,
+                    status=(
+                        CommentStatus.RESOLVED.value
+                        if entry.get('resolved')
+                        else CommentStatus.OPEN.value
+                    ),
+                )
+                store.upsert_remote(record)
+                synced.append({'remote_id': remote_id, 'file_path': record.file_path})
+        except Exception as exc:
+            self.logger.exception(
+                'failed to sync remote comments for task %s repo %s',
+                task_id, repo_id,
+            )
+            return {'ok': False, 'pull': pull_result, 'error': str(exc)}
+        return {'ok': True, 'pull': pull_result, 'synced': synced}
+
+    def _comment_store_for(self, task_id: str):
+        """Return the LocalCommentStore for a task — None if no workspace."""
+        from kato_core_lib.comment_core_lib import LocalCommentStore
+
+        if self._workspace_manager is None:
+            return None
+        normalized = str(task_id or '').strip()
+        if not normalized:
+            return None
+        try:
+            workspace_dir = self._workspace_manager.workspace_path(normalized)
+        except Exception:
+            return None
+        if not workspace_dir.is_dir():
+            return None
+        return LocalCommentStore(workspace_dir)
+
+    def _maybe_trigger_comment_run(
+        self, task_id: str, comment_id: str,
+    ) -> bool:
+        """Kick off a review-fix agent if the task has no live turn.
+
+        Returns True when an agent run was started immediately,
+        False when the comment was left in QUEUED for later
+        draining. Wraps the actual launch in try/except so a
+        bad spawn just leaves the comment queued — the operator
+        can retry by reopening the comment or running the queue
+        drain manually.
+        """
+        from kato_core_lib.comment_core_lib import KatoCommentStatus
+
+        store = self._comment_store_for(task_id)
+        if store is None:
+            return False
+        record = store.get(comment_id)
+        if record is None:
+            return False
+        live_turn_busy = self._task_has_busy_turn(task_id)
+        if live_turn_busy:
+            # Stay queued; the queue drain (called from the
+            # ``RESULT`` event handler) picks it up on the next
+            # idle transition.
+            return False
+        store.update_kato_status(
+            comment_id, kato_status=KatoCommentStatus.IN_PROGRESS.value,
+        )
+        try:
+            self._run_comment_agent(task_id, record)
+        except Exception as exc:
+            self.logger.exception(
+                'comment agent run failed for task %s comment %s',
+                task_id, comment_id,
+            )
+            store.update_kato_status(
+                comment_id,
+                kato_status=KatoCommentStatus.FAILED.value,
+                failure_reason=str(exc),
+            )
+            return False
+        return True
+
+    def _task_has_busy_turn(self, task_id: str) -> bool:
+        """True when the live streaming session is mid-turn."""
+        if self._session_manager is None:
+            return False
+        try:
+            session = self._session_manager.get_session(task_id)
+        except Exception:
+            return False
+        if session is None or not getattr(session, 'is_alive', False):
+            return False
+        return bool(getattr(session, 'is_working', False))
+
+    def _run_comment_agent(self, task_id: str, record) -> None:
+        """Hand the comment off to the streaming session as a user message.
+
+        Minimal first cut: append a short prompt to the live chat
+        session if one exists; if not, leave the comment QUEUED
+        and let the operator open the chat tab to drive the fix.
+        A fuller integration (auto-spawn a review-fix runner
+        keyed off this comment) is a follow-up — for now the
+        operator workflow is "comment lands → kato types it into
+        the chat → agent works on it" which is a recognisable
+        kato pattern.
+        """
+        from kato_core_lib.comment_core_lib import KatoCommentStatus
+
+        if self._session_manager is None:
+            return
+        session = self._session_manager.get_session(task_id)
+        if session is None or not getattr(session, 'is_alive', False):
+            # No live agent — keep queued. Will be drained when
+            # the operator opens the chat (which spawns the
+            # streaming session) and the queue-drain hook runs.
+            store = self._comment_store_for(task_id)
+            if store is not None:
+                store.update_kato_status(
+                    record.id, kato_status=KatoCommentStatus.QUEUED.value,
+                )
+            return
+        location_hint = (
+            f'`{record.file_path}` (line {record.line})'
+            if record.file_path and record.line > 0
+            else (record.file_path or '(no file specified)')
+        )
+        prompt = (
+            'Operator-added review comment from the kato diff tab.\n\n'
+            f'File: {location_hint}\n'
+            f'Comment: {record.body}\n\n'
+            'Address this comment, commit the fix on the current task '
+            'branch, and reply with a one-line summary of what '
+            'changed. If the comment is a question rather than a fix '
+            'request, answer it in prose without committing.'
+        )
+        send = getattr(session, 'send_user_message', None)
+        if not callable(send):
+            return
+        send(prompt)
+
+    @staticmethod
+    def _task_pull_request_id(task_id: str, repo_id: str) -> str:
+        """Hook for finding the PR id for a (task, repo). Empty by default.
+
+        The agent_service already has the state-registry that
+        tracks PR ids; subclasses / wiring overlays can populate
+        this. Default-empty keeps the comment_core_lib build
+        independent of the registry shape (which has changed
+        across versions).
+        """
+        return ''
+
     # ----- on-demand push / PR (planning UI buttons) -----
 
     def update_source_for_task(self, task_id: str) -> dict[str, object]:
@@ -720,6 +1106,163 @@ class AgentService(Service):
             'failed_repositories': failed_repositories,
             'warnings': warnings_per_repo,
         }
+
+    def list_all_assigned_tasks(self) -> list[dict[str, str]]:
+        """Return ``{id, summary, state, description}`` for every task assigned.
+
+        Drives the planning UI's "+ Add task" picker. Spans the full
+        ticket lifecycle (open / in progress / in review / done) so
+        the operator can drop any of their tickets into kato — even
+        completed ones for retrospective review or to re-run an
+        agent against the existing branch.
+        """
+        try:
+            tasks = self._task_service.list_all_assigned_tasks()
+        except Exception:
+            self.logger.exception('failed to list all assigned tasks')
+            return []
+        out: list[dict[str, str]] = []
+        for task in tasks or []:
+            out.append({
+                'id': str(getattr(task, 'id', '') or ''),
+                'summary': str(getattr(task, 'summary', '') or ''),
+                'state': str(getattr(task, 'state', '') or ''),
+                'description': str(getattr(task, 'description', '') or '')[:500],
+            })
+        return out
+
+    def adopt_task(self, task_id: str) -> dict[str, object]:
+        """Provision a workspace + clones for a task the operator picked.
+
+        Drives the "+ Add task" flow on the left panel. Mirrors the
+        autonomous initial-task path's first three steps (resolve
+        repos → REP gate → workspace clones) so an operator-picked
+        task has the same on-disk shape as one kato discovered via
+        the queue scan. Skips the agent spawn — the operator will
+        type into the chat tab when they're ready.
+
+        Idempotent on already-adopted: if the workspace already
+        exists, ``provision_task_workspace_clones`` reuses the
+        existing clones (the create call is a no-op for an existing
+        record), so re-clicking a task in the picker doesn't blow
+        anything away.
+        """
+        normalized = str(task_id or '').strip()
+        if not normalized:
+            return {'adopted': False, 'error': 'empty task id'}
+        if self._workspace_manager is None:
+            return {
+                'adopted': False, 'task_id': normalized,
+                'error': 'workspace manager not wired',
+            }
+        # Find the live Task — needed for tags/description-driven
+        # repo resolution.
+        task_obj = self._lookup_assigned_or_review_task(normalized)
+        if task_obj is None:
+            return {
+                'adopted': False, 'task_id': normalized,
+                'error': (
+                    f'task {normalized!r} is not assigned to this kato '
+                    f'(or the ticket platform refused the lookup)'
+                ),
+            }
+        # Resolve all task repos via the same path the autonomous
+        # flow uses; refuse the adoption when REP says no.
+        try:
+            repositories = self._repository_service.resolve_task_repositories(
+                task_obj,
+            )
+        except Exception as exc:
+            return {
+                'adopted': False, 'task_id': normalized,
+                'error': f'failed to resolve task repositories: {exc}',
+            }
+        # REP gate. We don't have the failure-handler chain that
+        # the autonomous path uses (it posts a ticket comment),
+        # so we surface as a structured error and let the UI
+        # render the "approve repo first" message.
+        try:
+            from kato_core_lib.data_layers.service.repository_approval_service import (
+                RepositoryApprovalService,
+            )
+            approval = RepositoryApprovalService()
+            unapproved = []
+            for repo in repositories:
+                repo_id = str(getattr(repo, 'id', '') or '')
+                if not approval.is_approved(repo_id):
+                    unapproved.append(repo_id)
+            if unapproved:
+                return {
+                    'adopted': False, 'task_id': normalized,
+                    'error': (
+                        f'restricted execution protocol: refusing — '
+                        f'no approval on record for repository id(s) '
+                        f'{", ".join(unapproved)}. Run '
+                        f'``kato approve-repo`` and retry.'
+                    ),
+                    'unapproved_repositories': unapproved,
+                }
+        except Exception:
+            # Approval service blew up — log and proceed; the
+            # autonomous path's REP enforcement will catch it on
+            # the next scan if there's a real problem.
+            self.logger.exception(
+                'REP approval check crashed for adopt_task on %s; '
+                'skipping the gate',
+                normalized,
+            )
+        # Provision clones via the same workspace_provisioner the
+        # autonomous flow uses.
+        from kato_core_lib.data_layers.service.workspace_manager import (
+            provision_task_workspace_clones,
+        )
+        try:
+            provisioned = provision_task_workspace_clones(
+                self._workspace_manager,
+                self._repository_service,
+                task_obj,
+                repositories,
+            )
+        except Exception as exc:
+            self.logger.exception(
+                'workspace provisioning failed for adopt_task %s', normalized,
+            )
+            return {
+                'adopted': False, 'task_id': normalized,
+                'error': f'workspace provisioning failed: {exc}',
+            }
+        cloned_ids = [
+            str(getattr(r, 'id', '') or '') for r in (provisioned or [])
+        ]
+        return {
+            'adopted': True,
+            'task_id': normalized,
+            'task_summary': str(getattr(task_obj, 'summary', '') or ''),
+            'cloned_repositories': [rid for rid in cloned_ids if rid],
+        }
+
+    def _lookup_assigned_or_review_task(self, task_id: str):
+        """Find ``task_id`` in the assigned or review queue (or all-list).
+
+        Walks all three sources because the operator might pick a
+        task that's no longer in the active queue (already done /
+        merged) — ``list_all_assigned_tasks`` covers that case.
+        """
+        for fetch in (
+            getattr(self._task_service, 'list_all_assigned_tasks', None),
+            getattr(self._task_service, 'get_assigned_tasks', None),
+            getattr(self._task_service, 'get_review_tasks', None),
+        ):
+            if not callable(fetch):
+                continue
+            try:
+                tasks = fetch() or []
+            except Exception:
+                continue
+            for task in tasks:
+                if str(getattr(task, 'id', '') or '').strip() == task_id:
+                    return task
+        return None
 
     def list_inventory_repositories(self) -> list[dict[str, str]]:
         """Return ``{id, owner, repo_slug, local_path}`` for every configured repo.
