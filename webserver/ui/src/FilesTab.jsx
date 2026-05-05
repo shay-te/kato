@@ -366,6 +366,21 @@ function Node({ node, style, onPickFile, conflictedFiles }) {
   function onActivate() {
     activateTreeNode(node, onPickFile);
   }
+  // Right-click pastes the FULL absolute path of whatever was
+  // clicked — file OR folder — into the chat composer. Folders
+  // can't be left-click-pasted (left-click toggles them open),
+  // and even for files the absolute form is what the operator
+  // usually wants when they're going to ask Claude to operate on
+  // a directory tree from elsewhere on disk. ``preventDefault``
+  // suppresses the browser's native context menu so the operator
+  // doesn't have to dismiss it after the paste lands.
+  function onContextMenu(event) {
+    event.preventDefault();
+    if (typeof onPickFile !== 'function') { return; }
+    const absolutePath = String(node.data?.path || '').trim();
+    if (!absolutePath) { return; }
+    onPickFile(absolutePath);
+  }
   const isConflicted = !isFolder
     && conflictedFiles
     && conflictedFiles.size > 0
@@ -383,12 +398,24 @@ function Node({ node, style, onPickFile, conflictedFiles }) {
   } else {
     iconName = 'folder';
   }
+  // Tooltip: spell out left- vs right-click semantics so the
+  // right-click affordance is discoverable. Conflict tooltip wins
+  // when set since it's the more urgent signal.
+  let tooltip;
+  if (isConflicted) {
+    tooltip = 'Merge conflict — needs resolution';
+  } else if (isFolder) {
+    tooltip = 'Click to expand · right-click to paste this folder’s path into the chat';
+  } else {
+    tooltip = 'Click to paste the relative path · right-click to paste the absolute path';
+  }
   return (
     <div
       className={rowClass}
       style={style}
       onClick={onActivate}
-      title={isConflicted ? 'Merge conflict — needs resolution' : undefined}
+      onContextMenu={onContextMenu}
+      title={tooltip}
     >
       <span className="tree-row-icon"><Icon name={iconName} /></span>
       <span className="tree-row-name">{node.data.name}</span>
