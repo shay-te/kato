@@ -100,6 +100,44 @@ export async function syncTaskRepositories(taskId) {
   }
 }
 
+// List every repository in kato's inventory (the chooser source for
+// "+ Add repository"). The picker filters out repos already on the
+// task UI-side so the same payload can power other chooser UIs.
+export async function fetchInventoryRepositories() {
+  try {
+    const response = await fetch('/api/repositories');
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return { ok: false, error: body.error || response.statusText };
+    }
+    return { ok: true, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+// Tag the task with ``kato:repo:<id>`` and clone the repo into the
+// workspace. Atomic from the operator's perspective: one click,
+// one toast, both halves done.
+export async function addTaskRepository(taskId, repositoryId) {
+  if (!taskId) { return { ok: false, error: 'no task id' }; }
+  if (!repositoryId) { return { ok: false, error: 'no repository id' }; }
+  try {
+    const response = await fetch(
+      `/api/sessions/${encodeURIComponent(taskId)}/add-repository`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ repository_id: repositoryId }),
+      },
+    );
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
 export async function finishTask(taskId) {
   if (!taskId) { return { ok: false, error: 'no task id' }; }
   try {

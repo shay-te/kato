@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Tree } from 'react-arborist';
 import { fetchFileTree, syncTaskRepositories } from './api.js';
+import AddRepositoryModal from './components/AddRepositoryModal.jsx';
 import Icon from './components/Icon.jsx';
 import { useChatComposer } from './contexts/ChatComposerContext.jsx';
 import { toast } from './stores/toastStore.js';
@@ -36,6 +37,7 @@ export default function FilesTab({
   // when either fires.
   const [syncTick, setSyncTick] = useState(0);
   const [syncing, setSyncing] = useState(false);
+  const [addModalOpen, setAddModalOpen] = useState(false);
   const inFlightRef = useRef(false);
   const containerRef = useRef(null);
   const filterInputRef = useRef(null);
@@ -180,8 +182,34 @@ export default function FilesTab({
     if (result.ok) { setSyncTick((n) => n + 1); }
   }
 
+  // Tracks repos already in the workspace so the "+ Add repository"
+  // picker filters them out — same source the file tree uses, so no
+  // extra fetch needed.
+  const attachedRepoIds = useMemo(() => {
+    const set = new Set();
+    for (const tree of state.trees) {
+      const id = String(tree?.repo_id || '').trim();
+      if (id) { set.add(id.toLowerCase()); }
+    }
+    return set;
+  }, [state.trees]);
+
   const toolbar = (
     <span className="files-tab-toolbar">
+      <button
+        type="button"
+        className="files-tab-icon-btn"
+        data-tooltip={
+          'Add repository — pick from kato\'s inventory, tag the '
+          + 'task with ``kato:repo:<id>``, and clone it into the '
+          + 'workspace. Filters out repos already attached.'
+        }
+        aria-label="Add repository to task"
+        onClick={() => setAddModalOpen(true)}
+        disabled={!taskId}
+      >
+        <Icon name="folder-plus" />
+      </button>
       <button
         type="button"
         className="files-tab-icon-btn"
@@ -287,6 +315,19 @@ export default function FilesTab({
       <div className="files-tab-body" ref={containerRef}>
         {body}
       </div>
+      {addModalOpen && (
+        <AddRepositoryModal
+          taskId={taskId}
+          alreadyAttachedIds={attachedRepoIds}
+          onClose={() => setAddModalOpen(false)}
+          onAdded={() => {
+            // Bump the sync tick so the file tree refetches and the
+            // newly-cloned repo appears as a top-level entry without
+            // waiting for the auto-poll.
+            setSyncTick((n) => n + 1);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -39,6 +39,11 @@ def run_git(cwd: str, args: list[str], *, timeout: float) -> str | None:
             ['git', '-C', cwd, *args],
             capture_output=True,
             text=True,
+            # Pin UTF-8 so a smart-quote in a commit message or a
+            # branch name doesn't blow up the stdout reader thread
+            # with ``UnicodeDecodeError`` on Windows (default cp1252).
+            encoding='utf-8',
+            errors='replace',
             check=False,
             timeout=timeout,
         )

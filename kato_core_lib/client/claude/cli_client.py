@@ -196,6 +196,8 @@ class ClaudeCliClient(object):
                 [*self._host_binary_argv(), '--version'],
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
+                errors='replace',
                 check=False,
                 timeout=self.VERSION_PROBE_TIMEOUT_SECONDS,
             )
@@ -847,6 +849,8 @@ class ClaudeCliClient(object):
                 env=env,
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
+                errors='replace',
                 check=False,
                 timeout=self._timeout_seconds,
             )
@@ -1200,6 +1204,8 @@ class ClaudeCliClient(object):
                 env=env,
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
+                errors='replace',
                 check=False,
                 timeout=self.SMOKE_TEST_TIMEOUT_SECONDS,
             )

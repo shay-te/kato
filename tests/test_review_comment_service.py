@@ -61,6 +61,89 @@ class ReviewCommentServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'unknown pull request id: 17'):
             self.service.process_review_comment(comment)
 
+    def test_process_review_comment_refuses_when_agent_made_no_changes(self) -> None:
+        # Regression: previously, when Claude ran but committed
+        # nothing AND left a clean tree, kato still posted "Kato
+        # addressed this review comment and pushed a follow-up
+        # update" and resolved the thread — because the publish
+        # check only verified the BRANCH had commits ahead of base,
+        # not that THIS review-fix added anything. With the
+        # head-sha snapshot + dirty-tree probe, kato now refuses to
+        # publish, posts a clear "no changes were made" reply, and
+        # leaves the thread open for human review.
+        self.service.logger = Mock()
+        # Same SHA before + after means "agent didn't commit
+        # anything"; clean tree means "no dirty edits either".
+        self.repository_service.current_head_sha = Mock(return_value='same-sha')
+        self.repository_service.has_dirty_working_tree = Mock(return_value=False)
+        comment = ReviewComment(
+            pull_request_id='17',
+            comment_id='99',
+            author='reviewer',
+            body='Please add a feature flag check.',
+        )
+        self.state_registry.remember_pull_request_context(
+            {
+                PullRequestFields.REPOSITORY_ID: 'client',
+                PullRequestFields.ID: '17',
+                PullRequestFields.TITLE: 'PROJ-1 Fix bug',
+            },
+            'feature/proj-1/client',
+            session_id='conversation-1',
+            task_id='PROJ-1',
+            task_summary='Fix bug',
+        )
+
+        with self.assertRaisesRegex(RuntimeError, 'produced no commits'):
+            self.service.process_review_comment(comment)
+
+        # The "kato addressed this and pushed" path must NOT run.
+        self.repository_service.publish_review_fix.assert_not_called()
+        # The thread must NOT be resolved — that was the lie.
+        self.repository_service.resolve_review_comment.assert_not_called()
+        # A reply WAS posted, but with the explicit "no changes"
+        # wording so the reviewer knows kato saw the comment and
+        # concluded nothing needed editing.
+        self.repository_service.reply_to_review_comment.assert_called_once()
+        reply_body = self.repository_service.reply_to_review_comment.call_args.args[2]
+        self.assertIn('produced no commits', reply_body)
+        self.assertIn('not been resolved', reply_body)
+
+    def test_process_review_comment_publishes_when_head_moves(self) -> None:
+        # The mirror of the regression: when the agent DID commit
+        # something (HEAD moves between the pre-agent snapshot and
+        # the post-agent check), the publish + reply + resolve path
+        # runs as before. Locks the safe-default behaviour so a
+        # future tweak to the change-detection heuristic can't
+        # accidentally turn off real fixes.
+        self.service.logger = Mock()
+        self.repository_service.current_head_sha = Mock(
+            side_effect=['sha-before', 'sha-after'],
+        )
+        self.repository_service.has_dirty_working_tree = Mock(return_value=False)
+        comment = ReviewComment(
+            pull_request_id='17',
+            comment_id='99',
+            author='reviewer',
+            body='Please rename this variable.',
+        )
+        self.state_registry.remember_pull_request_context(
+            {
+                PullRequestFields.REPOSITORY_ID: 'client',
+                PullRequestFields.ID: '17',
+                PullRequestFields.TITLE: 'PROJ-1 Fix bug',
+            },
+            'feature/proj-1/client',
+            session_id='conversation-1',
+            task_id='PROJ-1',
+            task_summary='Fix bug',
+        )
+
+        self.service.process_review_comment(comment)
+
+        self.repository_service.publish_review_fix.assert_called_once()
+        self.repository_service.resolve_review_comment.assert_called_once()
+
     def test_process_review_comment_processes_fix_and_marks_comment_processed(self) -> None:
         call_order: list[str] = []
         self.service.logger = Mock()

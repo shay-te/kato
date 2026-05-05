@@ -1154,6 +1154,44 @@ class RepositoryService(RepositoryInventoryService):
             f'failed to inspect working tree for repository at {local_path}',
         )
 
+    def current_head_sha(self, repository) -> str:
+        """Return ``HEAD`` SHA of ``repository``'s checkout (empty on failure).
+
+        Public so the review-fix path can snapshot HEAD before
+        spawning the agent and compare after to verify the agent
+        actually committed something. Without this check, an agent
+        that ran but produced no edits would still get its reply
+        posted and the comment resolved if the task branch had any
+        prior commits ahead of base — leading to the "kato pushed a
+        follow-up update" lie even when nothing was pushed.
+        """
+        local_path = str(getattr(repository, 'local_path', '') or '').strip()
+        if not local_path:
+            return ''
+        try:
+            return self._git_stdout(
+                local_path,
+                ['rev-parse', 'HEAD'],
+                f'failed to read HEAD sha for {local_path}',
+            ).strip()
+        except Exception:
+            return ''
+
+    def has_dirty_working_tree(self, repository) -> bool:
+        """True when the repository has uncommitted edits (tracked or untracked).
+
+        Used alongside ``current_head_sha`` for the "did the agent do
+        anything?" check. A clean tree + an unmoved HEAD is the
+        unambiguous "nothing happened" signal.
+        """
+        local_path = str(getattr(repository, 'local_path', '') or '').strip()
+        if not local_path:
+            return False
+        try:
+            return bool(self._working_tree_status(local_path).strip())
+        except Exception:
+            return False
+
     @staticmethod
     def _validation_report_paths_from_status(status_output: str) -> list[str]:
         return validation_report_paths_from_status(status_output)
@@ -1186,6 +1224,8 @@ class RepositoryService(RepositoryInventoryService):
             self._git_command(local_path, ['rev-parse', '--verify', reference]),
             capture_output=True,
             text=True,
+            encoding='utf-8',
+            errors='replace',
             check=False,
             timeout=self.GIT_SUBPROCESS_TIMEOUT_SECONDS,
         )
@@ -1271,6 +1311,8 @@ class RepositoryService(RepositoryInventoryService):
             [*command, *self._git_safe_directory_args(local_path), '-C', local_path, *args],
             capture_output=True,
             text=True,
+            encoding='utf-8',
+            errors='replace',
             check=False,
             env=env,
             timeout=self.GIT_SUBPROCESS_TIMEOUT_SECONDS,
@@ -1303,6 +1345,8 @@ class RepositoryService(RepositoryInventoryService):
                 ['ps', '-eo', 'command='],
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
+                errors='replace',
                 check=False,
                 timeout=RepositoryService.GIT_SUBPROCESS_TIMEOUT_SECONDS,
             )
@@ -1481,6 +1525,8 @@ class RepositoryService(RepositoryInventoryService):
                 RepositoryService._git_command(local_path, command),
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
+                errors='replace',
                 check=False,
                 timeout=RepositoryService.GIT_SUBPROCESS_TIMEOUT_SECONDS,
             )

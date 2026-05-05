@@ -18,6 +18,8 @@ Endpoints:
     POST /api/sessions/<task_id>/permission             — body: {"request_id", "allow", "rationale"}
     POST /api/sessions/<task_id>/adopt-claude-session   — body: {"claude_session_id"}
     POST /api/sessions/<task_id>/sync-repositories      — clone task repos missing from workspace
+    POST /api/sessions/<task_id>/add-repository         — body: {"repository_id"} — tag + clone
+    GET  /api/repositories                              — list inventory repos for the chooser
     GET  /api/claude/sessions                           — list adoptable Claude Code sessions
     GET  /api/status/recent                             — recent kato-process log entries
     GET  /api/status/events                             — SSE: live kato-process log feed
@@ -573,6 +575,49 @@ def _register_http_routes(app: Flask) -> None:
         result = update(task_id) or {}
         if result.get('error') and not result.get('updated'):
             return jsonify(result), 404 if 'no workspace' in str(result['error']) else 500
+        return jsonify(result)
+
+    @app.get('/api/repositories')
+    def list_inventory_repositories():
+        """Return the list of repos kato knows about — the chooser source.
+
+        Drives the Files-tab "+ Add repository" picker. Filtering
+        ("which of these are already on this task") happens UI-side
+        so the same payload can power other chooser UIs without
+        re-fetching per task.
+        """
+        agent_service = app.config.get('AGENT_SERVICE')
+        if agent_service is None:
+            return jsonify({'error': 'agent service not wired'}), 503
+        list_repos = getattr(agent_service, 'list_inventory_repositories', None)
+        if not callable(list_repos):
+            return jsonify({'repositories': []})
+        return jsonify({'repositories': list_repos()})
+
+    @app.post('/api/sessions/<task_id>/add-repository')
+    def add_task_repository(task_id: str):
+        """Tag the task with ``kato:repo:<id>`` and clone the repo.
+
+        Body: ``{"repository_id": "<inventory-id>"}``. Combines the
+        platform-side tag write with the workspace-side clone in one
+        call so the operator can attach a new repo without bouncing
+        through YouTrack / Jira and the Sync button.
+        """
+        agent_service = app.config.get('AGENT_SERVICE')
+        if agent_service is None:
+            return jsonify({'error': 'agent service not wired'}), 503
+        add_repo = getattr(agent_service, 'add_task_repository', None)
+        if not callable(add_repo):
+            return jsonify({'error': 'agent service does not support add-repository'}), 501
+        payload = request.get_json(silent=True) or {}
+        repository_id = str(payload.get('repository_id', '') or '').strip()
+        if not repository_id:
+            return jsonify({'error': 'repository_id is required'}), 400
+        result = add_repo(task_id, repository_id) or {}
+        if result.get('error') and not result.get('added'):
+            err = str(result.get('error', ''))
+            status = 404 if 'not in the kato inventory' in err else 500
+            return jsonify(result), status
         return jsonify(result)
 
     @app.post('/api/sessions/<task_id>/sync-repositories')

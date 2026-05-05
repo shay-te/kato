@@ -5,6 +5,7 @@ import {
   faFile,
   faFolder,
   faFolderOpen,
+  faFolderPlus,
   faPlus,
   faMinus,
   faXmark,
@@ -24,6 +25,10 @@ const ICONS = {
   'file': faFile,
   'folder': faFolder,
   'folder-open': faFolderOpen,
+  // "Add repository" — distinct from the bare ``plus`` (which the
+  // toolbar already uses for "expand all repositories") so the two
+  // affordances don't visually collide on multi-repo tasks.
+  'folder-plus': faFolderPlus,
   'plus': faPlus,
   'minus': faMinus,
   'xmark': faXmark,

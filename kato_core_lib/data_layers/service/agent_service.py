@@ -721,6 +721,129 @@ class AgentService(Service):
             'warnings': warnings_per_repo,
         }
 
+    def list_inventory_repositories(self) -> list[dict[str, str]]:
+        """Return ``{id, owner, repo_slug, local_path}`` for every configured repo.
+
+        Drives the Files-tab "Add repository" picker — the operator
+        sees the full list of repos kato knows about (the repository
+        inventory in the kato config) and picks one to attach to the
+        current task. Repositories already on the task are filtered
+        UI-side rather than here so the same payload can power other
+        chooser UIs in the future.
+        """
+        try:
+            inventory = self._repository_service.repositories
+        except Exception:
+            self.logger.exception('failed to list inventory repositories')
+            return []
+        out: list[dict[str, str]] = []
+        for repo in inventory:
+            out.append({
+                'id': str(getattr(repo, 'id', '') or ''),
+                'owner': str(getattr(repo, 'owner', '') or ''),
+                'repo_slug': str(getattr(repo, 'repo_slug', '') or ''),
+                'local_path': str(getattr(repo, 'local_path', '') or ''),
+            })
+        return out
+
+    def add_task_repository(
+        self, task_id: str, repository_id: str,
+    ) -> dict[str, object]:
+        """Tag the task with ``kato:repo:<id>`` and clone the repo.
+
+        Drives the Files-tab "+ Add repository" flow. Two steps,
+        run in order so a tag failure aborts cloning (the tag is what
+        makes the resolution durable across kato restarts):
+
+          1. ``task_service.add_tag(task_id, 'kato:repo:<id>')`` —
+             idempotent on the platform side; YouTrack / Jira return
+             cleanly if the tag already exists.
+          2. ``sync_task_repositories(task_id)`` — provisions the
+             new repo's clone into the per-task workspace via the
+             same code path the operator's Sync icon uses, so a
+             single missing repo is treated identically to a fresh
+             multi-repo task.
+
+        Returns the sync result enriched with ``tag_added`` so the
+        UI toast can distinguish "already tagged, just cloned" from
+        "tagged AND cloned".
+        """
+        normalized_task_id = str(task_id or '').strip()
+        normalized_repo_id = str(repository_id or '').strip()
+        if not normalized_task_id:
+            return {'added': False, 'error': 'empty task id'}
+        if not normalized_repo_id:
+            return {'added': False, 'error': 'empty repository id'}
+        # Defensive: only allow ids that exist in the inventory.
+        # Without this, a typo or a stale tab could create a kato:repo:
+        # tag pointing at a repo kato doesn't know about — the next
+        # ``resolve_task_repositories`` would then raise on every
+        # scan.
+        try:
+            inventory_ids = {
+                str(getattr(r, 'id', '') or '').lower()
+                for r in self._repository_service.repositories
+            }
+        except Exception:
+            inventory_ids = set()
+        if normalized_repo_id.lower() not in inventory_ids:
+            return {
+                'added': False,
+                'task_id': normalized_task_id,
+                'repository_id': normalized_repo_id,
+                'error': (
+                    f'repository {normalized_repo_id!r} is not in the kato '
+                    f'inventory; add it to the kato config under '
+                    f'``repositories`` first'
+                ),
+            }
+        from kato_core_lib.data_layers.data.fields import RepositoryFields
+        tag_name = f'{RepositoryFields.REPOSITORY_TAG_PREFIX}{normalized_repo_id}'
+        tag_added = False
+        try:
+            # Check whether the tag is already present so the toast can
+            # report "tag already there" rather than implying we did
+            # something we didn't.
+            existing_task = self._lookup_task_for_sync(normalized_task_id)
+            existing_tags = []
+            if existing_task is not None:
+                raw_tags = getattr(existing_task, 'tags', None) or []
+                for entry in raw_tags:
+                    if isinstance(entry, dict):
+                        existing_tags.append(str(entry.get('name', '') or ''))
+                    else:
+                        existing_tags.append(
+                            str(getattr(entry, 'name', entry) or ''),
+                        )
+            already_tagged = any(
+                t.strip().lower() == tag_name.lower()
+                for t in existing_tags
+            )
+            if not already_tagged:
+                self._task_service.add_tag(normalized_task_id, tag_name)
+                tag_added = True
+        except Exception as exc:
+            self.logger.exception(
+                'failed to add tag %s to task %s', tag_name, normalized_task_id,
+            )
+            return {
+                'added': False,
+                'task_id': normalized_task_id,
+                'repository_id': normalized_repo_id,
+                'error': f'failed to tag task: {exc}',
+            }
+        sync_result = self.sync_task_repositories(normalized_task_id)
+        # Compose the response so the UI can show one toast for the
+        # whole flow (tag + clone), not two.
+        return {
+            'added': bool(sync_result.get('synced')) or tag_added,
+            'task_id': normalized_task_id,
+            'repository_id': normalized_repo_id,
+            'tag_added': tag_added,
+            'tag_name': tag_name,
+            'sync': sync_result,
+        }
+
     def sync_task_repositories(self, task_id: str) -> dict[str, object]:
         """Add any task repos missing from the workspace; never remove.
 

@@ -156,6 +156,22 @@ class ReviewCommentService(Service):
         question_only = is_question_only_batch(comments)
         try:
             self._prepare_review_fix_branch(repository, review_context)
+            # Snapshot HEAD before the agent runs so we can verify
+            # the fix actually moved the branch (or left dirty edits)
+            # before claiming we addressed the comment. Without this
+            # check, a no-op agent run on a branch that already has
+            # prior commits ahead of base would still publish (push
+            # is a no-op when remote is up to date), reply "kato
+            # addressed this", and resolve the comment — even though
+            # nothing changed for THIS comment. The classic symptom:
+            # "Done — edits written, kato will publish" reply with
+            # zero commits behind it.
+            head_sha_fn = getattr(
+                self._repository_service, 'current_head_sha', None,
+            )
+            head_before_agent = (
+                head_sha_fn(repository) if callable(head_sha_fn) else ''
+            )
             execution = self._run_review_comments_batch_fix(
                 comments, review_context, mode=('answer' if question_only else 'fix'),
             )
@@ -164,6 +180,22 @@ class ReviewCommentService(Service):
                     comments, repository, review_context, execution,
                 )
             else:
+                # Hard pre-publish gate: if the agent produced no
+                # commits AND the working tree is clean, the fix is a
+                # lie. Post a "no changes were made" reply, do NOT
+                # resolve, and treat it as a failure so the comment
+                # stays open for human review.
+                if not self._review_fix_produced_changes(
+                    repository, head_before_agent,
+                ):
+                    self._publish_review_no_changes(
+                        comments, repository, review_context,
+                    )
+                    raise RuntimeError(
+                        'review-fix agent produced no commits and left a '
+                        'clean working tree; refusing to claim the comment '
+                        'was addressed'
+                    )
                 self._publish_review_comments_batch_fix(
                     comments, repository, review_context, execution,
                 )
@@ -843,6 +875,93 @@ class ReviewCommentService(Service):
             else:
                 self.logger.info(
                     'skipped resolving review comment %s on pull request %s',
+                    comment.comment_id,
+                    comment.pull_request_id,
+                )
+
+    def _review_fix_produced_changes(
+        self, repository, head_before_agent: str,
+    ) -> bool:
+        """True when the agent committed something OR left dirty edits.
+
+        Two ways the agent legitimately moves the needle:
+
+          * It committed directly on the task branch — HEAD moves.
+          * It left edits in the working tree — kato's commit step
+            (``_commit_branch_changes_if_needed``) will pick them
+            up during publish.
+
+        Either is enough to consider the fix real. Both absent means
+        the agent ran but didn't change anything — we refuse to
+        publish in that case so we don't post the misleading "kato
+        addressed this" reply on top of someone else's prior commits.
+
+        Defensively returns ``True`` when the wired repository
+        service doesn't expose the two helpers — preserves the
+        legacy behaviour for any test stub or custom wrapper that
+        hasn't been migrated yet, so the new check never silently
+        breaks an existing flow.
+        """
+        head_sha_fn = getattr(self._repository_service, 'current_head_sha', None)
+        dirty_fn = getattr(self._repository_service, 'has_dirty_working_tree', None)
+        if not callable(head_sha_fn) or not callable(dirty_fn):
+            return True
+        try:
+            head_now = head_sha_fn(repository)
+        except Exception:
+            return True
+        head_changed = bool(head_now and head_now != head_before_agent)
+        if head_changed:
+            return True
+        try:
+            return bool(dirty_fn(repository))
+        except Exception:
+            return True
+
+    def _publish_review_no_changes(
+        self,
+        comments: list[ReviewComment],
+        repository,
+        review_context: ReviewFixContext,
+    ) -> None:
+        """Reply to each comment explaining the fix produced no changes.
+
+        Posts a clearly-worded "no changes were made" body so the
+        reviewer knows kato saw the comment and concluded nothing
+        needed editing — without the misleading "kato addressed
+        this and pushed a follow-up update" template. Does NOT
+        resolve the thread: comments where Claude refused to act
+        belong in front of a human, not silently closed.
+
+        Best-effort per-comment: a 4xx on one reply doesn't stop
+        the next comment's reply.
+        """
+        body = (
+            'Kato ran an agent against this comment but produced no '
+            'commits and left the working tree clean. The comment '
+            'has not been resolved — please review the agent\'s '
+            'reasoning in the planning UI and either re-prompt with '
+            'more context, edit the file directly, or resolve the '
+            'comment yourself if no change is needed.'
+        )
+        for comment in comments:
+            try:
+                self._repository_service.reply_to_review_comment(
+                    repository, comment, body,
+                )
+                self.logger.warning(
+                    'review-fix produced no changes for comment %s on '
+                    'pull request %s; posted "no changes" reply, did '
+                    'NOT resolve',
+                    comment.comment_id,
+                    comment.pull_request_id,
+                )
+            except Exception:
+                self.logger.exception(
+                    'review-fix produced no changes for comment %s on '
+                    'pull request %s, AND posting the "no changes" '
+                    'reply failed; the comment is left in its original '
+                    'state',
                     comment.comment_id,
                     comment.pull_request_id,
                 )

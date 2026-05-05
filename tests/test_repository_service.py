@@ -1490,6 +1490,12 @@ class RepositoryServiceTests(unittest.TestCase):
             ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
             capture_output=True,
             text=True,
+            # UTF-8 + replace pinned across every text-mode subprocess
+            # so a smart-quote in a branch name or a status line
+            # doesn't crash the stdout reader thread on Windows
+            # (default cp1252).
+            encoding='utf-8',
+            errors='replace',
             check=False,
             env=unittest.mock.ANY,
             timeout=RepositoryService.GIT_SUBPROCESS_TIMEOUT_SECONDS,

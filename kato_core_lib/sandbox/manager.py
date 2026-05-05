@@ -348,7 +348,9 @@ def docker_available() -> bool:
     try:
         result = subprocess.run(
             ['docker', 'info', '--format', '{{.ServerVersion}}'],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True,
+            encoding='utf-8', errors='replace',
+            timeout=5,
         )
     except (OSError, subprocess.TimeoutExpired):
         return False
@@ -366,7 +368,9 @@ def gvisor_runtime_available() -> bool:
     try:
         result = subprocess.run(
             ['docker', 'info', '--format', '{{json .Runtimes}}'],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True,
+            encoding='utf-8', errors='replace',
+            timeout=5,
         )
     except (OSError, subprocess.TimeoutExpired):
         return False
@@ -391,7 +395,9 @@ def docker_running_rootless() -> bool:
     try:
         result = subprocess.run(
             ['docker', 'info', '--format', '{{.SecurityOptions}}'],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True,
+            encoding='utf-8', errors='replace',
+            timeout=5,
         )
     except (OSError, subprocess.TimeoutExpired):
         return False
@@ -497,7 +503,9 @@ def image_exists(image_tag: str = SANDBOX_IMAGE_TAG) -> bool:
     try:
         result = subprocess.run(
             ['docker', 'image', 'inspect', image_tag],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True,
+            encoding='utf-8', errors='replace',
+            timeout=10,
         )
     except (OSError, subprocess.TimeoutExpired):
         return False
@@ -519,7 +527,9 @@ def image_built_by_kato(image_tag: str = SANDBOX_IMAGE_TAG) -> bool:
                 '--format', '{{ index .Config.Labels "' + _IMAGE_IDENTITY_LABEL + '" }}',
                 image_tag,
             ],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True,
+            encoding='utf-8', errors='replace',
+            timeout=10,
         )
     except (OSError, subprocess.TimeoutExpired):
         return False
@@ -746,7 +756,9 @@ def build_image(
     cmd.append(str(_SANDBOX_DIR))
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=600,
+            cmd, capture_output=True, text=True,
+            encoding='utf-8', errors='replace',
+            timeout=600,
         )
     except subprocess.TimeoutExpired as exc:
         raise SandboxError(
@@ -810,7 +822,9 @@ def ensure_network(*, logger: logging.Logger | None = None) -> None:
     try:
         result = subprocess.run(
             ['docker', 'network', 'inspect', _SANDBOX_NETWORK_NAME],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True,
+            encoding='utf-8', errors='replace',
+            timeout=5,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise SandboxError(
@@ -828,7 +842,9 @@ def ensure_network(*, logger: logging.Logger | None = None) -> None:
     ]
     try:
         result = subprocess.run(
-            create_cmd, capture_output=True, text=True, timeout=15,
+            create_cmd, capture_output=True, text=True,
+            encoding='utf-8', errors='replace',
+            timeout=15,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise SandboxError(
@@ -1649,7 +1665,9 @@ def _image_digest_strict(image_tag: str) -> str:
                 '--format', '{{ index .Id }}',
                 image_tag,
             ],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True,
+            encoding='utf-8', errors='replace',
+            timeout=5,
         )
     except subprocess.TimeoutExpired as exc:
         raise _DigestLookupError(
@@ -1820,7 +1838,9 @@ def stamp_auth_volume_manifest(
     ]
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=30,
+            cmd, capture_output=True, text=True,
+            encoding='utf-8', errors='replace',
+            timeout=30,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         if logger is not None:
