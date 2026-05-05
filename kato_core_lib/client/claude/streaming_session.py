@@ -48,6 +48,55 @@ def _wait_for_exit(proc: subprocess.Popen, timeout: float) -> bool:
         return False
 
 
+# Hard caps on attached images. Anthropic's API allows up to 20 images
+# per request and ~5MB per image; kato is more conservative because a
+# misclick on a 4K screenshot can blow up the prompt and the per-task
+# token bill. Operator can paste up to 10 screenshots per message.
+_MAX_IMAGES_PER_MESSAGE = 10
+_MAX_IMAGE_BYTES = 5 * 1024 * 1024
+_ALLOWED_IMAGE_MEDIA_TYPES = frozenset({
+    'image/png',
+    'image/jpeg',
+    'image/gif',
+    'image/webp',
+})
+
+
+def _validate_image_blocks(images) -> list[dict]:
+    """Coerce a list of ``{media_type, data}`` dicts into Anthropic image blocks.
+
+    Bad entries are dropped silently rather than raising — a single
+    corrupt paste shouldn't block the whole message. Quietly capping
+    at ``_MAX_IMAGES_PER_MESSAGE`` for the same reason.
+    """
+    if not isinstance(images, list):
+        return []
+    blocks: list[dict] = []
+    for entry in images[:_MAX_IMAGES_PER_MESSAGE]:
+        if not isinstance(entry, dict):
+            continue
+        media_type = str(entry.get('media_type', '') or '').strip().lower()
+        if media_type not in _ALLOWED_IMAGE_MEDIA_TYPES:
+            continue
+        data = str(entry.get('data', '') or '').strip()
+        if not data:
+            continue
+        # Base64 expansion is ~4/3 of the raw byte count. Reject
+        # anything past the cap up-front so we don't write a huge
+        # envelope down the agent's stdin.
+        if len(data) > int(_MAX_IMAGE_BYTES * 4 / 3) + 1024:
+            continue
+        blocks.append({
+            'type': 'image',
+            'source': {
+                'type': 'base64',
+                'media_type': media_type,
+                'data': data,
+            },
+        })
+    return blocks
+
+
 @dataclass
 class SessionEvent(object):
     """One NDJSON event produced by the Claude CLI on stdout."""
@@ -352,28 +401,50 @@ class StreamingClaudeSession(object):
         if initial_prompt:
             self.send_user_message(initial_prompt)
 
-    def send_user_message(self, text: str) -> None:
-        """Push a follow-up user message into the live conversation."""
+    def send_user_message(
+        self,
+        text: str,
+        images: list[dict] | None = None,
+    ) -> None:
+        """Push a follow-up user message into the live conversation.
+
+        ``images`` is an optional list of ``{media_type, data}`` dicts
+        where ``data`` is base64-encoded image bytes. Each one is
+        appended to the message ``content`` array as an Anthropic
+        ``image`` block, so the operator can paste a screenshot into
+        the chat composer and have Claude actually see it.
+
+        Empty text + no images is a no-op (legacy behaviour). Empty
+        text **with** images sends the images alone, which the
+        Anthropic API accepts ("here, look at this").
+        """
         normalized = str(text or '').rstrip('\n')
-        if not normalized:
+        image_blocks = _validate_image_blocks(images or [])
+        if not normalized and not image_blocks:
             return
         if not self.is_alive:
             raise RuntimeError(
                 f'cannot send to streaming session for task {self._task_id}: '
                 'subprocess is not running'
             )
+        content: list[dict] = []
+        if normalized:
+            content.append({'type': 'text', 'text': normalized})
+        content.extend(image_blocks)
         envelope = {
             'type': 'user',
             'message': {
                 'role': 'user',
-                'content': [{'type': 'text', 'text': normalized}],
+                'content': content,
             },
         }
         self._write_stdin_line(envelope)
         self.logger.info(
-            'forwarded user message to claude session for task %s (%s chars)',
+            'forwarded user message to claude session for task %s '
+            '(%s chars, %d image(s))',
             self._task_id,
             len(normalized),
+            len(image_blocks),
         )
 
     def send_permission_response(

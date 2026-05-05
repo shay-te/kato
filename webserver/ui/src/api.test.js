@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test, { afterEach } from 'node:test';
 
-import { adoptClaudeSession, fetchClaudeSessions } from './api.js';
+import { adoptClaudeSession, fetchClaudeSessions, postChatMessage } from './api.js';
 
 
 function _stubFetch(response) {
@@ -106,4 +106,55 @@ test('adoptClaudeSession URL-encodes the task id', async function () {
   });
   await adoptClaudeSession('PROJ/1', 'sess-1');
   assert.equal(calls[0].url, '/api/sessions/PROJ%2F1/adopt-claude-session');
+});
+
+
+test('postChatMessage sends text and images JSON to /messages', async function () {
+  const calls = _stubFetch({
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve({ status: 'delivered', image_count: 1 }),
+  });
+  const result = await postChatMessage('PROJ-1', 'look at this', [
+    { media_type: 'image/png', data: 'AAAA' },
+  ]);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, '/api/sessions/PROJ-1/messages');
+  assert.equal(calls[0].init.method, 'POST');
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.text, 'look at this');
+  assert.equal(body.images.length, 1);
+  assert.equal(body.images[0].media_type, 'image/png');
+  assert.equal(result.ok, true);
+});
+
+test('postChatMessage with no images sends an empty images array', async function () {
+  const calls = _stubFetch({
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve({}),
+  });
+  await postChatMessage('PROJ-1', 'hi');
+  const body = JSON.parse(calls[0].init.body);
+  assert.deepEqual(body.images, []);
+});
+
+test('postChatMessage surfaces backend errors', async function () {
+  _stubFetch({
+    ok: false,
+    status: 400,
+    statusText: 'Bad Request',
+    json: () => Promise.resolve({ error: 'text or images is required' }),
+  });
+  const result = await postChatMessage('PROJ-1', '', []);
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 400);
+  assert.match(result.error, /required/);
+});
+
+test('postChatMessage refuses without a task id', async function () {
+  const calls = _stubFetch({ ok: true, json: () => Promise.resolve({}) });
+  const result = await postChatMessage('', 'hi', []);
+  assert.equal(result.ok, false);
+  assert.equal(calls.length, 0);
 });

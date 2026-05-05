@@ -14,7 +14,7 @@ Endpoints:
     GET  /api/sessions/<task_id>/events                 — SSE: live agent events
     GET  /api/sessions/<task_id>/files                  — repo file tree (Files tab)
     GET  /api/sessions/<task_id>/diff                   — committed + uncommitted diff
-    POST /api/sessions/<task_id>/messages               — body: {"text": "..."}
+    POST /api/sessions/<task_id>/messages               — body: {"text", "images": [{media_type, data}]}
     POST /api/sessions/<task_id>/permission             — body: {"request_id", "allow", "rationale"}
     POST /api/sessions/<task_id>/adopt-claude-session   — body: {"claude_session_id"}
     GET  /api/claude/sessions                           — list adoptable Claude Code sessions
@@ -726,12 +726,21 @@ def _register_post_message_route(app: Flask) -> None:
     def post_message(task_id: str):
         payload = request.get_json(silent=True) or {}
         text = str(payload.get('text', '') or '').strip()
-        if not text:
-            return jsonify({'error': 'text is required'}), 400
+        images = payload.get('images') or []
+        if not isinstance(images, list):
+            images = []
+        if not text and not images:
+            return jsonify({'error': 'text or images is required'}), 400
         manager = app.config['SESSION_MANAGER']
-        delivered = _deliver_to_live_session(manager, task_id, text)
+        delivered = _deliver_to_live_session(manager, task_id, text, images)
         if delivered is not None:
             return delivered
+        # Respawn paths don't currently carry images — kato spawns
+        # via ``--resume`` with the text as the first prompt, and
+        # the session manager builds its own initial-prompt envelope.
+        # Surfacing images here would require reshaping the runner's
+        # ``resume_session_for_chat`` API. Defer until the operator
+        # actually hits the idle-respawn-with-images case.
         return _spawn_or_reject_chat_session(app, task_id, text)
 
 
@@ -771,22 +780,40 @@ def _register_post_permission_route(app: Flask) -> None:
         return jsonify({'status': 'delivered'})
 
 
-def _deliver_to_live_session(manager, task_id: str, text: str):
+def _deliver_to_live_session(
+    manager, task_id: str, text: str, images=None,
+):
     """Send the user message to a live subprocess if one is running.
 
     Returns the Flask response on hit (delivered or 500 on send error)
     or ``None`` to signal the caller to fall through to the respawn
     path. Keeping this branch out of the route handler lets the
     "resume on idle" logic live in its own helper too.
+
+    ``images`` is an optional list of ``{media_type, data}`` dicts —
+    base64-encoded screenshots / pasted images. Forwarded as
+    Anthropic image content blocks alongside the text.
     """
     session = manager.get_session(task_id) if manager is not None else None
     if session is None or not session.is_alive:
         return None
     try:
-        session.send_user_message(text)
+        session.send_user_message(text, images=images or [])
+    except TypeError:
+        # Older session implementation without an ``images`` kwarg —
+        # fall back to text-only so a stale dependency doesn't break
+        # the message path entirely.
+        try:
+            session.send_user_message(text)
+        except Exception as exc:
+            return jsonify({'error': str(exc)}), 500
     except Exception as exc:
         return jsonify({'error': str(exc)}), 500
-    return jsonify({'status': 'delivered', 'text': text})
+    return jsonify({
+        'status': 'delivered',
+        'text': text,
+        'image_count': len(images or []),
+    })
 
 
 def _spawn_or_reject_chat_session(app: Flask, task_id: str, text: str):

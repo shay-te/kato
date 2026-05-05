@@ -159,6 +159,38 @@ export async function adoptClaudeSession(taskId, claudeSessionId) {
   }
 }
 
+// Send a chat message with optional image attachments. The endpoint
+// accepts the same shape as ``postSession(taskId, 'messages', {text})``
+// but with an extra ``images`` array of ``{media_type, data}``
+// entries. Kept separate from ``postSession`` so the call site reads
+// "this is the message-with-attachments path" without having to
+// know the body shape.
+export async function postChatMessage(taskId, text, images = []) {
+  if (!taskId) { return { ok: false, status: 0, error: 'no active task' }; }
+  try {
+    const response = await fetch(
+      `/api/sessions/${encodeURIComponent(taskId)}/messages`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text, images }),
+      },
+    );
+    let resultBody = null;
+    try { resultBody = await response.json(); } catch (_) { /* ignore */ }
+    if (!response.ok) {
+      return {
+        ok: false,
+        status: response.status,
+        error: (resultBody && resultBody.error) || response.statusText,
+      };
+    }
+    return { ok: true, status: response.status, body: resultBody };
+  } catch (err) {
+    return { ok: false, status: 0, error: String(err) };
+  }
+}
+
 export async function postSession(taskId, endpoint, body) {
   if (!taskId) {
     return { ok: false, status: 0, error: 'no active task' };

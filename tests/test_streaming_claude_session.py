@@ -128,6 +128,119 @@ class StreamingClaudeSessionTests(unittest.TestCase):
         fake_proc.force_exit()
         session.terminate(grace_seconds=0.2)
 
+    def test_send_user_message_with_images_appends_image_blocks(self) -> None:
+        fake_proc = _FakeProc()
+        fake_proc._exit_after_close = False
+        with patch(
+            'kato_core_lib.client.claude.streaming_session.subprocess.Popen',
+            return_value=fake_proc,
+        ), patch(
+            'kato_core_lib.client.claude.streaming_session.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ):
+            session = StreamingClaudeSession(task_id='PROJ-1')
+            session.start()
+            session.send_user_message(
+                'look at this',
+                images=[
+                    {'media_type': 'image/png', 'data': 'AAAA'},
+                    {'media_type': 'image/jpeg', 'data': 'BBBB'},
+                ],
+            )
+
+        written_bytes = fake_proc.stdin.write.call_args.args[0]
+        payload = json.loads(written_bytes.decode('utf-8').strip())
+        content = payload['message']['content']
+        # Text comes first, then one block per image.
+        self.assertEqual(content[0]['type'], 'text')
+        self.assertEqual(content[0]['text'], 'look at this')
+        self.assertEqual(content[1]['type'], 'image')
+        self.assertEqual(content[1]['source']['media_type'], 'image/png')
+        self.assertEqual(content[1]['source']['data'], 'AAAA')
+        self.assertEqual(content[2]['type'], 'image')
+        self.assertEqual(content[2]['source']['media_type'], 'image/jpeg')
+
+        fake_proc.force_exit()
+        session.terminate(grace_seconds=0.2)
+
+    def test_send_user_message_with_only_images_skips_text_block(self) -> None:
+        fake_proc = _FakeProc()
+        fake_proc._exit_after_close = False
+        with patch(
+            'kato_core_lib.client.claude.streaming_session.subprocess.Popen',
+            return_value=fake_proc,
+        ), patch(
+            'kato_core_lib.client.claude.streaming_session.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ):
+            session = StreamingClaudeSession(task_id='PROJ-1')
+            session.start()
+            session.send_user_message(
+                '',
+                images=[{'media_type': 'image/png', 'data': 'AAAA'}],
+            )
+
+        written_bytes = fake_proc.stdin.write.call_args.args[0]
+        payload = json.loads(written_bytes.decode('utf-8').strip())
+        content = payload['message']['content']
+        self.assertEqual(len(content), 1)
+        self.assertEqual(content[0]['type'], 'image')
+
+        fake_proc.force_exit()
+        session.terminate(grace_seconds=0.2)
+
+    def test_send_user_message_drops_unsupported_media_types(self) -> None:
+        fake_proc = _FakeProc()
+        fake_proc._exit_after_close = False
+        with patch(
+            'kato_core_lib.client.claude.streaming_session.subprocess.Popen',
+            return_value=fake_proc,
+        ), patch(
+            'kato_core_lib.client.claude.streaming_session.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ):
+            session = StreamingClaudeSession(task_id='PROJ-1')
+            session.start()
+            session.send_user_message(
+                'check',
+                images=[
+                    {'media_type': 'image/tiff', 'data': 'AAAA'},  # unsupported
+                    {'media_type': 'image/png', 'data': 'BBBB'},
+                    {'media_type': '', 'data': 'CCCC'},  # missing
+                    {'media_type': 'image/png', 'data': ''},  # empty data
+                ],
+            )
+
+        written_bytes = fake_proc.stdin.write.call_args.args[0]
+        payload = json.loads(written_bytes.decode('utf-8').strip())
+        content = payload['message']['content']
+        # Text + one valid image survives; the rest are dropped.
+        image_blocks = [b for b in content if b.get('type') == 'image']
+        self.assertEqual(len(image_blocks), 1)
+        self.assertEqual(image_blocks[0]['source']['data'], 'BBBB')
+
+        fake_proc.force_exit()
+        session.terminate(grace_seconds=0.2)
+
+    def test_send_user_message_with_no_text_and_no_images_is_noop(self) -> None:
+        fake_proc = _FakeProc()
+        fake_proc._exit_after_close = False
+        with patch(
+            'kato_core_lib.client.claude.streaming_session.subprocess.Popen',
+            return_value=fake_proc,
+        ), patch(
+            'kato_core_lib.client.claude.streaming_session.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ):
+            session = StreamingClaudeSession(task_id='PROJ-1')
+            session.start()
+            session.send_user_message('', images=[])
+
+        # No write happened — empty payload is silently dropped.
+        fake_proc.stdin.write.assert_not_called()
+        fake_proc.force_exit()
+        session.terminate(grace_seconds=0.2)
+
     def test_send_permission_response_writes_control_response_envelope(self) -> None:
         fake_proc = _FakeProc()
         fake_proc._exit_after_close = False

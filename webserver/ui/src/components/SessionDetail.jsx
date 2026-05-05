@@ -9,7 +9,7 @@ import { CLAUDE_EVENT, CLAUDE_SYSTEM_SUBTYPE } from '../constants/claudeEvent.js
 import { ENTRY_SOURCE } from '../constants/entrySource.js';
 import { useSessionStream, SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
 import { useToolMemory } from '../hooks/useToolMemory.js';
-import { postSession } from '../api.js';
+import { postChatMessage, postSession } from '../api.js';
 
 export default function SessionDetail({
   session,
@@ -39,10 +39,13 @@ export default function SessionDetail({
     );
   }
 
-  async function onSendMessage(text) {
-    stream.appendLocalEvent({ source: ENTRY_SOURCE.LOCAL, kind: BUBBLE_KIND.USER, text });
+  async function onSendMessage(text, images = []) {
+    const userText = images.length > 0
+      ? `${text || ''}${text ? '\n' : ''}(${images.length} image${images.length === 1 ? '' : 's'} attached)`
+      : text;
+    stream.appendLocalEvent({ source: ENTRY_SOURCE.LOCAL, kind: BUBBLE_KIND.USER, text: userText });
     stream.markTurnBusy(true);
-    const result = await postSession(taskId, 'messages', { text });
+    const result = await postChatMessage(taskId, text, images);
     if (result.ok) {
       const status = result.body?.status;
       if (status === 'spawned') {

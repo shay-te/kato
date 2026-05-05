@@ -224,6 +224,105 @@ class WebserverAppTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
+    def test_post_message_forwards_images_to_live_session(self):
+        live = MagicMock()
+        live.is_alive = True
+        send_calls = []
+        def record_send(text, images=None):
+            send_calls.append((text, images))
+        live.send_user_message.side_effect = record_send
+
+        class _LiveManager(_FakeManager):
+            def get_session(self, task_id):
+                return live if task_id == 'PROJ-1' else None
+
+        manager = _LiveManager(records=[
+            _FakeRecord(task_id='PROJ-1', claude_session_id='abc'),
+        ])
+        app = create_app(session_manager=manager)
+        response = app.test_client().post(
+            '/api/sessions/PROJ-1/messages',
+            json={
+                'text': 'look at this',
+                'images': [
+                    {'media_type': 'image/png', 'data': 'AAAA'},
+                ],
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(send_calls), 1)
+        self.assertEqual(send_calls[0][0], 'look at this')
+        self.assertEqual(len(send_calls[0][1]), 1)
+        self.assertEqual(send_calls[0][1][0]['media_type'], 'image/png')
+
+    def test_post_message_accepts_images_only_no_text(self):
+        live = MagicMock()
+        live.is_alive = True
+        send_calls = []
+        def record_send(text, images=None):
+            send_calls.append((text, images))
+        live.send_user_message.side_effect = record_send
+
+        class _LiveManager(_FakeManager):
+            def get_session(self, task_id):
+                return live if task_id == 'PROJ-1' else None
+
+        manager = _LiveManager(records=[
+            _FakeRecord(task_id='PROJ-1', claude_session_id='abc'),
+        ])
+        app = create_app(session_manager=manager)
+        response = app.test_client().post(
+            '/api/sessions/PROJ-1/messages',
+            json={
+                'text': '',
+                'images': [{'media_type': 'image/png', 'data': 'BBBB'}],
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(send_calls[0][0], '')
+        self.assertEqual(len(send_calls[0][1]), 1)
+
+    def test_post_message_400_when_neither_text_nor_images(self):
+        live = MagicMock()
+        live.is_alive = True
+        class _LiveManager(_FakeManager):
+            def get_session(self, task_id):
+                return live if task_id == 'PROJ-1' else None
+        manager = _LiveManager()
+        app = create_app(session_manager=manager)
+        response = app.test_client().post(
+            '/api/sessions/PROJ-1/messages',
+            json={'text': '   ', 'images': []},
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_post_message_falls_back_when_session_lacks_images_kwarg(self):
+        # Older session implementation predating the images kwarg —
+        # the endpoint retries text-only so a stale dependency
+        # doesn't break the message path.
+        live = MagicMock()
+        live.is_alive = True
+        sent = []
+        def picky_send(text, **kwargs):
+            if 'images' in kwargs:
+                raise TypeError("unexpected keyword argument 'images'")
+            sent.append(text)
+        live.send_user_message.side_effect = picky_send
+
+        class _LiveManager(_FakeManager):
+            def get_session(self, task_id):
+                return live if task_id == 'PROJ-1' else None
+        manager = _LiveManager(records=[
+            _FakeRecord(task_id='PROJ-1', claude_session_id='abc'),
+        ])
+        app = create_app(session_manager=manager)
+        response = app.test_client().post(
+            '/api/sessions/PROJ-1/messages',
+            json={'text': 'hi', 'images': [{'media_type': 'image/png', 'data': 'AAAA'}]},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(sent, ['hi'])
+
     def test_adopt_claude_session_endpoint_refuses_when_session_alive(self):
         live = MagicMock()
         live.is_alive = True
