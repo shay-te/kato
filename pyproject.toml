@@ -43,6 +43,7 @@ include = [
   "claude_core_lib*",
   "openhands_core_lib*",
   "agent_core_lib*",
+  "security_scanner_core_lib*",
 ]
 
 [tool.setuptools.package-data]

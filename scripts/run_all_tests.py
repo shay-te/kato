@@ -29,6 +29,7 @@ TEST_ROOTS = [
     'claude_core_lib/claude_core_lib/tests',
     'openhands_core_lib/openhands_core_lib/tests',
     'agent_core_lib/agent_core_lib/tests',
+    'security_scanner_core_lib/security_scanner_core_lib/tests',
 ]
 
 

@@ -351,8 +351,8 @@ class KatoCoreLib(CoreLib):
         we still construct a service (so the wiring stays uniform) but
         with no runners — calls to ``scan_workspace`` short-circuit.
         """
-        from kato_core_lib.data_layers.data.security_finding import Severity
-        from kato_core_lib.data_layers.service.security_scanner_service import (
+        from security_scanner_core_lib.security_scanner_core_lib.security_finding import Severity
+        from security_scanner_core_lib.security_scanner_core_lib.security_scanner_service import (
             RunnerConfig,
             SecurityScannerConfig,
             SecurityScannerService,
@@ -437,7 +437,7 @@ class KatoCoreLib(CoreLib):
         is treated as failing (the operator opted out of the scanner,
         so we cannot guarantee MEDIUM-severity blocks).
         """
-        from kato_core_lib.data_layers.data.security_finding import Severity
+        from security_scanner_core_lib.security_scanner_core_lib.security_finding import Severity
         from kato_core_lib.data_layers.service.repository_approval_service import (
             RuntimePosture,
         )

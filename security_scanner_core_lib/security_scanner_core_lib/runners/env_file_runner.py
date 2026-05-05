@@ -22,11 +22,11 @@ import logging
 import re
 from pathlib import Path
 
-from kato_core_lib.data_layers.data.security_finding import (
+from security_scanner_core_lib.security_scanner_core_lib.security_finding import (
     SecurityFinding,
     Severity,
 )
-from kato_core_lib.data_layers.service.security_scanner_runners._helpers import (
+from security_scanner_core_lib.security_scanner_core_lib.runners._helpers import (
     iter_workspace_files,
     workspace_relative,
 )

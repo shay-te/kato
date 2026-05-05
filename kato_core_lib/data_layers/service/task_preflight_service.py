@@ -420,7 +420,7 @@ class TaskPreflightService(Service):
         No-op when no scanner is wired or no repositories were
         resolved (e.g. inventory-less single-clone setups).
         """
-        from kato_core_lib.data_layers.service.security_scanner_service import (
+        from security_scanner_core_lib.security_scanner_core_lib.security_scanner_service import (
             SecurityScanBlocked,
         )
 
@@ -452,7 +452,7 @@ class TaskPreflightService(Service):
             block_threshold = report.block_threshold
         if block_threshold is None:
             return True
-        from kato_core_lib.data_layers.data.security_finding import ScanReport
+        from security_scanner_core_lib.security_scanner_core_lib.security_finding import ScanReport
         aggregate = ScanReport(
             findings=tuple(merged_findings),
             blocking=any(

@@ -25,18 +25,18 @@ import time
 import unittest
 from pathlib import Path
 
-from kato_core_lib.data_layers.data.security_finding import (
+from security_scanner_core_lib.security_scanner_core_lib.security_finding import (
     ScanReport,
     SecurityFinding,
     Severity,
 )
-from kato_core_lib.data_layers.service.security_scanner_runners import (
+from security_scanner_core_lib.security_scanner_core_lib.runners import (
     env_file_runner,
 )
-from kato_core_lib.data_layers.service.security_scanner_runners._helpers import (
+from security_scanner_core_lib.security_scanner_core_lib.runners._helpers import (
     RunnerUnavailableError,
 )
-from kato_core_lib.data_layers.service.security_scanner_service import (
+from security_scanner_core_lib.security_scanner_core_lib.security_scanner_service import (
     RunnerConfig,
     SecurityScannerConfig,
     SecurityScannerService,

@@ -25,12 +25,12 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
 from typing import Callable
 
-from kato_core_lib.data_layers.data.security_finding import (
+from security_scanner_core_lib.security_scanner_core_lib.security_finding import (
     ScanReport,
     SecurityFinding,
     Severity,
 )
-from kato_core_lib.data_layers.service.security_scanner_runners._helpers import (
+from security_scanner_core_lib.security_scanner_core_lib.runners._helpers import (
     RunnerUnavailableError,
 )
 
@@ -280,7 +280,7 @@ def default_config() -> SecurityScannerConfig:
     ``kato.security_scanner.runners`` in the config file or by
     passing a custom ``SecurityScannerConfig`` to the constructor.
     """
-    from kato_core_lib.data_layers.service.security_scanner_runners import (
+    from security_scanner_core_lib.security_scanner_core_lib.runners import (
         bandit_runner,
         detect_secrets_runner,
         env_file_runner,
