@@ -166,6 +166,7 @@ class ReviewCommentService(Service):
                 review_context.task_id,
                 'done working on mission',
             )
+            _record_review_fix_completed(comments, review_context)
             return [
                 review_fix_result(comment, review_context) for comment in comments
             ]
@@ -848,3 +849,35 @@ class ReviewCommentService(Service):
             task_id,
             review_comment_fixed_comment(comment),
         )
+
+
+def _record_review_fix_completed(comments, review_context) -> None:
+    """Append a review_fix_completed audit record. Best-effort.
+
+    The review-fix flow doesn't open a new PR — it pushes to the
+    existing branch and replies to the comment(s). We record the
+    pull-request id alongside the task / repo / branch so the
+    operator can correlate ``./kato history`` entries with the PR
+    review thread.
+    """
+    from kato_core_lib.helpers.audit_log_utils import (
+        EVENT_REVIEW_FIX_COMPLETED,
+        OUTCOME_SUCCESS,
+        append_audit_event,
+    )
+
+    pr_ids = sorted({
+        str(getattr(comment, 'pull_request_id', '') or '')
+        for comment in comments
+        if getattr(comment, 'pull_request_id', '')
+    })
+    append_audit_event(
+        event=EVENT_REVIEW_FIX_COMPLETED,
+        task_id=str(getattr(review_context, 'task_id', '') or ''),
+        ticket_summary=str(getattr(review_context, 'task_summary', '') or ''),
+        repositories=[str(getattr(review_context, 'repository_id', '') or '')]
+        if getattr(review_context, 'repository_id', '') else [],
+        branch=str(getattr(review_context, 'branch_name', '') or ''),
+        pr_url=', '.join(pr_ids),
+        outcome=OUTCOME_SUCCESS,
+    )

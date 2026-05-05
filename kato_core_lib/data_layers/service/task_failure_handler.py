@@ -54,6 +54,7 @@ class TaskFailureHandler(Service):
             task,
             error,
             f'Kato agent could not safely process this task: {error}',
+            prepared_task=prepared_task,
         )
 
     def handle_started_task_failure(
@@ -68,6 +69,7 @@ class TaskFailureHandler(Service):
             error,
             f'Kato agent stopped working on this task: {error}',
             move_to_open=True,
+            prepared_task=prepared_task,
         )
 
     def handle_testing_failure(
@@ -163,6 +165,7 @@ class TaskFailureHandler(Service):
         comment: str,
         *,
         move_to_open: bool = False,
+        prepared_task: PreparedTaskContext | None = None,
     ) -> None:
         self._log_task_step(task.id, 'recording failure comment: %s', comment)
         self._add_task_comment(
@@ -184,6 +187,7 @@ class TaskFailureHandler(Service):
             failure_args=(task.id,),
             default=False,
         )
+        _record_task_failed(task, error, prepared_task)
 
     def _restore_task_repositories(
         self,
@@ -246,3 +250,37 @@ class TaskFailureHandler(Service):
 
     def _log_task_step(self, task_id: str, message: str, *args) -> None:
         log_mission_step(self.logger, task_id, message, *args)
+
+
+def _record_task_failed(task, error, prepared_task) -> None:
+    """Append a task_failed audit record. Best-effort.
+
+    Funneled here so every failure path that reaches
+    ``_report_task_failure`` produces exactly one audit row. Skip
+    paths (definition-too-thin, ignored-repo) deliberately do not
+    pass through this funnel — those are kato refusals, not failures.
+    """
+    from kato_core_lib.helpers.audit_log_utils import (
+        EVENT_TASK_FAILED,
+        OUTCOME_FAILURE,
+        append_audit_event,
+    )
+
+    repositories = []
+    branch = ''
+    if prepared_task is not None:
+        repositories = [
+            str(getattr(repo, 'id', '') or '')
+            for repo in (getattr(prepared_task, 'repositories', None) or [])
+        ]
+        branch = str(getattr(prepared_task, 'branch_name', '') or '')
+    append_audit_event(
+        event=EVENT_TASK_FAILED,
+        task_id=str(getattr(task, 'id', '') or ''),
+        ticket_summary=str(getattr(task, 'summary', '') or ''),
+        repositories=[r for r in repositories if r],
+        branch=branch,
+        pr_url='',
+        outcome=OUTCOME_FAILURE,
+        error=str(error)[:500] if error else '',
+    )

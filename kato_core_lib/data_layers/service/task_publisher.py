@@ -489,6 +489,7 @@ class TaskPublisher(Service):
         self._state_registry.mark_task_processed(task.id, pull_requests)
         self._notify_task_ready_for_review(task, pull_requests)
         self._log_task_step(task.id, 'workflow completed successfully')
+        _record_task_completed(task, prepared_task, pull_requests)
         return {
             Task.id.key: task.id,
             StatusFields.STATUS: StatusFields.READY_FOR_REVIEW,
@@ -558,3 +559,40 @@ class TaskPublisher(Service):
         # Defensive: the loop either returns or raises.
         assert last_exc is not None  # pragma: no cover
         raise last_exc
+
+
+def _record_task_completed(task, prepared_task, pull_requests) -> None:
+    """Append a task_completed audit-log record. Best-effort.
+
+    Audit failures must never bubble up — observability never blocks
+    the publish path.
+    """
+    from kato_core_lib.helpers.audit_log_utils import (
+        EVENT_TASK_COMPLETED,
+        OUTCOME_SUCCESS,
+        append_audit_event,
+    )
+
+    repositories = []
+    branch = ''
+    if prepared_task is not None:
+        repositories = [
+            str(getattr(repo, 'id', '') or '')
+            for repo in (getattr(prepared_task, 'repositories', None) or [])
+        ]
+        branch = str(getattr(prepared_task, 'branch_name', '') or '')
+    pr_urls = []
+    for entry in pull_requests or []:
+        if isinstance(entry, dict):
+            url = entry.get(PullRequestFields.URL, '') or ''
+            if url:
+                pr_urls.append(str(url))
+    append_audit_event(
+        event=EVENT_TASK_COMPLETED,
+        task_id=str(getattr(task, 'id', '') or ''),
+        ticket_summary=str(getattr(task, 'summary', '') or ''),
+        repositories=[r for r in repositories if r],
+        branch=branch,
+        pr_url=', '.join(pr_urls),
+        outcome=OUTCOME_SUCCESS,
+    )

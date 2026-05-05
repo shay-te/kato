@@ -133,6 +133,12 @@ _TARGETS: dict[str, tuple[str, bool, list[str]]] = {
         True,
         ['scripts/approve_repository.py', 'list'],
     ),
+    'history': (
+        'Show recent kato task activity. '
+        'Options: --last N, --task <id>, --failed',
+        True,
+        ['scripts/audit_log_query.py'],
+    ),
 }
 
 
