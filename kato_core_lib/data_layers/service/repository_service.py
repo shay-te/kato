@@ -443,6 +443,120 @@ class RepositoryService(RepositoryInventoryService):
             return False
         return ahead_remote > 0
 
+    def pull_workspace_clone(
+        self,
+        repository,
+        branch_name: str,
+    ) -> dict[str, object]:
+        """Fast-forward the per-task workspace clone of ``repository`` to
+        ``origin/<branch_name>``.
+
+        Operator-driven. Drives the planning UI's ``Pull`` button —
+        symmetric to ``Push``. Refuses cleanly (does NOT auto-stash)
+        when the working tree is dirty: pulling would risk colliding
+        with in-progress agent edits, and the safer move is to let
+        the operator commit / discard those first. ``update_source``
+        is the place where we DO auto-stash, because it's targeting
+        the operator's own checkout, not kato's working clone.
+
+        Returns a status dict with one of:
+            {'pulled': True,  'updated': bool, 'commits_pulled': int}
+            {'pulled': False, 'reason': '<short>', 'detail': '<long>'}
+        """
+        local_path = str(getattr(repository, 'local_path', '') or '').strip()
+        normalized_branch = (branch_name or '').strip()
+        if not local_path:
+            return {
+                'pulled': False, 'reason': 'no_local_path',
+                'detail': f'repository {repository.id} has no local_path set',
+            }
+        if not (Path(local_path) / '.git').is_dir():
+            return {
+                'pulled': False, 'reason': 'not_a_git_repo',
+                'detail': f'workspace clone for {repository.id} at '
+                          f'{local_path} is not a git repository',
+            }
+        if not normalized_branch:
+            return {
+                'pulled': False, 'reason': 'no_branch',
+                'detail': f'no task branch for {repository.id}',
+            }
+        try:
+            current = self._current_branch(local_path)
+        except Exception as exc:
+            return {
+                'pulled': False, 'reason': 'branch_lookup_failed',
+                'detail': str(exc),
+            }
+        # The branch the workspace is on must be the task branch we
+        # are pulling into; otherwise a fast-forward would land in
+        # the wrong place. Operator-fixable (checkout the task
+        # branch first), so we surface a clear reason.
+        if current != normalized_branch:
+            return {
+                'pulled': False, 'reason': 'wrong_branch_checked_out',
+                'detail': f'workspace is on {current!r}, expected '
+                          f'{normalized_branch!r} — checkout first',
+            }
+        try:
+            dirty = bool(self._working_tree_status(local_path).strip())
+        except Exception as exc:
+            return {
+                'pulled': False, 'reason': 'status_check_failed',
+                'detail': str(exc),
+            }
+        if dirty:
+            return {
+                'pulled': False, 'reason': 'dirty_working_tree',
+                'detail': 'workspace has uncommitted changes; commit or '
+                          'discard them before pulling',
+            }
+        try:
+            self._run_git(
+                local_path, ['fetch', 'origin', '--prune'],
+                f'failed to fetch origin for {repository.id} workspace',
+                repository,
+            )
+        except RuntimeError as exc:
+            return {'pulled': False, 'reason': 'fetch_failed', 'detail': str(exc)}
+        remote_reference = f'origin/{normalized_branch}'
+        try:
+            remote_exists = self._git_reference_exists(local_path, remote_reference)
+        except Exception as exc:
+            return {
+                'pulled': False, 'reason': 'remote_lookup_failed',
+                'detail': str(exc),
+            }
+        if not remote_exists:
+            # No remote branch to pull from. Common right after a
+            # fresh task before anything was pushed; not an error,
+            # just a no-op.
+            return {
+                'pulled': True, 'updated': False, 'commits_pulled': 0,
+                'reason': 'remote_branch_missing',
+            }
+        try:
+            _ahead, behind = self._left_right_commit_counts(
+                local_path, normalized_branch, remote_reference,
+            )
+        except Exception as exc:
+            return {
+                'pulled': False, 'reason': 'commit_count_failed',
+                'detail': str(exc),
+            }
+        if behind == 0:
+            return {'pulled': True, 'updated': False, 'commits_pulled': 0}
+        try:
+            self._run_git(
+                local_path,
+                ['pull', '--ff-only', 'origin', normalized_branch],
+                f'failed to fast-forward {repository.id} workspace from origin',
+                repository,
+            )
+        except RuntimeError as exc:
+            return {'pulled': False, 'reason': 'pull_failed', 'detail': str(exc)}
+        return {'pulled': True, 'updated': True, 'commits_pulled': int(behind)}
+
     def resolve_review_comment(self, repository, comment) -> None:
         self._publication_service.resolve_review_comment(repository, comment)
 

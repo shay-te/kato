@@ -1857,6 +1857,81 @@ class AgentService(Service):
             'failed_repositories': failed_repositories,
         }
 
+    def pull_task(self, task_id: str) -> dict[str, object]:
+        """Fast-forward every workspace clone of the task from its remote.
+
+        Drives the planning UI's ``Pull`` button — symmetric to the
+        ``Push`` button. Per-repo outcomes are surfaced so the
+        operator sees exactly what happened (pulled, already in
+        sync, refused for dirty tree, etc.) without having to look
+        at logs.
+
+        Returns:
+            {
+              'task_id': <id>,
+              'pulled': bool,                # any repo actually moved
+              'pulled_repositories': [{repository_id, commits_pulled}],
+              'skipped_repositories': [{repository_id, reason, detail}],
+              'failed_repositories':  [{repository_id, error}],
+            }
+        """
+        normalized = str(task_id or '').strip()
+        if not normalized:
+            return {'pulled': False, 'task_id': task_id, 'error': 'empty task id'}
+        repos, branch_name, _task = self._resolve_publish_context(normalized)
+        if not repos:
+            return {
+                'pulled': False, 'task_id': normalized,
+                'error': 'no workspace context for this task',
+            }
+        pulled_repositories: list[dict[str, object]] = []
+        skipped_repositories: list[dict[str, str]] = []
+        failed_repositories: list[dict[str, str]] = []
+        for repository in repos:
+            repo_branch = self._repository_service.build_branch_name(_task, repository)
+            try:
+                outcome = self._repository_service.pull_workspace_clone(
+                    repository, repo_branch,
+                )
+            except Exception as exc:
+                self.logger.exception(
+                    'on-demand pull for task %s failed in repository %s',
+                    normalized, repository.id,
+                )
+                failed_repositories.append(
+                    {'repository_id': repository.id, 'error': str(exc)},
+                )
+                continue
+            if outcome.get('pulled') and outcome.get('updated'):
+                pulled_repositories.append({
+                    'repository_id': repository.id,
+                    'commits_pulled': int(outcome.get('commits_pulled') or 0),
+                })
+                self.logger.info(
+                    'on-demand pull for task %s: fast-forwarded %s by %s commit(s)',
+                    normalized, repository.id, outcome.get('commits_pulled'),
+                )
+            elif outcome.get('pulled'):
+                # ``pulled=True, updated=False`` — already in sync.
+                skipped_repositories.append({
+                    'repository_id': repository.id,
+                    'reason': outcome.get('reason') or 'already_in_sync',
+                    'detail': outcome.get('detail') or 'nothing to pull',
+                })
+            else:
+                skipped_repositories.append({
+                    'repository_id': repository.id,
+                    'reason': outcome.get('reason') or 'unknown',
+                    'detail': outcome.get('detail') or '',
+                })
+        return {
+            'task_id': normalized,
+            'pulled': bool(pulled_repositories),
+            'pulled_repositories': pulled_repositories,
+            'skipped_repositories': skipped_repositories,
+            'failed_repositories': failed_repositories,
+        }
+
     def create_pull_request_for_task(self, task_id: str) -> dict[str, object]:
         """Open a PR for every repo of the task that doesn't already have one.
 

@@ -82,13 +82,16 @@ from kato_webserver.git_diff_utils import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 KATO_REPO_ROOT = REPO_ROOT.parent
 
-# Browser-driven SSE stream cadence. The follow loop now blocks on
-# ``StreamingClaudeSession.wait_for_new_events`` and unblocks the
-# instant a new event lands — so we only "wake up" on the heartbeat
-# interval when the agent is genuinely idle. The old 100ms busy-poll
-# was the dominant cause of perceived stream lag (up to one tick of
-# latency per event AND a full ``recent_events()`` list-copy per
-# tick on long sessions).
+# Browser-driven SSE stream cadence. The follow loop polls the
+# session for new events and yields them as they arrive. We tried a
+# Condition-based blocking wait once — it tested clean locally but
+# stalled live-update delivery in production (events arrived only
+# after a tab switch forced a fresh SSE connection). Until we can
+# reproduce that reliably the safe primitive is a tight poll: 100ms
+# of latency is invisible to humans, and the per-tick cost is now
+# bounded by ``events_after`` (slice-read of only the new tail)
+# rather than the old ``recent_events()`` full-list copy.
+_SSE_POLL_INTERVAL_SECONDS = 0.1
 # Periodic SSE comment that keeps proxies / load balancers from idling
 # the connection out and lets the browser detect server crashes.
 _SSE_HEARTBEAT_SECONDS = 15.0
@@ -106,17 +109,57 @@ def _record_cwd_or_none(manager, task_id: str) -> str | None:
 
 
 def _task_repository_ids(workspace_manager, task_id: str) -> list[str]:
-    """Repository ids the workspace was provisioned with (in order)."""
+    """Repository ids the workspace was provisioned with (in order).
+
+    Falls back to a filesystem scan of ``<workspaces_root>/<task>/``
+    when the workspace manager record is gone — which happens after
+    the publish flow finishes and the in-memory record is cleared,
+    even though the on-disk clones are still right there. Without
+    this fallback the Files / Changes tabs would 404 immediately
+    after pushing (the symptom Shubham hit), forcing the operator
+    to reload to see the diff.
+    """
     if workspace_manager is None:
         return []
     try:
         record = workspace_manager.get(task_id)
     except Exception:
+        record = None
+    if record is not None:
+        repository_ids = getattr(record, 'repository_ids', []) or []
+        if repository_ids:
+            return [str(repo_id) for repo_id in repository_ids if repo_id]
+    return _enumerate_repo_ids_from_disk(workspace_manager, task_id)
+
+
+def _enumerate_repo_ids_from_disk(workspace_manager, task_id: str) -> list[str]:
+    """List ``<repo>/.git`` directories under the task's workspace path.
+
+    Used as the fallback for ``_task_repository_ids`` when the
+    in-memory workspace record has been cleaned up but the clones
+    are still on disk (post-publish, after a kato restart that lost
+    its in-memory state, etc.).
+    """
+    if workspace_manager is None or not task_id:
         return []
-    if record is None:
+    try:
+        task_path = workspace_manager.workspace_path(task_id)
+    except Exception:
         return []
-    repository_ids = getattr(record, 'repository_ids', []) or []
-    return [str(repo_id) for repo_id in repository_ids if repo_id]
+    if not task_path.is_dir():
+        return []
+    discovered: list[str] = []
+    try:
+        entries = sorted(task_path.iterdir())
+    except OSError:
+        return []
+    for repo_dir in entries:
+        if not repo_dir.is_dir():
+            continue
+        if not (repo_dir / '.git').exists():
+            continue
+        discovered.append(repo_dir.name)
+    return discovered
 
 
 def _repository_cwd(
@@ -461,7 +504,18 @@ def _register_http_routes(app: Flask) -> None:
                 })
         cwd = _record_cwd_or_none(manager, task_id)
         if cwd is None:
-            return jsonify({'error': 'session not found'}), 404
+            # Workspace clones already gone (task forgotten / never
+            # provisioned). Return an empty payload with 200 instead
+            # of 404 so the Files tab shows "no repositories" rather
+            # than the scary "Error: session not found" the operator
+            # sees right after kato finishes a publish.
+            return jsonify({
+                'repository_ids': [],
+                'trees': [],
+                'cwd': '',
+                'tree': [],
+                'conflicted_files': [],
+            })
         legacy_tree = tracked_file_tree(cwd)
         legacy_conflicts = conflicted_paths(cwd)
         return jsonify({
@@ -505,7 +559,18 @@ def _register_http_routes(app: Flask) -> None:
                 })
         cwd = _record_cwd_or_none(manager, task_id)
         if cwd is None:
-            return jsonify({'error': 'session not found'}), 404
+            # Same rationale as the Files endpoint above: prefer an
+            # empty diff payload over a 404 so the Changes tab shows
+            # "No repositories for this task." instead of an error.
+            return jsonify({
+                'repository_ids': [],
+                'diffs': [],
+                'workspace_status': workspace_status,
+                'repo_id': '',
+                'base': '',
+                'head': '',
+                'diff': '',
+            })
         single = _compute_repo_diff('', cwd, task_id=task_id)
         return jsonify({
             'repository_ids': [],
@@ -621,6 +686,21 @@ def _register_http_routes(app: Flask) -> None:
             return jsonify({'error': 'agent service does not support push'}), 501
         result = push(task_id) or {}
         if result.get('error') and not result.get('pushed'):
+            return jsonify(result), 404 if 'no workspace' in str(result['error']) else 500
+        return jsonify(result)
+
+    @app.post('/api/sessions/<task_id>/pull')
+    def pull_task(task_id: str):
+        """Operator-triggered fast-forward pull from the planning UI's
+        ``Pull`` button. Symmetric to ``/push``."""
+        agent_service = app.config.get('AGENT_SERVICE')
+        if agent_service is None:
+            return jsonify({'error': 'agent service not wired'}), 503
+        pull = getattr(agent_service, 'pull_task', None)
+        if not callable(pull):
+            return jsonify({'error': 'agent service does not support pull'}), 501
+        result = pull(task_id) or {}
+        if result.get('error') and not result.get('pulled'):
             return jsonify(result), 404 if 'no workspace' in str(result['error']) else 500
         return jsonify(result)
 
@@ -1434,38 +1514,34 @@ def _replay_session_backlog(session):
 def _follow_live_session(session, start_index: int = 0):
     """Tail new events as they arrive, plus a periodic SSE heartbeat.
 
-    Uses ``wait_for_new_events`` so the loop blocks until either an
-    event is appended or the heartbeat interval elapses. This removes
-    the 100ms-of-latency / full-list-copy-per-tick churn the old busy
-    poll caused — events now reach the browser within microseconds of
-    the session publishing them.
-
-    Heartbeat-only wakeups (no new events) emit an SSE comment frame
-    so proxies don't idle the connection. When the session has gone
-    away (``alive=False`` and no further events drained) we emit the
-    terminal ``session_closed`` frame and return.
+    Polls the session every ``_SSE_POLL_INTERVAL_SECONDS`` and yields
+    the new tail via ``events_after`` (cheap O(new) slice instead of
+    the old O(total) snapshot copy). 100ms of latency is invisible
+    to humans and the per-tick cost is bounded — see the comment on
+    ``_SSE_POLL_INTERVAL_SECONDS`` for why we are not doing the
+    Condition-based blocking wait this used to do.
     """
     last_index = max(0, int(start_index or 0))
+    last_heartbeat = time.monotonic()
     while True:
-        new_events, last_index, alive = session.wait_for_new_events(
-            last_index, _SSE_HEARTBEAT_SECONDS,
-        )
+        new_events, last_index = session.events_after(last_index)
         for event in new_events:
             yield _sse_message(SSE_EVENT_SESSION_EVENT, {'event': event.to_dict()})
-        if not alive:
-            # Drain any final events that landed between the wakeup
-            # and is_alive flipping; ``events_after`` is cheap when
-            # the slice is empty.
+
+        if not session.is_alive:
+            # Drain any final events that landed between the slice
+            # and ``is_alive`` flipping, then close.
             tail, last_index = session.events_after(last_index)
             for event in tail:
                 yield _sse_message(SSE_EVENT_SESSION_EVENT, {'event': event.to_dict()})
             yield _sse_message(SSE_EVENT_SESSION_CLOSED, {})
             return
-        if not new_events:
-            # ``wait_for_new_events`` returned because the heartbeat
-            # interval expired with no new activity — keep the
-            # connection warm for proxies / load balancers.
+
+        if time.monotonic() - last_heartbeat >= _SSE_HEARTBEAT_SECONDS:
             yield ': ping\n\n'
+            last_heartbeat = time.monotonic()
+
+        time.sleep(_SSE_POLL_INTERVAL_SECONDS)
 
 
 def _sse_message(event_type: str, data: dict[str, Any]) -> str:

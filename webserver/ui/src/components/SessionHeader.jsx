@@ -60,6 +60,21 @@ export default function SessionHeader({
     }
   }
 
+  async function onPull() {
+    if (taskPublish.pullBusy) { return; }
+    const result = await taskPublish.pull();
+    if (typeof taskPublish.refresh === 'function') {
+      taskPublish.refresh();
+    }
+    const { title, message, kind } = formatPullResult(result);
+    toast.show({
+      kind,
+      title,
+      message,
+      durationMs: kind === 'error' ? 12000 : 7000,
+    });
+  }
+
   async function onUpdateSource() {
     if (updatingSource) { return; }
     setUpdatingSource(true);
@@ -158,107 +173,139 @@ export default function SessionHeader({
   // error the operator can act on.
   const pushDisabled = !taskPublish.hasChangesToPush || taskPublish.pushBusy;
   const pushTitle = pushTitleFor(taskPublish);
+  // Pull is enabled whenever there's a workspace to pull into. We
+  // can't cheaply pre-check "is the remote ahead?" without a fetch
+  // (and operators would then complain the button is mysteriously
+  // disabled), so we let the click run; the toast surfaces the
+  // outcome — already in sync, dirty tree refusal, or
+  // commits-pulled count.
+  const pullDisabled = !taskPublish.hasWorkspace || taskPublish.pullBusy;
+  const pullTitle = pullTitleFor(taskPublish);
   const prDisabled = !taskPublish.hasWorkspace
     || taskPublish.hasPullRequest
     || taskPublish.prBusy;
   const prTitle = prTitleFor(taskPublish);
+  // Per AGENTS.md "no logic inside JSX": every label / element /
+  // condition that the return statement consumes is precomputed
+  // here so the JSX below is pure rendering.
+  const taskSummary = session.task_summary || '';
+  const pushButtonLabel = taskPublish.pushBusy ? 'Pushing…' : 'Push';
+  const pullButtonLabel = taskPublish.pullBusy ? 'Pulling…' : 'Pull';
+  const prButtonLabel = taskPublish.prBusy ? 'Opening PR…' : 'Pull request';
+  const updateSourceLabel = updatingSource ? 'Updating source…' : 'Update source';
+  const finishLabel = finishing ? 'Finishing…' : 'Done';
+  const stopOrResumeButton = isResumable ? (
+    <button
+      id="session-resume"
+      type="button"
+      data-tooltip="Resume the Claude session — kato will respawn the subprocess and ask Claude to pick up where it left off."
+      onClick={onResumeClick}
+      disabled={resuming || typeof onResume !== 'function'}
+    >
+      {resumeLabel}
+    </button>
+  ) : (
+    <button
+      id="session-stop"
+      type="button"
+      data-tooltip="Stop the live Claude subprocess for this task. The chat history is preserved; you can resume from this header when the subprocess has ended."
+      onClick={onStop}
+      disabled={stopping || baseStatus !== TAB_STATUS.ACTIVE}
+    >
+      {stopLabel}
+    </button>
+  );
+  const adoptModal = adoptModalOpen ? (
+    <AdoptSessionModal
+      taskId={session.task_id}
+      onClose={() => setAdoptModalOpen(false)}
+      onAdopted={(adopted) => {
+        setAdoptModalOpen(false);
+        if (typeof onSessionAdopted === 'function') {
+          onSessionAdopted(adopted);
+        }
+      }}
+    />
+  ) : null;
 
   return (
     <>
       <header id="session-header">
-        <span
-          id="session-status-dot"
-          className={dotClass}
-          title={tabStatusTitle(baseStatus, needsAttention)}
-        />
-        <strong id="session-task-id">{session.task_id}</strong>
-        <span id="session-task-summary">{session.task_summary || ''}</span>
-        <span
-          id="session-claude-status"
-          className={`claude-status claude-status-${claudeStatus.kind}`}
-          title={claudeStatus.title}
-        >
-          Claude: {claudeStatus.label}
-        </span>
-        {approvePushButton}
-        <button
-          id="session-push"
-          type="button"
-          data-tooltip={pushTitle}
-          onClick={taskPublish.push}
-          disabled={pushDisabled}
-        >
-          {taskPublish.pushBusy ? 'Pushing…' : 'Push'}
-        </button>
-        <button
-          id="session-pull-request"
-          type="button"
-          data-tooltip={prTitle}
-          onClick={taskPublish.createPullRequest}
-          disabled={prDisabled}
-        >
-          {taskPublish.prBusy ? 'Opening PR…' : 'Pull request'}
-        </button>
-        <button
-          id="session-update-source"
-          type="button"
-          data-tooltip="Update source — push the task branch, then for each repo under REPOSITORY_ROOT_PATH: fetch, checkout the task branch, and pull. Lets you test the task on your live running system. Refuses if a source repo has uncommitted changes."
-          onClick={onUpdateSource}
-          disabled={updatingSource}
-        >
-          {updatingSource ? 'Updating source…' : 'Update source'}
-        </button>
-        <button
-          id="session-finish"
-          type="button"
-          data-tooltip="Done — push pending changes, open a PR if missing, and move the ticket to In Review. Same flow Claude can trigger by emitting <KATO_TASK_DONE>."
-          onClick={onFinish}
-          disabled={finishing}
-        >
-          {finishing ? 'Finishing…' : 'Done'}
-        </button>
-        <button
-          id="session-adopt-claude"
-          type="button"
-          data-tooltip="Adopt an existing Claude Code session for this task — e.g. a chat you already started in the VS Code extension. Kato will --resume that session on the next agent spawn instead of starting fresh."
-          onClick={() => setAdoptModalOpen(true)}
-        >
-          Adopt session
-        </button>
-        {isResumable ? (
-          <button
-            id="session-resume"
-            type="button"
-            data-tooltip="Resume the Claude session — kato will respawn the subprocess and ask Claude to pick up where it left off."
-            onClick={onResumeClick}
-            disabled={resuming || typeof onResume !== 'function'}
+        <div className="session-header-info">
+          <span
+            id="session-status-dot"
+            className={dotClass}
+            title={tabStatusTitle(baseStatus, needsAttention)}
+          />
+          <strong id="session-task-id">{session.task_id}</strong>
+          <span id="session-task-summary">{taskSummary}</span>
+        </div>
+        <div className="session-header-actions">
+          <span
+            id="session-claude-status"
+            className={`claude-status claude-status-${claudeStatus.kind}`}
+            title={claudeStatus.title}
           >
-            {resumeLabel}
-          </button>
-        ) : (
+            Claude: {claudeStatus.label}
+          </span>
+          {approvePushButton}
           <button
-            id="session-stop"
+            id="session-push"
             type="button"
-            data-tooltip="Stop the live Claude subprocess for this task. The chat history is preserved; you can resume from this header when the subprocess has ended."
-            onClick={onStop}
-            disabled={stopping || baseStatus !== TAB_STATUS.ACTIVE}
+            data-tooltip={pushTitle}
+            onClick={taskPublish.push}
+            disabled={pushDisabled}
           >
-            {stopLabel}
+            {pushButtonLabel}
           </button>
-        )}
+          <button
+            id="session-pull"
+            type="button"
+            data-tooltip={pullTitle}
+            onClick={onPull}
+            disabled={pullDisabled}
+          >
+            {pullButtonLabel}
+          </button>
+          <button
+            id="session-pull-request"
+            type="button"
+            data-tooltip={prTitle}
+            onClick={taskPublish.createPullRequest}
+            disabled={prDisabled}
+          >
+            {prButtonLabel}
+          </button>
+          <button
+            id="session-update-source"
+            type="button"
+            data-tooltip="Update source — push the task branch, then for each repo under REPOSITORY_ROOT_PATH: fetch, checkout the task branch, and pull. Lets you test the task on your live running system. Refuses if a source repo has uncommitted changes."
+            onClick={onUpdateSource}
+            disabled={updatingSource}
+          >
+            {updateSourceLabel}
+          </button>
+          <button
+            id="session-finish"
+            type="button"
+            data-tooltip="Done — push pending changes, open a PR if missing, and move the ticket to In Review. Same flow Claude can trigger by emitting <KATO_TASK_DONE>."
+            onClick={onFinish}
+            disabled={finishing}
+          >
+            {finishLabel}
+          </button>
+          <button
+            id="session-adopt-claude"
+            type="button"
+            data-tooltip="Adopt an existing Claude Code session for this task — e.g. a chat you already started in the VS Code extension. Kato will --resume that session on the next agent spawn instead of starting fresh."
+            onClick={() => setAdoptModalOpen(true)}
+          >
+            Adopt session
+          </button>
+          {stopOrResumeButton}
+        </div>
       </header>
-      {adoptModalOpen && (
-        <AdoptSessionModal
-          taskId={session.task_id}
-          onClose={() => setAdoptModalOpen(false)}
-          onAdopted={(adopted) => {
-            setAdoptModalOpen(false);
-            if (typeof onSessionAdopted === 'function') {
-              onSessionAdopted(adopted);
-            }
-          }}
-        />
-      )}
+      {adoptModal}
     </>
   );
 }
@@ -383,6 +430,68 @@ function formatFinishResult(result) {
       : 'Done — partial completion',
     message: lines.join('\n'),
   };
+}
+
+function pullTitleFor(state) {
+  if (state.pullBusy) { return 'Pull in progress…'; }
+  if (!state.hasWorkspace) {
+    return 'Nothing to pull — kato has not provisioned a workspace for this task yet.';
+  }
+  return 'Fast-forward the workspace clone(s) from origin. Refuses if the working tree is dirty.';
+}
+
+// Render the per-repo outcome of POST /pull into a toast title +
+// message + kind. Mirrors ``formatUpdateSourceResult`` — every
+// repo gets a line so the operator never has to wonder whether the
+// click did anything.
+function formatPullResult(result) {
+  const body = (result && result.body) || {};
+  if (!result || !result.ok) {
+    return {
+      title: 'Pull failed',
+      kind: 'error',
+      message: (result && result.error) || body.error || 'unknown error',
+    };
+  }
+  const lines = [];
+  const pulled = body.pulled_repositories || [];
+  const skipped = body.skipped_repositories || [];
+  const failed = body.failed_repositories || [];
+  for (const entry of pulled) {
+    const count = Number(entry.commits_pulled || 0);
+    lines.push(`✓ ${entry.repository_id}: pulled ${count} commit(s)`);
+  }
+  for (const entry of skipped) {
+    const reason = entry.reason || 'no_change';
+    const detail = entry.detail || '';
+    if (reason === 'already_in_sync' || reason === 'remote_branch_missing') {
+      lines.push(`• ${entry.repository_id}: nothing to pull`);
+    } else if (reason === 'dirty_working_tree') {
+      lines.push(`⚠ ${entry.repository_id}: ${detail || 'dirty working tree'}`);
+    } else {
+      lines.push(`• ${entry.repository_id}: ${detail || reason}`);
+    }
+  }
+  for (const entry of failed) {
+    lines.push(`✗ ${entry.repository_id}: ${entry.error}`);
+  }
+  if (!pulled.length && !skipped.length && !failed.length) {
+    lines.push('• no repositories in workspace');
+  }
+  let kind;
+  if (failed.length > 0) {
+    kind = pulled.length > 0 ? 'warning' : 'error';
+  } else if (skipped.some((s) => s.reason === 'dirty_working_tree')) {
+    kind = pulled.length > 0 ? 'warning' : 'warning';
+  } else if (!pulled.length) {
+    kind = 'success';
+  } else {
+    kind = 'success';
+  }
+  const title = pulled.length
+    ? (failed.length ? 'Pull partially completed' : 'Pulled')
+    : 'Nothing to pull';
+  return { title, kind, message: lines.join('\n') };
 }
 
 function pushTitleFor(state) {

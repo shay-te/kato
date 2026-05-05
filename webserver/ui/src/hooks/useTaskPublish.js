@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   createTaskPullRequest,
   fetchTaskPublishState,
+  pullTask,
   pushTask,
 } from '../api.js';
 
@@ -21,6 +22,7 @@ export function useTaskPublish(taskId) {
   const [hasPullRequest, setHasPullRequest] = useState(false);
   const [pullRequestUrls, setPullRequestUrls] = useState([]);
   const [pushBusy, setPushBusy] = useState(false);
+  const [pullBusy, setPullBusy] = useState(false);
   const [prBusy, setPrBusy] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -68,6 +70,15 @@ export function useTaskPublish(taskId) {
     return result;
   }, [taskId, pushBusy, refresh]);
 
+  const pull = useCallback(async () => {
+    if (!taskId || pullBusy) { return null; }
+    setPullBusy(true);
+    const result = await pullTask(taskId);
+    setPullBusy(false);
+    refresh();
+    return result;
+  }, [taskId, pullBusy, refresh]);
+
   const createPullRequest = useCallback(async () => {
     if (!taskId || prBusy) { return null; }
     setPrBusy(true);
@@ -83,8 +94,10 @@ export function useTaskPublish(taskId) {
     hasPullRequest,
     pullRequestUrls,
     pushBusy,
+    pullBusy,
     prBusy,
     push,
+    pull,
     createPullRequest,
     refresh,
   };
