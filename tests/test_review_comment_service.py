@@ -170,6 +170,82 @@ class ReviewCommentServiceTests(unittest.TestCase):
             self.state_registry.is_review_comment_processed('client', '17', 'comment:99')
         )
 
+    def test_provision_workspace_clone_clones_every_task_repo_not_just_comment_repo(self) -> None:
+        # Regression: when a multi-repo task gets a review comment on
+        # a fresh machine, kato used to clone only the repo the
+        # comment was posted on. The agent then opened on a workspace
+        # missing the other repos the task touches and couldn't make
+        # consistent cross-repo fixes. The provisioner now resolves
+        # the FULL task repo set and clones every one of them, while
+        # still returning the comment's repo (re-pointed at its
+        # workspace clone) so the rest of the review-fix flow lands
+        # on the right branch.
+        from kato_core_lib.data_layers.service.review_comment_service import (
+            ReviewFixContext,
+        )
+
+        # Three-repo task; comment is on repo 'admin-client'.
+        repo_client = types.SimpleNamespace(id='admin-client', local_path='/inv/admin-client')
+        repo_backend = types.SimpleNamespace(id='admin-backend', local_path='/inv/admin-backend')
+        repo_core = types.SimpleNamespace(id='core-lib', local_path='/inv/core-lib')
+        all_task_repos = [repo_client, repo_backend, repo_core]
+        self.repository_service.resolve_task_repositories = Mock(
+            return_value=all_task_repos,
+        )
+        # Stub task lookup so the provisioner picks the real Task —
+        # which carries tags/description that resolve_task_repositories
+        # uses on the production path.
+        task = build_task(
+            task_id='PROJ-9',
+            summary='Cross-repo refactor',
+            description='Touches admin-client, admin-backend, core-lib',
+        )
+        self.task_service.get_review_tasks = Mock(return_value=[task])
+
+        # Fake workspace manager: records what it was asked to create.
+        from pathlib import Path
+        workspace_manager = Mock()
+        workspace_manager.repository_path = Mock(
+            side_effect=lambda task_id, repo_id: Path(f'/wks/{task_id}/{repo_id}'),
+        )
+        # Stub ensure_clone on repository_service since
+        # provision_task_workspace_clones routes the actual clone
+        # through there (and we don't want to hit real git in tests).
+        self.repository_service.ensure_clone = Mock()
+
+        service = ReviewCommentService(
+            self.task_service,
+            self.implementation_service,
+            self.repository_service,
+            self.state_registry,
+            workspace_manager=workspace_manager,
+        )
+
+        review_context = ReviewFixContext(
+            task_id='PROJ-9',
+            task_summary='Cross-repo refactor',
+            repository_id='admin-client',
+            branch_name='feature/PROJ-9',
+            session_id='conv-1',
+            pull_request_title='PROJ-9 Cross-repo refactor',
+        )
+
+        result = service._provision_workspace_clone(repo_client, review_context)
+
+        # All three repos passed to workspace_manager.create — the
+        # operator-visible "what folders does this task own?" list.
+        workspace_manager.create.assert_called_once()
+        kwargs = workspace_manager.create.call_args.kwargs
+        self.assertEqual(kwargs['task_id'], 'PROJ-9')
+        self.assertEqual(
+            sorted(kwargs['repository_ids']),
+            ['admin-backend', 'admin-client', 'core-lib'],
+        )
+        # Returned repo is the comment's repo, re-pointed at the
+        # workspace clone (so the fix branch / push lands there).
+        self.assertEqual(result.id, 'admin-client')
+        self.assertEqual(result.local_path, '/wks/PROJ-9/admin-client')
+
     def test_process_review_comment_treats_resolution_conflict_as_non_fatal(self) -> None:
         self.service.logger = Mock()
         self.repository_service.resolve_review_comment.side_effect = HTTPError(

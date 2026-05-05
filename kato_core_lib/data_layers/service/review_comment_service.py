@@ -664,6 +664,16 @@ class ReviewCommentService(Service):
         flops between tasks). The original ``repository`` (the operator's
         shared checkout) is never mutated.
 
+        Clones EVERY repo the task touches — not just the repo the
+        comment was posted on. The original implementation cloned only
+        the comment's repo, which broke multi-repo tasks: on a fresh
+        machine, Claude opened on a workspace that only contained
+        repo A, but the task spans repos A/B/C, and the fix usually
+        needs cross-repo context. Mirrors the initial-task path
+        (``TaskPreflightService._prepare_task_start`` →
+        ``_resolve_task_repositories`` →
+        ``_provision_workspace_clones``).
+
         Falls through to the original ``repository`` when no workspace
         manager is configured — preserves the legacy single-repo
         behaviour for setups that never opted into workspaces.
@@ -671,23 +681,51 @@ class ReviewCommentService(Service):
         if self._workspace_manager is None:
             return repository
         try:
-            from types import SimpleNamespace
-
             from kato_core_lib.data_layers.service.workspace_manager import (
                 provision_task_workspace_clones,
             )
 
-            task = SimpleNamespace(
-                id=review_context.task_id,
-                summary=review_context.task_summary,
-            )
+            task = self._task_for_workspace_clone(review_context, repository)
+            try:
+                task_repositories = self._repository_service.resolve_task_repositories(task)
+            except Exception:
+                # Tag/description resolution couldn't pin the repo set
+                # — degrade gracefully to "just the comment's repo" so
+                # the fix still proceeds. Logged so the operator can
+                # see why cross-repo context might be missing.
+                self.logger.exception(
+                    'failed to resolve task repositories for review-fix on '
+                    'task %s; cloning only the comment repo (%s) — multi-repo '
+                    'context will be missing from the agent workspace',
+                    review_context.task_id,
+                    review_context.repository_id,
+                )
+                task_repositories = [repository]
+            else:
+                # ``resolve_task_repositories`` may return repos that
+                # don't include the comment's repo (e.g. the comment
+                # is on a repo not tagged on the task). Always clone
+                # the comment repo as well so the fix branch has a
+                # workspace to land on.
+                if not any(
+                    getattr(r, 'id', '') == review_context.repository_id
+                    for r in task_repositories
+                ):
+                    task_repositories = [*task_repositories, repository]
             provisioned = provision_task_workspace_clones(
                 self._workspace_manager,
                 self._repository_service,
                 task,
-                [repository],
+                task_repositories,
             )
-            return provisioned[0] if provisioned else repository
+            # Return the comment's repo from the provisioned list so
+            # the rest of the review-fix flow (branch checkout, push,
+            # etc.) operates on its workspace clone, not the operator's
+            # shared checkout.
+            for clone in provisioned or []:
+                if getattr(clone, 'id', '') == review_context.repository_id:
+                    return clone
+            return repository
         except Exception:
             self.logger.exception(
                 'failed to provision per-task workspace clone for review-fix '
@@ -695,6 +733,34 @@ class ReviewCommentService(Service):
                 review_context.task_id,
             )
             return repository
+
+    def _task_for_workspace_clone(self, review_context, repository):
+        """Return a Task-like object good enough for resolve_task_repositories.
+
+        Prefers the live ticket-platform task (carries tags +
+        description, which drive the multi-repo resolution) and falls
+        back to a SimpleNamespace built from ``review_context`` if the
+        platform lookup fails. The fallback only resolves correctly via
+        the tag path or the single-repo short-circuit — multi-repo
+        description matching needs the full description string.
+        """
+        try:
+            for task in self._task_service.get_review_tasks():
+                if str(getattr(task, 'id', '') or '').strip() == review_context.task_id:
+                    return task
+        except Exception:
+            self.logger.exception(
+                'failed to load review tasks for workspace-clone resolution '
+                '(task %s); using stub task',
+                review_context.task_id,
+            )
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            id=review_context.task_id,
+            summary=review_context.task_summary,
+            description='',
+            tags=[],
+        )
 
     def _review_repository_local_path(
         self,
