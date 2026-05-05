@@ -183,6 +183,39 @@ def review_repository_context(comment: ReviewComment) -> str:
     return f' in repository {repository_id}' if repository_id else ''
 
 
+def review_comments_batch_text(comments) -> str:
+    """Render a numbered list of review comments for a batched prompt.
+
+    Used when kato addresses multiple comments on the same PR in one
+    agent spawn instead of one spawn per comment. Each entry shows
+    the localization (file/line, when known) on its own line above
+    the body so the agent can jump straight to the right spot. The
+    body is intentionally **not** wrapped in untrusted-content
+    markers here; the caller wraps each body before calling this
+    helper so the wrapping stays visible at the call site.
+    """
+    if not comments:
+        return ''
+    lines: list[str] = []
+    for index, comment in enumerate(comments, start=1):
+        author = normalized_text(getattr(comment, 'author', '')) or 'reviewer'
+        body = str(getattr(comment, 'body', '') or '').strip()
+        localization = review_comment_location_text(comment)
+        header = f'{index}.'
+        if localization:
+            # Indent localization lines so the entry block is visually
+            # distinct from the body — easier for the agent to parse
+            # which file/line ties to which comment body.
+            indented = '\n'.join(f'   {line}' for line in localization.split('\n'))
+            lines.append(f'{header} {indented.lstrip()}')
+        else:
+            lines.append(f'{header} (no file/line — PR-level comment)')
+        lines.append(f'   Comment by {author}: {body}')
+        lines.append('')
+    # Trailing blank line collapses cleanly when the caller joins.
+    return '\n'.join(lines).rstrip() + '\n'
+
+
 def review_comment_location_text(comment: ReviewComment) -> str:
     """Render the inline-comment file/line/commit hint for the prompt.
 

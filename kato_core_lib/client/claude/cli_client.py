@@ -318,8 +318,45 @@ class ClaudeCliClient(object):
         task_id: str = '',
         task_summary: str = '',
     ) -> dict[str, str | bool]:
-        prompt = self._build_review_prompt(comment, branch_name)
-        cwd = self._review_comment_cwd(comment)
+        return self.fix_review_comments(
+            [comment],
+            branch_name,
+            session_id=session_id,
+            task_id=task_id,
+            task_summary=task_summary,
+        )
+
+    def fix_review_comments(
+        self,
+        comments: list[ReviewComment],
+        branch_name: str,
+        session_id: str = '',
+        task_id: str = '',
+        task_summary: str = '',
+    ) -> dict[str, str | bool]:
+        """Address multiple PR review comments in a single Claude spawn.
+
+        ``comments`` must all belong to the same pull request — the
+        caller (``ReviewCommentService``) guarantees grouping by
+        (repo, pr) before calling. ``branch_name`` is the existing
+        task branch to commit on; one push covers every comment in
+        the batch.
+
+        For ``len(comments) == 1`` the prompt is identical to the
+        legacy single-comment prompt (``_build_review_prompt``) so
+        existing single-comment paths regress nothing. For 2+ the
+        builder enumerates each comment with its file/line
+        localization and asks the agent to address them in one
+        coherent change-set.
+        """
+        if not comments:
+            raise ValueError('fix_review_comments requires at least one comment')
+        if len(comments) == 1:
+            single = comments[0]
+            prompt = self._build_review_prompt(single, branch_name)
+        else:
+            prompt = self._build_review_comments_batch_prompt(comments, branch_name)
+        cwd = self._review_comment_cwd(comments[0])
         result = self._run_prompt_result(
             prompt=prompt,
             cwd=cwd,
@@ -328,16 +365,16 @@ class ClaudeCliClient(object):
             branch_name=branch_name,
             default_commit_message='Address review comments',
             log_label=agent_prompt_utils.review_conversation_title(
-                comment,
+                comments[0],
                 task_id=task_id,
                 task_summary=task_summary,
             ),
             task_id=task_id,
         )
         self.logger.info(
-            'review fix finished for pull request %s comment %s with success=%s',
-            comment.pull_request_id,
-            comment.comment_id,
+            'review fix finished for pull request %s with %d comment(s) success=%s',
+            comments[0].pull_request_id,
+            len(comments),
             result[ImplementationFields.SUCCESS],
         )
         return result
@@ -410,6 +447,79 @@ class ClaudeCliClient(object):
             f'{self._completion_instructions_text(testing=True)}\n'
             'If no dedicated tests are defined or available, do not invent new ones; '
             'just report that no testing was defined and stop after saving any change.\n'
+        )
+
+    @classmethod
+    def _build_review_comments_batch_prompt(
+        cls,
+        comments: list[ReviewComment],
+        branch_name: str,
+    ) -> str:
+        """Render a batched prompt for 2+ comments on one PR.
+
+        Architecture:
+        - Single header naming the branch + repository.
+        - Numbered list of comments, each with localization (file/
+          line/commit) and the comment body wrapped as untrusted
+          content (same OG9a wrapping the singular prompt does).
+        - Optional shared "review context" section (resolved-comment
+          history) drawn from the first comment's ``ALL_COMMENTS``
+          since every comment in the batch lives on the same PR.
+        - Same execution guardrails + completion contract as the
+          singular prompt — kato just changes "address one comment"
+          to "address all the listed comments in one change-set."
+        """
+        first = comments[0]
+        repository_context = agent_prompt_utils.review_repository_context(first)
+        # Wrap each body individually so each entry in the numbered
+        # list still has its own untrusted-content marker — the
+        # agent must treat every comment as data, not directive.
+        wrapped_comments: list = []
+        for comment in comments:
+            wrapped_body = wrap_untrusted_workspace_content(
+                comment.body,
+                source_path=f'pr-comment:{comment.author}',
+            )
+            shadow = ReviewComment(
+                pull_request_id=comment.pull_request_id,
+                comment_id=comment.comment_id,
+                author=comment.author,
+                body=wrapped_body,
+                file_path=comment.file_path,
+                line_number=comment.line_number,
+                line_type=comment.line_type,
+                commit_sha=comment.commit_sha,
+            )
+            wrapped_comments.append(shadow)
+        batch_text = agent_prompt_utils.review_comments_batch_text(wrapped_comments)
+        # Per-PR review context comes from any one comment — they
+        # share the thread. Skip when empty so we don't emit blank
+        # marker tags.
+        review_context = agent_prompt_utils.review_comment_context_text(first)
+        wrapped_review_context = (
+            wrap_untrusted_workspace_content(
+                review_context,
+                source_path='pr-comment-thread',
+            )
+            if review_context
+            else ''
+        )
+        return (
+            f'Address the following pull request review comments on branch '
+            f'{branch_name}{repository_context}.\n\n'
+            f'{batch_text}'
+            f'{wrapped_review_context}\n\n'
+            f'{cls._execution_guardrails_text()}\n\n'
+            'Address every comment listed above in a single coherent '
+            'change-set.\n'
+            'For each comment:\n'
+            '- Make the smallest possible change needed to address it.\n'
+            '- Prefer editing only the exact lines or blocks that need to change.\n'
+            '- Do not change indentation, formatting, or unrelated lines '
+            'when a narrow edit is enough.\n'
+            'Do not report success until all intended changes are saved in '
+            'the repository worktree.\n'
+            'When you are done, stop. Do not produce any extra commentary.\n'
         )
 
     @classmethod

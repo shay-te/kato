@@ -1433,7 +1433,9 @@ class AgentServiceTests(unittest.TestCase):
             }
         ]
 
-        with self.assertRaisesRegex(RuntimeError, 'failed to address comment 99'):
+        with self.assertRaisesRegex(
+            RuntimeError, 'failed to address review comment batch \\(99\\)',
+        ):
             self.service.handle_pull_request_comment(build_review_comment_payload())
 
     def test_get_new_pull_request_comments_returns_unprocessed_comments_with_context(self) -> None:

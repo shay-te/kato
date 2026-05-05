@@ -111,3 +111,23 @@ class AgentClient(Protocol):
         produced the implementation, for context continuity. Same return
         shape as :meth:`implement_task`.
         """
+
+    def fix_review_comments(
+        self,
+        comments: list[ReviewComment],
+        branch_name: str,
+        session_id: str = '',
+        task_id: str = '',
+        task_summary: str = '',
+    ) -> dict[str, str | bool]:
+        """Address multiple PR review comments on the existing task branch.
+
+        ``comments`` must all belong to the same pull request. The
+        backend addresses every comment in a single agent spawn,
+        producing one commit and one push for the whole batch.
+
+        Same return shape as :meth:`fix_review_comment`. The
+        single-comment case is equivalent to calling
+        ``fix_review_comment`` directly — backends use the legacy
+        prompt for ``len(comments) == 1`` to avoid regressions.
+        """

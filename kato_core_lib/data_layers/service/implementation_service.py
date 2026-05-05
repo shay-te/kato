@@ -64,3 +64,41 @@ class ImplementationService(Service):
             task_id=task_id,
             task_summary=task_summary,
         )
+
+    def fix_review_comments(
+        self,
+        comments,
+        branch_name: str,
+        session_id: str = '',
+        task_id: str = '',
+        task_summary: str = '',
+    ) -> dict[str, str | bool]:
+        """Address every comment in ``comments`` via the agent client.
+
+        Newer clients (Claude, OpenHands) implement ``fix_review_comments``
+        natively and address the whole batch in one agent spawn — that's
+        the efficiency win. Older clients (or test stubs) that only
+        expose ``fix_review_comment`` get auto-fanned-out: one client call
+        per comment, results merged. Behaviour-preserving back-compat for
+        anyone who wrote a custom agent client against the old API.
+        """
+        if hasattr(self._client, 'fix_review_comments'):
+            return self._client.fix_review_comments(
+                comments,
+                branch_name,
+                session_id=session_id,
+                task_id=task_id,
+                task_summary=task_summary,
+            )
+        # Fallback: iterate. Loses the batching efficiency, but
+        # preserves correctness — every comment still gets addressed.
+        last_result: dict[str, str | bool] = {}
+        for comment in comments:
+            last_result = self._client.fix_review_comment(
+                comment,
+                branch_name,
+                session_id,
+                task_id=task_id,
+                task_summary=task_summary,
+            )
+        return last_result

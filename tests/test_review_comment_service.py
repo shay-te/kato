@@ -131,7 +131,7 @@ class ReviewCommentServiceTests(unittest.TestCase):
                 '%s>> Mission %s: %s%s',
                 _CYAN,
                 'PROJ-1',
-                'starting pull request 17 (comment 99)',
+                'starting pull request 17 (1 comment(s) in batch)',
                 _RESET,
             ),
         )
@@ -144,7 +144,7 @@ class ReviewCommentServiceTests(unittest.TestCase):
             (
                 c
                 for c in self.service.logger.info.call_args_list
-                if c.args and 'completed pull request 17 (comment 99)' in str(c.args)
+                if c.args and 'completed pull request 17 (1 comment(s) in batch)' in str(c.args)
             ),
             None,
         )
@@ -155,7 +155,7 @@ class ReviewCommentServiceTests(unittest.TestCase):
                 '%s<< Mission %s: %s%s',
                 _CYAN,
                 'PROJ-1',
-                'completed pull request 17 (comment 99)',
+                'completed pull request 17 (1 comment(s) in batch)',
                 _RESET,
             ),
         )

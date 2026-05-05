@@ -427,6 +427,11 @@ class AgentService(Service):
     def process_review_comment(self, comment: ReviewComment) -> dict[str, str]:
         return self._review_comment_service.process_review_comment(comment)
 
+    def process_review_comment_batch(
+        self, comments: list[ReviewComment],
+    ) -> list[dict[str, str]]:
+        return self._review_comment_service.process_review_comment_batch(comments)
+
     def task_id_for_review_comment(self, comment: ReviewComment) -> str | None:
         return self._review_comment_service.task_id_for_comment(comment)
 

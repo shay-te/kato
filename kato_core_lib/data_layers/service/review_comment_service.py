@@ -86,7 +86,52 @@ class ReviewCommentService(Service):
         return self.process_review_comment(comment)
 
     def process_review_comment(self, comment: ReviewComment) -> dict[str, str]:
-        review_context = self._review_fix_context(comment)
+        results = self.process_review_comment_batch([comment])
+        if not results:
+            raise RuntimeError(
+                f'review comment {comment.comment_id} produced no result'
+            )
+        return results[0]
+
+    def process_review_comment_batch(
+        self, comments: list[ReviewComment],
+    ) -> list[dict[str, str]]:
+        """Address every comment in ``comments`` in a single agent spawn.
+
+        Caller (``process_assigned_tasks._dispatch_review_comments``)
+        groups comments by ``(repository_id, pull_request_id)`` so
+        every entry shares the workspace clone, the branch, and the
+        Claude session. Cuts startup cost from O(N) sessions to O(1)
+        and gives the agent the full set of related comments at once
+        — same rename across three files becomes one edit, not three
+        racing edits.
+
+        All-or-nothing on the implementation: one agent spawn,
+        success means every comment is addressed in a single
+        commit-and-push. Per-comment for the publication side: each
+        comment gets its own platform reply, resolution, and
+        state-registry mark — so the operator can see in the PR
+        which specific comments were addressed.
+        """
+        if not comments:
+            return []
+        review_context = self._review_fix_context(comments[0])
+        # Defensive: every comment must share the (repo, pr) shape.
+        # The dispatcher already groups; this guards against a
+        # misuse that would otherwise corrupt the batch by trying
+        # to push two PRs' worth of fixes onto one branch.
+        for comment in comments[1:]:
+            ctx = self._review_fix_context(comment)
+            if (
+                ctx.repository_id != review_context.repository_id
+                or comment.pull_request_id != comments[0].pull_request_id
+            ):
+                raise ValueError(
+                    'process_review_comment_batch requires every comment '
+                    'to share the same (repository_id, pull_request_id); '
+                    f'got {comment.comment_id} on '
+                    f'{ctx.repository_id}/{comment.pull_request_id}'
+                )
         log_mission_start(
             self.logger,
             review_context.task_id,
@@ -95,36 +140,44 @@ class ReviewCommentService(Service):
         log_review_comment_start(
             self.logger,
             review_context.task_id,
-            'starting pull request %s (comment %s)',
-            comment.pull_request_id,
-            comment.comment_id,
+            'starting pull request %s (%d comment(s) in batch)',
+            comments[0].pull_request_id,
+            len(comments),
         )
         repository = self._repository_service.get_repository(review_context.repository_id)
         repository = self._provision_workspace_clone(repository, review_context)
         try:
             self._prepare_review_fix_branch(repository, review_context)
-            execution = self._run_review_comment_fix(comment, review_context)
-            self._publish_review_comment_fix(comment, repository, review_context, execution)
-            self._complete_review_fix(comment, review_context)
+            execution = self._run_review_comments_batch_fix(comments, review_context)
+            self._publish_review_comments_batch_fix(
+                comments, repository, review_context, execution,
+            )
+            for comment in comments:
+                self._complete_review_fix(comment, review_context)
             log_review_comment_end(
                 self.logger,
                 review_context.task_id,
-                'completed pull request %s (comment %s)',
-                comment.pull_request_id,
-                comment.comment_id,
+                'completed pull request %s (%d comment(s) in batch)',
+                comments[0].pull_request_id,
+                len(comments),
             )
             log_mission_end(
                 self.logger,
                 review_context.task_id,
                 'done working on mission',
             )
-            return review_fix_result(comment, review_context)
+            return [
+                review_fix_result(comment, review_context) for comment in comments
+            ]
         except Exception:
-            self._restore_review_comment_repository(comment, repository)
+            # Restore the repository state once for the batch — it's
+            # idempotent and the comments share the workspace clone.
+            self._restore_review_comment_repository(comments[0], repository)
             self.logger.exception(
-                'failed to process review comment %s for pull request %s',
-                comment.comment_id,
-                comment.pull_request_id,
+                'failed to process review comment batch (%d comment(s)) '
+                'for pull request %s',
+                len(comments),
+                comments[0].pull_request_id,
             )
             raise
 
@@ -437,33 +490,100 @@ class ReviewCommentService(Service):
         comment: ReviewComment,
         review_context: ReviewFixContext,
     ) -> dict[str, str | bool]:
+        return self._run_review_comments_batch_fix([comment], review_context)
+
+    def _run_review_comments_batch_fix(
+        self,
+        comments: list[ReviewComment],
+        review_context: ReviewFixContext,
+    ) -> dict[str, str | bool]:
+        """One agent spawn covering every comment in ``comments``.
+
+        Backends address them in a single coherent change-set; we
+        get one ``execution`` dict back. ``len(comments) == 1``
+        produces an identical agent prompt to the legacy singular
+        path — no regression for setups that don't yet trigger
+        batched flow.
+
+        Back-compat: if the wired service or planning runner doesn't
+        expose ``fix_review_comments`` (older test stubs / custom
+        wrappers), we fan out to the singular method per comment.
+        Loses batching efficiency but preserves correctness for any
+        caller that hasn't migrated yet.
+        """
         if self._use_streaming_for_review_fixes:
             self.logger.info(
-                'streaming review-fix session for task %s comment %s '
+                'streaming review-fix session for task %s (%d comment(s)) '
                 '(visible in the planning UI)',
                 review_context.task_id,
-                comment.comment_id,
+                len(comments),
             )
-            execution = self._planning_session_runner.fix_review_comment(
-                comment,
-                review_context.branch_name,
+            execution = self._call_fix_review_comments_or_fanout(
+                self._planning_session_runner,
+                comments,
+                review_context,
+                streaming=True,
+            )
+        else:
+            execution = self._call_fix_review_comments_or_fanout(
+                self._implementation_service,
+                comments,
+                review_context,
+                streaming=False,
+            )
+        if not execution.get(ImplementationFields.SUCCESS, False):
+            comment_ids = ', '.join(c.comment_id for c in comments)
+            raise RuntimeError(
+                f'failed to address review comment batch ({comment_ids})'
+            )
+        return execution
+
+    def _call_fix_review_comments_or_fanout(
+        self,
+        backend,
+        comments: list[ReviewComment],
+        review_context: ReviewFixContext,
+        *,
+        streaming: bool,
+    ) -> dict[str, str | bool]:
+        if streaming:
+            kwargs = dict(
                 task_id=review_context.task_id,
                 task_summary=review_context.task_summary,
                 repository_local_path=self._review_repository_local_path(
                     review_context,
                 ),
-            ) or {}
+            )
+            singular_args = lambda c: (c, review_context.branch_name)  # noqa: E731
         else:
-            execution = self._implementation_service.fix_review_comment(
-                comment,
-                review_context.branch_name,
-                review_context.session_id,
+            kwargs = dict(
                 task_id=review_context.task_id,
                 task_summary=review_context.task_summary,
+            )
+            singular_args = lambda c: (  # noqa: E731
+                c, review_context.branch_name, review_context.session_id,
+            )
+        if hasattr(backend, 'fix_review_comments'):
+            plural_args = (comments, review_context.branch_name)
+            if not streaming:
+                # Implementation-service signature carries session_id
+                # as a positional, plural method matches.
+                plural_args = (
+                    comments, review_context.branch_name, review_context.session_id,
+                )
+            return backend.fix_review_comments(*plural_args, **kwargs) or {}
+        # Fanout: call singular per-comment, keep the last execution
+        # dict (they should all carry the same success flag for one
+        # batch). Best-effort — first failure raises so the caller
+        # can react the same way it would with a real plural call.
+        last_execution: dict[str, str | bool] = {}
+        for comment in comments:
+            last_execution = backend.fix_review_comment(
+                *singular_args(comment), **kwargs,
             ) or {}
-        if not execution.get(ImplementationFields.SUCCESS, False):
-            raise RuntimeError(f'failed to address comment {comment.comment_id}')
-        return execution
+            if not last_execution.get(ImplementationFields.SUCCESS, False):
+                return last_execution
+        return last_execution
 
     def _provision_workspace_clone(self, repository, review_context):
         """Return a copy of ``repository`` re-pointed at the per-task clone.
@@ -525,10 +645,29 @@ class ReviewCommentService(Service):
         review_context: ReviewFixContext,
         execution: dict[str, str | bool],
     ) -> None:
+        self._publish_review_comments_batch_fix(
+            [comment], repository, review_context, execution,
+        )
+
+    def _publish_review_comments_batch_fix(
+        self,
+        comments: list[ReviewComment],
+        repository,
+        review_context: ReviewFixContext,
+        execution: dict[str, str | bool],
+    ) -> None:
+        """Push once, then per-comment reply + resolve.
+
+        Single push covers every comment in the batch — one commit
+        on the task branch addresses them all. After the push lands,
+        the platform-side bookkeeping (reply, resolve) is per-comment
+        and best-effort: a 4xx on one reply doesn't roll back the
+        actual code fix or affect the other comments.
+        """
         self.logger.info(
-            'publishing review fix for pull request %s comment %s on branch %s',
-            comment.pull_request_id,
-            comment.comment_id,
+            'publishing review fix for pull request %s (%d comment(s)) on branch %s',
+            comments[0].pull_request_id,
+            len(comments),
             review_context.branch_name,
         )
         self._repository_service.publish_review_fix(
@@ -536,40 +675,41 @@ class ReviewCommentService(Service):
             review_context.branch_name,
             self._review_fix_commit_message(),
         )
-        # The fix is already on the remote at this point. Subsequent
-        # provider-side bookkeeping (reply, resolve) is best-effort: if
-        # Bitbucket/GitHub/etc. rejects the reply we don't want to roll
-        # back the actual code fix or pretend the work failed.
-        try:
-            self._repository_service.reply_to_review_comment(
-                repository,
-                comment,
-                review_comment_reply_body(execution),
-            )
-            self.logger.info(
-                'replied to review comment %s on pull request %s',
-                comment.comment_id,
-                comment.pull_request_id,
-            )
-        except Exception:
-            self.logger.exception(
-                'failed to post reply to review comment %s on pull request %s; '
-                'fix has been pushed but the reply will need manual posting',
-                comment.comment_id,
-                comment.pull_request_id,
-            )
-        if self._resolve_review_comment(repository, comment):
-            self.logger.info(
-                'resolved review comment %s on pull request %s',
-                comment.comment_id,
-                comment.pull_request_id,
-            )
-        else:
-            self.logger.info(
-                'skipped resolving review comment %s on pull request %s',
-                comment.comment_id,
-                comment.pull_request_id,
-            )
+        # Per-comment reply / resolve. Each call is best-effort —
+        # one comment's failed reply doesn't stop the next comment's
+        # reply from being attempted. The fix is already on the
+        # remote either way.
+        for comment in comments:
+            try:
+                self._repository_service.reply_to_review_comment(
+                    repository,
+                    comment,
+                    review_comment_reply_body(execution),
+                )
+                self.logger.info(
+                    'replied to review comment %s on pull request %s',
+                    comment.comment_id,
+                    comment.pull_request_id,
+                )
+            except Exception:
+                self.logger.exception(
+                    'failed to post reply to review comment %s on pull request %s; '
+                    'fix has been pushed but the reply will need manual posting',
+                    comment.comment_id,
+                    comment.pull_request_id,
+                )
+            if self._resolve_review_comment(repository, comment):
+                self.logger.info(
+                    'resolved review comment %s on pull request %s',
+                    comment.comment_id,
+                    comment.pull_request_id,
+                )
+            else:
+                self.logger.info(
+                    'skipped resolving review comment %s on pull request %s',
+                    comment.comment_id,
+                    comment.pull_request_id,
+                )
 
     def _complete_review_fix(
         self,

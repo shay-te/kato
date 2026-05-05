@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from core_lib.jobs.job import Job
 
-from kato_core_lib.data_layers.data.fields import StatusFields
+from kato_core_lib.data_layers.data.fields import (
+    PullRequestFields,
+    ReviewCommentFields,
+    StatusFields,
+)
 from kato_core_lib.helpers.error_handling_utils import log_and_notify_failure
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.kato_core_lib import KatoCoreLib
@@ -96,54 +100,120 @@ def _drain_finished_futures(futures) -> list[dict]:
     return results
 
 
-def _process_review_comment_best_effort(service, comment) -> dict | None:
-    try:
-        return service.process_review_comment(comment)
-    except Exception:
-        return None
+def _process_review_comment_batch_best_effort(service, comments) -> list[dict]:
+    """Run a batch through the service, fall back to singular per-comment.
+
+    Production services expose ``process_review_comment_batch`` and
+    return ``list[dict]``. Older test stubs (and any custom service
+    that hasn't migrated) only expose ``process_review_comment``;
+    fan out so behaviour stays correct even without the batched
+    optimisation.
+    """
+    batch_method = getattr(service, 'process_review_comment_batch', None)
+    if callable(batch_method):
+        try:
+            result = batch_method(comments)
+        except Exception:
+            return []
+        # Real service returns list[dict]. A test Mock will auto-create
+        # an attribute that returns another Mock — fall through to the
+        # singular path so those tests keep working.
+        if isinstance(result, list):
+            return [entry for entry in result if entry is not None]
+    results: list[dict] = []
+    for comment in comments:
+        try:
+            single = service.process_review_comment(comment)
+        except Exception:
+            continue
+        if single is not None:
+            results.append(single)
+    return results
+
+
+def _group_review_comments_by_pull_request(comments) -> list[list]:
+    """Bucket comments by ``(repository_id, pull_request_id)``.
+
+    Comments on the same PR share the workspace clone, the branch,
+    and (after batching) the agent spawn. Order within a bucket
+    preserves the order ``get_new_pull_request_comments`` returned —
+    which is roughly chronological — so the agent sees comments in
+    the same order the reviewer wrote them. Bucket-list order
+    follows first-occurrence so two PRs in the scan tick produce a
+    stable processing order.
+    """
+    buckets: dict[tuple[str, str], list] = {}
+    bucket_order: list[tuple[str, str]] = []
+    for comment in comments:
+        repository_id = str(
+            getattr(comment, PullRequestFields.REPOSITORY_ID, '') or '',
+        ).strip()
+        pull_request_id = str(
+            getattr(comment, ReviewCommentFields.PULL_REQUEST_ID, '') or '',
+        ).strip()
+        key = (repository_id, pull_request_id)
+        if key not in buckets:
+            buckets[key] = []
+            bucket_order.append(key)
+        buckets[key].append(comment)
+    return [buckets[key] for key in bucket_order]
 
 
 def _dispatch_review_comments(service) -> list[dict]:
-    """Submit each review comment to the parallel runner under its task id.
+    """Group review comments by PR, submit each group as a single batch.
 
-    Without a real parallel runner we fall back to the legacy inline path
-    (one comment fully processed before the next) to preserve the
-    behaviour single-worker / mocked-test setups depend on.
+    The runner's per-task dedup lock still serialises same-task work
+    (two parallel batches on the same task can't fight for the
+    workspace), and cross-task batches run concurrently. The batch
+    itself collapses N agent spawns into 1 per PR — the cost saving
+    that motivated this whole change.
 
-    With a real runner: each comment is submitted under
-    ``task_id_for_review_comment``. The runner's per-task dedup lock
-    means two comments on the same task serialize naturally (the second
-    submit returns ``None`` and we'll retry on the next scan), while
-    comments on different tasks run concurrently.
+    Without a real parallel runner we fall back to inline submission
+    (preserves the single-worker / mocked-test path).
     """
     runner = getattr(service, 'parallel_task_runner', None)
     comments = service.get_new_pull_request_comments()
+    grouped = _group_review_comments_by_pull_request(comments)
     if not _runner_has_real_concurrency(runner):
         results: list[dict] = []
-        for comment in comments:
-            result = _process_review_comment_best_effort(service, comment)
-            if result is not None:
-                results.append(result)
+        for batch in grouped:
+            results.extend(
+                _process_review_comment_batch_best_effort(service, batch),
+            )
         return results
     submitted_futures = []
-    for comment in comments:
-        task_id = service.task_id_for_review_comment(comment)
+    for batch in grouped:
+        task_id = service.task_id_for_review_comment(batch[0])
         if not task_id:
-            # Fall back to inline for comments we can't key — can't safely
-            # run them through the runner without a dedup key.
-            result = _process_review_comment_best_effort(service, comment)
-            if result is not None:
+            results = _process_review_comment_batch_best_effort(service, batch)
+            for result in results:
                 submitted_futures.append(_completed_future(result))
             continue
         if runner.is_in_flight(task_id):
             continue
         future = runner.submit(
             task_id,
-            (lambda c=comment: _process_review_comment_best_effort(service, c)),
+            (lambda b=batch: _process_review_comment_batch_best_effort(service, b)),
         )
         if future is not None:
             submitted_futures.append(future)
-    return _drain_finished_futures(submitted_futures)
+    return _drain_finished_review_batches(submitted_futures)
+
+
+def _drain_finished_review_batches(futures) -> list[dict]:
+    """Drain futures whose result is ``list[dict]`` (one per comment).
+
+    The runner returns futures wrapping the batch result list; flatten
+    so the caller's per-comment counting / logging stays unchanged.
+    """
+    drained = _drain_finished_futures(futures)
+    flat: list[dict] = []
+    for entry in drained:
+        if isinstance(entry, list):
+            flat.extend(entry)
+        elif entry is not None:
+            flat.append(entry)
+    return flat
 
 
 def _completed_future(value):

@@ -223,19 +223,46 @@ class PlanningSessionRunner(object):
         stays bound to ``task_id``, so the user sees the new turn stream
         in next to the original implementation history.
         """
+        return self.fix_review_comments(
+            [comment],
+            branch_name,
+            task_id=task_id,
+            task_summary=task_summary,
+            repository_local_path=repository_local_path,
+        )
+
+    def fix_review_comments(
+        self,
+        comments: list[ReviewComment],
+        branch_name: str,
+        *,
+        task_id: str,
+        task_summary: str = '',
+        repository_local_path: str = '',
+    ) -> dict[str, str | bool]:
+        """Address multiple comments in a single streaming session.
+
+        Same teardown / resume mechanics as the singular path; only
+        the prompt is batched. ``len(comments) == 1`` produces an
+        identical prompt to ``fix_review_comment``.
+        """
+        if not comments:
+            raise ValueError('fix_review_comments requires at least one comment')
         normalized_task_id = str(task_id or '').strip()
         if not normalized_task_id:
-            raise ValueError('task_id is required to fix a review comment')
-        # Tear down any prior subprocess so we observe a fresh terminal
-        # event for this turn. start_session below resumes the persisted
-        # Claude session_id via --resume, so context survives.
+            raise ValueError('task_id is required to fix review comments')
         if self._session_manager.get_session(normalized_task_id) is not None:
             self._session_manager.terminate_session(normalized_task_id)
+        prompt = (
+            self._build_review_prompt(comments[0], branch_name)
+            if len(comments) == 1
+            else self._build_review_comments_batch_prompt(comments, branch_name)
+        )
         return self._run_to_terminal(
             task_id=normalized_task_id,
             task_summary=normalized_text(task_summary),
             cwd=normalized_text(repository_local_path),
-            initial_prompt=self._build_review_prompt(comment, branch_name),
+            initial_prompt=prompt,
             branch_name=normalized_text(branch_name),
             default_commit_message='Address review comments',
             log_label='review-fix session',
@@ -343,6 +370,16 @@ class PlanningSessionRunner(object):
         from kato_core_lib.client.claude.cli_client import ClaudeCliClient
 
         return ClaudeCliClient._build_review_prompt(comment, branch_name)
+
+    @staticmethod
+    def _build_review_comments_batch_prompt(
+        comments: list[ReviewComment], branch_name: str,
+    ) -> str:
+        from kato_core_lib.client.claude.cli_client import ClaudeCliClient
+
+        return ClaudeCliClient._build_review_comments_batch_prompt(
+            comments, branch_name,
+        )
 
     def _wait_for_terminal_event(self, session, *, task_id: str):
         deadline = self._clock() + max(0.0, float(self._max_wait_seconds))

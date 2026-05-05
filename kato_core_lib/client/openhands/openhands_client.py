@@ -149,10 +149,32 @@ class KatoClient(RetryingClientBase):
         task_id: str = '',
         task_summary: str = '',
     ) -> dict[str, str | bool]:
+        return self.fix_review_comments(
+            [comment],
+            branch_name,
+            session_id=session_id,
+            task_id=task_id,
+            task_summary=task_summary,
+        )
+
+    def fix_review_comments(
+        self,
+        comments: list[ReviewComment],
+        branch_name: str,
+        session_id: str = '',
+        task_id: str = '',
+        task_summary: str = '',
+    ) -> dict[str, str | bool]:
+        if not comments:
+            raise ValueError('fix_review_comments requires at least one comment')
+        if len(comments) == 1:
+            prompt = self._build_review_prompt(comments[0], branch_name)
+        else:
+            prompt = self._build_review_comments_batch_prompt(comments, branch_name)
         result = self._run_prompt_result(
-            prompt=self._build_review_prompt(comment, branch_name),
+            prompt=prompt,
             title=self._review_conversation_title(
-                comment,
+                comments[0],
                 task_id=task_id,
                 task_summary=task_summary,
             ),
@@ -161,12 +183,39 @@ class KatoClient(RetryingClientBase):
             default_commit_message='Address review comments',
         )
         self.logger.info(
-            'review fix finished for pull request %s comment %s with success=%s',
-            comment.pull_request_id,
-            comment.comment_id,
+            'review fix finished for pull request %s with %d comment(s) success=%s',
+            comments[0].pull_request_id,
+            len(comments),
             result[ImplementationFields.SUCCESS],
         )
         return result
+
+    @classmethod
+    def _build_review_comments_batch_prompt(
+        cls,
+        comments: list[ReviewComment],
+        branch_name: str,
+    ) -> str:
+        first = comments[0]
+        repository_context = agent_prompt_utils.review_repository_context(first)
+        batch_text = agent_prompt_utils.review_comments_batch_text(comments)
+        review_context = cls._review_comment_context_text(first)
+        return (
+            f'Address the following pull request review comments on branch '
+            f'{branch_name}{repository_context}.\n\n'
+            f'{batch_text}'
+            f'{review_context}\n\n'
+            f'{cls._execution_guardrails_text()}\n\n'
+            'When you finish, use the finish tool.\n'
+            '- Put a short description of what changed in summary.\n'
+            '- Put any extra details in message.\n'
+            '- Address every comment listed above in a single coherent change-set.\n'
+            '- Make the smallest possible change needed to address each comment.\n'
+            '- Prefer editing only the exact lines or blocks that need to change.\n'
+            '- Do not change indentation, formatting, or unrelated lines when a narrow edit is enough.\n'
+            '- Do not report success until all intended changes are saved in the repository worktree.\n'
+            '- Do not pass extra finish-tool arguments beyond the supported fields.\n'
+        )
 
     @classmethod
     def _task_conversation_title(cls, task: Task, suffix: str = '') -> str:
