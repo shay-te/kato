@@ -8,6 +8,10 @@ from kato_core_lib.client.ticket_client_base import TicketClientBase
 from kato_core_lib.data_layers.data.fields import TaskCommentFields
 from kato_core_lib.data_layers.data.task import Task
 from kato_core_lib.data_layers.service.repository_service import RepositoryService
+from kato_core_lib.data_layers.service.task_failure_handler import (
+    TASK_DEFINITION_TOO_THIN_COMMENT,
+    repository_detection_comment,
+)
 from kato_core_lib.data_layers.service.task_service import TaskService
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.mission_logging_utils import log_mission_step
@@ -722,9 +726,7 @@ class TaskPreflightService(Service):
         self._log_task_step(task.id, 'recording repository detection skip comment')
         self._add_task_comment(
             task.id,
-            'Kato agent skipped this task because it could not detect which repository '
-            f'to use from the task content: {error}. '
-            'Please mention the repository name or alias in the task summary or description.',
+            repository_detection_comment(error),
             after_step='added repository detection skip comment',
             failure_log_message='failed to add repository detection comment for task %s',
         )
@@ -733,9 +735,7 @@ class TaskPreflightService(Service):
         self._log_task_step(task.id, 'recording task-definition skip comment')
         self._add_task_comment(
             task.id,
-            'Kato agent skipped this task because the task definition is too thin '
-            'to work from safely. Please add a clearer description or issue comment '
-            'describing the expected change.',
+            TASK_DEFINITION_TOO_THIN_COMMENT,
             after_step='added task-definition skip comment',
             failure_log_message='failed to add task definition comment for task %s',
         )

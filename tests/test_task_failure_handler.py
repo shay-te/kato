@@ -41,7 +41,12 @@ class TaskFailureHandlerTests(unittest.TestCase):
         self.task_service.add_comment.assert_called_once()
         comment = self.task_service.add_comment.call_args.args[1]
         self.assertIn('could not detect which repository', comment)
-        self.assertIn('repository name or alias', comment)
+        # Comment must walk the operator through the actual fix:
+        # the ``kato:repo:<id>`` tag format and the picker that
+        # lists the legal ids. Without these, the operator gets
+        # "kato can't pick a repo" with no obvious next step.
+        self.assertIn('kato:repo:<repository-id>', comment)
+        self.assertIn('./kato approve-repo', comment)
         self.task_state_service.move_task_to_open.assert_not_called()
         self.notification_service.notify_failure.assert_not_called()
 
@@ -136,6 +141,13 @@ class TaskFailureHandlerTests(unittest.TestCase):
         self.task_service.add_comment.assert_called_once()
         comment = self.task_service.add_comment.call_args.args[1]
         self.assertIn('task definition is too thin', comment)
+        # Operator must see the bulleted what/why/how-to-tell rubric
+        # and the "remove + re-add the kato:run tag" retry hint —
+        # otherwise they re-edit the description ad hoc and the
+        # next scan still rejects.
+        self.assertIn('what', comment)
+        self.assertIn('why', comment)
+        self.assertIn('kato:run', comment)
         self.handler.logger.info.assert_any_call(
             'Mission %s: %s',
             task.id,

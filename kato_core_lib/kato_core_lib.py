@@ -224,7 +224,7 @@ class KatoCoreLib(CoreLib):
         # service consults a per-operator JSON sidecar at
         # ``~/.kato/approved-repositories.json`` so first-time agent
         # runs against a previously-unseen repo require explicit
-        # approval (``./kato approve-repo <id> --remote <url>``).
+        # approval via the ``./kato approve-repo`` picker.
         repository_approval_service = self._build_repository_approval_service(open_cfg)
         # Posture supplier — captures the *current* global posture so
         # the REP gate can refuse RESTRICTED-mode repos when the

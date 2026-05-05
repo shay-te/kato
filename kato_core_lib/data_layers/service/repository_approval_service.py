@@ -270,8 +270,15 @@ class RestrictedExecutionRefusal(RuntimeError):
         joined = ', '.join(self.repository_ids) or '<none>'
         super().__init__(
             f'restricted execution protocol refused task: '
-            f'no approval on record for repository id(s) {joined}. '
-            f'Run `./kato approve-repo <id> --remote <git-url>` and retry.'
+            f'no approval on record for repository id(s) {joined}.\n'
+            f'\n'
+            f'**How to fix:** run `./kato approve-repo` on the host '
+            f'where kato runs. The picker shows every repo it can '
+            f'find (kato config + workspaces + your '
+            f'`REPOSITORY_ROOT_PATH` checkouts) with `[x]` next to '
+            f'the ones already approved. Type the index of '
+            f'`{joined}` to toggle it on, press Enter to apply, '
+            f'then re-run this task.'
         )
 
 
@@ -293,7 +300,8 @@ class RestrictedModePostureViolation(RuntimeError):
        / unset ``KATO_CLAUDE_BYPASS_PERMISSIONS`` / tighten the
        scanner block list) and restart kato.
     2. Elevate the repo to ``trusted`` mode after reviewing the first
-       agent run — ``./kato approve-repo <id> --remote <url> --trusted``.
+       agent run — re-run ``./kato approve-repo``, toggle the repo,
+       and answer "yes" to the trusted-mode question on apply.
 
     Either way, no RESTRICTED-mode repo ever runs under the lax
     posture, which matches the plan's security promise without
@@ -313,11 +321,15 @@ class RestrictedModePostureViolation(RuntimeError):
             f'restricted execution protocol refused task: repository id(s) '
             f'{ids_text} are RESTRICTED-mode approved, but the global kato '
             f'posture violates restricted-mode requirements: '
-            f'{violations_text}. '
-            f'Either fix the global posture and restart kato, or elevate '
-            f'the repo(s) to trusted mode '
-            f'(`./kato approve-repo <id> --remote <url> --trusted`) after '
-            f'reviewing.'
+            f'{violations_text}.\n'
+            f'\n'
+            f'**How to fix:** either tighten the global posture and '
+            f'restart kato (set `KATO_CLAUDE_DOCKER=true`, unset '
+            f'`KATO_CLAUDE_BYPASS_PERMISSIONS`, tighten the scanner '
+            f'block list — whichever the violation above names), '
+            f'OR elevate the repo(s) to trusted mode by re-running '
+            f'`./kato approve-repo` and answering "yes" to the '
+            f'trusted-mode question on apply.'
         )
 
 

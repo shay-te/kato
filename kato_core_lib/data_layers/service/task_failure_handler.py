@@ -13,6 +13,81 @@ from kato_core_lib.helpers.mission_logging_utils import log_mission_step
 from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
 
 
+# Operator-facing failure comments for the three "kato can't even
+# start this task" cases. Centralised here because both
+# ``TaskFailureHandler`` and ``TaskPreflightService`` reach for the
+# same wording, and silent drift between the two would mean
+# operators get different instructions for the same problem.
+#
+# Goals for these messages: name the exact thing that's wrong,
+# show the exact tag/env/file the operator has to touch, give a
+# concrete example, and call out which command (if any) helps.
+
+TASK_DEFINITION_TOO_THIN_COMMENT = (
+    'Kato agent skipped this task because the task definition is too '
+    'thin to work from safely.\n'
+    '\n'
+    '**How to fix:** add a description (or a comment on this issue) '
+    'that explains:\n'
+    '  • **what** should change (file, function, or feature),\n'
+    '  • **why** (the bug, the requirement, the behaviour you want),\n'
+    '  • **how kato will know it worked** (a test name, an '
+    'acceptance criterion, an example before/after).\n'
+    '\n'
+    'A one-line summary like "fix the bug" is not enough — kato '
+    'needs enough context to reach for the right files. Once you '
+    'have updated the description, re-run the task by removing and '
+    're-adding the `kato:run` tag.'
+)
+
+
+def repository_detection_comment(error: Exception) -> str:
+    """Operator-facing comment when kato can't pick a repository.
+
+    We surface ``error`` because it usually contains the agent's
+    own reasoning ("found two candidate repos: client, server —
+    can't choose"). The fix instructions are constant: tag the
+    issue with ``kato:repo:<id>``.
+    """
+    return (
+        'Kato agent skipped this task because it could not detect '
+        f'which repository to use from the task content: {error}\n'
+        '\n'
+        '**How to fix:** tag this issue with the repository kato '
+        'should work in. Add a tag of the form '
+        '`kato:repo:<repository-id>` (e.g. '
+        '`kato:repo:ob-love-admin-client`). The id has to match a '
+        '`repositories` entry in your kato config — if you are not '
+        'sure which ids exist, run `./kato approve-repo` on the '
+        'kato host; the picker lists every repo kato knows about.'
+    )
+
+
+def repository_ignored_comment(error: Exception) -> str:
+    """Operator-facing comment when a tagged repo is on the
+    ignore list.
+
+    Two possible fixes (remove from ignore list, or change the
+    tag) — surface both so the operator picks based on intent.
+    """
+    return (
+        'Kato refused to run this task because one of its '
+        '`kato:repo:<name>` tags points at a repository in '
+        '`KATO_IGNORED_REPOSITORY_FOLDERS` (the ignore list in '
+        f'`<kato>/.env`).\n'
+        f'\n'
+        f'Details: {error}\n'
+        '\n'
+        '**How to fix** (pick one):\n'
+        '  • Remove the offending entry from '
+        '`KATO_IGNORED_REPOSITORY_FOLDERS` in `<kato>/.env` and '
+        'restart kato — use this if the ignore was a mistake.\n'
+        '  • Change the task\'s `kato:repo:<name>` tag to point at '
+        'a different repository — use this if the ignore is '
+        'correct and the task was tagged wrong.'
+    )
+
+
 class TaskFailureHandler(Service):
     """Own task failure recovery, user-facing failure comments, and follow-up notifications."""
     def __init__(
@@ -104,9 +179,7 @@ class TaskFailureHandler(Service):
         self._log_task_step(task.id, 'recording task-definition skip comment')
         self._add_task_comment(
             task.id,
-            'Kato agent skipped this task because the task definition is too thin '
-            'to work from safely. Please add a clearer description or issue comment '
-            'describing the expected change.',
+            TASK_DEFINITION_TOO_THIN_COMMENT,
             after_step='added task-definition skip comment',
             failure_log_message='failed to add task definition comment for task %s',
         )
@@ -115,9 +188,7 @@ class TaskFailureHandler(Service):
         self._log_task_step(task.id, 'recording repository detection skip comment')
         self._add_task_comment(
             task.id,
-            'Kato agent skipped this task because it could not detect which repository '
-            f'to use from the task content: {error}. '
-            'Please mention the repository name or alias in the task summary or description.',
+            repository_detection_comment(error),
             after_step='added repository detection skip comment',
             failure_log_message='failed to add repository detection comment for task %s',
         )
@@ -132,9 +203,7 @@ class TaskFailureHandler(Service):
         self._log_task_step(task.id, 'rejecting task: tag points at ignored repository')
         self._add_task_comment(
             task.id,
-            'Kato refused to run this task because one of its '
-            f'kato:repo:<name> tags is in KATO_IGNORED_REPOSITORY_FOLDERS. '
-            f'Details: {error}',
+            repository_ignored_comment(error),
             after_step='added ignored-repository rejection comment',
             failure_log_message=(
                 'failed to add ignored-repository rejection comment for task %s'

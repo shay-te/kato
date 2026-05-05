@@ -744,8 +744,12 @@ class AgentServiceTests(unittest.TestCase):
 
         self.assertIsNone(results)
         self.task_client.add_comment.assert_called_once()
-        self.assertIn('could not detect which repository to use', self.task_client.add_comment.call_args.args[1])
-        self.assertIn('Please mention the repository name or alias', self.task_client.add_comment.call_args.args[1])
+        comment_body = self.task_client.add_comment.call_args.args[1]
+        self.assertIn('could not detect which repository to use', comment_body)
+        # The fix instruction: tag with ``kato:repo:<id>`` and use
+        # the picker to find the legal ids.
+        self.assertIn('kato:repo:<repository-id>', comment_body)
+        self.assertIn('./kato approve-repo', comment_body)
         self.email_core_lib.send.assert_not_called()
 
     def test_process_assigned_task_reports_generic_pre_start_failures_without_reopening(self) -> None:
@@ -917,12 +921,17 @@ class AgentServiceTests(unittest.TestCase):
         results = self.service.process_assigned_task(task)
 
         self.assertIsNone(results)
-        self.task_client.add_comment.assert_called_once_with(
-            'PROJ-1',
-            'Kato agent skipped this task because the task definition is too thin '
-            'to work from safely. Please add a clearer description or issue comment '
-            'describing the expected change.',
-        )
+        self.task_client.add_comment.assert_called_once()
+        comment_args = self.task_client.add_comment.call_args.args
+        self.assertEqual(comment_args[0], 'PROJ-1')
+        comment_body = comment_args[1]
+        # Pin the load-bearing parts of the actionable comment, not
+        # the whole string — the prose can iterate without breaking
+        # the test.
+        self.assertIn('task definition is too thin', comment_body)
+        self.assertIn('what', comment_body)
+        self.assertIn('why', comment_body)
+        self.assertIn('kato:run', comment_body)
         self.task_client.move_issue_to_state.assert_not_called()
         self.kato_client.implement_task.assert_not_called()
         self.email_core_lib.send.assert_not_called()
