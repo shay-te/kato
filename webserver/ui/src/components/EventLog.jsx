@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import Bubble from './Bubble.jsx';
 import { BUBBLE_KIND } from '../constants/bubbleKind.js';
 import { CLAUDE_EVENT, CLAUDE_SYSTEM_SUBTYPE } from '../constants/claudeEvent.js';
@@ -9,8 +9,14 @@ import { MessageFilter } from '../utils/MessageFilter.js';
 
 export default function EventLog({ entries, banner }) {
   const containerRef = useRef(null);
-  const visibleEntries = MessageFilter.dedupeUserEchoes(
-    MessageFilter.dedupeRateLimitCycles(entries),
+  // Dedupe is O(N) over the entire event list; without memoization
+  // it re-runs every time the parent re-renders (tab switches,
+  // workspace bumps, attention flips), even though ``entries`` is
+  // unchanged. Memoizing on ``entries`` identity collapses that to
+  // once-per-stream-update.
+  const visibleEntries = useMemo(
+    () => MessageFilter.dedupeUserEchoes(MessageFilter.dedupeRateLimitCycles(entries)),
+    [entries],
   );
   useEffect(() => {
     const node = containerRef.current;
@@ -18,9 +24,10 @@ export default function EventLog({ entries, banner }) {
   }, [visibleEntries.length, banner]);
 
   const bannerBubble = banner && <Bubble kind={BUBBLE_KIND.SYSTEM}>{banner}</Bubble>;
-  const eventBubbles = visibleEntries.flatMap((entry, index) => {
-    return bubblesFor(entry, index);
-  });
+  const eventBubbles = useMemo(
+    () => visibleEntries.flatMap((entry, index) => bubblesFor(entry, index)),
+    [visibleEntries],
+  );
   return (
     <div id="event-log" ref={containerRef}>
       {bannerBubble}

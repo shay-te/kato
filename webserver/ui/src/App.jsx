@@ -20,7 +20,6 @@ import { useStatusFeed } from './hooks/useStatusFeed.js';
 import { useTaskAttention } from './hooks/useTaskAttention.js';
 import { useToolMemory } from './hooks/useToolMemory.js';
 import { CLAUDE_EVENT } from './constants/claudeEvent.js';
-import { appendComposerFragment } from './utils/chatComposerHelpers.js';
 import { mergePendingPermissionTaskIds } from './utils/sessionAttention.js';
 
 const RIGHT_PANE_DEFAULT_WIDTH = 380;
@@ -30,7 +29,13 @@ const RIGHT_PANE_STORAGE_KEY = 'kato.rightPaneWidth';
 
 export default function App() {
   const [activeTaskId, setActiveTaskIdState] = useState('');
-  const [composerValue, setComposerValue] = useState('');
+  // The chat-composer textarea owns its own value (see
+  // ``MessageForm`` for why — it's the per-keystroke perf fix).
+  // App talks to it via ``composerRef.current.appendFragment(...)``
+  // so file-tree clicks / Cmd+P picks / diff right-click can push
+  // text into the composer without re-rendering the whole tree
+  // on every keystroke.
+  const composerRef = useRef(null);
   const { sessions, refresh } = useSessions();
   const attention = useTaskAttention();
   // Lifted from SessionDetail so the same recall function powers
@@ -73,14 +78,16 @@ export default function App() {
     }, 1200);
   }, []);
 
-  useEffect(() => {
-    setComposerValue('');
-  }, [activeTaskId]);
+  // Tab switch → MessageForm remounts (it's keyed on
+  // ``activeTaskId`` via SessionDetail), so its internal composer
+  // state resets without us doing anything here. The old
+  // ``setComposerValue('')`` on taskId change is no longer needed.
 
   const appendToInput = useCallback((fragment) => {
-    setComposerValue((current) => {
-      return appendComposerFragment(current, fragment);
-    });
+    const composer = composerRef.current;
+    if (composer && typeof composer.appendFragment === 'function') {
+      composer.appendFragment(fragment);
+    }
   }, []);
 
   const setActiveTaskId = useCallback((taskId) => {
@@ -189,7 +196,12 @@ export default function App() {
   const activeNeedsAttention = !!activeTaskId && attentionTaskIds.has(activeTaskId);
   const activeSessionKey = activeTaskId || '__none__';
   const activeWorkspaceVersion = workspaceVersion[activeTaskId] || 0;
-  const composerContextValue = { appendToInput };
+  // Memoize so the context value is reference-stable across App
+  // renders. Without this, EVERY ``useChatComposer()`` consumer
+  // (FilesTab, ChangesTab via DiffFileWithComments, etc.)
+  // re-renders on every App render — including the wasteful ones
+  // that fire on tab focus changes / poll ticks.
+  const composerContextValue = useMemo(() => ({ appendToInput }), [appendToInput]);
   const layout = (
     <Layout
       rightWidth={resizer.width}
@@ -210,8 +222,7 @@ export default function App() {
           needsAttention={activeNeedsAttention}
           onActivity={handleSessionEvent}
           onPendingPermissionChange={handlePendingPermissionChange}
-          composerValue={composerValue}
-          onComposerChange={setComposerValue}
+          composerRef={composerRef}
           toolMemory={toolMemory}
         />
       }

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import EventLog from './EventLog.jsx';
 import MessageForm from './MessageForm.jsx';
 import PermissionDecisionContainer from './PermissionDecisionContainer.jsx';
@@ -16,8 +16,7 @@ export default function SessionDetail({
   onActivity,
   onPendingPermissionChange,
   needsAttention = false,
-  composerValue = '',
-  onComposerChange,
+  composerRef = null,
   toolMemory: providedToolMemory = null,
 }) {
   const taskId = session?.task_id;
@@ -27,7 +26,6 @@ export default function SessionDetail({
   // fall back to a local instance for tests / standalone usage.
   const localToolMemory = useToolMemory();
   const memory = providedToolMemory || localToolMemory;
-  const updateComposer = typeof onComposerChange === 'function' ? onComposerChange : noop;
 
   useEffect(() => {
     if (typeof onPendingPermissionChange !== 'function') { return; }
@@ -135,11 +133,8 @@ export default function SessionDetail({
     });
   }
 
-  const banner = lifecycleBanner(
-    stream.lifecycle,
-    taskId,
-    hasVisibleBubbles(stream.events),
-  );
+  const hasVisible = useMemo(() => hasVisibleBubbles(stream.events), [stream.events]);
+  const banner = lifecycleBanner(stream.lifecycle, taskId, hasVisible);
   const composerDisabled = !canSend(stream.lifecycle, session);
   const composerHint = composerDisabledReason(stream.lifecycle, session);
   return (
@@ -161,8 +156,7 @@ export default function SessionDetail({
             lastEventAt={stream.lastEventAt}
           />
         <MessageForm
-          value={composerValue}
-          onChange={updateComposer}
+          ref={composerRef}
           turnInFlight={stream.turnInFlight}
           onSubmit={onSendMessage}
           disabled={composerDisabled}
@@ -180,8 +174,6 @@ export default function SessionDetail({
     </main>
   );
 }
-
-function noop() {}
 
 function canSend(lifecycle, session) {
   // Only block when the server has no record at all. CLOSED/IDLE still

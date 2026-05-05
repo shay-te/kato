@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { parseDiff } from 'react-diff-view';
 import 'react-diff-view/style/index.css';
-import { fetchDiff, syncTaskComments } from './api.js';
+import { fetchDiff, fetchTaskComments, syncTaskComments } from './api.js';
 import DiffFileWithComments from './components/DiffFileWithComments.jsx';
 import Icon from './components/Icon.jsx';
 import { useChatComposer } from './contexts/ChatComposerContext.jsx';
@@ -282,6 +282,44 @@ function RepoDiff({
   const heading = repoDiff.repo_id || repoDiff.cwd || 'repo';
   const chevronName = collapsed ? 'chevron-right' : 'chevron-down';
   const [syncing, setSyncing] = useState(false);
+  // One fetch per repo per refresh, indexed by file path. Previously
+  // every DiffFileWithComments re-fetched the same per-repo list and
+  // filtered locally, so a 30-file repo did 30 HTTP calls per tick.
+  // Bumped by ``localTick`` on every successful mutation so the new
+  // comment shows up immediately, no waiting on the parent's poll.
+  const [commentsByFile, setCommentsByFile] = useState(() => new Map());
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [commentsError, setCommentsError] = useState('');
+  const [localTick, setLocalTick] = useState(0);
+  const repoId = repoDiff.repo_id;
+  useEffect(() => {
+    if (!taskId || !repoId || collapsed) { return undefined; }
+    let cancelled = false;
+    setCommentsLoading(true);
+    setCommentsError('');
+    fetchTaskComments(taskId, repoId).then((result) => {
+      if (cancelled) { return; }
+      if (!result.ok) {
+        setCommentsError(String(result.error || 'failed to load comments'));
+        setCommentsByFile(new Map());
+        return;
+      }
+      const list = Array.isArray(result.body?.comments) ? result.body.comments : [];
+      const byFile = new Map();
+      for (const comment of list) {
+        const path = String(comment.file_path || '');
+        if (!byFile.has(path)) { byFile.set(path, []); }
+        byFile.get(path).push(comment);
+      }
+      setCommentsByFile(byFile);
+    }).finally(() => {
+      if (!cancelled) { setCommentsLoading(false); }
+    });
+    return () => { cancelled = true; };
+  }, [taskId, repoId, collapsed, commentsRefreshTick, localTick]);
+  const bumpRepoComments = useCallback(() => {
+    setLocalTick((n) => n + 1);
+  }, []);
 
   async function onSyncRemoteComments(event) {
     event.stopPropagation();  // don't toggle the repo header
@@ -346,22 +384,32 @@ function RepoDiff({
               <code>{repoDiff.head}</code>.
             </p>
           )}
-          {!repoDiff.error && repoDiff.files.map((file) => (
-            <DiffFileWithComments
-              key={diffFileKey(file)}
-              file={file}
-              conflicted={isFileConflicted(file, repoDiff.conflictedFiles)}
-              repoId={repoDiff.repo_id}
-              onAddToChat={onAddToChat}
-              taskId={taskId}
-              refreshTick={commentsRefreshTick}
-            />
-          ))}
+          {!repoDiff.error && repoDiff.files.map((file) => {
+            const path = file.newPath || file.oldPath || '(unknown)';
+            return (
+              <DiffFileWithComments
+                key={diffFileKey(file)}
+                file={file}
+                conflicted={isFileConflicted(file, repoDiff.conflictedFiles)}
+                repoId={repoDiff.repo_id}
+                onAddToChat={onAddToChat}
+                taskId={taskId}
+                comments={commentsByFile.get(path) || EMPTY_COMMENTS}
+                commentsLoading={commentsLoading}
+                commentsError={commentsError}
+                onMutated={bumpRepoComments}
+              />
+            );
+          })}
         </div>
       )}
     </section>
   );
 }
+
+// Stable empty array so DiffFileWithComments memo selectors don't
+// see a fresh `[]` every parent render when a file has no comments.
+const EMPTY_COMMENTS = [];
 
 function diffFileKey(file) {
   const oldPath = file.oldPath || '';

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Diff,
   Hunk,
@@ -8,7 +8,6 @@ import {
 import {
   createTaskComment,
   deleteTaskComment,
-  fetchTaskComments,
   markTaskCommentAddressed,
   reopenTaskComment,
   resolveTaskComment,
@@ -32,16 +31,13 @@ import {
 export default function DiffFileWithComments({
   file, conflicted = false, repoId = '', taskId = '',
   onAddToChat,
-  refreshTick = 0,
+  comments = [],
+  commentsLoading = false,
+  commentsError = '',
+  onMutated,
 }) {
   const path = file.newPath || file.oldPath || '(unknown)';
 
-  const [comments, setComments] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  // Bumped on every successful mutation so the per-file fetch
-  // re-runs immediately (no waiting on the parent's poll tick).
-  const [localTick, setLocalTick] = useState(0);
   // ``activeLine`` is the line number where the inline new-comment
   // form is currently open. ``-1`` is the file-level panel below
   // the diff. ``null`` means no inline form is open.
@@ -53,25 +49,9 @@ export default function DiffFileWithComments({
     [file.hunks, path],
   );
 
-  useEffect(() => {
-    if (!taskId || !repoId) { return undefined; }
-    let cancelled = false;
-    setLoading(true);
-    setError('');
-    fetchTaskComments(taskId, repoId).then((result) => {
-      if (cancelled) { return; }
-      if (!result.ok) {
-        setError(String(result.error || 'failed to load comments'));
-        setComments([]);
-        return;
-      }
-      const list = Array.isArray(result.body?.comments) ? result.body.comments : [];
-      setComments(list.filter((c) => c.file_path === path));
-    }).finally(() => {
-      if (!cancelled) { setLoading(false); }
-    });
-    return () => { cancelled = true; };
-  }, [taskId, repoId, path, refreshTick, localTick]);
+  function notifyMutated() {
+    if (typeof onMutated === 'function') { onMutated(); }
+  }
 
   // Group comments by line so we can build the widgets dict and
   // the file-level panel separately. Line < 0 means "file-level."
@@ -122,7 +102,7 @@ export default function DiffFileWithComments({
     });
     setActiveLine(null);
     setReplyTo('');
-    setLocalTick((n) => n + 1);
+    notifyMutated();
     return true;
   }
 
@@ -159,7 +139,7 @@ export default function DiffFileWithComments({
         });
       }
     }
-    setLocalTick((n) => n + 1);
+    notifyMutated();
   }
 
   async function onReopen(commentId) {
@@ -171,7 +151,7 @@ export default function DiffFileWithComments({
       });
       return;
     }
-    setLocalTick((n) => n + 1);
+    notifyMutated();
   }
 
   async function onDelete(commentId) {
@@ -186,7 +166,7 @@ export default function DiffFileWithComments({
       });
       return;
     }
-    setLocalTick((n) => n + 1);
+    notifyMutated();
   }
 
   async function onMarkAddressed(commentId, addressedSha = '') {
@@ -215,7 +195,7 @@ export default function DiffFileWithComments({
         });
       }
     }
-    setLocalTick((n) => n + 1);
+    notifyMutated();
   }
 
   // Build the react-diff-view widgets dict. Each widget is keyed
@@ -344,18 +324,20 @@ export default function DiffFileWithComments({
         ))}
       </Diff>
       <div className="diff-file-comments">
-        {loading && <p className="diff-file-comments-empty">Loading comments…</p>}
-        {!loading && error && (
-          <p className="diff-file-comments-empty error">{error}</p>
+        {commentsLoading && comments.length === 0 && (
+          <p className="diff-file-comments-empty">Loading comments…</p>
         )}
-        {!loading && !error && fileThreads.length === 0 && commentsByLine.size === 0 && (
+        {!commentsLoading && commentsError && (
+          <p className="diff-file-comments-empty error">{commentsError}</p>
+        )}
+        {!commentsLoading && !commentsError && fileThreads.length === 0 && commentsByLine.size === 0 && (
           <p className="diff-file-comments-empty">
             Click a diff line's gutter to add an inline comment, or use
             the form below for a file-level comment. Kato runs on it
             immediately if idle, or queues it.
           </p>
         )}
-        {!loading && !error && fileThreads.map((thread) => (
+        {!commentsError && fileThreads.map((thread) => (
           <article
             key={thread.root.id}
             className={[

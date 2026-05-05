@@ -1,18 +1,31 @@
-import { useRef, useState } from 'react';
+import { forwardRef, useImperativeHandle, useRef, useState } from 'react';
 import {
   collectImageParts,
   IMAGE_REJECT_REASON,
 } from '../utils/imageAttachment.js';
 import { toast } from '../stores/toastStore.js';
+import { appendComposerFragment } from '../utils/chatComposerHelpers.js';
 
-export default function MessageForm({
-  value,
-  onChange,
+// Composer state (the textarea contents + attached images) lives
+// INSIDE this component on purpose — typing should not re-render
+// the rest of the UI tree. Earlier the value was lifted to App so
+// every keystroke walked the entire tab list, the EventLog, the
+// FilesTab tree, and the ChangesTab diff (with comment widgets).
+// Multiply that by typing speed and the operator saw visible
+// per-keystroke lag on busy tabs.
+//
+// Now App holds a ref to this component (forwarded via the ref
+// arg) and reaches in imperatively when it needs to push a
+// fragment ("paste this file path / repo:path snippet into the
+// composer"). Typing stays local; appendFragment is rare; both
+// paths stay correct without an O(tree) re-render.
+const MessageForm = forwardRef(function MessageForm({
   turnInFlight,
   onSubmit,
   disabled = false,
   disabledReason = '',
-}) {
+}, ref) {
+  const [value, setValue] = useState('');
   // Attached images live in component state (not lifted) because the
   // composer is the only thing that reads / writes them — no other
   // pane needs to know what the operator pasted before they hit Send.
@@ -20,13 +33,28 @@ export default function MessageForm({
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef(null);
 
+  // Expose the imperative API App uses for "paste this fragment"
+  // (file-tree clicks, Cmd+P picker results, diff right-click,
+  // commit-id paste). Stable per-mount: the parent's
+  // ``appendToInput`` callback never changes.
+  useImperativeHandle(ref, () => ({
+    appendFragment(fragment) {
+      setValue((current) => appendComposerFragment(current, fragment));
+    },
+    clear() {
+      setValue('');
+      setAttachments([]);
+    },
+    getValue() { return value; },
+  }), [value]);
+
   function submit(event) {
     event.preventDefault();
     if (disabled) { return; }
     const trimmed = (value || '').trim();
     if (!trimmed && attachments.length === 0) { return; }
     onSubmit(trimmed, attachments.map((a) => a.part));
-    onChange('');
+    setValue('');
     setAttachments([]);
   }
 
@@ -47,7 +75,7 @@ export default function MessageForm({
   }
 
   function handleChange(event) {
-    onChange(event.target.value);
+    setValue(event.target.value);
   }
   function handleKeyDown(event) {
     if (event.key === 'Enter' && !event.shiftKey) {
@@ -187,7 +215,10 @@ export default function MessageForm({
       </button>
     </form>
   );
-}
+});
+
+
+export default MessageForm;
 
 
 function _previewUrl(part) {
