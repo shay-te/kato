@@ -7,9 +7,11 @@ Three surfaces:
    malformed lines are tolerated.
 2. The hook points (publisher success, review-fix success,
    failure-handler) actually call into the helper.
-3. ``scripts/audit_log_query.main`` filters by ``--last``, ``--task``,
-   ``--failed`` and shows a friendly empty-state when no records
-   exist.
+3. ``scripts/audit_log_query.main`` prints a numbered list of the
+   most recent records (capped at the script's history limit) and
+   shows a friendly empty-state when no records exist. The script
+   intentionally has no flags — operators jq the JSONL directly
+   for fine-grained filtering.
 """
 
 from __future__ import annotations
@@ -324,44 +326,16 @@ class CliQueryTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(out.count('PROJ-'), 6)
 
-    def test_last_filter_caps_results(self) -> None:
+    def test_records_are_numbered_for_at_a_glance_indexing(self) -> None:
+        # The numbered prefix is the entire UX hint that the operator
+        # is looking at a list — without it, the view collapses back
+        # to a wall of tab-separated lines that's hard to scan. Pin
+        # the format so a future "compact" change doesn't quietly
+        # drop the indices.
         self._seed()
-        out, _, _ = self._run('--last', '2')
-        # Tail: PROJ-99 failure, PROJ-0 review-fix success.
-        self.assertEqual(out.count('\n') - out.count('error:'), 2)
-        self.assertIn('PROJ-99', out)
-        self.assertIn('PROJ-0', out)
-
-    def test_task_filter_matches_id(self) -> None:
-        self._seed()
-        out, _, _ = self._run('--task', 'PROJ-1')
-        # PROJ-1 has 2 entries: success + failure.
-        # Failure prints two lines (header + error), success one.
-        self.assertEqual(out.count('PROJ-1'), 2)
-        self.assertNotIn('PROJ-0', out)
-        self.assertNotIn('PROJ-99', out)
-
-    def test_failed_filter_returns_only_failures(self) -> None:
-        self._seed()
-        out, _, _ = self._run('--failed')
-        self.assertIn('PROJ-1', out)
-        self.assertIn('PROJ-99', out)
-        # PROJ-2's success should not appear.
-        self.assertNotIn('task 2', out)
-
-    def test_filters_compose(self) -> None:
-        self._seed()
-        out, _, _ = self._run('--task', 'PROJ-1', '--failed')
-        # Only PROJ-1's failure.
-        self.assertIn('boom', out)
-        self.assertNotIn('PROJ-99', out)
-
-    def test_no_records_match_filter_message(self) -> None:
-        self._seed()
-        out, err, rc = self._run('--task', 'NEVER-HAPPENED')
-        self.assertEqual(rc, 0)
-        self.assertEqual(out, '')
-        self.assertIn('No records match', err)
+        out, _, _ = self._run()
+        self.assertIn('  1.\t', out)
+        self.assertIn('  6.\t', out)
 
 
 if __name__ == '__main__':

@@ -172,37 +172,19 @@ _TARGETS: dict[str, tuple[str, bool, list[str]]] = {
         ],
     ),
     'approve-repo': (
-        'Manage the REP approval list. '
-        'No args = unified picker that shows every repo (from your '
-        'kato config, your kato workspaces, AND your '
-        'REPOSITORY_ROOT_PATH checkouts). Approved repos start '
-        'pre-checked; type indices like ``1,3,5-7`` to toggle, '
-        'press Enter to apply. One command for add+edit+remove. '
-        'Scripted form (CI): ``approve-repo approve <id> --remote '
-        '<url> [--trusted]``, ``approve-repo revoke <id>``, '
-        '``approve-repo list``.',
+        'Manage the REP approval list. Drops into a picker that '
+        'shows every repo (from your kato config, your kato '
+        'workspaces, AND your REPOSITORY_ROOT_PATH checkouts). '
+        'Approved repos start pre-checked; type indices like '
+        '``1,3,5-7`` to toggle, press Enter to apply. One command '
+        'for add+edit+remove.',
         True,
         ['scripts/approve_repository.py'],
     ),
-    'revoke-repo': (
-        'Remove an entry from the REP approval list (scripted '
-        'form). Args: ``<repo_id>``. For interactive use prefer '
-        '``approve-repo`` — that picker handles add+edit+remove '
-        'in one screen.',
-        True,
-        ['scripts/approve_repository.py', 'revoke'],
-    ),
-    'list-approved-repos': (
-        'Print the REP approval list (scripted form). For '
-        'interactive use prefer ``approve-repo`` — its picker '
-        'shows the same list with ``[x]`` markers and lets you '
-        'edit it in place.',
-        True,
-        ['scripts/approve_repository.py', 'list'],
-    ),
     'history': (
-        'Show recent kato task activity. '
-        'Options: --last N, --task <id>, --failed',
+        'Show the most recent kato task activity (numbered list). '
+        'No flags — for fine-grained filtering, ``jq`` the audit '
+        'log JSONL directly.',
         True,
         ['scripts/audit_log_query.py'],
     ),

@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Operator-facing CLI for the Restricted Execution Protocol approval list.
 
-**Interactive (no arguments)** — one picker for all operations.
+One picker. No sub-modes, no flags, no scripted variants — every
+add/edit/remove operation lives behind a single prompt.
+
 Shows every repo kato can find, with a ``[x]`` next to the ones
 already approved. The operator types a comma-separated list of
 indices to toggle: anything you check that wasn't approved becomes
-approved; anything you uncheck that was approved is revoked. One
-command, one screen, add+edit+remove in a single Apply step. No
-sub-modes for the operator to remember.
+approved; anything you uncheck that was approved is revoked. Press
+Enter to apply.
 
 Sources scanned for repo discovery:
 
@@ -18,28 +19,16 @@ Sources scanned for repo discovery:
    clones. Useful after kato has actually run something.
 3. ``REPOSITORY_ROOT_PATH/<repo>/.git`` — the operator's local
    checkout root (the same folder kato pushes branches to at task
-   end). This is what unblocks the case Shubham hit in #ops: kato
-   refused on REP, no workspace clone existed yet, but the repo
-   was sitting right there in his ``REPOSITORY_ROOT_PATH``.
+   end). The fresh-task source: kato refuses on REP before any
+   per-task clone exists, but the repo lives in this folder.
 
 When NO source can be located (no kato config, no workspaces, no
 ``REPOSITORY_ROOT_PATH``), we exit with a precise message naming
-which env vars are missing and how to set them — instead of
-silently showing "0 repositories found".
-
-**Scripted mode** is unchanged and still supported for CI:
-
-    approve <repo_id> --remote <git-url> [--trusted]
-    revoke  <repo_id>
-    list
-
-Both paths defer to ``RepositoryApprovalService`` so semantics stay
-co-located with the preflight gate.
+which env vars are missing and how to set them.
 """
 
 from __future__ import annotations
 
-import argparse
 import os
 import subprocess
 import sys
@@ -109,74 +98,6 @@ class _DiscoveredRepository(object):
     source: str
     workspace_path: str = ''
     task_id: str = ''
-
-
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog='kato approve-repo',
-        description='Manage the Restricted Execution Protocol approval list.',
-    )
-    sub = parser.add_subparsers(dest='action', required=False)
-
-    approve = sub.add_parser('approve', help='Approve a repository for kato use.')
-    approve.add_argument('repository_id')
-    approve.add_argument(
-        '--remote', required=True,
-        help='Git remote URL captured at approval time '
-             '(URL changes force re-approval).',
-    )
-    approve.add_argument(
-        '--trusted', action='store_true',
-        help='Skip restricted mode; run with the operator global config.',
-    )
-
-    revoke = sub.add_parser('revoke', help='Remove an approval entry.')
-    revoke.add_argument('repository_id')
-
-    sub.add_parser('list', help='List repositories on the approval sidecar.')
-    return parser
-
-
-def _run_approve(args: argparse.Namespace) -> int:
-    service = RepositoryApprovalService()
-    mode = ApprovalMode.TRUSTED if args.trusted else ApprovalMode.RESTRICTED
-    entry = service.approve(
-        args.repository_id,
-        args.remote,
-        mode=mode,
-    )
-    print(
-        f'approved {entry.repository_id!r} '
-        f'(mode={entry.approval_mode.value}, '
-        f'remote={entry.remote_url}, by={entry.approved_by})',
-    )
-    return 0
-
-
-def _run_revoke(args: argparse.Namespace) -> int:
-    service = RepositoryApprovalService()
-    removed = service.revoke(args.repository_id)
-    if removed:
-        print(f'revoked approval for {args.repository_id!r}')
-        return 0
-    print(f'no approval on record for {args.repository_id!r}', file=sys.stderr)
-    return 1
-
-
-def _run_list(_args: argparse.Namespace) -> int:
-    service = RepositoryApprovalService()
-    rows = service.list_approvals()
-    if not rows:
-        print(f'no approvals on record at {service.storage_path}')
-        return 0
-    print(f'approvals at {service.storage_path}:')
-    for entry in rows:
-        print(
-            f'  {entry.repository_id:<40} '
-            f'{entry.approval_mode.value:<10} '
-            f'{entry.remote_url}',
-        )
-    return 0
 
 
 # ----- interactive mode -----
@@ -591,8 +512,7 @@ def _print_no_sources_help(
         )
     print('', file=sys.stderr)
     print(
-        'You can also approve directly without the picker: '
-        '``kato approve-repo approve <repo_id> --remote <git-url>``.',
+        'Fix at least one of the above and re-run ``kato approve-repo``.',
         file=sys.stderr,
     )
 
@@ -688,21 +608,8 @@ def _run_interactive() -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = _build_parser()
-    args = parser.parse_args(argv)
-    # No subcommand → drop into the interactive picker. The scripted
-    # form ``approve <id> --remote <url>`` is still available for CI.
-    if args.action is None:
-        return _run_interactive()
-    if args.action == 'approve':
-        return _run_approve(args)
-    if args.action == 'revoke':
-        return _run_revoke(args)
-    if args.action == 'list':
-        return _run_list(args)
-    parser.error(f'unknown action: {args.action}')
-    return 2
+def main() -> int:
+    return _run_interactive()
 
 
 if __name__ == '__main__':
