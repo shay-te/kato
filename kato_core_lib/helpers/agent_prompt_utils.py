@@ -181,3 +181,41 @@ def review_comment_context_text(comment: ReviewComment) -> str:
 def review_repository_context(comment: ReviewComment) -> str:
     repository_id = getattr(comment, PullRequestFields.REPOSITORY_ID, '')
     return f' in repository {repository_id}' if repository_id else ''
+
+
+def review_comment_location_text(comment: ReviewComment) -> str:
+    """Render the inline-comment file/line/commit hint for the prompt.
+
+    Bitbucket / GitHub / GitLab return file path and line number on
+    every per-line review comment. Surfacing them up-front saves the
+    agent from a directory walk to localise what "fix this typo"
+    refers to. Empty string when the comment isn't tied to a line
+    (PR-level discussion comments) so the prompt stays clean.
+
+    Output shape:
+        File: path/to/file.py:42 (added)
+        Commit: abc123def456
+
+    The line-type hint (added / removed / context) tells the agent
+    which side of the diff to look at — important for review
+    comments on lines the PR removed, where the line no longer
+    exists in HEAD.
+    """
+    file_path = normalized_text(getattr(comment, ReviewCommentFields.FILE_PATH, ''))
+    raw_line = getattr(comment, ReviewCommentFields.LINE_NUMBER, '')
+    line_type = normalized_text(getattr(comment, ReviewCommentFields.LINE_TYPE, ''))
+    commit_sha = normalized_text(getattr(comment, ReviewCommentFields.COMMIT_SHA, ''))
+    if not file_path:
+        return ''
+    location = f'File: {file_path}'
+    try:
+        line_int = int(raw_line)
+        if line_int > 0:
+            location = f'{location}:{line_int}'
+    except (TypeError, ValueError):
+        pass
+    if line_type:
+        location = f'{location} ({line_type})'
+    if commit_sha:
+        location = f'{location}\nCommit: {commit_sha}'
+    return location

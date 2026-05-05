@@ -26,12 +26,21 @@ query($owner: String!, $name: String!, $number: Int!) {
         nodes {
           id
           isResolved
+          path
+          line
+          originalLine
           comments(first: 100) {
             nodes {
               databaseId
               body
               author {
                 login
+              }
+              commit {
+                oid
+              }
+              originalCommit {
+                oid
               }
             }
           }
@@ -177,12 +186,26 @@ mutation($threadId: ID!) {
             if not isinstance(thread, dict) or thread.get('isResolved'):
                 continue
             thread_id = text_from_mapping(thread, 'id')
+            # Inline metadata is per-thread on GitHub (one thread =
+            # one line). ``line`` is the new-side line; falls back
+            # to ``originalLine`` for outdated threads where the
+            # diff has moved on.
+            file_path = thread.get('path', '') or ''
+            line_value = thread.get('line')
+            line_type = 'added' if line_value else ''
+            if line_value is None:
+                line_value = thread.get('originalLine')
+                line_type = 'removed' if line_value else ''
             comments_payload = dict_from_mapping(thread, 'comments')
             nodes = list_from_mapping(comments_payload, 'nodes')
             for item in nodes:
                 if not isinstance(item, dict):
                     continue
                 author = dict_from_mapping(item, 'author')
+                commit = dict_from_mapping(item, 'commit')
+                if not commit:
+                    commit = dict_from_mapping(item, 'originalCommit')
+                commit_sha = commit.get('oid', '') if commit else ''
                 comment = cls._review_comment_from_values(
                     pull_request_id=pull_request_id,
                     comment_id=item.get('databaseId', ''),
@@ -190,6 +213,10 @@ mutation($threadId: ID!) {
                     body=item.get('body', ''),
                     resolution_target_id=thread_id,
                     resolution_target_type='thread',
+                    file_path=file_path,
+                    line_number=line_value,
+                    line_type=line_type,
+                    commit_sha=commit_sha,
                 )
                 comments.append(comment)
         return [comment for comment in comments if comment.comment_id]

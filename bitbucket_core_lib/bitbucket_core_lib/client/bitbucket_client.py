@@ -202,6 +202,26 @@ class BitbucketClient(PullRequestClientBase):
             resolution_target_id = normalized_text(
                 parent.get('id', '') or item.get('id', '')
             )
+            # Inline metadata: Bitbucket puts file/line under
+            # ``inline``. ``inline.to`` is the new-side line (post-
+            # change); ``inline.from`` is the old-side line (only
+            # set on lines deleted by the PR). We prefer ``to`` and
+            # mark the line type so the agent knows which side of
+            # the diff to look at.
+            inline = dict_from_mapping(item, 'inline')
+            file_path = ''
+            line_number: object = ''
+            line_type = ''
+            if inline:
+                file_path = inline.get('path', '') or ''
+                if inline.get('to') is not None:
+                    line_number = inline.get('to')
+                    line_type = 'added'
+                elif inline.get('from') is not None:
+                    line_number = inline.get('from')
+                    line_type = 'removed'
+            commit = dict_from_mapping(item, 'commit')
+            commit_sha = commit.get('hash', '') if commit else ''
             comment = cls._review_comment_from_values(
                 pull_request_id=pull_request_id,
                 comment_id=item.get('id', ''),
@@ -209,6 +229,10 @@ class BitbucketClient(PullRequestClientBase):
                 body=content.get('raw', ''),
                 resolution_target_id=resolution_target_id,
                 resolution_target_type='comment',
+                file_path=file_path,
+                line_number=line_number,
+                line_type=line_type,
+                commit_sha=commit_sha,
             )
             comments.append(comment)
         return [comment for comment in comments if comment.comment_id]

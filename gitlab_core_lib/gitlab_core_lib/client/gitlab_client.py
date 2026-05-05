@@ -158,6 +158,32 @@ class GitLabClient(PullRequestClientBase):
                 if not isinstance(item, dict) or item.get('system'):
                     continue
                 author = dict_from_mapping(item, 'author')
+                # GitLab inline metadata lives in ``position`` on each
+                # note. ``new_path`` / ``new_line`` are the post-change
+                # location; ``old_line`` covers lines deleted by the
+                # MR. We mirror Bitbucket's "prefer new side" rule.
+                position = dict_from_mapping(item, 'position')
+                file_path = ''
+                line_value: object = ''
+                line_type = ''
+                commit_sha = ''
+                if position:
+                    file_path = (
+                        position.get('new_path')
+                        or position.get('old_path')
+                        or ''
+                    )
+                    if position.get('new_line') is not None:
+                        line_value = position.get('new_line')
+                        line_type = 'added'
+                    elif position.get('old_line') is not None:
+                        line_value = position.get('old_line')
+                        line_type = 'removed'
+                    commit_sha = (
+                        position.get('head_sha')
+                        or position.get('start_sha')
+                        or ''
+                    )
                 comment = cls._review_comment_from_values(
                     pull_request_id=pull_request_id,
                     comment_id=item.get('id', ''),
@@ -165,6 +191,10 @@ class GitLabClient(PullRequestClientBase):
                     body=item.get('body', ''),
                     resolution_target_id=discussion_id,
                     resolution_target_type='discussion',
+                    file_path=file_path,
+                    line_number=line_value,
+                    line_type=line_type,
+                    commit_sha=commit_sha,
                 )
                 comments.append(comment)
         return [comment for comment in comments if comment.comment_id]

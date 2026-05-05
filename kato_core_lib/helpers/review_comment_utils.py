@@ -35,6 +35,12 @@ def review_comment_from_payload(payload: dict) -> ReviewComment:
             comment_id=str(payload[ReviewCommentFields.COMMENT_ID]),
             author=str(payload[ReviewCommentFields.AUTHOR]),
             body=str(payload[ReviewCommentFields.BODY]),
+            file_path=str(payload.get(ReviewCommentFields.FILE_PATH, '') or ''),
+            line_number=_coerce_optional_int(
+                payload.get(ReviewCommentFields.LINE_NUMBER, ''),
+            ),
+            line_type=str(payload.get(ReviewCommentFields.LINE_TYPE, '') or ''),
+            commit_sha=str(payload.get(ReviewCommentFields.COMMIT_SHA, '') or ''),
         )
         if PullRequestFields.REPOSITORY_ID in payload:
             setattr(
@@ -50,6 +56,18 @@ def review_comment_from_payload(payload: dict) -> ReviewComment:
         return comment
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f'invalid review comment payload: {exc}') from exc
+
+
+def _coerce_optional_int(value: object) -> int | str:
+    if value is None or value == '':
+        return ''
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return ''
+    if n <= 0:
+        return ''
+    return n
 
 
 def comment_context_entry(comment: ReviewComment) -> dict[str, str]:

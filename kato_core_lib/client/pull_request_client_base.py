@@ -8,6 +8,24 @@ from kato_core_lib.data_layers.data.fields import PullRequestFields, ReviewComme
 from kato_core_lib.helpers.text_utils import normalized_text
 
 
+def _coerce_line_number(value: object) -> int | str:
+    """Normalise a platform-supplied line number into an int (or '').
+
+    Bitbucket / GitHub / GitLab all return integers, but JSON parsers
+    occasionally hand us strings. Anything non-positive collapses to
+    '' so the prompt builder can treat "no line info" uniformly.
+    """
+    if value is None or value == '':
+        return ''
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return ''
+    if n <= 0:
+        return ''
+    return n
+
+
 class PullRequestClientBase(RetryingClientBase, ABC):
     provider_name = 'repository'
 
@@ -36,12 +54,20 @@ class PullRequestClientBase(RetryingClientBase, ABC):
         resolution_target_id: object = '',
         resolution_target_type: str = '',
         resolvable: bool | None = None,
+        file_path: object = '',
+        line_number: object = '',
+        line_type: object = '',
+        commit_sha: object = '',
     ) -> ReviewComment:
         comment = ReviewComment(
             pull_request_id=normalized_text(pull_request_id),
             comment_id=normalized_text(comment_id),
             author=normalized_text(author),
             body=normalized_text(body),
+            file_path=normalized_text(file_path),
+            line_number=_coerce_line_number(line_number),
+            line_type=normalized_text(line_type),
+            commit_sha=normalized_text(commit_sha),
         )
         normalized_target_id = normalized_text(resolution_target_id)
         if normalized_target_id:

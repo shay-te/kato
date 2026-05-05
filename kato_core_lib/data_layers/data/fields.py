@@ -19,6 +19,15 @@ class ReviewCommentFields(object):
     RESOLUTION_TARGET_ID = 'resolution_target_id'
     RESOLUTION_TARGET_TYPE = 'resolution_target_type'
     RESOLVABLE = 'resolvable'
+    # Inline-comment localization. Bitbucket / GitHub / GitLab all
+    # return file path + line number on per-line review comments;
+    # capturing them lets the agent jump straight to the right spot
+    # instead of grepping the whole repo for what "fix this typo"
+    # was about.
+    FILE_PATH = 'file_path'
+    LINE_NUMBER = 'line_number'
+    LINE_TYPE = 'line_type'  # 'added' | 'removed' | 'context' | ''
+    COMMIT_SHA = 'commit_sha'
 
 
 class TaskCommentFields(object):
