@@ -67,6 +67,86 @@ def prepend_forbidden_repository_guardrails(prompt: str, raw_value: object = Non
     return f'{guardrails}\n\n{prompt}'
 
 
+def workspace_inventory_block(cwd: str, additional_dirs) -> str:
+    """Render a short list of THIS task's repos so Claude doesn't guess.
+
+    Without this, the chat agent has no anchored "ground truth" for
+    what repos are accessible — it sees the cwd, possibly some
+    ``--add-dir`` paths, and the ``KATO_IGNORED_REPOSITORY_FOLDERS``
+    list, and has to infer which name in that mix is "the frontend"
+    or "the backend". When a forbidden name happens to match the
+    word the operator used (e.g. user says "front end" while
+    ``ob-love-admin-client-new`` is forbidden), the model latches
+    onto the forbidden one and refuses, even though the actual
+    frontend repo (``ob-love-admin-client``) sits right there in
+    the workspace.
+
+    The block is short on purpose: a numbered list of full paths
+    plus one sentence telling Claude not to invent additional repos.
+    Token cost stays small and the disambiguation is unmissable.
+    Returns '' when there's nothing to anchor (e.g. fresh task,
+    no workspace yet) so the prompt stays clean.
+    """
+    cwd_text = normalized_text(str(cwd or ''))
+    extra_paths: list[str] = []
+    seen: set[str] = set()
+    if cwd_text:
+        seen.add(cwd_text.rstrip('/\\'))
+    for entry in (additional_dirs or []):
+        path = normalized_text(str(entry or ''))
+        if not path:
+            continue
+        normalized = path.rstrip('/\\')
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        extra_paths.append(path)
+    if not cwd_text and not extra_paths:
+        return ''
+    lines = ['Repositories available in this workspace:']
+    if cwd_text:
+        lines.append(f'- (cwd) {cwd_text}')
+    for path in extra_paths:
+        lines.append(f'- {path}')
+    lines.append('')
+    lines.append(
+        'These are the ONLY repositories present for this task. When the '
+        'operator refers to "the frontend", "the backend", "the client", '
+        '"the core lib", or any other shorthand, resolve it to a folder '
+        'in the list above — do NOT assume a similarly-named repository '
+        '(e.g. ``-new``, ``-old``, ``-legacy``) exists elsewhere on disk. '
+        'If the list contains the repo Claude needs, use it directly; if '
+        'it does not, ask the operator for clarification rather than '
+        'declaring the work blocked by a forbidden repository.'
+    )
+    return '\n'.join(lines)
+
+
+def prepend_chat_workspace_context(
+    prompt: str,
+    *,
+    cwd: str = '',
+    additional_dirs=None,
+    raw_ignored_value: object = None,
+) -> str:
+    """Front-load workspace inventory + forbidden guardrails on a chat message.
+
+    Order matters: the inventory comes FIRST so Claude reads "these
+    are the repos that exist" before the forbidden list. Otherwise
+    the model sometimes starts from the forbidden block and tries to
+    map the operator's wording onto a forbidden name. With the
+    inventory leading, the forbidden block becomes "and don't go
+    looking outside this list" — which is what it's actually meant
+    to enforce.
+    """
+    inventory = workspace_inventory_block(cwd, additional_dirs)
+    forbidden = forbidden_repository_guardrails_text(raw_ignored_value)
+    parts = [block for block in (inventory, forbidden) if block]
+    if not parts:
+        return prompt
+    return '\n\n'.join([*parts, prompt])
+
+
 def security_guardrails_text() -> str:
     return (
         'Security guardrails:\n'

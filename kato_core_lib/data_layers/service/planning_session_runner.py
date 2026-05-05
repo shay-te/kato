@@ -169,8 +169,18 @@ class PlanningSessionRunner(object):
         normalized_message = str(message or '').strip()
         if not normalized_message:
             raise ValueError('message is required to resume a chat session')
-        initial_prompt = agent_prompt_utils.prepend_forbidden_repository_guardrails(
+        # Front-load BOTH the workspace inventory AND the forbidden
+        # block. The inventory anchors Claude to the actual cloned
+        # repos for this task — without it the model has been
+        # mapping operator shorthand like "the front end" onto names
+        # it sees in the forbidden list (e.g.
+        # ``ob-love-admin-client-new``) instead of the
+        # ``ob-love-admin-client`` clone that's right there in the
+        # workspace.
+        initial_prompt = agent_prompt_utils.prepend_chat_workspace_context(
             normalized_message,
+            cwd=cwd,
+            additional_dirs=additional_dirs,
         )
         return self._session_manager.start_session(
             task_id=normalized_task_id,
