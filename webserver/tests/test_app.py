@@ -423,7 +423,13 @@ class WebserverAppTests(unittest.TestCase):
         self.assertIn('"type": "control_request"', joined)
 
     def test_session_pending_permission_detects_unanswered_request(self):
+        # Live state ("agent is paused on stdin") is the new
+        # primary source of truth — when ``pending_control_request_tool``
+        # returns a non-empty string, we trust it. Earlier this
+        # method walked ``recent_events`` history; that fallback
+        # is still wired for stubs that don't expose the live probe.
         session = MagicMock()
+        session.pending_control_request_tool = MagicMock(return_value='Bash')
         session.recent_events.return_value = [
             _FakeSessionEvent('assistant'),
             _FakeSessionEvent('control_request'),
@@ -432,10 +438,47 @@ class WebserverAppTests(unittest.TestCase):
         self.assertTrue(_session_has_pending_permission(session))
 
     def test_session_pending_permission_clears_after_response(self):
+        # ``send_permission_response`` pops the request from
+        # ``_pending_control_requests``, so the live probe returns
+        # '' the instant a response lands. Tab-orange clears
+        # immediately even if the synthetic response didn't make
+        # it back to the history walk.
         session = MagicMock()
+        session.pending_control_request_tool = MagicMock(return_value='')
         session.recent_events.return_value = [
             _FakeSessionEvent('control_request'),
             _FakeSessionEvent('permission_response'),
+        ]
+
+        self.assertFalse(_session_has_pending_permission(session))
+
+    def test_session_pending_permission_falls_back_to_history_walk_when_no_live_probe(self):
+        # Older session stubs / custom backends without the live
+        # probe still get the legacy history-walk behaviour, so we
+        # never silently start reporting "no pending" on a backend
+        # that hasn't migrated.
+        from types import SimpleNamespace
+        session = SimpleNamespace(
+            recent_events=lambda: [
+                _FakeSessionEvent('assistant'),
+                _FakeSessionEvent('control_request'),
+            ],
+        )
+        self.assertTrue(_session_has_pending_permission(session))
+
+    def test_session_pending_permission_live_probe_wins_over_stale_history(self):
+        # The original bug: ``recent_events`` had an old
+        # ``control_request`` whose response was dedupe'd or never
+        # logged, so the history walk reported "still waiting"
+        # forever and the tab stayed orange. The live probe says
+        # "nothing pending" and is now authoritative — history
+        # is NOT consulted when the live probe returns ''.
+        session = MagicMock()
+        session.pending_control_request_tool = MagicMock(return_value='')
+        session.recent_events.return_value = [
+            _FakeSessionEvent('control_request'),
+            _FakeSessionEvent('assistant'),
+            _FakeSessionEvent('control_request'),
         ]
 
         self.assertFalse(_session_has_pending_permission(session))

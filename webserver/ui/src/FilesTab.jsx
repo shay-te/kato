@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Tree } from 'react-arborist';
-import { fetchFileTree, syncTaskRepositories } from './api.js';
+import { fetchFileTree, fetchRepoCommits, syncTaskRepositories } from './api.js';
 import AddRepositoryModal from './components/AddRepositoryModal.jsx';
+import CommitDiffModal from './components/CommitDiffModal.jsx';
 import Icon from './components/Icon.jsx';
 import { useChatComposer } from './contexts/ChatComposerContext.jsx';
 import { toast } from './stores/toastStore.js';
@@ -270,6 +271,7 @@ export default function FilesTab({
           onPickFile={appendToInput}
           searchTerm={query}
           conflictedFiles={repoTree.conflictedFiles}
+          taskId={taskId}
         />
       );
     });
@@ -378,17 +380,62 @@ function formatSyncResult(result) {
 
 function RepoTree({
   repoTree, width, collapsed, onToggle, onPickFile,
-  searchTerm = '', conflictedFiles,
+  searchTerm = '', conflictedFiles, taskId = '',
 }) {
   const treeData = useMemo(() => {
     return attachIds(repoTree.tree, repoTree.cwd);
   }, [repoTree.tree, repoTree.cwd]);
   const heading = repoTree.repo_id || repoTree.cwd || 'repo';
+  const repoId = String(repoTree.repo_id || '').trim();
   // While filtering, expand by default so the operator sees every
   // matching descendant without clicking through ancestor folders.
   const isFiltering = !!searchTerm.trim();
   const treeHeight = Math.max(120, Math.min(treeData.length * 22 + 8, 800));
   const chevronName = collapsed ? 'chevron-right' : 'chevron-down';
+  // Per-repo commit dropdown state. Populated lazily on first
+  // open so we don't fetch ``/commits`` for every repo on every
+  // file-tree refetch (would be 5+ extra HTTP calls per
+  // workspace-version bump otherwise).
+  const [commitsState, setCommitsState] = useState({
+    status: 'idle', items: [], error: '',
+  });
+  const [commitMenuOpen, setCommitMenuOpen] = useState(false);
+  const [activeCommit, setActiveCommit] = useState(null);
+
+  async function ensureCommitsLoaded() {
+    if (!taskId || !repoId) { return; }
+    if (commitsState.status === 'ready' || commitsState.status === 'loading') {
+      return;
+    }
+    setCommitsState({ status: 'loading', items: [], error: '' });
+    const result = await fetchRepoCommits(taskId, repoId, { limit: 50 });
+    if (!result.ok) {
+      setCommitsState({
+        status: 'error', items: [],
+        error: String(result.error || 'failed to load commits'),
+      });
+      return;
+    }
+    setCommitsState({
+      status: 'ready',
+      items: Array.isArray(result.body?.commits) ? result.body.commits : [],
+      error: '',
+    });
+  }
+
+  function toggleCommitMenu(event) {
+    // Stop the click from bubbling to the header — header click
+    // is "expand/collapse repo", which we explicitly DON'T want
+    // when the operator clicks the commit-list icon.
+    event.stopPropagation();
+    if (!commitMenuOpen) { ensureCommitsLoaded(); }
+    setCommitMenuOpen((prev) => !prev);
+  }
+
+  function pickCommit(commit) {
+    setCommitMenuOpen(false);
+    setActiveCommit(commit);
+  }
   let body;
   if (collapsed) {
     body = null;
@@ -430,9 +477,85 @@ function RepoTree({
           <Icon name={chevronName} />
         </span>
         <span className="files-tab-repo-name">{heading}</span>
+        {repoId && taskId && (
+          <button
+            type="button"
+            className="files-tab-repo-commits-btn"
+            onClick={toggleCommitMenu}
+            aria-haspopup="listbox"
+            aria-expanded={commitMenuOpen ? 'true' : 'false'}
+            data-tooltip="View changes from a commit on this repo's task branch"
+            aria-label={`View commit history for ${heading}`}
+          >
+            <Icon name="commit" />
+          </button>
+        )}
       </header>
+      {commitMenuOpen && (
+        <CommitDropdown
+          state={commitsState}
+          onPick={pickCommit}
+          onClose={() => setCommitMenuOpen(false)}
+        />
+      )}
       {body}
+      {activeCommit && (
+        <CommitDiffModal
+          taskId={taskId}
+          repoId={repoId}
+          commit={activeCommit}
+          onClose={() => setActiveCommit(null)}
+        />
+      )}
     </section>
+  );
+}
+
+
+function CommitDropdown({ state, onPick, onClose }) {
+  // Light-touch "click outside" behaviour: a backdrop catches
+  // outside clicks without trapping mouse events on the rest of
+  // the page (a real popover library would be overkill for one
+  // dropdown).
+  return (
+    <>
+      <div
+        className="files-tab-commit-backdrop"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <ul className="files-tab-commit-menu" role="listbox">
+        {state.status === 'loading' && (
+          <li className="files-tab-commit-empty">Loading commits…</li>
+        )}
+        {state.status === 'error' && (
+          <li className="files-tab-commit-empty error">{state.error}</li>
+        )}
+        {state.status === 'ready' && state.items.length === 0 && (
+          <li className="files-tab-commit-empty">
+            No commits on the task branch yet.
+          </li>
+        )}
+        {state.status === 'ready' && state.items.map((commit) => (
+          <li key={commit.sha}>
+            <button
+              type="button"
+              role="option"
+              className="files-tab-commit-row"
+              onClick={() => onPick(commit)}
+              aria-selected="false"
+              title={commit.sha}
+            >
+              <code className="files-tab-commit-sha">{commit.short_sha}</code>
+              <span className="files-tab-commit-subject">
+                {commit.subject || '(no subject)'}
+              </span>
+              <span className="files-tab-commit-author">{commit.author}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 

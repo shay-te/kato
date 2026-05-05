@@ -81,6 +81,49 @@ export async function updateTaskSource(taskId) {
   }
 }
 
+// Recent commits on a repo's task branch (newest first). Drives the
+// Files-tab per-repo "view commit" dropdown. ``limit`` is optional
+// (server caps it at 200); ``repoId`` is required.
+export async function fetchRepoCommits(taskId, repoId, { limit = 50 } = {}) {
+  if (!taskId) { return { ok: false, error: 'no task id' }; }
+  if (!repoId) { return { ok: false, error: 'no repo id' }; }
+  const params = new URLSearchParams({ repo: repoId, limit: String(limit) });
+  try {
+    const response = await fetch(
+      `/api/sessions/${encodeURIComponent(taskId)}/commits?${params}`,
+    );
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return { ok: false, status: response.status, error: body.error || response.statusText };
+    }
+    return { ok: true, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+// Unified diff for a single commit on a repo. ``react-diff-view``'s
+// parser eats the same shape ``/diff`` returns.
+export async function fetchRepoCommitDiff(taskId, repoId, sha) {
+  if (!taskId) { return { ok: false, error: 'no task id' }; }
+  if (!repoId) { return { ok: false, error: 'no repo id' }; }
+  if (!sha) { return { ok: false, error: 'no sha' }; }
+  const params = new URLSearchParams({ repo: repoId, sha });
+  try {
+    const response = await fetch(
+      `/api/sessions/${encodeURIComponent(taskId)}/commit?${params}`,
+    );
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return { ok: false, status: response.status, error: body.error || response.statusText };
+    }
+    return { ok: true, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+
 // Add any task repositories missing from the workspace. Pure additive
 // — repos already cloned, and repos no longer on the task, stay on
 // disk untouched. The Files-tab sync icon calls this when the

@@ -3,6 +3,8 @@ import { parseDiff, Diff, Hunk } from 'react-diff-view';
 import 'react-diff-view/style/index.css';
 import { fetchDiff } from './api.js';
 import Icon from './components/Icon.jsx';
+import { useChatComposer } from './contexts/ChatComposerContext.jsx';
+import { buildChatFragmentFromSelection } from './utils/diffSelectionPrompt.js';
 import { tokenizeHunks } from './utils/diffSyntax.js';
 
 
@@ -20,6 +22,7 @@ export default function ChangesTab({
   taskId,
   workspaceVersion = 0,
 }) {
+  const { appendToInput } = useChatComposer();
   const [state, setState] = useState({
     status: 'loading',
     diffs: [],
@@ -185,6 +188,7 @@ export default function ChangesTab({
           repoDiff={repoDiff}
           collapsed={collapsed.has(repoKey)}
           onToggle={() => toggleRepo(repoKey)}
+          onAddToChat={appendToInput}
         />
       );
     });
@@ -265,7 +269,7 @@ function basenameOf(path) {
   return idx >= 0 ? trimmed.slice(idx + 1) : trimmed;
 }
 
-function RepoDiff({ repoDiff, collapsed, onToggle }) {
+function RepoDiff({ repoDiff, collapsed, onToggle, onAddToChat }) {
   const heading = repoDiff.repo_id || repoDiff.cwd || 'repo';
   const chevronName = collapsed ? 'chevron-right' : 'chevron-down';
   return (
@@ -295,6 +299,8 @@ function RepoDiff({ repoDiff, collapsed, onToggle }) {
               key={diffFileKey(file)}
               file={file}
               conflicted={isFileConflicted(file, repoDiff.conflictedFiles)}
+              repoId={repoDiff.repo_id}
+              onAddToChat={onAddToChat}
             />
           ))}
         </div>
@@ -309,7 +315,7 @@ function diffFileKey(file) {
   return `${file.type}:${oldPath}->${newPath}`;
 }
 
-function DiffFile({ file, conflicted = false }) {
+function DiffFile({ file, conflicted = false, repoId = '', onAddToChat }) {
   const path = file.newPath || file.oldPath || '(unknown)';
   // Run intra-line edit highlighting (markEdits enhancer). Memoized
   // on the hunks reference + path so workspace-poll re-renders
@@ -318,8 +324,34 @@ function DiffFile({ file, conflicted = false }) {
     () => tokenizeHunks(file.hunks || [], path),
     [file.hunks, path],
   );
+  // Right-click anywhere inside the diff body pastes a precise
+  // prompt fragment into the chat composer:
+  //
+  //   * If the operator highlighted text first (any selection
+  //     inside this DiffFile), the fragment includes the file
+  //     path, the repo it lives in, AND the literal selected
+  //     text inside a fenced code block. That gives Claude an
+  //     unambiguous reference to act on (it can search the
+  //     selected text directly without needing line numbers).
+  //   * If nothing is selected, fall back to just the file
+  //     path — same as right-clicking on the Files tree.
+  //
+  // ``preventDefault`` suppresses the browser's native context
+  // menu so the paste lands without an extra dismiss step.
+  function onContextMenu(event) {
+    if (typeof onAddToChat !== 'function') { return; }
+    event.preventDefault();
+    const fragment = buildChatFragmentFromSelection(path, repoId);
+    if (fragment) {
+      onAddToChat(fragment);
+    }
+  }
   return (
-    <section className="diff-file">
+    <section
+      className="diff-file"
+      onContextMenu={onContextMenu}
+      title="Right-click to add this file (and any selected lines) to the chat composer"
+    >
       <header className="diff-file-header">
         <span className="diff-file-type">{file.type}</span>
         <span className="diff-file-path">{path}</span>
@@ -345,6 +377,8 @@ function DiffFile({ file, conflicted = false }) {
     </section>
   );
 }
+
+
 
 
 function isFileConflicted(file, conflictedSet) {

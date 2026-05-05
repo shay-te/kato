@@ -172,6 +172,81 @@ def conflicted_paths(cwd: str) -> list[str]:
     return sorted(paths)
 
 
+def list_branch_commits(
+    cwd: str,
+    base_ref: str,
+    *,
+    limit: int = 50,
+) -> list[dict]:
+    """Recent commits on HEAD ahead of ``base_ref``, newest first.
+
+    Returns one ``{sha, short_sha, subject, author, epoch}`` dict
+    per commit. Drives the Files-tab "view changes from commit"
+    dropdown — the operator picks a commit and the UI shows only
+    that commit's diff. Empty list on any failure (no upstream,
+    detached HEAD, malformed log output) — the dropdown just
+    renders empty in that case rather than spamming an error.
+
+    ``--no-merges`` because merge commits don't represent kato's
+    own work; the operator's mental model is "what did kato
+    change", and merges are bookkeeping. ``--max-count`` keeps
+    the dropdown scannable even on long-running task branches.
+    """
+    if not cwd or not base_ref:
+        return []
+    bounded_limit = max(1, min(int(limit), 200))
+    fmt = '%H%x09%h%x09%ct%x09%an%x09%s'
+    out = run_git(
+        cwd,
+        [
+            'log',
+            f'--max-count={bounded_limit}',
+            '--no-merges',
+            f'--pretty=format:{fmt}',
+            f'{base_ref}..HEAD',
+        ],
+        timeout=15,
+    )
+    if not out:
+        return []
+    commits: list[dict] = []
+    for line in out.splitlines():
+        parts = line.split('\t', 4)
+        if len(parts) < 5:
+            continue
+        sha, short_sha, epoch_text, author, subject = parts
+        try:
+            epoch = float(epoch_text)
+        except ValueError:
+            epoch = 0.0
+        commits.append({
+            'sha': sha.strip(),
+            'short_sha': short_sha.strip(),
+            'epoch': epoch,
+            'author': author.strip(),
+            'subject': subject.strip(),
+        })
+    return commits
+
+
+def diff_for_commit(cwd: str, sha: str) -> str:
+    """Unified diff for a single commit's changes.
+
+    Equivalent to ``git show --no-color <sha>`` minus the leading
+    commit header — we want the file-by-file diff payload only,
+    so the existing react-diff-view ``parseDiff`` can render it
+    the same way it renders the branch-vs-base diff.
+    """
+    safe_sha = str(sha or '').strip()
+    if not cwd or not safe_sha:
+        return ''
+    return run_git(
+        cwd,
+        ['show', '--no-color', '--pretty=format:', safe_sha],
+        timeout=30,
+    ) or ''
+
+
 def diff_against_base(cwd: str, base_ref: str) -> str:
     """Unified diff that surfaces committed AND uncommitted work vs ``base_ref``.
 

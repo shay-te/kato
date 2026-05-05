@@ -945,7 +945,87 @@ body.kato-resizing { user-select: none; cursor: col-resize; }
 }
 .files-tab-repo-header:hover { background: #1f1f1f; }
 .files-tab-repo-chevron { color: #a3a3a3; width: 12px; }
-.files-tab-repo-name { color: #e5e5e5; font-weight: 600; }
+.files-tab-repo-name { color: #e5e5e5; font-weight: 600; flex: 1; }
+
+/* Per-repo "view commit" affordance + dropdown menu (FilesTab). */
+.files-tab-repo-commits-btn {
+  background: transparent;
+  border: 1px solid #404040;
+  border-radius: 3px;
+  color: #a3a3a3;
+  padding: 2px 8px;
+  cursor: pointer;
+  font: 11px/1 inherit;
+  flex-shrink: 0;
+}
+.files-tab-repo-commits-btn:hover { background: #262626; color: #e5e5e5; }
+.files-tab-repo-commits-btn[aria-expanded='true'] {
+  background: #262626;
+  color: #e5e5e5;
+}
+
+.files-tab-commit-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+}
+.files-tab-commit-menu {
+  position: absolute;
+  z-index: 10;
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  background: #1a1a1a;
+  border: 1px solid #404040;
+  border-radius: 4px;
+  max-height: 360px;
+  overflow-y: auto;
+  min-width: 280px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+.files-tab-commit-empty {
+  padding: 8px 12px;
+  color: #a3a3a3;
+  font: 12px/1.4 inherit;
+}
+.files-tab-commit-empty.error { color: #f87171; }
+.files-tab-commit-row {
+  display: grid;
+  grid-template-columns: 64px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 6px 12px;
+  cursor: pointer;
+  color: #d4d4d4;
+  font: 12px/1.3 inherit;
+}
+.files-tab-commit-row:hover { background: #262626; }
+.files-tab-commit-sha {
+  color: #fbbf24;
+  font-family: ui-monospace, monospace;
+}
+.files-tab-commit-subject {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.files-tab-commit-author {
+  color: #737373;
+  font-size: 11px;
+}
+
+/* Commit-diff modal — wider scrim than the adopt-session modal so
+ * file diffs don't squash horizontally. */
+.commit-diff-modal { max-width: 90vw; width: 1100px; }
+.commit-diff-modal-body {
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 8px 4px;
+}
 
 .diff-repo {
   border: 1px solid #171717;

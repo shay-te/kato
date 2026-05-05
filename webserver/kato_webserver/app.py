@@ -14,6 +14,8 @@ Endpoints:
     GET  /api/sessions/<task_id>/events                 — SSE: live agent events
     GET  /api/sessions/<task_id>/files                  — repo file tree (Files tab)
     GET  /api/sessions/<task_id>/diff                   — committed + uncommitted diff
+    GET  /api/sessions/<task_id>/commits?repo=<id>      — recent commits on a repo's task branch
+    GET  /api/sessions/<task_id>/commit?repo=<id>&sha=  — unified diff for one commit
     POST /api/sessions/<task_id>/messages               — body: {"text", "images": [{media_type, data}]}
     POST /api/sessions/<task_id>/permission             — body: {"request_id", "allow", "rationale"}
     POST /api/sessions/<task_id>/adopt-claude-session   — body: {"claude_session_id"}
@@ -61,7 +63,9 @@ from kato_webserver.git_diff_utils import (
     current_branch,
     detect_default_branch,
     diff_against_base,
+    diff_for_commit,
     ensure_branch_checked_out,
+    list_branch_commits,
     tracked_file_tree,
 )
 
@@ -498,6 +502,67 @@ def _register_http_routes(app: Flask) -> None:
             'base': single['base'],
             'head': single['head'],
             'diff': single['diff'],
+        })
+
+    @app.get('/api/sessions/<task_id>/commits')
+    def list_repo_commits(task_id: str):
+        """Recent commits on a repo's task branch (newest first).
+
+        Drives the Files-tab "view changes from commit" dropdown
+        on each repo's header. Required query param: ``repo``
+        (the repository id, matching the ``files`` / ``diff``
+        endpoints). Optional ``limit`` (default 50, capped at 200)
+        for very long-running task branches.
+        """
+        repo_id = (request.args.get('repo') or '').strip()
+        if not repo_id:
+            return jsonify({'error': 'repo query parameter is required'}), 400
+        try:
+            limit = int(request.args.get('limit', '50'))
+        except (TypeError, ValueError):
+            limit = 50
+        workspace_manager = app.config.get('WORKSPACE_MANAGER')
+        cwd = _repository_cwd(workspace_manager, task_id, repo_id)
+        if cwd is None:
+            return jsonify({'error': f'repository {repo_id!r} not in workspace'}), 404
+        base = detect_default_branch(cwd)
+        if not base:
+            return jsonify({
+                'commits': [],
+                'error': 'could not detect default branch',
+            }), 200
+        commits = list_branch_commits(cwd, f'origin/{base}', limit=limit)
+        return jsonify({
+            'repo_id': repo_id,
+            'base': base,
+            'head': current_branch(cwd),
+            'commits': commits,
+        })
+
+    @app.get('/api/sessions/<task_id>/commit')
+    def get_repo_commit_diff(task_id: str):
+        """Unified diff for a single commit on a repo.
+
+        Required query params: ``repo`` (repository id) and ``sha``
+        (the commit SHA returned by ``/commits``). The diff is the
+        same shape as ``/diff`` so the existing ``react-diff-view``
+        rendering works without changes.
+        """
+        repo_id = (request.args.get('repo') or '').strip()
+        sha = (request.args.get('sha') or '').strip()
+        if not repo_id:
+            return jsonify({'error': 'repo query parameter is required'}), 400
+        if not sha:
+            return jsonify({'error': 'sha query parameter is required'}), 400
+        workspace_manager = app.config.get('WORKSPACE_MANAGER')
+        cwd = _repository_cwd(workspace_manager, task_id, repo_id)
+        if cwd is None:
+            return jsonify({'error': f'repository {repo_id!r} not in workspace'}), 404
+        diff = diff_for_commit(cwd, sha)
+        return jsonify({
+            'repo_id': repo_id,
+            'sha': sha,
+            'diff': diff,
         })
 
     @app.post('/api/sessions/<task_id>/approve-push')
@@ -1383,14 +1448,38 @@ def _session_has_pending_permission(session) -> bool:
 
 
 def _session_pending_permission_tool(session) -> str:
-    """Tool name on the most recent un-answered permission request, or ''.
+    """Tool name on the live un-answered control request, or ''.
 
-    Walks ``recent_events`` newest-first looking for the first
-    permission/control request not yet followed by a response /
-    result. Returns the tool name from the request payload (or
-    a fallback marker so callers can still treat the task as
-    pending without crashing on a malformed envelope).
+    Reads the streaming session's ``_pending_control_requests`` dict
+    (via ``pending_control_request_tool()``). That dict is populated
+    when a ``control_request`` event arrives and ``pop``'d when
+    ``send_permission_response`` runs — so it flips false the
+    instant the operator's reply (or auto-allow's reply) lands.
+    Tab-orange tracks this; the operator never sees a stuck
+    indicator from a request that's already been answered.
+
+    Falls back to walking ``recent_events`` for sessions that
+    don't expose the live state (older test stubs, or the
+    permission_request shape that doesn't go through the
+    control_request pipeline). The fallback was the only mode
+    before — it sometimes left the orange "stuck" because a
+    dedupe'd response or a request that the agent moved past
+    without answering still appeared as the newest permission
+    event in the history.
     """
+    live_probe = getattr(session, 'pending_control_request_tool', None)
+    if callable(live_probe):
+        try:
+            tool_name = str(live_probe() or '').strip()
+        except Exception:
+            tool_name = ''
+        if tool_name:
+            return tool_name
+        # Live state says "nothing pending" — trust it. Don't fall
+        # back to the history walk; that's what produced the stuck
+        # orange in the first place.
+        return ''
+    # Legacy / test stub path: walk the history.
     for event in reversed(session.recent_events()):
         raw = getattr(event, 'raw', {}) or {}
         event_type = raw.get('type') if isinstance(raw, dict) else ''
@@ -1398,8 +1487,6 @@ def _session_pending_permission_tool(session) -> str:
             CLAUDE_EVENT_PERMISSION_REQUEST,
             CLAUDE_EVENT_CONTROL_REQUEST,
         ):
-            # Both shapes: ``permission_request`` flat ``tool_name``,
-            # ``control_request`` nested under ``request``.
             tool_name = raw.get('tool_name') or raw.get('tool') or ''
             if not tool_name and isinstance(raw.get('request'), dict):
                 nested = raw['request']

@@ -839,6 +839,39 @@ class StreamingClaudeSession(object):
         with self._pending_control_requests_lock:
             self._pending_control_requests[request_id] = request
 
+    def pending_control_request_tool(self) -> str:
+        """Tool name on the oldest currently-waiting control request, or ''.
+
+        Reads the LIVE ``_pending_control_requests`` dict — the
+        authoritative "agent is paused on stdin, needs an answer"
+        state, populated when a ``control_request`` arrives and
+        ``pop``'d when the operator's response is delivered. This is
+        what the orange-tab indicator should track. The previous
+        approach walked ``recent_events`` history, which sometimes
+        showed "still waiting" after the response had landed (the
+        synthetic ``permission_response`` was dropped by client-side
+        dedupe, or the walk hit an old un-answered request that the
+        agent had since moved past). The dict version flips false
+        the instant ``send_permission_response`` runs, so the tab
+        clears as soon as auto-allow / manual-allow completes.
+
+        Returns the tool name from the oldest pending request (FIFO
+        on insertion order — matches operator expectation that the
+        modal shows the first un-answered ask). Empty string when
+        nothing is pending.
+        """
+        with self._pending_control_requests_lock:
+            for request in self._pending_control_requests.values():
+                if not isinstance(request, dict):
+                    continue
+                tool_name = str(
+                    request.get('tool_name')
+                    or request.get('tool')
+                    or '',
+                ).strip()
+                return tool_name or '<unknown>'
+        return ''
+
     def _log_event_for_operator(self, event: SessionEvent) -> None:
         """Surface high-signal events to the kato terminal log.
 
