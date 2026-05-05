@@ -51,33 +51,59 @@ test('Grep / Glob with path show full path', function () {
 
 // ----- Edit / Write / MultiEdit emit structured {summary, details} -----
 
-test('Edit emits a unified-diff-style details block', function () {
+test('Edit shows a single-line replacement as -/+ pair plus a summary badge', function () {
   const out = formatToolUse('Edit', {
     file_path: '/repo/src/auth.py',
     old_string: 'return None',
     new_string: 'return verify(token)',
   });
   assert.equal(typeof out, 'object');
-  assert.equal(out.summary, 'Edit · /repo/src/auth.py');
+  assert.equal(out.summary, 'Edit · /repo/src/auth.py · +1 -1');
   assert.equal(out.details, '- return None\n+ return verify(token)');
 });
 
-test('Edit with multi-line old/new prefixes every line', function () {
+test('Edit keeps unchanged lines as context (matches VS Code Claude\'s diff view)', function () {
+  // Common prefix + middle change + common suffix → only the middle
+  // line should be tagged as removed/added; everything else is
+  // context. This mirrors how Claude Code's VS Code extension
+  // renders Edit tool calls (small green/red region with the
+  // surrounding code shown plain).
   const out = formatToolUse('Edit', {
-    file_path: '/repo/foo.py',
-    old_string: 'a\nb\nc',
-    new_string: 'x\ny',
+    file_path: '/repo/foo.js',
+    old_string: 'const a = 1\nconst b = 2\nconst c = 3',
+    new_string: 'const a = 1\nconst b = 22\nconst c = 3',
   });
-  assert.equal(out.details, '- a\n- b\n- c\n+ x\n+ y');
+  assert.equal(
+    out.details,
+    '  const a = 1\n- const b = 2\n+ const b = 22\n  const c = 3',
+  );
+  assert.equal(out.summary, 'Edit · /repo/foo.js · +1 -1');
 });
 
-test('Edit with empty old (insertion) renders only the + lines', function () {
+test('Edit treats a pure insertion as added lines surrounded by context', function () {
+  // The two new lines are inserted between the unchanged ones; the
+  // diff should keep the surrounding lines as context (no -/+
+  // duplication of every existing line).
+  const out = formatToolUse('Edit', {
+    file_path: '/repo/foo.js',
+    old_string: 'name: "",\nisInitialized: false,\n})',
+    new_string: 'name: "",\nisInitialized: false,\nisDragging: false,\ndragHoverPlusId: null,\n})',
+  });
+  assert.equal(
+    out.details,
+    '  name: "",\n  isInitialized: false,\n+ isDragging: false,\n+ dragHoverPlusId: null,\n  })',
+  );
+  assert.equal(out.summary, 'Edit · /repo/foo.js · +2');
+});
+
+test('Edit with empty old (insertion) renders only added lines', function () {
   const out = formatToolUse('Edit', {
     file_path: '/repo/foo.py',
     old_string: '',
     new_string: 'new line',
   });
   assert.equal(out.details, '+ new line');
+  assert.equal(out.summary, 'Edit · /repo/foo.py · +1');
 });
 
 test('Edit drops a single trailing newline so we do not emit a stray prefix-only row', function () {
@@ -86,11 +112,11 @@ test('Edit drops a single trailing newline so we do not emit a stray prefix-only
     old_string: 'a\nb\n',
     new_string: 'x\ny\n',
   });
-  // Without the trim, this would be "- a\n- b\n- \n+ x\n+ y\n+ ".
+  // No common lines → all of old becomes -, all of new becomes +.
   assert.equal(out.details, '- a\n- b\n+ x\n+ y');
 });
 
-test('MultiEdit joins each edit block with a separator', function () {
+test('MultiEdit joins each edit block with a separator and aggregates the badge', function () {
   const out = formatToolUse('MultiEdit', {
     file_path: '/repo/foo.py',
     edits: [
@@ -98,7 +124,7 @@ test('MultiEdit joins each edit block with a separator', function () {
       { old_string: 'b', new_string: 'B' },
     ],
   });
-  assert.equal(out.summary, 'Edit · /repo/foo.py (2 edits)');
+  assert.equal(out.summary, 'Edit · /repo/foo.py (2 edits) · +2 -2');
   assert.equal(out.details, '- a\n+ A\n---\n- b\n+ B');
 });
 

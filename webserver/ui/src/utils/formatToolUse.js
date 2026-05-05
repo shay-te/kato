@@ -36,9 +36,10 @@ const FORMATTERS = {
     const path = String(input?.file_path || '');
     const oldStr = String(input?.old_string || '');
     const newStr = String(input?.new_string || '');
+    const diff = formatEditDiff(oldStr, newStr);
     return {
-      summary: `Edit · ${path}`,
-      details: formatEditDiff(oldStr, newStr),
+      summary: `Edit · ${path}${_changeBadge(diff.stats)}`,
+      details: diff.text,
     };
   },
   MultiEdit: (input) => {
@@ -48,14 +49,18 @@ const FORMATTERS = {
     if (edits.length === 0) {
       return `Edit · ${path} (${editLabel})`;
     }
-    const blocks = edits.map((edit) => {
+    const diffs = edits.map((edit) => {
       const oldStr = String(edit?.old_string || '');
       const newStr = String(edit?.new_string || '');
       return formatEditDiff(oldStr, newStr);
     });
+    const totals = diffs.reduce(
+      (acc, d) => ({ added: acc.added + d.stats.added, removed: acc.removed + d.stats.removed }),
+      { added: 0, removed: 0 },
+    );
     return {
-      summary: `Edit · ${path} (${editLabel})`,
-      details: blocks.join('\n---\n'),
+      summary: `Edit · ${path} (${editLabel})${_changeBadge(totals)}`,
+      details: diffs.map((d) => d.text).join('\n---\n'),
     };
   },
   Write: (input) => {
@@ -136,31 +141,113 @@ export function formatToolUse(toolName, input) {
 }
 
 
-// Render an old → new edit as a unified-diff-style block:
-//   - old line
-//   + new line
-// Each of old_string and new_string can be multi-line; we tag every
-// line so the operator can scan the change visually.
+// Render an Edit's old → new replacement as a unified diff: unchanged
+// lines kept as context, only differences tagged with ``+ `` / ``- ``.
+// Matches the way Claude Code's own VS Code extension renders Edit
+// tool calls, where the operator wants to see the SURROUNDING context
+// alongside the actual change — not two separate dump-everything
+// blocks. We compute an LCS-based line diff (small dimensions in
+// practice — old_string / new_string are usually a few dozen lines),
+// then walk the alignment producing context (``  ``), additions
+// (``+ ``), and deletions (``- ``).
+//
+// Returns ``{ text, stats: {added, removed} }`` so the summary line
+// can show "+N -M" alongside the path the way VS Code does.
 function formatEditDiff(oldStr, newStr) {
-  const oldBlock = prefixLines(oldStr, '- ');
-  const newBlock = prefixLines(newStr, '+ ');
-  if (!oldBlock && !newBlock) { return ''; }
-  if (!oldBlock) { return newBlock; }
-  if (!newBlock) { return oldBlock; }
-  return `${oldBlock}\n${newBlock}`;
+  const oldLines = _splitForDiff(oldStr);
+  const newLines = _splitForDiff(newStr);
+  if (oldLines.length === 0 && newLines.length === 0) {
+    return { text: '', stats: { added: 0, removed: 0 } };
+  }
+  const ops = _lcsLineDiff(oldLines, newLines);
+  let added = 0;
+  let removed = 0;
+  const out = [];
+  for (const op of ops) {
+    if (op.kind === 'add') {
+      added += 1;
+      out.push(`+ ${op.text}`);
+    } else if (op.kind === 'del') {
+      removed += 1;
+      out.push(`- ${op.text}`);
+    } else {
+      // Two-space context prefix keeps the column-zero character of
+      // each line aligned with ``+ `` / ``- `` rows; the renderer
+      // only special-cases ``+ `` and ``- ``, so context shows up
+      // uncoloured.
+      out.push(`  ${op.text}`);
+    }
+  }
+  return { text: out.join('\n'), stats: { added, removed } };
+}
+
+
+function _splitForDiff(text) {
+  const raw = String(text || '');
+  if (!raw) { return []; }
+  const lines = raw.split('\n');
+  // Drop a single trailing blank line (string ending in \n) so an
+  // ``old_string`` like "foo\n" doesn't render an extra empty row.
+  if (lines.length > 1 && lines[lines.length - 1] === '') {
+    lines.pop();
+  }
+  return lines;
 }
 
 
 function prefixLines(text, prefix) {
-  const raw = String(text || '');
-  if (!raw) { return ''; }
-  const lines = raw.split('\n');
-  // Drop a single trailing blank line (string ending in \n) so we
-  // don't emit a stray prefix-only row.
-  if (lines.length > 1 && lines[lines.length - 1] === '') {
-    lines.pop();
-  }
+  const lines = _splitForDiff(text);
+  if (lines.length === 0) { return ''; }
   return lines.map((line) => `${prefix}${line}`).join('\n');
+}
+
+
+// Standard LCS-based line diff. O(m·n) time and space — fine for the
+// sizes we see in Edit tool calls (typically <200 lines per side; the
+// Claude SDK rejects huge old_strings anyway).
+function _lcsLineDiff(oldLines, newLines) {
+  const m = oldLines.length;
+  const n = newLines.length;
+  // dp[i][j] = LCS length of oldLines[0..i] and newLines[0..j].
+  const dp = Array.from({ length: m + 1 }, () => new Int32Array(n + 1));
+  for (let i = 1; i <= m; i += 1) {
+    for (let j = 1; j <= n; j += 1) {
+      if (oldLines[i - 1] === newLines[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+  }
+  const ops = [];
+  let i = m;
+  let j = n;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
+      ops.push({ kind: 'eq', text: oldLines[i - 1] });
+      i -= 1; j -= 1;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      ops.push({ kind: 'add', text: newLines[j - 1] });
+      j -= 1;
+    } else {
+      ops.push({ kind: 'del', text: oldLines[i - 1] });
+      i -= 1;
+    }
+  }
+  ops.reverse();
+  return ops;
+}
+
+
+function _changeBadge(stats) {
+  if (!stats) { return ''; }
+  const added = Number(stats.added || 0);
+  const removed = Number(stats.removed || 0);
+  if (added === 0 && removed === 0) { return ''; }
+  const parts = [];
+  if (added > 0) { parts.push(`+${added}`); }
+  if (removed > 0) { parts.push(`-${removed}`); }
+  return ` · ${parts.join(' ')}`;
 }
 
 
