@@ -227,6 +227,14 @@ class KatoClient(RetryingClientBase):
             [workspace_path] if workspace_path else [],
         )
         scope_prefix = f'{scope_block}\n' if scope_block else ''
+        from kato_core_lib.helpers.agents_instruction_utils import (
+            agents_instructions_for_path,
+        )
+        agents_text = agents_instructions_for_path(
+            workspace_path,
+            repository_id=str(getattr(first, 'repository_id', '') or ''),
+        )
+        agents_block = f'{agents_text}\n\n' if agents_text else ''
         if mode == 'answer':
             return (
                 f'{scope_prefix}'
@@ -234,6 +242,7 @@ class KatoClient(RetryingClientBase):
                 f'{branch_name}{repository_context}.\n\n'
                 f'{batch_text}'
                 f'{review_context}\n\n'
+                f'{agents_block}'
                 f'{cls._execution_guardrails_text()}\n\n'
                 'These are QUESTIONS, not fix requests.\n'
                 '- Read the relevant code; do NOT modify any files.\n'
@@ -249,6 +258,7 @@ class KatoClient(RetryingClientBase):
             f'{branch_name}{repository_context}.\n\n'
             f'{batch_text}'
             f'{review_context}\n\n'
+            f'{agents_block}'
             f'{cls._execution_guardrails_text()}\n\n'
             'When you finish, use the finish tool.\n'
             '- Put a short description of what changed in summary.\n'
@@ -403,6 +413,14 @@ class KatoClient(RetryingClientBase):
             [workspace_path] if workspace_path else [],
         )
         scope_prefix = f'{scope_block}\n' if scope_block else ''
+        from kato_core_lib.helpers.agents_instruction_utils import (
+            agents_instructions_for_path,
+        )
+        agents_text = agents_instructions_for_path(
+            workspace_path,
+            repository_id=str(getattr(comment, 'repository_id', '') or ''),
+        )
+        agents_block = f'{agents_text}\n\n' if agents_text else ''
         if mode == 'answer':
             return (
                 f'{scope_prefix}'
@@ -412,6 +430,7 @@ class KatoClient(RetryingClientBase):
                 f'{snippet_block}'
                 f'Question by {comment.author}: {comment.body}'
                 f'{review_context}\n\n'
+                f'{agents_block}'
                 f'{cls._execution_guardrails_text()}\n\n'
                 'These are QUESTIONS, not fix requests.\n'
                 '- Read the relevant code; do NOT modify any files.\n'
@@ -426,6 +445,7 @@ class KatoClient(RetryingClientBase):
             f'{snippet_block}'
             f'Comment by {comment.author}: {comment.body}'
             f'{review_context}\n\n'
+            f'{agents_block}'
             f'{cls._execution_guardrails_text()}\n\n'
             'When you finish, use the finish tool.\n'
             '- Put a short description of what changed in summary.\n'

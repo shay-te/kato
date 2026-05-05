@@ -18,6 +18,45 @@ def repository_agents_instructions_text(repositories: list[object]) -> str:
             sections.append(repository_section)
     if not sections:
         return ''
+    return _wrap_agents_sections(sections)
+
+
+def agents_instructions_for_path(
+    workspace_path: str,
+    *,
+    repository_id: str = '',
+) -> str:
+    """Same surface as ``repository_agents_instructions_text`` but takes a path.
+
+    Used by the review-fix prompt builders, which know the operator's
+    workspace clone directory (e.g. ``~/.kato/workspaces/PROJ-1/client``)
+    but don't have a ``Repository`` object on hand. Walks the path
+    for ``AGENTS.md`` files and renders the same wrapper so the
+    review-fix agent sees the same checked-in conventions the
+    implementation agent did.
+
+    Returns ``''`` when the path is empty, missing, or has no
+    ``AGENTS.md`` anywhere — caller's prompt builder skips the
+    block silently.
+    """
+    workspace = normalized_text(workspace_path)
+    if not workspace:
+        return ''
+    root = Path(workspace)
+    if not root.is_dir():
+        return ''
+    entries = _agents_entries(root)
+    if not entries:
+        return ''
+    label = normalized_text(repository_id) or root.name
+    section_lines = [f'Repository {label} at {root}:']
+    for relative_path, content in entries:
+        section_lines.append(f'{relative_path}:')
+        section_lines.append(content)
+    return _wrap_agents_sections(['\n'.join(section_lines)])
+
+
+def _wrap_agents_sections(sections: list[str]) -> str:
     return (
         'Repository AGENTS.md instructions:\n'
         'The following checked-in AGENTS.md files were found in the allowed '

@@ -531,6 +531,17 @@ class ClaudeCliClient(object):
             [workspace_path] if workspace_path else [],
         )
         scope_prefix = f'{scope_block}\n' if scope_block else ''
+        # Pull AGENTS.md from the workspace clone if the project has
+        # one — the review-fix agent should respect the same
+        # checked-in conventions the implementation agent did.
+        from kato_core_lib.helpers.agents_instruction_utils import (
+            agents_instructions_for_path,
+        )
+        agents_text = agents_instructions_for_path(
+            workspace_path,
+            repository_id=str(getattr(first, 'repository_id', '') or ''),
+        )
+        agents_block = f'{agents_text}\n\n' if agents_text else ''
         if mode == 'answer':
             return (
                 f'{scope_prefix}'
@@ -538,6 +549,7 @@ class ClaudeCliClient(object):
                 f'{branch_name}{repository_context}.\n\n'
                 f'{batch_text}'
                 f'{wrapped_review_context}\n\n'
+                f'{agents_block}'
                 f'{cls._execution_guardrails_text()}\n\n'
                 'These are QUESTIONS, not fix requests. Read the relevant '
                 'code to understand context, then write a concise plain-text '
@@ -559,6 +571,7 @@ class ClaudeCliClient(object):
             f'{branch_name}{repository_context}.\n\n'
             f'{batch_text}'
             f'{wrapped_review_context}\n\n'
+            f'{agents_block}'
             f'{cls._execution_guardrails_text()}\n\n'
             'Address every comment listed above in a single coherent '
             'change-set.\n'
@@ -616,6 +629,14 @@ class ClaudeCliClient(object):
             [workspace_path] if workspace_path else [],
         )
         scope_prefix = f'{scope_block}\n' if scope_block else ''
+        from kato_core_lib.helpers.agents_instruction_utils import (
+            agents_instructions_for_path,
+        )
+        agents_text = agents_instructions_for_path(
+            workspace_path,
+            repository_id=str(getattr(comment, 'repository_id', '') or ''),
+        )
+        agents_block = f'{agents_text}\n\n' if agents_text else ''
         if mode == 'answer':
             return (
                 f'{scope_prefix}'
@@ -625,6 +646,7 @@ class ClaudeCliClient(object):
                 f'{snippet_block}'
                 f'Question by {comment.author}:\n{untrusted_comment_body}'
                 f'{wrapped_review_context}\n\n'
+                f'{agents_block}'
                 f'{cls._execution_guardrails_text()}\n\n'
                 'Read the relevant code to understand context, then write a '
                 'concise plain-text answer.\n'
@@ -644,6 +666,7 @@ class ClaudeCliClient(object):
             f'{snippet_block}'
             f'Comment by {comment.author}:\n{untrusted_comment_body}'
             f'{wrapped_review_context}\n\n'
+            f'{agents_block}'
             f'{cls._execution_guardrails_text()}\n\n'
             'Make the smallest possible change needed to address the review comment.\n'
             'Prefer editing only the exact lines or blocks that need to change.\n'
