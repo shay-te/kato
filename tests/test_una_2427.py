@@ -16,7 +16,7 @@ class TestUna2427(unittest.TestCase):
         # This validates basic initialization of the CoreLib component
         with patch('kato_core_lib.kato_core_lib.EmailCoreLib'), \
              patch('kato_core_lib.kato_core_lib.TaskCoreLib'), \
-             patch('kato_core_lib.kato_core_lib.KatoClient'), \
+             patch('openhands_core_lib.openhands_core_lib.openhands_client.KatoClient'), \
              patch('kato_core_lib.kato_core_lib.RepositoryService'), \
              patch('kato_core_lib.kato_core_lib.TaskDataAccess'), \
              patch('kato_core_lib.kato_core_lib.TaskService'), \
@@ -38,7 +38,7 @@ class TestUna2427(unittest.TestCase):
         
         with patch('kato_core_lib.kato_core_lib.EmailCoreLib'), \
              patch('kato_core_lib.kato_core_lib.TaskCoreLib'), \
-             patch('kato_core_lib.kato_core_lib.KatoClient'), \
+             patch('openhands_core_lib.openhands_core_lib.openhands_client.KatoClient'), \
              patch('kato_core_lib.kato_core_lib.RepositoryService'), \
              patch('kato_core_lib.kato_core_lib.TaskDataAccess'), \
              patch('kato_core_lib.kato_core_lib.TaskService'), \

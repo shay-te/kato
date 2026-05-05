@@ -54,7 +54,7 @@ from flask import (
     stream_with_context,
 )
 
-from kato_core_lib.client.claude.wire_protocol import (
+from claude_core_lib.claude_core_lib.wire_protocol import (
     CLAUDE_EVENT_CONTROL_REQUEST,
     CLAUDE_EVENT_PERMISSION_REQUEST,
     CLAUDE_EVENT_PERMISSION_RESPONSE,
@@ -393,7 +393,7 @@ def _register_http_routes(app: Flask) -> None:
         match against cwd and either preview. Empty ``q`` returns all
         (capped server-side).
         """
-        from kato_core_lib.data_layers.service.claude_session_index import (
+        from claude_core_lib.claude_core_lib.claude_session_index import (
             list_sessions as list_claude_session_metadata,
         )
 
@@ -1323,7 +1323,7 @@ def _migrate_adopted_session_transcript(
     spawn silently starts a fresh conversation even though we passed
     ``--resume``. Returns the destination path or ``None``.
     """
-    from kato_core_lib.data_layers.service.claude_session_index import (
+    from claude_core_lib.claude_core_lib.claude_session_index import (
         list_sessions,
         migrate_session_to_workspace,
     )
@@ -1539,7 +1539,7 @@ def _replay_history_from_disk(claude_session_id: str):
     if not claude_session_id:
         return
     try:
-        from kato_core_lib.client.claude.session_history import load_history_events
+        from claude_core_lib.claude_core_lib.session_history import load_history_events
     except ImportError:
         return
     try:
@@ -1876,7 +1876,7 @@ def _record_to_dict(record) -> dict[str, Any]:
 def _build_fallback_manager(fallback_state_dir: str):
     """Stand up a minimal manager so dev runs of the webserver don't crash."""
     try:
-        from kato_core_lib.client.claude.session_manager import ClaudeSessionManager
+        from claude_core_lib.claude_core_lib.session_manager import ClaudeSessionManager
     except ImportError:
         from kato_webserver.session_registry import SessionRegistry
 

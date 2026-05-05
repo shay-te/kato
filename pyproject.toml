@@ -39,6 +39,10 @@ include = [
   "jira_core_lib*",
   "hydra_plugins*",
   "vcs_provider_contracts*",
+  "agent_provider_contracts*",
+  "claude_core_lib*",
+  "openhands_core_lib*",
+  "agent_core_lib*",
 ]
 
 [tool.setuptools.package-data]

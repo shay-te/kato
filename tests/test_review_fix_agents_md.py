@@ -20,7 +20,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from kato_core_lib.client.claude.cli_client import ClaudeCliClient
+from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
 from kato_core_lib.data_layers.data.fields import PullRequestFields
 from kato_core_lib.data_layers.data.review_comment import ReviewComment
 from kato_core_lib.helpers.agents_instruction_utils import (

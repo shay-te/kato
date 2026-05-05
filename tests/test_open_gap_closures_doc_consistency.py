@@ -43,7 +43,7 @@ import unittest
 from pathlib import Path
 
 from kato_core_lib import main as kato_main
-from kato_core_lib.client.claude import cli_client as cli_client_module
+from claude_core_lib.claude_core_lib import cli_client as cli_client_module
 from sandbox_core_lib.sandbox_core_lib import manager as sandbox_manager
 
 
@@ -354,7 +354,7 @@ class ReadOnlyToolsAllowlistPinTests(unittest.TestCase):
         # by ``ClaudeCliClient._build_command`` contains every entry
         # in the pinned allowlist. Locks the wiring from constant to
         # subprocess invocation.
-        from kato_core_lib.client.claude.cli_client import ClaudeCliClient
+        from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
 
         client = ClaudeCliClient(binary='claude', read_only_tools_on=True)
         cmd = client._build_command(additional_dirs=[], session_id='')

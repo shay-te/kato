@@ -16,7 +16,7 @@ import time
 import unittest
 from pathlib import Path
 
-from kato_core_lib.client.claude.session_history import (
+from claude_core_lib.claude_core_lib.session_history import (
     find_session_file,
     find_session_id_for_cwd,
     load_history_events,

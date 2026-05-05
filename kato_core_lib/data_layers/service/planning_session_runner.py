@@ -17,7 +17,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from kato_core_lib.client.claude.session_manager import (
+from claude_core_lib.claude_core_lib.session_manager import (
     SESSION_STATUS_REVIEW,
     SESSION_STATUS_TERMINATED,
     ClaudeSessionManager,
@@ -391,7 +391,7 @@ class PlanningSessionRunner(object):
     ) -> str:
         # Reuse the one-shot client's prompt so streaming and one-shot
         # paths show identical guardrails.
-        from kato_core_lib.client.claude.cli_client import ClaudeCliClient
+        from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
 
         return ClaudeCliClient._build_review_prompt(
             comment, branch_name, workspace_path=workspace_path, mode=mode,
@@ -404,7 +404,7 @@ class PlanningSessionRunner(object):
         workspace_path: str = '',
         mode: str = 'fix',
     ) -> str:
-        from kato_core_lib.client.claude.cli_client import ClaudeCliClient
+        from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
 
         return ClaudeCliClient._build_review_comments_batch_prompt(
             comments, branch_name, workspace_path=workspace_path, mode=mode,
@@ -448,7 +448,7 @@ class PlanningSessionRunner(object):
     ) -> str:
         # Reuse the same prompt the one-shot ClaudeCliClient builds so the
         # planning agent sees identical guardrails and instructions.
-        from kato_core_lib.client.claude.cli_client import ClaudeCliClient
+        from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
 
         builder = ClaudeCliClient(binary='unused-builder-only')
         return builder._build_implementation_prompt(task, prepared_task)

@@ -25,12 +25,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from kato_core_lib.client.claude.session_manager import (
+from claude_core_lib.claude_core_lib.session_manager import (
     ClaudeSessionManager,
     PlanningSessionRecord,
     SESSION_STATUS_TERMINATED,
 )
-from kato_core_lib.data_layers.service.claude_session_index import (
+from claude_core_lib.claude_core_lib.claude_session_index import (
     CLAUDE_SESSIONS_ROOT_ENV_KEY,
     ClaudeSessionMetadata,
     claude_project_dir_for_cwd,

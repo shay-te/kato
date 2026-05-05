@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from queue import Empty, Queue
 from typing import Any
 
-from kato_core_lib.client.claude.wire_protocol import (
+from claude_core_lib.claude_core_lib.wire_protocol import (
     CLAUDE_EVENT_CONTROL_REQUEST,
     CLAUDE_EVENT_CONTROL_RESPONSE,
     CLAUDE_EVENT_PERMISSION_RESPONSE,
@@ -695,7 +695,7 @@ class StreamingClaudeSession(object):
         # Hard, non-overridable git denylist. Kato is the only component
         # that ever runs git operations; Claude must NEVER invoke `git`
         # directly. See ClaudeCliClient.GIT_DENY_PATTERNS for rationale.
-        from kato_core_lib.client.claude.cli_client import ClaudeCliClient as _CliClient
+        from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient as _CliClient
         merged_disallowed = _CliClient._merge_disallowed_with_git_deny(
             self._disallowed_tools
         )

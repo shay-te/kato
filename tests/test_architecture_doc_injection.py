@@ -21,8 +21,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from kato_core_lib.client.claude.cli_client import ClaudeCliClient
-from kato_core_lib.client.claude.streaming_session import StreamingClaudeSession
+from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
+from claude_core_lib.claude_core_lib.streaming_session import StreamingClaudeSession
 from kato_core_lib.data_layers.service.planning_session_runner import (
     PlanningSessionRunner,
     StreamingSessionDefaults,

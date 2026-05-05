@@ -2,8 +2,13 @@ from omegaconf import DictConfig
 
 from core_lib.core_lib import CoreLib
 
-from kato_core_lib.client.claude import ClaudeCliClient, ClaudeSessionManager
-from kato_core_lib.client.openhands import KatoClient
+from agent_core_lib.agent_core_lib import AgentCoreLib
+from agent_core_lib.agent_core_lib.client.agent_client_factory import resolve_platform
+# ClaudeSessionManager is the only Claude-specific surface kato
+# still touches directly — it owns the planning UI's chat-time
+# streaming sessions, which has no equivalent in OpenHands and
+# therefore intentionally lives outside ``AgentProvider``.
+from claude_core_lib.claude_core_lib import ClaudeSessionManager
 from kato_core_lib.data_layers.data_access.task_data_access import TaskDataAccess
 from kato_core_lib.data_layers.service.agent_service import AgentService
 from kato_core_lib.data_layers.service.agent_state_registry import AgentStateRegistry
@@ -62,10 +67,7 @@ from kato_core_lib.validation.startup_dependency_validator import (
 )
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.kato_config_utils import (
-    is_claude_backend,
     resolved_agent_backend,
-    resolved_openhands_base_url,
-    resolved_openhands_llm_settings,
     skip_testing_enabled,
 )
 from task_core_lib.task_core_lib.platform import Platform
@@ -577,89 +579,22 @@ class KatoCoreLib(CoreLib):
         testing: bool = False,
         docker_mode_on: bool = False,
         read_only_tools_on: bool = False,
-    ) -> KatoClient | ClaudeCliClient:
-        if is_claude_backend(open_cfg):
-            return cls._build_claude_client(
-                open_cfg,
-                max_retries,
-                testing=testing,
-                docker_mode_on=docker_mode_on,
-                read_only_tools_on=read_only_tools_on,
-            )
-        return cls._build_kato_client(
-            open_cfg.openhands,
+    ):
+        """Pick the configured backend through ``agent_core_lib``.
+
+        Backend-selection logic + per-backend construction now
+        lives in ``agent_core_lib`` (the same way ticket-platform
+        selection lives in ``task_core_lib``). Kato hands the
+        config + the runtime knobs to the factory and gets back
+        an ``AgentProvider`` it can call by interface — no more
+        if-claude-else-openhands branches in this file.
+        """
+        platform = resolve_platform(getattr(open_cfg, 'agent_backend', '') or '')
+        return AgentCoreLib(
+            platform,
+            open_cfg,
             max_retries,
             testing=testing,
-        )
-
-    @classmethod
-    def _build_kato_client(
-        cls,
-        openhands_cfg: DictConfig,
-        max_retries: int,
-        *,
-        testing: bool = False,
-    ) -> KatoClient:
-        return KatoClient(
-            resolved_openhands_base_url(openhands_cfg, testing=testing),
-            openhands_cfg.api_key,
-            max_retries,
-            llm_settings=resolved_openhands_llm_settings(
-                openhands_cfg,
-                testing=testing,
-            ),
-            poll_interval_seconds=cls._openhands_poll_interval_seconds(openhands_cfg),
-            max_poll_attempts=cls._openhands_max_poll_attempts(openhands_cfg),
-            model_smoke_test_enabled=not testing
-            and bool(getattr(openhands_cfg, 'model_smoke_test_enabled', True)),
-        )
-
-    @classmethod
-    def _build_claude_client(
-        cls,
-        open_cfg: DictConfig,
-        max_retries: int,
-        *,
-        testing: bool = False,
-        docker_mode_on: bool = False,
-        read_only_tools_on: bool = False,
-    ) -> ClaudeCliClient:
-        claude_cfg = getattr(open_cfg, 'claude', None)
-        if claude_cfg is None:
-            raise RuntimeError(
-                'KATO_AGENT_BACKEND=claude requires the kato.claude config block; '
-                'rebuild the configuration template'
-            )
-        repository_root_path = str(getattr(open_cfg, 'repository_root_path', '') or '').strip()
-        return ClaudeCliClient(
-            binary=str(getattr(claude_cfg, 'binary', '') or ''),
-            model=str(getattr(claude_cfg, 'model', '') or ''),
-            max_turns=getattr(claude_cfg, 'max_turns', None),
-            effort=str(getattr(claude_cfg, 'effort', '') or ''),
-            allowed_tools=str(getattr(claude_cfg, 'allowed_tools', '') or ''),
-            disallowed_tools=str(getattr(claude_cfg, 'disallowed_tools', '') or ''),
-            bypass_permissions=bool(getattr(claude_cfg, 'bypass_permissions', False)),
             docker_mode_on=docker_mode_on,
             read_only_tools_on=read_only_tools_on,
-            timeout_seconds=int(getattr(claude_cfg, 'timeout_seconds', 1800) or 1800),
-            max_retries=max_retries,
-            repository_root_path=repository_root_path,
-            model_smoke_test_enabled=(
-                not testing
-                and bool(getattr(claude_cfg, 'model_smoke_test_enabled', False))
-            ),
-            architecture_doc_path=str(
-                getattr(claude_cfg, 'architecture_doc_path', '') or ''
-            ),
-            lessons_path=str(
-                getattr(claude_cfg, 'lessons_path', '') or ''
-            ),
-        )
-
-    @staticmethod
-    def _openhands_poll_interval_seconds(openhands_cfg: DictConfig) -> float:
-        return float(openhands_cfg.get('poll_interval_seconds', 2.0))
-
-    @staticmethod
-    def _openhands_max_poll_attempts(openhands_cfg: DictConfig) -> int:
-        return int(openhands_cfg.get('max_poll_attempts', 900))
+        ).agent
