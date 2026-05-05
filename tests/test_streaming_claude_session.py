@@ -85,13 +85,13 @@ class StreamingClaudeSessionTests(unittest.TestCase):
         pinned = cmd[cmd.index('--session-id') + 1]
         self.assertEqual(session.claude_session_id, pinned)
 
-    def test_start_with_resume_id_pins_session_to_resumed_id(self) -> None:
-        # When resuming, kato passes BOTH ``--resume`` and ``--session-id``
-        # with the same id so Claude continues writing to the same JSONL
-        # instead of forking a fresh id per spawn (which used to leave
-        # orphan transcripts and a constantly-changing session chip in
-        # the UI). The resumed id is also captured as
-        # ``claude_session_id`` synchronously, before the first system
+    def test_start_with_resume_id_passes_resume_flag_only(self) -> None:
+        # ``claude --resume <id>`` keeps the same session id by default
+        # (forking is opt-in via ``--fork-session``), so we don't pass
+        # ``--session-id`` alongside it — Claude rejects the duplicate
+        # and the spawn would fall back to fresh-session self-heal,
+        # losing the adoption. The resumed id is captured synchronously
+        # so the UI can show the right chip before the system_init
         # event arrives.
         fake_proc = _FakeProc()
         with patch(
@@ -113,11 +113,9 @@ class StreamingClaudeSessionTests(unittest.TestCase):
             cmd[cmd.index('--resume') + 1],
             'earlier-session-uuid',
         )
-        self.assertIn('--session-id', cmd)
-        self.assertEqual(
-            cmd[cmd.index('--session-id') + 1],
-            'earlier-session-uuid',
-        )
+        # We deliberately don't pass --session-id when resuming;
+        # Claude keeps the resumed id without it.
+        self.assertNotIn('--session-id', cmd)
 
     def test_send_user_message_writes_ndjson_envelope(self) -> None:
         fake_proc = _FakeProc()

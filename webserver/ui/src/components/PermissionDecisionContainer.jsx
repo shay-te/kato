@@ -38,7 +38,7 @@ export default function PermissionDecisionContainer({
       onDismiss();
       onAuditBubble({
         kind: 'system',
-        text: `(auto-${allow ? 'allow' : 'deny'}ed for ${toolName} — remembered for this session)`,
+        text: `(auto-${allow ? 'allow' : 'deny'}ed for ${toolName} — remembered across kato restarts)`,
       });
     }
     submitRememberedDecision();
