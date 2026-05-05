@@ -13,6 +13,7 @@ export default function SessionHeader({
   needsAttention = false,
   onStopped,
   onResume,
+  onSessionAdopted,
   streamLifecycle,
   turnInFlight = false,
 }) {
@@ -250,7 +251,12 @@ export default function SessionHeader({
         <AdoptSessionModal
           taskId={session.task_id}
           onClose={() => setAdoptModalOpen(false)}
-          onAdopted={() => setAdoptModalOpen(false)}
+          onAdopted={(adopted) => {
+            setAdoptModalOpen(false);
+            if (typeof onSessionAdopted === 'function') {
+              onSessionAdopted(adopted);
+            }
+          }}
         />
       )}
     </>

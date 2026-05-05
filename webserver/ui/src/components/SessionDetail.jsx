@@ -109,6 +109,27 @@ export default function SessionDetail({
     await onSendMessage('Please continue from where you left off.');
   }
 
+  // Drop a system bubble into the chat so the operator has a visual
+  // confirmation that adoption took — without it, the modal closes,
+  // a toast flashes, and the chat looks unchanged. The bubble also
+  // persists in the per-task event cache, so switching tabs and
+  // coming back still shows "session attached" until the next
+  // server-side history replay overwrites the picture.
+  function onSessionAdopted(adopted) {
+    const sessionId = String(adopted?.session_id || '').trim();
+    const cwd = String(adopted?.cwd || '').trim();
+    const idShort = sessionId ? `${sessionId.slice(0, 8)}…` : '(unknown)';
+    const cwdLine = cwd ? `\ncwd: ${cwd}` : '';
+    stream.appendLocalEvent({
+      source: ENTRY_SOURCE.LOCAL,
+      kind: BUBBLE_KIND.SYSTEM,
+      text: (
+        `📎 session attached — kato will resume Claude session ${idShort} `
+        + `for ${taskId} on the next message.${cwdLine}`
+      ),
+    });
+  }
+
   const banner = lifecycleBanner(
     stream.lifecycle,
     taskId,
@@ -124,6 +145,7 @@ export default function SessionDetail({
           needsAttention={needsAttention}
           onStopped={onStopped}
           onResume={onResume}
+          onSessionAdopted={onSessionAdopted}
           streamLifecycle={stream.lifecycle}
           turnInFlight={stream.turnInFlight}
         />
