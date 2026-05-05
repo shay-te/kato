@@ -119,9 +119,17 @@ _TARGETS: dict[str, tuple[str, bool, list[str]]] = {
     ),
     'approve-repo': (
         'Approve a repository for kato use (REP). '
-        'Args: <repo_id> --remote <url> [--trusted]',
+        'No args = interactive picker (lists every repo in your kato '
+        'config + every workspace clone, you pick, kato writes the '
+        'approval). Scripted form: ``approve-repo approve <id> '
+        '--remote <url> [--trusted]``.',
         True,
-        ['scripts/approve_repository.py', 'approve'],
+        # Pass NO forced subcommand so ``kato approve-repo`` with no
+        # args drops into the interactive picker. Scripted callers
+        # tack ``approve <id> --remote <url>`` after; the picker
+        # invokes that same script with the same flags it always
+        # accepted, so CI/automation usage is unchanged.
+        ['scripts/approve_repository.py'],
     ),
     'revoke-repo': (
         'Remove an entry from the REP approval list. Args: <repo_id>',

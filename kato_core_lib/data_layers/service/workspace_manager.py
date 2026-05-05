@@ -173,6 +173,77 @@ class WorkspaceManager(object):
         """Path the named repository should be cloned into."""
         return self.workspace_path(task_id) / self._safe_repository_id(repository_id)
 
+    def preflight_log_path(self, task_id: str) -> Path:
+        """``<workspace>/.kato-preflight.log`` — chat-visible step log.
+
+        One line per provisioning step (``cloning admin-client (1/3)``,
+        ``cloned admin-client (1/3)``, ``all repositories cloned —
+        starting agent``). The webserver's session-events SSE replays
+        the file as ``system { subtype: 'preflight' }`` events so the
+        operator sees provisioning progress in the chat tab without
+        needing to look at the orchestrator activity feed.
+        """
+        return self.workspace_path(task_id) / '.kato-preflight.log'
+
+    def append_preflight_log(self, task_id: str, message: str) -> None:
+        """Append one line to the per-task preflight log (best-effort).
+
+        Idempotent on workspace-not-yet-created: the workspace dir is
+        created up front by ``create()``, so by the time the
+        provisioner is calling this the dir exists. We catch OS
+        errors and log a warning rather than raise — preflight
+        progress is informational; failing to write a status line
+        must never abort a clone in progress.
+        """
+        text = str(message or '').strip()
+        if not text:
+            return
+        with self._lock:
+            path = self.preflight_log_path(task_id)
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with path.open('a', encoding='utf-8') as fh:
+                    fh.write(f'{int(time.time())}\t{text}\n')
+            except OSError as exc:
+                self.logger.warning(
+                    'failed to append preflight log for task %s: %s',
+                    task_id, exc,
+                )
+
+    def read_preflight_log(self, task_id: str) -> list[tuple[float, str]]:
+        """Return ``(epoch, message)`` pairs from the preflight log, oldest first.
+
+        Empty list when the file doesn't exist (fresh task, no
+        provisioning recorded yet) or any read error — the SSE
+        path treats absent log identically to "nothing to replay."
+        """
+        path = self.preflight_log_path(task_id)
+        if not path.is_file():
+            return []
+        out: list[tuple[float, str]] = []
+        try:
+            with path.open('r', encoding='utf-8') as fh:
+                for line in fh:
+                    line = line.rstrip('\n')
+                    if not line:
+                        continue
+                    if '\t' not in line:
+                        out.append((0.0, line))
+                        continue
+                    epoch_text, _, message = line.partition('\t')
+                    try:
+                        epoch = float(epoch_text)
+                    except ValueError:
+                        epoch = 0.0
+                    out.append((epoch, message))
+        except OSError as exc:
+            self.logger.warning(
+                'failed to read preflight log for task %s: %s',
+                task_id, exc,
+            )
+            return []
+        return out
+
     def exists(self, task_id: str) -> bool:
         return self.workspace_path(task_id).is_dir()
 
@@ -429,29 +500,58 @@ def provision_task_workspace_clones(
         task_summary=str(getattr(task, 'summary', '') or ''),
         repository_ids=repository_ids,
     )
+    total = len(repositories)
+    workspace_manager.append_preflight_log(
+        str(task.id),
+        f'preparing workspace ({total} repository(ies))',
+    )
     provisioned: list = []
     try:
-        for repository in repositories:
+        for index, repository in enumerate(repositories, start=1):
             clone_path = workspace_manager.repository_path(
                 str(task.id), repository.id,
             )
-            # Log only when an actual clone will happen — ensure_clone
-            # is idempotent (it short-circuits when the .git folder
-            # already exists), and announcing "cloning" for every
-            # already-cloned repo on every scan tick would be noisy.
-            if not (clone_path / '.git').is_dir():
+            already_cloned = (clone_path / '.git').is_dir()
+            # Two layers of progress: ``log_mission_step`` feeds the
+            # orchestrator activity feed (right pane); the preflight
+            # log feeds the chat tab (left pane). Operators glance at
+            # whichever side they're looking at — both surfaces stay
+            # in sync. ``cloning N/M:`` makes the progress bar
+            # mental-model unmissable so they can see the queue.
+            if already_cloned:
+                workspace_manager.append_preflight_log(
+                    str(task.id),
+                    f'cloning {index}/{total}: {repository.id} (already on disk, reusing)',
+                )
+            else:
                 log_mission_step(
                     workspace_manager.logger,
                     str(task.id),
-                    'cloning repository: %s',
-                    repository.id,
+                    'cloning repository: %s (%d/%d)',
+                    repository.id, index, total,
+                )
+                workspace_manager.append_preflight_log(
+                    str(task.id),
+                    f'cloning {index}/{total}: {repository.id}',
                 )
             repository_service.ensure_clone(repository, clone_path)
+            workspace_manager.append_preflight_log(
+                str(task.id),
+                f'✓ cloned {index}/{total}: {repository.id}',
+            )
             rewritten = copy.copy(repository)
             rewritten.local_path = str(clone_path)
             provisioned.append(rewritten)
-    except Exception:
+    except Exception as exc:
+        workspace_manager.append_preflight_log(
+            str(task.id),
+            f'✗ clone failed: {exc}',
+        )
         workspace_manager.update_status(str(task.id), WORKSPACE_STATUS_ERRORED)
         raise
+    workspace_manager.append_preflight_log(
+        str(task.id),
+        f'✓ all {total} repository(ies) cloned — starting agent',
+    )
     workspace_manager.update_status(str(task.id), WORKSPACE_STATUS_ACTIVE)
     return provisioned

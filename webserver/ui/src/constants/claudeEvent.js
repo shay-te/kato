@@ -22,4 +22,9 @@ export const CLAUDE_EVENT = Object.freeze({
 
 export const CLAUDE_SYSTEM_SUBTYPE = Object.freeze({
   INIT: 'init',
+  // Kato-synthetic: emitted from the workspace provisioner's
+  // ``.kato-preflight.log`` so the operator sees ``cloning 1/3:
+  // admin-client`` / ``✓ all repositories cloned — starting agent``
+  // bubbles in the chat tab while kato is preparing the workspace.
+  PREFLIGHT: 'preflight',
 });

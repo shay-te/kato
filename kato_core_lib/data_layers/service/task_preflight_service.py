@@ -269,22 +269,35 @@ class TaskPreflightService(Service):
 
         The provisioner (set by agent_service) returns repos with
         ``local_path`` rewritten to point at this task's workspace
-        clones. Failures pass the resolved set through unchanged so the
-        legacy "use existing local clones" path still works.
+        clones. With NO provisioner wired (legacy single-clone setup),
+        we pass the inventory list through unchanged.
+
+        WITH a provisioner wired, we either return the workspace
+        clones OR re-raise — never silently fall back. The previous
+        fallback was a foot-gun: a transient git failure mid-clone
+        would catch here, the agent would spawn on the operator's
+        ``REPOSITORY_ROOT_PATH`` checkout, and edits would land on
+        the live dev tree instead of the workspace clone. Hard-fail
+        is the only safe default for a workspace-mode install.
         """
         if self._workspace_provisioner is None or not repositories:
             return repositories
-        try:
-            return list(
-                self._workspace_provisioner(task, list(repositories)) or repositories,
+        provisioned = self._workspace_provisioner(task, list(repositories))
+        if not provisioned:
+            raise RuntimeError(
+                f'workspace provisioner returned no clones for task {task.id} '
+                f'(expected {len(repositories)} repo(s)); refusing to spawn '
+                f'an agent that would otherwise run against the inventory '
+                f'checkout under REPOSITORY_ROOT_PATH'
             )
-        except Exception:
-            self.logger.exception(
-                'workspace provisioning failed for task %s; '
-                'falling back to inventory clones',
-                task.id,
+        provisioned = list(provisioned)
+        if len(provisioned) < len(repositories):
+            raise RuntimeError(
+                f'workspace provisioner returned {len(provisioned)} clone(s) '
+                f'for task {task.id} but {len(repositories)} were expected; '
+                f'refusing to spawn an agent on a partial workspace'
             )
-            return repositories
+        return provisioned
 
     def _enforce_restricted_execution_protocol(
         self,

@@ -1098,13 +1098,57 @@ def _event_stream_generator(manager, workspace_manager, task_id: str):
         return
     session = manager.get_session(task_id) if manager is not None else None
     if session is None:
+        yield from _replay_preflight_log(workspace_manager, task_id)
         yield from _replay_history_from_disk(claude_session_id)
         idle_payload = _record_to_dict(record) if record is not None else {}
         yield _sse_message(SSE_EVENT_SESSION_IDLE, idle_payload)
         return
+    yield from _replay_preflight_log(workspace_manager, task_id)
     yield from _replay_history_from_disk(claude_session_id)
     replayed_count = yield from _replay_session_backlog(session)
     yield from _follow_live_session(session, start_index=replayed_count)
+
+
+def _replay_preflight_log(workspace_manager, task_id: str):
+    """Yield ``system { subtype: 'preflight' }`` events from the workspace's
+    preflight log so the chat tab shows clone progress (``cloning 1/3:
+    admin-client``, ``✓ cloned 1/3: admin-client``, ``✓ all 3 cloned —
+    starting agent``). The log lives at
+    ``<workspace>/.kato-preflight.log`` and is appended to as the
+    workspace provisioner runs; replaying it here is what surfaces
+    "kato is cloning" in the chat instead of only the right-pane
+    activity feed.
+
+    Best-effort: missing log / missing workspace_manager / unreadable
+    file all degrade silently — the chat loads with whatever else is
+    available (history-from-disk, idle, etc.).
+    """
+    if workspace_manager is None or not task_id:
+        return
+    read = getattr(workspace_manager, 'read_preflight_log', None)
+    if not callable(read):
+        return
+    try:
+        entries = read(task_id)
+    except Exception:
+        return
+    for epoch, message in entries:
+        # ``subtype: 'preflight'`` is what the SSE-history reducer in
+        # ``useSessionStream.js`` keys on to render these as system
+        # bubbles. We use ``received_at_epoch=0`` so the dedupe path
+        # treats them as archival history (same shape as the
+        # ``_replay_history_from_disk`` events). If a future tail
+        # mode wants to stream these live, swap to a real epoch.
+        raw = {
+            'type': 'system',
+            'subtype': 'preflight',
+            'message': message,
+            'logged_at_epoch': epoch,
+        }
+        yield _sse_message(
+            SSE_EVENT_SESSION_HISTORY_EVENT,
+            {'event': {'received_at_epoch': 0, 'raw': raw}},
+        )
 
 
 def _resolve_claude_session_id(manager, workspace_manager, task_id: str) -> str:

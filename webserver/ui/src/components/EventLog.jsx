@@ -60,6 +60,19 @@ function serverBubblesFor(raw, index, isHistory = false) {
           </Bubble>,
         ];
       }
+      if (raw.subtype === CLAUDE_SYSTEM_SUBTYPE.PREFLIGHT) {
+        const message = String(raw.message || '').trim();
+        if (!message) { return []; }
+        // Kato-synthetic provisioning step. Renders as a system
+        // bubble so the operator sees clone progress in the chat
+        // tab without having to look at the orchestrator activity
+        // feed in the right pane.
+        return [
+          <Bubble key={keyOf(raw, index, 'preflight')} kind={BUBBLE_KIND.SYSTEM}>
+            {message}
+          </Bubble>,
+        ];
+      }
       return [];
     case CLAUDE_EVENT.ASSISTANT:
       return assistantBubbles(raw, index);

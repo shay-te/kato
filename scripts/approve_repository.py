@@ -3,14 +3,18 @@
 
 Two ways to use it:
 
-1. **Interactive mode** (no arguments). Walks ``KATO_WORKSPACES_ROOT``
-   for every cloned repo it can find, reads ``git remote get-url
-   origin`` from each, and offers a numbered picker plus an
-   "approve all" option. The operator just answers prompts; no need
-   to remember repository ids or remote URLs.
+1. **Interactive mode** (no arguments). Lists every repo kato knows
+   about — pulled from the kato config's ``repositories`` block AND
+   from existing workspace clones — and offers a numbered picker
+   plus an "approve all" option. The repository inventory is the
+   primary source: it has the remote URL up front, so this works
+   for **fresh tasks where no clone exists yet**, which is the
+   common case (operator tags a YouTrack ticket, kato refuses on
+   the REP gate, operator runs the picker before any clone has
+   been created).
 
-2. **Scripted mode** with explicit subcommands — the original shape,
-   kept for CI / automation that wants no interaction:
+2. **Scripted mode** with explicit subcommands — kept for CI /
+   automation that wants no interaction:
 
        approve <repo_id> --remote <git-url> [--trusted]
        revoke  <repo_id>
@@ -37,27 +41,34 @@ from kato_core_lib.data_layers.service.repository_approval_service import (
 )
 
 
-# Sentinel options surfaced in the picker alongside the discovered
-# repos. Strings (not enum) so ``prompt_options`` can render them
-# directly in the same numbered list as the repos.
-_OPTION_APPROVE_ALL = '[approve all discovered repositories]'
+_OPTION_APPROVE_ALL = '[approve all listed repositories]'
 _OPTION_QUIT = '[quit without approving anything]'
 
 
 @dataclass(frozen=True)
 class _DiscoveredRepository(object):
-    """One ``<task_id>/<repo_id>`` clone under ``KATO_WORKSPACES_ROOT``."""
+    """One repo the picker can offer for approval.
+
+    ``source`` lets the picker render where the entry came from —
+    ``inventory`` (kato config) vs ``workspace`` (existing clone) —
+    so the operator can spot if the URL kato is about to record
+    differs from what their kato config says. ``workspace_path``
+    is empty for inventory-only entries (no clone yet).
+    """
 
     repository_id: str
     remote_url: str
-    workspace_path: Path
-    task_id: str
+    source: str
+    workspace_path: str = ''
+    task_id: str = ''
 
-    def __str__(self) -> str:
-        # Rendered in the picker; keep it scannable on a single
-        # line. The remote URL is the load-bearing piece (it's what
-        # gets recorded), so put it last for visual alignment.
-        return f'{self.repository_id}  ({self.task_id})  →  {self.remote_url}'
+    def render(self) -> str:
+        bits = [self.repository_id]
+        if self.source == 'workspace' and self.task_id:
+            bits.append(f'({self.task_id})')
+        bits.append(f'[{self.source}]')
+        bits.append(f'→ {self.remote_url}')
+        return '  '.join(bits)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -132,28 +143,93 @@ def _run_list(_args: argparse.Namespace) -> int:
 
 
 def _resolve_workspaces_root() -> Path:
-    """Return ``KATO_WORKSPACES_ROOT`` (or the default ``~/.kato/workspaces``).
-
-    Mirrors ``WorkspaceManager.from_config``'s precedence so the
-    interactive picker walks the same directory kato itself writes
-    into. We don't import the manager because that would pull in the
-    full kato config machinery for what is fundamentally a directory
-    walk.
-    """
+    """``KATO_WORKSPACES_ROOT`` (or the default ``~/.kato/workspaces``)."""
     configured = os.environ.get('KATO_WORKSPACES_ROOT', '').strip()
     if configured:
         return Path(configured).expanduser()
     return Path.home() / '.kato' / 'workspaces'
 
 
-def _discover_workspace_repositories(root: Path) -> list[_DiscoveredRepository]:
-    """Walk ``<root>/<task_id>/<repo_id>/`` and return one entry per repo.
+def _discover_inventory_repositories() -> list[_DiscoveredRepository]:
+    """Read kato's ``repositories`` config block.
 
-    A directory counts as a repository when it contains a ``.git``
-    folder AND ``git remote get-url origin`` succeeds. Repos without
-    a usable remote are skipped silently — they wouldn't be
-    approvable anyway (the URL is the load-bearing field). Sorted
-    by repository id for stable picker ordering.
+    This is the ground truth for "what repos can kato touch" — it has
+    every repo's id and remote_url from the config, regardless of
+    whether a clone exists on disk yet. For the fresh-task flow where
+    kato just refused on REP and never cloned, the inventory is the
+    only place we can get a remote URL from.
+
+    Best-effort: if the config can't be loaded (kato not configured,
+    Python path issues, dependency import failure), we return [] and
+    the picker falls back to the workspace-clone scan + the
+    "type a repo id manually" path.
+    """
+    try:
+        # Lazy: importing the config machinery pulls in a lot of
+        # kato. Operators running this on a half-set-up Windows box
+        # would otherwise get a stack trace before the picker shows.
+        from omegaconf import OmegaConf
+
+        from kato_core_lib.data_layers.service.repository_inventory_service import (
+            RepositoryInventoryService,
+        )
+    except Exception:
+        return []
+    config_path = _kato_config_path()
+    if config_path is None or not config_path.is_file():
+        return []
+    try:
+        cfg = OmegaConf.load(str(config_path))
+        repositories_cfg = (
+            getattr(getattr(cfg, 'kato', cfg), 'repositories', None)
+            or getattr(cfg, 'repositories', None)
+        )
+        service = RepositoryInventoryService(repositories_cfg)
+        repos = service.repositories
+    except Exception:
+        return []
+    out: list[_DiscoveredRepository] = []
+    seen: set[str] = set()
+    for repo in repos:
+        repo_id = str(getattr(repo, 'id', '') or '').strip()
+        remote_url = str(getattr(repo, 'remote_url', '') or '').strip()
+        if not repo_id or not remote_url:
+            continue
+        key = repo_id.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(_DiscoveredRepository(
+            repository_id=repo_id,
+            remote_url=remote_url,
+            source='inventory',
+        ))
+    return sorted(out, key=lambda r: r.repository_id.lower())
+
+
+def _kato_config_path() -> Path | None:
+    """Locate the operator's kato config. None when nothing is set up."""
+    configured = os.environ.get('KATO_CONFIG', '').strip()
+    if configured:
+        path = Path(configured).expanduser()
+        return path if path.is_file() else None
+    candidates = [
+        Path.cwd() / '.kato' / 'kato.yaml',
+        Path.cwd() / 'kato.yaml',
+        Path.home() / '.kato' / 'kato.yaml',
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _discover_workspace_repositories(root: Path) -> list[_DiscoveredRepository]:
+    """Walk ``<root>/<task_id>/<repo_id>/`` for already-cloned repos.
+
+    Secondary source. Only useful after kato has run a task on this
+    machine (the clone needs to exist). For fresh-task flows the
+    inventory path above is what produces results.
     """
     if not root.is_dir():
         return []
@@ -171,16 +247,14 @@ def _discover_workspace_repositories(root: Path) -> list[_DiscoveredRepository]:
             if not remote_url:
                 continue
             repo_id = repo_dir.name
-            # First-seen wins. Two tasks both touching the same repo
-            # produce two clones with the same origin URL; we only
-            # need to surface that repo once in the picker.
             if repo_id.lower() in seen_ids:
                 continue
             seen_ids.add(repo_id.lower())
             discovered.append(_DiscoveredRepository(
                 repository_id=repo_id,
                 remote_url=remote_url,
-                workspace_path=repo_dir,
+                source='workspace',
+                workspace_path=str(repo_dir),
                 task_id=task_dir.name,
             ))
     return discovered
@@ -205,16 +279,33 @@ def _read_origin_url(repo_dir: Path) -> str:
     return result.stdout.strip()
 
 
+def _merge_sources(
+    inventory: list[_DiscoveredRepository],
+    workspace: list[_DiscoveredRepository],
+) -> list[_DiscoveredRepository]:
+    """Inventory wins on duplicates — its remote_url is the source of truth.
+
+    A workspace clone might have a stale or operator-rewritten
+    ``origin`` URL; the kato config's ``remote_url`` is what kato
+    will actually use at runtime. So when both sources mention the
+    same repo id, prefer the inventory entry.
+    """
+    by_id: dict[str, _DiscoveredRepository] = {}
+    for repo in inventory:
+        by_id[repo.repository_id.lower()] = repo
+    for repo in workspace:
+        by_id.setdefault(repo.repository_id.lower(), repo)
+    return sorted(by_id.values(), key=lambda r: r.repository_id.lower())
+
+
 def _filter_unapproved(
     repos: list[_DiscoveredRepository],
     service: RepositoryApprovalService,
 ) -> list[_DiscoveredRepository]:
-    """Drop repos already on the approval sidecar with the same remote.
+    """Drop repos already approved with the SAME remote URL.
 
-    The picker should only show repos that need a decision. A repo
-    already approved with the SAME remote is a no-op — leaving it in
-    the list is operator noise. A different remote means re-approval
-    is needed (the URL changed under us), so it stays.
+    Same remote = no-op approval = picker noise. Different remote
+    stays in the list — operator needs to re-confirm.
     """
     existing = {
         entry.repository_id.lower(): entry
@@ -244,45 +335,55 @@ def _approve_one(
 
 
 def _run_interactive() -> int:
-    """Walk KATO_WORKSPACES_ROOT, list candidates, prompt for a pick.
+    """List repos from inventory + workspace clones, prompt for a pick.
 
-    The operator sees:
-        1. <repo-id-1>  (<task-id>)  →  <remote-url-1>
-        2. <repo-id-2>  ...
-        3. [approve all discovered repositories]
-        4. [quit without approving anything]
+    The fresh-task flow this is built for:
 
-    On a single repo pick: confirm trusted/restricted, write the
-    approval. On "approve all": loop the same write per repo. On
-    "quit": exit cleanly.
+      1. Operator tags a YouTrack ticket with ``kato:repo:<id>``.
+      2. Kato refuses on the REP gate before any clone is created.
+      3. Operator runs ``kato approve-repo`` (no args) — this picker.
+      4. Inventory provides the remote URL (no clone needed).
+      5. Operator picks the repo, kato writes the approval, retries.
+
+    The picker also surfaces existing workspace clones so the
+    "approve all repos I've already touched" use case still works.
     """
-    root = _resolve_workspaces_root()
-    print(f'scanning {root} for cloned repositories…')
-    discovered = _discover_workspace_repositories(root)
-    if not discovered:
+    inventory = _discover_inventory_repositories()
+    workspace_root = _resolve_workspaces_root()
+    workspace = _discover_workspace_repositories(workspace_root)
+    candidates = _merge_sources(inventory, workspace)
+
+    print(
+        f'inventory: {len(inventory)} repo(s) from kato config; '
+        f'workspaces: {len(workspace)} repo(s) under {workspace_root}',
+    )
+    if not candidates:
         print(
-            f'no git repositories found under {root}. Run a kato task '
-            'first (or set KATO_WORKSPACES_ROOT to where your clones '
-            'live) and retry.',
+            'no repositories found. Add a ``repositories`` block to your '
+            'kato config (or run a task to populate workspaces) and retry. '
+            'You can also approve directly with: '
+            'kato approve-repo approve <repo_id> --remote <git-url>',
             file=sys.stderr,
         )
         return 1
 
     service = RepositoryApprovalService()
-    candidates = _filter_unapproved(discovered, service)
-    if not candidates:
+    needing_decision = _filter_unapproved(candidates, service)
+    if not needing_decision:
         print(
-            f'every repository under {root} is already approved with '
-            'its current remote URL. Nothing to do.',
+            f'every repository found is already approved with its current '
+            f'remote URL. {len(candidates)} repo(s) in scope, all good. '
+            f'Use ``kato list-approved-repos`` to inspect.',
         )
         return 0
 
-    options = [str(repo) for repo in candidates]
+    options = [repo.render() for repo in needing_decision]
     options.append(_OPTION_APPROVE_ALL)
     options.append(_OPTION_QUIT)
 
     selection = prompt_options(
-        'Pick a repository to approve, or approve all at once:',
+        f'Pick a repository to approve ({len(needing_decision)} need a '
+        f'decision), or approve all at once:',
         options,
     )
     if selection == _OPTION_QUIT:
@@ -295,25 +396,23 @@ def _run_interactive() -> int:
         default=False,
     )
     if selection == _OPTION_APPROVE_ALL:
-        print(f'approving {len(candidates)} repository(ies)…')
-        for repo in candidates:
+        print(f'approving {len(needing_decision)} repository(ies)…')
+        for repo in needing_decision:
             _approve_one(service, repo, trusted=trusted)
         return 0
-    # Single-repo path: map the chosen string back to its dataclass.
     idx = options.index(selection)
-    if idx >= len(candidates):  # defensive — shouldn't trip, sentinel
+    if idx >= len(needing_decision):
         print('unrecognised selection; aborting.', file=sys.stderr)
         return 1
-    _approve_one(service, candidates[idx], trusted=trusted)
+    _approve_one(service, needing_decision[idx], trusted=trusted)
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
-    # No subcommand given → drop into the interactive picker. The
-    # operator can still get the full scripted shape with
-    # ``approve <id> --remote <url>`` if they prefer.
+    # No subcommand → drop into the interactive picker. The scripted
+    # form ``approve <id> --remote <url>`` is still available for CI.
     if args.action is None:
         return _run_interactive()
     if args.action == 'approve':
