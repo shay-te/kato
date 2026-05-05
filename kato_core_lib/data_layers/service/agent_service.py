@@ -1355,6 +1355,38 @@ class AgentService(Service):
             'warnings': warnings_per_repo,
         }
 
+    def configured_destination_branch(self, repository_id: str) -> str:
+        """Branch the task was forked from for ``repository_id``, per kato config.
+
+        This is the authoritative answer for the diff base in the
+        Changes tab — kato always creates a task branch off this
+        ref, so ``git diff <task_branch>...origin/<destination>``
+        is what the operator wants to see. Auto-detecting via git
+        (``origin/HEAD``) returns the *remote's* default, which
+        is wrong whenever an operator has configured a non-default
+        base (e.g. ``develop`` on Bitbucket).
+
+        Returns '' when the inventory has no entry for the repo
+        (unknown id) or when neither config nor inferred default
+        is available — the webserver surfaces that as a precise
+        operator-facing error instead of guessing.
+        """
+        normalized = str(repository_id or '').strip()
+        if not normalized:
+            return ''
+        try:
+            repository = self._repository_service.get_repository(normalized)
+        except Exception:
+            return ''
+        try:
+            return self._repository_service.destination_branch(repository) or ''
+        except Exception:
+            # ``destination_branch`` raises when no configured value
+            # AND inference fails — safe to swallow here; '' means
+            # "we don't know" and the caller emits the right
+            # operator-facing error.
+            return ''
+
     def list_all_assigned_tasks(self) -> list[dict[str, str]]:
         """Return ``{id, summary, state, description}`` for every task assigned.
 

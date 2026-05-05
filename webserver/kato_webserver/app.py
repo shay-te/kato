@@ -200,6 +200,7 @@ def _compute_repo_diff(
     cwd: str,
     *,
     task_id: str = '',
+    agent_service=None,
 ) -> dict[str, Any]:
     """Build the per-repo diff payload the Changes-tab accordion expects.
 
@@ -210,13 +211,25 @@ def _compute_repo_diff(
     — otherwise the operator would see "No changes between master
     and master" and have no way to fix it from the UI.
 
-    Failures (e.g. a repo where ``origin/<default>`` isn't reachable)
+    Base branch resolution: ALWAYS prefer the kato config's
+    ``destination_branch`` for the repo. Kato forks every task
+    branch from that ref, so ``git diff <task_branch>...origin/<base>``
+    only makes sense when ``<base>`` matches the configured value.
+    Auto-detecting via git (``origin/HEAD``) returns the *remote's*
+    default branch, which is a different thing — we hit a real bug
+    where a repo with default ``master`` but configured base
+    ``develop`` had the Changes tab show hundreds of unrelated
+    commits because the diff was computed against the wrong base.
+    Git detection only kicks in as a last-resort fallback when the
+    inventory cannot answer (e.g. unknown repo id).
+
+    Failures (e.g. a repo where ``origin/<base>`` isn't reachable)
     surface as an ``error`` field so the UI can render that single
     accordion section in an error state without breaking the rest.
     """
     if task_id:
         ensure_branch_checked_out(cwd, task_id)
-    base = detect_default_branch(cwd)
+    base = _resolve_diff_base(repo_id, cwd, agent_service)
     if not base:
         return {
             'repo_id': repo_id,
@@ -224,7 +237,7 @@ def _compute_repo_diff(
             'base': '',
             'head': '',
             'diff': '',
-            'error': 'could not detect default branch',
+            'error': _no_base_error_message(repo_id),
         }
     # Conflicted file list — surfaces in the Changes tab as a yellow
     # CONFLICTED badge and in the Files tree as a warning icon. Best-
@@ -239,6 +252,39 @@ def _compute_repo_diff(
         'conflicted_files': conflicted_paths(cwd),
         'error': '',
     }
+
+
+def _resolve_diff_base(repo_id: str, cwd: str, agent_service) -> str:
+    """Configured destination_branch first, then git auto-detect.
+
+    Pulled out of ``_compute_repo_diff`` so the resolution policy
+    is in one named place — both the diff endpoint AND the commits
+    endpoint share it.
+    """
+    if repo_id and agent_service is not None:
+        lookup = getattr(agent_service, 'configured_destination_branch', None)
+        if callable(lookup):
+            configured = (lookup(repo_id) or '').strip()
+            if configured:
+                return configured
+    return detect_default_branch(cwd)
+
+
+def _no_base_error_message(repo_id: str) -> str:
+    """Operator-facing message when no diff base can be resolved."""
+    if repo_id:
+        return (
+            f'no destination_branch configured for repository {repo_id!r} '
+            f'in your kato config, and the workspace clone has no '
+            f'``origin/HEAD`` set either. Add a ``destination_branch`` '
+            f'entry under that repo in your kato config and restart '
+            f'kato (or run ``git remote set-head origin --auto`` in the '
+            f'workspace clone if you cannot edit the config).'
+        )
+    return (
+        'no destination branch configured and could not detect one '
+        'from the workspace clone — check your kato config.'
+    )
 
 
 def _resolve_repo_cwd(
@@ -533,6 +579,7 @@ def _register_http_routes(app: Flask) -> None:
     def get_session_diff(task_id: str):
         manager = app.config['SESSION_MANAGER']
         workspace_manager = app.config.get('WORKSPACE_MANAGER')
+        agent_service = app.config.get('AGENT_SERVICE')
         workspace_status = _workspace_status(workspace_manager, task_id)
         repository_ids = _task_repository_ids(workspace_manager, task_id)
         # Multi-repo task: compute one diff per clone so the UI can
@@ -544,7 +591,9 @@ def _register_http_routes(app: Flask) -> None:
                 cwd = _repository_cwd(workspace_manager, task_id, repo_id)
                 if cwd is None:
                     continue
-                diffs.append(_compute_repo_diff(repo_id, cwd, task_id=task_id))
+                diffs.append(_compute_repo_diff(
+                    repo_id, cwd, task_id=task_id, agent_service=agent_service,
+                ))
             if diffs:
                 first = diffs[0]
                 return jsonify({
@@ -571,7 +620,7 @@ def _register_http_routes(app: Flask) -> None:
                 'head': '',
                 'diff': '',
             })
-        single = _compute_repo_diff('', cwd, task_id=task_id)
+        single = _compute_repo_diff('', cwd, task_id=task_id, agent_service=agent_service)
         return jsonify({
             'repository_ids': [],
             'diffs': [single],
@@ -600,14 +649,18 @@ def _register_http_routes(app: Flask) -> None:
         except (TypeError, ValueError):
             limit = 50
         workspace_manager = app.config.get('WORKSPACE_MANAGER')
+        agent_service = app.config.get('AGENT_SERVICE')
         cwd = _repository_cwd(workspace_manager, task_id, repo_id)
         if cwd is None:
             return jsonify({'error': f'repository {repo_id!r} not in workspace'}), 404
-        base = detect_default_branch(cwd)
+        # Same resolver as the diff endpoint — configured
+        # destination_branch wins over git auto-detection so the
+        # commit list matches what the operator sees in Changes.
+        base = _resolve_diff_base(repo_id, cwd, agent_service)
         if not base:
             return jsonify({
                 'commits': [],
-                'error': 'could not detect default branch',
+                'error': _no_base_error_message(repo_id),
             }), 200
         commits = list_branch_commits(cwd, f'origin/{base}', limit=limit)
         return jsonify({

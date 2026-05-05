@@ -109,23 +109,71 @@ def ensure_branch_checked_out(cwd: str, branch: str) -> bool:
 
 
 def detect_default_branch(cwd: str) -> str:
-    """Repo's default branch (e.g. ``main`` / ``master``), or '' on failure.
+    """Repo's default branch as published by the remote, or '' on failure.
 
-    Tries ``origin/HEAD`` first, then falls back to common names. Empty
-    string means we couldn't tell — caller should refuse to compute a
-    diff in that case.
+    This is a *fallback* used by the diff endpoint when the kato
+    config has no ``destination_branch`` for the repo. It is NOT
+    the right answer for diffing a kato task branch — kato always
+    forks a task off the configured ``destination_branch`` for
+    that repo, which may not be the remote's default. Probing
+    ``origin/main`` or ``origin/master`` blindly produced wrong
+    diffs (the operator saw hundreds of unrelated commits because
+    the task base was ``develop``); we used to do that and stopped.
+
+    Resolution order:
+
+    1. ``git symbolic-ref refs/remotes/origin/HEAD`` — works when
+       the local clone has its HEAD ref set (the common case).
+    2. ``git ls-remote --symref origin HEAD`` — asks the remote
+       directly. Works even when step 1 returns nothing because
+       the workspace clone never had ``origin/HEAD`` set.
+
+    Empty string means we could not determine the remote default
+    — the caller surfaces a precise error so the operator can fix
+    the config rather than silently picking a wrong base.
     """
+    return _branch_from_local_head(cwd) or _branch_from_ls_remote(cwd)
+
+
+def _branch_from_local_head(cwd: str) -> str:
+    """Read ``refs/remotes/origin/HEAD`` if the clone has it set."""
     out = run_git(
         cwd, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], timeout=5,
     )
-    if out is not None:
-        ref = out.strip()
-        return ref.split('/', 1)[1] if '/' in ref else ref
-    for candidate in ('main', 'master'):
-        if run_git(
-            cwd, ['rev-parse', '--verify', f'origin/{candidate}'], timeout=5,
-        ) is not None:
-            return candidate
+    if out is None:
+        return ''
+    ref = out.strip()
+    return ref.split('/', 1)[1] if '/' in ref else ref
+
+
+def _branch_from_ls_remote(cwd: str) -> str:
+    """Ask the remote what HEAD points at, via ``git ls-remote --symref``.
+
+    Output format::
+
+        ref: refs/heads/develop\\tHEAD
+        <sha>\\tHEAD
+
+    Independent of the local clone's HEAD ref state — works even
+    when the local clone never set ``refs/remotes/origin/HEAD``,
+    which is the case kato hit in production with Bitbucket repos
+    whose default branch is ``develop``.
+    """
+    out = run_git(cwd, ['ls-remote', '--symref', 'origin', 'HEAD'], timeout=10)
+    if out is None:
+        return ''
+    for line in out.splitlines():
+        if not line.startswith('ref:'):
+            continue
+        # ``ref: refs/heads/<branch>\tHEAD`` → grab the branch name.
+        ref_part = line.split('\t', 1)[0]
+        if ':' not in ref_part:
+            continue
+        ref = ref_part.split(':', 1)[1].strip()
+        prefix = 'refs/heads/'
+        if ref.startswith(prefix):
+            return ref[len(prefix):]
+        return ref
     return ''
 
 

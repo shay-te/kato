@@ -672,7 +672,13 @@ class MultiRepoEndpointShapeTests(unittest.TestCase):
         client_diff = next(d for d in payload['diffs'] if d['repo_id'] == 'client')
         backend_diff = next(d for d in payload['diffs'] if d['repo_id'] == 'backend')
         self.assertEqual(client_diff['error'], '')
-        self.assertEqual(backend_diff['error'], 'could not detect default branch')
+        # Error is now precise + actionable — names the repo and
+        # tells the operator to set ``destination_branch`` in the
+        # kato config rather than the vague "could not detect" we
+        # used to emit (which sent operators down the wrong rabbit
+        # hole, looking at git state instead of their config).
+        self.assertIn("'backend'", backend_diff['error'])
+        self.assertIn('destination_branch', backend_diff['error'])
 
 
 if __name__ == '__main__':
