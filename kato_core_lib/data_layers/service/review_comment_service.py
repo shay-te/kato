@@ -411,18 +411,51 @@ class ReviewCommentService(Service):
         pull_request_id: str,
         comment_context: list[dict[str, str]],
     ) -> list[ReviewComment]:
+        """Pick the comments kato should address on this scan tick.
+
+        Position-based "already handled" check: for each thread, find
+        the position of kato's most recent reply. A reviewer comment
+        whose position is **after** that reply is a follow-up — kato
+        re-engages. A reviewer comment whose position is **before**
+        the reply has already been addressed; skip.
+
+        This handles two scenarios that the old "thread has any kato
+        reply → skip" logic missed:
+
+        1. Reviewer adds a follow-up comment in the same thread
+           ("still not fixed, the bug is at line 88"). New comment
+           id, but same thread/resolution target — old logic dropped
+           it; new logic picks it up because its index in ``comments``
+           is past kato's reply.
+        2. Reviewer re-opens a thread by adding a new comment after
+           kato's reply. Same flow as #1.
+
+        Kato's reply itself is never returned — that's just kato
+        narrating to itself. The state-registry processed-mark stays
+        as a within-cycle dedup so we don't double-process the same
+        follow-up if a scan tick races with another worker.
+        """
+        # Map thread → index of kato's most recent reply in this
+        # comment list. Threads with no kato reply have index = -1
+        # so every reviewer comment is "after" by definition.
+        last_kato_reply_index: dict = {}
+        for index, comment in enumerate(comments):
+            if is_kato_review_comment_reply(comment):
+                last_kato_reply_index[review_comment_resolution_key(comment)] = index
+
         new_comments: list[ReviewComment] = []
-        seen_resolution_targets: set[tuple[str, str]] = set()
-        already_handled_resolution_targets = {
-            review_comment_resolution_key(comment)
-            for comment in comments
-            if is_kato_review_comment_reply(comment)
-        }
-        for comment in reversed(comments):
+        seen_resolution_targets: set = set()
+        for index in range(len(comments) - 1, -1, -1):
+            comment = comments[index]
+            if is_kato_review_comment_reply(comment):
+                continue
             setattr(comment, PullRequestFields.REPOSITORY_ID, repository_id)
             setattr(comment, ReviewCommentFields.ALL_COMMENTS, list(comment_context))
             resolution_key = review_comment_resolution_key(comment)
-            if resolution_key in already_handled_resolution_targets:
+            kato_reply_index = last_kato_reply_index.get(resolution_key, -1)
+            if index < kato_reply_index:
+                # Reviewer comment older than kato's last reply on
+                # this thread — already addressed, skip.
                 continue
             if resolution_key in seen_resolution_targets:
                 continue
