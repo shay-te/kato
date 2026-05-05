@@ -17,6 +17,7 @@ from __future__ import annotations
 import unittest
 
 from kato_core_lib.sandbox.system_prompt import (
+    RESUMED_SESSION_ADDENDUM,
     SANDBOX_SYSTEM_PROMPT_ADDENDUM,
     WORKSPACE_SCOPE_ADDENDUM,
     compose_system_prompt,
@@ -24,37 +25,51 @@ from kato_core_lib.sandbox.system_prompt import (
 
 
 class ComposeSystemPromptTests(unittest.TestCase):
-    def test_off_with_no_arch_doc_returns_workspace_addendum(self) -> None:
+    def test_off_with_no_arch_doc_returns_workspace_then_resumed(self) -> None:
         self.assertEqual(
             compose_system_prompt('', docker_mode_on=False),
-            WORKSPACE_SCOPE_ADDENDUM,
+            f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{RESUMED_SESSION_ADDENDUM}',
         )
 
-    def test_off_with_arch_doc_joins_arch_then_workspace(self) -> None:
+    def test_off_with_arch_doc_joins_arch_workspace_resumed(self) -> None:
         arch = 'Architecture: services A, B, C with kafka in between.'
         result = compose_system_prompt(arch, docker_mode_on=False)
         self.assertTrue(result.startswith(arch))
         self.assertIn(WORKSPACE_SCOPE_ADDENDUM, result)
-        self.assertEqual(result, f'{arch}\n\n{WORKSPACE_SCOPE_ADDENDUM}')
+        self.assertIn(RESUMED_SESSION_ADDENDUM, result)
+        self.assertEqual(
+            result,
+            (
+                f'{arch}\n\n{WORKSPACE_SCOPE_ADDENDUM}\n\n'
+                f'{RESUMED_SESSION_ADDENDUM}'
+            ),
+        )
 
-    def test_on_with_no_arch_doc_appends_workspace_then_sandbox(self) -> None:
+    def test_on_with_no_arch_doc_appends_workspace_resumed_sandbox(self) -> None:
         result = compose_system_prompt('', docker_mode_on=True)
         self.assertEqual(
             result,
-            f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{SANDBOX_SYSTEM_PROMPT_ADDENDUM}',
+            (
+                f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{RESUMED_SESSION_ADDENDUM}\n\n'
+                f'{SANDBOX_SYSTEM_PROMPT_ADDENDUM}'
+            ),
         )
 
-    def test_on_with_arch_doc_joins_arch_workspace_sandbox(self) -> None:
+    def test_on_with_arch_doc_joins_arch_workspace_resumed_sandbox(self) -> None:
         arch = 'Architecture: services A, B, C with kafka in between.'
         result = compose_system_prompt(arch, docker_mode_on=True)
         # Architecture comes first so the operator-authored content is
-        # not buried below boilerplate.
+        # not buried below boilerplate; sandbox stays last.
         self.assertTrue(result.startswith(arch))
         self.assertTrue(result.endswith(SANDBOX_SYSTEM_PROMPT_ADDENDUM))
         self.assertIn(WORKSPACE_SCOPE_ADDENDUM, result)
+        self.assertIn(RESUMED_SESSION_ADDENDUM, result)
         self.assertEqual(
             result,
-            f'{arch}\n\n{WORKSPACE_SCOPE_ADDENDUM}\n\n{SANDBOX_SYSTEM_PROMPT_ADDENDUM}',
+            (
+                f'{arch}\n\n{WORKSPACE_SCOPE_ADDENDUM}\n\n'
+                f'{RESUMED_SESSION_ADDENDUM}\n\n{SANDBOX_SYSTEM_PROMPT_ADDENDUM}'
+            ),
         )
 
     def test_none_arch_doc_treated_as_empty(self) -> None:
@@ -62,11 +77,14 @@ class ComposeSystemPromptTests(unittest.TestCase):
         # the composer must accept both without raising.
         self.assertEqual(
             compose_system_prompt(None, docker_mode_on=False),  # type: ignore[arg-type]
-            WORKSPACE_SCOPE_ADDENDUM,
+            f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{RESUMED_SESSION_ADDENDUM}',
         )
         self.assertEqual(
             compose_system_prompt(None, docker_mode_on=True),  # type: ignore[arg-type]
-            f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{SANDBOX_SYSTEM_PROMPT_ADDENDUM}',
+            (
+                f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{RESUMED_SESSION_ADDENDUM}\n\n'
+                f'{SANDBOX_SYSTEM_PROMPT_ADDENDUM}'
+            ),
         )
 
 

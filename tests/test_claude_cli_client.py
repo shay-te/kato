@@ -602,21 +602,27 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
 
     def test_docker_mode_off_does_not_append_sandbox_addendum(self) -> None:
         from kato_core_lib.sandbox.system_prompt import (
+            RESUMED_SESSION_ADDENDUM,
             SANDBOX_SYSTEM_PROMPT_ADDENDUM,
             WORKSPACE_SCOPE_ADDENDUM,
         )
 
         client = ClaudeCliClient(binary='claude', docker_mode_on=False)
         cmd = client._build_command(additional_dirs=[], session_id='')
-        # Workspace addendum is always appended (independent of docker mode)
-        # so the flag is present, but the sandbox-specific addendum is not.
+        # Workspace + resumed-session addenda are always appended
+        # (independent of docker mode) so the flag is present, but
+        # the sandbox-specific addendum is not.
         self.assertIn('--append-system-prompt', cmd)
         idx = cmd.index('--append-system-prompt')
-        self.assertEqual(cmd[idx + 1], WORKSPACE_SCOPE_ADDENDUM)
+        self.assertEqual(
+            cmd[idx + 1],
+            f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{RESUMED_SESSION_ADDENDUM}',
+        )
         self.assertNotIn(SANDBOX_SYSTEM_PROMPT_ADDENDUM, cmd[idx + 1])
 
     def test_docker_mode_on_appends_sandbox_addendum(self) -> None:
         from kato_core_lib.sandbox.system_prompt import (
+            RESUMED_SESSION_ADDENDUM,
             SANDBOX_SYSTEM_PROMPT_ADDENDUM,
             WORKSPACE_SCOPE_ADDENDUM,
         )
@@ -627,7 +633,10 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
         idx = cmd.index('--append-system-prompt')
         self.assertEqual(
             cmd[idx + 1],
-            f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{SANDBOX_SYSTEM_PROMPT_ADDENDUM}',
+            (
+                f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{RESUMED_SESSION_ADDENDUM}\n\n'
+                f'{SANDBOX_SYSTEM_PROMPT_ADDENDUM}'
+            ),
         )
 
     def test_docker_plus_bypass_does_NOT_wrap_validate_connection(self) -> None:

@@ -45,6 +45,40 @@ WORKSPACE_SCOPE_ADDENDUM = (
 )
 
 
+# Always appended. Targets the "kato re-runs git log / git diff every turn"
+# behaviour the operator observed when adopting a session that was started
+# in another Claude instance (e.g. VS Code Claude). Even with the JSONL
+# resumed cleanly, a fresh subprocess instinctively re-grounds itself in
+# the filesystem on broad prompts like "verify the changes" — replaying
+# the same git inspections across turns the conversation already records.
+# This nudge biases towards reading the conversation's own tool history
+# first; it does NOT block git when there's a real reason to use it.
+RESUMED_SESSION_ADDENDUM = (
+    '# Resumed sessions\n'
+    '\n'
+    'You may be resuming a conversation that another Claude instance\n'
+    '(VS Code Claude, a previous kato run, etc.) was driving — same\n'
+    'session id, same JSONL, different subprocess. The conversation\n'
+    'history above is your authoritative record of what files were\n'
+    'edited and what shell commands were run; trust it.\n'
+    '\n'
+    'When the operator asks about "what changed", "what did you do",\n'
+    '"verify the changes", or any similar continuity question, prefer\n'
+    'to answer from the existing tool_use entries in the conversation\n'
+    'rather than re-running ``git log`` / ``git diff`` / ``git show`` /\n'
+    'whole-file Reads. Reach for git or the filesystem only when:\n'
+    '\n'
+    '  * the operator explicitly asks you to inspect git or re-read a file,\n'
+    '  * the operator mentions external changes (a manual edit, a pull,\n'
+    "    another developer's commit), or\n"
+    '  * the conversation history is genuinely insufficient for a\n'
+    '    truthful answer.\n'
+    '\n'
+    'Replaying inspections the conversation already records wastes\n'
+    "operator time and blurs the answer. If you don't know, say so."
+)
+
+
 SANDBOX_SYSTEM_PROMPT_ADDENDUM = (
     '# Sandboxed execution environment\n'
     '\n'
@@ -124,14 +158,22 @@ def compose_system_prompt(
     (docker only). Any piece may be empty.
 
     Order:
-      1. Architecture doc          (operator-authored)
-      2. Lessons                   (kato-curated, learned over time)
-      3. Workspace-scope addendum  (always)
-      4. Sandbox addendum          (docker only)
+      1. Architecture doc            (operator-authored)
+      2. Lessons                     (kato-curated, learned over time)
+      3. Workspace-scope addendum    (always)
+      4. Resumed-session addendum    (always — applies on adoption / chat respawn)
+      5. Sandbox addendum            (docker only)
     """
     arch = architecture_doc or ''
     lesson_text = lessons or ''
-    parts = [p for p in (arch, lesson_text, WORKSPACE_SCOPE_ADDENDUM) if p]
+    parts = [
+        p for p in (
+            arch,
+            lesson_text,
+            WORKSPACE_SCOPE_ADDENDUM,
+            RESUMED_SESSION_ADDENDUM,
+        ) if p
+    ]
     if docker_mode_on:
         parts.append(SANDBOX_SYSTEM_PROMPT_ADDENDUM)
     return '\n\n'.join(parts)

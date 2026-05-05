@@ -305,32 +305,23 @@ class SessionManagerAdoptionTests(unittest.TestCase):
         )
         self.assertEqual(record.claude_session_id, 'abc-def')
 
-    def test_adopt_records_source_cwd_so_kato_spawns_alongside_vs_code(self) -> None:
-        # When the operator hands off a VS Code Claude session, they
-        # want kato to JOIN the same conversation — same JSONL on
-        # disk, prompts in either UI continuing the same thread. That
-        # only works if kato spawns Claude at the SOURCE session's
-        # cwd (because Claude's projects dir is cwd-keyed). The adopt
-        # endpoint passes the source cwd through; the manager records
-        # it on the per-task record so ``_chat_resume_context`` can
-        # use it on the next spawn instead of the workspace clone.
-        record = self.manager.adopt_session_id(
-            'PROJ-1',
-            claude_session_id='abc-def',
-            cwd=r'C:\Codes\UNA-2489-ob-love-admin-backend',
-        )
-        self.assertEqual(record.cwd, r'C:\Codes\UNA-2489-ob-love-admin-backend')
-        # Empty cwd leaves any existing cwd alone — re-adopting from
-        # an older session that doesn't have a recorded cwd shouldn't
-        # blank a previously-set spawn directory.
-        self.manager.adopt_session_id(
-            'PROJ-1',
-            claude_session_id='ghi-jkl',
-            cwd='',
-        )
+    def test_adopt_does_not_change_cwd_so_kato_keeps_workspace_isolation(self) -> None:
+        # Adoption MUST NOT repoint kato's spawn cwd at the source
+        # session's directory. The operator wants kato to run
+        # against its per-task workspace clone (an isolated copy)
+        # so it can review changes against a clean worktree, not
+        # against their live editor checkout. A short-lived
+        # experiment with the opposite behaviour broke that
+        # invariant — kato edited the dev's checkout in-place and
+        # mixed git state. This test locks the safe default down.
+        # Pre-set a cwd as if a previous spawn populated it.
+        first = self.manager.adopt_session_id('PROJ-1', claude_session_id='abc-def')
+        first.cwd = '/wks/PROJ-1/admin-backend'
+        # Re-adopt — record.cwd must be untouched by the adoption.
+        self.manager.adopt_session_id('PROJ-1', claude_session_id='ghi-jkl')
         self.assertEqual(
             self.manager.get_record('PROJ-1').cwd,
-            r'C:\Codes\UNA-2489-ob-love-admin-backend',
+            '/wks/PROJ-1/admin-backend',
         )
 
     def test_adopt_does_not_overwrite_existing_task_summary(self) -> None:
