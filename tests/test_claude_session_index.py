@@ -305,6 +305,34 @@ class SessionManagerAdoptionTests(unittest.TestCase):
         )
         self.assertEqual(record.claude_session_id, 'abc-def')
 
+    def test_adopt_records_source_cwd_so_kato_spawns_alongside_vs_code(self) -> None:
+        # When the operator hands off a VS Code Claude session, they
+        # want kato to JOIN the same conversation — same JSONL on
+        # disk, prompts in either UI continuing the same thread. That
+        # only works if kato spawns Claude at the SOURCE session's
+        # cwd (because Claude's projects dir is cwd-keyed). The adopt
+        # endpoint passes the source cwd through; the manager records
+        # it on the per-task record so ``_chat_resume_context`` can
+        # use it on the next spawn instead of the workspace clone.
+        record = self.manager.adopt_session_id(
+            'PROJ-1',
+            claude_session_id='abc-def',
+            cwd=r'C:\Codes\UNA-2489-ob-love-admin-backend',
+        )
+        self.assertEqual(record.cwd, r'C:\Codes\UNA-2489-ob-love-admin-backend')
+        # Empty cwd leaves any existing cwd alone — re-adopting from
+        # an older session that doesn't have a recorded cwd shouldn't
+        # blank a previously-set spawn directory.
+        self.manager.adopt_session_id(
+            'PROJ-1',
+            claude_session_id='ghi-jkl',
+            cwd='',
+        )
+        self.assertEqual(
+            self.manager.get_record('PROJ-1').cwd,
+            r'C:\Codes\UNA-2489-ob-love-admin-backend',
+        )
+
     def test_adopt_does_not_overwrite_existing_task_summary(self) -> None:
         self.manager.adopt_session_id(
             'PROJ-1', claude_session_id='first',

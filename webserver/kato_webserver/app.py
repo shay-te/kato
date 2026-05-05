@@ -335,27 +335,39 @@ def _register_http_routes(app: Flask) -> None:
                     'stop it before adopting a different Claude session'
                 ),
             }), 409
+        # Look up the adopted session's ORIGINAL cwd from its JSONL
+        # so kato can spawn Claude there directly — same projects dir,
+        # same JSONL, same conversation as VS Code (or whoever owns
+        # the source session). Without this kato spawns at its per-
+        # task workspace clone, ``claude --resume`` reads a stale
+        # snapshot, and prompts in the two UIs end up writing to
+        # divergent transcripts.
+        source_cwd = _adopted_session_cwd(claude_session_id)
         try:
             record = manager.adopt_session_id(
                 task_id,
                 claude_session_id=claude_session_id,
+                cwd=source_cwd,
             )
         except ValueError as exc:
             return jsonify({'error': str(exc)}), 400
-        # Migrate the session JSONL into kato's workspace cwd so
-        # ``claude --resume <id>`` can find it. Claude Code stores
-        # sessions per-cwd; without this copy the next spawn
-        # silently starts a fresh conversation even though we
-        # passed --resume. Best-effort: a failure to migrate is
-        # surfaced in the response but the adoption record stays
-        # so the operator can retry / investigate.
-        migration = _migrate_adopted_session_transcript(
-            app, task_id, claude_session_id,
-        )
+        # When kato now spawns at the source cwd, the JSONL is
+        # already there — no migration needed. Only fall back to
+        # copying the transcript if we couldn't pin a source cwd
+        # (older sessions without a recorded cwd, broken JSONL),
+        # because then kato will still spawn at its workspace clone
+        # and ``--resume`` needs the file in that encoded dir.
+        migration_path = ''
+        if not source_cwd:
+            migration = _migrate_adopted_session_transcript(
+                app, task_id, claude_session_id,
+            )
+            migration_path = str(migration) if migration else ''
         return jsonify({
             'task_id': record.task_id,
             'claude_session_id': record.claude_session_id,
-            'transcript_migrated_to': str(migration) if migration else '',
+            'spawn_cwd': source_cwd,
+            'transcript_migrated_to': migration_path,
         })
 
     @app.get('/healthz')
@@ -866,6 +878,30 @@ def _spawn_or_reject_chat_session(app: Flask, task_id: str, text: str):
     except Exception as exc:
         return jsonify({'error': str(exc)}), 500
     return jsonify({'status': 'spawned', 'text': text})
+
+
+def _adopted_session_cwd(claude_session_id: str) -> str:
+    """Return the cwd recorded inside ``claude_session_id``'s JSONL.
+
+    Reads the index produced by ``list_sessions`` (the same one the
+    AdoptSessionModal renders) and returns the ``cwd`` field for the
+    matching row. Empty string when the session can't be found or
+    has no recorded cwd. Used by adoption to share the projects-dir
+    encoding with the source session — see the adopt endpoint for the
+    reasoning.
+    """
+    if not claude_session_id:
+        return ''
+    try:
+        from kato_core_lib.data_layers.service.claude_session_index import (
+            list_sessions as list_claude_session_metadata,
+        )
+        for entry in list_claude_session_metadata(max_results=10000):
+            if entry.session_id == claude_session_id:
+                return str(entry.cwd or '').strip()
+    except Exception:  # pragma: no cover — defensive
+        pass
+    return ''
 
 
 def _migrate_adopted_session_transcript(

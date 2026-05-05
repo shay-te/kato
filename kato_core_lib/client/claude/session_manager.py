@@ -406,6 +406,7 @@ class ClaudeSessionManager(object):
         *,
         claude_session_id: str,
         task_summary: str = '',
+        cwd: str = '',
     ) -> PlanningSessionRecord:
         """Bind ``claude_session_id`` to ``task_id`` so the next spawn resumes it.
 
@@ -414,6 +415,18 @@ class ClaudeSessionManager(object):
         off to kato. The next ``start_session`` for ``task_id`` will
         ``--resume <claude_session_id>`` instead of starting a fresh
         conversation.
+
+        ``cwd`` (optional) overrides the task's spawn directory. Pass
+        the adopted session's ORIGINAL cwd — usually the dev's local
+        checkout, where VS Code Claude is running — so kato spawns
+        Claude there too. Both surfaces then read and write the SAME
+        ``~/.claude/projects/<encoded-cwd>/<id>.jsonl`` and you get a
+        truly shared session: prompts in either UI continue the same
+        conversation. Without this override, kato spawns at its
+        per-task workspace clone, which has a different encoded
+        projects dir → Claude reads kato's snapshot copy and the two
+        instances diverge after the first turn. Empty string keeps
+        the existing cwd (workspace clone).
 
         The adopted id is mirrored to the workspace metadata so it
         survives a kato restart, and persisted to the per-task record
@@ -427,6 +440,7 @@ class ClaudeSessionManager(object):
         if not new_id:
             raise ValueError('claude_session_id must be non-empty')
         normalized_task_id = self._normalize_task_id(task_id)
+        normalized_cwd = str(cwd or '').strip()
         now = time.time()
         with self._lock:
             record = self._records.get(normalized_task_id)
@@ -440,6 +454,8 @@ class ClaudeSessionManager(object):
             record.claude_session_id = new_id
             if task_summary and not record.task_summary:
                 record.task_summary = str(task_summary)
+            if normalized_cwd:
+                record.cwd = normalized_cwd
             record.updated_at_epoch = now
             self._persist_record(record)
             self._mirror_to_workspace_metadata(record)
