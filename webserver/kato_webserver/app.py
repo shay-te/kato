@@ -82,9 +82,13 @@ from kato_webserver.git_diff_utils import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 KATO_REPO_ROOT = REPO_ROOT.parent
 
-# Browser-driven SSE stream cadence. The server pushes new events to the
-# stream as they appear in the live session's recent_events buffer.
-_SSE_POLL_INTERVAL_SECONDS = 0.1
+# Browser-driven SSE stream cadence. The follow loop now blocks on
+# ``StreamingClaudeSession.wait_for_new_events`` and unblocks the
+# instant a new event lands — so we only "wake up" on the heartbeat
+# interval when the agent is genuinely idle. The old 100ms busy-poll
+# was the dominant cause of perceived stream lag (up to one tick of
+# latency per event AND a full ``recent_events()`` list-copy per
+# tick on long sessions).
 # Periodic SSE comment that keeps proxies / load balancers from idling
 # the connection out and lets the browser detect server crashes.
 _SSE_HEARTBEAT_SECONDS = 15.0
@@ -1428,25 +1432,40 @@ def _replay_session_backlog(session):
 
 
 def _follow_live_session(session, start_index: int = 0):
-    """Tail new events as they arrive, plus a periodic SSE heartbeat."""
-    last_index = max(0, int(start_index or 0))
-    last_heartbeat = time.monotonic()
-    while True:
-        current = session.recent_events()
-        if len(current) > last_index:
-            for event in current[last_index:]:
-                yield _sse_message(SSE_EVENT_SESSION_EVENT, {'event': event.to_dict()})
-            last_index = len(current)
+    """Tail new events as they arrive, plus a periodic SSE heartbeat.
 
-        if not session.is_alive and last_index >= len(session.recent_events()):
+    Uses ``wait_for_new_events`` so the loop blocks until either an
+    event is appended or the heartbeat interval elapses. This removes
+    the 100ms-of-latency / full-list-copy-per-tick churn the old busy
+    poll caused — events now reach the browser within microseconds of
+    the session publishing them.
+
+    Heartbeat-only wakeups (no new events) emit an SSE comment frame
+    so proxies don't idle the connection. When the session has gone
+    away (``alive=False`` and no further events drained) we emit the
+    terminal ``session_closed`` frame and return.
+    """
+    last_index = max(0, int(start_index or 0))
+    while True:
+        new_events, last_index, alive = session.wait_for_new_events(
+            last_index, _SSE_HEARTBEAT_SECONDS,
+        )
+        for event in new_events:
+            yield _sse_message(SSE_EVENT_SESSION_EVENT, {'event': event.to_dict()})
+        if not alive:
+            # Drain any final events that landed between the wakeup
+            # and is_alive flipping; ``events_after`` is cheap when
+            # the slice is empty.
+            tail, last_index = session.events_after(last_index)
+            for event in tail:
+                yield _sse_message(SSE_EVENT_SESSION_EVENT, {'event': event.to_dict()})
             yield _sse_message(SSE_EVENT_SESSION_CLOSED, {})
             return
-
-        if time.monotonic() - last_heartbeat >= _SSE_HEARTBEAT_SECONDS:
+        if not new_events:
+            # ``wait_for_new_events`` returned because the heartbeat
+            # interval expired with no new activity — keep the
+            # connection warm for proxies / load balancers.
             yield ': ping\n\n'
-            last_heartbeat = time.monotonic()
-
-        time.sleep(_SSE_POLL_INTERVAL_SECONDS)
 
 
 def _sse_message(event_type: str, data: dict[str, Any]) -> str:

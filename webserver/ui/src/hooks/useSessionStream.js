@@ -131,8 +131,17 @@ function reducer(state, action) {
   switch (action.type) {
     case ACTION_HYDRATE:
       return action.value;
-    case ACTION_INCOMING_EVENT:
-      return reduceIncomingEvent(state, action.event, action.receivedAtEpoch);
+    case ACTION_INCOMING_EVENT: {
+      const next = reduceIncomingEvent(state, action.event, action.receivedAtEpoch);
+      // Live events also imply lifecycle=STREAMING. Folding the
+      // transition into the same reducer pass means one re-render
+      // per event instead of two — used to be a separate
+      // ACTION_LIFECYCLE dispatch from the SSE handler.
+      if (next.lifecycle !== SESSION_LIFECYCLE.STREAMING) {
+        return { ...next, lifecycle: SESSION_LIFECYCLE.STREAMING };
+      }
+      return next;
+    }
     case ACTION_INCOMING_HISTORY:
       return reduceIncomingHistory(state, action.event);
     case ACTION_LOCAL_EVENT: {
@@ -281,7 +290,6 @@ export function useSessionStream(taskId, onIncomingEvent) {
         event: raw,
         receivedAtEpoch: envelope?.received_at_epoch,
       });
-      dispatch({ type: ACTION_LIFECYCLE, value: SESSION_LIFECYCLE.STREAMING });
       if (typeof onIncomingEvent === 'function') {
         onIncomingEvent(raw, taskId);
       }

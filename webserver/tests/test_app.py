@@ -49,17 +49,30 @@ class _FakeSessionEvent:
 class _RaceyLiveSession:
     def __init__(self):
         self._events = [_FakeSessionEvent('system')]
-        self._recent_event_calls = 0
+        self._wait_calls = 0
 
     @property
     def is_alive(self):
         return False
 
     def recent_events(self):
-        self._recent_event_calls += 1
-        if self._recent_event_calls == 2:
-            self._events.append(_FakeSessionEvent('control_request'))
         return list(self._events)
+
+    def events_after(self, start_index):
+        if start_index >= len(self._events):
+            return ([], len(self._events))
+        return (list(self._events[start_index:]), len(self._events))
+
+    def wait_for_new_events(self, start_index, timeout):
+        # Mirror the original race: a new event lands AFTER the
+        # backlog snapshot but BEFORE the follow loop's first wakeup.
+        # The follow loop must still observe + emit it before
+        # reporting the session closed.
+        self._wait_calls += 1
+        if self._wait_calls == 1:
+            self._events.append(_FakeSessionEvent('control_request'))
+        new_slice = self._events[start_index:]
+        return (list(new_slice), len(self._events), False)
 
 
 class WebserverAppTests(unittest.TestCase):

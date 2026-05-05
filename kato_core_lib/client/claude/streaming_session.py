@@ -239,6 +239,16 @@ class StreamingClaudeSession(object):
         # stayed constant and the WS loop stopped forwarding new events.
         self._recent_events: list[SessionEvent] = []
         self._recent_events_lock = threading.Lock()
+        # Notified every time an event is appended OR the session
+        # terminates. SSE consumers wait on it instead of busy-polling
+        # ``recent_events()`` every 100ms — that polling pattern was
+        # the dominant source of streamed-event latency AND it copied
+        # the full event list on every tick (O(N) per poll on a long
+        # session). The condition is paired with the existing
+        # ``_recent_events_lock`` so callers can atomically (a) take
+        # a snapshot of new entries and (b) record the new high-water
+        # index without a TOCTOU window.
+        self._events_changed = threading.Condition(self._recent_events_lock)
         self._claude_session_id: str = ''
         self._terminal_event: SessionEvent | None = None
         self._reader_threads: list[threading.Thread] = []
@@ -510,9 +520,7 @@ class StreamingClaudeSession(object):
                 'allow': bool(allow),
             },
         )
-        with self._recent_events_lock:
-            self._recent_events.append(synthetic_event)
-        self._event_queue.put(synthetic_event)
+        self._publish_event(synthetic_event)
 
     def terminate(self, grace_seconds: float = 5.0) -> None:
         """Close stdin, wait briefly, then SIGTERM / kill as needed.
@@ -532,6 +540,12 @@ class StreamingClaudeSession(object):
         for thread in self._reader_threads:
             thread.join(timeout=1.0)
         self._reader_threads = []
+        # Wake any SSE tailers blocked in ``wait_for_new_events`` so
+        # they observe the freshly-flipped ``is_alive=False`` and
+        # close the stream immediately, instead of sleeping out the
+        # heartbeat interval.
+        with self._events_changed:
+            self._events_changed.notify_all()
 
     def _escalate_to_sigterm(self, proc: subprocess.Popen) -> None:
         self.logger.info(
@@ -583,6 +597,69 @@ class StreamingClaudeSession(object):
         if limit is not None and limit >= 0:
             events = events[-limit:]
         return events
+
+    def events_after(self, start_index: int) -> tuple[list[SessionEvent], int]:
+        """Return events appended at or after ``start_index`` (only the
+        new slice) plus the new high-water index.
+
+        Cheap O(new) read instead of the O(total) snapshot
+        ``recent_events()`` makes — used by the SSE tail loop, which
+        calls this once per wakeup to drain anything new without
+        copying the whole event log every time.
+        """
+        with self._recent_events_lock:
+            total = len(self._recent_events)
+            if start_index < 0:
+                start_index = 0
+            if start_index >= total:
+                return ([], total)
+            return (list(self._recent_events[start_index:]), total)
+
+    def wait_for_new_events(
+        self,
+        start_index: int,
+        timeout: float,
+    ) -> tuple[list[SessionEvent], int, bool]:
+        """Block until at least one event has been appended past
+        ``start_index`` OR ``timeout`` seconds elapse OR the session
+        terminates.
+
+        Returns ``(new_events, new_index, alive)``. ``alive=False``
+        signals the SSE loop that it should emit a terminal frame and
+        exit. The lock is held across the wait+drain so a concurrent
+        ``_publish_event`` cannot land an event between the wait
+        wake-up and the slice read.
+        """
+        with self._events_changed:
+            self._events_changed.wait_for(
+                lambda: (
+                    len(self._recent_events) > start_index
+                    or not self.is_alive
+                ),
+                timeout=timeout,
+            )
+            total = len(self._recent_events)
+            new_events = (
+                list(self._recent_events[start_index:total])
+                if total > start_index
+                else []
+            )
+            return (new_events, total, self.is_alive)
+
+    def _publish_event(self, event: SessionEvent) -> None:
+        """Append ``event`` to the recent-events log and wake up
+        anyone blocked in ``wait_for_new_events``.
+
+        Single funnel for the two append sites (real stdout events
+        and the synthetic permission-response mirror) so neither path
+        can forget to notify and silently strand a tailing client.
+        Also feeds the legacy ``_event_queue`` for the
+        ``poll_event`` / ``events_iter`` callers.
+        """
+        with self._events_changed:
+            self._recent_events.append(event)
+            self._events_changed.notify_all()
+        self._event_queue.put(event)
 
     def stderr_snapshot(self) -> list[str]:
         with self._stderr_lock:
@@ -707,15 +784,19 @@ class StreamingClaudeSession(object):
                 # audit signal. Detective-only: the agent's text has
                 # already crossed to Anthropic.
                 self._scan_terminal_for_credentials(event)
-            with self._recent_events_lock:
-                self._recent_events.append(event)
-            self._event_queue.put(event)
+            self._publish_event(event)
             self._maybe_capture_session_id(event)
             self._maybe_capture_control_request(event)
             self._maybe_fire_done_sentinel(event)
             self._log_event_for_operator(event)
                 # Don't break here — let the subprocess close stdout itself.
         # stdout closed; the subprocess is winding down or already gone.
+        # Wake any SSE tailers blocked in ``wait_for_new_events`` so
+        # they observe the impending ``is_alive=False`` without having
+        # to sleep through the heartbeat interval. Same rationale as
+        # the explicit ``terminate`` path above.
+        with self._events_changed:
+            self._events_changed.notify_all()
 
     def _scan_terminal_for_credentials(self, event: SessionEvent) -> None:
         """WARNING-log credential AND phishing patterns in terminal text.

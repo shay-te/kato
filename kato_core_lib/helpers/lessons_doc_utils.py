@@ -15,6 +15,7 @@ never blocks the spawn.
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 
 from kato_core_lib.data_layers.data_access.lessons_data_access import (
@@ -24,6 +25,14 @@ from kato_core_lib.helpers.text_utils import normalized_text
 
 
 _MAX_BODY_CHARS = 50_000
+
+# Process-local cache for the (potentially large) lessons body keyed
+# on (path, mtime, size). Streaming spawns previously re-read the
+# entire file from disk on every Claude turn; this collapses
+# unchanged-file spawns to a stat call. Lessons files can be tens of
+# kB after compaction, so the avoided IO is real.
+_LESSONS_CACHE: dict[str, tuple[float, int, str]] = {}
+_LESSONS_CACHE_LOCK = threading.Lock()
 
 
 _LESSONS_DIRECTIVE_TEMPLATE = (
@@ -56,8 +65,20 @@ def read_lessons_file(
     if not normalized:
         return ''
     file_path = Path(normalized).expanduser()
-    if not file_path.is_file():
+    try:
+        stat = file_path.stat()
+        is_file = file_path.is_file()
+    except (FileNotFoundError, OSError):
         return ''
+    if not is_file:
+        return ''
+    cache_key = str(file_path)
+    mtime = stat.st_mtime
+    size = stat.st_size
+    with _LESSONS_CACHE_LOCK:
+        cached = _LESSONS_CACHE.get(cache_key)
+        if cached is not None and cached[0] == mtime and cached[1] == size:
+            return cached[2]
     try:
         raw = file_path.read_text(encoding='utf-8')
     except OSError as exc:
@@ -68,10 +89,14 @@ def read_lessons_file(
         return ''
     body = strip_timestamp_header(raw).strip()
     if not body:
-        return ''
-    if len(body) > _MAX_BODY_CHARS:
-        body = body[:_MAX_BODY_CHARS]
-    return _LESSONS_DIRECTIVE_TEMPLATE.format(
-        path=str(file_path),
-        text=body,
-    )
+        directive = ''
+    else:
+        if len(body) > _MAX_BODY_CHARS:
+            body = body[:_MAX_BODY_CHARS]
+        directive = _LESSONS_DIRECTIVE_TEMPLATE.format(
+            path=str(file_path),
+            text=body,
+        )
+    with _LESSONS_CACHE_LOCK:
+        _LESSONS_CACHE[cache_key] = (mtime, size, directive)
+    return directive
