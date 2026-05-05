@@ -3,9 +3,18 @@ import { Tree } from 'react-arborist';
 import { fetchFileTree } from './api.js';
 import Icon from './components/Icon.jsx';
 import { useChatComposer } from './contexts/ChatComposerContext.jsx';
-import { activateTreeNode, attachIds, normalizeTrees } from './FilesTabHelpers.js';
+import {
+  activateTreeNode,
+  attachIds,
+  matchTreeNode,
+  normalizeTrees,
+} from './FilesTabHelpers.js';
 
-export default function FilesTab({ taskId, workspaceVersion = 0 }) {
+export default function FilesTab({
+  taskId,
+  workspaceVersion = 0,
+  focusFilterSignal = 0,
+}) {
   const { appendToInput } = useChatComposer();
   const [state, setState] = useState({
     status: 'loading',
@@ -13,8 +22,31 @@ export default function FilesTab({ taskId, workspaceVersion = 0 }) {
     error: '',
   });
   const [collapsed, setCollapsed] = useState(() => new Set());
+  const [query, setQuery] = useState('');
   const containerRef = useRef(null);
+  const filterInputRef = useRef(null);
   const [size, setSize] = useState({ width: 320, height: 480 });
+
+  // Cmd/Ctrl+P from the parent flips the right pane to Files (already
+  // handled in RightPane) and bumps ``focusFilterSignal``; on every
+  // bump we focus + select the input so the operator's first
+  // keystroke after the shortcut goes into the filter, not somewhere
+  // else.
+  useEffect(() => {
+    if (focusFilterSignal === 0) { return; }
+    const node = filterInputRef.current;
+    if (!node) { return; }
+    node.focus();
+    node.select();
+  }, [focusFilterSignal]);
+
+  // Reset the filter when switching tasks — every task has its own
+  // file tree, so a stale query from the previous task would be
+  // confusing if the same string doesn't match anything in the new
+  // tree.
+  useEffect(() => {
+    setQuery('');
+  }, [taskId]);
 
   useEffect(() => {
     if (!taskId) { return; }
@@ -126,13 +158,43 @@ export default function FilesTab({ taskId, workspaceVersion = 0 }) {
           collapsed={collapsed.has(repoKey)}
           onToggle={() => toggleRepo(repoKey)}
           onPickFile={appendToInput}
+          searchTerm={query}
         />
       );
     });
   }
 
-  const header = showToolbar && (
+  const filterRow = (
+    <div className="files-tab-filter">
+      <input
+        ref={filterInputRef}
+        type="search"
+        className="files-tab-filter-input"
+        placeholder="Search files… (Cmd+P / Ctrl+P)"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Escape') { setQuery(''); } }}
+        aria-label="Search files in this task's workspace"
+        spellCheck={false}
+        autoComplete="off"
+      />
+      {query && (
+        <button
+          type="button"
+          className="files-tab-filter-clear"
+          onClick={() => setQuery('')}
+          aria-label="Clear search"
+          title="Clear (Esc)"
+        >
+          ×
+        </button>
+      )}
+    </div>
+  );
+
+  const header = (
     <header className="files-tab-header">
+      {filterRow}
       {toolbar}
     </header>
   );
@@ -146,11 +208,14 @@ export default function FilesTab({ taskId, workspaceVersion = 0 }) {
   );
 }
 
-function RepoTree({ repoTree, width, collapsed, onToggle, onPickFile }) {
+function RepoTree({ repoTree, width, collapsed, onToggle, onPickFile, searchTerm = '' }) {
   const treeData = useMemo(() => {
     return attachIds(repoTree.tree, repoTree.cwd);
   }, [repoTree.tree, repoTree.cwd]);
   const heading = repoTree.repo_id || repoTree.cwd || 'repo';
+  // While filtering, expand by default so the operator sees every
+  // matching descendant without clicking through ancestor folders.
+  const isFiltering = !!searchTerm.trim();
   const treeHeight = Math.max(120, Math.min(treeData.length * 22 + 8, 800));
   const chevronName = collapsed ? 'chevron-right' : 'chevron-down';
   let body;
@@ -166,7 +231,9 @@ function RepoTree({ repoTree, width, collapsed, onToggle, onPickFile }) {
         height={treeHeight}
         rowHeight={22}
         indent={14}
-        openByDefault={false}
+        openByDefault={isFiltering}
+        searchTerm={searchTerm}
+        searchMatch={matchTreeNode}
         disableDrag
         disableDrop
         disableEdit

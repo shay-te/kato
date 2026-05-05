@@ -50,6 +50,28 @@ function basenameOf(path) {
   return idx >= 0 ? trimmed.slice(idx + 1) : trimmed;
 }
 
+// Match a tree node against a free-text search term.
+//
+// react-arborist's default matcher only checks ``node.data.name``
+// (the basename). That misses VS-Code-style "Cmd+P type-the-path"
+// flows where the user wants ``src/auth.py`` to surface when they
+// type "src/auth" or "auth.py". This matcher checks BOTH basename
+// AND relative path, case-insensitive, substring match.
+//
+// Empty / whitespace-only term matches everything (renders the
+// whole tree, same as no filter). Folders match when their name
+// matches OR any descendant matches — but react-arborist already
+// shows ancestors of matching descendants, so we only need to
+// match nodes themselves here.
+export function matchTreeNode(node, term) {
+  const needle = String(term || '').trim().toLowerCase();
+  if (!needle) { return true; }
+  const data = node?.data || {};
+  const name = String(data.name || '').toLowerCase();
+  const relativePath = String(data.relativePath || '').toLowerCase();
+  return name.includes(needle) || relativePath.includes(needle);
+}
+
 function relativePathForRepo(path, cwd) {
   const normalizedPath = String(path || '').replace(/\\/g, '/');
   const normalizedCwd = String(cwd || '').replace(/\\/g, '/').replace(/\/+$/, '');

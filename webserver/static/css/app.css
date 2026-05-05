@@ -804,6 +804,50 @@ body.kato-resizing { user-select: none; cursor: col-resize; }
   flex-shrink: 0;
 }
 
+.files-tab-filter {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+.files-tab-filter-input {
+  width: 100%;
+  background: #050505;
+  color: #e5e5e5;
+  border: 1px solid #262626;
+  border-radius: 4px;
+  padding: 4px 24px 4px 8px;
+  font: inherit;
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+}
+.files-tab-filter-input:focus {
+  outline: none;
+  border-color: #404040;
+}
+.files-tab-filter-input::placeholder {
+  color: #525252;
+}
+/* Native search input in WebKit ships an "x" clear control we don't
+ * use — hide it so the only clear affordance is our own button. */
+.files-tab-filter-input::-webkit-search-cancel-button {
+  display: none;
+}
+.files-tab-filter-clear {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: #a3a3a3;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 4px;
+}
+.files-tab-filter-clear:hover { color: #e5e5e5; }
+
 .files-tab-toolbar,
 .changes-tab-toolbar {
   margin-left: auto;

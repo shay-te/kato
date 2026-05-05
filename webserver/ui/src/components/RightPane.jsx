@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import FilesTab from '../FilesTab.jsx';
 import ChangesTab from '../ChangesTab.jsx';
 import OrchestratorActivityFeed from './OrchestratorActivityFeed.jsx';
@@ -15,9 +15,40 @@ export default function RightPane({
   activityHistory = [],
 }) {
   const [tab, setTab] = useState(TAB_FILES);
+  // Bumped each time Cmd/Ctrl+P fires. ``FilesTab`` watches this and
+  // focuses its filter input on every increment. Using a counter
+  // (vs a boolean toggle) so consecutive invocations always trigger
+  // the focus effect — repeated Cmd+P presses re-focus the input
+  // even if it's already mounted.
+  const [focusFilterSignal, setFocusFilterSignal] = useState(0);
+
+  // VS Code's Cmd+P / Ctrl+P opens the file picker. Same shortcut
+  // here flips the right pane to Files and focuses the search box.
+  // Only intercepted when there's an active task — otherwise the
+  // browser keeps its default Print binding so operators on the
+  // empty-state screen aren't surprised.
+  useEffect(() => {
+    if (!activeTaskId) { return; }
+    function onKeyDown(event) {
+      const isP = event.key === 'p' || event.key === 'P';
+      if (!isP) { return; }
+      const meta = event.metaKey || event.ctrlKey;
+      if (!meta) { return; }
+      if (event.shiftKey || event.altKey) { return; }
+      event.preventDefault();
+      setTab(TAB_FILES);
+      setFocusFilterSignal((tick) => tick + 1);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [activeTaskId]);
 
   const filesBody = tab === TAB_FILES && (
-    <FilesTab taskId={activeTaskId} workspaceVersion={workspaceVersion} />
+    <FilesTab
+      taskId={activeTaskId}
+      workspaceVersion={workspaceVersion}
+      focusFilterSignal={focusFilterSignal}
+    />
   );
   const changesBody = tab === TAB_CHANGES && (
     <ChangesTab taskId={activeTaskId} workspaceVersion={workspaceVersion} />
