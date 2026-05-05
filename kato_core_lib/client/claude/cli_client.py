@@ -333,6 +333,7 @@ class ClaudeCliClient(object):
         session_id: str = '',
         task_id: str = '',
         task_summary: str = '',
+        mode: str = 'fix',
     ) -> dict[str, str | bool]:
         """Address multiple PR review comments in a single Claude spawn.
 
@@ -341,6 +342,15 @@ class ClaudeCliClient(object):
         (repo, pr) before calling. ``branch_name`` is the existing
         task branch to commit on; one push covers every comment in
         the batch.
+
+        ``mode``:
+        - ``'fix'`` (default) — the legacy flow. Agent makes edits,
+          commits, returns success when the workspace has the change.
+        - ``'answer'`` — the question-answering flow. Agent reads the
+          code to understand context but does NOT modify any files;
+          the returned ``message`` text is what kato posts back to
+          each commenter as a reply. The caller (service) skips
+          ``publish_review_fix`` for this mode.
 
         For ``len(comments) == 1`` the prompt is identical to the
         legacy single-comment prompt (``_build_review_prompt``) so
@@ -355,11 +365,11 @@ class ClaudeCliClient(object):
         if len(comments) == 1:
             single = comments[0]
             prompt = self._build_review_prompt(
-                single, branch_name, workspace_path=cwd,
+                single, branch_name, workspace_path=cwd, mode=mode,
             )
         else:
             prompt = self._build_review_comments_batch_prompt(
-                comments, branch_name, workspace_path=cwd,
+                comments, branch_name, workspace_path=cwd, mode=mode,
             )
         result = self._run_prompt_result(
             prompt=prompt,
@@ -459,6 +469,7 @@ class ClaudeCliClient(object):
         comments: list[ReviewComment],
         branch_name: str,
         workspace_path: str = '',
+        mode: str = 'fix',
     ) -> str:
         """Render a batched prompt for 2+ comments on one PR.
 
@@ -511,6 +522,27 @@ class ClaudeCliClient(object):
             if review_context
             else ''
         )
+        if mode == 'answer':
+            return (
+                f'The following pull request review questions are on branch '
+                f'{branch_name}{repository_context}.\n\n'
+                f'{batch_text}'
+                f'{wrapped_review_context}\n\n'
+                f'{cls._execution_guardrails_text()}\n\n'
+                'These are QUESTIONS, not fix requests. Read the relevant '
+                'code to understand context, then write a concise plain-text '
+                'answer that addresses every question.\n'
+                'Rules:\n'
+                '- Do NOT modify any files. Do not call Edit, Write, or any '
+                'tool that mutates the workspace.\n'
+                '- Do not commit. Do not push.\n'
+                '- Number your answers 1, 2, 3 to match the numbered '
+                'questions above.\n'
+                '- Keep each answer focused: explain the behaviour, point to '
+                'the relevant file/line if helpful, and stop.\n'
+                'When you are done, stop. Your final response will be '
+                'posted as the reply to each question.\n'
+            )
         return (
             f'Address the following pull request review comments on branch '
             f'{branch_name}{repository_context}.\n\n'
@@ -535,6 +567,7 @@ class ClaudeCliClient(object):
         comment: ReviewComment,
         branch_name: str,
         workspace_path: str = '',
+        mode: str = 'fix',
     ) -> str:
         repository_context = agent_prompt_utils.review_repository_context(comment)
         review_context = agent_prompt_utils.review_comment_context_text(comment)
@@ -568,6 +601,26 @@ class ClaudeCliClient(object):
         )
         location_block = f'{location_text}\n' if location_text else ''
         snippet_block = f'{snippet_text}\n' if snippet_text else ''
+        if mode == 'answer':
+            return (
+                f'A pull request reviewer asked a QUESTION on branch '
+                f'{branch_name}{repository_context}.\n'
+                f'{location_block}'
+                f'{snippet_block}'
+                f'Question by {comment.author}:\n{untrusted_comment_body}'
+                f'{wrapped_review_context}\n\n'
+                f'{cls._execution_guardrails_text()}\n\n'
+                'Read the relevant code to understand context, then write a '
+                'concise plain-text answer.\n'
+                'Rules:\n'
+                '- Do NOT modify any files. Do not call Edit, Write, or any '
+                'tool that mutates the workspace.\n'
+                '- Do not commit. Do not push.\n'
+                '- Keep the answer focused: explain the behaviour, point to '
+                'the relevant file/line if helpful, and stop.\n'
+                'Your final response will be posted as the reply to the '
+                'question.\n'
+            )
         return (
             f'Address pull request comment on branch {branch_name}{repository_context}.\n'
             f'{location_block}'

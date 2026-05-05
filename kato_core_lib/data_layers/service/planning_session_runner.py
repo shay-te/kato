@@ -239,12 +239,14 @@ class PlanningSessionRunner(object):
         task_id: str,
         task_summary: str = '',
         repository_local_path: str = '',
+        mode: str = 'fix',
     ) -> dict[str, str | bool]:
         """Address multiple comments in a single streaming session.
 
         Same teardown / resume mechanics as the singular path; only
         the prompt is batched. ``len(comments) == 1`` produces an
-        identical prompt to ``fix_review_comment``.
+        identical prompt to ``fix_review_comment``. ``mode='answer'``
+        switches the prompt to the question-answering shape.
         """
         if not comments:
             raise ValueError('fix_review_comments requires at least one comment')
@@ -256,11 +258,11 @@ class PlanningSessionRunner(object):
         workspace = normalized_text(repository_local_path)
         prompt = (
             self._build_review_prompt(
-                comments[0], branch_name, workspace_path=workspace,
+                comments[0], branch_name, workspace_path=workspace, mode=mode,
             )
             if len(comments) == 1
             else self._build_review_comments_batch_prompt(
-                comments, branch_name, workspace_path=workspace,
+                comments, branch_name, workspace_path=workspace, mode=mode,
             )
         )
         return self._run_to_terminal(
@@ -373,13 +375,14 @@ class PlanningSessionRunner(object):
         comment: ReviewComment,
         branch_name: str,
         workspace_path: str = '',
+        mode: str = 'fix',
     ) -> str:
         # Reuse the one-shot client's prompt so streaming and one-shot
         # paths show identical guardrails.
         from kato_core_lib.client.claude.cli_client import ClaudeCliClient
 
         return ClaudeCliClient._build_review_prompt(
-            comment, branch_name, workspace_path=workspace_path,
+            comment, branch_name, workspace_path=workspace_path, mode=mode,
         )
 
     @staticmethod
@@ -387,11 +390,12 @@ class PlanningSessionRunner(object):
         comments: list[ReviewComment],
         branch_name: str,
         workspace_path: str = '',
+        mode: str = 'fix',
     ) -> str:
         from kato_core_lib.client.claude.cli_client import ClaudeCliClient
 
         return ClaudeCliClient._build_review_comments_batch_prompt(
-            comments, branch_name, workspace_path=workspace_path,
+            comments, branch_name, workspace_path=workspace_path, mode=mode,
         )
 
     def _wait_for_terminal_event(self, session, *, task_id: str):

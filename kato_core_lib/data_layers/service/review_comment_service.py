@@ -28,6 +28,8 @@ from kato_core_lib.helpers.review_comment_utils import (
     ReviewFixContext,
     comment_context_entry,
     is_kato_review_comment_reply,
+    is_question_only_batch,
+    review_comment_answer_body,
     review_comment_from_payload,
     review_comment_fixed_comment,
     review_comment_reply_body,
@@ -146,12 +148,25 @@ class ReviewCommentService(Service):
         )
         repository = self._repository_service.get_repository(review_context.repository_id)
         repository = self._provision_workspace_clone(repository, review_context)
+        # Pure-question batches go through the answer-only flow:
+        # agent reads code to understand context, posts a plain-text
+        # answer per comment, NO commit, NO push, NO resolve. The
+        # heuristic is conservative so any wording that looks like a
+        # fix request stays on the existing fix flow.
+        question_only = is_question_only_batch(comments)
         try:
             self._prepare_review_fix_branch(repository, review_context)
-            execution = self._run_review_comments_batch_fix(comments, review_context)
-            self._publish_review_comments_batch_fix(
-                comments, repository, review_context, execution,
+            execution = self._run_review_comments_batch_fix(
+                comments, review_context, mode=('answer' if question_only else 'fix'),
             )
+            if question_only:
+                self._publish_review_comment_answers(
+                    comments, repository, review_context, execution,
+                )
+            else:
+                self._publish_review_comments_batch_fix(
+                    comments, repository, review_context, execution,
+                )
             for comment in comments:
                 self._complete_review_fix(comment, review_context)
             log_review_comment_end(
@@ -530,6 +545,7 @@ class ReviewCommentService(Service):
         self,
         comments: list[ReviewComment],
         review_context: ReviewFixContext,
+        mode: str = 'fix',
     ) -> dict[str, str | bool]:
         """One agent spawn covering every comment in ``comments``.
 
@@ -539,6 +555,11 @@ class ReviewCommentService(Service):
         path — no regression for setups that don't yet trigger
         batched flow.
 
+        ``mode='answer'`` switches to the question-answering prompt:
+        agent reads code, returns text answer in ``message``, no
+        commit. The caller (publish path) uses the message as the
+        reply body and skips ``publish_review_fix``.
+
         Back-compat: if the wired service or planning runner doesn't
         expose ``fix_review_comments`` (older test stubs / custom
         wrappers), we fan out to the singular method per comment.
@@ -547,16 +568,18 @@ class ReviewCommentService(Service):
         """
         if self._use_streaming_for_review_fixes:
             self.logger.info(
-                'streaming review-fix session for task %s (%d comment(s)) '
+                'streaming review-fix session for task %s (%d comment(s), mode=%s) '
                 '(visible in the planning UI)',
                 review_context.task_id,
                 len(comments),
+                mode,
             )
             execution = self._call_fix_review_comments_or_fanout(
                 self._planning_session_runner,
                 comments,
                 review_context,
                 streaming=True,
+                mode=mode,
             )
         else:
             execution = self._call_fix_review_comments_or_fanout(
@@ -564,6 +587,7 @@ class ReviewCommentService(Service):
                 comments,
                 review_context,
                 streaming=False,
+                mode=mode,
             )
         if not execution.get(ImplementationFields.SUCCESS, False):
             comment_ids = ', '.join(c.comment_id for c in comments)
@@ -579,6 +603,7 @@ class ReviewCommentService(Service):
         review_context: ReviewFixContext,
         *,
         streaming: bool,
+        mode: str = 'fix',
     ) -> dict[str, str | bool]:
         if streaming:
             kwargs = dict(
@@ -605,7 +630,18 @@ class ReviewCommentService(Service):
                 plural_args = (
                     comments, review_context.branch_name, review_context.session_id,
                 )
-            return backend.fix_review_comments(*plural_args, **kwargs) or {}
+            try:
+                return backend.fix_review_comments(
+                    *plural_args, **kwargs, mode=mode,
+                ) or {}
+            except TypeError:
+                # Older test stub without ``mode`` kwarg — fall back
+                # to the legacy signature. Service still skips the
+                # push for question batches, so the agent's answer
+                # text simply travels through the fix-mode prompt.
+                return backend.fix_review_comments(
+                    *plural_args, **kwargs,
+                ) or {}
         # Fanout: call singular per-comment, keep the last execution
         # dict (they should all carry the same success flag for one
         # batch). Best-effort — first failure raises so the caller
@@ -741,6 +777,64 @@ class ReviewCommentService(Service):
             else:
                 self.logger.info(
                     'skipped resolving review comment %s on pull request %s',
+                    comment.comment_id,
+                    comment.pull_request_id,
+                )
+
+    def _publish_review_comment_answers(
+        self,
+        comments: list[ReviewComment],
+        repository,
+        review_context: ReviewFixContext,
+        execution: dict[str, str | bool],
+    ) -> None:
+        """Reply to each question with the agent's answer text.
+
+        Differences from ``_publish_review_comments_batch_fix``:
+        - No ``publish_review_fix`` call. Nothing was edited.
+        - Reply body is the agent's plain-text answer (via
+          ``review_comment_answer_body``), not the
+          "Kato addressed / pushed a follow-up update" template
+          which would be misleading here.
+        - Resolution stays best-effort: kato closes the thread
+          when it can. Some platforms only let the original
+          commenter resolve, in which case the resolve no-ops.
+        """
+        self.logger.info(
+            'answering pull request %s (%d question(s)) on branch %s — no push',
+            comments[0].pull_request_id,
+            len(comments),
+            review_context.branch_name,
+        )
+        answer_body = review_comment_answer_body(execution)
+        for comment in comments:
+            try:
+                self._repository_service.reply_to_review_comment(
+                    repository,
+                    comment,
+                    answer_body,
+                )
+                self.logger.info(
+                    'replied to review question %s on pull request %s',
+                    comment.comment_id,
+                    comment.pull_request_id,
+                )
+            except Exception:
+                self.logger.exception(
+                    'failed to post answer to review question %s on pull request %s; '
+                    'the question is unanswered, re-open the thread to retry',
+                    comment.comment_id,
+                    comment.pull_request_id,
+                )
+            if self._resolve_review_comment(repository, comment):
+                self.logger.info(
+                    'resolved review question %s on pull request %s',
+                    comment.comment_id,
+                    comment.pull_request_id,
+                )
+            else:
+                self.logger.info(
+                    'skipped resolving review question %s on pull request %s',
                     comment.comment_id,
                     comment.pull_request_id,
                 )

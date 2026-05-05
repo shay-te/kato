@@ -119,6 +119,7 @@ class AgentClient(Protocol):
         session_id: str = '',
         task_id: str = '',
         task_summary: str = '',
+        mode: str = 'fix',
     ) -> dict[str, str | bool]:
         """Address multiple PR review comments on the existing task branch.
 

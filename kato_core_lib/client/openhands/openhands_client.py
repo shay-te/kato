@@ -164,17 +164,18 @@ class KatoClient(RetryingClientBase):
         session_id: str = '',
         task_id: str = '',
         task_summary: str = '',
+        mode: str = 'fix',
     ) -> dict[str, str | bool]:
         if not comments:
             raise ValueError('fix_review_comments requires at least one comment')
         workspace_path = self._review_workspace_path(comments[0])
         if len(comments) == 1:
             prompt = self._build_review_prompt(
-                comments[0], branch_name, workspace_path=workspace_path,
+                comments[0], branch_name, workspace_path=workspace_path, mode=mode,
             )
         else:
             prompt = self._build_review_comments_batch_prompt(
-                comments, branch_name, workspace_path=workspace_path,
+                comments, branch_name, workspace_path=workspace_path, mode=mode,
             )
         result = self._run_prompt_result(
             prompt=prompt,
@@ -214,6 +215,7 @@ class KatoClient(RetryingClientBase):
         comments: list[ReviewComment],
         branch_name: str,
         workspace_path: str = '',
+        mode: str = 'fix',
     ) -> str:
         first = comments[0]
         repository_context = agent_prompt_utils.review_repository_context(first)
@@ -221,6 +223,21 @@ class KatoClient(RetryingClientBase):
             comments, workspace_path=workspace_path,
         )
         review_context = cls._review_comment_context_text(first)
+        if mode == 'answer':
+            return (
+                f'The following pull request review questions are on branch '
+                f'{branch_name}{repository_context}.\n\n'
+                f'{batch_text}'
+                f'{review_context}\n\n'
+                f'{cls._execution_guardrails_text()}\n\n'
+                'These are QUESTIONS, not fix requests.\n'
+                '- Read the relevant code; do NOT modify any files.\n'
+                '- Do not commit, do not push.\n'
+                '- When you finish, use the finish tool. Put a numbered '
+                'plain-text answer (1, 2, 3 to match the questions) in '
+                'summary; leave message empty unless extra detail is '
+                'genuinely needed.\n'
+            )
         return (
             f'Address the following pull request review comments on branch '
             f'{branch_name}{repository_context}.\n\n'
@@ -347,6 +364,7 @@ class KatoClient(RetryingClientBase):
         comment: ReviewComment,
         branch_name: str,
         workspace_path: str = '',
+        mode: str = 'fix',
     ) -> str:
         repository_context = agent_prompt_utils.review_repository_context(comment)
         review_context = cls._review_comment_context_text(comment)
@@ -358,6 +376,21 @@ class KatoClient(RetryingClientBase):
         )
         location_block = f'{location_text}\n' if location_text else ''
         snippet_block = f'{snippet_text}\n' if snippet_text else ''
+        if mode == 'answer':
+            return (
+                f'A pull request reviewer asked a QUESTION on branch '
+                f'{branch_name}{repository_context}.\n'
+                f'{location_block}'
+                f'{snippet_block}'
+                f'Question by {comment.author}: {comment.body}'
+                f'{review_context}\n\n'
+                f'{cls._execution_guardrails_text()}\n\n'
+                'These are QUESTIONS, not fix requests.\n'
+                '- Read the relevant code; do NOT modify any files.\n'
+                '- Do not commit, do not push.\n'
+                '- When you finish, use the finish tool with a concise '
+                'plain-text answer in summary.\n'
+            )
         return (
             f'Address pull request comment on branch {branch_name}{repository_context}.\n'
             f'{location_block}'

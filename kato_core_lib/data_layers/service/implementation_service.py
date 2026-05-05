@@ -72,6 +72,7 @@ class ImplementationService(Service):
         session_id: str = '',
         task_id: str = '',
         task_summary: str = '',
+        mode: str = 'fix',
     ) -> dict[str, str | bool]:
         """Address every comment in ``comments`` via the agent client.
 
@@ -81,6 +82,9 @@ class ImplementationService(Service):
         expose ``fix_review_comment`` get auto-fanned-out: one client call
         per comment, results merged. Behaviour-preserving back-compat for
         anyone who wrote a custom agent client against the old API.
+
+        ``mode='answer'`` routes the agent through the question-answering
+        prompt — service caller skips the push step in that case.
         """
         if hasattr(self._client, 'fix_review_comments'):
             return self._client.fix_review_comments(
@@ -89,9 +93,14 @@ class ImplementationService(Service):
                 session_id=session_id,
                 task_id=task_id,
                 task_summary=task_summary,
+                mode=mode,
             )
         # Fallback: iterate. Loses the batching efficiency, but
         # preserves correctness — every comment still gets addressed.
+        # Older clients without ``mode`` support fall through to fix
+        # mode silently; the service-level skip-push branch still
+        # applies, so worst case the agent makes an unnecessary
+        # commit that nobody pushes.
         last_result: dict[str, str | bool] = {}
         for comment in comments:
             last_result = self._client.fix_review_comment(
