@@ -1688,6 +1688,15 @@ body.kato-resizing { user-select: none; cursor: col-resize; }
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
 }
+.adopt-session-id {
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  color: #525252;
+  margin-top: 2px;
+  cursor: copy;
+  word-break: break-all;
+}
+.adopt-session-id:hover { color: #a3a3a3; }
 .adopt-session-badges {
   display: flex;
   gap: 6px;
