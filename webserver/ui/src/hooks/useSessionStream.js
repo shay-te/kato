@@ -66,30 +66,56 @@ function entryDedupeKey(entry) {
   if (entry.source === ENTRY_SOURCE.LOCAL) {
     return `local:${entry.localId}`;
   }
-  // SERVER and HISTORY entries are keyed by content. The server emits
-  // identical raw payloads on each replay (history-from-disk reads the
-  // same JSONL lines; recent_events backlog is the same in-memory
-  // list) so JSON.stringify of `raw` is a stable identity. We
-  // deliberately ignore `received_at_epoch` because history replay
-  // uses 0 for every event — including it would defeat dedupe.
+  // SERVER entries: prefer the per-event ``received_at_epoch`` the
+  // server stamps on each ``SessionEvent``. It's a high-resolution
+  // timestamp captured when kato received the event from Claude's
+  // stdout, and it's preserved across replays — so a backlog re-emit
+  // of the same event reuses the same key. JSON.stringify(raw) is a
+  // BAD fallback here: two distinct live events with identical
+  // payload (e.g., a respawned Claude emitting another
+  // ``system { subtype: init }`` for the same session id) would
+  // collide and the second would be silently dropped, freezing the UI
+  // until something with different content arrives. The epoch is
+  // unique-per-event by construction, so it can't collide.
+  if (entry.source === ENTRY_SOURCE.SERVER) {
+    const epoch = Number(entry.receivedAtEpoch || 0);
+    if (epoch > 0) {
+      return `server:${epoch}`;
+    }
+    // No epoch (older payload shape) — fall back to content. Worst
+    // case is over-dedupe of identical-content events; better than
+    // re-rendering them as duplicate bubbles.
+    try {
+      return `server:${JSON.stringify(entry.raw)}`;
+    } catch (_) {
+      return `server:unserialisable:${Math.random()}`;
+    }
+  }
+  // HISTORY entries always have ``received_at_epoch === 0`` (the
+  // server stamps zero on disk-replayed events to mark them as
+  // archival). Use raw content for identity — replays of the same
+  // JSONL produce identical raw dicts, so this is stable.
   try {
-    return `${entry.source}:${JSON.stringify(entry.raw)}`;
+    return `history:${JSON.stringify(entry.raw)}`;
   } catch (_) {
-    return `${entry.source}:unserialisable:${Math.random()}`;
+    return `history:unserialisable:${Math.random()}`;
   }
 }
 
 function appendEntryIfNew(state, entry) {
   const key = entryDedupeKey(entry);
   if (state.eventKeys.has(key)) {
-    return state;
+    return { state, appended: false };
   }
   const eventKeys = new Set(state.eventKeys);
   eventKeys.add(key);
   return {
-    ...state,
-    events: [...state.events, entry],
-    eventKeys,
+    state: {
+      ...state,
+      events: [...state.events, entry],
+      eventKeys,
+    },
+    appended: true,
   };
 }
 
@@ -98,13 +124,13 @@ function reducer(state, action) {
     case ACTION_HYDRATE:
       return action.value;
     case ACTION_INCOMING_EVENT:
-      return reduceIncomingEvent(state, action.event);
+      return reduceIncomingEvent(state, action.event, action.receivedAtEpoch);
     case ACTION_INCOMING_HISTORY:
       return reduceIncomingHistory(state, action.event);
     case ACTION_LOCAL_EVENT: {
       _localEventCounter += 1;
       const enriched = { ...action.event, localId: _localEventCounter };
-      return appendEntryIfNew(state, enriched);
+      return appendEntryIfNew(state, enriched).state;
     }
     case ACTION_LIFECYCLE:
       // CLOSED / IDLE / MISSING all mean "nothing live is waiting for input"
@@ -124,13 +150,21 @@ function reducer(state, action) {
   }
 }
 
-function reduceIncomingEvent(state, raw) {
-  const entry = { source: ENTRY_SOURCE.SERVER, raw };
-  const next = appendEntryIfNew(state, entry);
-  if (next === state) { return state; }
-  // Every server event — including ``stream_event`` token chunks that
-  // never produce a chat bubble — resets the activity clock so the UI
-  // can distinguish "Claude is working" from "Claude is stuck".
+function reduceIncomingEvent(state, raw, receivedAtEpoch) {
+  const entry = {
+    source: ENTRY_SOURCE.SERVER,
+    raw,
+    receivedAtEpoch: Number(receivedAtEpoch || 0),
+  };
+  const { state: appended } = appendEntryIfNew(state, entry);
+  // Always advance the activity clock + lifecycle hooks, even when
+  // dedupe drops the entry (e.g., backlog replay re-emits an event
+  // we already cached). The bubble doesn't get rendered twice but
+  // activity tracking still sees the heartbeat — without this, the
+  // WorkingIndicator trips its "stalled" threshold during a healthy
+  // live stream and only un-trips on tab switch (when remount
+  // forces a hydrate that includes a freshly-stamped lastEventAt).
+  const next = appended === state ? { ...state } : appended;
   next.lastEventAt = Date.now();
   switch (raw?.type) {
     case CLAUDE_EVENT.ASSISTANT:
@@ -160,8 +194,9 @@ function reduceIncomingEvent(state, raw) {
 
 function reduceIncomingHistory(state, raw) {
   const entry = { source: ENTRY_SOURCE.HISTORY, raw };
-  const next = appendEntryIfNew(state, entry);
-  if (next === state) { return state; }
+  const { state: appended, appended: didAppend } = appendEntryIfNew(state, entry);
+  if (!didAppend) { return state; }
+  const next = appended;
   switch (raw?.type) {
     case CLAUDE_EVENT.PERMISSION_REQUEST:
     case CLAUDE_EVENT.CONTROL_REQUEST:
@@ -233,7 +268,11 @@ export function useSessionStream(taskId, onIncomingEvent) {
       const envelope = payload?.event || payload;
       const raw = envelope?.raw || envelope;
       if (!raw) { return; }
-      dispatch({ type: ACTION_INCOMING_EVENT, event: raw });
+      dispatch({
+        type: ACTION_INCOMING_EVENT,
+        event: raw,
+        receivedAtEpoch: envelope?.received_at_epoch,
+      });
       dispatch({ type: ACTION_LIFECYCLE, value: SESSION_LIFECYCLE.STREAMING });
       if (typeof onIncomingEvent === 'function') {
         onIncomingEvent(raw, taskId);
