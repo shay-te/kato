@@ -112,13 +112,37 @@ function assistantBubbles(raw, index) {
       textPieces.push(block.text);
     } else if (block.type === 'tool_use') {
       const toolName = block.name || 'tool';
-      const summary = formatToolUse(toolName, block.input);
+      const formatted = formatToolUse(toolName, block.input);
+      // ``formatted`` is either a string (header-only) or
+      // ``{ summary, details }``. The details block renders as
+      // monospace code under the header — for Edit/Write/MultiEdit
+      // this is the full before/after snippet, for Bash it's the
+      // remaining lines of a multi-line command, etc.
+      const summary = typeof formatted === 'string'
+        ? formatted
+        : (formatted?.summary || '');
+      const details = typeof formatted === 'object' && formatted
+        ? formatted.details
+        : '';
       toolBubbles.push(
         <Bubble
           key={keyOf(raw, index, `tool-${block.id || toolBubbles.length}`)}
           kind={BUBBLE_KIND.TOOL}
         >
-          {`→ ${summary}`}
+          <span className="bubble-tool-summary">{`→ ${summary}`}</span>
+          {details && (
+            <pre className="bubble-tool-details">
+              {details.split('\n').map((line, lineIdx) => (
+                <span
+                  key={lineIdx}
+                  className={`bubble-tool-details-line ${_diffLineKind(line)}`}
+                >
+                  {line || ' '}
+                  {'\n'}
+                </span>
+              ))}
+            </pre>
+          )}
         </Bubble>,
       );
     }
@@ -171,4 +195,18 @@ function resultBubbles(raw, index) {
 
 function keyOf(raw, index, slot) {
   return `${index}:${raw.uuid || raw.session_id || ''}:${slot}`;
+}
+
+
+// Classify a tool-details line by its prefix so the renderer can
+// tint added vs removed lines red/green. Prefixes match what
+// ``formatToolUse`` produces:
+//   ``+ `` — added line (Edit new_string, Write content)
+//   ``- `` — removed line (Edit old_string)
+//   ``---`` — separator between MultiEdit edits
+function _diffLineKind(line) {
+  if (line.startsWith('+ ')) { return 'added'; }
+  if (line.startsWith('- ')) { return 'removed'; }
+  if (line === '---') { return 'separator'; }
+  return 'context';
 }
