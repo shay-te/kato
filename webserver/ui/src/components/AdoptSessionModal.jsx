@@ -156,6 +156,18 @@ export default function AdoptSessionModal({ taskId, onClose, onAdopted }) {
                     || session.first_user_message
                     || '(no user messages)'}
                 </div>
+                <div
+                  className="adopt-session-id"
+                  title={`Full session id: ${session.session_id}\nMatches Claude Code /status output. Click to copy.`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (navigator.clipboard) {
+                      navigator.clipboard.writeText(session.session_id);
+                    }
+                  }}
+                >
+                  id: {session.session_id}
+                </div>
                 <div className="adopt-session-badges">
                   {isInUse && (
                     <span
