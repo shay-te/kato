@@ -10,7 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 class BitbucketCoreLibConfigTests(unittest.TestCase):
     def test_config_includes_max_retries(self) -> None:
         config_text = (
-            REPO_ROOT / 'bitbucket_core_lib/bitbucket_core_lib/config/bitbucket_core_lib.yaml'
+            REPO_ROOT / 'bitbucket_core_lib/bitbucket_core_lib/config/bitbucket_core_lib/bitbucket_core_lib.yaml'
         ).read_text(encoding='utf-8')
 
         self.assertIn(

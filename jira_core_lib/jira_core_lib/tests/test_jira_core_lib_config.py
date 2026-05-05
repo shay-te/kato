@@ -10,7 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 class JiraCoreLibConfigTests(unittest.TestCase):
     def test_config_includes_max_retries(self) -> None:
         config_text = (
-            REPO_ROOT / 'jira_core_lib/jira_core_lib/config/jira_core_lib.yaml'
+            REPO_ROOT / 'jira_core_lib/jira_core_lib/config/jira_core_lib/jira_core_lib.yaml'
         ).read_text(encoding='utf-8')
 
         self.assertIn('jira_core_lib:', config_text)
