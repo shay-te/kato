@@ -63,6 +63,74 @@ Reference:
 - https://shay-te.github.io/core-lib/
 - https://shay-te.github.io/core-lib/advantages.html
 
+## Core-lib map
+
+Kato is a thin orchestrator on top of a stack of focused libraries. Each one has a clear responsibility and either implements a contract (provider impls) or wraps several providers behind a typed factory (wrapping libs).
+
+```
+   ┌─────────────────────────────────────────────────────────────────────┐
+   │                                                                     │
+   │                          kato_core_lib                              │
+   │                                                                     │
+   │  product orchestrator: assigned-task scan → REP gate → workspace    │
+   │  clone → preflight → planning session → publish → review-fix loop   │
+   │                                                                     │
+   │  webserver/   planning UI (Flask + React) lives here                │
+   │                                                                     │
+   └──┬──────────────┬───────────────────┬──────────────────┬────────────┘
+      │              │                   │                  │
+      │ wraps        │ wraps             │ wraps            │ uses
+      ▼              ▼                   ▼                  ▼
+
+  ┌─────────┐  ┌──────────────┐  ┌──────────────┐  ┌────────────────┐
+  │ task_   │  │ repository_  │  │ agent_       │  │ sandbox_       │
+  │ core_lib│  │ core_lib     │  │ core_lib     │  │ core_lib       │
+  │         │  │              │  │              │  │                │
+  │ factory │  │ factory +    │  │ factory +    │  │ INDEPENDENT    │
+  │ +       │  │ provider     │  │ AgentPlatform│  │ (no contracts, │
+  │ Platform│  │ routing      │  │ enum         │  │  no providers, │
+  │ enum    │  │              │  │              │  │  self-contained)│
+  └────┬────┘  └──────┬───────┘  └──────┬───────┘  │                │
+       │              │                 │          │ Dockerfile +   │
+       │ depends on   │ depends on      │ depends  │ tls_pin +      │
+       ▼              ▼                 │ on       │ audit_log +    │
+  ┌────────────────────────────┐ ┌─────────────────────┐│ workspace_  │
+  │ vcs_provider_contracts     │ │ agent_provider_      ││ delimiter + │
+  │                            │ │ contracts            ││ credential_ │
+  │  IssueProvider     (ABC)   │ │                      ││ patterns +  │
+  │  PullRequestProvider (ABC) │ │  AgentProvider       ││ bypass_     │
+  │  DTOs: Issue, PullRequest, │ │   (Protocol)         ││ permissions │
+  │  ReviewComment,            │ │  DTOs: AgentTask,    ││ _validator  │
+  │  IssueComment              │ │   AgentReviewComment,│└────────────────┘
+  │                            │ │   AgentResult        │
+  │  pure ABCs + DTOs, no impl │ │   pure ABCs + DTOs   │
+  └────────────────────────────┘ └─────────────────────┘
+       ▲              ▲                 ▲
+       │ implements   │ implements      │ implements
+       │              │                 │
+   ┌───┴───┐      ┌───┴────┐      ┌─────┴──────┬───────────────┐
+   │       │      │        │      │            │               │
+   │       │      │        │      │            │               │
+youtrack jira_  github_  gitlab_  claude_   openhands_     codex_
+_core_   core   core_lib core_lib core_lib  core_lib       core_lib
+ lib    _lib                                                (future)
+
+                bitbucket_
+                core_lib                  subprocess     HTTP/RPC      subprocess
+                                          + NDJSON       no stream     + NDJSON
+                                          stream                       stream
+```
+
+Five layers, top to bottom:
+
+1. **`kato_core_lib`** — the product. Orchestration loop + planning UI. Calls the four wrapping libs through their typed contracts; never reaches into a provider directly.
+2. **Wrapping factory libs** — `task_core_lib`, `repository_core_lib`, `agent_core_lib`, plus `sandbox_core_lib` (the odd one out — see below). Each is a thin factory + Platform enum. No business logic.
+3. **Contracts packages** — `vcs_provider_contracts` and `agent_provider_contracts`. Pure `Protocol` + frozen DTOs. Zero implementation, zero dependencies on anything else in the repo. Implementations import from contracts; contracts import from nothing.
+4. **Provider implementations** — one per concrete backend. `youtrack_core_lib`, `jira_core_lib`, `github_core_lib`, `gitlab_core_lib`, `bitbucket_core_lib` for VCS/issues; `claude_core_lib`, `openhands_core_lib` (and future `codex_core_lib`) for agents. Each implements one or more contracts.
+5. **Independent units** — `sandbox_core_lib` is the only one today. It's a flat self-contained library, not a contracts/factory/provider triangle, because the domain doesn't have alternatives — there's only one sandbox model (hardened-Docker-for-CLI-agents).
+
+Adding a new provider (e.g. a `gerrit_core_lib` for code review, or a `codex_core_lib` for the OpenAI Codex agent) follows the same playbook every time: implement the contract, wire it into the factory, add a Platform enum value. Kato itself doesn't change.
+
 ## Choosing an Agent Backend
 
 Kato can drive its implementation, testing, and review-fix work through one of two agent backends. Selection is a single environment variable:
