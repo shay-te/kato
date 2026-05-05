@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Tree } from 'react-arborist';
 import { fetchFileTree, fetchRepoCommits, syncTaskRepositories } from './api.js';
 import AddRepositoryModal from './components/AddRepositoryModal.jsx';
@@ -33,6 +33,13 @@ export default function FilesTab({
   });
   const [collapsed, setCollapsed] = useState(() => new Set());
   const [query, setQuery] = useState('');
+  // The input itself stays bound to ``query`` (controlled, no input
+  // lag), but the tree filter reads ``deferredQuery`` so the
+  // potentially expensive node walk in ``matchTreeNode`` runs in a
+  // lower-priority render. On a huge workspace, typing into the
+  // filter previously walked every tree node on each keystroke and
+  // janked the input.
+  const deferredQuery = useDeferredValue(query);
   // Bumped after a successful repo-sync OR the auto-poll. Both
   // funnel into the fetch effect's dep array so the tree re-renders
   // when either fires.
@@ -269,7 +276,7 @@ export default function FilesTab({
           collapsed={collapsed.has(repoKey)}
           onToggle={() => toggleRepo(repoKey)}
           onPickFile={appendToInput}
-          searchTerm={query}
+          searchTerm={deferredQuery}
           conflictedFiles={repoTree.conflictedFiles}
           taskId={taskId}
         />

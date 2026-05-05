@@ -439,6 +439,22 @@ header button:hover { color: #e5e5e5; border-color: #e5e5e5; }
 .bubble-tool-details-line.context {
   color: #a3a3a3;
 }
+.bubble-tool-details-toggle {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-family: inherit;
+  color: #a3a3a3;
+  background: transparent;
+  border: 1px solid #404040;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.bubble-tool-details-toggle:hover {
+  color: #e5e5e5;
+  border-color: #525252;
+}
 .bubble.system .bubble-dot { background: #404040; }
 .bubble.system .bubble-content {
   color: #a3a3a3;

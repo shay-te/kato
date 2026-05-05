@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Bubble from './Bubble.jsx';
 import { BUBBLE_KIND } from '../constants/bubbleKind.js';
 import { CLAUDE_EVENT, CLAUDE_SYSTEM_SUBTYPE } from '../constants/claudeEvent.js';
@@ -150,19 +150,7 @@ function assistantBubbles(raw, index) {
           kind={BUBBLE_KIND.TOOL}
         >
           <span className="bubble-tool-summary">{`→ ${summary}`}</span>
-          {details && (
-            <pre className="bubble-tool-details">
-              {details.split('\n').map((line, lineIdx) => (
-                <span
-                  key={lineIdx}
-                  className={`bubble-tool-details-line ${_diffLineKind(line)}`}
-                >
-                  {line || ' '}
-                  {'\n'}
-                </span>
-              ))}
-            </pre>
-          )}
+          {details && <ToolDetails details={details} />}
         </Bubble>,
       );
     }
@@ -217,6 +205,51 @@ function keyOf(raw, index, slot) {
   return `${index}:${raw.uuid || raw.session_id || ''}:${slot}`;
 }
 
+
+// Render the monospace tool-details block, collapsed when the
+// payload is huge. A single Write/Edit on a 5000-line file used to
+// emit one <span> per line directly into the bubble — thousands of
+// DOM nodes for one tool call. We now show the head of the payload
+// inline and stash the rest behind a one-click toggle so the
+// transcript doesn't blow up the layout for big I/O.
+const TOOL_DETAILS_COLLAPSE_THRESHOLD = 40;
+
+function ToolDetails({ details }) {
+  const [expanded, setExpanded] = useState(false);
+  const lines = useMemo(() => details.split('\n'), [details]);
+  const truncated = !expanded && lines.length > TOOL_DETAILS_COLLAPSE_THRESHOLD;
+  const visible = truncated
+    ? lines.slice(0, TOOL_DETAILS_COLLAPSE_THRESHOLD)
+    : lines;
+  return (
+    <>
+      <pre className="bubble-tool-details">
+        {visible.map((line, lineIdx) => (
+          <span
+            key={lineIdx}
+            className={`bubble-tool-details-line ${_diffLineKind(line)}`}
+          >
+            {line || ' '}
+            {'\n'}
+          </span>
+        ))}
+      </pre>
+      {lines.length > TOOL_DETAILS_COLLAPSE_THRESHOLD && (
+        <button
+          type="button"
+          className="bubble-tool-details-toggle"
+          onClick={() => setExpanded((current) => !current)}
+        >
+          {expanded
+            ? 'Hide full output'
+            : `Show ${lines.length - TOOL_DETAILS_COLLAPSE_THRESHOLD} more line${
+              lines.length - TOOL_DETAILS_COLLAPSE_THRESHOLD === 1 ? '' : 's'
+            }`}
+        </button>
+      )}
+    </>
+  );
+}
 
 // Classify a tool-details line by its prefix so the renderer can
 // tint added vs removed lines red/green. Prefixes match what

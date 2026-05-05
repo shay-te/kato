@@ -82,24 +82,32 @@ function entryDedupeKey(entry) {
     if (epoch > 0) {
       return `server:${epoch}`;
     }
-    // No epoch (older payload shape) — fall back to content. Worst
-    // case is over-dedupe of identical-content events; better than
-    // re-rendering them as duplicate bubbles.
-    try {
-      return `server:${JSON.stringify(entry.raw)}`;
-    } catch (_) {
-      return `server:unserialisable:${Math.random()}`;
-    }
+    return `server:${rawFingerprint(entry.raw)}`;
   }
   // HISTORY entries always have ``received_at_epoch === 0`` (the
   // server stamps zero on disk-replayed events to mark them as
-  // archival). Use raw content for identity — replays of the same
-  // JSONL produce identical raw dicts, so this is stable.
-  try {
-    return `history:${JSON.stringify(entry.raw)}`;
-  } catch (_) {
-    return `history:unserialisable:${Math.random()}`;
-  }
+  // archival). Use a compact fingerprint for identity — replays of
+  // the same JSONL produce identical raw dicts so the fingerprint is
+  // stable, and we avoid walking the full payload via JSON.stringify
+  // (which is the dominant cost during long-history replay).
+  return `history:${rawFingerprint(entry.raw)}`;
+}
+
+// Compact identity for a Claude raw event. Most events the SDK
+// emits carry a ``uuid``; assistant/user envelopes carry an
+// Anthropic ``message.id``; tool results carry a ``tool_use_id``.
+// Any of those uniquely identify the event without walking the
+// (potentially huge) prompt / tool-output payload. Falling back to
+// a type+subtype+session triple is good enough for the rare event
+// shape that lacks all three — collisions there only over-dedupe,
+// they don't drop distinct content.
+function rawFingerprint(raw) {
+  if (!raw || typeof raw !== 'object') { return 'none'; }
+  if (raw.uuid) { return `u:${raw.uuid}`; }
+  const messageId = raw.message && raw.message.id;
+  if (messageId) { return `m:${messageId}`; }
+  if (raw.tool_use_id) { return `t:${raw.tool_use_id}`; }
+  return `s:${raw.type || ''}:${raw.subtype || ''}:${raw.session_id || ''}`;
 }
 
 function appendEntryIfNew(state, entry) {

@@ -248,6 +248,29 @@ function parseRepoDiffs(payload) {
   return [normalizeDiff(payload)];
 }
 
+// Cache parsed diffs by (repo, raw bytes). Auto-poll fires every 5s
+// while the tab is open; on an idle workspace the diff bytes are
+// unchanged across ticks, so reparsing them via ``parseDiff`` is
+// pure waste. Keying on ``repoId|raw`` collapses identical-payload
+// polls to a Map lookup. The cache is bounded to the most recent
+// few entries per repo so a long-lived tab with churning diffs
+// doesn't leak memory.
+const PARSED_DIFF_CACHE = new Map();
+const PARSED_DIFF_CACHE_MAX = 32;
+function parseDiffCached(repoId, raw) {
+  const key = `${repoId}|${raw.length}|${raw}`;
+  const hit = PARSED_DIFF_CACHE.get(key);
+  if (hit) { return hit; }
+  const parsed = parseDiff(raw);
+  PARSED_DIFF_CACHE.set(key, parsed);
+  if (PARSED_DIFF_CACHE.size > PARSED_DIFF_CACHE_MAX) {
+    // Drop the oldest entry. Map preserves insertion order.
+    const oldestKey = PARSED_DIFF_CACHE.keys().next().value;
+    PARSED_DIFF_CACHE.delete(oldestKey);
+  }
+  return parsed;
+}
+
 function normalizeDiff(entry) {
   const raw = String(entry?.diff || '');
   const cwd = String(entry?.cwd || '');
@@ -263,7 +286,7 @@ function normalizeDiff(entry) {
     base: String(entry?.base || ''),
     head: String(entry?.head || ''),
     error: String(entry?.error || ''),
-    files: raw ? parseDiff(raw) : [],
+    files: raw ? parseDiffCached(repoId, raw) : [],
     conflictedFiles: new Set(conflicts),
   };
 }
