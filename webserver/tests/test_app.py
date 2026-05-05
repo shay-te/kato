@@ -224,6 +224,67 @@ class WebserverAppTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
+    def test_adopt_claude_session_endpoint_migrates_jsonl_into_target_cwd(self):
+        # End-to-end: adopt + migrate. Source JSONL lives under the
+        # dev's checkout cwd; after adoption, a copy must exist under
+        # the kato workspace cwd's project directory so
+        # ``claude --resume <id>`` finds it on the next spawn.
+        import json, os, tempfile, unittest.mock as _mock
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            sessions_root = Path(tmp)
+            # Source: VS-Code-style session under the dev's path.
+            source_dir = sessions_root / '-Users-dev-repos-myproj'
+            source_dir.mkdir()
+            source_path = source_dir / 'sess-imported.jsonl'
+            source_path.write_text(
+                json.dumps({'type': 'user', 'sessionId': 'sess-imported',
+                            'cwd': '/Users/dev/repos/myproj'}) + '\n',
+                encoding='utf-8',
+            )
+
+            class _AdoptingManager(_FakeManager):
+                def __init__(self):
+                    super().__init__(records=[_FakeRecord(
+                        task_id='PROJ-9',
+                        cwd='/Users/dev/.kato/workspaces/PROJ-9/myproj',
+                        claude_session_id='',
+                    )])
+
+                def get_record(self, task_id):
+                    return next(
+                        (r for r in self._records if r.task_id == task_id),
+                        None,
+                    )
+
+                def adopt_session_id(self, task_id, *, claude_session_id, task_summary=''):
+                    return _FakeRecord(
+                        task_id=task_id,
+                        claude_session_id=claude_session_id,
+                    )
+
+            manager = _AdoptingManager()
+            with _mock.patch.dict(
+                os.environ,
+                {'KATO_CLAUDE_SESSIONS_ROOT': str(sessions_root)},
+                clear=False,
+            ):
+                app = create_app(session_manager=manager)
+                response = app.test_client().post(
+                    '/api/sessions/PROJ-9/adopt-claude-session',
+                    json={'claude_session_id': 'sess-imported'},
+                )
+            self.assertEqual(response.status_code, 200)
+            # The JSONL has been copied into the kato cwd's project dir.
+            # Claude Code's encoding only replaces ``/`` with ``-`` —
+            # dots in segments (``.kato``) are preserved.
+            kato_dir = sessions_root / '-Users-dev-.kato-workspaces-PROJ-9-myproj'
+            self.assertTrue((kato_dir / 'sess-imported.jsonl').is_file())
+            payload = response.get_json()
+            self.assertIn('transcript_migrated_to', payload)
+            self.assertIn('PROJ-9', payload['transcript_migrated_to'])
+
     def test_post_message_forwards_images_to_live_session(self):
         live = MagicMock()
         live.is_alive = True

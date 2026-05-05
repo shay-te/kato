@@ -32,7 +32,9 @@ Design notes:
 from __future__ import annotations
 
 import json
+import logging
 import os
+import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -241,6 +243,87 @@ def _clip_preview(text: str) -> str:
     if len(cleaned) <= _PREVIEW_LENGTH:
         return cleaned
     return cleaned[: _PREVIEW_LENGTH - 1] + '…'
+
+
+# ----- session migration (adopt → kato workspace) -----
+
+
+_logger = logging.getLogger(__name__)
+
+
+def claude_project_dir_for_cwd(cwd: str) -> Path:
+    """Return Claude Code's per-project session directory for ``cwd``.
+
+    Claude Code stores every session as
+    ``~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`` where the
+    encoded form is the absolute path with ``/`` replaced by ``-``.
+    Looking sessions up via ``claude --resume <id>`` is cwd-keyed —
+    spawning at a different cwd than the session's original cwd
+    means the resume lookup misses and Claude starts fresh.
+
+    This helper is the canonical "where does Claude Code expect this
+    session to live?" function — used by ``migrate_session_to_workspace``
+    to copy an adopted JSONL into kato's per-task workspace cwd, and
+    available to operator-facing tooling that needs the same answer.
+    """
+    abs_cwd = os.path.abspath(os.path.expanduser(str(cwd or '')))
+    encoded = abs_cwd.replace(os.sep, '-')
+    root = Path(os.environ.get(CLAUDE_SESSIONS_ROOT_ENV_KEY, '')).expanduser()
+    if str(root) and root.is_dir():
+        return root / encoded
+    return Path.home() / '.claude' / 'projects' / encoded
+
+
+def migrate_session_to_workspace(
+    *,
+    transcript_path: str,
+    target_cwd: str,
+) -> Path | None:
+    """Copy an adopted session JSONL into the target cwd's project dir.
+
+    Returns the destination path on success, ``None`` when the source
+    file isn't readable. The destination directory is created if it
+    doesn't already exist (Claude Code creates it lazily on first
+    write, so it may not be there yet for a never-used cwd).
+
+    Idempotent: if the destination already exists with the same
+    contents (or the source IS the destination), the copy is a no-op.
+    Best-effort — a failure is logged and ``None`` returned so the
+    adoption flow can decide how to surface it.
+    """
+    source = Path(str(transcript_path or '')).expanduser()
+    if not source.is_file():
+        _logger.warning(
+            'cannot migrate Claude session: source transcript missing at %s',
+            source,
+        )
+        return None
+    if not target_cwd:
+        return None
+    target_dir = claude_project_dir_for_cwd(target_cwd)
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        _logger.exception('failed to create target session dir %s', target_dir)
+        return None
+    target = target_dir / source.name
+    try:
+        if target.resolve() == source.resolve():
+            return target
+    except OSError:
+        # ``resolve`` follows symlinks; a missing target raises only
+        # on older Python where ``strict=False`` is the default — fall
+        # through to the copy.
+        pass
+    try:
+        shutil.copyfile(source, target)
+    except OSError:
+        _logger.exception(
+            'failed to copy Claude session transcript from %s to %s',
+            source, target,
+        )
+        return None
+    return target
 
 
 def _matches_query(metadata: ClaudeSessionMetadata, needle: str) -> bool:

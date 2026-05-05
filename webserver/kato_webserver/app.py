@@ -342,9 +342,20 @@ def _register_http_routes(app: Flask) -> None:
             )
         except ValueError as exc:
             return jsonify({'error': str(exc)}), 400
+        # Migrate the session JSONL into kato's workspace cwd so
+        # ``claude --resume <id>`` can find it. Claude Code stores
+        # sessions per-cwd; without this copy the next spawn
+        # silently starts a fresh conversation even though we
+        # passed --resume. Best-effort: a failure to migrate is
+        # surfaced in the response but the adoption record stays
+        # so the operator can retry / investigate.
+        migration = _migrate_adopted_session_transcript(
+            app, task_id, claude_session_id,
+        )
         return jsonify({
             'task_id': record.task_id,
             'claude_session_id': record.claude_session_id,
+            'transcript_migrated_to': str(migration) if migration else '',
         })
 
     @app.get('/healthz')
@@ -855,6 +866,45 @@ def _spawn_or_reject_chat_session(app: Flask, task_id: str, text: str):
     except Exception as exc:
         return jsonify({'error': str(exc)}), 500
     return jsonify({'status': 'spawned', 'text': text})
+
+
+def _migrate_adopted_session_transcript(
+    app, task_id: str, claude_session_id: str,
+):
+    """Copy the adopted session JSONL into kato's workspace cwd.
+
+    Claude Code's session storage is keyed by cwd
+    (``~/.claude/projects/<encoded-cwd>/<id>.jsonl``); ``--resume <id>``
+    only finds the transcript if it lives under the SPAWN cwd's
+    project directory. The dev's VS Code session was recorded against
+    the dev's checkout path; kato spawns Claude at its per-task
+    workspace clone — different paths. Without this copy, the next
+    spawn silently starts a fresh conversation even though we passed
+    ``--resume``. Returns the destination path or ``None``.
+    """
+    from kato_core_lib.data_layers.service.claude_session_index import (
+        list_sessions,
+        migrate_session_to_workspace,
+    )
+
+    session_manager = app.config['SESSION_MANAGER']
+    workspace_manager = app.config.get('WORKSPACE_MANAGER')
+    target_cwd, _summary = _chat_resume_context(
+        session_manager, workspace_manager, task_id,
+    )
+    if not target_cwd:
+        return None
+    transcript_path = ''
+    for entry in list_sessions(max_results=10000):
+        if entry.session_id == claude_session_id:
+            transcript_path = entry.transcript_path
+            break
+    if not transcript_path:
+        return None
+    return migrate_session_to_workspace(
+        transcript_path=transcript_path,
+        target_cwd=target_cwd,
+    )
 
 
 def _chat_resume_context(session_manager, workspace_manager, task_id: str) -> tuple[str, str]:

@@ -33,8 +33,10 @@ from kato_core_lib.client.claude.session_manager import (
 from kato_core_lib.data_layers.service.claude_session_index import (
     CLAUDE_SESSIONS_ROOT_ENV_KEY,
     ClaudeSessionMetadata,
+    claude_project_dir_for_cwd,
     default_sessions_root,
     list_sessions,
+    migrate_session_to_workspace,
 )
 
 
@@ -316,6 +318,126 @@ class SessionManagerAdoptionTests(unittest.TestCase):
         # First summary stays — the operator is adopting an existing
         # conversation, not redefining the task.
         self.assertEqual(record.task_summary, 'first summary')
+
+
+class ProjectDirEncodingTests(unittest.TestCase):
+    """``claude_project_dir_for_cwd`` matches Claude Code's on-disk layout."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self._env_patch = patch.dict(
+            os.environ,
+            {CLAUDE_SESSIONS_ROOT_ENV_KEY: self._tmp.name},
+            clear=False,
+        )
+        self._env_patch.start()
+        self.addCleanup(self._env_patch.stop)
+
+    def test_encodes_unix_cwd_with_dash_separator(self) -> None:
+        # Replace ``/`` with ``-``; leading slash becomes leading dash.
+        result = claude_project_dir_for_cwd('/Users/shay/repos/myproj')
+        self.assertEqual(
+            result,
+            Path(self._tmp.name) / '-Users-shay-repos-myproj',
+        )
+
+    def test_collapses_to_workspace_root_under_env_override(self) -> None:
+        # Override pins the projects root to a temp dir so tests
+        # don't write into the operator's real ~/.claude.
+        result = claude_project_dir_for_cwd('/x/y')
+        self.assertTrue(str(result).startswith(self._tmp.name))
+
+
+class MigrateSessionToWorkspaceTests(unittest.TestCase):
+    """``migrate_session_to_workspace`` copies the JSONL to the target cwd's project dir."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        # Override Claude Code's project root so tests don't pollute
+        # the host's ~/.claude/projects.
+        self._env_patch = patch.dict(
+            os.environ,
+            {CLAUDE_SESSIONS_ROOT_ENV_KEY: str(self.root)},
+            clear=False,
+        )
+        self._env_patch.start()
+        self.addCleanup(self._env_patch.stop)
+        # Source: a fake "VS Code" session JSONL stored under a
+        # different cwd's encoded project directory.
+        self.source_project_dir = self.root / '-Users-dev-repos-myproj'
+        self.source_project_dir.mkdir()
+        self.source_path = self.source_project_dir / 'sess-abc.jsonl'
+        self.source_path.write_text(
+            json.dumps({'type': 'user', 'sessionId': 'sess-abc',
+                        'cwd': '/Users/dev/repos/myproj'}) + '\n',
+            encoding='utf-8',
+        )
+
+    def test_copies_jsonl_into_target_cwd_project_dir(self) -> None:
+        target_cwd = '/Users/dev/.kato/workspaces/PROJ-1/myproj'
+        result = migrate_session_to_workspace(
+            transcript_path=str(self.source_path),
+            target_cwd=target_cwd,
+        )
+        self.assertIsNotNone(result)
+        # File now also exists at the kato cwd's project dir.
+        # Claude Code's encoding only replaces ``/`` with ``-``;
+        # dots in path segments (``.kato``) are preserved verbatim.
+        kato_dir = self.root / '-Users-dev-.kato-workspaces-PROJ-1-myproj'
+        self.assertTrue((kato_dir / 'sess-abc.jsonl').is_file())
+
+    def test_returns_none_when_source_missing(self) -> None:
+        result = migrate_session_to_workspace(
+            transcript_path=str(self.root / 'nope.jsonl'),
+            target_cwd='/x/y',
+        )
+        self.assertIsNone(result)
+
+    def test_returns_none_when_target_cwd_empty(self) -> None:
+        result = migrate_session_to_workspace(
+            transcript_path=str(self.source_path),
+            target_cwd='',
+        )
+        self.assertIsNone(result)
+
+    def test_idempotent_when_destination_already_exists(self) -> None:
+        target_cwd = '/Users/dev/.kato/workspaces/PROJ-1/myproj'
+        # First call copies.
+        first = migrate_session_to_workspace(
+            transcript_path=str(self.source_path),
+            target_cwd=target_cwd,
+        )
+        # Second call doesn't error and returns the same destination.
+        second = migrate_session_to_workspace(
+            transcript_path=str(self.source_path),
+            target_cwd=target_cwd,
+        )
+        self.assertEqual(first, second)
+        self.assertTrue(first.is_file())
+
+    def test_creates_target_dir_when_missing(self) -> None:
+        # Cwd has never been used by Claude Code, so its project
+        # dir doesn't exist yet. Migration creates it.
+        target_cwd = '/totally/new/path/never/used'
+        result = migrate_session_to_workspace(
+            transcript_path=str(self.source_path),
+            target_cwd=target_cwd,
+        )
+        self.assertIsNotNone(result)
+        self.assertTrue(result.is_file())
+
+    def test_preserves_jsonl_content(self) -> None:
+        result = migrate_session_to_workspace(
+            transcript_path=str(self.source_path),
+            target_cwd='/Users/dev/.kato/workspaces/PROJ-1/myproj',
+        )
+        self.assertEqual(
+            result.read_text(encoding='utf-8'),
+            self.source_path.read_text(encoding='utf-8'),
+        )
 
 
 if __name__ == '__main__':
