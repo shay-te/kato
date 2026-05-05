@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { adoptClaudeSession, fetchClaudeSessions } from '../api.js';
 import { toast } from '../stores/toastStore.js';
+import { formatRelativeTime } from '../utils/relativeTime.js';
 
 // "In use" badge shows when the transcript file was modified
 // recently — proxy for "VS Code is still holding this session open."
@@ -200,10 +201,3 @@ export default function AdoptSessionModal({ taskId, onClose, onAdopted }) {
   );
 }
 
-function formatRelativeTime(seconds) {
-  if (!Number.isFinite(seconds) || seconds < 0) { return '—'; }
-  if (seconds < 60) { return 'just now'; }
-  if (seconds < 3600) { return `${Math.floor(seconds / 60)}m ago`; }
-  if (seconds < 86400) { return `${Math.floor(seconds / 3600)}h ago`; }
-  return `${Math.floor(seconds / 86400)}d ago`;
-}

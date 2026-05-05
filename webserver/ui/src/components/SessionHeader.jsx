@@ -128,76 +128,77 @@ export default function SessionHeader({
   const prTitle = prTitleFor(taskPublish);
 
   return (
-    <header id="session-header">
-      <span
-        id="session-status-dot"
-        className={dotClass}
-        title={tabStatusTitle(baseStatus, needsAttention)}
-      />
-      <strong id="session-task-id">{session.task_id}</strong>
-      <span id="session-task-summary">{session.task_summary || ''}</span>
-      <span
-        id="session-claude-status"
-        className={`claude-status claude-status-${claudeStatus.kind}`}
-        title={claudeStatus.title}
-      >
-        Claude: {claudeStatus.label}
-      </span>
-      {approvePushButton}
-      <button
-        id="session-push"
-        type="button"
-        data-tooltip={pushTitle}
-        onClick={taskPublish.push}
-        disabled={pushDisabled}
-      >
-        {taskPublish.pushBusy ? 'Pushing…' : 'Push'}
-      </button>
-      <button
-        id="session-pull-request"
-        type="button"
-        data-tooltip={prTitle}
-        onClick={taskPublish.createPullRequest}
-        disabled={prDisabled}
-      >
-        {taskPublish.prBusy ? 'Opening PR…' : 'Pull request'}
-      </button>
-      <button
-        id="session-update-source"
-        type="button"
-        data-tooltip="Update source — push the task branch, then for each repo under REPOSITORY_ROOT_PATH: fetch, checkout the task branch, and pull. Lets you test the task on your live running system. Refuses if a source repo has uncommitted changes."
-        onClick={onUpdateSource}
-        disabled={updatingSource}
-      >
-        {updatingSource ? 'Updating source…' : 'Update source'}
-      </button>
-      <button
-        id="session-finish"
-        type="button"
-        data-tooltip="Done — push pending changes, open a PR if missing, and move the ticket to In Review. Same flow Claude can trigger by emitting <KATO_TASK_DONE>."
-        onClick={onFinish}
-        disabled={finishing}
-      >
-        {finishing ? 'Finishing…' : 'Done'}
-      </button>
-      <button
-        id="session-adopt-claude"
-        type="button"
-        data-tooltip="Adopt an existing Claude Code session for this task — e.g. a chat you already started in the VS Code extension. Kato will --resume that session on the next agent spawn instead of starting fresh."
-        onClick={() => setAdoptModalOpen(true)}
-        disabled={baseStatus === TAB_STATUS.ACTIVE}
-      >
-        Adopt session
-      </button>
-      <button
-        id="session-stop"
-        type="button"
-        data-tooltip="Stop the live Claude subprocess for this task. The chat history is preserved; kato can respawn Claude when you send the next message."
-        onClick={onStop}
-        disabled={stopping || baseStatus !== TAB_STATUS.ACTIVE}
-      >
-        {stopLabel}
-      </button>
+    <>
+      <header id="session-header">
+        <span
+          id="session-status-dot"
+          className={dotClass}
+          title={tabStatusTitle(baseStatus, needsAttention)}
+        />
+        <strong id="session-task-id">{session.task_id}</strong>
+        <span id="session-task-summary">{session.task_summary || ''}</span>
+        <span
+          id="session-claude-status"
+          className={`claude-status claude-status-${claudeStatus.kind}`}
+          title={claudeStatus.title}
+        >
+          Claude: {claudeStatus.label}
+        </span>
+        {approvePushButton}
+        <button
+          id="session-push"
+          type="button"
+          data-tooltip={pushTitle}
+          onClick={taskPublish.push}
+          disabled={pushDisabled}
+        >
+          {taskPublish.pushBusy ? 'Pushing…' : 'Push'}
+        </button>
+        <button
+          id="session-pull-request"
+          type="button"
+          data-tooltip={prTitle}
+          onClick={taskPublish.createPullRequest}
+          disabled={prDisabled}
+        >
+          {taskPublish.prBusy ? 'Opening PR…' : 'Pull request'}
+        </button>
+        <button
+          id="session-update-source"
+          type="button"
+          data-tooltip="Update source — push the task branch, then for each repo under REPOSITORY_ROOT_PATH: fetch, checkout the task branch, and pull. Lets you test the task on your live running system. Refuses if a source repo has uncommitted changes."
+          onClick={onUpdateSource}
+          disabled={updatingSource}
+        >
+          {updatingSource ? 'Updating source…' : 'Update source'}
+        </button>
+        <button
+          id="session-finish"
+          type="button"
+          data-tooltip="Done — push pending changes, open a PR if missing, and move the ticket to In Review. Same flow Claude can trigger by emitting <KATO_TASK_DONE>."
+          onClick={onFinish}
+          disabled={finishing}
+        >
+          {finishing ? 'Finishing…' : 'Done'}
+        </button>
+        <button
+          id="session-adopt-claude"
+          type="button"
+          data-tooltip="Adopt an existing Claude Code session for this task — e.g. a chat you already started in the VS Code extension. Kato will --resume that session on the next agent spawn instead of starting fresh."
+          onClick={() => setAdoptModalOpen(true)}
+        >
+          Adopt session
+        </button>
+        <button
+          id="session-stop"
+          type="button"
+          data-tooltip="Stop the live Claude subprocess for this task. The chat history is preserved; kato can respawn Claude when you send the next message."
+          onClick={onStop}
+          disabled={stopping || baseStatus !== TAB_STATUS.ACTIVE}
+        >
+          {stopLabel}
+        </button>
+      </header>
       {adoptModalOpen && (
         <AdoptSessionModal
           taskId={session.task_id}
@@ -205,7 +206,7 @@ export default function SessionHeader({
           onAdopted={() => setAdoptModalOpen(false)}
         />
       )}
-    </header>
+    </>
   );
 }
 
