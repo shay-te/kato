@@ -151,6 +151,7 @@ class PlanningSessionRunner(object):
         message: str,
         cwd: str = '',
         task_summary: str = '',
+        additional_dirs: list[str] | None = None,
     ):
         """Spawn a fresh Claude subprocess for ``task_id`` and queue ``message``.
 
@@ -188,6 +189,7 @@ class PlanningSessionRunner(object):
             architecture_doc_path=self._defaults.architecture_doc_path,
             lessons_path=self._defaults.lessons_path,
             docker_mode_on=self._defaults.docker_mode_on,
+            additional_dirs=additional_dirs,
         )
 
     def implement_task(

@@ -85,6 +85,41 @@ class StreamingClaudeSessionTests(unittest.TestCase):
         pinned = cmd[cmd.index('--session-id') + 1]
         self.assertEqual(session.claude_session_id, pinned)
 
+    def test_start_with_additional_dirs_emits_add_dir_per_path(self) -> None:
+        # Multi-repo tasks need every repo accessible to Claude, not
+        # just the cwd one. Without this the chat agent sees only its
+        # cwd and refuses cross-repo questions ("verify the front
+        # end" → "frontend repo is forbidden") because the only
+        # frontend-named entry it knows about came from
+        # ``KATO_IGNORED_REPOSITORY_FOLDERS``. ``--add-dir`` per
+        # sibling repo path is what fixes that.
+        fake_proc = _FakeProc()
+        with patch(
+            'kato_core_lib.client.claude.streaming_session.subprocess.Popen',
+            return_value=fake_proc,
+        ) as mock_popen, patch(
+            'kato_core_lib.client.claude.streaming_session.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ):
+            session = StreamingClaudeSession(
+                task_id='UNA-2489',
+                cwd='/wks/UNA-2489/ob-love-admin-backend',
+                additional_dirs=[
+                    '/wks/UNA-2489/ob-love-admin-client',
+                    '/wks/UNA-2489/workflow-core-lib',
+                ],
+            )
+            session.start()
+        cmd = mock_popen.call_args.args[0]
+        # Every additional dir should produce a ``--add-dir <path>``
+        # pair. We don't assert ordering against other flags, only
+        # that each pair is present in sequence.
+        add_dir_indices = [i for i, a in enumerate(cmd) if a == '--add-dir']
+        self.assertEqual(len(add_dir_indices), 2)
+        add_dir_values = [cmd[i + 1] for i in add_dir_indices]
+        self.assertIn('/wks/UNA-2489/ob-love-admin-client', add_dir_values)
+        self.assertIn('/wks/UNA-2489/workflow-core-lib', add_dir_values)
+
     def test_start_with_resume_id_passes_resume_flag_only(self) -> None:
         # ``claude --resume <id>`` keeps the same session id by default
         # (forking is opt-in via ``--fork-session``), so we don't pass

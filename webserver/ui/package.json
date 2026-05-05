@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node --test src/*.test.js src/utils/*.test.js"
+    "test": "node --test src/*.test.js src/utils/*.test.js src/hooks/*.test.js"
   },
   "dependencies": {
     "@fortawesome/fontawesome-svg-core": "^7.2.0",

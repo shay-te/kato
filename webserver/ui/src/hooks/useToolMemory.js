@@ -11,6 +11,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 const STORAGE_KEY = 'kato.toolDecisions.v1';
 
 
+// Exported for unit tests so the persistence layer can be verified
+// independent of React's hook plumbing. Underscore-prefixed names
+// signal "test surface, not part of the public API"; consumers
+// should still go through ``useToolMemory``.
+export const _readPersistedForTest = readPersisted;
+export const _writePersistedForTest = writePersisted;
+
 function readPersisted() {
   if (typeof window === 'undefined' || !window.localStorage) {
     return {};

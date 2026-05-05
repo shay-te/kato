@@ -12,7 +12,7 @@ export default function PermissionModal({ raw, onDecide }) {
   const fields = renderFields(toolInput);
   const denyTooltip = `Deny this ${toolName} request. Claude will see your rationale (if any) and decide what to do next.`;
   const allowOnceTitle = `Approve this ${toolName} request only — kato will ask again next time.`;
-  const allowAlwaysTitle = `Approve and remember ${toolName} for the rest of this session — kato won't ask again until you restart.`;
+  const allowAlwaysTitle = `Approve and remember ${toolName} — kato won't ask again, even after a kato or browser restart, until you clear it from settings.`;
   function handleRationaleChange(event) {
     setRationale(event.target.value);
   }

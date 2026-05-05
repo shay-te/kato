@@ -868,12 +868,14 @@ def _spawn_or_reject_chat_session(app: Flask, task_id: str, text: str):
     manager = app.config['SESSION_MANAGER']
     workspace_manager = app.config.get('WORKSPACE_MANAGER')
     cwd, summary = _chat_resume_context(manager, workspace_manager, task_id)
+    additional_dirs = _chat_additional_dirs(workspace_manager, task_id, cwd)
     try:
         runner.resume_session_for_chat(
             task_id=task_id,
             message=text,
             cwd=cwd,
             task_summary=summary,
+            additional_dirs=additional_dirs,
         )
     except Exception as exc:
         return jsonify({'error': str(exc)}), 500
@@ -974,6 +976,51 @@ def _chat_resume_context(session_manager, workspace_manager, task_id: str) -> tu
                 except Exception:
                     cwd = ''
     return cwd, summary
+
+
+def _chat_additional_dirs(workspace_manager, task_id: str, cwd: str) -> list[str]:
+    """Return sibling-repo paths to expose to Claude via ``--add-dir``.
+
+    The chat path used to spawn Claude with ONLY ``cwd`` accessible.
+    For multi-repo tasks that meant the agent saw exactly one repo
+    and refused cross-repo questions ("verify the front end" →
+    "the frontend repo is forbidden") because the only frontend
+    name it knew about came from ``KATO_IGNORED_REPOSITORY_FOLDERS``.
+
+    Workspace mode: walk every repo folder under
+    ``~/.kato/workspaces/<task>/`` and surface them all (skipping
+    the cwd one — Claude already has that). Empty list when there's
+    no workspace (e.g. adopted-cwd tasks that point at the dev's
+    own checkout); the dev's sibling repos sit elsewhere on disk
+    and we don't probe parent dirs blindly.
+    """
+    if workspace_manager is None or not task_id:
+        return []
+    try:
+        workspace = workspace_manager.get(task_id)
+    except Exception:
+        return []
+    if workspace is None:
+        return []
+    repository_ids = list(getattr(workspace, 'repository_ids', None) or [])
+    normalized_cwd = str(cwd or '').strip().rstrip('/\\')
+    extras: list[str] = []
+    seen: set[str] = set()
+    for repo_id in repository_ids:
+        try:
+            repo_path = str(workspace_manager.repository_path(task_id, repo_id))
+        except Exception:
+            continue
+        if not repo_path:
+            continue
+        normalized_repo = repo_path.rstrip('/\\')
+        # Skip the cwd entry (Claude already has it as its working
+        # directory) and anything we've already added.
+        if normalized_repo == normalized_cwd or normalized_repo in seen:
+            continue
+        seen.add(normalized_repo)
+        extras.append(normalized_repo)
+    return extras
 
 
 def _resolve_writable_session(manager, task_id: str):

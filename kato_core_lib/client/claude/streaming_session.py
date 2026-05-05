@@ -167,6 +167,7 @@ class StreamingClaudeSession(object):
         architecture_doc_path: str = '',
         lessons_path: str = '',
         docker_mode_on: bool = False,
+        additional_dirs: list[str] | None = None,
         done_callback=None,
     ) -> None:
         if not str(task_id or '').strip():
@@ -193,6 +194,18 @@ class StreamingClaudeSession(object):
         self._resume_session_id = normalized_text(resume_session_id)
         self._architecture_doc_path = normalized_text(architecture_doc_path)
         self._lessons_path = normalized_text(lessons_path)
+        # Extra directories Claude is allowed to read/edit beyond
+        # ``cwd``. For multi-repo tasks the chat path uses this to
+        # surface sibling repo clones (e.g. all task repos under
+        # ``~/.kato/workspaces/<task>/``); without it Claude only
+        # sees the cwd and refuses cross-repo questions like
+        # "verify the front end" with a "forbidden repository"
+        # response when the only frontend-named entry it knows about
+        # came from ``KATO_IGNORED_REPOSITORY_FOLDERS``.
+        self._additional_dirs = [
+            normalized_text(str(d)) for d in (additional_dirs or [])
+            if normalized_text(str(d))
+        ]
         # Set from ``KATO_CLAUDE_DOCKER`` at boot, threaded down through
         # the session manager. Independent of ``permission_mode``: docker
         # is the *containment* layer (sandbox), permission_mode is the
@@ -649,6 +662,8 @@ class StreamingClaudeSession(object):
             # without waiting for the system event to arrive.
             self._claude_session_id = str(uuid.uuid4())
             command.extend(['--session-id', self._claude_session_id])
+        for directory in self._additional_dirs:
+            command.extend(['--add-dir', directory])
         return command
 
     def _build_env(self) -> dict[str, str]:

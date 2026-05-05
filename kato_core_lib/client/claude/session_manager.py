@@ -219,6 +219,7 @@ class ClaudeSessionManager(object):
         architecture_doc_path: str = '',
         lessons_path: str = '',
         docker_mode_on: bool = False,
+        additional_dirs: list[str] | None = None,
     ) -> StreamingClaudeSession:
         """Spawn (or rehydrate) the streaming session bound to ``task_id``.
 
@@ -242,6 +243,7 @@ class ClaudeSessionManager(object):
             'architecture_doc_path': architecture_doc_path,
             'lessons_path': lessons_path,
             'docker_mode_on': docker_mode_on,
+            'additional_dirs': list(additional_dirs or []),
             'done_callback': self._done_callback,
         }
         # Per-task spawn lock: get-or-create under the global lock, then
