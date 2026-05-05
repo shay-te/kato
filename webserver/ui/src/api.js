@@ -214,16 +214,38 @@ export async function syncTaskComments(taskId, repoId) {
 // Every task assigned to the configured kato user — open, in
 // progress, in review, done. Drives the left-panel "+ Add task"
 // picker.
-export async function fetchAllAssignedTasks() {
+//
+// We bound the wait with an AbortController. The endpoint
+// synchronously calls into YouTrack / Jira; if the ticket platform
+// is slow, rate-limited, or down, the modal would otherwise sit
+// on "Loading tasks…" indefinitely. After the timeout we surface
+// a short, operator-actionable error instead.
+export async function fetchAllAssignedTasks({ timeoutMs = 30_000 } = {}) {
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timeoutHandle = controller && typeof window !== 'undefined'
+    ? window.setTimeout(() => controller.abort(), timeoutMs)
+    : null;
   try {
-    const response = await fetch('/api/tasks');
+    const response = await fetch(
+      '/api/tasks',
+      controller ? { signal: controller.signal } : undefined,
+    );
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
       return { ok: false, status: response.status, error: body.error || response.statusText };
     }
     return { ok: true, body };
   } catch (err) {
+    if (err && err.name === 'AbortError') {
+      return {
+        ok: false,
+        error: `ticket platform did not respond within ${Math.round(timeoutMs / 1000)}s `
+             + '— check kato logs and the YouTrack/Jira connection',
+      };
+    }
     return { ok: false, error: String(err) };
+  } finally {
+    if (timeoutHandle !== null) { window.clearTimeout(timeoutHandle); }
   }
 }
 

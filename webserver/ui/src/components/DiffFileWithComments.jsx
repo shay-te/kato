@@ -19,6 +19,7 @@ import {
   CommentForm,
   buildThreads,
 } from './CommentWidgets.jsx';
+import { countDiffLines, isLargeFile } from './diffFileSize.js';
 
 // One <Diff> + per-line comment threads + file-level thread, all
 // in one component so the comments state is shared across the
@@ -43,10 +44,21 @@ export default function DiffFileWithComments({
   // the diff. ``null`` means no inline form is open.
   const [activeLine, setActiveLine] = useState(null);
   const [replyTo, setReplyTo] = useState('');
+  // Auto-collapse big files. Rendering a 5K-line diff into the
+  // DOM freezes the browser's paint loop and makes EVERY input on
+  // the page lag (typing in the chat composer, opening the adopt
+  // modal, etc.). Below the threshold the file expands by default
+  // — the operator's normal flow is unchanged. The collapsed
+  // placeholder is one ``<button>``, costing nothing.
+  const lineCount = useMemo(() => countDiffLines(file), [file]);
+  const [expanded, setExpanded] = useState(() => !isLargeFile(file));
 
+  // Tokenisation walks every hunk synchronously and is by far the
+  // hottest first-paint cost on big diffs. Skip it entirely when
+  // the file is collapsed; recompute lazily on expand.
   const tokens = useMemo(
-    () => tokenizeHunks(file.hunks || [], path),
-    [file.hunks, path],
+    () => (expanded ? tokenizeHunks(file.hunks || [], path) : null),
+    [file.hunks, path, expanded],
   );
 
   function notifyMutated() {
@@ -202,8 +214,11 @@ export default function DiffFileWithComments({
   // by the change's stable id (``getChangeKey``) so the line
   // doesn't lose its widget when the diff re-tokenizes between
   // polls. Widget content is the threads at that line plus an
-  // inline new-comment form when ``activeLine`` matches.
+  // inline new-comment form when ``activeLine`` matches. Skipped
+  // entirely when collapsed — the dict feeds into a <Diff> we are
+  // not going to render anyway.
   const widgets = useMemo(() => {
+    if (!expanded) { return {}; }
     const out = {};
     for (const hunk of file.hunks || []) {
       for (const change of hunk.changes || []) {
@@ -267,7 +282,7 @@ export default function DiffFileWithComments({
       }
     }
     return out;
-  }, [file.hunks, commentsByLine, activeLine, replyTo]);
+  }, [file.hunks, commentsByLine, activeLine, replyTo, expanded]);
 
   // Gutter click → open the inline form at that line.
   const gutterEvents = useMemo(() => ({
@@ -293,6 +308,74 @@ export default function DiffFileWithComments({
     [fileLevelComments],
   );
 
+  // The file-level comment form is shown either when nothing has
+  // been said yet (zero threads) OR when the operator explicitly
+  // opened it (activeLine === -1, set by either a Reply on a
+  // thread OR the new "Add file-level comment" button below).
+  // Without the explicit-open path the form was unreachable once
+  // any file-level thread existed — clicking nothing did nothing.
+  const fileFormOpen = activeLine === -1 || fileThreads.length === 0;
+  const fileFormReplyMode = !!replyTo && activeLine === -1;
+  const conflictedBadge = conflicted ? (
+    <span
+      className="diff-file-conflicted"
+      title="This file has merge conflicts that must be resolved before it can be merged."
+    >
+      CONFLICTED
+    </span>
+  ) : null;
+  const collapseToggle = (
+    <button
+      type="button"
+      className="diff-file-collapse-toggle"
+      onClick={() => setExpanded((current) => !current)}
+      title={expanded ? 'Hide diff' : `Show diff (${lineCount} line${lineCount === 1 ? '' : 's'})`}
+    >
+      {expanded ? '−' : `Show diff (${lineCount} line${lineCount === 1 ? '' : 's'})`}
+    </button>
+  );
+  const diffBody = expanded ? (
+    <Diff
+      viewType="unified"
+      diffType={file.type}
+      hunks={file.hunks || []}
+      tokens={tokens}
+      widgets={widgets}
+      gutterEvents={gutterEvents}
+    >
+      {(hunks) => hunks.map((hunk) => (
+        <Hunk key={hunk.content} hunk={hunk} />
+      ))}
+    </Diff>
+  ) : (
+    <p className="diff-file-collapsed-note">
+      {`Diff hidden (${lineCount} change line${lineCount === 1 ? '' : 's'}). `
+       + `Click "Show diff" above to render — large diffs are auto-collapsed `
+       + `because rendering them in full makes the rest of the page lag.`}
+    </p>
+  );
+  const fileLevelEntryButton = !fileFormOpen ? (
+    <button
+      type="button"
+      className="diff-file-add-file-comment"
+      onClick={() => { setActiveLine(-1); setReplyTo(''); }}
+    >
+      + Add file-level comment
+    </button>
+  ) : null;
+  const fileLevelForm = fileFormOpen ? (
+    <CommentForm
+      placeholder={fileFormReplyMode ? 'Add a reply…' : 'Add a file-level comment…'}
+      onSubmit={(body) => onSubmit(-1, body, fileFormReplyMode ? replyTo : '')}
+      onCancel={
+        activeLine === -1
+          ? () => { setActiveLine(null); setReplyTo(''); }
+          : null
+      }
+      replyMode={fileFormReplyMode}
+    />
+  ) : null;
+
   return (
     <section
       className="diff-file"
@@ -302,27 +385,10 @@ export default function DiffFileWithComments({
       <header className="diff-file-header">
         <span className="diff-file-type">{file.type}</span>
         <span className="diff-file-path">{path}</span>
-        {conflicted && (
-          <span
-            className="diff-file-conflicted"
-            title="This file has merge conflicts that must be resolved before it can be merged."
-          >
-            CONFLICTED
-          </span>
-        )}
+        {conflictedBadge}
+        {collapseToggle}
       </header>
-      <Diff
-        viewType="unified"
-        diffType={file.type}
-        hunks={file.hunks || []}
-        tokens={tokens}
-        widgets={widgets}
-        gutterEvents={gutterEvents}
-      >
-        {(hunks) => hunks.map((hunk) => (
-          <Hunk key={hunk.content} hunk={hunk} />
-        ))}
-      </Diff>
+      {diffBody}
       <div className="diff-file-comments">
         {commentsLoading && comments.length === 0 && (
           <p className="diff-file-comments-empty">Loading comments…</p>
@@ -371,22 +437,8 @@ export default function DiffFileWithComments({
             ))}
           </article>
         ))}
-        {(activeLine === -1 || fileThreads.length === 0) && (
-          <CommentForm
-            placeholder={
-              replyTo
-                ? 'Add a reply…'
-                : 'Add a file-level comment…'
-            }
-            onSubmit={(body) => onSubmit(-1, body, activeLine === -1 ? replyTo : '')}
-            onCancel={
-              activeLine === -1
-                ? () => { setActiveLine(null); setReplyTo(''); }
-                : null
-            }
-            replyMode={!!replyTo && activeLine === -1}
-          />
-        )}
+        {fileLevelEntryButton}
+        {fileLevelForm}
       </div>
     </section>
   );
