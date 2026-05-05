@@ -28,6 +28,7 @@ Endpoints:
     POST /api/sessions/<task_id>/comments               — add comment, immediately queue/run kato
     POST /api/sessions/<task_id>/comments/<id>/resolve  — mark thread resolved
     POST /api/sessions/<task_id>/comments/<id>/reopen   — re-open a resolved thread
+    POST /api/sessions/<task_id>/comments/<id>/addressed — mark addressed + post on remote
     DEL  /api/sessions/<task_id>/comments/<id>          — delete comment + replies
     POST /api/sessions/<task_id>/comments/sync          — git pull + pull remote PR comments
     GET  /api/claude/sessions                           — list adoptable Claude Code sessions
@@ -705,6 +706,28 @@ def _register_http_routes(app: Flask) -> None:
         return jsonify(resolve(
             task_id, comment_id,
             resolved_by=str(payload.get('resolved_by') or ''),
+        ))
+
+    @app.post('/api/sessions/<task_id>/comments/<comment_id>/addressed')
+    def mark_comment_addressed(task_id: str, comment_id: str):
+        """Mark kato_status=ADDRESSED + post 'Kato addressed' on remote.
+
+        Body (optional): ``{"addressed_sha": "<commit-sha>"}``.
+        Called after a kato run produces a fix for the comment.
+        For remote-sourced comments, also posts the standard
+        "Kato addressed this review comment and pushed a follow-up
+        update" reply on the source git platform.
+        """
+        agent_service = app.config.get('AGENT_SERVICE')
+        if agent_service is None:
+            return jsonify({'error': 'agent service not wired'}), 503
+        mark = getattr(agent_service, 'mark_comment_addressed', None)
+        if not callable(mark):
+            return jsonify({'error': 'comments not supported'}), 501
+        payload = request.get_json(silent=True) or {}
+        return jsonify(mark(
+            task_id, comment_id,
+            addressed_sha=str(payload.get('addressed_sha') or ''),
         ))
 
     @app.post('/api/sessions/<task_id>/comments/<comment_id>/reopen')

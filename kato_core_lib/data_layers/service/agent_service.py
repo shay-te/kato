@@ -692,8 +692,19 @@ class AgentService(Service):
         addressed the comment (``ADDRESSED``) and the operator
         decides whether to keep the thread open for review or
         close it.
+
+        For ``source=remote`` comments, ALSO mirrors the resolve
+        back to the source git platform: posts a reply explaining
+        why kato thought it was addressed (when applicable) and
+        resolves the thread there too. Best-effort — a platform
+        failure leaves the local store resolved but flags the
+        sync gap in the response so the UI can surface it.
         """
-        from kato_core_lib.comment_core_lib import CommentStatus
+        from kato_core_lib.comment_core_lib import (
+            CommentSource,
+            CommentStatus,
+            KatoCommentStatus,
+        )
 
         store = self._comment_store_for(task_id)
         if store is None:
@@ -705,7 +716,70 @@ class AgentService(Service):
         )
         if updated is None:
             return {'ok': False, 'error': f'comment {comment_id!r} not found'}
-        return {'ok': True, 'comment': updated.to_dict()}
+        remote_sync = {'attempted': False}
+        if updated.source == CommentSource.REMOTE.value and updated.remote_id:
+            # When kato had already addressed it, post the
+            # "addressed" reply too so the source thread carries
+            # context. Otherwise just resolve.
+            include_reply = (
+                updated.kato_status == KatoCommentStatus.ADDRESSED.value
+            )
+            remote_sync = self._sync_resolve_to_remote(
+                task_id, updated, include_reply=include_reply,
+            )
+        return {'ok': True, 'comment': updated.to_dict(), 'remote_sync': remote_sync}
+
+    def mark_comment_addressed(
+        self,
+        task_id: str,
+        comment_id: str,
+        *,
+        addressed_sha: str = '',
+        post_remote_reply: bool = True,
+    ) -> dict[str, object]:
+        """Move ``kato_status`` to ADDRESSED + (for remote) post a reply.
+
+        Called after a kato run produces a fix for a comment. Two
+        side-effects on remote-sourced comments:
+
+          1. ``kato_status`` flips to ADDRESSED on the local
+             record so the UI's pipeline pill switches to
+             ``✓ kato addressed``.
+          2. Posts the "Kato addressed this review comment and
+             pushed a follow-up update" reply on the source git
+             platform (same wording as the autonomous review-fix
+             flow, via ``review_comment_reply_body``) so reviewers
+             see the same thread continuity they get from kato's
+             other paths.
+
+        Resolve on the source is left to the operator's explicit
+        Resolve click — kato is *not* the right authority to
+        decide whether the reviewer's ask is fully addressed,
+        only to claim "I shipped a fix, please confirm."
+        """
+        from kato_core_lib.comment_core_lib import (
+            CommentSource,
+            KatoCommentStatus,
+        )
+
+        store = self._comment_store_for(task_id)
+        if store is None:
+            return {'ok': False, 'error': 'no workspace for task'}
+        updated = store.update_kato_status(
+            comment_id,
+            kato_status=KatoCommentStatus.ADDRESSED.value,
+            addressed_sha=str(addressed_sha or ''),
+        )
+        if updated is None:
+            return {'ok': False, 'error': f'comment {comment_id!r} not found'}
+        remote_reply = {'attempted': False}
+        if (
+            post_remote_reply
+            and updated.source == CommentSource.REMOTE.value
+            and updated.remote_id
+        ):
+            remote_reply = self._sync_addressed_reply_to_remote(task_id, updated)
+        return {'ok': True, 'comment': updated.to_dict(), 'remote_reply': remote_reply}
 
     def reopen_task_comment(
         self, task_id: str, comment_id: str,
@@ -851,6 +925,118 @@ class AgentService(Service):
             return {'ok': False, 'pull': pull_result, 'error': str(exc)}
         return {'ok': True, 'pull': pull_result, 'synced': synced}
 
+    def _sync_resolve_to_remote(
+        self, task_id: str, comment, *, include_reply: bool,
+    ) -> dict[str, object]:
+        """Mirror an operator-resolve back to the source git platform.
+
+        Posts an optional "Kato addressed…" reply (when kato had
+        actually addressed the comment), then calls
+        ``resolve_review_comment``. Best-effort each step.
+        """
+        result: dict[str, object] = {'attempted': True}
+        try:
+            inventory_repo = self._repository_service.get_repository(
+                comment.repo_id,
+            )
+        except Exception as exc:
+            result['error'] = f'inventory lookup failed: {exc}'
+            return result
+        pr_id = self._task_pull_request_id(task_id, comment.repo_id)
+        if not pr_id:
+            result['error'] = (
+                'no pull request id on file — kato cannot resolve the '
+                'remote thread without one. This is normal when no PR '
+                'has been opened yet.'
+            )
+            return result
+        # Build a minimal ReviewComment-like object: the publish
+        # service only reads ``comment_id`` and ``pull_request_id``
+        # off the argument, so a SimpleNamespace works.
+        from types import SimpleNamespace
+        comment_obj = SimpleNamespace(
+            comment_id=comment.remote_id,
+            pull_request_id=pr_id,
+            repository_id=comment.repo_id,
+        )
+        if include_reply and comment.kato_addressed_sha:
+            try:
+                from kato_core_lib.helpers.review_comment_utils import (
+                    review_comment_reply_body,
+                )
+                body = review_comment_reply_body({
+                    'success': True,
+                    'message': (
+                        f'Addressed in commit '
+                        f'{comment.kato_addressed_sha[:8]}.'
+                    ),
+                })
+                self._repository_service.reply_to_review_comment(
+                    inventory_repo, comment_obj, body,
+                )
+                result['reply_posted'] = True
+            except Exception as exc:
+                result['reply_error'] = str(exc)
+        try:
+            self._repository_service.resolve_review_comment(
+                inventory_repo, comment_obj,
+            )
+            result['resolved'] = True
+        except Exception as exc:
+            result['resolve_error'] = str(exc)
+        return result
+
+    def _sync_addressed_reply_to_remote(
+        self, task_id: str, comment,
+    ) -> dict[str, object]:
+        """Post the "kato addressed this" reply on the source thread.
+
+        Same wording as the autonomous review-fix flow uses. Does
+        NOT resolve the thread — leaving "should I close this?"
+        as an explicit operator click.
+        """
+        result: dict[str, object] = {'attempted': True}
+        try:
+            inventory_repo = self._repository_service.get_repository(
+                comment.repo_id,
+            )
+        except Exception as exc:
+            result['error'] = f'inventory lookup failed: {exc}'
+            return result
+        pr_id = self._task_pull_request_id(task_id, comment.repo_id)
+        if not pr_id:
+            result['error'] = (
+                'no pull request id on file — reply will be posted '
+                'on the next sync once the PR is opened.'
+            )
+            return result
+        from types import SimpleNamespace
+        comment_obj = SimpleNamespace(
+            comment_id=comment.remote_id,
+            pull_request_id=pr_id,
+            repository_id=comment.repo_id,
+        )
+        try:
+            from kato_core_lib.helpers.review_comment_utils import (
+                review_comment_reply_body,
+            )
+            body = review_comment_reply_body({
+                'success': True,
+                'message': (
+                    f'Addressed in commit '
+                    f'{comment.kato_addressed_sha[:8]}.'
+                    if comment.kato_addressed_sha
+                    else 'Addressed.'
+                ),
+            })
+            self._repository_service.reply_to_review_comment(
+                inventory_repo, comment_obj, body,
+            )
+            result['reply_posted'] = True
+        except Exception as exc:
+            result['reply_error'] = str(exc)
+        return result
+
     def _comment_store_for(self, task_id: str):
         """Return the LocalCommentStore for a task — None if no workspace."""
         from kato_core_lib.comment_core_lib import LocalCommentStore
@@ -970,16 +1156,78 @@ class AgentService(Service):
             return
         send(prompt)
 
-    @staticmethod
-    def _task_pull_request_id(task_id: str, repo_id: str) -> str:
-        """Hook for finding the PR id for a (task, repo). Empty by default.
+    def _task_pull_request_id(self, task_id: str, repo_id: str) -> str:
+        """Find the source-platform PR id for a (task, repo).
 
-        The agent_service already has the state-registry that
-        tracks PR ids; subclasses / wiring overlays can populate
-        this. Default-empty keeps the comment_core_lib build
-        independent of the registry shape (which has changed
-        across versions).
+        Two sources, in order:
+
+          1. ``AgentStateRegistry`` — the review-comment service
+             writes PR contexts here as it discovers them on every
+             scan tick. Cheap, accurate when populated.
+          2. ``RepositoryService.find_pull_requests`` against the
+             task branch — falls back to a live API call when the
+             registry hasn't seen this task yet (e.g. an operator
+             who adopted a task that hadn't gone through the scan
+             loop).
+
+        Empty string when neither source produces a hit. Callers
+        treat that as "no PR yet" and skip the platform-side push.
         """
+        normalized_task_id = str(task_id or '').strip()
+        normalized_repo_id = str(repo_id or '').strip()
+        if not normalized_task_id or not normalized_repo_id:
+            return ''
+        # 1. Registry lookup. Best-effort — defensive against
+        # a registry shape change.
+        registry = getattr(
+            self._review_comment_service, 'state_registry', None,
+        )
+        list_contexts = getattr(registry, 'list_pull_request_contexts', None)
+        if callable(list_contexts):
+            try:
+                contexts = list_contexts() or []
+            except Exception:
+                contexts = []
+            for context in contexts:
+                if not isinstance(context, dict):
+                    continue
+                ctx_task = str(context.get('task_id') or '').strip()
+                ctx_repo = str(context.get('repository_id') or '').strip()
+                ctx_pr = str(context.get('pull_request_id') or '').strip()
+                if ctx_task == normalized_task_id and ctx_repo == normalized_repo_id and ctx_pr:
+                    return ctx_pr
+        # 2. Live find_pull_requests fallback. Compute the task
+        # branch on the inventory repo and ask the platform.
+        try:
+            inventory_repo = self._repository_service.get_repository(
+                normalized_repo_id,
+            )
+        except Exception:
+            return ''
+        try:
+            from types import SimpleNamespace
+            task_lite = SimpleNamespace(
+                id=normalized_task_id, summary='',
+            )
+            branch_name = self._repository_service.build_branch_name(
+                task_lite, inventory_repo,
+            )
+        except Exception:
+            return ''
+        try:
+            prs = self._repository_service.find_pull_requests(
+                inventory_repo,
+                source_branch=branch_name,
+                title_prefix=f'{normalized_task_id} ',
+            ) or []
+        except Exception:
+            return ''
+        for entry in prs:
+            pr_id = str(
+                entry.get('id') or entry.get('pull_request_id') or '',
+            ).strip()
+            if pr_id:
+                return pr_id
         return ''
 
     # ----- on-demand push / PR (planning UI buttons) -----

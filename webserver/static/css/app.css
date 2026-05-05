@@ -1201,6 +1201,49 @@ body.kato-resizing { user-select: none; cursor: col-resize; }
   cursor: not-allowed;
 }
 
+/* Inline per-line comment widget host — react-diff-view renders
+ * widgets in a full-width row beneath the keyed line. We pad and
+ * tint so the thread reads as "attached to that line" rather than
+ * floating in the diff. */
+.diff-line-comments-host {
+  background: #0a0a0a;
+  border-top: 1px solid #262626;
+  border-bottom: 1px solid #262626;
+  padding: 8px 16px;
+}
+.diff-line-comments-host .diff-file-comment-thread {
+  margin-bottom: 8px;
+}
+.diff-line-comments-host .diff-file-comment-thread:last-child {
+  margin-bottom: 0;
+}
+
+/* Make the diff gutter look clickable so the operator
+ * discovers the "click to comment on this line" affordance. */
+.diff-gutter { cursor: pointer; }
+.diff-gutter:hover { background: #1f1f1f; }
+
+/* Inline-resolved banner inside a CommentBubble (smaller than the
+ * top-of-thread version since it sits inside the bubble). */
+.diff-file-comment-resolved-banner.inline {
+  margin: -4px 0 6px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+}
+
+.diff-file-comments-cancel {
+  background: transparent;
+  border: 1px solid #404040;
+  color: #a3a3a3;
+  border-radius: 3px;
+  padding: 4px 12px;
+  font: 12px/1 inherit;
+  cursor: pointer;
+  margin-right: 8px;
+}
+.diff-file-comments-cancel:hover { background: #262626; color: #e5e5e5; }
+
 /* Per-repo "sync remote comments" button on the diff repo header. */
 .diff-repo-sync-comments {
   margin-left: auto;

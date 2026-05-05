@@ -132,6 +132,24 @@ export async function resolveTaskComment(taskId, commentId) {
   }
 }
 
+export async function markTaskCommentAddressed(taskId, commentId, addressedSha = '') {
+  if (!taskId || !commentId) { return { ok: false, error: 'no ids' }; }
+  try {
+    const response = await fetch(
+      `/api/sessions/${encodeURIComponent(taskId)}/comments/${encodeURIComponent(commentId)}/addressed`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ addressed_sha: addressedSha }),
+      },
+    );
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
 export async function reopenTaskComment(taskId, commentId) {
   if (!taskId || !commentId) { return { ok: false, error: 'no ids' }; }
   try {
