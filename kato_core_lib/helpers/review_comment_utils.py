@@ -18,6 +18,60 @@ KATO_REVIEW_COMMENT_FIXED_PREFIX = 'Kato addressed review comment '
 KATO_REVIEW_COMMENT_REPLY_PREFIX = 'Kato addressed this review comment'
 
 
+class ReviewReplyTemplate:
+    """Template fragments for the auto-reply kato posts on a review
+    comment. Grouped here so the visible header, separator, and the
+    "did nothing — here is why" fallbacks all live next to each
+    other instead of bleeding through the file as loose module-level
+    constants.
+
+    Why these are templates (not f-strings inline in the helper):
+    the strings render in Bitbucket / GitHub markdown, so any change
+    to tags or whitespace has to be reviewed in one place; and the
+    ``HEADER`` substring is what ``is_kato_review_comment_reply``
+    looks for on poll, so we can never accidentally drift the wire
+    format from the dedupe rule.
+    """
+
+    # Visible (smaller) header line. ``<sub>`` is used (not
+    # ``<small>``) because Bitbucket Cloud strips ``<small>``
+    # whereas it preserves ``<sub>`` and renders it as smaller
+    # text — same on GitHub. Must contain the reply prefix verbatim
+    # so the dedupe check below still recognises kato's own replies.
+    HEADER = (
+        '<sub>Kato addressed this review comment and pushed a '
+        'follow-up update.</sub>'
+    )
+
+    # Separator between the auto-header and the per-comment
+    # summary. The reviewer can see at a glance: header above the
+    # rule is boilerplate, content below is what kato actually did.
+    SEPARATOR = '\n\n---\n\n'
+
+    # Final fallback when the agent finished, kato resolved the
+    # thread, BUT no summary, message, result, or error string was
+    # captured. Renders as italic so it is visibly distinct from a
+    # real summary — the reviewer needs to know "kato made no
+    # observable change" rather than reading the boilerplate header
+    # and assuming work happened.
+    EMPTY_SUMMARY = (
+        '_Kato did nothing observable on this comment — the '
+        'pipeline reported success but produced no implementation '
+        'summary, no validation report, and no agent output. '
+        'Check the planning UI for the full transcript; if this '
+        'looks wrong, re-open the thread to retry._'
+    )
+
+    # Used when we DO have a hint of why nothing happened (e.g., a
+    # short ``message`` or ``result`` field from the execution
+    # dict). Embeds the hint verbatim so the reviewer sees kato's
+    # own words rather than a generic "did nothing" stub.
+    DID_NOTHING_PREFIX = (
+        '_Kato did not commit any changes for this comment._\n\n'
+        '**Reason:** '
+    )
+
+
 @dataclass(frozen=True)
 class ReviewFixContext(object):
     repository_id: str
@@ -99,7 +153,19 @@ def review_comment_processing_keys(comment: ReviewComment) -> set[str]:
 
 
 def is_kato_review_comment_reply(comment: ReviewComment) -> bool:
+    """True when ``comment`` is one of kato's own auto-replies.
+
+    Drops a leading ``<sub>``/``<small>`` opening tag before the
+    prefix check so the reply still de-dupes after the visible
+    header was wrapped in ``<sub>...</sub>`` to render smaller.
+    Existing un-wrapped historical replies still match the bare
+    prefix, so old PRs do not regress.
+    """
     body = normalized_text(comment.body)
+    for opener in ('<sub>', '<small>'):
+        if body.startswith(opener):
+            body = body[len(opener):]
+            break
     return body.startswith(
         (
             KATO_REVIEW_COMMENT_FIXED_PREFIX,
@@ -191,13 +257,70 @@ def review_comment_fixed_comment(comment: ReviewComment) -> str:
 
 
 def review_comment_reply_body(execution: dict[str, str | bool]) -> str:
+    """Build the visible reply body for a successfully-addressed
+    review comment.
+
+    Layout: [smaller boilerplate header] --- [what kato actually
+    did]. The separator is mandatory: previously, when the agent
+    produced no summary text, the reply body was just the
+    boilerplate and reviewers had no signal whether code changed.
+    Now the body always carries either a real summary or an
+    explicit "did nothing — here is why" line beneath the rule.
+    """
     report = task_execution_report(execution).strip()
-    if not report:
-        return 'Kato addressed this review comment and pushed a follow-up update.'
+    summary = report or _did_nothing_summary(execution)
     return (
-        'Kato addressed this review comment and pushed a follow-up update.\n\n'
-        f'{report}'
+        f'{ReviewReplyTemplate.HEADER}'
+        f'{ReviewReplyTemplate.SEPARATOR}'
+        f'{summary}'
     )
+
+
+def _did_nothing_summary(execution: dict[str, str | bool]) -> str:
+    """Surface whatever signal the execution dict has about why
+    kato produced no observable change.
+
+    Priority order:
+    1. ``error`` — pipeline raised; surface it verbatim.
+    2. ``result`` / ``message`` — the agent's own final text
+       (Claude one-shot stores it in ``result``; OpenHands /
+       streaming runs put it in ``message``). Truncated so a
+       multi-page transcript doesn't drown the comment thread.
+    3. ``success=False`` with no message — explicit "pipeline
+       failed" stub; the operator can dig into the planning UI.
+    4. Nothing usable — the empty-summary template.
+
+    The point is to never post the boilerplate header alone:
+    reviewers have repeatedly read the header as "kato did
+    something" and merged without checking, which is a real bug.
+    """
+    error = str(execution.get('error') or '').strip()
+    if error:
+        return f'{ReviewReplyTemplate.DID_NOTHING_PREFIX}{_truncate(error)}'
+    for key in ('result', ImplementationFields.MESSAGE, 'summary'):
+        hint = str(execution.get(key) or '').strip()
+        if hint:
+            return f'{ReviewReplyTemplate.DID_NOTHING_PREFIX}{_truncate(hint)}'
+    success = bool(execution.get(ImplementationFields.SUCCESS, True))
+    if not success:
+        return (
+            f'{ReviewReplyTemplate.DID_NOTHING_PREFIX}'
+            'pipeline reported failure but produced no error message.'
+        )
+    return ReviewReplyTemplate.EMPTY_SUMMARY
+
+
+# Cap the embedded reason at one paragraph: long agent transcripts
+# in a comment thread are unreadable, and Bitbucket / GitHub both
+# truncate very long comments anyway.
+_DID_NOTHING_REASON_MAX_CHARS = 600
+
+
+def _truncate(text: str) -> str:
+    text = text.strip()
+    if len(text) <= _DID_NOTHING_REASON_MAX_CHARS:
+        return text
+    return text[:_DID_NOTHING_REASON_MAX_CHARS].rstrip() + '…'
 
 
 def review_comment_answer_body(execution: dict[str, str | bool]) -> str:
