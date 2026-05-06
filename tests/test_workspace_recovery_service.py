@@ -11,11 +11,11 @@ from unittest.mock import MagicMock
 
 from kato_core_lib.data_layers.service.workspace_manager import (
     WORKSPACE_STATUS_ACTIVE,
-    WorkspaceManager,
 )
 from kato_core_lib.data_layers.service.workspace_recovery_service import (
     WorkspaceRecoveryService,
 )
+from workspace_core_lib.workspace_core_lib import WorkspaceCoreLib
 
 
 class WorkspaceRecoveryServiceTests(unittest.TestCase):
@@ -23,9 +23,18 @@ class WorkspaceRecoveryServiceTests(unittest.TestCase):
         self._workspaces_tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._workspaces_tmp.cleanup)
         self.workspaces_root = Path(self._workspaces_tmp.name)
-        self.workspace_manager = WorkspaceManager(
-            root=self.workspaces_root, max_parallel_tasks=4,
+        # The recovery service runs against kato's workspace flavour:
+        # ``.kato-meta.json`` filenames (kato deployments have these
+        # on disk; the lib defaults to ``.workspace-meta.json``). Pin
+        # the kato names here so the metadata-file assertions further
+        # down hit the right path.
+        self._lib = WorkspaceCoreLib(
+            root=self.workspaces_root,
+            max_parallel_tasks=4,
+            metadata_filename='.kato-meta.json',
+            preflight_log_filename='.kato-preflight.log',
         )
+        self.workspace_manager = self._lib.workspaces
 
         self.repo = SimpleNamespace(id='client', summary='client repo')
         self.task = SimpleNamespace(id='PROJ-1', summary='do the thing', tags=[])
