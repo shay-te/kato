@@ -10,13 +10,15 @@ from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
 from kato_core_lib.helpers.logging_utils import configure_logger
 
 if TYPE_CHECKING:
-    from kato_core_lib.client.agent_client import AgentClient
+    from agent_provider_contracts.agent_provider_contracts.agent_provider import (
+        AgentProvider,
+    )
 
 
 class ImplementationService(Service):
     """Wrap the active agent client for implementation and review-comment fixing."""
 
-    def __init__(self, client: 'AgentClient') -> None:
+    def __init__(self, client: 'AgentProvider') -> None:
         self._client = client
         self.logger = configure_logger(self.__class__.__name__)
 

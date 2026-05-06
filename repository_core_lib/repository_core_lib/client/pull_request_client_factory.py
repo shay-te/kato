@@ -3,7 +3,7 @@ from __future__ import annotations
 from bitbucket_core_lib.bitbucket_core_lib.bitbucket_core_lib import BitbucketCoreLib
 from gitlab_core_lib.gitlab_core_lib.gitlab_core_lib import GitLabCoreLib
 from github_core_lib.github_core_lib.github_core_lib import GitHubCoreLib
-from kato_core_lib.client.pull_request_client_base import PullRequestClientBase
+from provider_client_base.provider_client_base.pull_request_client_base import PullRequestClientBase
 from core_lib.error_handling.not_found_decorator import NotFoundErrorHandler
 from omegaconf import DictConfig, OmegaConf
 from repository_core_lib.repository_core_lib.platform import Platform

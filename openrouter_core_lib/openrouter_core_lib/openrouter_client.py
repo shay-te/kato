@@ -1,4 +1,4 @@
-from kato_core_lib.client.retrying_client_base import RetryingClientBase
+from provider_client_base.provider_client_base.retrying_client_base import RetryingClientBase
 from kato_core_lib.helpers.text_utils import normalized_text
 
 

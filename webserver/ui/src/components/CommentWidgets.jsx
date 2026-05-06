@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { formatRelativeTime } from '../utils/relativeTime.js';
+import { commentSubmitLock } from '../stores/commentSubmitLock.js';
+import { toast } from '../stores/toastStore.js';
 
 // Bubble + thread builder + form, shared between the file-level
 // comments panel and the per-line widget rendered through
@@ -141,6 +143,13 @@ export function CommentForm({
 }) {
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
+  // Mirror the global lock into local render state so the button
+  // shows ``Submitting…`` and disables when ANY comment form is
+  // mid-submit, not just this one. Without this an operator with
+  // multiple comment forms open could fire two submits in parallel
+  // and kato would race two review-fix runs against the same
+  // workspace.
+  const [globallyLocked, setGloballyLocked] = useState(commentSubmitLock.isBusy());
   const textareaRef = useRef(null);
 
   // Focus the textarea on mount so the operator can type
@@ -149,13 +158,30 @@ export function CommentForm({
     if (textareaRef.current) { textareaRef.current.focus(); }
   }, []);
 
+  // Track the global lock so any other form's in-flight submit
+  // disables this form's submit button too.
+  useEffect(() => commentSubmitLock.subscribe(setGloballyLocked), []);
+
   async function submit() {
     const trimmed = draft.trim();
     if (!trimmed || busy) { return; }
+    if (!commentSubmitLock.acquire()) {
+      toast.show({
+        kind: 'warning',
+        title: 'Another comment is already being submitted',
+        message: 'Wait for it to finish, then try again.',
+        durationMs: 5000,
+      });
+      return;
+    }
     setBusy(true);
-    const ok = await onSubmit(trimmed);
-    setBusy(false);
-    if (ok) { setDraft(''); }
+    try {
+      const ok = await onSubmit(trimmed);
+      if (ok) { setDraft(''); }
+    } finally {
+      setBusy(false);
+      commentSubmitLock.release();
+    }
   }
 
   return (
@@ -192,9 +218,9 @@ export function CommentForm({
           type="button"
           className="diff-file-comments-submit"
           onClick={submit}
-          disabled={busy || !draft.trim()}
+          disabled={busy || globallyLocked || !draft.trim()}
         >
-          {busy ? 'Submitting…' : (replyMode ? 'Reply' : 'Add comment')}
+          {(busy || globallyLocked) ? 'Submitting…' : (replyMode ? 'Reply' : 'Add comment')}
         </button>
       </div>
     </div>

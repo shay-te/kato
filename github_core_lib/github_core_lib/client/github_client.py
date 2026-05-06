@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import urlparse
 
-from kato_core_lib.client.pull_request_client_base import PullRequestClientBase
+from provider_client_base.provider_client_base.pull_request_client_base import PullRequestClientBase
 from kato_core_lib.data_layers.data.fields import PullRequestFields, ReviewCommentFields
 from kato_core_lib.data_layers.data.review_comment import ReviewComment
 from kato_core_lib.helpers.retry_utils import run_with_retry

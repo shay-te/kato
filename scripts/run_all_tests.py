@@ -30,6 +30,8 @@ TEST_ROOTS = [
     'openhands_core_lib/openhands_core_lib/tests',
     'agent_core_lib/agent_core_lib/tests',
     'security_scanner_core_lib/security_scanner_core_lib/tests',
+    'openrouter_core_lib/openrouter_core_lib/tests',
+    'provider_client_base/provider_client_base/tests',
 ]
 
 

@@ -5,7 +5,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from kato_core_lib.helpers.retry_utils import run_with_retry
-from kato_core_lib.client.retrying_client_base import RetryingClientBase
+from provider_client_base.provider_client_base.retrying_client_base import RetryingClientBase
 from kato_core_lib.data_layers.data.task import Task
 from kato_core_lib.data_layers.data.fields import TaskCommentFields
 from kato_core_lib.helpers.text_utils import (

@@ -44,6 +44,8 @@ include = [
   "openhands_core_lib*",
   "agent_core_lib*",
   "security_scanner_core_lib*",
+  "openrouter_core_lib*",
+  "provider_client_base*",
 ]
 
 [tool.setuptools.package-data]

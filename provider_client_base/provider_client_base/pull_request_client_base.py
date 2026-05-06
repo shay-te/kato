@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from kato_core_lib.client.retrying_client_base import RetryingClientBase
+from provider_client_base.provider_client_base.retrying_client_base import RetryingClientBase
 from kato_core_lib.data_layers.data.review_comment import ReviewComment
 from kato_core_lib.data_layers.data.fields import PullRequestFields, ReviewCommentFields
 from kato_core_lib.helpers.text_utils import normalized_text

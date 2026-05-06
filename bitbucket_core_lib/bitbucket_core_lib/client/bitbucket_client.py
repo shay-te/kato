@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from bitbucket_core_lib.bitbucket_core_lib.client.auth import bitbucket_basic_auth_header
-from kato_core_lib.client.pull_request_client_base import PullRequestClientBase
+from provider_client_base.provider_client_base.pull_request_client_base import PullRequestClientBase
 from kato_core_lib.data_layers.data.fields import PullRequestFields, ReviewCommentFields
 from kato_core_lib.data_layers.data.review_comment import ReviewComment
 from kato_core_lib.helpers.text_utils import (
