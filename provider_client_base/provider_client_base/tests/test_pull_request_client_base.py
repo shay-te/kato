@@ -5,7 +5,7 @@ from bitbucket_core_lib.bitbucket_core_lib.client.bitbucket_client import Bitbuc
 from github_core_lib.github_core_lib.client.github_client import GitHubClient
 from gitlab_core_lib.gitlab_core_lib.client.gitlab_client import GitLabClient
 from provider_client_base.provider_client_base.pull_request_client_base import PullRequestClientBase
-from kato_core_lib.data_layers.data.fields import PullRequestFields, ReviewCommentFields
+from provider_client_base.provider_client_base.data.fields import PullRequestFields, ReviewCommentFields
 
 
 class PullRequestClientBaseTests(unittest.TestCase):

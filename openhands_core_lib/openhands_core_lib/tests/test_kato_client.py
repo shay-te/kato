@@ -1,11 +1,13 @@
 import unittest
 import types
 import os
+from dataclasses import dataclass, field
+from typing import Any
 from unittest.mock import ANY, Mock, call, patch
 
 from openhands_core_lib.openhands_core_lib.openhands_client import KatoClient
-from kato_core_lib.data_layers.data.fields import ImplementationFields, ReviewCommentFields
-from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
+from openhands_core_lib.openhands_core_lib.data.fields import ImplementationFields
+from provider_client_base.provider_client_base.data.fields import ReviewCommentFields
 from tests.utils import (
     ClientTimeout,
     assert_client_headers_and_timeout,
@@ -16,6 +18,14 @@ from tests.utils import (
     mock_response,
     test_task_with_defaults,
 )
+
+
+@dataclass
+class PreparedTaskContext:
+    branch_name: str = ''
+    repositories: list[Any] = field(default_factory=list)
+    repository_branches: dict[str, str] = field(default_factory=dict)
+    agents_instructions: str = ''
 
 
 class KatoClientTests(unittest.TestCase):

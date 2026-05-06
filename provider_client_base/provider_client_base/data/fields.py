@@ -1,0 +1,25 @@
+class PullRequestFields(object):
+    ID = 'id'
+    TITLE = 'title'
+    URL = 'url'
+    SOURCE_BRANCH = 'source_branch'
+    DESTINATION_BRANCH = 'destination_branch'
+    DESCRIPTION = 'description'
+    REPOSITORY_ID = 'repository_id'
+    PULL_REQUESTS = 'pull_requests'
+    FAILED_REPOSITORIES = 'failed_repositories'
+
+
+class ReviewCommentFields(object):
+    PULL_REQUEST_ID = 'pull_request_id'
+    COMMENT_ID = 'comment_id'
+    AUTHOR = 'author'
+    BODY = 'body'
+    ALL_COMMENTS = 'all_comments'
+    RESOLUTION_TARGET_ID = 'resolution_target_id'
+    RESOLUTION_TARGET_TYPE = 'resolution_target_type'
+    RESOLVABLE = 'resolvable'
+    FILE_PATH = 'file_path'
+    LINE_NUMBER = 'line_number'
+    LINE_TYPE = 'line_type'
+    COMMIT_SHA = 'commit_sha'

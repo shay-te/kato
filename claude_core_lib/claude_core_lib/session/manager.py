@@ -23,11 +23,10 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from kato_core_lib.helpers.atomic_json_utils import atomic_write_json
-
+from claude_core_lib.claude_core_lib.helpers.atomic_write import atomic_write_json
+from claude_core_lib.claude_core_lib.helpers.logging_utils import configure_logger
+from claude_core_lib.claude_core_lib.helpers.text_utils import normalized_text
 from claude_core_lib.claude_core_lib.session.streaming import StreamingClaudeSession
-from kato_core_lib.helpers.logging_utils import configure_logger
-from kato_core_lib.helpers.text_utils import normalized_text
 
 
 SESSION_STATUS_ACTIVE = 'active'

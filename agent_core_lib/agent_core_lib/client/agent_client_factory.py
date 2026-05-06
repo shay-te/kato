@@ -121,7 +121,7 @@ class AgentClientFactory(object):
     def _build_openhands(self, open_cfg: Any) -> AgentProvider:
         # Imported lazily — see _build_claude for the rationale.
         from openhands_core_lib.openhands_core_lib.openhands_client import KatoClient
-        from kato_core_lib.helpers.kato_config_utils import (
+        from openhands_core_lib.openhands_core_lib.config_utils import (
             resolved_openhands_base_url,
             resolved_openhands_llm_settings,
         )

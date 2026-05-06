@@ -1,7 +1,7 @@
 from core_lib.client.client_base import ClientBase
 
-from kato_core_lib.helpers.logging_utils import configure_logger
-from kato_core_lib.helpers.retry_utils import run_with_retry
+from provider_client_base.provider_client_base.helpers.logging_utils import configure_logger
+from provider_client_base.provider_client_base.helpers.retry_utils import run_with_retry
 
 
 class RetryingClientBase(ClientBase):

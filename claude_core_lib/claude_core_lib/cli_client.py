@@ -5,21 +5,20 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
-from kato_core_lib.data_layers.data.fields import ImplementationFields
-from kato_core_lib.data_layers.data.review_comment import ReviewComment
-from kato_core_lib.data_layers.data.task import Task
-from kato_core_lib.helpers import agent_prompt_utils
-from kato_core_lib.helpers.architecture_doc_utils import read_architecture_doc
-from kato_core_lib.helpers.kato_result_utils import build_openhands_result
-from kato_core_lib.helpers.logging_utils import configure_logger
-from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
-from kato_core_lib.helpers.text_utils import (
+from claude_core_lib.claude_core_lib.data.fields import ImplementationFields
+from claude_core_lib.claude_core_lib.helpers import agent_prompt_utils
+from claude_core_lib.claude_core_lib.helpers.architecture_doc_utils import read_architecture_doc
+from claude_core_lib.claude_core_lib.helpers.logging_utils import configure_logger
+from claude_core_lib.claude_core_lib.helpers.result_utils import build_openhands_result
+from claude_core_lib.claude_core_lib.helpers.text_utils import (
     condensed_text,
     normalized_text,
     text_from_attr,
     text_from_mapping,
 )
+from provider_client_base.provider_client_base.data.review_comment import ReviewComment
 from sandbox_core_lib.sandbox_core_lib.workspace_delimiter import (
     wrap_untrusted_workspace_content,
 )
@@ -232,9 +231,9 @@ class ClaudeCliClient(object):
 
     def implement_task(
         self,
-        task: Task,
+        task: Any,
         session_id: str = '',
-        prepared_task: PreparedTaskContext | None = None,
+        prepared_task: Any | None = None,
     ) -> dict[str, str | bool]:
         self.logger.info('requesting implementation for task %s', task.id)
         prompt = self._build_implementation_prompt(task, prepared_task)
@@ -258,8 +257,8 @@ class ClaudeCliClient(object):
 
     def test_task(
         self,
-        task: Task,
-        prepared_task: PreparedTaskContext | None = None,
+        task: Any,
+        prepared_task: Any | None = None,
     ) -> dict[str, str | bool]:
         self.logger.info('requesting testing validation for task %s', task.id)
         prompt = self._build_testing_prompt(task, prepared_task)
@@ -399,8 +398,8 @@ class ClaudeCliClient(object):
 
     def _build_implementation_prompt(
         self,
-        task: Task,
-        prepared_task: PreparedTaskContext | None = None,
+        task: Any,
+        prepared_task: Any | None = None,
     ) -> str:
         scope_block = agent_prompt_utils.workspace_scope_block(
             _repository_local_paths(prepared_task),
@@ -438,8 +437,8 @@ class ClaudeCliClient(object):
 
     def _build_testing_prompt(
         self,
-        task: Task,
-        prepared_task: PreparedTaskContext | None = None,
+        task: Any,
+        prepared_task: Any | None = None,
     ) -> str:
         repository_scope = agent_prompt_utils.repository_scope_text(task, prepared_task)
         agents_instructions = agent_prompt_utils.agents_instructions_text(prepared_task)
@@ -536,7 +535,7 @@ class ClaudeCliClient(object):
         # Pull AGENTS.md from the workspace clone if the project has
         # one — the review-fix agent should respect the same
         # checked-in conventions the implementation agent did.
-        from kato_core_lib.helpers.agents_instruction_utils import (
+        from claude_core_lib.claude_core_lib.helpers.agents_instruction_utils import (
             agents_instructions_for_path,
         )
         agents_text = agents_instructions_for_path(
@@ -631,7 +630,7 @@ class ClaudeCliClient(object):
             [workspace_path] if workspace_path else [],
         )
         scope_prefix = f'{scope_block}\n' if scope_block else ''
-        from kato_core_lib.helpers.agents_instruction_utils import (
+        from claude_core_lib.claude_core_lib.helpers.agents_instruction_utils import (
             agents_instructions_for_path,
         )
         agents_text = agents_instructions_for_path(
@@ -904,7 +903,7 @@ class ClaudeCliClient(object):
             architecture_doc = read_architecture_doc(
                 self._architecture_doc_path, logger=self.logger,
             )
-            from kato_core_lib.helpers.lessons_doc_utils import read_lessons_file
+            from claude_core_lib.claude_core_lib.helpers.lessons_doc_utils import read_lessons_file
             lessons_text = read_lessons_file(
                 self._lessons_path, logger=self.logger,
             )
@@ -1040,7 +1039,7 @@ class ClaudeCliClient(object):
 
         result: dict[str, str | bool] = {
             ImplementationFields.SUCCESS: success,
-            Task.summary.key: result_text,
+            'summary': result_text,
         }
         if result_text:
             result[ImplementationFields.MESSAGE] = result_text
@@ -1140,7 +1139,7 @@ class ClaudeCliClient(object):
 
     def _working_directories(
         self,
-        prepared_task: PreparedTaskContext | None,
+        prepared_task: Any | None,
     ) -> tuple[str, list[str]]:
         repositories = []
         if prepared_task is not None:

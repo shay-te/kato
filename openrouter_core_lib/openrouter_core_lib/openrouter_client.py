@@ -1,5 +1,5 @@
+from provider_client_base.provider_client_base.helpers.text_utils import normalized_text
 from provider_client_base.provider_client_base.retrying_client_base import RetryingClientBase
-from kato_core_lib.helpers.text_utils import normalized_text
 
 
 class OpenRouterClient(RetryingClientBase):

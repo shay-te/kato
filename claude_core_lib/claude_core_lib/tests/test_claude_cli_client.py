@@ -3,12 +3,21 @@ from __future__ import annotations
 import json
 import subprocess
 import unittest
+from dataclasses import dataclass, field
+from typing import Any
 from unittest.mock import patch
 
 from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
-from kato_core_lib.data_layers.data.fields import ImplementationFields
-from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
+from claude_core_lib.claude_core_lib.data.fields import ImplementationFields
 from tests.utils import build_review_comment, build_task
+
+
+@dataclass
+class PreparedTaskContext:
+    branch_name: str = ''
+    repositories: list[Any] = field(default_factory=list)
+    repository_branches: dict[str, str] = field(default_factory=dict)
+    agents_instructions: str = ''
 
 
 class _FakeRepo:

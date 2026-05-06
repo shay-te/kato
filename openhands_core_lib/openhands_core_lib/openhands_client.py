@@ -3,20 +3,18 @@ from __future__ import annotations
 import os
 import json
 import time
+from typing import Any
 from uuid import UUID
 
 from openrouter_core_lib.openrouter_core_lib import OpenRouterClient
+from provider_client_base.provider_client_base.data.review_comment import ReviewComment
+from provider_client_base.provider_client_base.helpers.retry_utils import run_with_retry
 from provider_client_base.provider_client_base.retrying_client_base import RetryingClientBase
-from kato_core_lib.data_layers.data.review_comment import ReviewComment
-from kato_core_lib.data_layers.data.task import Task
-from kato_core_lib.data_layers.data.fields import ImplementationFields
-from kato_core_lib.helpers import agent_prompt_utils
-from kato_core_lib.helpers.kato_result_utils import build_openhands_result
-from kato_core_lib.helpers.kato_config_utils import is_openrouter_model
-from kato_core_lib.helpers.logging_utils import configure_logger
-from kato_core_lib.helpers.retry_utils import run_with_retry
-from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
-from kato_core_lib.helpers.text_utils import (
+from openhands_core_lib.openhands_core_lib.data.fields import ImplementationFields
+from openhands_core_lib.openhands_core_lib.helpers import agent_prompt_utils
+from openhands_core_lib.openhands_core_lib.helpers.logging_utils import configure_logger
+from openhands_core_lib.openhands_core_lib.helpers.result_utils import build_openhands_result
+from openhands_core_lib.openhands_core_lib.helpers.text_utils import (
     condensed_text,
     normalized_lower_text,
     normalized_text,
@@ -98,15 +96,15 @@ class KatoClient(RetryingClientBase):
         llm_model = text_from_mapping(self._llm_settings, 'llm_model')
         if not llm_model:
             return
-        if is_openrouter_model(llm_model):
+        if normalized_text(llm_model).startswith('openrouter/'):
             self._validate_openrouter_connection(llm_model)
         self._validate_model_access_smoke_test()
 
     def implement_task(
         self,
-        task: Task,
+        task: Any,
         session_id: str = '',
-        prepared_task: PreparedTaskContext | None = None,
+        prepared_task: Any | None = None,
     ) -> dict[str, str | bool]:
         self.logger.info('requesting implementation for task %s', task.id)
         # Task work always starts in a fresh Kato conversation so each
@@ -126,8 +124,8 @@ class KatoClient(RetryingClientBase):
 
     def test_task(
         self,
-        task: Task,
-        prepared_task: PreparedTaskContext | None = None,
+        task: Any,
+        prepared_task: Any | None = None,
     ) -> dict[str, str | bool]:
         self.logger.info('requesting testing validation for task %s', task.id)
         result = self._run_prompt_result(
@@ -205,7 +203,7 @@ class KatoClient(RetryingClientBase):
         Returns empty string when not set — the prompt builder skips
         the snippet block in that case, no harm done.
         """
-        from kato_core_lib.helpers.text_utils import normalized_text, text_from_attr
+        from openhands_core_lib.openhands_core_lib.helpers.text_utils import normalized_text, text_from_attr
 
         return normalized_text(text_from_attr(comment, 'repository_local_path'))
 
@@ -227,7 +225,7 @@ class KatoClient(RetryingClientBase):
             [workspace_path] if workspace_path else [],
         )
         scope_prefix = f'{scope_block}\n' if scope_block else ''
-        from kato_core_lib.helpers.agents_instruction_utils import (
+        from openhands_core_lib.openhands_core_lib.helpers.agents_instruction_utils import (
             agents_instructions_for_path,
         )
         agents_text = agents_instructions_for_path(
@@ -272,7 +270,7 @@ class KatoClient(RetryingClientBase):
         )
 
     @classmethod
-    def _task_conversation_title(cls, task: Task, suffix: str = '') -> str:
+    def _task_conversation_title(cls, task, suffix: str = '') -> str:
         return agent_prompt_utils.task_conversation_title(task, suffix)
 
     @classmethod
@@ -290,8 +288,8 @@ class KatoClient(RetryingClientBase):
 
     def _build_implementation_prompt(
         self,
-        task: Task,
-        prepared_task: PreparedTaskContext | None = None,
+        task: Any,
+        prepared_task: Any | None = None,
     ) -> str:
         scope_block = agent_prompt_utils.workspace_scope_block(
             self._repository_local_paths(prepared_task),
@@ -328,8 +326,8 @@ class KatoClient(RetryingClientBase):
 
     def _build_testing_prompt(
         self,
-        task: Task,
-        prepared_task: PreparedTaskContext | None = None,
+        task: Any,
+        prepared_task: Any | None = None,
     ) -> str:
         repository_scope = self._repository_scope_text(task, prepared_task)
         agents_instructions = agent_prompt_utils.agents_instructions_text(prepared_task)
@@ -369,7 +367,7 @@ class KatoClient(RetryingClientBase):
         )
 
     @staticmethod
-    def _task_branch_name(task: Task, prepared_task: PreparedTaskContext | None = None) -> str:
+    def _task_branch_name(task, prepared_task=None) -> str:
         return agent_prompt_utils.task_branch_name(task, prepared_task)
 
     @staticmethod
@@ -386,8 +384,8 @@ class KatoClient(RetryingClientBase):
 
     def _repository_scope_text(
         self,
-        task: Task,
-        prepared_task: PreparedTaskContext | None = None,
+        task: Any,
+        prepared_task: Any | None = None,
     ) -> str:
         return agent_prompt_utils.repository_scope_text(task, prepared_task)
 
@@ -413,7 +411,7 @@ class KatoClient(RetryingClientBase):
             [workspace_path] if workspace_path else [],
         )
         scope_prefix = f'{scope_block}\n' if scope_block else ''
-        from kato_core_lib.helpers.agents_instruction_utils import (
+        from openhands_core_lib.openhands_core_lib.helpers.agents_instruction_utils import (
             agents_instructions_for_path,
         )
         agents_text = agents_instructions_for_path(
@@ -1116,8 +1114,7 @@ class KatoClient(RetryingClientBase):
         if not isinstance(action, dict):
             action = {}
         summary = normalized_text(
-            parsed_arguments.get(Task.summary.key)
-            or parsed_arguments.get('summary')
+            parsed_arguments.get('summary')
             or action.get('summary')
             or event.get('summary')
             or ''
