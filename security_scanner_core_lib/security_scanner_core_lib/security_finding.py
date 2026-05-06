@@ -38,6 +38,9 @@ class Severity(str, Enum):
                 return member
         return cls.LOW
 
+    def __str__(self) -> str:
+        return self.value
+
     def is_at_least(self, other: 'Severity') -> bool:
         """True when ``self`` >= ``other`` on the severity ladder.
 

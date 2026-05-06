@@ -100,5 +100,74 @@ class WorkspaceRecordTests(unittest.TestCase):
             self.assertIn(status, SUPPORTED_WORKSPACE_STATUSES)
 
 
+class WorkspaceStatusValuesTests(unittest.TestCase):
+    def test_provisioning_value(self) -> None:
+        self.assertEqual(WORKSPACE_STATUS_PROVISIONING, 'provisioning')
+
+    def test_active_value(self) -> None:
+        self.assertEqual(WORKSPACE_STATUS_ACTIVE, 'active')
+
+    def test_review_value(self) -> None:
+        self.assertEqual(WORKSPACE_STATUS_REVIEW, 'review')
+
+    def test_done_value(self) -> None:
+        self.assertEqual(WORKSPACE_STATUS_DONE, 'done')
+
+    def test_errored_value(self) -> None:
+        self.assertEqual(WORKSPACE_STATUS_ERRORED, 'errored')
+
+    def test_terminated_value(self) -> None:
+        self.assertEqual(WORKSPACE_STATUS_TERMINATED, 'terminated')
+
+    def test_supported_statuses_count_is_six(self) -> None:
+        self.assertEqual(len(SUPPORTED_WORKSPACE_STATUSES), 6)
+
+
+class WorkspaceRecordFromDictFieldsTest(unittest.TestCase):
+    def test_from_dict_sets_cwd(self) -> None:
+        record = WorkspaceRecord.from_dict({'task_id': 'T1', 'cwd': '/some/path'})
+        self.assertEqual(record.cwd, '/some/path')
+
+    def test_from_dict_sets_resume_on_startup_false(self) -> None:
+        record = WorkspaceRecord.from_dict(
+            {'task_id': 'T1', 'resume_on_startup': False},
+        )
+        self.assertFalse(record.resume_on_startup)
+
+    def test_from_dict_sets_resume_on_startup_defaults_true(self) -> None:
+        record = WorkspaceRecord.from_dict({'task_id': 'T1'})
+        self.assertTrue(record.resume_on_startup)
+
+    def test_from_dict_sets_created_at_epoch(self) -> None:
+        record = WorkspaceRecord.from_dict(
+            {'task_id': 'T1', 'created_at_epoch': 1234567890.5},
+        )
+        self.assertAlmostEqual(record.created_at_epoch, 1234567890.5)
+
+    def test_from_dict_sets_updated_at_epoch(self) -> None:
+        record = WorkspaceRecord.from_dict(
+            {'task_id': 'T1', 'updated_at_epoch': 9999999.0},
+        )
+        self.assertAlmostEqual(record.updated_at_epoch, 9999999.0)
+
+    def test_from_dict_sets_task_summary(self) -> None:
+        record = WorkspaceRecord.from_dict(
+            {'task_id': 'T1', 'task_summary': 'my task'},
+        )
+        self.assertEqual(record.task_summary, 'my task')
+
+    def test_from_dict_sets_status(self) -> None:
+        record = WorkspaceRecord.from_dict(
+            {'task_id': 'T1', 'status': WORKSPACE_STATUS_REVIEW},
+        )
+        self.assertEqual(record.status, WORKSPACE_STATUS_REVIEW)
+
+    def test_from_dict_sets_repository_ids(self) -> None:
+        record = WorkspaceRecord.from_dict(
+            {'task_id': 'T1', 'repository_ids': ['r1', 'r2']},
+        )
+        self.assertEqual(record.repository_ids, ['r1', 'r2'])
+
+
 if __name__ == '__main__':
     unittest.main()

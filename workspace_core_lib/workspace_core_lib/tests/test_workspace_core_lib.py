@@ -8,9 +8,13 @@ isolation; this file pins the integration story — that constructing
 
 from __future__ import annotations
 
+import logging
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock
+
+from core_lib.core_lib import CoreLib
 
 from workspace_core_lib.workspace_core_lib import (
     WORKSPACE_STATUS_ACTIVE,
@@ -94,6 +98,22 @@ class WorkspaceCoreLibTests(unittest.TestCase):
 
         self.lib.workspaces.delete('LIFE-1')
         self.assertEqual(self.lib.workspaces.list_workspaces(), [])
+
+    def test_inherits_from_core_lib(self) -> None:
+        self.assertIsInstance(self.lib, CoreLib)
+
+    def test_custom_logger_propagates_to_services(self) -> None:
+        logger = logging.getLogger('test.workspace_core_lib')
+        lib = WorkspaceCoreLib(root=self.root, logger=logger)
+        self.assertIs(lib._logger, logger)
+
+    def test_multiple_workspaces_listed_independently(self) -> None:
+        for i in range(5):
+            self.lib.workspaces.create(task_id=f'T-{i}', task_summary=f's{i}')
+        records = self.lib.workspaces.list_workspaces()
+        self.assertEqual(len(records), 5)
+        ids = {r.task_id for r in records}
+        self.assertEqual(ids, {'T-0', 'T-1', 'T-2', 'T-3', 'T-4'})
 
 
 if __name__ == '__main__':

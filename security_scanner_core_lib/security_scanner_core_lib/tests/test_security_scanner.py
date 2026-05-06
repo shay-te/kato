@@ -8,13 +8,8 @@ Tests are organised by layer:
 * ``SecurityScannerServiceTests`` — orchestrator: dedupe, threshold,
   timeout handling, runner-error surfacing, summariser output.
 * ``SummariserTests`` — markdown ticket comment + email subject/body.
-
-The other runners (``detect-secrets``, ``bandit``, ``safety``,
-``npm audit``) require their tools installed and exercising them
-properly needs real fixtures; they're integration-tested through
-the orchestrator's "runner unavailable" path here, with their own
-deeper tests left as a follow-up when those tools are part of the
-default kato dependency set.
+* ``ConfigTests`` — SecurityScannerConfig, block_threshold, default_config.
+* ``SecurityScanBlockedTests`` — exception message and report attribute.
 """
 
 from __future__ import annotations
@@ -38,8 +33,10 @@ from security_scanner_core_lib.security_scanner_core_lib.runners._helpers import
 )
 from security_scanner_core_lib.security_scanner_core_lib.security_scanner_service import (
     RunnerConfig,
+    SecurityScanBlocked,
     SecurityScannerConfig,
     SecurityScannerService,
+    default_config,
 )
 
 
@@ -60,9 +57,6 @@ class DataTypeTests(unittest.TestCase):
         self.assertEqual(Severity.from_string('  Medium  '), Severity.MEDIUM)
 
     def test_severity_from_string_unknown_falls_back_to_low(self) -> None:
-        # Defensive: unrecognised values shouldn't crash the scanner —
-        # surface as LOW so the operator sees the finding without a
-        # false-positive block.
         self.assertEqual(Severity.from_string(''), Severity.LOW)
         self.assertEqual(Severity.from_string('made-up'), Severity.LOW)
         self.assertEqual(Severity.from_string(None), Severity.LOW)  # type: ignore[arg-type]
@@ -165,18 +159,27 @@ class EnvFileRunnerTests(unittest.TestCase):
         findings = env_file_runner.run(str(self.workspace))
         self.assertEqual(findings, [], f'expected no findings, got {findings}')
 
-    def test_inline_kato_placeholder_annotation_silences(self) -> None:
+    def test_default_placeholder_annotation_silences(self) -> None:
         self._write('.env', '\n'.join([
-            'AWS_KEY=AKIAREALLYLOOKSREAL12345  # kato:placeholder',
+            'AWS_KEY=AKIAREALLYLOOKSREAL12345  # security-scanner:placeholder',
             'AWS_KEY2=AKIATHISONELEAKSEXAMPLE  # not annotated',
         ]))
         findings = env_file_runner.run(str(self.workspace))
         self.assertEqual(len(findings), 1)
         self.assertIn('AWS_KEY2', findings[0].message)
 
+    def test_custom_placeholder_annotation_silences(self) -> None:
+        self._write('.env', '\n'.join([
+            'AWS_KEY=AKIAREALLYLOOKSREAL12345  # myapp:placeholder',
+            'AWS_KEY2=AKIATHISONELEAKSEXAMPLE  # not annotated',
+        ]))
+        findings = env_file_runner.run(
+            str(self.workspace), placeholder_annotation='myapp:placeholder',
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertIn('AWS_KEY2', findings[0].message)
+
     def test_export_prefix_is_handled(self) -> None:
-        # ``export FOO=bar`` is valid bash and operators sometimes
-        # use it in .env files for source-able compatibility.
         self._write('.env', 'export AWS_KEY=AKIAEXAMPLEAKEYREALISH123\n')
         findings = env_file_runner.run(str(self.workspace))
         self.assertEqual(len(findings), 1)
@@ -196,8 +199,6 @@ class EnvFileRunnerTests(unittest.TestCase):
         self.assertEqual(findings[0].path, 'backend/config/.env')
 
     def test_node_modules_subtree_is_ignored(self) -> None:
-        # ``node_modules/some-pkg/.env`` shouldn't be scanned —
-        # those are vendored deps, not the operator's secrets.
         self._write(
             'node_modules/whatever/.env',
             'API_KEY=AKIAfakebutlongenough123456789\n',
@@ -216,12 +217,33 @@ class SecurityScannerServiceTests(unittest.TestCase):
         self.assertEqual(report.findings, ())
         self.assertEqual(report.runner_errors, ())
 
+    def test_enabled_property_reflects_config(self) -> None:
+        service_on = SecurityScannerService(SecurityScannerConfig(enabled=True))
+        service_off = SecurityScannerService(SecurityScannerConfig(enabled=False))
+        self.assertTrue(service_on.enabled)
+        self.assertFalse(service_off.enabled)
+
     def test_no_active_runners_returns_clean_report(self) -> None:
         service = SecurityScannerService(SecurityScannerConfig(
             enabled=True, runners=[],
         ))
         report = service.scan_workspace('/nonexistent')
         self.assertFalse(report.blocking)
+
+    def test_disabled_runner_is_skipped(self) -> None:
+        called = []
+
+        def runner_fn(_path, **_kw):
+            called.append(True)
+            return [_make_finding(Severity.CRITICAL)]
+
+        service = SecurityScannerService(SecurityScannerConfig(
+            enabled=True,
+            runners=[RunnerConfig('r', runner_fn, enabled=False)],
+        ))
+        report = service.scan_workspace('/')
+        self.assertEqual(called, [])
+        self.assertEqual(report.findings, ())
 
     def test_runner_findings_are_aggregated(self) -> None:
         def runner_a(_path, **_kw): return [_make_finding(Severity.HIGH, tool='a')]
@@ -241,7 +263,6 @@ class SecurityScannerServiceTests(unittest.TestCase):
     def test_blocking_decision_uses_threshold(self) -> None:
         def critical(_path, **_kw): return [_make_finding(Severity.CRITICAL)]
         def medium(_path, **_kw): return [_make_finding(Severity.MEDIUM, tool='med')]
-        # Threshold = HIGH (default): CRITICAL blocks, MEDIUM doesn't.
         service = SecurityScannerService(SecurityScannerConfig(
             enabled=True,
             block_on_severity=(Severity.CRITICAL, Severity.HIGH),
@@ -294,7 +315,7 @@ class SecurityScannerServiceTests(unittest.TestCase):
 
     def test_runner_timeout_does_not_block_other_runners(self) -> None:
         def slow(_path, **_kw):
-            time.sleep(2)  # exceeds 1s budget below
+            time.sleep(2)
             return []
         def fast(_path, **_kw):
             return [_make_finding(Severity.MEDIUM, tool='fast')]
@@ -306,14 +327,12 @@ class SecurityScannerServiceTests(unittest.TestCase):
             ],
         ))
         report = service.scan_workspace('/')
-        # ``fast`` finding survives even though ``slow`` timed out.
         self.assertEqual([f.tool for f in report.findings], ['fast'])
         self.assertEqual(len(report.runner_errors), 1)
         self.assertEqual(report.runner_errors[0][0], 'slow')
         self.assertIn('timeout', report.runner_errors[0][1].lower())
 
     def test_findings_are_deduped(self) -> None:
-        # Two runners report the same path:line:rule_id — dedupe to one.
         f = _make_finding(Severity.HIGH, tool='shared', rule_id='X', path='a.py', line=5)
         def r1(_path, **_kw): return [f]
         def r2(_path, **_kw): return [f]
@@ -344,19 +363,113 @@ class SecurityScannerServiceTests(unittest.TestCase):
             enabled=True,
             runners=[RunnerConfig('r', runner)],
         ))
-        # Should fall back to the no-timeout signature without crashing.
         service.scan_workspace('/')
+
+
+# ----- SecurityScanBlocked ---------------------------------------------------
+
+
+class SecurityScanBlockedTests(unittest.TestCase):
+    def test_is_runtime_error_subclass(self) -> None:
+        self.assertTrue(issubclass(SecurityScanBlocked, RuntimeError))
+
+    def test_message_includes_critical_and_high_counts(self) -> None:
+        report = ScanReport(
+            findings=(
+                _make_finding(Severity.CRITICAL),
+                _make_finding(Severity.CRITICAL),
+                _make_finding(Severity.HIGH),
+            ),
+            blocking=True,
+            block_threshold=Severity.HIGH,
+        )
+        exc = SecurityScanBlocked(report)
+        msg = str(exc)
+        self.assertIn('2 critical', msg)
+        self.assertIn('1 high', msg)
+
+    def test_report_attribute_is_attached(self) -> None:
+        report = ScanReport(findings=(), blocking=True, block_threshold=Severity.HIGH)
+        exc = SecurityScanBlocked(report)
+        self.assertIs(exc.report, report)
+
+    def test_can_be_raised_and_caught(self) -> None:
+        report = ScanReport(findings=(), blocking=True, block_threshold=Severity.HIGH)
+        with self.assertRaises(SecurityScanBlocked) as ctx:
+            raise SecurityScanBlocked(report)
+        self.assertIs(ctx.exception.report, report)
+
+    def test_zero_critical_zero_high_message(self) -> None:
+        report = ScanReport(findings=(), blocking=True, block_threshold=Severity.HIGH)
+        exc = SecurityScanBlocked(report)
+        self.assertIn('0 critical', str(exc))
+        self.assertIn('0 high', str(exc))
+
+
+# ----- Config ----------------------------------------------------------------
+
+
+class SecurityScannerConfigTests(unittest.TestCase):
+    def test_default_config_is_enabled(self) -> None:
+        config = SecurityScannerConfig()
+        self.assertTrue(config.enabled)
+
+    def test_default_tool_name(self) -> None:
+        config = SecurityScannerConfig()
+        self.assertEqual(config.tool_name, 'security-scanner')
+
+    def test_custom_tool_name(self) -> None:
+        config = SecurityScannerConfig(tool_name='my-scanner')
+        self.assertEqual(config.tool_name, 'my-scanner')
+
+    def test_block_threshold_default_is_high(self) -> None:
+        config = SecurityScannerConfig(
+            block_on_severity=(Severity.CRITICAL, Severity.HIGH),
+        )
+        self.assertEqual(config.block_threshold(), Severity.HIGH)
+
+    def test_block_threshold_strict_is_medium(self) -> None:
+        config = SecurityScannerConfig(
+            block_on_severity=(Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM),
+        )
+        self.assertEqual(config.block_threshold(), Severity.MEDIUM)
+
+    def test_block_threshold_critical_only(self) -> None:
+        config = SecurityScannerConfig(
+            block_on_severity=(Severity.CRITICAL,),
+        )
+        self.assertEqual(config.block_threshold(), Severity.CRITICAL)
+
+    def test_block_threshold_empty_defaults_to_critical(self) -> None:
+        config = SecurityScannerConfig(block_on_severity=())
+        self.assertEqual(config.block_threshold(), Severity.CRITICAL)
+
+    def test_default_config_function_returns_all_runners(self) -> None:
+        config = default_config()
+        names = {r.name for r in config.runners}
+        self.assertIn('env-file', names)
+        self.assertIn('bandit', names)
+        self.assertIn('safety', names)
+        self.assertIn('npm-audit', names)
+        self.assertIn('detect-secrets', names)
+
+    def test_default_config_function_is_enabled(self) -> None:
+        config = default_config()
+        self.assertTrue(config.enabled)
 
 
 # ----- summarisers -----------------------------------------------------------
 
 
 class SummariserTests(unittest.TestCase):
+    def _service(self, tool_name: str = 'security-scanner') -> SecurityScannerService:
+        return SecurityScannerService(SecurityScannerConfig(tool_name=tool_name))
+
     def test_clean_report_summary_is_friendly(self) -> None:
         report = ScanReport(
             findings=(), blocking=False, block_threshold=Severity.HIGH,
         )
-        body = SecurityScannerService.summarize_for_ticket(report)
+        body = self._service().summarize_for_ticket(report)
         self.assertIn('no findings', body)
 
     def test_blocking_report_starts_with_red_flag_and_lists_findings(self) -> None:
@@ -370,7 +483,7 @@ class SummariserTests(unittest.TestCase):
             blocking=True,
             block_threshold=Severity.HIGH,
         )
-        body = SecurityScannerService.summarize_for_ticket(report)
+        body = self._service().summarize_for_ticket(report)
         self.assertIn('refused', body.lower())
         self.assertIn('CRITICAL'.lower(), body.lower())
         self.assertIn('env-file', body)
@@ -382,7 +495,7 @@ class SummariserTests(unittest.TestCase):
             blocking=False,
             block_threshold=Severity.HIGH,
         )
-        body = SecurityScannerService.summarize_for_ticket(report)
+        body = self._service().summarize_for_ticket(report)
         self.assertIn('proceed', body.lower())
 
     def test_email_subject_summarises_count_and_threshold(self) -> None:
@@ -394,11 +507,26 @@ class SummariserTests(unittest.TestCase):
             blocking=True,
             block_threshold=Severity.HIGH,
         )
-        subject, body = SecurityScannerService.summarize_for_email(report)
+        subject, body = self._service().summarize_for_email(report)
         self.assertIn('BLOCKED', subject)
         self.assertIn('2 security finding', subject)
         self.assertIn('high', subject)
         self.assertIn('refused', body.lower())
+
+    def test_email_subject_warn_when_non_blocking_findings(self) -> None:
+        report = ScanReport(
+            findings=(_make_finding(Severity.MEDIUM),),
+            blocking=False,
+            block_threshold=Severity.HIGH,
+        )
+        subject, body = self._service().summarize_for_email(report)
+        self.assertIn('WARN', subject)
+        self.assertIn('1 security finding', subject)
+
+    def test_email_subject_clean_when_no_findings(self) -> None:
+        report = ScanReport(findings=(), blocking=False, block_threshold=Severity.HIGH)
+        subject, _ = self._service().summarize_for_email(report)
+        self.assertIn('clean', subject.lower())
 
     def test_runner_errors_appear_in_summary(self) -> None:
         report = ScanReport(
@@ -410,11 +538,30 @@ class SummariserTests(unittest.TestCase):
                 ('npm-audit', 'npm not installed'),
             ),
         )
-        body = SecurityScannerService.summarize_for_ticket(report)
+        body = self._service().summarize_for_ticket(report)
         self.assertIn('Scanner warnings', body)
         self.assertIn('safety', body)
         self.assertIn('network unreachable', body)
         self.assertIn('npm-audit', body)
+
+    def test_custom_tool_name_appears_in_ticket(self) -> None:
+        report = ScanReport(findings=(), blocking=False, block_threshold=Severity.HIGH)
+        body = self._service(tool_name='myorg-scanner').summarize_for_ticket(report)
+        self.assertIn('myorg-scanner', body)
+
+    def test_custom_tool_name_appears_in_email_subject(self) -> None:
+        report = ScanReport(findings=(), blocking=False, block_threshold=Severity.HIGH)
+        subject, _ = self._service(tool_name='myorg-scanner').summarize_for_email(report)
+        self.assertIn('myorg-scanner', subject)
+
+    def test_blocking_ticket_uses_tool_name(self) -> None:
+        report = ScanReport(
+            findings=(_make_finding(Severity.CRITICAL),),
+            blocking=True,
+            block_threshold=Severity.HIGH,
+        )
+        body = self._service(tool_name='custom-sec').summarize_for_ticket(report)
+        self.assertIn('custom-sec', body)
 
 
 # ----- helpers ---------------------------------------------------------------

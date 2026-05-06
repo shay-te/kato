@@ -162,6 +162,31 @@ class WorkspaceDataAccessTests(unittest.TestCase):
         # Second delete is a no-op.
         self.data_access.delete('PROJ-1')
 
+    def test_root_property_returns_configured_root(self) -> None:
+        self.assertEqual(self.data_access.root, self.root)
+
+    def test_metadata_filename_property_returns_configured_filename(self) -> None:
+        da = WorkspaceDataAccess(
+            root=self.root, metadata_filename='.custom.json',
+        )
+        self.assertEqual(da.metadata_filename, '.custom.json')
+
+    def test_metadata_filename_property_returns_default(self) -> None:
+        self.assertEqual(
+            self.data_access.metadata_filename, DEFAULT_METADATA_FILENAME,
+        )
+
+    def test_ensure_workspace_dir_creates_and_returns_path(self) -> None:
+        path = self.data_access.ensure_workspace_dir('NEW-1')
+        self.assertTrue(path.is_dir())
+        self.assertEqual(path, self.root / 'NEW-1')
+
+    def test_ensure_workspace_dir_is_idempotent(self) -> None:
+        path1 = self.data_access.ensure_workspace_dir('IDEM-1')
+        path2 = self.data_access.ensure_workspace_dir('IDEM-1')
+        self.assertEqual(path1, path2)
+        self.assertTrue(path2.is_dir())
+
 
 if __name__ == '__main__':
     unittest.main()

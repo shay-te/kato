@@ -76,6 +76,7 @@ class SecurityScannerConfig:
     enabled: bool = True
     block_on_severity: tuple[Severity, ...] = (Severity.CRITICAL, Severity.HIGH)
     runners: list[RunnerConfig] = field(default_factory=list)
+    tool_name: str = 'security-scanner'
 
     def block_threshold(self) -> Severity:
         """Lowest severity in ``block_on_severity`` (i.e. the gate)."""
@@ -192,18 +193,18 @@ class SecurityScannerService:
 
     # ----- summarisers (used by callers to build comments / emails) -----
 
-    @staticmethod
-    def summarize_for_ticket(report: ScanReport) -> str:
+    def summarize_for_ticket(self, report: ScanReport) -> str:
         """Markdown body suitable for a YouTrack / Jira ticket comment."""
+        tool = self._config.tool_name
         lines: list[str] = []
         if report.blocking:
-            lines.append('🛑 **kato refused this task: security scan found '
+            lines.append(f'🛑 **{tool} refused this task: security scan found '
                          'CRITICAL/HIGH issues.**')
         elif report.findings:
-            lines.append('⚠️ **kato security scan found MEDIUM/LOW findings.** '
+            lines.append(f'⚠️ **{tool} security scan found MEDIUM/LOW findings.** '
                          'The task will proceed; please review.')
         else:
-            lines.append('✅ kato security scan: no findings.')
+            lines.append(f'✅ {tool} security scan: no findings.')
         if report.findings:
             lines.append('')
             lines.append('| severity | tool | path | rule | message |')
@@ -225,26 +226,26 @@ class SecurityScannerService:
                 lines.append(f'- {name}: {err}')
         return '\n'.join(lines)
 
-    @staticmethod
-    def summarize_for_email(report: ScanReport) -> tuple[str, str]:
+    def summarize_for_email(self, report: ScanReport) -> tuple[str, str]:
         """``(subject, body)`` pair for the security distribution list.
 
         Subject is short + scannable; body is the same markdown
         used in the ticket comment, with a one-line preamble for
         operators reading it in their inbox.
         """
+        tool = self._config.tool_name
         if report.blocking:
             subject = (
-                f'[kato] BLOCKED: {len(report.findings)} security finding(s) '
+                f'[{tool}] BLOCKED: {len(report.findings)} security finding(s) '
                 f'(threshold: {report.block_threshold.value})'
             )
         elif report.findings:
             subject = (
-                f'[kato] WARN: {len(report.findings)} security finding(s)'
+                f'[{tool}] WARN: {len(report.findings)} security finding(s)'
             )
         else:
-            subject = '[kato] security scan clean'
-        body = SecurityScannerService.summarize_for_ticket(report)
+            subject = f'[{tool}] security scan clean'
+        body = self.summarize_for_ticket(report)
         return subject, body
 
 

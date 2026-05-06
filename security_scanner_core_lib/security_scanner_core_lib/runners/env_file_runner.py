@@ -69,8 +69,12 @@ _PLACEHOLDER_PATTERNS = (
     re.compile(r'^/[\w./-]*$'),                  # filesystem paths
 )
 
-# Operator-overridable: a line annotated with this comment is silenced.
-_PLACEHOLDER_OVERRIDE = re.compile(r'#\s*kato\s*:\s*placeholder', re.IGNORECASE)
+# Default annotation that silences a line when added as a trailing comment.
+# Operators can override this via the ``placeholder_annotation`` parameter.
+_DEFAULT_PLACEHOLDER_ANNOTATION = 'security-scanner:placeholder'
+_PLACEHOLDER_OVERRIDE = re.compile(
+    r'#\s*security-scanner\s*:\s*placeholder', re.IGNORECASE
+)
 
 
 def _is_real_env(path: Path) -> bool:
@@ -138,13 +142,28 @@ def _parse_env_line(line: str) -> tuple[str, str, str] | None:
 def run(
     workspace_path: str,
     logger: logging.Logger | None = None,
+    *,
+    placeholder_annotation: str | None = None,
 ) -> list[SecurityFinding]:
     """Walk ``workspace_path`` for ``.env`` files and flag real values.
 
     Returns the list of findings; never raises. Empty list when the
     workspace contains no real ``.env`` files (only scaffolding,
     or none at all).
+
+    ``placeholder_annotation`` is the trailing-comment text that silences
+    a line (default: ``security-scanner:placeholder``). Operators can pass
+    a custom string to match a different annotation convention.
     """
+    annotation = placeholder_annotation or _DEFAULT_PLACEHOLDER_ANNOTATION
+    override_pattern = (
+        _PLACEHOLDER_OVERRIDE
+        if annotation == _DEFAULT_PLACEHOLDER_ANNOTATION
+        else re.compile(
+            r'#\s*' + re.escape(annotation.strip()) + r'\s*$',
+            re.IGNORECASE,
+        )
+    )
     workspace = Path(workspace_path)
     findings: list[SecurityFinding] = []
     for entry in iter_workspace_files(workspace):
@@ -161,7 +180,7 @@ def run(
             if parsed is None:
                 continue
             key, value, comment = parsed
-            if _PLACEHOLDER_OVERRIDE.search(comment):
+            if override_pattern.search(comment):
                 continue
             if not _value_looks_real(value):
                 continue
@@ -173,7 +192,7 @@ def run(
                     f'{key} in {entry.name} looks like a real credential '
                     f'(not a placeholder). If this is intentional repo '
                     f'scaffolding, rename the file to {entry.name}.example '
-                    f'or annotate the line with "# kato:placeholder".'
+                    f'or annotate the line with "# {annotation}".'
                 ),
                 path=workspace_relative(workspace, entry),
                 line=line_no,

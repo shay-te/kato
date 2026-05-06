@@ -4,9 +4,9 @@ What callers reach for. Composes :class:`WorkspaceDataAccess` with
 business behavior (status validation, partial updates, preflight
 log, parallelism cap, path computation for sibling repo clones).
 
-Layering: this is the only class kato (or any other consumer) should
-touch. Don't bypass it for raw data-access calls — the validation
-and partial-update semantics live here.
+Layering: this is the only class the consumer should touch. Don't
+bypass it for raw data-access calls — the validation and partial-update
+semantics live here.
 
 Thread safety: every public mutation acquires an internal lock so
 concurrent callers (e.g. the orchestrator's main thread creating

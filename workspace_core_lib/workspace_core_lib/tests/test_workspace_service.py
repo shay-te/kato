@@ -24,6 +24,8 @@ from workspace_core_lib.workspace_core_lib.data_layers.data.workspace_record imp
     WORKSPACE_STATUS_DONE,
     WORKSPACE_STATUS_ERRORED,
     WORKSPACE_STATUS_PROVISIONING,
+    WORKSPACE_STATUS_REVIEW,
+    WORKSPACE_STATUS_TERMINATED,
     WorkspaceRecord,
 )
 from workspace_core_lib.workspace_core_lib.data_layers.data_access.workspace_data_access import (
@@ -344,6 +346,83 @@ class WorkspaceServiceTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
         self.assertEqual(len(self.service.list_workspaces()), 20)
+
+    # ----- data_access property -----
+
+    def test_data_access_property_returns_the_instance(self) -> None:
+        self.assertIs(self.service.data_access, self.data_access)
+
+    # ----- all six status transitions -----
+
+    def test_update_status_to_provisioning(self) -> None:
+        self.service.create(task_id='PROJ-10')
+        result = self.service.update_status('PROJ-10', WORKSPACE_STATUS_PROVISIONING)
+        assert result is not None
+        self.assertEqual(result.status, WORKSPACE_STATUS_PROVISIONING)
+
+    def test_update_status_to_review(self) -> None:
+        self.service.create(task_id='PROJ-11')
+        result = self.service.update_status('PROJ-11', WORKSPACE_STATUS_REVIEW)
+        assert result is not None
+        self.assertEqual(result.status, WORKSPACE_STATUS_REVIEW)
+
+    def test_update_status_to_done(self) -> None:
+        self.service.create(task_id='PROJ-12')
+        result = self.service.update_status('PROJ-12', WORKSPACE_STATUS_DONE)
+        assert result is not None
+        self.assertEqual(result.status, WORKSPACE_STATUS_DONE)
+
+    def test_update_status_to_errored(self) -> None:
+        self.service.create(task_id='PROJ-13')
+        result = self.service.update_status('PROJ-13', WORKSPACE_STATUS_ERRORED)
+        assert result is not None
+        self.assertEqual(result.status, WORKSPACE_STATUS_ERRORED)
+
+    def test_update_status_to_terminated(self) -> None:
+        self.service.create(task_id='PROJ-14')
+        result = self.service.update_status('PROJ-14', WORKSPACE_STATUS_TERMINATED)
+        assert result is not None
+        self.assertEqual(result.status, WORKSPACE_STATUS_TERMINATED)
+
+    # ----- update_repositories with empty list -----
+
+    def test_update_repositories_with_empty_list(self) -> None:
+        self.service.create(task_id='PROJ-20', repository_ids=['a', 'b'])
+        result = self.service.update_repositories('PROJ-20', [])
+        assert result is not None
+        self.assertEqual(result.repository_ids, [])
+
+    # ----- toggle resume_on_startup back to True -----
+
+    def test_update_resume_on_startup_toggle_false_then_true(self) -> None:
+        self.service.create(task_id='PROJ-21')
+        self.service.update_resume_on_startup('PROJ-21', False)
+        record = self.service.get('PROJ-21')
+        assert record is not None
+        self.assertFalse(record.resume_on_startup)
+        self.service.update_resume_on_startup('PROJ-21', True)
+        record = self.service.get('PROJ-21')
+        assert record is not None
+        self.assertTrue(record.resume_on_startup)
+
+    # ----- preflight epoch recorded -----
+
+    def test_preflight_log_entry_has_positive_epoch(self) -> None:
+        import time
+        before = int(time.time())  # log stores int seconds
+        self.service.create(task_id='PROJ-30')
+        self.service.append_preflight_log('PROJ-30', 'step one')
+        entries = self.service.read_preflight_log('PROJ-30')
+        self.assertEqual(len(entries), 1)
+        epoch, _ = entries[0]
+        self.assertGreaterEqual(epoch, before)
+
+    def test_preflight_log_multiple_entries_are_ordered(self) -> None:
+        self.service.create(task_id='PROJ-31')
+        for msg in ('a', 'b', 'c'):
+            self.service.append_preflight_log('PROJ-31', msg)
+        messages = [m for _, m in self.service.read_preflight_log('PROJ-31')]
+        self.assertEqual(messages, ['a', 'b', 'c'])
 
     # ----- backwards compat with legacy on-disk format -----
 

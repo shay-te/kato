@@ -17,8 +17,8 @@ Design:
   :func:`atomic_write_json`.
 * **Configurable filename.** Defaults to ``.workspace-meta.json``
   but the metadata filename is constructor-injectable so existing
-  deployments with legacy file names (e.g. kato's historical
-  ``.kato-meta.json``) can keep working without disk migration.
+  deployments with a legacy filename can keep working without a
+  disk migration.
 """
 
 from __future__ import annotations
