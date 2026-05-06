@@ -12,11 +12,22 @@ from __future__ import annotations
 
 import glob
 import json
+import os
 from pathlib import Path
 from typing import Iterable
 
 
 _DEFAULT_PROJECTS_ROOT = Path.home() / '.claude' / 'projects'
+# Match claude_session_index — both modules walk the same store, so they
+# must agree on its location when tests redirect via this env var.
+_CLAUDE_SESSIONS_ROOT_ENV_KEY = 'KATO_CLAUDE_SESSIONS_ROOT'
+
+
+def _default_projects_root() -> Path:
+    override = os.environ.get(_CLAUDE_SESSIONS_ROOT_ENV_KEY, '').strip()
+    if override:
+        return Path(override).expanduser()
+    return _DEFAULT_PROJECTS_ROOT
 
 
 def find_session_file(
@@ -34,7 +45,7 @@ def find_session_file(
     session_id = (claude_session_id or '').strip()
     if not session_id:
         return None
-    root = Path(projects_root) if projects_root else _DEFAULT_PROJECTS_ROOT
+    root = Path(projects_root) if projects_root else _default_projects_root()
     if not root.is_dir():
         return None
     pattern = str(root / '*' / f'{session_id}.jsonl')

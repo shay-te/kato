@@ -209,6 +209,48 @@ class ClaudeSessionManagerTests(unittest.TestCase):
 
         self.assertIs(captured['docker_mode_on'], False)
 
+    def test_resume_copies_jsonl_into_target_cwd_project_dir(self) -> None:
+        # One-session-per-task invariant: when kato spawns at a cwd
+        # different from where the session's JSONL currently lives,
+        # the manager copies the JSONL into the new cwd's project dir
+        # so ``claude --resume`` finds it. Without this the resume
+        # fails silently and a new session id is created — that's the
+        # "kato keeps switching sessions" bug.
+        import os
+        sessions_root = self.state_dir / 'claude-sessions'
+        old_cwd_project_dir = sessions_root / '-tmp-old-repo'
+        old_cwd_project_dir.mkdir(parents=True)
+        session_id = 'old-session-uuid'
+        old_jsonl = old_cwd_project_dir / f'{session_id}.jsonl'
+        old_jsonl.write_text('{"type": "user"}\n', encoding='utf-8')
+        # Persist a record pointing at the old session id.
+        record = PlanningSessionRecord(
+            task_id='PROJ-77',
+            claude_session_id=session_id,
+            status='terminated',
+            cwd='/tmp/old/repo',
+        )
+        self.manager._records['PROJ-77'] = record
+        self.manager._persist_record(record)
+
+        os.environ['KATO_CLAUDE_SESSIONS_ROOT'] = str(sessions_root)
+        self.addCleanup(
+            os.environ.pop, 'KATO_CLAUDE_SESSIONS_ROOT', None,
+        )
+        try:
+            self.manager.start_session(
+                task_id='PROJ-77',
+                cwd='/tmp/new/repo',
+            )
+        finally:
+            pass
+
+        new_cwd_project_dir = sessions_root / '-tmp-new-repo'
+        self.assertTrue(
+            (new_cwd_project_dir / f'{session_id}.jsonl').is_file(),
+            'JSONL should have been copied into the new cwd project dir',
+        )
+
 
 class PlanningSessionRecordTests(unittest.TestCase):
     def test_round_trips_through_dict(self) -> None:

@@ -264,6 +264,22 @@ class ClaudeSessionManager(object):
                 resume_session_id = self._resume_id_for_spawn(
                     normalized_task_id, previous_record, existing,
                 )
+            # One-session-per-task invariant: if the task already has a
+            # session id on file, ensure the JSONL transcript is present
+            # at the spawn cwd's project dir before passing ``--resume``.
+            # ``claude --resume <id>`` is cwd-keyed — it looks at
+            # ``~/.claude/projects/<encoded-cwd>/<id>.jsonl`` only — so
+            # when kato switches cwds across spawns (workspace clone vs
+            # source repo, sibling repos in a multi-repo task) the
+            # resume previously failed with "No conversation found" and
+            # self-heal blanked the id, ending the conversation. The
+            # JSONL itself is a plain file: we copy it to the new cwd's
+            # project dir and Claude resumes natively. Free in tokens
+            # and idempotent.
+            self._ensure_resume_jsonl_at_target_cwd(
+                resume_session_id=resume_session_id,
+                target_cwd=cwd,
+            )
             # Spawn happens with NO global lock held — concurrent spawns
             # for different task ids run in parallel.
             session = self._spawn_with_resume_self_heal(
@@ -283,6 +299,71 @@ class ClaudeSessionManager(object):
                     resume_session_id=resume_session_id,
                 )
             return session
+
+    def _ensure_resume_jsonl_at_target_cwd(
+        self,
+        *,
+        resume_session_id: str,
+        target_cwd: str,
+    ) -> None:
+        """Copy the resume JSONL into ``target_cwd``'s project dir if needed.
+
+        Defends the one-session-per-task invariant against cwd drift.
+        ``claude --resume`` only finds a transcript under the spawn
+        cwd's encoded project dir; kato's cwd legitimately changes
+        across operations on the same task (review-fix in a sibling
+        repo, retargeted workspace clone, etc.), so we copy the JSONL
+        to wherever Claude will look for it. No-op when there's no
+        resume id, no target cwd, no source transcript on disk, or
+        the source already lives at the target.
+        """
+        if not resume_session_id or not target_cwd:
+            return
+        try:
+            from claude_core_lib.claude_core_lib.session_history import (
+                find_session_file,
+            )
+            from claude_core_lib.claude_core_lib.claude_session_index import (
+                claude_project_dir_for_cwd,
+                migrate_session_to_workspace,
+            )
+        except ImportError:
+            return
+        try:
+            source = find_session_file(resume_session_id)
+        except Exception:
+            self.logger.exception(
+                'failed to locate resume transcript for session %s',
+                resume_session_id,
+            )
+            return
+        if source is None:
+            return
+        try:
+            target_dir = claude_project_dir_for_cwd(target_cwd)
+            if source.parent.resolve() == target_dir.resolve():
+                return
+        except OSError:
+            pass
+        # The source JSONL is left in place as a historical snapshot
+        # of the conversation at the moment the cwd switched. Kato's
+        # "one session per task" invariant lives at the session-id
+        # level — kato's record points at exactly one id, and Claude
+        # writes new turns only to the canonical copy at the spawn
+        # cwd's project dir. The old file is harmless and useful for
+        # forensics; orphan cleanup, if ever wanted, is a separate
+        # housekeeping concern.
+        try:
+            migrate_session_to_workspace(
+                transcript_path=str(source),
+                target_cwd=target_cwd,
+            )
+        except Exception:
+            self.logger.exception(
+                'failed to copy resume transcript for session %s into %s',
+                resume_session_id,
+                target_cwd,
+            )
 
     def _resume_id_for_spawn(
         self,
