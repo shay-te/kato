@@ -212,6 +212,31 @@ class AgentService(Service):
     def validate_connections(self) -> None:
         self._startup_validator.validate(self.logger)
 
+    def warm_up_repository_inventory(self) -> None:
+        """Trigger repository auto-discovery in the background.
+
+        Without this, the disk walk that finds all .git folders under
+        REPOSITORY_ROOT_PATH fires lazily on the *first task pickup*,
+        blocking that task for however long the walk takes. Calling
+        this right after startup means the walk runs in parallel with
+        the first scan-interval sleep, so first-task latency is zero
+        instead of "however large the project tree is".
+
+        Errors are swallowed — the walk will re-run on first task pickup
+        as before, so a transient failure here is non-fatal.
+        """
+        import threading
+        repo_service = self._repository_service
+
+        def _run() -> None:
+            try:
+                repo_service._ensure_repositories()
+            except Exception:
+                pass
+
+        t = threading.Thread(target=_run, daemon=True, name='kato-repo-inventory-warmup')
+        t.start()
+
     def shutdown(self) -> None:
         """Tear down everything kato owns: pool, sessions, conversations.
 

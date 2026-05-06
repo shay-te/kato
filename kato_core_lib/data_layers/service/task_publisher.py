@@ -151,6 +151,11 @@ class TaskPublisher(Service):
                 pull_requests,
                 failed_repositories,
             )
+        if not pull_requests:
+            # Every repo was unchanged — the agent ran but produced no commits.
+            # Do NOT move the task to "In Review"; leave it in the current
+            # state so a human can see that nothing was actually published.
+            return self._no_changes_publish_result(task, prepared_task, unchanged_repositories)
         return self._complete_successful_publish(task, prepared_task, pull_requests)
 
     def comment_task_started(
@@ -461,6 +466,33 @@ class TaskPublisher(Service):
                 }
                 for repo_id, reason in failed_repositories
             ],
+        }
+
+    def _no_changes_publish_result(
+        self,
+        task: Task,
+        prepared_task: PreparedTaskContext,
+        unchanged_repositories: list[str],
+    ) -> dict[str, object]:
+        repo_list = ', '.join(unchanged_repositories) if unchanged_repositories else 'all repositories'
+        self._log_task_step(
+            task.id,
+            'agent produced no commits in %s — task left in current state',
+            repo_list,
+        )
+        self._failure_handler.handle_started_task_failure(
+            task,
+            RuntimeError(
+                f'agent produced no changes in {repo_list}; '
+                f'nothing was pushed and no pull request was created'
+            ),
+            prepared_task=prepared_task,
+        )
+        return {
+            Task.id.key: task.id,
+            StatusFields.STATUS: StatusFields.NO_CHANGES,
+            PullRequestFields.PULL_REQUESTS: [],
+            PullRequestFields.FAILED_REPOSITORIES: [],
         }
 
     def _complete_successful_publish(

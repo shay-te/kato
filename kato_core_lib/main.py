@@ -164,6 +164,7 @@ def main(cfg: DictConfig) -> int:
     _start_planning_webserver_if_enabled(app)
     _register_shutdown_hook(app)
     startup_delay_seconds, scan_interval_seconds = _task_scan_settings(cfg)
+    _warm_up_repository_inventory(app)
     _run_task_scan_loop(
         app,
         startup_delay_seconds=startup_delay_seconds,
@@ -535,11 +536,18 @@ def _register_shutdown_hook(app) -> None:
         )
 
 
+def _warm_up_repository_inventory(app) -> None:
+    service = getattr(app, 'service', None)
+    warm_up = getattr(service, 'warm_up_repository_inventory', None)
+    if callable(warm_up):
+        warm_up()
+
+
 def _task_scan_settings(cfg: DictConfig) -> tuple[float, float]:
     task_scan_cfg = cfg.kato.get('task_scan', {}) or {}
     return (
-        float(task_scan_cfg.get('startup_delay_seconds', 30.0)),
-        float(task_scan_cfg.get('scan_interval_seconds', 60.0)),
+        float(task_scan_cfg.get('startup_delay_seconds', 5.0)),
+        float(task_scan_cfg.get('scan_interval_seconds', 30.0)),
     )
 
 

@@ -22,6 +22,7 @@ class StatusFields(object):
     UPDATED = 'updated'
     READY_FOR_REVIEW = 'ready_for_review'
     PARTIAL_FAILURE = 'partial_failure'
+    NO_CHANGES = 'no_changes'
     SKIPPED = 'skipped'
     TESTING_FAILED = 'testing_failed'
 

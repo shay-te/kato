@@ -272,10 +272,11 @@ class TaskPublisherTests(unittest.TestCase):
 
     def test_publish_task_execution_all_repos_unchanged_skips_publish(self) -> None:
         # Edge case: every tagged repo was context-only (or the agent
-        # didn't make any edits). With no PR to open we treat this as
-        # the existing "no PRs" path — no review transition, no
-        # summary comment, no failure handler. The caller decides what
-        # to do (today: this returns None which the orchestrator logs).
+        # didn't make any edits). With no PR opened and no push, the
+        # task must NOT move to "In Review" — that would falsely claim
+        # success. Instead the publisher surfaces a NO_CHANGES failure
+        # so the task stays in its current state and the operator can
+        # see that nothing was actually published.
         task = build_task(description='Multi-repo task with no edits anywhere')
         prepared_task = types.SimpleNamespace(
             repositories=[
@@ -298,15 +299,11 @@ class TaskPublisherTests(unittest.TestCase):
 
         result = self.publisher.publish_task_execution(task, prepared_task, execution)
 
-        # No PRs → existing "no review summary" branch (returns None
-        # via _complete_successful_publish? Actually with no failures
-        # we still hit the success path — but with empty pull_requests
-        # the summary comment is suppressed, the move-to-review still
-        # runs, and notification fires).
-        self.assertEqual(result[StatusFields.STATUS], StatusFields.READY_FOR_REVIEW)
+        self.assertEqual(result[StatusFields.STATUS], StatusFields.NO_CHANGES)
         self.assertEqual(result[PullRequestFields.PULL_REQUESTS], [])
         self.assertEqual(result[PullRequestFields.FAILED_REPOSITORIES], [])
-        self.failure_handler.handle_started_task_failure.assert_not_called()
+        self.failure_handler.handle_started_task_failure.assert_called_once()
+        self.task_state_service.move_task_to_review.assert_not_called()
 
     def test_publish_task_execution_retries_pr_creation_on_transient_failure(self) -> None:
         # Two PR-creation calls fail before the third succeeds. With
@@ -417,8 +414,9 @@ class TaskPublisherTests(unittest.TestCase):
 
         # Exactly one call — no retries on the no-changes path.
         self.assertEqual(self.repository_service.create_pull_request.call_count, 1)
-        # Task still moves to review (no PRs but also no failures).
-        self.assertEqual(result[StatusFields.STATUS], StatusFields.READY_FOR_REVIEW)
+        # No push happened → task must NOT move to review.
+        self.assertEqual(result[StatusFields.STATUS], StatusFields.NO_CHANGES)
+        self.task_state_service.move_task_to_review.assert_not_called()
 
     def test_publish_task_execution_retries_move_to_review(self) -> None:
         # PRs created cleanly, but the YouTrack/Jira state transition
