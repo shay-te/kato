@@ -100,6 +100,40 @@ class BitbucketIssuesClient(RetryingClientBase):
         )
         response.raise_for_status()
 
+    def add_tag(self, issue_id: str, label_name: str) -> None:
+        # Bitbucket Cloud issues use 'component' as the closest tag equivalent.
+        # It is single-valued — a second call overwrites the first tag.
+        normalized = normalized_text(label_name)
+        if not normalized:
+            return
+        response = self._put_with_retry(
+            f'/repositories/{self._workspace}/{self._repo_slug}/issues/{issue_id}',
+            json={'component': {'name': normalized}},
+        )
+        response.raise_for_status()
+
+    def remove_tag(self, issue_id: str, label_name: str) -> None:
+        # Only clears the component when it matches label_name — avoids
+        # wiping a different component that was set independently.
+        try:
+            response = self._get_with_retry(
+                f'/repositories/{self._workspace}/{self._repo_slug}/issues/{issue_id}',
+            )
+            response.raise_for_status()
+            component = (response.json() or {}).get('component') or {}
+            current = normalized_text(
+                component.get('name') if isinstance(component, dict) else ''
+            )
+        except Exception:
+            return
+        if current.lower() != normalized_text(label_name).lower():
+            return
+        response = self._put_with_retry(
+            f'/repositories/{self._workspace}/{self._repo_slug}/issues/{issue_id}',
+            json={'component': None},
+        )
+        response.raise_for_status()
+
     # ----- internal record builders -----
 
     def _to_record(self, payload: dict[str, Any]) -> IssueRecord:

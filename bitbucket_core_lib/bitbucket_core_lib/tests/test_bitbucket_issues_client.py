@@ -403,6 +403,100 @@ class BitbucketIssuesClientMoveStateTests(unittest.TestCase):
         self.assertIn(BitbucketIssueFields.STATE, kwargs['json'])
 
 
+class BitbucketIssuesClientAddRemoveTagTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client = BitbucketIssuesClient(
+            'https://api.bitbucket.org/2.0', 'bb-token', 'workspace', 'repo'
+        )
+
+    # ----- add_tag -----
+
+    def test_add_tag_puts_component_name(self) -> None:
+        response = mock_response()
+        with patch.object(self.client, '_put', return_value=response) as mock_put:
+            self.client.add_tag('42', 'kato:triage:investigate')
+
+        mock_put.assert_called_once_with(
+            '/repositories/workspace/repo/issues/42',
+            json={'component': {'name': 'kato:triage:investigate'}},
+        )
+
+    def test_add_tag_strips_whitespace_from_label(self) -> None:
+        response = mock_response()
+        with patch.object(self.client, '_put', return_value=response) as mock_put:
+            self.client.add_tag('1', '  my-tag  ')
+
+        _, kwargs = mock_put.call_args
+        self.assertEqual(kwargs['json']['component']['name'], 'my-tag')
+
+    def test_add_tag_skips_empty_label(self) -> None:
+        with patch.object(self.client, '_put') as mock_put:
+            self.client.add_tag('1', '')
+        mock_put.assert_not_called()
+
+    def test_add_tag_skips_whitespace_only_label(self) -> None:
+        with patch.object(self.client, '_put') as mock_put:
+            self.client.add_tag('1', '   ')
+        mock_put.assert_not_called()
+
+    def test_add_tag_propagates_http_error(self) -> None:
+        from tests.utils import mock_response as _mr
+        bad_response = _mr(status_code=400)
+        bad_response.raise_for_status.side_effect = Exception('bad request')
+        with patch.object(self.client, '_put', return_value=bad_response):
+            with self.assertRaises(Exception):
+                self.client.add_tag('1', 'some-tag')
+
+    # ----- remove_tag -----
+
+    def test_remove_tag_clears_component_when_name_matches(self) -> None:
+        get_response = mock_response(
+            json_data={'component': {'name': 'kato:triage:investigate'}}
+        )
+        put_response = mock_response()
+        with patch.object(self.client, '_get', return_value=get_response), \
+             patch.object(self.client, '_put', return_value=put_response) as mock_put:
+            self.client.remove_tag('42', 'kato:triage:investigate')
+
+        mock_put.assert_called_once_with(
+            '/repositories/workspace/repo/issues/42',
+            json={'component': None},
+        )
+
+    def test_remove_tag_is_no_op_when_component_does_not_match(self) -> None:
+        get_response = mock_response(json_data={'component': {'name': 'other-tag'}})
+        with patch.object(self.client, '_get', return_value=get_response), \
+             patch.object(self.client, '_put') as mock_put:
+            self.client.remove_tag('42', 'kato:triage:investigate')
+
+        mock_put.assert_not_called()
+
+    def test_remove_tag_is_no_op_when_component_is_null(self) -> None:
+        get_response = mock_response(json_data={'component': None})
+        with patch.object(self.client, '_get', return_value=get_response), \
+             patch.object(self.client, '_put') as mock_put:
+            self.client.remove_tag('42', 'some-tag')
+
+        mock_put.assert_not_called()
+
+    def test_remove_tag_comparison_is_case_insensitive(self) -> None:
+        get_response = mock_response(json_data={'component': {'name': 'MyTag'}})
+        put_response = mock_response()
+        with patch.object(self.client, '_get', return_value=get_response), \
+             patch.object(self.client, '_put', return_value=put_response) as mock_put:
+            self.client.remove_tag('42', 'mytag')
+
+        mock_put.assert_called_once()
+
+    def test_remove_tag_is_no_op_on_get_exception(self) -> None:
+        with patch.object(self.client, '_get', side_effect=Exception('network error')), \
+             patch.object(self.client, '_put') as mock_put:
+            # Should not raise
+            self.client.remove_tag('42', 'any-tag')
+
+        mock_put.assert_not_called()
+
+
 class BitbucketIssuesClientTagHelpersTests(unittest.TestCase):
     def test_task_tags_extracts_string_values(self) -> None:
         tags = BitbucketIssuesClient._task_tags(['repo:client', 'priority:high'])
