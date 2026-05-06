@@ -8,7 +8,7 @@ from gitlab_core_lib.gitlab_core_lib.client.gitlab_issues_client import GitLabIs
 
 
 class GitLabCoreLib(CoreLib):
-    """Compose GitLab repository and issue clients for Kato."""
+    """Compose GitLab repository and issue clients."""
 
     def __init__(self, cfg: DictConfig) -> None:
         super().__init__()
