@@ -10,7 +10,7 @@ from bitbucket_core_lib.bitbucket_core_lib.client.bitbucket_issues_client import
 
 
 class BitbucketCoreLib(CoreLib):
-    """Compose Bitbucket repository and issue clients for Kato."""
+    """Compose Bitbucket repository and issue clients."""
 
     def __init__(self, cfg: DictConfig) -> None:
         super().__init__()

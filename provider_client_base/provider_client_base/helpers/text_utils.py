@@ -23,3 +23,17 @@ def text_from_mapping(
     if not isinstance(mapping, Mapping):
         return normalized_text(default)
     return normalized_text(mapping.get(key, default))
+
+
+def dict_from_mapping(mapping: object, key: object) -> dict:
+    if not isinstance(mapping, Mapping):
+        return {}
+    value = mapping.get(key)  # type: ignore[attr-defined]
+    return value if isinstance(value, dict) else {}
+
+
+def list_from_mapping(mapping: object, key: object) -> list:
+    if not isinstance(mapping, Mapping):
+        return []
+    value = mapping.get(key)  # type: ignore[attr-defined]
+    return value if isinstance(value, list) else []

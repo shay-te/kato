@@ -6,7 +6,7 @@ from bitbucket_core_lib.bitbucket_core_lib.client.bitbucket_client import (
     BITBUCKET_PAGE_LENGTH,
     BitbucketClient,
 )
-from kato_core_lib.data_layers.data.fields import PullRequestFields, ReviewCommentFields
+from provider_client_base.provider_client_base.data.fields import PullRequestFields, ReviewCommentFields
 from tests.utils import (
     ClientTimeout,
     assert_client_headers_and_timeout,
@@ -34,6 +34,10 @@ class BitbucketClientTests(unittest.TestCase):
         )
 
         assert_client_basic_auth_and_timeout(self, client, 'bb-user', 'bb-token', 30)
+
+    def test_uses_bearer_auth_when_no_username(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+        assert_client_headers_and_timeout(self, client, 'bb-token', 30)
 
     def test_validate_connection_checks_configured_repository(self) -> None:
         client = BitbucketClient('https://bitbucket.example', 'bb-token')
@@ -269,6 +273,138 @@ class BitbucketClientTests(unittest.TestCase):
 
         self.assertEqual(comments, [])
 
+    def test_list_pull_request_comments_skips_deleted_items(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+        response = mock_response(
+            json_data={
+                'values': [
+                    {
+                        'id': 99,
+                        'deleted': True,
+                        'content': {'raw': 'Deleted comment'},
+                        'user': {'display_name': 'reviewer'},
+                    }
+                ]
+            }
+        )
+
+        with patch.object(client, '_get', return_value=response):
+            comments = client.list_pull_request_comments('workspace', 'repo', '17')
+
+        self.assertEqual(comments, [])
+
+    def test_list_pull_request_comments_skips_comment_with_resolved_parent(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+        response = mock_response(
+            json_data={
+                'values': [
+                    {
+                        'id': 101,
+                        'parent': {'id': 99, 'resolution': {'type': 'resolved'}},
+                        'content': {'raw': 'Reply on resolved thread'},
+                        'user': {'display_name': 'reviewer'},
+                    }
+                ]
+            }
+        )
+
+        with patch.object(client, '_get', return_value=response):
+            comments = client.list_pull_request_comments('workspace', 'repo', '17')
+
+        self.assertEqual(comments, [])
+
+    def test_list_pull_request_comments_captures_inline_added_line(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+        response = mock_response(
+            json_data={
+                'values': [
+                    {
+                        'id': 55,
+                        'content': {'raw': 'Wrong indentation'},
+                        'user': {'display_name': 'reviewer'},
+                        'inline': {'path': 'src/app.py', 'to': 10, 'from': None},
+                    }
+                ]
+            }
+        )
+
+        with patch.object(client, '_get', return_value=response):
+            comments = client.list_pull_request_comments('workspace', 'repo', '42')
+
+        self.assertEqual(len(comments), 1)
+        self.assertEqual(comments[0].file_path, 'src/app.py')
+        self.assertEqual(comments[0].line_number, 10)
+        self.assertEqual(comments[0].line_type, 'added')
+
+    def test_list_pull_request_comments_captures_inline_removed_line(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+        response = mock_response(
+            json_data={
+                'values': [
+                    {
+                        'id': 56,
+                        'content': {'raw': 'Old code'},
+                        'user': {'display_name': 'reviewer'},
+                        'inline': {'path': 'src/app.py', 'from': 5, 'to': None},
+                    }
+                ]
+            }
+        )
+
+        with patch.object(client, '_get', return_value=response):
+            comments = client.list_pull_request_comments('workspace', 'repo', '42')
+
+        self.assertEqual(comments[0].line_number, 5)
+        self.assertEqual(comments[0].line_type, 'removed')
+
+    def test_list_pull_request_comments_captures_commit_sha(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+        response = mock_response(
+            json_data={
+                'values': [
+                    {
+                        'id': 57,
+                        'content': {'raw': 'Fix this'},
+                        'user': {'display_name': 'reviewer'},
+                        'commit': {'hash': 'abc123'},
+                    }
+                ]
+            }
+        )
+
+        with patch.object(client, '_get', return_value=response):
+            comments = client.list_pull_request_comments('workspace', 'repo', '42')
+
+        self.assertEqual(comments[0].commit_sha, 'abc123')
+
+    def test_list_pull_request_comments_uses_nickname_when_display_name_absent(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+        response = mock_response(
+            json_data={
+                'values': [
+                    {
+                        'id': 58,
+                        'content': {'raw': 'Add tests'},
+                        'user': {'nickname': 'jdoe'},
+                    }
+                ]
+            }
+        )
+
+        with patch.object(client, '_get', return_value=response):
+            comments = client.list_pull_request_comments('workspace', 'repo', '42')
+
+        self.assertEqual(comments[0].author, 'jdoe')
+
+    def test_list_pull_request_comments_empty_values_returns_empty(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+        response = mock_response(json_data={'values': []})
+
+        with patch.object(client, '_get', return_value=response):
+            comments = client.list_pull_request_comments('workspace', 'repo', '17')
+
+        self.assertEqual(comments, [])
+
     def test_find_pull_requests_filters_open_pull_requests_by_branch_and_title_prefix(self) -> None:
         client = BitbucketClient('https://bitbucket.example', 'bb-token')
         response = mock_response(
@@ -313,6 +449,68 @@ class BitbucketClientTests(unittest.TestCase):
             params={'pagelen': BITBUCKET_PAGE_LENGTH},
         )
 
+    def test_find_pull_requests_returns_all_when_no_filters(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+        response = mock_response(
+            json_data={
+                'values': [
+                    {
+                        'id': 1,
+                        PullRequestFields.TITLE: 'A',
+                        'links': {'html': {'href': 'https://x/1'}},
+                        'source': {'branch': {'name': 'branch-a'}},
+                    },
+                    {
+                        'id': 2,
+                        PullRequestFields.TITLE: 'B',
+                        'links': {'html': {'href': 'https://x/2'}},
+                        'source': {'branch': {'name': 'branch-b'}},
+                    },
+                ]
+            }
+        )
+
+        with patch.object(client, '_get', return_value=response):
+            prs = client.find_pull_requests('workspace', 'repo')
+
+        self.assertEqual(len(prs), 2)
+
+    def test_find_pull_requests_skips_non_dict_items(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+        response = mock_response(json_data={'values': ['not-a-dict', None]})
+
+        with patch.object(client, '_get', return_value=response):
+            prs = client.find_pull_requests('workspace', 'repo')
+
+        self.assertEqual(prs, [])
+
+    def test_find_pull_requests_filter_by_source_branch_only(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+        response = mock_response(
+            json_data={
+                'values': [
+                    {
+                        'id': 1,
+                        PullRequestFields.TITLE: 'Any title',
+                        'links': {'html': {'href': ''}},
+                        'source': {'branch': {'name': 'feat-1'}},
+                    },
+                    {
+                        'id': 2,
+                        PullRequestFields.TITLE: 'Other title',
+                        'links': {'html': {'href': ''}},
+                        'source': {'branch': {'name': 'feat-2'}},
+                    },
+                ]
+            }
+        )
+
+        with patch.object(client, '_get', return_value=response):
+            prs = client.find_pull_requests('workspace', 'repo', source_branch='feat-1')
+
+        self.assertEqual(len(prs), 1)
+        self.assertEqual(prs[0][PullRequestFields.ID], '1')
+
     def test_resolve_review_comment_posts_to_resolution_endpoint(self) -> None:
         client = BitbucketClient('https://bitbucket.example', 'bb-token')
         response = mock_response()
@@ -329,6 +527,26 @@ class BitbucketClientTests(unittest.TestCase):
         mock_post.assert_called_once_with(
             '/repositories/workspace/repo/pullrequests/17/comments/99/resolve',
         )
+
+    def test_resolve_review_comment_falls_back_to_comment_id(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+        response = mock_response()
+        # No RESOLUTION_TARGET_ID set, so it falls back to comment_id
+        comment = build_review_comment(comment_id='42')
+
+        with patch.object(client, '_post', return_value=response) as mock_post:
+            client.resolve_review_comment('workspace', 'repo', comment)
+
+        mock_post.assert_called_once_with(
+            '/repositories/workspace/repo/pullrequests/17/comments/42/resolve',
+        )
+
+    def test_resolve_review_comment_raises_when_no_id_available(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+        comment = build_review_comment(comment_id='', pull_request_id='17')
+
+        with self.assertRaisesRegex(ValueError, 'bitbucket review comment id is required'):
+            client.resolve_review_comment('workspace', 'repo', comment)
 
     def test_reply_to_review_comment_posts_thread_reply(self) -> None:
         client = BitbucketClient('https://bitbucket.example', 'bb-token')
@@ -355,6 +573,24 @@ class BitbucketClientTests(unittest.TestCase):
                 'parent': {'id': 99},
             },
         )
+
+    def test_reply_to_review_comment_raises_when_no_id(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+        response = mock_response()
+        response.ok = True
+        comment = build_review_comment(comment_id='', pull_request_id='17')
+
+        with self.assertRaisesRegex(ValueError, 'bitbucket review comment id is required'):
+            client.reply_to_review_comment('workspace', 'repo', comment, 'reply')
+
+    def test_reply_to_review_comment_raises_on_non_integer_id(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+        response = mock_response()
+        response.ok = True
+        comment = build_review_comment(resolution_target_id='not-a-number')
+
+        with self.assertRaisesRegex(ValueError, 'invalid bitbucket review comment id'):
+            client.reply_to_review_comment('workspace', 'repo', comment, 'reply')
 
     def test_reply_to_review_comment_raises_with_response_body_on_non_ok(self) -> None:
         client = BitbucketClient('https://bitbucket.example', 'bb-token')
