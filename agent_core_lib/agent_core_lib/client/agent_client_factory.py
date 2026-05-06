@@ -1,8 +1,6 @@
 """Build the configured agent backend.
 
-Same shape as ``task_core_lib.client.task_client_factory`` and
-``repository_core_lib.client.pull_request_client_factory``: takes
-config + an ``AgentPlatform`` selector, returns something that
+Takes config + an ``AgentPlatform`` selector, returns something that
 satisfies ``agent_provider_contracts.AgentProvider``.
 
 The factory keeps the runtime knobs (``docker_mode_on``,
@@ -23,7 +21,7 @@ from agent_provider_contracts.agent_provider_contracts.agent_provider import (
 from agent_core_lib.agent_core_lib.platform import AgentPlatform
 
 
-# Aliases the operator can write in ``KATO_AGENT_BACKEND`` that
+# Aliases the operator can write in the agent_backend config field that
 # resolve to canonical platforms. Centralised here so a future
 # alias rename lands in one place rather than scattered string
 # checks across the codebase.
@@ -41,7 +39,7 @@ _PLATFORM_ALIASES: dict[str, AgentPlatform] = {
 
 
 def resolve_platform(name: str) -> AgentPlatform:
-    """Map an operator-typed string (``KATO_AGENT_BACKEND``) to an enum."""
+    """Map an operator-supplied agent backend name to an ``AgentPlatform`` enum."""
     key = (name or '').strip().lower()
     if key not in _PLATFORM_ALIASES:
         raise ValueError(
@@ -89,7 +87,7 @@ class AgentClientFactory(object):
         claude_cfg = getattr(open_cfg, 'claude', None)
         if claude_cfg is None:
             raise RuntimeError(
-                'KATO_AGENT_BACKEND=claude requires the kato.claude config block; '
+                'agent_backend=claude requires a claude configuration block; '
                 'rebuild the configuration template'
             )
         repository_root_path = str(getattr(open_cfg, 'repository_root_path', '') or '').strip()

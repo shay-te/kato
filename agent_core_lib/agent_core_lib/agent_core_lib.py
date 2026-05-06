@@ -1,8 +1,6 @@
 """Composition root for the agent backend.
 
-Mirrors ``task_core_lib.task_core_lib.TaskCoreLib`` and
-``repository_core_lib.repository_core_lib.RepositoryCoreLib``:
-single ``CoreLib`` subclass that exposes the chosen backend
+Single ``CoreLib`` subclass that exposes the chosen backend
 behind one attribute (``self.agent``) typed as the shared
 ``AgentProvider`` Protocol.
 """
@@ -23,7 +21,7 @@ from agent_core_lib.agent_core_lib.platform import AgentPlatform
 
 
 class AgentCoreLib(CoreLib):
-    """Compose the agent backend kato (or any orchestrator) talks to."""
+    """Compose the configured agent backend."""
 
     def __init__(
         self,
