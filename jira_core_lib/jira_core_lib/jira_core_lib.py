@@ -7,7 +7,7 @@ from jira_core_lib.jira_core_lib.client.jira_client import JiraClient
 
 
 class JiraCoreLib(CoreLib):
-    """Compose the Jira ticket client for Kato."""
+    """Compose the Jira ticket client."""
 
     def __init__(self, cfg: DictConfig) -> None:
         super().__init__()
