@@ -23,7 +23,7 @@ from dataclasses import dataclass
 
 from kato_core_lib.data_layers.data.fields import TaskTags
 from kato_core_lib.data_layers.data.task import Task
-from kato_core_lib.data_layers.service.workspace_manager import (
+from kato_core_lib.data_layers.service.workspace_provisioning_service import (
     provision_task_workspace_clones,
 )
 from kato_core_lib.helpers import agent_prompt_utils

@@ -736,9 +736,9 @@ class ReviewCommentService(Service):
         if self._workspace_manager is None:
             return repository
         try:
-            from kato_core_lib.data_layers.service.workspace_manager import (
-                provision_task_workspace_clones,
-            )
+            from kato_core_lib.data_layers.service.workspace_provisioning_service import (
+            provision_task_workspace_clones,
+        )
 
             task = self._task_for_workspace_clone(review_context, repository)
             try:

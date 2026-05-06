@@ -178,7 +178,16 @@ class ClaudeSessionManager(object):
             return
         with self._lock:
             for workspace in workspace_records:
-                session_id = str(getattr(workspace, 'claude_session_id', '') or '').strip()
+                # ``agent_session_id`` is workspace_core_lib's generic name
+                # for the bound agent session id. Older deployments may
+                # still surface the legacy ``claude_session_id`` attribute
+                # on workspace records that haven't been rewritten yet —
+                # accept either.
+                session_id = str(
+                    getattr(workspace, 'agent_session_id', '')
+                    or getattr(workspace, 'claude_session_id', '')
+                    or ''
+                ).strip()
                 if not session_id:
                     continue
                 existing = self._records.get(workspace.task_id)
@@ -666,9 +675,9 @@ class ClaudeSessionManager(object):
         if not record.claude_session_id and not record.cwd:
             return
         try:
-            self._workspace_manager.update_claude_session(
+            self._workspace_manager.update_agent_session(
                 record.task_id,
-                claude_session_id=record.claude_session_id,
+                agent_session_id=record.claude_session_id,
                 cwd=record.cwd,
             )
         except Exception:

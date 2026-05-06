@@ -1493,7 +1493,7 @@ class AgentService(Service):
             )
         # Provision clones via the same workspace_provisioner the
         # autonomous flow uses.
-        from kato_core_lib.data_layers.service.workspace_manager import (
+        from kato_core_lib.data_layers.service.workspace_provisioning_service import (
             provision_task_workspace_clones,
         )
         try:
@@ -1752,7 +1752,7 @@ class AgentService(Service):
         # repo idempotently — passing the FULL task set lets it both
         # update the metadata and skip the already-cloned ones with
         # the existing dedupe in ``WorkspaceManager.create``.
-        from kato_core_lib.data_layers.service.workspace_manager import (
+        from kato_core_lib.data_layers.service.workspace_provisioning_service import (
             provision_task_workspace_clones,
         )
         added: list[str] = []

@@ -32,6 +32,7 @@ TEST_ROOTS = [
     'security_scanner_core_lib/security_scanner_core_lib/tests',
     'openrouter_core_lib/openrouter_core_lib/tests',
     'provider_client_base/provider_client_base/tests',
+    'workspace_core_lib/workspace_core_lib/tests',
 ]
 
 

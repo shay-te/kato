@@ -1530,8 +1530,17 @@ def _resolve_claude_session_id(manager, workspace_manager, task_id: str) -> str:
             workspace = workspace_manager.get(task_id)
         except Exception:
             workspace = None
-        if workspace is not None and getattr(workspace, 'claude_session_id', ''):
-            return str(workspace.claude_session_id)
+        if workspace is not None:
+            # Generic ``agent_session_id`` is the new name in
+            # workspace_core_lib; legacy on-disk records that haven't
+            # been rewritten yet still expose ``claude_session_id``.
+            agent_id = (
+                getattr(workspace, 'agent_session_id', '')
+                or getattr(workspace, 'claude_session_id', '')
+                or ''
+            )
+            if agent_id:
+                return str(agent_id)
     return ''
 
 

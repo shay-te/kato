@@ -160,25 +160,25 @@ class WorkspaceRecoveryService(object):
             )
             return None
         first_repo_dir = orphan_dir / repository_dirs[0]
-        claude_session_id = find_session_id_for_cwd(str(first_repo_dir))
+        agent_session_id = find_session_id_for_cwd(str(first_repo_dir))
         record = self._workspace_manager.create(
             task_id=task_id,
             task_summary=normalized_text(getattr(task, 'summary', '')),
             repository_ids=repository_ids,
         )
         self._workspace_manager.update_status(task_id, WORKSPACE_STATUS_ACTIVE)
-        self._workspace_manager.update_claude_session(
+        self._workspace_manager.update_agent_session(
             task_id,
-            claude_session_id=claude_session_id,
+            agent_session_id=agent_session_id,
             cwd=str(first_repo_dir),
         )
         self.logger.info(
             'recovered orphan workspace for task %s (%d repo%s, '
-            'claude_session_id=%s)',
+            'agent_session_id=%s)',
             task_id,
             len(repository_ids),
             '' if len(repository_ids) == 1 else 's',
-            claude_session_id or '<none>',
+            agent_session_id or '<none>',
         )
         return record
 
