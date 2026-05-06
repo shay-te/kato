@@ -117,19 +117,15 @@ class StartupDependencyValidatorTests(unittest.TestCase):
     def test_validate_raises_when_repository_validation_fails(self) -> None:
         self.repository_connections_validator.validate.side_effect = RuntimeError('repo down')
 
-        with self.assertRaisesRegex(RuntimeError, 'repo down') as exc_context:
+        with self.assertRaisesRegex(RuntimeError, 'repo down'):
             self.validator.validate(self.logger)
 
         self.repository_connections_validator.validate.assert_called_once_with()
-        self.task_service.validate_connection.assert_not_called()
-        self.implementation_service.validate_connection.assert_not_called()
-        self.testing_service.validate_connection.assert_not_called()
-        self.logger.error.assert_called_once()
-        self.assertEqual(self.logger.error.call_args.args[0], 'failed to validate repositories connection: %s')
-        self.assertIsInstance(self.logger.error.call_args.args[1], RuntimeError)
-        self.assertEqual(str(self.logger.error.call_args.args[1]), 'repo down')
-        self.assertIsInstance(exc_context.exception.__cause__, RuntimeError)
-        self.assertEqual(str(exc_context.exception.__cause__), 'repo down')
+        # All validations run in parallel — task/impl/testing still execute even
+        # when repos fail.  Repo errors are surfaced first in the raised message.
+        self.task_service.validate_connection.assert_called_once_with()
+        self.implementation_service.validate_connection.assert_called_once_with()
+        self.testing_service.validate_connection.assert_called_once_with()
 
     def test_validate_logs_progress_without_inline_spinner(self) -> None:
         self.validator.validate(self.logger)

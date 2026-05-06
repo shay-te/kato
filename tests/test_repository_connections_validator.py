@@ -45,8 +45,8 @@ class RepositoryConnectionsValidatorTests(unittest.TestCase):
         service._ensure_repositories.assert_called_once_with()
         service._validate_git_executable.assert_called_once_with()
         service._prepare_repository_access.assert_has_calls(
-            [unittest.mock.call('repo-1'), unittest.mock.call('repo-2')]
+            [unittest.mock.call('repo-1'), unittest.mock.call('repo-2')], any_order=True,
         )
         service._validate_repository_git_access.assert_has_calls(
-            [unittest.mock.call('repo-1'), unittest.mock.call('repo-2')]
+            [unittest.mock.call('repo-1'), unittest.mock.call('repo-2')], any_order=True,
         )

@@ -497,7 +497,7 @@ class RepositoryInventoryService(Service):
         try:
             self._run_git(
                 local_path,
-                ['ls-remote', '--heads', 'origin'],
+                ['ls-remote', 'origin', 'HEAD'],
                 f'failed to validate git access for repository at {local_path}',
                 repository,
             )

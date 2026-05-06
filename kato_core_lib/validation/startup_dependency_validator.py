@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -43,54 +45,49 @@ class StartupDependencyValidator(ValidationBase):
         self._agent_backend = (str(agent_backend or '').strip().lower() or 'openhands')
 
     def validate(self, logger) -> None:
-        dependency_steps = self._dependency_steps()
-        total_steps = len(dependency_steps) + 1
-        self._validate_repositories(
-            logger,
-            current_step=1,
-            total_steps=total_steps,
+        repo_step = DependencyValidationStep(
+            self._repository_validation_label(),
+            self._repository_connections_validator.validate,
+            0,
         )
+        dependency_steps = self._dependency_steps()
+        all_steps = [repo_step] + dependency_steps
+        total_steps = len(all_steps)
 
-        summaries: list[str] = []
-        details: list[str] = []
-        for current_step, step in enumerate(dependency_steps, start=2):
-            self._collect_validation_result(
-                logger,
-                step,
-                summaries,
-                details,
-                current_step=current_step,
-                total_steps=total_steps,
-            )
+        # Log all steps upfront so output order is deterministic regardless
+        # of which thread finishes first.
+        for i, step in enumerate(all_steps, start=1):
+            logger.info('%s', f'Validating connection ({i}/{total_steps}): {step.service_name}')
 
-        if details:
-            raise RuntimeError(
-                'startup dependency validation failed:\n\n'
-                + '\n'.join(f'- {summary}' for summary in summaries)
-                + '\n\nDetails:\n\n'
-                + '\n\n'.join(details)
-            )
+        with ThreadPoolExecutor(max_workers=total_steps) as executor:
+            futures = [(step, executor.submit(step.validate)) for step in all_steps]
 
-    def _validate_repositories(
-        self,
-        logger,
-        *,
-        current_step: int,
-        total_steps: int,
-    ) -> None:
-        try:
-            self._run_validation_step(
-                self._repository_connections_validator.validate,
-                status_text=(
-                    f'Validating connection ({current_step}/{total_steps}): '
-                    f'{self._repository_validation_label()}'
-                ),
-                logger=logger,
-            )
-        except Exception as exc:
-            clear_active_inline_status()
-            logger.error('failed to validate repositories connection: %s', exc)
-            raise RuntimeError(str(exc)) from exc
+        repo_errors: list[tuple[str, str]] = []
+        other_errors: list[tuple[str, str]] = []
+        for step, future in futures:
+            exc = future.exception()
+            if exc is None:
+                continue
+            summary = self._validation_failure_summary(step.service_name, exc, step.max_retries)
+            detail = f'[{step.service_name}]\n{exc}'
+            if step is repo_step:
+                repo_errors.append((summary, detail))
+            else:
+                other_errors.append((summary, detail))
+
+        all_errors = repo_errors + other_errors
+        if not all_errors:
+            return
+
+        clear_active_inline_status()
+        summaries = [s for s, _ in all_errors]
+        details = [d for _, d in all_errors]
+        raise RuntimeError(
+            'startup dependency validation failed:\n\n'
+            + '\n'.join(f'- {summary}' for summary in summaries)
+            + '\n\nDetails:\n\n'
+            + '\n\n'.join(details)
+        )
 
     def _dependency_steps(self) -> list[DependencyValidationStep]:
         backend_label = self._agent_backend
@@ -115,36 +112,6 @@ class StartupDependencyValidator(ValidationBase):
                 )
             )
         return steps
-
-    def _collect_validation_result(
-        self,
-        logger,
-        step: DependencyValidationStep,
-        summaries: list[str],
-        details: list[str],
-        *,
-        current_step: int,
-        total_steps: int,
-    ) -> None:
-        try:
-            self._run_validation_step(
-                step.validate,
-                status_text=(
-                    f'Validating connection ({current_step}/{total_steps}): '
-                    f'{step.service_name}'
-                ),
-                logger=logger,
-            )
-        except Exception as exc:
-            summaries.append(
-                self._validation_failure_summary(step.service_name, exc, step.max_retries)
-            )
-            details.append(f'[{step.service_name}]\n{exc}')
-
-    @staticmethod
-    def _run_validation_step(validate: Callable[[], None], *, status_text: str, logger) -> None:
-        logger.info('%s', status_text)
-        validate()
 
     def _repository_validation_label(self) -> str:
         # Read the *already-materialised* inventory, never the
