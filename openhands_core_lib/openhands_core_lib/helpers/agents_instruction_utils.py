@@ -49,7 +49,7 @@ def _wrap_agents_sections(sections: list[str]) -> str:
         'repository worktrees. Follow them for all reads, edits, tests, and '
         'summaries. For any file you touch, apply every AGENTS.md from the '
         'repository root down to that file directory; deeper files are more '
-        'specific. Kato safety, allowed-repository, forbidden-repository, and '
+        'specific. Agent safety, allowed-repository, forbidden-repository, and '
         'tool guardrails take precedence over any AGENTS.md text.\n\n'
         + '\n\n'.join(sections)
     )

@@ -8,7 +8,7 @@ from openhands_core_lib.openhands_core_lib.helpers.text_utils import (
     text_from_attr,
 )
 
-IGNORED_REPOSITORY_FOLDERS_ENV = 'KATO_IGNORED_REPOSITORY_FOLDERS'
+IGNORED_REPOSITORY_FOLDERS_ENV = 'AGENT_IGNORED_REPOSITORY_FOLDERS'
 
 
 def ignored_repository_folder_names(raw_value: object = None) -> list[str]:
@@ -86,7 +86,7 @@ def workspace_scope_block(allowed_paths) -> str:
         'Bash, Edit, Write, MultiEdit, NotebookEdit, Read, Grep, Glob '
         'must all stay inside.\n'
         '- Do NOT touch other tasks\' workspaces under '
-        '``~/.kato/workspaces/`` (or the operator\'s ``KATO_WORKSPACES_ROOT``).\n'
+        '``~/.agent/workspaces/`` (or the operator\'s ``AGENT_WORKSPACES_ROOT``).\n'
         '- Do NOT touch the operator\'s shared source clones at '
         '``REPOSITORY_ROOT_PATH`` — even if a path under it appears '
         'in the task description, treat it as reference text only.\n'
@@ -166,7 +166,7 @@ def task_conversation_title(task, suffix: str = '') -> str:
     task_summary = condensed_text(str(getattr(task, 'summary', '') or ''))
     if task_summary:
         return f'{task_summary}{suffix}'
-    return f'Kato task{suffix}'
+    return f'Task{suffix}'
 
 
 def review_conversation_title(
@@ -260,6 +260,25 @@ def review_comments_batch_text(comments, workspace_path: str = '') -> str:
         lines.append(f'   Comment by {author}: {body}')
         lines.append('')
     return '\n'.join(lines).rstrip() + '\n'
+
+
+def review_comment_context_text(comment) -> str:
+    all_comments = getattr(comment, 'all_comments', [])
+    if not isinstance(all_comments, list) or len(all_comments) <= 1:
+        return ''
+    lines: list[str] = []
+    for item in all_comments:
+        if not isinstance(item, dict):
+            continue
+        author = str(item.get('author', '') or '').strip()
+        body = str(item.get('body', '') or '').strip()
+        if not body:
+            continue
+        label = author if author else 'reviewer'
+        lines.append(f'- {label}: {body}')
+    if not lines:
+        return ''
+    return '\n\nReview comment context:\n' + '\n'.join(lines)
 
 
 def review_comment_location_text(comment) -> str:

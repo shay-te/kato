@@ -3,10 +3,9 @@ from __future__ import annotations
 import os
 import json
 import time
-from typing import Any
+from typing import Any, Callable
 from uuid import UUID
 
-from openrouter_core_lib.openrouter_core_lib import OpenRouterClient
 from provider_client_base.provider_client_base.data.review_comment import ReviewComment
 from provider_client_base.provider_client_base.helpers.retry_utils import run_with_retry
 from provider_client_base.provider_client_base.retrying_client_base import RetryingClientBase
@@ -25,12 +24,12 @@ from openhands_core_lib.openhands_core_lib.helpers.text_utils import (
 logger = configure_logger(__name__)
 
 
-class KatoClient(RetryingClientBase):
+class OpenHandsClient(RetryingClientBase):
     _APP_CONVERSATIONS_PATH = '/api/v1/app-conversations'
     _SETTINGS_PATH = '/api/settings'
     _START_TASKS_PATH = '/api/v1/app-conversations/start-tasks'
     _EVENTS_PATH_TEMPLATE = '/api/v1/conversation/{conversation_id}/events/search'
-    _MODEL_SMOKE_TEST_TITLE = 'Kato model validation'
+    _MODEL_SMOKE_TEST_TITLE = 'Model validation'
     _MODEL_SMOKE_TEST_PROMPT = (
         'Reply with exactly hi and use the finish tool immediately. '
         'Do not inspect files or run shell commands.'
@@ -77,6 +76,8 @@ class KatoClient(RetryingClientBase):
         poll_interval_seconds: float = _DEFAULT_POLL_INTERVAL_SECONDS,
         max_poll_attempts: int = _DEFAULT_MAX_POLL_ATTEMPTS,
         model_smoke_test_enabled: bool = False,
+        *,
+        openrouter_validator: Callable[[str, str, str, int], None] | None = None,
     ) -> None:
         super().__init__(base_url, api_key, timeout=300, max_retries=max_retries)
         self._session_api_key = api_key
@@ -85,6 +86,7 @@ class KatoClient(RetryingClientBase):
         self._max_poll_attempts = max(1, int(max_poll_attempts or 0))
         self._model_smoke_test_enabled = bool(model_smoke_test_enabled)
         self._model_access_smoke_test_ran = False
+        self._openrouter_validator = openrouter_validator
 
     def validate_connection(self) -> None:
         response = self._get_with_retry(f'{self._APP_CONVERSATIONS_PATH}/count')
@@ -107,7 +109,7 @@ class KatoClient(RetryingClientBase):
         prepared_task: Any | None = None,
     ) -> dict[str, str | bool]:
         self.logger.info('requesting implementation for task %s', task.id)
-        # Task work always starts in a fresh Kato conversation so each
+        # Task work always starts in a fresh conversation so each
         # task gets its own thread and pull request history.
         result = self._run_prompt_result(
             prompt=self._build_implementation_prompt(task, prepared_task),
@@ -608,7 +610,7 @@ class KatoClient(RetryingClientBase):
         if not llm_model:
             return
 
-        self.logger.info('running Kato model access validation')
+        self.logger.info('running model access validation')
         result = self._run_prompt_result(
             prompt=self._MODEL_SMOKE_TEST_PROMPT,
             title=self._MODEL_SMOKE_TEST_TITLE,
@@ -617,16 +619,17 @@ class KatoClient(RetryingClientBase):
             summary = condensed_text(text_from_mapping(result, 'summary'))
             detail = f': {summary}' if summary else ''
             raise RuntimeError(
-                f'Kato model validation returned a failure result{detail}'
+                f'Model validation returned a failure result{detail}'
             )
 
     def _validate_openrouter_connection(self, llm_model: str) -> None:
+        if self._openrouter_validator is None:
+            return
         api_key = self._openrouter_api_key()
         if not api_key:
             raise RuntimeError('OpenRouter model validation requires LLM_API_KEY')
         base_url = text_from_mapping(self._llm_settings, 'llm_base_url')
-        client = OpenRouterClient(base_url, api_key, self.max_retries)
-        client.validate_model_available(llm_model)
+        self._openrouter_validator(llm_model, base_url, api_key, self.max_retries)
 
     @staticmethod
     def _openrouter_api_key() -> str:
@@ -694,7 +697,7 @@ class KatoClient(RetryingClientBase):
     def _wait_for_started_conversation_id(self, start_task: dict) -> str:
         start_task_id = text_from_mapping(start_task, 'id')
         if not start_task_id:
-            raise ValueError('kato start task response did not include an id')
+            raise ValueError('openhands start task response did not include an id')
 
         for attempt in range(self._max_poll_attempts):
             task_info = self._get_start_task(start_task_id)
@@ -703,16 +706,16 @@ class KatoClient(RetryingClientBase):
                 conversation_id = text_from_mapping(task_info, 'app_conversation_id')
                 if conversation_id:
                     return conversation_id
-                raise ValueError('kato start task became ready without a conversation id')
+                raise ValueError('openhands start task became ready without a conversation id')
             if status == self._START_TASK_ERROR:
                 detail = text_from_mapping(task_info, 'detail')
                 if self._is_retryable_start_task_error(detail):
-                    raise TimeoutError(detail or 'kato failed to start a conversation')
-                raise RuntimeError(detail or 'kato failed to start a conversation')
+                    raise TimeoutError(detail or 'openhands failed to start a conversation')
+                raise RuntimeError(detail or 'openhands failed to start a conversation')
             self._sleep_before_next_poll(attempt)
 
         raise TimeoutError(
-            f'kato did not start a conversation after {self._max_poll_attempts} polls'
+            f'openhands did not start a conversation after {self._max_poll_attempts} polls'
         )
 
     @classmethod
@@ -734,7 +737,7 @@ class KatoClient(RetryingClientBase):
         tasks = self._normalized_items_payload(response)
         if tasks:
             return tasks[0]
-        raise ValueError(f'kato start task not found: {start_task_id}')
+        raise ValueError(f'openhands start task not found: {start_task_id}')
 
     def _wait_for_conversation_result(
         self,
@@ -767,7 +770,7 @@ class KatoClient(RetryingClientBase):
             self._sleep_before_next_poll(attempt)
 
         raise TimeoutError(
-            f'kato conversation {conversation_id} did not finish after {self._max_poll_attempts} polls'
+            f'openhands conversation {conversation_id} did not finish after {self._max_poll_attempts} polls'
         )
 
     def _conversation_failure_message(
@@ -777,11 +780,11 @@ class KatoClient(RetryingClientBase):
         conversation: dict,
     ) -> str:
         detail = self._conversation_failure_detail(conversation_id, conversation)
-        message = f'kato conversation failed with status: {execution_status}'
+        message = f'openhands conversation failed with status: {execution_status}'
         if detail:
             message = f'{message}: {detail}'
         self.logger.error(
-            'kato conversation %s failed with status %s%s',
+            'openhands conversation %s failed with status %s%s',
             conversation_id,
             execution_status,
             f': {detail}' if detail else '',
@@ -804,7 +807,7 @@ class KatoClient(RetryingClientBase):
             events = self._get_conversation_events(conversation_id)
         except Exception as exc:
             self.logger.warning(
-                'kato conversation %s failed, but failure events could not be loaded: %s',
+                'openhands conversation %s failed, but failure events could not be loaded: %s',
                 conversation_id,
                 exc,
             )
@@ -831,7 +834,7 @@ class KatoClient(RetryingClientBase):
             summaries.append(highlight)
         if not summaries:
             return ''
-        return f'recent Kato activity: {"; ".join(summaries)}'
+        return f'recent agent activity: {"; ".join(summaries)}'
 
     def _event_failure_detail(self, event: object) -> str:
         if not isinstance(event, dict):
@@ -866,7 +869,7 @@ class KatoClient(RetryingClientBase):
         conversations = self._normalized_items_payload(response)
         if conversations:
             return conversations[0]
-        raise ValueError(f'kato conversation not found: {conversation_id}')
+        raise ValueError(f'openhands conversation not found: {conversation_id}')
 
     def _get_result_payload(
         self,
@@ -882,7 +885,7 @@ class KatoClient(RetryingClientBase):
                     return parsed_result
         fallback_summary = condensed_text(conversation_title) or conversation_id
         self.logger.warning(
-            'kato conversation %s finished without a parseable result; '
+            'openhands conversation %s finished without a parseable result; '
             'falling back to title %s',
             conversation_id,
             fallback_summary,
@@ -902,7 +905,7 @@ class KatoClient(RetryingClientBase):
         payload = self._normalized_payload(response)
         events = payload.get('items', [])
         if not isinstance(events, list):
-            raise ValueError('kato events response did not include items')
+            raise ValueError('openhands events response did not include items')
         return events
 
     def _log_conversation_highlights(
@@ -915,7 +918,7 @@ class KatoClient(RetryingClientBase):
             events = self._get_conversation_events(conversation_id)
         except Exception as exc:
             self.logger.warning(
-                'Mission %s: live Kato highlights unavailable; continuing without them: %s',
+                'Mission %s: live highlights unavailable; continuing without them: %s',
                 conversation_title or conversation_id,
                 exc,
             )
@@ -935,7 +938,7 @@ class KatoClient(RetryingClientBase):
                 continue
             seen_highlights.update({event_key, highlight_key})
             self.logger.info(
-                'Mission %s: Kato %s',
+                'Mission %s: Agent %s',
                 conversation_title or conversation_id,
                 highlight,
             )
@@ -1063,10 +1066,10 @@ class KatoClient(RetryingClientBase):
 
     @staticmethod
     def _finish_action_payload(event: object) -> dict[str, str | bool] | None:
-        if not KatoClient._is_finish_action_event(event):
+        if not OpenHandsClient._is_finish_action_event(event):
             return None
-        parsed_arguments = KatoClient._finish_action_arguments(event)
-        summary, message = KatoClient._finish_action_summary(
+        parsed_arguments = OpenHandsClient._finish_action_arguments(event)
+        summary, message = OpenHandsClient._finish_action_summary(
             event,
             parsed_arguments,
         )

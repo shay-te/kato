@@ -57,13 +57,30 @@ from __future__ import annotations
 import os
 import sys
 
-try:
-    # Use ``prompt_yes_no`` (not ``input_yes_no``) — it loops on
-    # invalid input instead of silently defaulting, which matters for
-    # a security prompt: a fat-fingered Enter must not accept "yes".
-    from core_lib.helpers.command_line import prompt_yes_no as _core_prompt_yes_no
-except (ImportError, ModuleNotFoundError):  # pragma: no cover - core-lib is required
-    _core_prompt_yes_no = None
+def _default_yes_no_prompter(question: str, default: bool = False) -> bool:
+    """Inline yes/no prompter — loops until a clear y/n is given.
+
+    Security property: a stray Enter does NOT select the default,
+    because the default is never assumed — only an explicit y/yes or
+    n/no is accepted.  This matches the behaviour of
+    ``core_lib.helpers.command_line.prompt_yes_no`` that was here
+    previously, without any cross-lib dependency.
+    """
+    suffix = ' [y/n] '
+    while True:
+        try:
+            answer = input(question + suffix).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return False
+        if answer in ('y', 'yes'):
+            return True
+        if answer in ('n', 'no'):
+            return False
+        # Invalid input — loop silently. A fat-fingered Enter must
+        # not be treated as confirmation of a security gate.
+
+
+_core_prompt_yes_no = _default_yes_no_prompter
 
 
 BYPASS_ENV_KEY = 'KATO_CLAUDE_BYPASS_PERMISSIONS'
@@ -339,11 +356,6 @@ def validate_bypass_permissions(
         )
 
     prompter = yes_no_prompter if yes_no_prompter is not None else _core_prompt_yes_no
-    if prompter is None:  # pragma: no cover - core-lib is required
-        raise BypassPermissionsRefused(
-            'core-lib prompt_yes_no helper is unavailable; cannot prompt '
-            f'for confirmation. Unset {BYPASS_ENV_KEY} to start kato.'
-        )
 
     # Two-step confirmation. Both must be yes; either no -> refuse.
     # ``prompt_yes_no`` loops on invalid input until y/n is given, so

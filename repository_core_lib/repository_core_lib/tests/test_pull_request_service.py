@@ -7,54 +7,34 @@ from repository_core_lib.repository_core_lib.pull_request_service import PullReq
 from repository_core_lib.repository_core_lib.platform import Platform
 
 
-class PullRequestServiceTests(unittest.TestCase):
-    def test_validate_connection_routes_github_client(self) -> None:
-        service, factory, client = self._service_with_client()
+class PullRequestServiceAttributeTests(unittest.TestCase):
+    def test_provider_name_is_repository(self):
+        self.assertEqual(PullRequestService.provider_name, 'repository')
 
-        service.validate_connection(
-            Platform.GITHUB,
-            repo_owner='octo',
-            repo_slug='repo',
-        )
 
+class PullRequestServiceValidateConnectionTests(unittest.TestCase):
+    def test_routes_to_github_client(self):
+        service, factory, client = _service_with_client()
+        service.validate_connection(Platform.GITHUB, repo_owner='octo', repo_slug='repo')
         factory.get.assert_called_once_with(Platform.GITHUB)
-        client.validate_connection.assert_called_once_with(
-            repo_owner='octo',
-            repo_slug='repo',
-        )
+        client.validate_connection.assert_called_once_with(repo_owner='octo', repo_slug='repo')
 
-    def test_validate_connection_routes_gitlab_client(self) -> None:
-        service, factory, client = self._service_with_client()
-
-        service.validate_connection(
-            Platform.GITLAB,
-            repo_owner='group',
-            repo_slug='repo',
-        )
-
+    def test_routes_to_gitlab_client(self):
+        service, factory, client = _service_with_client()
+        service.validate_connection(Platform.GITLAB, repo_owner='group', repo_slug='repo')
         factory.get.assert_called_once_with(Platform.GITLAB)
-        client.validate_connection.assert_called_once_with(
-            repo_owner='group',
-            repo_slug='repo',
-        )
+        client.validate_connection.assert_called_once_with(repo_owner='group', repo_slug='repo')
 
-    def test_validate_connection_routes_bitbucket_client(self) -> None:
-        service, factory, client = self._service_with_client()
-
-        service.validate_connection(
-            Platform.BITBUCKET,
-            repo_owner='workspace',
-            repo_slug='repo',
-        )
-
+    def test_routes_to_bitbucket_client(self):
+        service, factory, client = _service_with_client()
+        service.validate_connection(Platform.BITBUCKET, repo_owner='workspace', repo_slug='repo')
         factory.get.assert_called_once_with(Platform.BITBUCKET)
-        client.validate_connection.assert_called_once_with(
-            repo_owner='workspace',
-            repo_slug='repo',
-        )
+        client.validate_connection.assert_called_once_with(repo_owner='workspace', repo_slug='repo')
 
-    def test_create_pull_request_routes_to_client(self) -> None:
-        service, factory, client = self._service_with_client()
+
+class PullRequestServiceCreatePullRequestTests(unittest.TestCase):
+    def test_routes_to_github_client_with_all_args(self):
+        service, factory, client = _service_with_client()
         client.create_pull_request.return_value = {'id': '17'}
 
         result = service.create_pull_request(
@@ -78,18 +58,70 @@ class PullRequestServiceTests(unittest.TestCase):
             description='Ready for review',
         )
 
-    def test_list_pull_request_comments_routes_to_client(self) -> None:
-        service, factory, client = self._service_with_client()
+    def test_default_destination_branch_is_none(self):
+        service, _, client = _service_with_client()
+        client.create_pull_request.return_value = {}
+        service.create_pull_request(
+            Platform.GITHUB,
+            title='Fix',
+            source_branch='feature/fix',
+            repo_owner='octo',
+            repo_slug='repo',
+        )
+        _, kwargs = client.create_pull_request.call_args
+        self.assertIsNone(kwargs['destination_branch'])
+
+    def test_default_description_is_empty_string(self):
+        service, _, client = _service_with_client()
+        client.create_pull_request.return_value = {}
+        service.create_pull_request(
+            Platform.GITHUB,
+            title='Fix',
+            source_branch='feature/fix',
+            repo_owner='octo',
+            repo_slug='repo',
+        )
+        _, kwargs = client.create_pull_request.call_args
+        self.assertEqual(kwargs['description'], '')
+
+    def test_routes_to_gitlab_client(self):
+        service, factory, client = _service_with_client()
+        client.create_pull_request.return_value = {'id': '5'}
+        service.create_pull_request(
+            Platform.GITLAB,
+            title='MR title',
+            source_branch='feature/branch',
+            repo_owner='group',
+            repo_slug='repo',
+        )
+        factory.get.assert_called_once_with(Platform.GITLAB)
+
+    def test_routes_to_bitbucket_client(self):
+        service, factory, client = _service_with_client()
+        client.create_pull_request.return_value = {'id': '3'}
+        service.create_pull_request(
+            Platform.BITBUCKET,
+            title='PR title',
+            source_branch='feature/branch',
+            repo_owner='workspace',
+            repo_slug='repo',
+        )
+        factory.get.assert_called_once_with(Platform.BITBUCKET)
+
+
+class PullRequestServiceListCommentsTests(unittest.TestCase):
+    def test_routes_to_client(self):
+        service, factory, client = _service_with_client()
         client.list_pull_request_comments.return_value = ['comment']
 
-        comments = service.list_pull_request_comments(
+        result = service.list_pull_request_comments(
             Platform.GITLAB,
             repo_owner='group',
             repo_slug='repo',
             pull_request_id='17',
         )
 
-        self.assertEqual(comments, ['comment'])
+        self.assertEqual(result, ['comment'])
         factory.get.assert_called_once_with(Platform.GITLAB)
         client.list_pull_request_comments.assert_called_once_with(
             repo_owner='group',
@@ -97,11 +129,35 @@ class PullRequestServiceTests(unittest.TestCase):
             pull_request_id='17',
         )
 
-    def test_find_pull_requests_routes_to_client(self) -> None:
-        service, factory, client = self._service_with_client()
+    def test_returns_empty_list_when_client_returns_empty(self):
+        service, _, client = _service_with_client()
+        client.list_pull_request_comments.return_value = []
+        result = service.list_pull_request_comments(
+            Platform.GITHUB,
+            repo_owner='octo',
+            repo_slug='repo',
+            pull_request_id='1',
+        )
+        self.assertEqual(result, [])
+
+    def test_routes_bitbucket(self):
+        service, factory, client = _service_with_client()
+        client.list_pull_request_comments.return_value = []
+        service.list_pull_request_comments(
+            Platform.BITBUCKET,
+            repo_owner='workspace',
+            repo_slug='repo',
+            pull_request_id='42',
+        )
+        factory.get.assert_called_once_with(Platform.BITBUCKET)
+
+
+class PullRequestServiceFindPullRequestsTests(unittest.TestCase):
+    def test_routes_to_client_with_all_args(self):
+        service, factory, client = _service_with_client()
         client.find_pull_requests.return_value = ['pr']
 
-        pull_requests = service.find_pull_requests(
+        result = service.find_pull_requests(
             Platform.BITBUCKET,
             repo_owner='workspace',
             repo_slug='repo',
@@ -109,7 +165,7 @@ class PullRequestServiceTests(unittest.TestCase):
             title_prefix='PROJ-1',
         )
 
-        self.assertEqual(pull_requests, ['pr'])
+        self.assertEqual(result, ['pr'])
         factory.get.assert_called_once_with(Platform.BITBUCKET)
         client.find_pull_requests.assert_called_once_with(
             repo_owner='workspace',
@@ -118,28 +174,41 @@ class PullRequestServiceTests(unittest.TestCase):
             title_prefix='PROJ-1',
         )
 
-    def test_resolve_review_comment_routes_to_client(self) -> None:
-        service, factory, client = self._service_with_client()
-        comment = Mock()
-
-        service.resolve_review_comment(
-            Platform.BITBUCKET,
-            repo_owner='workspace',
+    def test_default_source_branch_is_empty_string(self):
+        service, _, client = _service_with_client()
+        client.find_pull_requests.return_value = []
+        service.find_pull_requests(
+            Platform.GITHUB,
+            repo_owner='octo',
             repo_slug='repo',
-            comment=comment,
+            title_prefix='FIX',
         )
+        _, kwargs = client.find_pull_requests.call_args
+        self.assertEqual(kwargs['source_branch'], '')
 
-        factory.get.assert_called_once_with(Platform.BITBUCKET)
-        client.resolve_review_comment.assert_called_once_with(
-            repo_owner='workspace',
+    def test_default_title_prefix_is_empty_string(self):
+        service, _, client = _service_with_client()
+        client.find_pull_requests.return_value = []
+        service.find_pull_requests(
+            Platform.GITHUB,
+            repo_owner='octo',
             repo_slug='repo',
-            comment=comment,
+            source_branch='feature/branch',
         )
+        _, kwargs = client.find_pull_requests.call_args
+        self.assertEqual(kwargs['title_prefix'], '')
 
-    def test_reply_to_review_comment_routes_to_client(self) -> None:
-        service, factory, client = self._service_with_client()
+    def test_routes_gitlab(self):
+        service, factory, client = _service_with_client()
+        client.find_pull_requests.return_value = []
+        service.find_pull_requests(Platform.GITLAB, repo_owner='group', repo_slug='repo')
+        factory.get.assert_called_once_with(Platform.GITLAB)
+
+
+class PullRequestServiceReviewCommentTests(unittest.TestCase):
+    def test_reply_to_review_comment_routes_to_client(self):
+        service, factory, client = _service_with_client()
         comment = Mock()
-
         service.reply_to_review_comment(
             Platform.GITHUB,
             repo_owner='octo',
@@ -147,7 +216,6 @@ class PullRequestServiceTests(unittest.TestCase):
             comment=comment,
             body='Done.',
         )
-
         factory.get.assert_called_once_with(Platform.GITHUB)
         client.reply_to_review_comment.assert_called_once_with(
             repo_owner='octo',
@@ -156,30 +224,65 @@ class PullRequestServiceTests(unittest.TestCase):
             body='Done.',
         )
 
-    def test_builds_a_fresh_client_for_each_repository_type_call(self) -> None:
-        service, factory, github_client = self._service_with_client()
-        bitbucket_client = Mock()
-        factory.get.side_effect = [github_client, bitbucket_client]
+    def test_resolve_review_comment_routes_to_client(self):
+        service, factory, client = _service_with_client()
+        comment = Mock()
+        service.resolve_review_comment(
+            Platform.BITBUCKET,
+            repo_owner='workspace',
+            repo_slug='repo',
+            comment=comment,
+        )
+        factory.get.assert_called_once_with(Platform.BITBUCKET)
+        client.resolve_review_comment.assert_called_once_with(
+            repo_owner='workspace',
+            repo_slug='repo',
+            comment=comment,
+        )
 
-        service.validate_connection(
+    def test_reply_routes_gitlab(self):
+        service, factory, client = _service_with_client()
+        service.reply_to_review_comment(
+            Platform.GITLAB,
+            repo_owner='group',
+            repo_slug='repo',
+            comment=Mock(),
+            body='LGTM.',
+        )
+        factory.get.assert_called_once_with(Platform.GITLAB)
+
+    def test_resolve_routes_github(self):
+        service, factory, client = _service_with_client()
+        service.resolve_review_comment(
             Platform.GITHUB,
             repo_owner='octo',
             repo_slug='repo',
+            comment=Mock(),
         )
-        service.validate_connection(
-            Platform.BITBUCKET,
-            repo_owner='octo',
-            repo_slug='repo',
-        )
+        factory.get.assert_called_once_with(Platform.GITHUB)
+
+
+class PullRequestServiceFactoryCallTests(unittest.TestCase):
+    def test_factory_called_once_per_operation(self):
+        service, factory, _ = _service_with_client()
+        service.validate_connection(Platform.GITHUB, repo_owner='o', repo_slug='r')
+        self.assertEqual(factory.get.call_count, 1)
+
+    def test_each_operation_calls_factory_separately(self):
+        service, factory, client = _service_with_client()
+        bitbucket_client = Mock()
+        factory.get.side_effect = [client, bitbucket_client]
+
+        service.validate_connection(Platform.GITHUB, repo_owner='octo', repo_slug='repo')
+        service.validate_connection(Platform.BITBUCKET, repo_owner='octo', repo_slug='repo')
 
         factory.get.assert_any_call(Platform.GITHUB)
         factory.get.assert_any_call(Platform.BITBUCKET)
         self.assertEqual(factory.get.call_count, 2)
 
-    @staticmethod
-    def _service_with_client() -> tuple[PullRequestService, Mock, Mock]:
-        factory = Mock()
-        client = Mock()
-        factory.get.return_value = client
-        service = PullRequestService(factory)
-        return service, factory, client
+
+def _service_with_client():
+    factory = Mock()
+    client = Mock()
+    factory.get.return_value = client
+    return PullRequestService(factory), factory, client

@@ -1,23 +1,40 @@
 from __future__ import annotations
 
-from bitbucket_core_lib.bitbucket_core_lib.bitbucket_core_lib import BitbucketCoreLib
-from gitlab_core_lib.gitlab_core_lib.gitlab_core_lib import GitLabCoreLib
-from github_core_lib.github_core_lib.github_core_lib import GitHubCoreLib
-from provider_client_base.provider_client_base.pull_request_client_base import PullRequestClientBase
+from typing import Any, Callable
+
 from core_lib.error_handling.not_found_decorator import NotFoundErrorHandler
 from omegaconf import DictConfig, OmegaConf
+
 from repository_core_lib.repository_core_lib.platform import Platform
 
 
 class PullRequestClientFactory(object):
-    """Build repository pull-request clients on demand."""
+    """Build repository pull-request clients on demand.
 
-    def __init__(self, config: DictConfig, max_retries: int) -> None:
+    Provider core-libs (github, gitlab, bitbucket) are resolved lazily via the
+    default factory helpers below.  Pass explicit callables to
+    ``github_client_factory`` / ``gitlab_client_factory`` /
+    ``bitbucket_client_factory`` to override the defaults — useful for testing
+    or to swap in alternative implementations without touching this module.
+    """
+
+    def __init__(
+        self,
+        config: DictConfig,
+        max_retries: int,
+        *,
+        github_client_factory: Callable[[DictConfig], Any] | None = None,
+        gitlab_client_factory: Callable[[DictConfig], Any] | None = None,
+        bitbucket_client_factory: Callable[[DictConfig], Any] | None = None,
+    ) -> None:
         self._config = config
         self._max_retries = max_retries
+        self._github_client_factory = github_client_factory or _default_github_factory
+        self._gitlab_client_factory = gitlab_client_factory or _default_gitlab_factory
+        self._bitbucket_client_factory = bitbucket_client_factory or _default_bitbucket_factory
 
     @NotFoundErrorHandler('unsupported repository provider')
-    def get(self, platform: Platform) -> PullRequestClientBase | None:
+    def get(self, platform: Platform) -> Any | None:
         if platform == Platform.BITBUCKET:
             bitbucket_config = OmegaConf.create(
                 {
@@ -34,7 +51,7 @@ class PullRequestClientFactory(object):
                     },
                 }
             )
-            return BitbucketCoreLib(bitbucket_config).pull_request
+            return self._bitbucket_client_factory(bitbucket_config)
         if platform == Platform.GITHUB:
             github_config = OmegaConf.create(
                 {
@@ -46,7 +63,7 @@ class PullRequestClientFactory(object):
                     },
                 }
             )
-            return GitHubCoreLib(github_config).pull_request
+            return self._github_client_factory(github_config)
         if platform == Platform.GITLAB:
             gitlab_config = OmegaConf.create(
                 {
@@ -58,5 +75,20 @@ class PullRequestClientFactory(object):
                     },
                 }
             )
-            return GitLabCoreLib(gitlab_config).pull_request
+            return self._gitlab_client_factory(gitlab_config)
         return None
+
+
+def _default_github_factory(config: DictConfig) -> Any:
+    from github_core_lib.github_core_lib.github_core_lib import GitHubCoreLib  # noqa: PLC0415
+    return GitHubCoreLib(config).pull_request
+
+
+def _default_gitlab_factory(config: DictConfig) -> Any:
+    from gitlab_core_lib.gitlab_core_lib.gitlab_core_lib import GitLabCoreLib  # noqa: PLC0415
+    return GitLabCoreLib(config).pull_request
+
+
+def _default_bitbucket_factory(config: DictConfig) -> Any:
+    from bitbucket_core_lib.bitbucket_core_lib.bitbucket_core_lib import BitbucketCoreLib  # noqa: PLC0415
+    return BitbucketCoreLib(config).pull_request
