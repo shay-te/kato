@@ -1,22 +1,19 @@
 from __future__ import annotations
 
 import os
-import shutil
-import subprocess
 from pathlib import Path
-from urllib.parse import urlparse
 
-from bitbucket_core_lib.bitbucket_core_lib.client.auth import basic_auth_header
-from kato_core_lib.data_layers.data.task import Task
-from kato_core_lib.data_layers.data.fields import RepositoryFields
-from kato_core_lib.helpers.git_clean_utils import (
+from bitbucket_core_lib.bitbucket_core_lib.helpers.git_auth import git_http_auth_header
+from git_core_lib.git_core_lib.client.git_client import GitClientMixin
+from git_core_lib.git_core_lib.helpers.git_clean_utils import (
     generated_artifact_paths_from_status,
     git_ready_command_summary,
     status_contains_only_removable_artifacts,
     validation_report_paths_from_status,
 )
+from kato_core_lib.data_layers.data.task import Task
+from kato_core_lib.data_layers.data.fields import RepositoryFields
 from kato_core_lib.helpers.text_utils import (
-    normalized_lower_text,
     normalized_text,
     text_from_attr,
 )
@@ -57,19 +54,18 @@ class RepositoryHasNoChangesError(RuntimeError):
     """
 
 
-class RepositoryService(RepositoryInventoryService):
+class RepositoryService(GitClientMixin, RepositoryInventoryService):
     """Manage repository worktree preparation, branch publication, and cleanup."""
-
-    GIT_SUBPROCESS_TIMEOUT_SECONDS = 300
-    NON_FAST_FORWARD_PUSH_REJECTION_MARKERS = (
-        'fetch first',
-        'non-fast-forward',
-        'updates were rejected because the remote contains work',
-    )
 
     def __init__(self, repositories_config, max_retries: int) -> None:
         super().__init__(repositories_config, max_retries)
         self._publication_service = RepositoryPublicationService(self, max_retries)
+
+    def _build_git_http_auth_header(self, repository) -> str:
+        return git_http_auth_header(
+            repository,
+            bitbucket_username_attr=RepositoryFields.BITBUCKET_USERNAME,
+        )
 
     def prepare_task_repositories(self, repositories: list[object]) -> list[object]:
         self._validate_git_executable()
@@ -699,37 +695,6 @@ class RepositoryService(RepositoryInventoryService):
         )
         return destination_branch
 
-    @staticmethod
-    def _validate_git_executable() -> None:
-        if shutil.which('git'):
-            return
-        raise RuntimeError('git executable is required but was not found on PATH')
-
-    @staticmethod
-    def _git_safe_directory_args(local_path: str) -> list[str]:
-        safe_directory = normalized_text(local_path)
-        if not safe_directory:
-            return []
-        return ['-c', f'safe.directory={safe_directory}']
-
-    @classmethod
-    def _git_command(cls, local_path: str, args: list[str]) -> list[str]:
-        # ``core.hooksPath=/dev/null`` disables every git hook (pre-commit,
-        # post-commit, pre-push, etc.) for kato's own git invocations.
-        # Defends against a sandboxed Claude that drops a malicious
-        # ``.git/hooks/pre-push`` into the workspace: when kato later runs
-        # ``git push`` on the host (outside the sandbox) the hook would
-        # otherwise fire with the operator's privileges. Single funnel
-        # point; covers every git command kato runs.
-        return [
-            'git',
-            *cls._git_safe_directory_args(local_path),
-            '-c', 'core.hooksPath=/dev/null',
-            '-C',
-            local_path,
-            *args,
-        ]
-
     def _prepare_branch_for_publication(
         self,
         local_path: str,
@@ -850,25 +815,6 @@ class RepositoryService(RepositoryInventoryService):
         if self._working_tree_status(local_path):
             return
         self._ensure_branch_is_publishable(local_path, branch_name, destination_branch)
-
-    def _ahead_count(
-        self,
-        local_path: str,
-        comparison_ref: str,
-        branch_name: str,
-    ) -> int:
-        ahead_count_text = self._git_stdout(
-            local_path,
-            ['rev-list', '--count', f'{comparison_ref}..{branch_name}'],
-            f'failed to compare branch {branch_name} against {comparison_ref}',
-        )
-        try:
-            return int(ahead_count_text or '0')
-        except ValueError as exc:
-            raise RuntimeError(
-                f'failed to parse ahead count for branch {branch_name}: '
-                f'{ahead_count_text or "<empty>"}'
-            ) from exc
 
     def _publish_branch_updates(
         self,
@@ -1254,20 +1200,6 @@ class RepositoryService(RepositoryInventoryService):
             f'destination branch {destination_branch} is not available locally'
         )
 
-    def _current_branch(self, local_path: str) -> str:
-        return self._git_stdout(
-            local_path,
-            ['rev-parse', '--abbrev-ref', 'HEAD'],
-            f'failed to determine current branch for {local_path}',
-        )
-
-    def _working_tree_status(self, local_path: str) -> str:
-        return self._git_stdout(
-            local_path,
-            ['status', '--porcelain'],
-            f'failed to inspect working tree for repository at {local_path}',
-        )
-
     def current_head_sha(self, repository) -> str:
         """Return ``HEAD`` SHA of ``repository``'s checkout (empty on failure).
 
@@ -1333,323 +1265,3 @@ class RepositoryService(RepositoryInventoryService):
             validation_report_paths,
         )
 
-    def _git_reference_exists(self, local_path: str, reference: str) -> bool:
-        result = subprocess.run(
-            self._git_command(local_path, ['rev-parse', '--verify', reference]),
-            capture_output=True,
-            text=True,
-            encoding='utf-8',
-            errors='replace',
-            check=False,
-            timeout=self.GIT_SUBPROCESS_TIMEOUT_SECONDS,
-        )
-        return result.returncode == 0
-
-    def _left_right_commit_counts(
-        self,
-        local_path: str,
-        left_reference: str,
-        right_reference: str,
-    ) -> tuple[int, int]:
-        counts_text = self._git_stdout(
-            local_path,
-            ['rev-list', '--left-right', '--count', f'{left_reference}...{right_reference}'],
-            f'failed to compare {left_reference} against {right_reference}',
-        )
-        parts = counts_text.split()
-        if len(parts) != 2:
-            raise RuntimeError(
-                f'failed to parse commit counts for {left_reference}...{right_reference}: '
-                f'{counts_text or "<empty>"}'
-            )
-        try:
-            return int(parts[0]), int(parts[1])
-        except ValueError as exc:
-            raise RuntimeError(
-                f'failed to parse commit counts for {left_reference}...{right_reference}: '
-                f'{counts_text or "<empty>"}'
-            ) from exc
-
-    def _git_stdout(
-        self,
-        local_path: str,
-        args: list[str],
-        failure_message: str,
-        repository=None,
-    ) -> str:
-        result = self._run_git(local_path, args, failure_message, repository)
-        return result.stdout.strip()
-
-    def _run_git(
-        self,
-        local_path: str,
-        args: list[str],
-        failure_message: str,
-        repository=None,
-    ):
-        self._validate_git_executable()
-        result = self._run_git_subprocess(local_path, args, repository)
-        if result.returncode == 0:
-            return result
-        failure_detail = result.stderr.strip() or result.stdout.strip() or 'git command failed'
-        if self._is_git_index_lock_error(failure_detail) and self._clear_stale_git_index_lock(
-            local_path
-        ):
-            result = self._run_git_subprocess(local_path, args, repository)
-            if result.returncode == 0:
-                return result
-            failure_detail = result.stderr.strip() or result.stdout.strip() or 'git command failed'
-        raise RuntimeError(
-            f'{failure_message}: {failure_detail}'
-        )
-
-    def _run_git_subprocess(
-        self,
-        local_path: str,
-        args: list[str],
-        repository=None,
-    ):
-        command = ['git']
-        env = os.environ.copy()
-        env['GIT_TERMINAL_PROMPT'] = '0'
-        auth_header = self._git_http_auth_header(repository)
-        if auth_header:
-            env['GIT_CONFIG_COUNT'] = '1'
-            env['GIT_CONFIG_KEY_0'] = 'http.extraHeader'
-            env['GIT_CONFIG_VALUE_0'] = auth_header
-        else:
-            env.pop('GIT_CONFIG_COUNT', None)
-            env.pop('GIT_CONFIG_KEY_0', None)
-            env.pop('GIT_CONFIG_VALUE_0', None)
-        return subprocess.run(
-            [*command, *self._git_safe_directory_args(local_path), '-C', local_path, *args],
-            capture_output=True,
-            text=True,
-            encoding='utf-8',
-            errors='replace',
-            check=False,
-            env=env,
-            timeout=self.GIT_SUBPROCESS_TIMEOUT_SECONDS,
-        )
-
-    @staticmethod
-    def _is_git_index_lock_error(error_text: str) -> bool:
-        normalized_error_text = normalized_lower_text(error_text)
-        return 'index.lock' in normalized_error_text and 'file exists' in normalized_error_text
-
-    def _clear_stale_git_index_lock(self, local_path: str) -> bool:
-        lock_path = Path(local_path) / '.git' / 'index.lock'
-        if self._has_running_git_process(local_path):
-            self.logger.warning(
-                'leaving git index lock in place at %s because another git process is still running',
-                lock_path,
-            )
-            return False
-        try:
-            lock_path.unlink()
-        except FileNotFoundError:
-            return False
-        self.logger.warning('removed stale git index lock at %s', lock_path)
-        return True
-
-    @staticmethod
-    def _has_running_git_process(local_path: str) -> bool:
-        try:
-            result = subprocess.run(
-                ['ps', '-eo', 'command='],
-                capture_output=True,
-                text=True,
-                encoding='utf-8',
-                errors='replace',
-                check=False,
-                timeout=RepositoryService.GIT_SUBPROCESS_TIMEOUT_SECONDS,
-            )
-        except OSError:
-            return False
-        if result.returncode != 0:
-            return False
-        repository_arg = f'-C {local_path}'
-        for command_line in result.stdout.splitlines():
-            normalized_command_line = command_line.strip()
-            if not normalized_command_line.startswith('git '):
-                continue
-            if repository_arg in normalized_command_line:
-                return True
-        return False
-
-    def _push_branch(
-        self,
-        local_path: str,
-        branch_name: str,
-        repository=None,
-        *,
-        dry_run: bool = False,
-    ) -> None:
-        push_args = ['push']
-        if dry_run:
-            push_args.append('--dry-run')
-        push_args.extend(['-u', 'origin', branch_name])
-        try:
-            self._run_git(
-                local_path,
-                push_args,
-                f'failed to push branch {branch_name}',
-                repository,
-            )
-        except RuntimeError as exc:
-            if dry_run or not self._is_non_fast_forward_push_rejection(exc):
-                raise
-            self.logger.warning(
-                'push for branch %s was rejected because origin has newer commits; '
-                'fetching and rebasing before retrying',
-                branch_name,
-            )
-            self._sync_branch_with_remote(local_path, branch_name, repository)
-            self._run_git(
-                local_path,
-                push_args,
-                f'failed to push branch {branch_name} after syncing with origin/{branch_name}',
-                repository,
-            )
-
-    def _sync_branch_with_remote(self, local_path: str, branch_name: str, repository=None) -> None:
-        remote_branch_ref = f'refs/remotes/origin/{branch_name}'
-        remote_branch = f'origin/{branch_name}'
-        self._run_git(
-            local_path,
-            ['fetch', 'origin', f'{branch_name}:{remote_branch_ref}'],
-            f'failed to fetch latest {remote_branch} before pushing {branch_name}',
-            repository,
-        )
-        if not self._git_reference_exists(local_path, remote_branch):
-            raise RuntimeError(
-                f'failed to fetch latest {remote_branch} before pushing {branch_name}: '
-                f'{remote_branch} is not available locally'
-            )
-        self._rebase_branch_onto_remote(local_path, branch_name, remote_branch, repository)
-
-    def _rebase_branch_onto_remote(
-        self,
-        local_path: str,
-        branch_name: str,
-        remote_branch: str,
-        repository=None,
-    ) -> None:
-        try:
-            self._run_git(
-                local_path,
-                ['rebase', remote_branch],
-                f'failed to rebase branch {branch_name} onto {remote_branch}',
-                repository,
-            )
-        except RuntimeError:
-            self._abort_rebase_after_failure(local_path, branch_name, repository)
-            raise
-
-    def _abort_rebase_after_failure(
-        self,
-        local_path: str,
-        branch_name: str,
-        repository=None,
-    ) -> None:
-        try:
-            self._run_git(
-                local_path,
-                ['rebase', '--abort'],
-                f'failed to abort rebase for branch {branch_name}',
-                repository,
-            )
-        except RuntimeError as abort_exc:
-            self.logger.warning(
-                'failed to abort rebase for branch %s after push-sync failure: %s',
-                branch_name,
-                abort_exc,
-            )
-
-    @classmethod
-    def _is_non_fast_forward_push_rejection(cls, exc: RuntimeError) -> bool:
-        message = normalized_lower_text(str(exc))
-        return any(
-            marker in message
-            for marker in cls.NON_FAST_FORWARD_PUSH_REJECTION_MARKERS
-        )
-
-    def _pull_destination_branch(
-        self,
-        local_path: str,
-        destination_branch: str,
-        repository=None,
-    ) -> None:
-        self._run_git(
-            local_path,
-            ['pull', '--ff-only', 'origin', destination_branch],
-            f'failed to pull latest {destination_branch} for repository at {local_path}',
-            repository,
-        )
-
-    @classmethod
-    def _git_http_auth_header(cls, repository) -> str:
-        if repository is None:
-            return ''
-        remote_url = text_from_attr(repository, 'remote_url')
-        if not cls._uses_http_remote(remote_url):
-            return ''
-        token = text_from_attr(repository, 'token')
-        if not token:
-            return ''
-        username = cls._git_http_username(repository, remote_url)
-        if not username:
-            return ''
-        return f'Authorization: {basic_auth_header(username, token)}'
-
-    @classmethod
-    def _git_http_username(cls, repository, remote_url: str) -> str:
-        parsed = urlparse(remote_url)
-        provider = normalized_lower_text(text_from_attr(repository, 'provider'))
-        if provider == 'bitbucket':
-            bitbucket_username = text_from_attr(repository, RepositoryFields.BITBUCKET_USERNAME)
-            if bitbucket_username:
-                return bitbucket_username
-            username = text_from_attr(repository, 'username')
-            if username:
-                return username
-            return parsed.username or 'x-token-auth'
-        if parsed.username:
-            return parsed.username
-        return {
-            'github': 'x-access-token',
-            'gitlab': 'oauth2',
-            'bitbucket': 'x-token-auth',
-        }.get(provider, 'git')
-
-    @staticmethod
-    def _uses_http_remote(remote_url: str) -> bool:
-        normalized = normalized_lower_text(remote_url)
-        return normalized.startswith('https://') or normalized.startswith('http://')
-
-    @staticmethod
-    def _infer_default_branch(local_path: str) -> str:
-        RepositoryService._validate_git_executable()
-        commands = [
-            ['symbolic-ref', 'refs/remotes/origin/HEAD'],
-            ['branch', '--show-current'],
-        ]
-        for command in commands:
-            result = subprocess.run(
-                RepositoryService._git_command(local_path, command),
-                capture_output=True,
-                text=True,
-                encoding='utf-8',
-                errors='replace',
-                check=False,
-                timeout=RepositoryService.GIT_SUBPROCESS_TIMEOUT_SECONDS,
-            )
-            output = result.stdout.strip()
-            if result.returncode != 0 or not output:
-                continue
-            if output.startswith('refs/remotes/'):
-                return output.rsplit('/', 1)[-1]
-            return output
-        raise ValueError(
-            f'unable to determine destination branch for repository at {local_path}'
-        )

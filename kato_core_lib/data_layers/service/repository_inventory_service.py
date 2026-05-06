@@ -3,8 +3,6 @@ import re
 import shutil
 from pathlib import Path
 from types import SimpleNamespace
-from urllib.parse import urlparse
-
 from core_lib.data_layers.service.service import Service
 from omegaconf import OmegaConf
 
@@ -15,9 +13,14 @@ from kato_core_lib.helpers.repository_discovery_utils import (
     build_discovered_repository,
     discover_git_repositories,
     display_name_from_repo_slug,
-    remote_web_base_url,
     repository_id_from_name,
     review_url_for_remote,
+)
+from repository_core_lib.repository_core_lib.helpers.provider_utils import (
+    default_provider_base_url,
+    fallback_web_base_url,
+    missing_pull_request_token_message,
+    provider_from_url_string,
 )
 from repository_core_lib.repository_core_lib.repository_core_lib import RepositoryCoreLib
 from kato_core_lib.helpers.text_utils import (
@@ -542,10 +545,10 @@ class RepositoryInventoryService(Service):
         if provider:
             return provider
         provider_base_url = text_from_attr(repository, RepositoryFields.PROVIDER_BASE_URL)
-        provider = self._provider_from_url_string(provider_base_url)
+        provider = provider_from_url_string(provider_base_url)
         if provider:
             return provider
-        provider = self._provider_from_url_string(text_from_attr(repository, 'remote_url'))
+        provider = provider_from_url_string(text_from_attr(repository, 'remote_url'))
         if provider:
             return provider
         raise ValueError(
@@ -566,7 +569,7 @@ class RepositoryInventoryService(Service):
         token = token or normalized_text(defaults.get('token', ''))
         if provider_base_url:
             return provider_base_url, token
-        return self._default_provider_base_url(
+        return default_provider_base_url(
             provider,
             text_from_attr(repository, 'remote_url'),
         ), token
@@ -608,7 +611,7 @@ class RepositoryInventoryService(Service):
                 f'missing Bitbucket API email for repository {repository_id}'
             )
         raise ValueError(
-            self._missing_pull_request_token_message(repository_id, provider)
+            missing_pull_request_token_message(repository_id, provider)
         )
 
     @staticmethod
@@ -670,10 +673,10 @@ class RepositoryInventoryService(Service):
                 destination_branch=destination_branch,
             )
 
-        web_base_url = self._fallback_web_base_url(repository)
+        web_base_url = fallback_web_base_url(repository)
         if not web_base_url or not owner or not repo_slug:
             return ''
-        provider = provider or self._provider_from_url_string(
+        provider = provider or provider_from_url_string(
             text_from_attr(repository, 'provider_base_url')
         )
         if provider:
@@ -688,59 +691,3 @@ class RepositoryInventoryService(Service):
         repository_path = f'{owner}/{repo_slug}'.strip('/')
         return f'{web_base_url}/{repository_path}'
 
-    @staticmethod
-    def _fallback_web_base_url(repository) -> str:
-        remote_url = text_from_attr(repository, 'remote_url')
-        if remote_url:
-            return remote_web_base_url(remote_url)
-        provider_base_url = text_from_attr(repository, 'provider_base_url')
-        if not provider_base_url:
-            return ''
-        if 'api.bitbucket.org' in provider_base_url:
-            return 'https://bitbucket.org'
-        if provider_base_url.rstrip('/').endswith('/api/v4'):
-            return provider_base_url[: -len('/api/v4')]
-        if provider_base_url.rstrip('/').endswith('/api/v3'):
-            return provider_base_url[: -len('/api/v3')]
-        if provider_base_url.rstrip('/').endswith('/api'):
-            return provider_base_url[: -len('/api')]
-        return provider_base_url
-
-    @staticmethod
-    def _provider_from_url_string(url: str) -> str:
-        normalized = url.lower()
-        if 'bitbucket' in normalized:
-            return 'bitbucket'
-        if 'github' in normalized:
-            return 'github'
-        if 'gitlab' in normalized:
-            return 'gitlab'
-        return ''
-
-    @staticmethod
-    def _default_provider_base_url(provider: str, remote_url: str) -> str:
-        web_base_url = remote_web_base_url(remote_url)
-        if not web_base_url:
-            return ''
-        host = str(urlparse(web_base_url).hostname or '').lower()
-        if provider == 'github':
-            if host == 'github.com':
-                return 'https://api.github.com'
-            return f'{web_base_url}/api/v3'
-        if provider == 'gitlab':
-            return f'{web_base_url}/api/v4'
-        if provider == 'bitbucket' and host == 'bitbucket.org':
-            return 'https://api.bitbucket.org/2.0'
-        return ''
-
-    @staticmethod
-    def _missing_pull_request_token_message(repository_id: str, provider: str) -> str:
-        env_key = {
-            'github': 'GITHUB_API_TOKEN',
-            'gitlab': 'GITLAB_API_TOKEN',
-            'bitbucket': 'BITBUCKET_API_TOKEN',
-        }.get(provider, '<provider-token>')
-        return (
-            f'missing pull request API token for repository {repository_id}; '
-            f'set {env_key} or configure repository token explicitly'
-        )

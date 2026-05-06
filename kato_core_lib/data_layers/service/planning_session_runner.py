@@ -17,6 +17,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
 from claude_core_lib.claude_core_lib.session.manager import (
     SESSION_STATUS_REVIEW,
     SESSION_STATUS_TERMINATED,
@@ -269,11 +270,11 @@ class PlanningSessionRunner(object):
             self._session_manager.terminate_session(normalized_task_id)
         workspace = normalized_text(repository_local_path)
         prompt = (
-            self._build_review_prompt(
+            ClaudeCliClient._build_review_prompt(
                 comments[0], branch_name, workspace_path=workspace, mode=mode,
             )
             if len(comments) == 1
-            else self._build_review_comments_batch_prompt(
+            else ClaudeCliClient._build_review_comments_batch_prompt(
                 comments, branch_name, workspace_path=workspace, mode=mode,
             )
         )
@@ -381,34 +382,6 @@ class PlanningSessionRunner(object):
             detail = result_text or f'{log_label} reported an error'
             raise RuntimeError(f'{log_label} failed: {detail}')
         return result_text
-
-    @staticmethod
-    def _build_review_prompt(
-        comment: ReviewComment,
-        branch_name: str,
-        workspace_path: str = '',
-        mode: str = 'fix',
-    ) -> str:
-        # Reuse the one-shot client's prompt so streaming and one-shot
-        # paths show identical guardrails.
-        from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
-
-        return ClaudeCliClient._build_review_prompt(
-            comment, branch_name, workspace_path=workspace_path, mode=mode,
-        )
-
-    @staticmethod
-    def _build_review_comments_batch_prompt(
-        comments: list[ReviewComment],
-        branch_name: str,
-        workspace_path: str = '',
-        mode: str = 'fix',
-    ) -> str:
-        from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
-
-        return ClaudeCliClient._build_review_comments_batch_prompt(
-            comments, branch_name, workspace_path=workspace_path, mode=mode,
-        )
 
     def _wait_for_terminal_event(self, session, *, task_id: str):
         deadline = self._clock() + max(0.0, float(self._max_wait_seconds))
