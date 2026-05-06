@@ -8,7 +8,7 @@ from github_core_lib.github_core_lib.client.github_issues_client import GitHubIs
 
 
 class GitHubCoreLib(CoreLib):
-    """Compose GitHub repository and issue clients for Kato."""
+    """Compose GitHub repository and issue clients."""
 
     def __init__(self, cfg: DictConfig) -> None:
         super().__init__()
