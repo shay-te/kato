@@ -156,7 +156,9 @@ class AnswerBodyTests(unittest.TestCase):
         body = review_comment_answer_body({
             'summary': 'Short answer text.',
         })
-        self.assertEqual(body, 'Short answer text.')
+        # Body is prefixed with the no-push disclaimer; agent text follows.
+        self.assertIn('No code was changed', body)
+        self.assertIn('Short answer text.', body)
 
     def test_friendly_fallback_when_agent_produced_nothing(self) -> None:
         body = review_comment_answer_body({})
@@ -279,9 +281,14 @@ class ServiceRoutingTests(unittest.TestCase):
             self._question_comment('1'),
         ])
         body = repo.reply_to_review_comment.call_args.args[2]
-        self.assertEqual(body, 'Because the link triggers JS at render time.')
-        # Confirm we are NOT posting the "Kato addressed / pushed" template.
+        # Body must carry the no-push disclaimer so the reviewer can't
+        # mistake an answer for a code fix, and must include the agent text.
+        self.assertIn('No code was changed', body)
+        self.assertIn('Because the link triggers JS at render time.', body)
+        # NOT the "Kato addressed / pushed" fix template.
         self.assertNotIn('pushed a follow-up update', body)
+        # Thread must NOT be resolved — the human verifies the answer.
+        repo.resolve_review_comment.assert_not_called()
 
     def test_fix_batch_still_pushes(self) -> None:
         service, impl, repo = self._build_service()

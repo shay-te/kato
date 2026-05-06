@@ -43,6 +43,16 @@ class ReviewReplyTemplate:
         'follow-up update.</sub>'
     )
 
+    # Header for answer-mode replies: no code was changed, nothing
+    # was pushed. Placed at the very top so it cannot be missed even
+    # if the agent's answer text mistakenly claims otherwise.
+    ANSWER_HEADER = (
+        '<sub>**No code was changed and nothing was pushed.** '
+        'Kato read this as a question and answered it below — no fix was applied. '
+        'If you expected a code change, re-open the thread and re-phrase as an '
+        'imperative (e.g. *"Fix this to handle the null case."*).</sub>'
+    )
+
     # Separator between the auto-header and the per-comment
     # summary. The reviewer can see at a glance: header above the
     # rule is boilerplate, content below is what kato actually did.
@@ -326,10 +336,11 @@ def _truncate(text: str) -> str:
 def review_comment_answer_body(execution: dict[str, str | bool]) -> str:
     """Build the reply body for an answer-mode review comment.
 
-    Pulls the agent's plain-text answer out of the execution dict.
-    Reply text is what the reviewer reads — kato's own
-    "addressed/pushed" template would be misleading here because no
-    code changed and nothing was pushed.
+    Always prefixes the ANSWER_HEADER so the reviewer cannot mistake
+    this for a push-backed fix, even if the agent's output text
+    happens to say "I've pushed a change" (an LLM hallucination that
+    can occur when the model doesn't track whether it's in answer vs
+    fix mode).
 
     Different backends populate different fields:
     - Claude one-shot puts the final text in ``result``.
@@ -340,10 +351,17 @@ def review_comment_answer_body(execution: dict[str, str | bool]) -> str:
     for key in ('message', 'result', ImplementationFields.MESSAGE, 'summary'):
         value = str(execution.get(key) or '').strip()
         if value:
-            return value
+            answer = value
+            break
+    else:
+        answer = (
+            'Kato read this question but did not produce an answer. '
+            'Re-open the thread for a fresh attempt.'
+        )
     return (
-        'Kato read this question but did not produce an answer. '
-        'Re-open the thread for a fresh attempt.'
+        f'{ReviewReplyTemplate.ANSWER_HEADER}'
+        f'{ReviewReplyTemplate.SEPARATOR}'
+        f'{answer}'
     )
 
 

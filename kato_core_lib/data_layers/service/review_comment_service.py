@@ -1019,16 +1019,17 @@ class ReviewCommentService(Service):
 
         Differences from ``_publish_review_comments_batch_fix``:
         - No ``publish_review_fix`` call. Nothing was edited.
-        - Reply body is the agent's plain-text answer (via
-          ``review_comment_answer_body``), not the
-          "Kato addressed / pushed a follow-up update" template
-          which would be misleading here.
-        - Resolution stays best-effort: kato closes the thread
-          when it can. Some platforms only let the original
-          commenter resolve, in which case the resolve no-ops.
+        - Reply body is prefixed with a clear "no code changed" disclaimer
+          so the reviewer cannot mistake an answer for a push-backed fix,
+          even if the LLM's output text claims otherwise.
+        - The thread is intentionally NOT resolved. No code changed, so
+          the comment stays open for the reviewer to read the answer,
+          verify it, and close the thread themselves. Auto-resolving an
+          unanswered fix request (misclassified as a question) would
+          make the problem invisible.
         """
         self.logger.info(
-            'answering pull request %s (%d question(s)) on branch %s — no push',
+            'answering pull request %s (%d question(s)) on branch %s — no push, no resolve',
             comments[0].pull_request_id,
             len(comments),
             review_context.branch_name,
@@ -1042,7 +1043,7 @@ class ReviewCommentService(Service):
                     answer_body,
                 )
                 self.logger.info(
-                    'replied to review question %s on pull request %s',
+                    'replied to review question %s on pull request %s — thread left open',
                     comment.comment_id,
                     comment.pull_request_id,
                 )
@@ -1050,18 +1051,6 @@ class ReviewCommentService(Service):
                 self.logger.exception(
                     'failed to post answer to review question %s on pull request %s; '
                     'the question is unanswered, re-open the thread to retry',
-                    comment.comment_id,
-                    comment.pull_request_id,
-                )
-            if self._resolve_review_comment(repository, comment):
-                self.logger.info(
-                    'resolved review question %s on pull request %s',
-                    comment.comment_id,
-                    comment.pull_request_id,
-                )
-            else:
-                self.logger.info(
-                    'skipped resolving review question %s on pull request %s',
                     comment.comment_id,
                     comment.pull_request_id,
                 )
