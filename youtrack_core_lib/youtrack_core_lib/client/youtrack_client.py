@@ -2,22 +2,23 @@ from __future__ import annotations
 
 from typing import Any
 
-from kato_core_lib.client.ticket_client_base import TicketClientBase
-from kato_core_lib.data_layers.data.task import Task
-from kato_core_lib.data_layers.data.fields import (
+from youtrack_core_lib.youtrack_core_lib.client.youtrack_client_base import YouTrackClientBase
+from youtrack_core_lib.youtrack_core_lib.data.fields import (
+    TaskCommentFields,
     YouTrackAttachmentFields,
     YouTrackCommentFields,
     YouTrackCustomFieldFields,
     YouTrackTagFields,
 )
-from kato_core_lib.helpers.text_utils import (
+from youtrack_core_lib.youtrack_core_lib.data.task import Task
+from youtrack_core_lib.youtrack_core_lib.helpers.text_utils import (
     alphanumeric_lower_text,
     normalized_text,
     text_from_mapping,
 )
 
 
-class YouTrackClient(TicketClientBase):
+class YouTrackClient(YouTrackClientBase):
     provider_name = 'youtrack'
     EVENT_FIELDS = 'id,presentation,$type'
     FIELD_VALUE_FIELDS = 'id,name,$type'
@@ -61,8 +62,21 @@ class YouTrackClient(TicketClientBase):
     STATE_MACHINE_CUSTOM_FIELD_TYPE = 'StateMachineIssueCustomField'
     TAG_FIELDS = YouTrackTagFields.NAME
 
-    def __init__(self, base_url: str, token: str, max_retries: int = 3) -> None:
-        super().__init__(base_url, token, timeout=30, max_retries=max_retries)
+    def __init__(
+        self,
+        base_url: str,
+        token: str,
+        max_retries: int = 3,
+        *,
+        operational_comment_prefixes: tuple[str, ...] = (),
+    ) -> None:
+        super().__init__(
+            base_url,
+            token,
+            timeout=30,
+            max_retries=max_retries,
+            operational_comment_prefixes=operational_comment_prefixes,
+        )
 
     def validate_connection(self, project: str, assignee: str, states: list[str]) -> None:
         response = self._get_with_retry(
@@ -100,10 +114,8 @@ class YouTrackClient(TicketClientBase):
     def add_tag(self, issue_id: str, tag_name: str) -> None:
         """Attach ``tag_name`` to a YouTrack issue.
 
-        YouTrack tags are first-class objects; the request is a POST to
-        ``/api/issues/<id>/tags`` with ``{name: <tag_name>}``. A 200/201
-        response means the tag is now on the issue (existing or newly
-        created). Used by the triage flow to record an outcome tag.
+        Tags are first-class objects; the request POSTs to
+        ``/api/issues/<id>/tags`` with ``{name: <tag_name>}``.
         """
         response = self._post_with_retry(
             f'/api/issues/{issue_id}/tags',
@@ -114,10 +126,8 @@ class YouTrackClient(TicketClientBase):
     def remove_tag(self, issue_id: str, tag_name: str) -> None:
         """Detach ``tag_name`` from a YouTrack issue.
 
-        Tags must be removed by their tag id, so we look the id up
-        first. A missing tag is a no-op (kato may try to remove
-        ``kato:triage:investigate`` after triage even when somebody
-        already cleaned it up by hand).
+        Tags must be removed by their tag id, so we look it up first.
+        A missing tag is a no-op.
         """
         tag_id = self._issue_tag_id(issue_id, tag_name)
         if not tag_id:
@@ -427,7 +437,9 @@ class YouTrackClient(TicketClientBase):
                 continue
             metadata = attachment.get(YouTrackAttachmentFields.METADATA) or 'no metadata'
             url = attachment.get(YouTrackAttachmentFields.URL) or ''
-            lines.append(f'- {YouTrackClient._attachment_name(attachment)} ({metadata}) {url}'.strip())
+            lines.append(
+                f'- {YouTrackClient._attachment_name(attachment)} ({metadata}) {url}'.strip()
+            )
         return lines
 
     def _read_text_attachment(self, attachment: dict[str, Any]) -> str | None:

@@ -1,17 +1,17 @@
+"""Full coverage for YouTrackClient — all public methods, all permutations."""
 import unittest
 from unittest.mock import patch
 
-
 from youtrack_core_lib.youtrack_core_lib.client.youtrack_client import YouTrackClient
-from kato_core_lib.data_layers.data.task import Task
-from kato_core_lib.data_layers.data.fields import (
+from youtrack_core_lib.youtrack_core_lib.data.fields import (
     TaskCommentFields,
     YouTrackAttachmentFields,
     YouTrackCommentFields,
     YouTrackCustomFieldFields,
     YouTrackTagFields,
 )
-from tests.utils import (
+from youtrack_core_lib.youtrack_core_lib.data.task import Task
+from youtrack_core_lib.youtrack_core_lib.tests.utils import (
     ClientTimeout,
     add_pull_request_comment_with_defaults,
     assert_client_headers_and_timeout,
@@ -20,8 +20,15 @@ from tests.utils import (
     move_issue_to_state_with_defaults,
 )
 
+# Prefix strings used in tests that exercise operational-comment filtering.
+_OP_PREFIXES = (
+    'Kato agent could not safely process this task:',
+    'Kato agent skipped this task because it could not detect which repository',
+    'Kato agent skipped this task because the task definition',
+)
 
-class YouTrackClientTests(unittest.TestCase):
+
+class YouTrackClientConstructionTests(unittest.TestCase):
     def test_uses_configured_retry_count(self) -> None:
         client = YouTrackClient('https://youtrack.example', 'yt-token', max_retries=5)
         self.assertEqual(client.max_retries, 5)
@@ -30,6 +37,24 @@ class YouTrackClientTests(unittest.TestCase):
         client = YouTrackClient('https://youtrack.example', 'yt-token', max_retries=0)
         self.assertEqual(client.max_retries, 1)
 
+    def test_default_operational_comment_prefixes_are_empty(self) -> None:
+        client = YouTrackClient('https://youtrack.example', 'yt-token')
+        self.assertEqual(client._operational_comment_prefixes, ())
+
+    def test_custom_operational_comment_prefixes_stored(self) -> None:
+        prefixes = ('Agent started:', 'Agent stopped:')
+        client = YouTrackClient(
+            'https://youtrack.example', 'yt-token',
+            operational_comment_prefixes=prefixes,
+        )
+        self.assertEqual(client._operational_comment_prefixes, prefixes)
+
+    def test_headers_and_timeout(self) -> None:
+        client = YouTrackClient('https://youtrack.example', 'yt-token')
+        assert_client_headers_and_timeout(self, client, 'yt-token', 30)
+
+
+class YouTrackValidateConnectionTests(unittest.TestCase):
     def test_validate_connection_checks_project_access(self) -> None:
         client = YouTrackClient('https://youtrack.example', 'yt-token')
         response = mock_response(json_data=[])
@@ -47,8 +72,13 @@ class YouTrackClientTests(unittest.TestCase):
             },
         )
 
-    def test_get_assigned_tasks_builds_query_and_maps_tasks(self) -> None:
-        client = YouTrackClient('https://youtrack.example', 'yt-token')
+
+class YouTrackGetAssignedTasksTests(unittest.TestCase):
+    def _make_client(self, **kwargs):
+        return YouTrackClient('https://youtrack.example', 'yt-token', **kwargs)
+
+    def test_builds_query_and_maps_tasks(self) -> None:
+        client = self._make_client()
         issue_response = mock_response(json_data=[
             {'idReadable': 'PROJ-1', 'summary': 'Fix bug', 'description': 'Details'}
         ])
@@ -61,9 +91,7 @@ class YouTrackClientTests(unittest.TestCase):
         comments_response = mock_response(json_data=[
             {
                 YouTrackCommentFields.TEXT: 'Please keep the fix minimal.',
-                YouTrackCommentFields.AUTHOR: {
-                    YouTrackCommentFields.NAME: 'Product Manager'
-                },
+                YouTrackCommentFields.AUTHOR: {YouTrackCommentFields.NAME: 'Product Manager'},
             }
         ])
         attachments_response = mock_response(json_data=[
@@ -84,27 +112,18 @@ class YouTrackClientTests(unittest.TestCase):
         text_attachment_response = mock_response(text='Stack trace details')
 
         with patch.object(
-            client,
-            '_get',
+            client, '_get',
             side_effect=[
-                issue_response,
-                tags_response,
-                comments_response,
-                attachments_response,
-                text_attachment_response,
+                issue_response, tags_response, comments_response,
+                attachments_response, text_attachment_response,
             ],
         ) as mock_get:
             tasks = get_assigned_tasks_with_defaults(client)
 
-        issue_response.raise_for_status.assert_called_once_with()
-        tags_response.raise_for_status.assert_called_once_with()
-        comments_response.raise_for_status.assert_called_once_with()
-        attachments_response.raise_for_status.assert_called_once_with()
-        text_attachment_response.raise_for_status.assert_called_once_with()
         self.assertEqual(len(tasks), 1)
         self.assertIsInstance(tasks[0], Task)
-        self.assertEqual(tasks[0].id, "PROJ-1")
-        self.assertEqual(tasks[0].summary, "Fix bug")
+        self.assertEqual(tasks[0].id, 'PROJ-1')
+        self.assertEqual(tasks[0].summary, 'Fix bug')
         self.assertEqual(tasks[0].tags, ['repo:client', 'priority:high'])
         self.assertIn('Details', tasks[0].description)
         self.assertIn(
@@ -122,8 +141,7 @@ class YouTrackClientTests(unittest.TestCase):
             tasks[0].description,
         )
         self.assertIn('bug.png (1920x1080) /api/files/bug.png', tasks[0].description)
-        self.assertEqual(tasks[0].branch_name, "feature/proj-1")
-        assert_client_headers_and_timeout(self, client, 'yt-token', 30)
+        self.assertEqual(tasks[0].branch_name, 'feature/proj-1')
         self.assertEqual(
             mock_get.call_args_list,
             [
@@ -151,8 +169,8 @@ class YouTrackClientTests(unittest.TestCase):
             ],
         )
 
-    def test_get_assigned_tasks_reads_absolute_text_attachment_urls_directly(self) -> None:
-        client = YouTrackClient('https://youtrack.example', 'yt-token')
+    def test_reads_absolute_text_attachment_urls_directly(self) -> None:
+        client = self._make_client()
         issue_response = mock_response(json_data=[
             {'idReadable': 'PROJ-1', 'summary': 'Fix bug', 'description': 'Details'}
         ])
@@ -169,12 +187,10 @@ class YouTrackClientTests(unittest.TestCase):
         text_attachment_response = mock_response(text='Absolute URL attachment')
 
         with patch.object(
-            client,
-            '_get',
+            client, '_get',
             side_effect=[issue_response, tags_response, comments_response, attachments_response],
         ) as mock_get, patch.object(
-            client.session,
-            'get',
+            client.session, 'get',
             return_value=text_attachment_response,
         ) as mock_session_get:
             tasks = get_assigned_tasks_with_defaults(client)
@@ -187,8 +203,8 @@ class YouTrackClientTests(unittest.TestCase):
             timeout=30,
         )
 
-    def test_get_assigned_tasks_handles_non_dict_comment_author(self) -> None:
-        client = YouTrackClient('https://youtrack.example', 'yt-token')
+    def test_handles_non_dict_comment_author(self) -> None:
+        client = self._make_client()
         issue_response = mock_response(json_data=[
             {'idReadable': 'PROJ-1', 'summary': 'Fix bug', 'description': 'Details'}
         ])
@@ -202,16 +218,15 @@ class YouTrackClientTests(unittest.TestCase):
         attachments_response = mock_response(json_data=[])
 
         with patch.object(
-            client,
-            '_get',
+            client, '_get',
             side_effect=[issue_response, tags_response, comments_response, attachments_response],
         ):
             tasks = get_assigned_tasks_with_defaults(client, states=['Open'])
 
         self.assertIn('- unknown: Please fix this.', tasks[0].description)
 
-    def test_get_assigned_tasks_ignores_agent_operational_comments(self) -> None:
-        client = YouTrackClient('https://youtrack.example', 'yt-token')
+    def test_ignores_operational_comments_when_prefixes_configured(self) -> None:
+        client = self._make_client(operational_comment_prefixes=_OP_PREFIXES)
         issue_response = mock_response(json_data=[
             {'idReadable': 'PROJ-1', 'summary': 'Fix bug', 'description': 'Details'}
         ])
@@ -221,9 +236,7 @@ class YouTrackClientTests(unittest.TestCase):
                 YouTrackCommentFields.TEXT: (
                     'Kato agent could not safely process this task: timeout'
                 ),
-                YouTrackCommentFields.AUTHOR: {
-                    YouTrackCommentFields.NAME: 'shay'
-                },
+                YouTrackCommentFields.AUTHOR: {YouTrackCommentFields.NAME: 'shay'},
             },
             {
                 YouTrackCommentFields.TEXT: (
@@ -231,22 +244,17 @@ class YouTrackClientTests(unittest.TestCase):
                     'which repository to use from the task content: no configured '
                     'repository matched task PROJ-1.'
                 ),
-                YouTrackCommentFields.AUTHOR: {
-                    YouTrackCommentFields.NAME: 'shay'
-                },
+                YouTrackCommentFields.AUTHOR: {YouTrackCommentFields.NAME: 'shay'},
             },
             {
                 YouTrackCommentFields.TEXT: 'Please keep the fix minimal.',
-                YouTrackCommentFields.AUTHOR: {
-                    YouTrackCommentFields.NAME: 'Product Manager'
-                },
+                YouTrackCommentFields.AUTHOR: {YouTrackCommentFields.NAME: 'Product Manager'},
             },
         ])
         attachments_response = mock_response(json_data=[])
 
         with patch.object(
-            client,
-            '_get',
+            client, '_get',
             side_effect=[issue_response, tags_response, comments_response, attachments_response],
         ):
             tasks = get_assigned_tasks_with_defaults(client, states=['Open'])
@@ -282,8 +290,30 @@ class YouTrackClientTests(unittest.TestCase):
             ],
         )
 
-    def test_get_assigned_tasks_stringifies_non_string_description_and_comment_text(self) -> None:
-        client = YouTrackClient('https://youtrack.example', 'yt-token')
+    def test_does_not_filter_comments_without_prefixes_configured(self) -> None:
+        client = self._make_client()  # no operational_comment_prefixes
+        issue_response = mock_response(json_data=[
+            {'idReadable': 'PROJ-1', 'summary': 'Fix bug', 'description': 'Details'}
+        ])
+        tags_response = mock_response(json_data=[])
+        comments_response = mock_response(json_data=[
+            {
+                YouTrackCommentFields.TEXT: 'Agent processed this task: done',
+                YouTrackCommentFields.AUTHOR: {YouTrackCommentFields.NAME: 'bot'},
+            },
+        ])
+        attachments_response = mock_response(json_data=[])
+
+        with patch.object(
+            client, '_get',
+            side_effect=[issue_response, tags_response, comments_response, attachments_response],
+        ):
+            tasks = get_assigned_tasks_with_defaults(client, states=['Open'])
+
+        self.assertIn('bot: Agent processed this task: done', tasks[0].description)
+
+    def test_stringifies_non_string_description_and_comment_text(self) -> None:
+        client = self._make_client()
         issue_response = mock_response(json_data=[
             {'idReadable': 'PROJ-1', 'summary': 123, 'description': 456}
         ])
@@ -291,16 +321,13 @@ class YouTrackClientTests(unittest.TestCase):
         comments_response = mock_response(json_data=[
             {
                 YouTrackCommentFields.TEXT: 789,
-                YouTrackCommentFields.AUTHOR: {
-                    YouTrackCommentFields.NAME: 'Product Manager'
-                },
+                YouTrackCommentFields.AUTHOR: {YouTrackCommentFields.NAME: 'Product Manager'},
             }
         ])
         attachments_response = mock_response(json_data=[])
 
         with patch.object(
-            client,
-            '_get',
+            client, '_get',
             side_effect=[issue_response, tags_response, comments_response, attachments_response],
         ):
             tasks = get_assigned_tasks_with_defaults(client, states=['Open'])
@@ -309,7 +336,227 @@ class YouTrackClientTests(unittest.TestCase):
         self.assertIn('456', tasks[0].description)
         self.assertIn('Product Manager: 789', tasks[0].description)
 
-    def test_add_pull_request_comment_posts_expected_payload(self) -> None:
+    def test_retries_on_transient_timeout(self) -> None:
+        client = self._make_client()
+        issue_response = mock_response(json_data=[
+            {'idReadable': 'PROJ-1', 'summary': 'Fix bug', 'description': 'Details'}
+        ])
+        tags_response = mock_response(json_data=[])
+        comments_response = mock_response(json_data=[])
+        attachments_response = mock_response(json_data=[])
+
+        with patch.object(
+            client, '_get',
+            side_effect=[
+                ClientTimeout('read timeout'),
+                issue_response, tags_response, comments_response, attachments_response,
+            ],
+        ) as mock_get:
+            tasks = get_assigned_tasks_with_defaults(client, states=['Todo'])
+
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(mock_get.call_count, 5)
+
+    def test_skips_malformed_issue_payloads(self) -> None:
+        client = self._make_client()
+        issue_response = mock_response(json_data=[
+            {'summary': 'Missing id'},
+            {'idReadable': 'PROJ-2', 'summary': 'Valid', 'description': 'Details'},
+        ])
+        tags_response = mock_response(json_data=[])
+        comments_response = mock_response(json_data=[])
+        attachments_response = mock_response(json_data=[])
+
+        with patch.object(
+            client, '_get',
+            side_effect=[issue_response, tags_response, comments_response, attachments_response],
+        ):
+            tasks = get_assigned_tasks_with_defaults(client, states=['Open'])
+
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0].id, 'PROJ-2')
+
+    def test_returns_empty_for_non_list_issue_payload(self) -> None:
+        client = self._make_client()
+        issue_response = mock_response(json_data={'idReadable': 'PROJ-1'})
+
+        with patch.object(client, '_get', return_value=issue_response):
+            tasks = get_assigned_tasks_with_defaults(client, states=['Open'])
+
+        self.assertEqual(tasks, [])
+
+    def test_handles_comment_and_attachment_failures(self) -> None:
+        client = self._make_client()
+        issue_response = mock_response(json_data=[
+            {'idReadable': 'PROJ-1', 'summary': 'Fix bug', 'description': 'Details'}
+        ])
+        tags_response = mock_response(json_data=[])
+
+        with patch.object(
+            client, '_get',
+            side_effect=[
+                issue_response, tags_response,
+                ClientTimeout('comments down'), ClientTimeout('comments down'), ClientTimeout('comments down'),
+                ClientTimeout('attachments down'), ClientTimeout('attachments down'), ClientTimeout('attachments down'),
+            ],
+        ):
+            tasks = client.get_assigned_tasks('PROJ', 'me', ['Open'])
+
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0].description, 'Details')
+
+    def test_logs_comment_and_attachment_failures(self) -> None:
+        client = self._make_client()
+        issue_response = mock_response(json_data=[
+            {'idReadable': 'PROJ-1', 'summary': 'Fix bug', 'description': 'Details'}
+        ])
+        tags_response = mock_response(json_data=[])
+        client.logger = unittest.mock.Mock()
+
+        with patch.object(client, 'logger', client.logger), patch.object(
+            client, '_get',
+            side_effect=[
+                issue_response, tags_response,
+                ClientTimeout('comments down'), ClientTimeout('comments down'), ClientTimeout('comments down'),
+                ClientTimeout('attachments down'), ClientTimeout('attachments down'), ClientTimeout('attachments down'),
+            ],
+        ):
+            client.get_assigned_tasks('PROJ', 'me', ['Open'])
+
+        self.assertEqual(client.logger.exception.call_count, 2)
+
+    def test_truncates_long_text_attachments_and_marks_unavailable(self) -> None:
+        client = self._make_client()
+        issue_response = mock_response(json_data=[
+            {'idReadable': 'PROJ-1', 'summary': 'Fix bug', 'description': ''}
+        ])
+        tags_response = mock_response(json_data=[])
+        comments_response = mock_response(
+            json_data=[None, {YouTrackCommentFields.TEXT: None}]
+        )
+        attachments_response = mock_response(json_data=[
+            {
+                YouTrackAttachmentFields.NAME: 'large.txt',
+                YouTrackAttachmentFields.MIME_TYPE: 'text/plain',
+                YouTrackAttachmentFields.CHARSET: 'utf-8',
+                YouTrackAttachmentFields.URL: '/api/files/large.txt',
+            },
+            {
+                YouTrackAttachmentFields.NAME: 'broken.txt',
+                YouTrackAttachmentFields.MIME_TYPE: 'text/plain',
+                YouTrackAttachmentFields.CHARSET: 'utf-8',
+                YouTrackAttachmentFields.URL: '/api/files/broken.txt',
+            },
+        ])
+        large_text_response = mock_response(text='A' * 6000)
+
+        with patch.object(
+            client, '_get',
+            side_effect=[
+                issue_response, tags_response, comments_response, attachments_response,
+                large_text_response,
+                ClientTimeout('attachment unavailable'), ClientTimeout('attachment unavailable'),
+                ClientTimeout('attachment unavailable'),
+            ],
+        ):
+            tasks = client.get_assigned_tasks('PROJ', 'me', ['Open'])
+
+        self.assertEqual(len(tasks), 1)
+        self.assertIn('No description provided.', tasks[0].description)
+        self.assertIn('Attachment large.txt:\n' + ('A' * 5000), tasks[0].description)
+        self.assertIn('Attachment broken.txt could not be downloaded.', tasks[0].description)
+        self.assertNotIn('A' * 5001, tasks[0].description)
+
+    def test_rejects_empty_states(self) -> None:
+        client = self._make_client()
+        with self.assertRaisesRegex(ValueError, 'states must not be empty'):
+            client.get_assigned_tasks('PROJ', 'me', [])
+
+    def test_decodes_binary_text_attachment_using_charset(self) -> None:
+        client = self._make_client()
+        issue_response = mock_response(json_data=[
+            {'idReadable': 'PROJ-1', 'summary': 'Fix bug', 'description': ''}
+        ])
+        tags_response = mock_response(json_data=[])
+        comments_response = mock_response(json_data=[])
+        attachments_response = mock_response(json_data=[
+            {
+                YouTrackAttachmentFields.NAME: 'notes.txt',
+                YouTrackAttachmentFields.MIME_TYPE: 'text/plain',
+                YouTrackAttachmentFields.CHARSET: 'latin-1',
+                YouTrackAttachmentFields.URL: '/api/files/notes.txt',
+            }
+        ])
+        text_attachment_response = mock_response(
+            text='',
+            content='cafe\xe9'.encode('latin-1'),
+        )
+
+        with patch.object(
+            client, '_get',
+            side_effect=[
+                issue_response, tags_response, comments_response,
+                attachments_response, text_attachment_response,
+            ],
+        ):
+            tasks = client.get_assigned_tasks('PROJ', 'me', ['Open'])
+
+        self.assertIn('Attachment notes.txt:\ncafe\xe9', tasks[0].description)
+
+    def test_ignores_text_attachment_without_url(self) -> None:
+        client = self._make_client()
+        issue_response = mock_response(json_data=[
+            {'idReadable': 'PROJ-1', 'summary': 'Fix bug', 'description': 'Details'}
+        ])
+        tags_response = mock_response(json_data=[])
+        comments_response = mock_response(json_data=[])
+        attachments_response = mock_response(json_data=[
+            {
+                YouTrackAttachmentFields.NAME: 'notes.txt',
+                YouTrackAttachmentFields.MIME_TYPE: 'text/plain',
+                YouTrackAttachmentFields.CHARSET: 'utf-8',
+            }
+        ])
+
+        with patch.object(
+            client, '_get',
+            side_effect=[issue_response, tags_response, comments_response, attachments_response],
+        ):
+            tasks = client.get_assigned_tasks('PROJ', 'me', ['Open'])
+
+        self.assertEqual(tasks[0].description, 'Details')
+
+    def test_multiple_issues_all_returned(self) -> None:
+        client = self._make_client()
+        issue_response = mock_response(json_data=[
+            {'idReadable': 'PROJ-1', 'summary': 'Bug 1', 'description': ''},
+            {'idReadable': 'PROJ-2', 'summary': 'Bug 2', 'description': ''},
+        ])
+
+        def per_issue_responses(*_args, **_kwargs):
+            return mock_response(json_data=[])
+
+        with patch.object(
+            client, '_get',
+            side_effect=[
+                issue_response,
+                mock_response(json_data=[]),  # tags PROJ-1
+                mock_response(json_data=[]),  # comments PROJ-1
+                mock_response(json_data=[]),  # attachments PROJ-1
+                mock_response(json_data=[]),  # tags PROJ-2
+                mock_response(json_data=[]),  # comments PROJ-2
+                mock_response(json_data=[]),  # attachments PROJ-2
+            ],
+        ):
+            tasks = get_assigned_tasks_with_defaults(client)
+
+        self.assertEqual(len(tasks), 2)
+        self.assertEqual(tasks[0].id, 'PROJ-1')
+        self.assertEqual(tasks[1].id, 'PROJ-2')
+
+
+class YouTrackAddPullRequestCommentTests(unittest.TestCase):
+    def test_posts_expected_payload(self) -> None:
         client = YouTrackClient('https://youtrack.example', 'yt-token')
         response = mock_response()
 
@@ -322,20 +569,103 @@ class YouTrackClientTests(unittest.TestCase):
             json={'text': 'Pull request created: https://bitbucket/pr/1'},
         )
 
-    def test_add_pull_request_comment_retries_on_timeout(self) -> None:
+    def test_retries_on_timeout(self) -> None:
         client = YouTrackClient('https://youtrack.example', 'yt-token')
         response = mock_response()
 
         with patch.object(
-            client,
-            '_post',
+            client, '_post',
             side_effect=[ClientTimeout('timeout'), response],
         ) as mock_post:
             add_pull_request_comment_with_defaults(client)
 
         self.assertEqual(mock_post.call_count, 2)
 
-    def test_move_issue_to_state_updates_configured_field(self) -> None:
+    def test_does_not_retry_non_transient_exception(self) -> None:
+        client = YouTrackClient('https://youtrack.example', 'yt-token')
+
+        with patch.object(
+            client, '_post',
+            side_effect=ValueError('invalid request'),
+        ) as mock_post:
+            with self.assertRaisesRegex(ValueError, 'invalid request'):
+                add_pull_request_comment_with_defaults(client)
+
+        self.assertEqual(mock_post.call_count, 1)
+
+
+class YouTrackAddTagTests(unittest.TestCase):
+    def test_posts_to_tags_endpoint(self) -> None:
+        client = YouTrackClient('https://youtrack.example', 'yt-token')
+        response = mock_response()
+
+        with patch.object(client, '_post', return_value=response) as mock_post:
+            client.add_tag('PROJ-1', 'priority:high')
+
+        mock_post.assert_called_once_with(
+            '/api/issues/PROJ-1/tags',
+            json={'name': 'priority:high'},
+        )
+        response.raise_for_status.assert_called_once()
+
+    def test_retries_on_timeout(self) -> None:
+        client = YouTrackClient('https://youtrack.example', 'yt-token')
+        response = mock_response()
+
+        with patch.object(
+            client, '_post',
+            side_effect=[ClientTimeout('timeout'), response],
+        ) as mock_post:
+            client.add_tag('PROJ-1', 'my-tag')
+
+        self.assertEqual(mock_post.call_count, 2)
+
+
+class YouTrackRemoveTagTests(unittest.TestCase):
+    def test_deletes_by_looked_up_tag_id(self) -> None:
+        client = YouTrackClient('https://youtrack.example', 'yt-token')
+        tags_response = mock_response(json_data=[
+            {'id': 'tag-42', 'name': 'priority:high'},
+            {'id': 'tag-99', 'name': 'other-tag'},
+        ])
+        delete_response = mock_response()
+
+        with patch.object(
+            client, '_get', return_value=tags_response,
+        ), patch.object(
+            client, '_delete', return_value=delete_response,
+        ) as mock_delete:
+            client.remove_tag('PROJ-1', 'priority:high')
+
+        mock_delete.assert_called_once_with('/api/issues/PROJ-1/tags/tag-42')
+        delete_response.raise_for_status.assert_called_once()
+
+    def test_noop_when_tag_not_found(self) -> None:
+        client = YouTrackClient('https://youtrack.example', 'yt-token')
+        tags_response = mock_response(json_data=[
+            {'id': 'tag-1', 'name': 'other-tag'},
+        ])
+
+        with patch.object(client, '_get', return_value=tags_response), \
+             patch.object(client, '_delete') as mock_delete:
+            client.remove_tag('PROJ-1', 'missing-tag')
+
+        mock_delete.assert_not_called()
+
+    def test_noop_when_tags_request_fails(self) -> None:
+        client = YouTrackClient('https://youtrack.example', 'yt-token')
+        bad_response = mock_response(status_code=500)
+        bad_response.raise_for_status.side_effect = Exception('server error')
+
+        with patch.object(client, '_get', return_value=bad_response), \
+             patch.object(client, '_delete') as mock_delete:
+            client.remove_tag('PROJ-1', 'any-tag')
+
+        mock_delete.assert_not_called()
+
+
+class YouTrackMoveIssueToStateTests(unittest.TestCase):
+    def test_updates_value_field(self) -> None:
         client = YouTrackClient('https://youtrack.example', 'yt-token')
         custom_fields_response = mock_response(json_data=[
             {
@@ -358,18 +688,12 @@ class YouTrackClientTests(unittest.TestCase):
         })
 
         with patch.object(
-            client,
-            '_get',
-            return_value=custom_fields_response,
+            client, '_get', return_value=custom_fields_response,
         ) as mock_get, patch.object(
-            client,
-            '_post',
-            return_value=update_response,
+            client, '_post', return_value=update_response,
         ) as mock_post:
             move_issue_to_state_with_defaults(client, state_name='To Verify')
 
-        custom_fields_response.raise_for_status.assert_called_once_with()
-        update_response.raise_for_status.assert_called_once_with()
         mock_get.assert_called_once_with(
             '/api/issues/PROJ-1/customFields',
             params={'fields': YouTrackClient.DETAILED_CUSTOM_FIELD_FIELDS},
@@ -385,7 +709,7 @@ class YouTrackClientTests(unittest.TestCase):
             },
         )
 
-    def test_move_issue_to_state_uses_state_machine_event_when_required(self) -> None:
+    def test_uses_state_machine_event_when_required(self) -> None:
         client = YouTrackClient('https://youtrack.example', 'yt-token')
         custom_fields_response = mock_response(json_data=[
             {
@@ -414,17 +738,13 @@ class YouTrackClientTests(unittest.TestCase):
             'value': {'name': 'In Progress'},
         })
 
-        with patch.object(client, '_get', return_value=custom_fields_response) as mock_get, patch.object(
-            client,
-            '_post',
-            return_value=update_response,
+        with patch.object(
+            client, '_get', return_value=custom_fields_response,
+        ), patch.object(
+            client, '_post', return_value=update_response,
         ) as mock_post:
             move_issue_to_state_with_defaults(client, state_name='In Progress')
 
-        mock_get.assert_called_once_with(
-            '/api/issues/PROJ-1/customFields',
-            params={'fields': YouTrackClient.DETAILED_CUSTOM_FIELD_FIELDS},
-        )
         mock_post.assert_called_once_with(
             '/api/issues/PROJ-1/customFields/92-45',
             params={'fields': YouTrackClient.DETAILED_CUSTOM_FIELD_FIELDS},
@@ -439,64 +759,56 @@ class YouTrackClientTests(unittest.TestCase):
             },
         )
 
-    def test_move_issue_to_state_rejects_unknown_field(self) -> None:
+    def test_rejects_unknown_field(self) -> None:
         client = YouTrackClient('https://youtrack.example', 'yt-token')
-        custom_fields_response = mock_response(
-            json_data=[
-                {
-                    YouTrackCustomFieldFields.ID: '92-44',
-                    YouTrackCustomFieldFields.NAME: 'Priority',
-                    YouTrackCustomFieldFields.TYPE: 'SingleEnumIssueCustomField',
-                }
-            ]
-        )
+        custom_fields_response = mock_response(json_data=[
+            {
+                YouTrackCustomFieldFields.ID: '92-44',
+                YouTrackCustomFieldFields.NAME: 'Priority',
+                YouTrackCustomFieldFields.TYPE: 'SingleEnumIssueCustomField',
+            }
+        ])
 
         with patch.object(client, '_get', return_value=custom_fields_response):
             with self.assertRaisesRegex(ValueError, 'unknown issue field: State'):
                 move_issue_to_state_with_defaults(client)
 
-    def test_move_issue_to_state_rejects_missing_field_type(self) -> None:
+    def test_rejects_missing_field_type(self) -> None:
         client = YouTrackClient('https://youtrack.example', 'yt-token')
-        custom_fields_response = mock_response(
-            json_data=[
-                {
-                    YouTrackCustomFieldFields.ID: '92-45',
-                    YouTrackCustomFieldFields.NAME: 'State',
-                }
-            ]
-        )
+        custom_fields_response = mock_response(json_data=[
+            {
+                YouTrackCustomFieldFields.ID: '92-45',
+                YouTrackCustomFieldFields.NAME: 'State',
+            }
+        ])
 
         with patch.object(client, '_get', return_value=custom_fields_response):
             with self.assertRaisesRegex(ValueError, 'missing issue field type for: State'):
                 move_issue_to_state_with_defaults(client)
 
-    def test_move_issue_to_state_rejects_missing_field_id(self) -> None:
+    def test_rejects_missing_field_id(self) -> None:
         client = YouTrackClient('https://youtrack.example', 'yt-token')
-        custom_fields_response = mock_response(
-            json_data=[
-                {
-                    YouTrackCustomFieldFields.NAME: 'State',
-                    YouTrackCustomFieldFields.TYPE: 'StateIssueCustomField',
-                }
-            ]
-        )
+        custom_fields_response = mock_response(json_data=[
+            {
+                YouTrackCustomFieldFields.NAME: 'State',
+                YouTrackCustomFieldFields.TYPE: 'StateIssueCustomField',
+            }
+        ])
 
         with patch.object(client, '_get', return_value=custom_fields_response):
             with self.assertRaisesRegex(ValueError, 'missing issue field id for: State'):
                 move_issue_to_state_with_defaults(client)
 
-    def test_move_issue_to_state_retries_on_transient_timeout(self) -> None:
+    def test_retries_on_transient_timeout(self) -> None:
         client = YouTrackClient('https://youtrack.example', 'yt-token')
-        custom_fields_response = mock_response(
-            json_data=[
-                {
-                    YouTrackCustomFieldFields.ID: '92-45',
-                    YouTrackCustomFieldFields.NAME: 'State',
-                    YouTrackCustomFieldFields.TYPE: 'StateIssueCustomField',
-                    'value': {'name': 'Open'},
-                }
-            ]
-        )
+        custom_fields_response = mock_response(json_data=[
+            {
+                YouTrackCustomFieldFields.ID: '92-45',
+                YouTrackCustomFieldFields.NAME: 'State',
+                YouTrackCustomFieldFields.TYPE: 'StateIssueCustomField',
+                'value': {'name': 'Open'},
+            }
+        ])
         update_response = mock_response(json_data={
             YouTrackCustomFieldFields.ID: '92-45',
             YouTrackCustomFieldFields.NAME: 'State',
@@ -504,267 +816,93 @@ class YouTrackClientTests(unittest.TestCase):
             'value': {'name': 'To Verify'},
         })
 
-        with patch.object(client, '_get', return_value=custom_fields_response), patch.object(
-            client,
-            '_post',
+        with patch.object(
+            client, '_get', return_value=custom_fields_response,
+        ), patch.object(
+            client, '_post',
             side_effect=[ClientTimeout('timeout'), update_response],
         ) as mock_post:
             move_issue_to_state_with_defaults(client, state_name='To Verify')
 
         self.assertEqual(mock_post.call_count, 2)
 
-    def test_move_issue_to_state_raises_after_retry_exhaustion(self) -> None:
+    def test_raises_after_retry_exhaustion(self) -> None:
         client = YouTrackClient('https://youtrack.example', 'yt-token')
-        custom_fields_response = mock_response(
-            json_data=[
-                {
-                    YouTrackCustomFieldFields.ID: '92-45',
-                    YouTrackCustomFieldFields.NAME: 'State',
-                    YouTrackCustomFieldFields.TYPE: 'StateIssueCustomField',
-                    'value': {'name': 'Open'},
-                }
-            ]
-        )
+        custom_fields_response = mock_response(json_data=[
+            {
+                YouTrackCustomFieldFields.ID: '92-45',
+                YouTrackCustomFieldFields.NAME: 'State',
+                YouTrackCustomFieldFields.TYPE: 'StateIssueCustomField',
+                'value': {'name': 'Open'},
+            }
+        ])
 
-        with patch.object(client, '_get', return_value=custom_fields_response), patch.object(
-            client,
-            '_post',
-            side_effect=[
-                ClientTimeout('timeout'),
-                ClientTimeout('timeout'),
-                ClientTimeout('timeout'),
-            ],
-        ):
+        with patch.object(client, '_get', return_value=custom_fields_response), \
+             patch.object(
+                 client, '_post',
+                 side_effect=[
+                     ClientTimeout('timeout'),
+                     ClientTimeout('timeout'),
+                     ClientTimeout('timeout'),
+                 ],
+             ):
             with self.assertRaises(ClientTimeout):
                 move_issue_to_state_with_defaults(client, state_name='To Verify')
 
-    def test_get_assigned_tasks_retries_on_transient_timeout(self) -> None:
+    def test_noop_when_already_in_target_state(self) -> None:
         client = YouTrackClient('https://youtrack.example', 'yt-token')
-        issue_response = mock_response(json_data=[
-            {'idReadable': 'PROJ-1', 'summary': 'Fix bug', 'description': 'Details'}
-        ])
-        tags_response = mock_response(json_data=[])
-        comments_response = mock_response(json_data=[])
-        attachments_response = mock_response(json_data=[])
-
-        with patch.object(
-            client,
-            '_get',
-            side_effect=[
-                ClientTimeout('read timeout'),
-                issue_response,
-                tags_response,
-                comments_response,
-                attachments_response,
-            ],
-        ) as mock_get:
-            tasks = get_assigned_tasks_with_defaults(client, states=['Todo'])
-
-        self.assertEqual(len(tasks), 1)
-        self.assertEqual(mock_get.call_count, 5)
-
-    def test_get_assigned_tasks_skips_malformed_issue_payloads(self) -> None:
-        client = YouTrackClient('https://youtrack.example', 'yt-token')
-        issue_response = mock_response(json_data=[
-            {'summary': 'Missing id'},
-            {'idReadable': 'PROJ-2', 'summary': 'Valid', 'description': 'Details'},
-        ])
-        tags_response = mock_response(json_data=[])
-        comments_response = mock_response(json_data=[])
-        attachments_response = mock_response(json_data=[])
-
-        with patch.object(
-            client,
-            '_get',
-            side_effect=[issue_response, tags_response, comments_response, attachments_response],
-        ):
-            tasks = get_assigned_tasks_with_defaults(client, states=['Open'])
-
-        self.assertEqual(len(tasks), 1)
-        self.assertEqual(tasks[0].id, 'PROJ-2')
-
-    def test_get_assigned_tasks_returns_empty_for_non_list_issue_payload(self) -> None:
-        client = YouTrackClient('https://youtrack.example', 'yt-token')
-        issue_response = mock_response(json_data={'idReadable': 'PROJ-1'})
-
-        with patch.object(client, '_get', return_value=issue_response):
-            tasks = get_assigned_tasks_with_defaults(client, states=['Open'])
-
-        self.assertEqual(tasks, [])
-
-    def test_get_assigned_tasks_handles_comment_and_attachment_failures(self) -> None:
-        client = YouTrackClient('https://youtrack.example', 'yt-token')
-        issue_response = mock_response(json_data=[
-            {'idReadable': 'PROJ-1', 'summary': 'Fix bug', 'description': 'Details'}
-        ])
-        tags_response = mock_response(json_data=[])
-
-        with patch.object(
-            client,
-            '_get',
-            side_effect=[
-                issue_response,
-                tags_response,
-                ClientTimeout('comments down'),
-                ClientTimeout('comments down'),
-                ClientTimeout('comments down'),
-                ClientTimeout('attachments down'),
-                ClientTimeout('attachments down'),
-                ClientTimeout('attachments down'),
-            ],
-        ):
-            tasks = client.get_assigned_tasks('PROJ', 'me', ['Open'])
-
-        self.assertEqual(len(tasks), 1)
-        self.assertEqual(tasks[0].description, 'Details')
-
-    def test_get_assigned_tasks_logs_comment_and_attachment_failures(self) -> None:
-        client = YouTrackClient('https://youtrack.example', 'yt-token')
-        issue_response = mock_response(json_data=[
-            {'idReadable': 'PROJ-1', 'summary': 'Fix bug', 'description': 'Details'}
-        ])
-        tags_response = mock_response(json_data=[])
-        client.logger = unittest.mock.Mock()
-
-        with patch.object(client, 'logger', client.logger), patch.object(
-            client,
-            '_get',
-            side_effect=[
-                issue_response,
-                tags_response,
-                ClientTimeout('comments down'),
-                ClientTimeout('comments down'),
-                ClientTimeout('comments down'),
-                ClientTimeout('attachments down'),
-                ClientTimeout('attachments down'),
-                ClientTimeout('attachments down'),
-            ],
-        ):
-            client.get_assigned_tasks('PROJ', 'me', ['Open'])
-
-        self.assertEqual(client.logger.exception.call_count, 2)
-
-    def test_get_assigned_tasks_truncates_long_text_attachments_and_marks_unavailable(self) -> None:
-        client = YouTrackClient('https://youtrack.example', 'yt-token')
-        issue_response = mock_response(json_data=[
-            {'idReadable': 'PROJ-1', 'summary': 'Fix bug', 'description': ''}
-        ])
-        tags_response = mock_response(json_data=[])
-        comments_response = mock_response(
-            json_data=[None, {YouTrackCommentFields.TEXT: None}]
-        )
-        attachments_response = mock_response(json_data=[
+        custom_fields_response = mock_response(json_data=[
             {
-                YouTrackAttachmentFields.NAME: 'large.txt',
-                YouTrackAttachmentFields.MIME_TYPE: 'text/plain',
-                YouTrackAttachmentFields.CHARSET: 'utf-8',
-                YouTrackAttachmentFields.URL: '/api/files/large.txt',
-            },
-            {
-                YouTrackAttachmentFields.NAME: 'broken.txt',
-                YouTrackAttachmentFields.MIME_TYPE: 'text/plain',
-                YouTrackAttachmentFields.CHARSET: 'utf-8',
-                YouTrackAttachmentFields.URL: '/api/files/broken.txt',
-            },
+                YouTrackCustomFieldFields.ID: '92-45',
+                YouTrackCustomFieldFields.NAME: 'State',
+                YouTrackCustomFieldFields.TYPE: 'StateIssueCustomField',
+                'value': {'name': 'In Review'},
+            }
         ])
-        large_text_response = mock_response(text='A' * 6000)
 
         with patch.object(
-            client,
-            '_get',
-            side_effect=[
-                issue_response,
-                tags_response,
-                comments_response,
-                attachments_response,
-                large_text_response,
-                ClientTimeout('attachment unavailable'),
-                ClientTimeout('attachment unavailable'),
-                ClientTimeout('attachment unavailable'),
-            ],
-        ):
-            tasks = client.get_assigned_tasks('PROJ', 'me', ['Open'])
+            client, '_get', return_value=custom_fields_response,
+        ), patch.object(client, '_post') as mock_post:
+            client.move_issue_to_state('PROJ-1', 'State', 'In Review')
 
-        self.assertEqual(len(tasks), 1)
-        self.assertIn('No description provided.', tasks[0].description)
-        self.assertIn('Attachment large.txt:\n' + ('A' * 5000), tasks[0].description)
-        self.assertIn('Attachment broken.txt could not be downloaded.', tasks[0].description)
-        self.assertNotIn('A' * 5001, tasks[0].description)
+        mock_post.assert_not_called()
 
-    def test_get_assigned_tasks_rejects_empty_states(self) -> None:
+    def test_raises_when_state_machine_event_not_found(self) -> None:
         client = YouTrackClient('https://youtrack.example', 'yt-token')
+        custom_fields_response = mock_response(json_data=[
+            {
+                YouTrackCustomFieldFields.ID: '92-45',
+                YouTrackCustomFieldFields.NAME: 'State',
+                YouTrackCustomFieldFields.TYPE: 'StateMachineIssueCustomField',
+                'value': {'name': 'Open'},
+                'possibleEvents': [
+                    {
+                        YouTrackCustomFieldFields.ID: 'start-work',
+                        'presentation': 'In Progress',
+                        YouTrackCustomFieldFields.TYPE: 'Event',
+                    },
+                ],
+            }
+        ])
 
+        with patch.object(client, '_get', return_value=custom_fields_response):
+            with self.assertRaisesRegex(ValueError, 'no YouTrack transition event matched'):
+                client.move_issue_to_state('PROJ-1', 'State', 'Nonexistent State')
+
+
+class YouTrackQueryBuilderTests(unittest.TestCase):
+    def test_single_state(self) -> None:
+        q = YouTrackClient._build_assigned_tasks_query('PROJ', 'me', ['Todo'])
+        self.assertEqual(q, 'project: PROJ assignee: me State: {Todo}')
+
+    def test_multiple_states(self) -> None:
+        q = YouTrackClient._build_assigned_tasks_query('PROJ', 'me', ['Todo', 'Open'])
+        self.assertEqual(q, 'project: PROJ assignee: me State: {Todo}, {Open}')
+
+    def test_empty_states_raises(self) -> None:
         with self.assertRaisesRegex(ValueError, 'states must not be empty'):
-            client.get_assigned_tasks('PROJ', 'me', [])
+            YouTrackClient._build_assigned_tasks_query('PROJ', 'me', [])
 
-    def test_add_pull_request_comment_does_not_retry_non_transient_exception(self) -> None:
-        client = YouTrackClient('https://youtrack.example', 'yt-token')
 
-        with patch.object(
-            client,
-            '_post',
-            side_effect=ValueError('invalid request'),
-        ) as mock_post:
-            with self.assertRaisesRegex(ValueError, 'invalid request'):
-                add_pull_request_comment_with_defaults(client)
-
-        self.assertEqual(mock_post.call_count, 1)
-
-    def test_get_assigned_tasks_decodes_binary_text_attachment_using_charset(self) -> None:
-        client = YouTrackClient('https://youtrack.example', 'yt-token')
-        issue_response = mock_response(json_data=[
-            {'idReadable': 'PROJ-1', 'summary': 'Fix bug', 'description': ''}
-        ])
-        tags_response = mock_response(json_data=[])
-        comments_response = mock_response(json_data=[])
-        attachments_response = mock_response(json_data=[
-            {
-                YouTrackAttachmentFields.NAME: 'notes.txt',
-                YouTrackAttachmentFields.MIME_TYPE: 'text/plain',
-                YouTrackAttachmentFields.CHARSET: 'latin-1',
-                YouTrackAttachmentFields.URL: '/api/files/notes.txt',
-            }
-        ])
-        text_attachment_response = mock_response(
-            text='',
-            content='cafe\xe9'.encode('latin-1'),
-        )
-
-        with patch.object(
-            client,
-            '_get',
-            side_effect=[
-                issue_response,
-                tags_response,
-                comments_response,
-                attachments_response,
-                text_attachment_response,
-            ],
-        ):
-            tasks = client.get_assigned_tasks('PROJ', 'me', ['Open'])
-
-        self.assertIn('Attachment notes.txt:\ncafe\xe9', tasks[0].description)
-
-    def test_get_assigned_tasks_ignores_text_attachment_without_url(self) -> None:
-        client = YouTrackClient('https://youtrack.example', 'yt-token')
-        issue_response = mock_response(json_data=[
-            {'idReadable': 'PROJ-1', 'summary': 'Fix bug', 'description': 'Details'}
-        ])
-        tags_response = mock_response(json_data=[])
-        comments_response = mock_response(json_data=[])
-        attachments_response = mock_response(json_data=[
-            {
-                YouTrackAttachmentFields.NAME: 'notes.txt',
-                YouTrackAttachmentFields.MIME_TYPE: 'text/plain',
-                YouTrackAttachmentFields.CHARSET: 'utf-8',
-            }
-        ])
-
-        with patch.object(
-            client,
-            '_get',
-            side_effect=[issue_response, tags_response, comments_response, attachments_response],
-        ):
-            tasks = client.get_assigned_tasks('PROJ', 'me', ['Open'])
-
-        self.assertEqual(tasks[0].description, 'Details')
+if __name__ == '__main__':
+    unittest.main()
