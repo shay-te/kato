@@ -23,7 +23,7 @@ Public surface:
 """
 
 from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
-from claude_core_lib.claude_core_lib.session_manager import (
+from claude_core_lib.claude_core_lib.session.manager import (
     SESSION_STATUS_ACTIVE,
     SESSION_STATUS_DONE,
     SESSION_STATUS_REVIEW,
@@ -31,7 +31,7 @@ from claude_core_lib.claude_core_lib.session_manager import (
     ClaudeSessionManager,
     PlanningSessionRecord,
 )
-from claude_core_lib.claude_core_lib.streaming_session import (
+from claude_core_lib.claude_core_lib.session.streaming import (
     SessionEvent,
     StreamingClaudeSession,
 )

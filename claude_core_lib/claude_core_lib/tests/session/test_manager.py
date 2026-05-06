@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from claude_core_lib.claude_core_lib.session_manager import (
+from claude_core_lib.claude_core_lib.session.manager import (
     SESSION_STATUS_ACTIVE,
     SESSION_STATUS_DONE,
     ClaudeSessionManager,

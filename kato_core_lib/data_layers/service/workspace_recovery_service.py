@@ -34,7 +34,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from claude_core_lib.claude_core_lib.session_history import find_session_id_for_cwd
+from claude_core_lib.claude_core_lib.session.history import find_session_id_for_cwd
 from kato_core_lib.data_layers.service.workspace_manager import (
     WORKSPACE_STATUS_ACTIVE,
     WorkspaceManager,

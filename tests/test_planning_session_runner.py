@@ -4,11 +4,11 @@ import time
 import unittest
 from unittest.mock import MagicMock, patch
 
-from claude_core_lib.claude_core_lib.session_manager import (
+from claude_core_lib.claude_core_lib.session.manager import (
     SESSION_STATUS_REVIEW,
     SESSION_STATUS_TERMINATED,
 )
-from claude_core_lib.claude_core_lib.streaming_session import SessionEvent
+from claude_core_lib.claude_core_lib.session.streaming import SessionEvent
 from kato_core_lib.data_layers.data.fields import ImplementationFields
 from kato_core_lib.data_layers.service.planning_session_runner import (
     PlanningSessionRunner,

@@ -7,7 +7,7 @@ import time
 import unittest
 from unittest.mock import MagicMock, patch
 
-from claude_core_lib.claude_core_lib.streaming_session import SessionEvent, StreamingClaudeSession
+from claude_core_lib.claude_core_lib.session.streaming import SessionEvent, StreamingClaudeSession
 
 
 class _FakeProc:
@@ -65,10 +65,10 @@ class StreamingClaudeSessionTests(unittest.TestCase):
             json.dumps({'type': 'system', 'subtype': 'init', 'session_id': 'live-123'}),
         ])
         with patch(
-            'claude_core_lib.claude_core_lib.streaming_session.subprocess.Popen',
+            'claude_core_lib.claude_core_lib.session.streaming.subprocess.Popen',
             return_value=fake_proc,
         ) as mock_popen, patch(
-            'claude_core_lib.claude_core_lib.streaming_session.shutil.which',
+            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ):
             session = StreamingClaudeSession(task_id='PROJ-1', cwd='/tmp')
@@ -95,10 +95,10 @@ class StreamingClaudeSessionTests(unittest.TestCase):
         # sibling repo path is what fixes that.
         fake_proc = _FakeProc()
         with patch(
-            'claude_core_lib.claude_core_lib.streaming_session.subprocess.Popen',
+            'claude_core_lib.claude_core_lib.session.streaming.subprocess.Popen',
             return_value=fake_proc,
         ) as mock_popen, patch(
-            'claude_core_lib.claude_core_lib.streaming_session.shutil.which',
+            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ):
             session = StreamingClaudeSession(
@@ -130,10 +130,10 @@ class StreamingClaudeSessionTests(unittest.TestCase):
         # event arrives.
         fake_proc = _FakeProc()
         with patch(
-            'claude_core_lib.claude_core_lib.streaming_session.subprocess.Popen',
+            'claude_core_lib.claude_core_lib.session.streaming.subprocess.Popen',
             return_value=fake_proc,
         ) as mock_popen, patch(
-            'claude_core_lib.claude_core_lib.streaming_session.shutil.which',
+            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ):
             session = StreamingClaudeSession(
@@ -156,10 +156,10 @@ class StreamingClaudeSessionTests(unittest.TestCase):
         fake_proc = _FakeProc()
         fake_proc._exit_after_close = False
         with patch(
-            'claude_core_lib.claude_core_lib.streaming_session.subprocess.Popen',
+            'claude_core_lib.claude_core_lib.session.streaming.subprocess.Popen',
             return_value=fake_proc,
         ), patch(
-            'claude_core_lib.claude_core_lib.streaming_session.shutil.which',
+            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ):
             session = StreamingClaudeSession(task_id='PROJ-1')
@@ -183,10 +183,10 @@ class StreamingClaudeSessionTests(unittest.TestCase):
         fake_proc = _FakeProc()
         fake_proc._exit_after_close = False
         with patch(
-            'claude_core_lib.claude_core_lib.streaming_session.subprocess.Popen',
+            'claude_core_lib.claude_core_lib.session.streaming.subprocess.Popen',
             return_value=fake_proc,
         ), patch(
-            'claude_core_lib.claude_core_lib.streaming_session.shutil.which',
+            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ):
             session = StreamingClaudeSession(task_id='PROJ-1')
@@ -218,10 +218,10 @@ class StreamingClaudeSessionTests(unittest.TestCase):
         fake_proc = _FakeProc()
         fake_proc._exit_after_close = False
         with patch(
-            'claude_core_lib.claude_core_lib.streaming_session.subprocess.Popen',
+            'claude_core_lib.claude_core_lib.session.streaming.subprocess.Popen',
             return_value=fake_proc,
         ), patch(
-            'claude_core_lib.claude_core_lib.streaming_session.shutil.which',
+            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ):
             session = StreamingClaudeSession(task_id='PROJ-1')
@@ -244,10 +244,10 @@ class StreamingClaudeSessionTests(unittest.TestCase):
         fake_proc = _FakeProc()
         fake_proc._exit_after_close = False
         with patch(
-            'claude_core_lib.claude_core_lib.streaming_session.subprocess.Popen',
+            'claude_core_lib.claude_core_lib.session.streaming.subprocess.Popen',
             return_value=fake_proc,
         ), patch(
-            'claude_core_lib.claude_core_lib.streaming_session.shutil.which',
+            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ):
             session = StreamingClaudeSession(task_id='PROJ-1')
@@ -277,10 +277,10 @@ class StreamingClaudeSessionTests(unittest.TestCase):
         fake_proc = _FakeProc()
         fake_proc._exit_after_close = False
         with patch(
-            'claude_core_lib.claude_core_lib.streaming_session.subprocess.Popen',
+            'claude_core_lib.claude_core_lib.session.streaming.subprocess.Popen',
             return_value=fake_proc,
         ), patch(
-            'claude_core_lib.claude_core_lib.streaming_session.shutil.which',
+            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ):
             session = StreamingClaudeSession(task_id='PROJ-1')
@@ -296,10 +296,10 @@ class StreamingClaudeSessionTests(unittest.TestCase):
         fake_proc = _FakeProc()
         fake_proc._exit_after_close = False
         with patch(
-            'claude_core_lib.claude_core_lib.streaming_session.subprocess.Popen',
+            'claude_core_lib.claude_core_lib.session.streaming.subprocess.Popen',
             return_value=fake_proc,
         ), patch(
-            'claude_core_lib.claude_core_lib.streaming_session.shutil.which',
+            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ):
             session = StreamingClaudeSession(task_id='PROJ-1')
@@ -330,10 +330,10 @@ class StreamingClaudeSessionTests(unittest.TestCase):
         fake_proc = _FakeProc()
         fake_proc._exit_after_close = False
         with patch(
-            'claude_core_lib.claude_core_lib.streaming_session.subprocess.Popen',
+            'claude_core_lib.claude_core_lib.session.streaming.subprocess.Popen',
             return_value=fake_proc,
         ), patch(
-            'claude_core_lib.claude_core_lib.streaming_session.shutil.which',
+            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ):
             session = StreamingClaudeSession(task_id='PROJ-1')
@@ -361,10 +361,10 @@ class StreamingClaudeSessionTests(unittest.TestCase):
                         'is_error': False, 'result': 'done'}),
         ])
         with patch(
-            'claude_core_lib.claude_core_lib.streaming_session.subprocess.Popen',
+            'claude_core_lib.claude_core_lib.session.streaming.subprocess.Popen',
             return_value=fake_proc,
         ), patch(
-            'claude_core_lib.claude_core_lib.streaming_session.shutil.which',
+            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ):
             session = StreamingClaudeSession(task_id='PROJ-1')
@@ -389,10 +389,10 @@ class StreamingClaudeSessionTests(unittest.TestCase):
         fake_proc = _FakeProc()
         fake_proc._exit_after_close = False  # simulate hung subprocess
         with patch(
-            'claude_core_lib.claude_core_lib.streaming_session.subprocess.Popen',
+            'claude_core_lib.claude_core_lib.session.streaming.subprocess.Popen',
             return_value=fake_proc,
         ), patch(
-            'claude_core_lib.claude_core_lib.streaming_session.shutil.which',
+            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ):
             session = StreamingClaudeSession(task_id='PROJ-1')
@@ -417,10 +417,10 @@ class StreamingClaudeSessionDockerModeTests(unittest.TestCase):
     def test_docker_mode_off_does_not_wrap_spawn_even_when_bypass_permissions(self) -> None:
         fake_proc = _FakeProc()
         with patch(
-            'claude_core_lib.claude_core_lib.streaming_session.subprocess.Popen',
+            'claude_core_lib.claude_core_lib.session.streaming.subprocess.Popen',
             return_value=fake_proc,
         ) as mock_popen, patch(
-            'claude_core_lib.claude_core_lib.streaming_session.shutil.which',
+            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ), patch(
             'sandbox_core_lib.sandbox_core_lib.manager.wrap_command',
@@ -441,10 +441,10 @@ class StreamingClaudeSessionDockerModeTests(unittest.TestCase):
     def test_docker_mode_on_wraps_spawn_in_sandbox(self) -> None:
         fake_proc = _FakeProc()
         with patch(
-            'claude_core_lib.claude_core_lib.streaming_session.subprocess.Popen',
+            'claude_core_lib.claude_core_lib.session.streaming.subprocess.Popen',
             return_value=fake_proc,
         ) as mock_popen, patch(
-            'claude_core_lib.claude_core_lib.streaming_session.shutil.which',
+            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ), patch(
             'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
@@ -548,10 +548,10 @@ class StreamingClaudeSessionCredentialOutputScanTests(unittest.TestCase):
         })
         fake_proc = _FakeProc(stdout_lines=[terminal_line])
         with patch(
-            'claude_core_lib.claude_core_lib.streaming_session.subprocess.Popen',
+            'claude_core_lib.claude_core_lib.session.streaming.subprocess.Popen',
             return_value=fake_proc,
         ), patch(
-            'claude_core_lib.claude_core_lib.streaming_session.shutil.which',
+            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ), self.assertLogs('kato.workflow.StreamingClaudeSession', level='WARNING') as cm:
             session = StreamingClaudeSession(task_id='PROJ-CRED')
@@ -577,10 +577,10 @@ class StreamingClaudeSessionCredentialOutputScanTests(unittest.TestCase):
         })
         fake_proc = _FakeProc(stdout_lines=[terminal_line])
         with patch(
-            'claude_core_lib.claude_core_lib.streaming_session.subprocess.Popen',
+            'claude_core_lib.claude_core_lib.session.streaming.subprocess.Popen',
             return_value=fake_proc,
         ), patch(
-            'claude_core_lib.claude_core_lib.streaming_session.shutil.which',
+            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ):
             session = StreamingClaudeSession(task_id='PROJ-CLEAN')
@@ -610,10 +610,10 @@ class StreamingClaudeSessionCredentialOutputScanTests(unittest.TestCase):
         })
         fake_proc = _FakeProc(stdout_lines=[terminal_line])
         with patch(
-            'claude_core_lib.claude_core_lib.streaming_session.subprocess.Popen',
+            'claude_core_lib.claude_core_lib.session.streaming.subprocess.Popen',
             return_value=fake_proc,
         ), patch(
-            'claude_core_lib.claude_core_lib.streaming_session.shutil.which',
+            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ), self.assertLogs('kato.workflow.StreamingClaudeSession', level='WARNING') as cm:
             session = StreamingClaudeSession(task_id='PROJ-PHISH')

@@ -17,7 +17,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from claude_core_lib.claude_core_lib.session_manager import (
+from claude_core_lib.claude_core_lib.session.manager import (
     SESSION_STATUS_REVIEW,
     SESSION_STATUS_TERMINATED,
     ClaudeSessionManager,

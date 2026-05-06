@@ -25,7 +25,7 @@ from pathlib import Path
 
 from kato_core_lib.helpers.atomic_json_utils import atomic_write_json
 
-from claude_core_lib.claude_core_lib.streaming_session import StreamingClaudeSession
+from claude_core_lib.claude_core_lib.session.streaming import StreamingClaudeSession
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.text_utils import normalized_text
 
@@ -320,10 +320,10 @@ class ClaudeSessionManager(object):
         if not resume_session_id or not target_cwd:
             return
         try:
-            from claude_core_lib.claude_core_lib.session_history import (
+            from claude_core_lib.claude_core_lib.session.history import (
                 find_session_file,
             )
-            from claude_core_lib.claude_core_lib.claude_session_index import (
+            from claude_core_lib.claude_core_lib.session.index import (
                 claude_project_dir_for_cwd,
                 migrate_session_to_workspace,
             )

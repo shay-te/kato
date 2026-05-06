@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from queue import Empty, Queue
 from typing import Any
 
-from claude_core_lib.claude_core_lib.wire_protocol import (
+from claude_core_lib.claude_core_lib.session.wire_protocol import (
     CLAUDE_EVENT_CONTROL_REQUEST,
     CLAUDE_EVENT_CONTROL_RESPONSE,
     CLAUDE_EVENT_PERMISSION_RESPONSE,

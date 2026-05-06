@@ -25,12 +25,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from claude_core_lib.claude_core_lib.session_manager import (
+from claude_core_lib.claude_core_lib.session.manager import (
     ClaudeSessionManager,
     PlanningSessionRecord,
     SESSION_STATUS_TERMINATED,
 )
-from claude_core_lib.claude_core_lib.claude_session_index import (
+from claude_core_lib.claude_core_lib.session.index import (
     CLAUDE_SESSIONS_ROOT_ENV_KEY,
     ClaudeSessionMetadata,
     claude_project_dir_for_cwd,
