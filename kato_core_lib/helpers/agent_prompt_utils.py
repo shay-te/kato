@@ -6,7 +6,7 @@ from kato_core_lib.data_layers.data.fields import (
     PullRequestFields,
     ReviewCommentFields,
 )
-from kato_core_lib.data_layers.data.review_comment import ReviewComment
+from provider_client_base.provider_client_base.data.review_comment import ReviewComment
 from kato_core_lib.data_layers.data.task import Task
 from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
 from kato_core_lib.helpers.text_utils import (

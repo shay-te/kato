@@ -31,7 +31,7 @@ from kato_core_lib.data_layers.data.fields import (
     PullRequestFields,
     ReviewCommentFields,
 )
-from kato_core_lib.data_layers.data.review_comment import ReviewComment
+from provider_client_base.provider_client_base.data.review_comment import ReviewComment
 from kato_core_lib.helpers.agent_prompt_utils import review_comments_batch_text
 from kato_core_lib.jobs.process_assigned_tasks import (
     _group_review_comments_by_pull_request,

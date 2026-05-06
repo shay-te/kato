@@ -24,7 +24,7 @@ from claude_core_lib.claude_core_lib.session.manager import (
     ClaudeSessionManager,
 )
 from kato_core_lib.data_layers.data.fields import ImplementationFields
-from kato_core_lib.data_layers.data.review_comment import ReviewComment
+from provider_client_base.provider_client_base.data.review_comment import ReviewComment
 from kato_core_lib.data_layers.data.task import Task
 from kato_core_lib.helpers import agent_prompt_utils
 from kato_core_lib.helpers.kato_result_utils import build_openhands_result

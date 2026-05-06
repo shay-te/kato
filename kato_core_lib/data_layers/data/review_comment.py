@@ -1,1 +1,0 @@
-from provider_client_base.provider_client_base.data.review_comment import ReviewComment

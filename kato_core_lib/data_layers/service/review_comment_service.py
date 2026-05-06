@@ -12,7 +12,7 @@ from kato_core_lib.data_layers.data.fields import (
     ReviewCommentFields,
     TaskCommentFields,
 )
-from kato_core_lib.data_layers.data.review_comment import ReviewComment
+from provider_client_base.provider_client_base.data.review_comment import ReviewComment
 from kato_core_lib.data_layers.service.agent_state_registry import AgentStateRegistry
 from kato_core_lib.data_layers.service.implementation_service import ImplementationService
 from kato_core_lib.data_layers.service.repository_service import RepositoryService

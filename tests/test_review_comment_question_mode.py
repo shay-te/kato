@@ -27,7 +27,7 @@ from kato_core_lib.data_layers.data.fields import (
     PullRequestFields,
     ReviewCommentFields,
 )
-from kato_core_lib.data_layers.data.review_comment import ReviewComment
+from provider_client_base.provider_client_base.data.review_comment import ReviewComment
 from kato_core_lib.helpers.review_comment_utils import (
     is_question_comment,
     is_question_only_batch,

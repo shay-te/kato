@@ -3,7 +3,7 @@ from omegaconf import DictConfig
 from core_lib.data_layers.data_access.data_access import DataAccess
 from core_lib.rule_validator.rule_validator import RuleValidator, ValueRuleValidator
 
-from kato_core_lib.data_layers.data.review_comment import ReviewComment
+from provider_client_base.provider_client_base.data.review_comment import ReviewComment
 from kato_core_lib.data_layers.data.fields import PullRequestFields, ReviewCommentFields
 from repository_core_lib.repository_core_lib.pull_request_service import PullRequestService
 from repository_core_lib.repository_core_lib.platform import Platform

@@ -21,7 +21,7 @@ import types
 import unittest
 from unittest.mock import Mock
 
-from kato_core_lib.data_layers.data.review_comment import ReviewComment
+from provider_client_base.provider_client_base.data.review_comment import ReviewComment
 from kato_core_lib.data_layers.data.fields import (
     PullRequestFields,
     ReviewCommentFields,

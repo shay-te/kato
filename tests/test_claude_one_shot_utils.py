@@ -14,7 +14,7 @@ import subprocess
 import unittest
 from unittest.mock import MagicMock, patch
 
-from kato_core_lib.helpers.claude_one_shot_utils import (
+from claude_core_lib.claude_core_lib.helpers.one_shot_utils import (
     ClaudeOneShotError,
     claude_one_shot,
     make_claude_one_shot,

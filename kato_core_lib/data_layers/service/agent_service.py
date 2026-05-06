@@ -43,7 +43,7 @@ from kato_core_lib.data_layers.data.fields import (
     StatusFields,
     TaskTags,
 )
-from kato_core_lib.data_layers.data.review_comment import ReviewComment
+from provider_client_base.provider_client_base.data.review_comment import ReviewComment
 from kato_core_lib.validation.branch_publishability import (
     TaskBranchPublishabilityValidator,
 )

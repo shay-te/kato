@@ -9,7 +9,7 @@ from kato_core_lib.data_layers.data.fields import (
     PullRequestFields,
     ReviewCommentFields,
 )
-from kato_core_lib.data_layers.data.review_comment import ReviewComment
+from provider_client_base.provider_client_base.data.review_comment import ReviewComment
 from kato_core_lib.data_layers.service.agent_state_registry import AgentStateRegistry
 from kato_core_lib.data_layers.service.review_comment_service import ReviewCommentService
 from kato_core_lib.helpers.review_comment_utils import review_comment_fixed_comment

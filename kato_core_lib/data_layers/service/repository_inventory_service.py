@@ -9,7 +9,7 @@ from omegaconf import OmegaConf
 from kato_core_lib.data_layers.data.fields import RepositoryFields
 from kato_core_lib.data_layers.data_access.pull_request_data_access import PullRequestDataAccess
 from kato_core_lib.helpers.logging_utils import configure_logger
-from kato_core_lib.helpers.repository_discovery_utils import (
+from git_core_lib.git_core_lib.helpers.repository_discovery_utils import (
     build_discovered_repository,
     discover_git_repositories,
     display_name_from_repo_slug,

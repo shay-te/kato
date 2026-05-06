@@ -10,7 +10,7 @@ from kato_core_lib.helpers.kato_config_utils import (
     is_bedrock_model,
     is_openrouter_model,
 )
-from kato_core_lib.helpers.repository_discovery_utils import (
+from git_core_lib.git_core_lib.helpers.repository_discovery_utils import (
     discover_git_repositories,
     read_git_remote_url,
 )
