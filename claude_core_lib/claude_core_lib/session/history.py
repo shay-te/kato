@@ -182,12 +182,12 @@ def _coerce_event(raw_line: str) -> dict | None:
             return payload
         if not _has_displayable_text(message):
             return None
-        if _is_kato_orchestration_prompt(message):
+        if _is_orchestration_prompt(message):
             return None
     return payload
 
 
-_KATO_PROMPT_MARKERS = (
+_ORCHESTRATION_PROMPT_MARKERS = (
     'Security guardrails:',
     'Tool guardrails:',
     'Address pull request comment',
@@ -195,8 +195,8 @@ _KATO_PROMPT_MARKERS = (
 )
 
 
-def _is_kato_orchestration_prompt(message) -> bool:
-    """True when the user message is kato's auto-injected task prompt.
+def _is_orchestration_prompt(message) -> bool:
+    """True when the user message is the orchestrator's auto-injected task prompt.
 
     Those carry security/tool guardrails plus an explicit completion
     contract — useful to Claude, noise to a human reading the history.
@@ -209,7 +209,7 @@ def _is_kato_orchestration_prompt(message) -> bool:
         if not isinstance(block, dict):
             continue
         text = block.get('text') or ''
-        if any(marker in text for marker in _KATO_PROMPT_MARKERS):
+        if any(marker in text for marker in _ORCHESTRATION_PROMPT_MARKERS):
             return True
     return False
 

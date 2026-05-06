@@ -168,7 +168,7 @@ def workspace_scope_block(allowed_paths) -> str:
         'Bash, Edit, Write, MultiEdit, NotebookEdit, Read, Grep, Glob '
         'must all stay inside.\n'
         '- Do NOT touch other tasks\' workspaces under '
-        '``~/.kato/workspaces/`` (or the operator\'s ``KATO_WORKSPACES_ROOT``).\n'
+        '``KATO_WORKSPACES_ROOT`` (set by the operator).\n'
         '- Do NOT touch the operator\'s shared source clones at '
         '``REPOSITORY_ROOT_PATH`` — even if a path under it appears '
         'in the task description, treat it as reference text only.\n'
@@ -248,7 +248,7 @@ def task_conversation_title(task, suffix: str = '') -> str:
     task_summary = condensed_text(str(getattr(task, 'summary', '') or ''))
     if task_summary:
         return f'{task_summary}{suffix}'
-    return f'Kato task{suffix}'
+    return f'task{suffix}'
 
 
 def review_conversation_title(
@@ -274,7 +274,7 @@ def review_comment_context_text(comment) -> str:
         body = str(item.get('body', '') or '').strip()
         if not body:
             continue
-        if _is_kato_self_reply_body(body):
+        if _is_self_reply_body(body):
             continue
         label = author if author else 'reviewer'
         lines.append(f'- {label}: {body}')
@@ -283,14 +283,14 @@ def review_comment_context_text(comment) -> str:
     return '\n\nReview comment context:\n' + '\n'.join(lines)
 
 
-_KATO_SELF_REPLY_PREFIXES = (
+_SELF_REPLY_PREFIXES = (
     'Kato addressed review comment ',
     'Kato addressed this review comment',
 )
 
 
-def _is_kato_self_reply_body(body: str) -> bool:
-    return body.startswith(_KATO_SELF_REPLY_PREFIXES)
+def _is_self_reply_body(body: str) -> bool:
+    return body.startswith(_SELF_REPLY_PREFIXES)
 
 
 def review_repository_context(comment) -> str:

@@ -21,7 +21,7 @@ _LIVING_DOC_DIRECTIVE_TEMPLATE = (
     'section, or add a new section if none fits. Do not duplicate '
     'content already documented; do not restate what the code shows. '
     'The document is a navigation aid and a contract registry, not '
-    'a mirror of the source. Kato commits and pushes the file (you '
+    'a mirror of the source. The orchestration layer commits and pushes the file (you '
     'must NEVER run git); just edit.\n'
 )
 

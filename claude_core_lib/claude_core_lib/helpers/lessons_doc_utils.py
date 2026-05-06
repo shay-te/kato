@@ -9,7 +9,7 @@ _TIMESTAMP_PATTERN = re.compile(r'^<!-- last_compacted:.*-->$')
 _MAX_BODY_CHARS = 50_000
 
 _LESSONS_DIRECTIVE_TEMPLATE = (
-    'Codebase-specific lessons learned by Kato across previous tasks '
+    'Codebase-specific lessons learned across previous tasks '
     '(location: {path}). These are concrete rules extracted from real '
     'mistakes that happened on prior tasks in this codebase. Treat '
     'them as additional constraints on your work — alongside the '
