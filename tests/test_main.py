@@ -1,12 +1,15 @@
 import os
+import tempfile
 import types
 import unittest
-from unittest.mock import Mock, call, patch
+from pathlib import Path
+from unittest.mock import ANY, Mock, call, patch
 
 
 from kato_core_lib.main import (
     _RESUME_CONTINUE_PROMPT,
     _RESUME_WAIT_PROMPT,
+    _reset_stuck_workspace_statuses,
     _resume_prompt_for_workspace,
     _resume_streaming_sessions,
     _run_task_scan_loop,
@@ -51,6 +54,7 @@ class MainTests(unittest.TestCase):
             app,
             startup_delay_seconds=30.0,
             scan_interval_seconds=60.0,
+            force_scan_event=ANY,
         )
         app.logger.info.assert_any_call('Starting kato agent')
 
@@ -526,3 +530,133 @@ class MainReadOnlyToolsIntegrationTests(unittest.TestCase):
         ) as mock_validator:
             self._run_main_with_other_validators_mocked()
         mock_validator.assert_called_once()
+
+
+class ResetStuckWorkspaceStatusesTests(unittest.TestCase):
+    """Tests for _reset_stuck_workspace_statuses (Fix 3 boot-time status repair)."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.workspace_root = Path(self._tmp.name)
+        from workspace_core_lib.workspace_core_lib import WorkspaceCoreLib
+        self._lib = WorkspaceCoreLib(
+            root=self.workspace_root,
+            max_parallel_tasks=2,
+            metadata_filename='.kato-meta.json',
+            preflight_log_filename='.kato-preflight.log',
+        )
+        self.workspace_manager = self._lib.workspaces
+
+    def _make_app(self):
+        return types.SimpleNamespace(
+            logger=Mock(),
+            workspace_manager=self.workspace_manager,
+        )
+
+    def _create_workspace(self, task_id, status, repo_ids=None):
+        from workspace_core_lib.workspace_core_lib import (
+            WORKSPACE_STATUS_PROVISIONING,
+        )
+        record = self.workspace_manager.create(
+            task_id=task_id,
+            task_summary='test task',
+            repository_ids=repo_ids or [],
+        )
+        self.workspace_manager.update_status(task_id, status)
+        return record
+
+    def _add_git_repo(self, task_id, repo_id):
+        repo_path = self.workspace_root / task_id / repo_id
+        repo_path.mkdir(parents=True, exist_ok=True)
+        (repo_path / '.git').mkdir(exist_ok=True)
+
+    def test_provisioning_with_git_repo_is_promoted_to_active(self) -> None:
+        self._create_workspace('PROJ-1', 'provisioning', ['client'])
+        self._add_git_repo('PROJ-1', 'client')
+        app = self._make_app()
+
+        _reset_stuck_workspace_statuses(app)
+
+        record = self.workspace_manager.get('PROJ-1')
+        self.assertEqual(record.status, 'active')
+        app.logger.info.assert_any_call(
+            'workspace %s promoted from provisioning to active '
+            '(repos were cloned before the previous kato process stopped)',
+            'PROJ-1',
+        )
+
+    def test_provisioning_without_git_repo_is_not_promoted(self) -> None:
+        self._create_workspace('PROJ-2', 'provisioning', ['client'])
+        app = self._make_app()
+
+        _reset_stuck_workspace_statuses(app)
+
+        record = self.workspace_manager.get('PROJ-2')
+        self.assertEqual(record.status, 'provisioning')
+        app.logger.warning.assert_any_call(
+            'workspace %s is stuck in provisioning state with no valid '
+            'git repos — the previous clone was incomplete. '
+            'Re-run the task to provision it correctly.',
+            'PROJ-2',
+        )
+
+    def test_errored_workspace_logs_warning_without_status_change(self) -> None:
+        self._create_workspace('PROJ-3', 'errored', ['client'])
+        app = self._make_app()
+
+        _reset_stuck_workspace_statuses(app)
+
+        record = self.workspace_manager.get('PROJ-3')
+        self.assertEqual(record.status, 'errored')
+        app.logger.warning.assert_any_call(
+            'workspace %s is in errored state from a previous run — '
+            'operator may need to re-run the task or discard the workspace',
+            'PROJ-3',
+        )
+
+    def test_active_workspace_is_left_unchanged(self) -> None:
+        self._create_workspace('PROJ-4', 'active', ['client'])
+        app = self._make_app()
+
+        _reset_stuck_workspace_statuses(app)
+
+        record = self.workspace_manager.get('PROJ-4')
+        self.assertEqual(record.status, 'active')
+        app.logger.info.assert_not_called()
+
+    def test_review_workspace_is_left_unchanged(self) -> None:
+        self._create_workspace('PROJ-5', 'review', ['client'])
+        app = self._make_app()
+
+        _reset_stuck_workspace_statuses(app)
+
+        record = self.workspace_manager.get('PROJ-5')
+        self.assertEqual(record.status, 'review')
+
+    def test_noop_when_workspace_manager_is_none(self) -> None:
+        app = types.SimpleNamespace(
+            logger=Mock(),
+            workspace_manager=None,
+        )
+        _reset_stuck_workspace_statuses(app)
+        app.logger.info.assert_not_called()
+        app.logger.warning.assert_not_called()
+
+    def test_noop_when_workspace_manager_attribute_missing(self) -> None:
+        app = types.SimpleNamespace(logger=Mock())
+        _reset_stuck_workspace_statuses(app)
+        app.logger.info.assert_not_called()
+
+    def test_promotion_count_logged_when_multiple_workspaces_promoted(self) -> None:
+        for i in (1, 2):
+            self._create_workspace(f'PROJ-{i}', 'provisioning', ['client'])
+            self._add_git_repo(f'PROJ-{i}', 'client')
+        app = self._make_app()
+
+        _reset_stuck_workspace_statuses(app)
+
+        app.logger.info.assert_any_call(
+            'promoted %d workspace(s) from provisioning to active at boot',
+            2,
+        )

@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import EventLog from './EventLog.jsx';
 import MessageForm from './MessageForm.jsx';
 import PermissionDecisionContainer from './PermissionDecisionContainer.jsx';
@@ -9,7 +9,7 @@ import { CLAUDE_EVENT, CLAUDE_SYSTEM_SUBTYPE } from '../constants/claudeEvent.js
 import { ENTRY_SOURCE } from '../constants/entrySource.js';
 import { useSessionStream, SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
 import { useToolMemory } from '../hooks/useToolMemory.js';
-import { postChatMessage, postSession } from '../api.js';
+import { fetchModels, fetchSessionModel, postChatMessage, postSession, setSessionModel } from '../api.js';
 
 export default function SessionDetail({
   session,
@@ -21,6 +21,27 @@ export default function SessionDetail({
 }) {
   const taskId = session?.task_id;
   const stream = useSessionStream(taskId, onActivity);
+
+  const [availableModels, setAvailableModels] = useState([]);
+  const [selectedModel, setSelectedModel] = useState('');
+  const modelsLoadedRef = useRef(false);
+  useEffect(() => {
+    if (modelsLoadedRef.current) { return; }
+    modelsLoadedRef.current = true;
+    fetchModels().then((result) => {
+      if (result && result.models) { setAvailableModels(result.models); }
+    }).catch(() => {});
+  }, []);
+  useEffect(() => {
+    if (!taskId) { setSelectedModel(''); return; }
+    fetchSessionModel(taskId).then((result) => {
+      setSelectedModel((result && result.model) || '');
+    }).catch(() => {});
+  }, [taskId]);
+  const handleModelChange = useCallback(async (modelId) => {
+    setSelectedModel(modelId);
+    await setSessionModel(taskId, modelId);
+  }, [taskId]);
   // Prefer the App-level toolMemory when passed (so the same recall
   // function powers both this modal AND the tab-attention filter);
   // fall back to a local instance for tests / standalone usage.
@@ -161,6 +182,9 @@ export default function SessionDetail({
           onSubmit={onSendMessage}
           disabled={composerDisabled}
           disabledReason={composerHint}
+          availableModels={availableModels}
+          selectedModel={selectedModel}
+          onModelChange={handleModelChange}
         />
       </section>
       <PermissionDecisionContainer

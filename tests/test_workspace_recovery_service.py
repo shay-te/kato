@@ -164,6 +164,40 @@ class WorkspaceRecoveryServiceTests(unittest.TestCase):
         meta = json.loads((orphan_dir / '.kato-meta.json').read_text())
         self.assertEqual(meta.get('agent_session_id', ''), '')
 
+    def test_recovery_warns_when_live_task_list_is_empty(self) -> None:
+        # When both API calls fail, recovery can't match orphans to
+        # live tasks. A visible warning prevents silent abandonment.
+        self.task_service.get_assigned_tasks.side_effect = RuntimeError('network error')
+        self.task_service.get_review_tasks.side_effect = RuntimeError('network error')
+        self._stage_orphan()
+        mock_logger = MagicMock()
+        service = WorkspaceRecoveryService(
+            workspace_manager=self.workspace_manager,
+            task_service=self.task_service,
+            repository_service=self.repository_service,
+            logger=mock_logger,
+        )
+
+        adopted = service.recover_orphan_workspaces()
+
+        self.assertEqual(adopted, [])
+        warning_args = [call.args[0] for call in mock_logger.warning.call_args_list]
+        self.assertTrue(
+            any('orphan workspace recovery skipped' in msg for msg in warning_args),
+            f'expected orphan-skipped warning, got: {warning_args}',
+        )
+
+    def test_recovery_proceeds_with_partial_task_list_when_one_api_call_fails(self) -> None:
+        # If assigned-tasks fails but review-tasks succeeds, recovery
+        # continues with what we have.
+        self.task_service.get_assigned_tasks.side_effect = RuntimeError('network error')
+        self.task_service.get_review_tasks.return_value = [self.task]
+        self._stage_orphan()
+
+        adopted = self.service.recover_orphan_workspaces()
+
+        self.assertEqual(len(adopted), 1)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -24,6 +24,9 @@ const MessageForm = forwardRef(function MessageForm({
   onSubmit,
   disabled = false,
   disabledReason = '',
+  availableModels = [],
+  selectedModel = '',
+  onModelChange,
 }, ref) {
   const [value, setValue] = useState('');
   // Attached images live in component state (not lifted) because the
@@ -205,6 +208,21 @@ const MessageForm = forwardRef(function MessageForm({
         style={{ display: 'none' }}
         onChange={handleFilePickerChange}
       />
+      {availableModels.length > 0 && (
+        <select
+          id="model-selector"
+          className="tooltip-above"
+          data-tooltip="Model used for the next session spawn. Takes effect when Claude is re-spawned."
+          value={selectedModel}
+          onChange={(e) => onModelChange && onModelChange(e.target.value)}
+          aria-label="Select model"
+        >
+          <option value="">Default</option>
+          {availableModels.map((m) => (
+            <option key={m.id} value={m.id}>{m.label}</option>
+          ))}
+        </select>
+      )}
       <button
         type="submit"
         disabled={disabled || !hasContent}

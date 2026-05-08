@@ -28,6 +28,7 @@ from kato_core_lib.helpers.review_comment_utils import (
     ReviewFixContext,
     comment_context_entry,
     is_kato_review_comment_reply,
+    is_mention_comment,
     is_question_only_batch,
     review_comment_answer_body,
     review_comment_from_payload,

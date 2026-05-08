@@ -82,6 +82,12 @@ from kato_webserver.git_diff_utils import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 KATO_REPO_ROOT = REPO_ROOT.parent
 
+_CLAUDE_MODELS = [
+    {'id': 'claude-opus-4-7',          'label': 'Opus 4.7'},
+    {'id': 'claude-sonnet-4-6',        'label': 'Sonnet 4.6', 'default': True},
+    {'id': 'claude-haiku-4-5-20251001','label': 'Haiku 4.5'},
+]
+
 # Browser-driven SSE stream cadence. The follow loop polls the
 # session for new events and yields them as they arrive. We tried a
 # Condition-based blocking wait once — it tested clean locally but
@@ -109,15 +115,17 @@ def _record_cwd_or_none(manager, task_id: str) -> str | None:
 
 
 def _task_repository_ids(workspace_manager, task_id: str) -> list[str]:
-    """Repository ids the workspace was provisioned with (in order).
+    """Repository ids for the task, merging metadata with what is on disk.
 
-    Falls back to a filesystem scan of ``<workspaces_root>/<task>/``
-    when the workspace manager record is gone — which happens after
-    the publish flow finishes and the in-memory record is cleared,
-    even though the on-disk clones are still right there. Without
-    this fallback the Files / Changes tabs would 404 immediately
-    after pushing (the symptom Shubham hit), forcing the operator
-    to reload to see the diff.
+    Metadata order is preserved. Any repo directory found on disk that
+    is not in the metadata list (e.g. manually cloned after the workspace
+    was created, or added via a new YouTrack tag before sync ran) is
+    appended at the end so the Files / Changes tabs pick it up immediately
+    without requiring a sync or a reload.
+
+    Falls back to the disk scan entirely when no workspace record exists —
+    which happens after publish when the in-memory record is cleared but
+    the on-disk clones are still present.
     """
     if workspace_manager is None:
         return []
@@ -125,11 +133,19 @@ def _task_repository_ids(workspace_manager, task_id: str) -> list[str]:
         record = workspace_manager.get(task_id)
     except Exception:
         record = None
+    meta_ids = []
     if record is not None:
-        repository_ids = getattr(record, 'repository_ids', []) or []
-        if repository_ids:
-            return [str(repo_id) for repo_id in repository_ids if repo_id]
-    return _enumerate_repo_ids_from_disk(workspace_manager, task_id)
+        meta_ids = [
+            str(repo_id)
+            for repo_id in (getattr(record, 'repository_ids', []) or [])
+            if repo_id
+        ]
+    disk_ids = _enumerate_repo_ids_from_disk(workspace_manager, task_id)
+    if not meta_ids:
+        return disk_ids
+    meta_lower = {rid.lower() for rid in meta_ids}
+    extras = [rid for rid in disk_ids if rid.lower() not in meta_lower]
+    return meta_ids + extras
 
 
 def _enumerate_repo_ids_from_disk(workspace_manager, task_id: str) -> list[str]:
@@ -322,6 +338,8 @@ def create_app(
     fallback_state_dir: str = '',
     status_broadcaster=None,
     agent_service=None,
+    force_scan_event=None,
+    scan_in_progress_event=None,
 ) -> Flask:
     app = Flask(
         __name__,
@@ -335,6 +353,9 @@ def create_app(
     app.config['PLANNING_SESSION_RUNNER'] = planning_session_runner
     app.config['STATUS_BROADCASTER'] = status_broadcaster
     app.config['AGENT_SERVICE'] = agent_service
+    app.config['FORCE_SCAN_EVENT'] = force_scan_event
+    app.config['SCAN_IN_PROGRESS_EVENT'] = scan_in_progress_event
+    app.config['TASK_MODEL_OVERRIDES'] = {}
 
     _register_http_routes(app)
     _register_streaming_routes(app)
@@ -361,6 +382,40 @@ def _register_http_routes(app: Flask) -> None:
             app.config.get('WORKSPACE_MANAGER'),
             app.config.get('AGENT_SERVICE'),
         ))
+
+    @app.get('/api/models')
+    def list_models():
+        return jsonify({'models': _CLAUDE_MODELS})
+
+    @app.get('/api/sessions/<task_id>/model')
+    def get_session_model(task_id: str):
+        overrides = app.config.get('TASK_MODEL_OVERRIDES') or {}
+        model = overrides.get(task_id, '')
+        return jsonify({'model': model})
+
+    @app.post('/api/sessions/<task_id>/model')
+    def set_session_model(task_id: str):
+        body = request.get_json(silent=True) or {}
+        model = str(body.get('model') or '').strip()
+        overrides = app.config.get('TASK_MODEL_OVERRIDES')
+        if overrides is None:
+            return jsonify({'error': 'not available'}), 503
+        if model:
+            overrides[task_id] = model
+        else:
+            overrides.pop(task_id, None)
+        return jsonify({'model': model})
+
+    @app.post('/api/scan/trigger')
+    def trigger_scan():
+        force_event = app.config.get('FORCE_SCAN_EVENT')
+        in_progress = app.config.get('SCAN_IN_PROGRESS_EVENT')
+        if force_event is None:
+            return jsonify({'status': 'unavailable'}), 503
+        if in_progress is not None and in_progress.is_set():
+            return jsonify({'status': 'scanning'})
+        force_event.set()
+        return jsonify({'status': 'triggered'})
 
     @app.get('/api/sessions/<task_id>')
     def get_session(task_id: str):
@@ -1296,6 +1351,8 @@ def _spawn_or_reject_chat_session(app: Flask, task_id: str, text: str):
     workspace_manager = app.config.get('WORKSPACE_MANAGER')
     cwd, summary = _chat_resume_context(manager, workspace_manager, task_id)
     additional_dirs = _chat_additional_dirs(workspace_manager, task_id, cwd)
+    overrides = app.config.get('TASK_MODEL_OVERRIDES') or {}
+    model_override = overrides.get(task_id, '')
     try:
         runner.resume_session_for_chat(
             task_id=task_id,
@@ -1303,6 +1360,7 @@ def _spawn_or_reject_chat_session(app: Flask, task_id: str, text: str):
             cwd=cwd,
             task_summary=summary,
             additional_dirs=additional_dirs,
+            model=model_override,
         )
     except Exception as exc:
         return jsonify({'error': str(exc)}), 500

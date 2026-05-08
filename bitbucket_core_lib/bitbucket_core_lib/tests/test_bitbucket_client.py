@@ -293,7 +293,10 @@ class BitbucketClientTests(unittest.TestCase):
 
         self.assertEqual(comments, [])
 
-    def test_list_pull_request_comments_skips_comment_with_resolved_parent(self) -> None:
+    def test_list_pull_request_comments_includes_new_comment_on_resolved_thread(self) -> None:
+        # A reviewer re-comments on a previously-resolved thread. The parent has
+        # resolution set (it was resolved) but the new comment itself does not —
+        # kato should pick it up so it can be re-addressed.
         client = BitbucketClient('https://bitbucket.example', 'bb-token')
         response = mock_response(
             json_data={
@@ -301,7 +304,7 @@ class BitbucketClientTests(unittest.TestCase):
                     {
                         'id': 101,
                         'parent': {'id': 99, 'resolution': {'type': 'resolved'}},
-                        'content': {'raw': 'Reply on resolved thread'},
+                        'content': {'raw': 'Still not fixed — please re-address.'},
                         'user': {'display_name': 'reviewer'},
                     }
                 ]
@@ -311,7 +314,8 @@ class BitbucketClientTests(unittest.TestCase):
         with patch.object(client, '_get', return_value=response):
             comments = client.list_pull_request_comments('workspace', 'repo', '17')
 
-        self.assertEqual(comments, [])
+        self.assertEqual(len(comments), 1)
+        self.assertEqual(comments[0].body, 'Still not fixed — please re-address.')
 
     def test_list_pull_request_comments_captures_inline_added_line(self) -> None:
         client = BitbucketClient('https://bitbucket.example', 'bb-token')
@@ -404,6 +408,26 @@ class BitbucketClientTests(unittest.TestCase):
             comments = client.list_pull_request_comments('workspace', 'repo', '17')
 
         self.assertEqual(comments, [])
+
+    def test_list_pull_request_comments_follows_next_page_link(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+        page1 = mock_response(json_data={
+            'values': [{'id': 1, 'content': {'raw': 'page 1 comment'}, 'user': {'display_name': 'reviewer'}}],
+            'next': 'https://bitbucket.example/page2',
+        })
+        page2 = mock_response(json_data={
+            'values': [{'id': 2, 'content': {'raw': 'page 2 comment'}, 'user': {'display_name': 'reviewer'}}],
+        })
+
+        with patch.object(client, '_get', side_effect=[page1, page2]) as mock_get:
+            comments = client.list_pull_request_comments('workspace', 'repo', '17')
+
+        self.assertEqual(len(comments), 2)
+        self.assertEqual(comments[0].comment_id, '1')
+        self.assertEqual(comments[1].comment_id, '2')
+        self.assertEqual(mock_get.call_count, 2)
+        # Second call uses the full URL from 'next' with no extra params
+        mock_get.assert_any_call('https://bitbucket.example/page2', params={})
 
     def test_find_pull_requests_filters_open_pull_requests_by_branch_and_title_prefix(self) -> None:
         client = BitbucketClient('https://bitbucket.example', 'bb-token')

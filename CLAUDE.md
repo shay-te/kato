@@ -12,6 +12,14 @@ python -m unittest discover -s tests -p "test_*.py"
 
 94 pre-existing errors in `openhands_core_lib` — ignore. Zero failures expected.
 
+**Never run `npm run build`** — the React bundle is pre-compiled. Running it takes 30+ seconds, requires Node.js to be installed, and is not needed for backend changes or Python tests. To rebuild the frontend (only when changing files under `webserver/ui/src/`):
+
+```bash
+cd webserver/ui
+npm install
+npm run build
+```
+
 ---
 
 ## Core-Lib Architecture

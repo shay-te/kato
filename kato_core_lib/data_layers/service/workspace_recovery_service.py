@@ -82,6 +82,13 @@ class WorkspaceRecoveryService(object):
             return []
         live_tasks_by_id = self._fetch_live_tasks_by_id()
         if not live_tasks_by_id:
+            self.logger.warning(
+                'orphan workspace recovery skipped: could not fetch any live '
+                'tasks from the ticket system (%d orphan folder(s) left '
+                'unadopted). Check the ticket service connection and restart '
+                'kato to retry.',
+                len(orphan_dirs),
+            )
             return []
         adopted: list[WorkspaceRecord] = []
         for orphan_dir in orphan_dirs:

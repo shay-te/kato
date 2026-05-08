@@ -65,12 +65,17 @@ class BitbucketClient(PullRequestClientBase):
         repo_slug: str,
         pull_request_id: str,
     ) -> list[ReviewComment]:
-        response = self._get_with_retry(
-            f'/repositories/{repo_owner}/{repo_slug}/pullrequests/{pull_request_id}/comments',
-            params={'pagelen': BITBUCKET_PAGE_LENGTH, 'sort': 'created_on'},
-        )
-        response.raise_for_status()
-        return self._normalize_comments(response.json(), pull_request_id)
+        url = f'/repositories/{repo_owner}/{repo_slug}/pullrequests/{pull_request_id}/comments'
+        params: dict = {'pagelen': BITBUCKET_PAGE_LENGTH, 'sort': 'created_on'}
+        all_comments: list[ReviewComment] = []
+        while url:
+            response = self._get_with_retry(url, params=params)
+            response.raise_for_status()
+            payload = response.json() or {}
+            all_comments.extend(self._normalize_comments(payload, pull_request_id))
+            url = payload.get('next') or ''
+            params = {}
+        return all_comments
 
     def find_pull_requests(
         self,
@@ -193,7 +198,7 @@ class BitbucketClient(PullRequestClientBase):
             if not isinstance(item, dict) or item.get('deleted'):
                 continue
             parent = dict_from_mapping(item, 'parent')
-            if item.get('resolution') or parent.get('resolution'):
+            if item.get('resolution'):
                 continue
             content = dict_from_mapping(item, 'content')
             author = dict_from_mapping(item, 'user')
