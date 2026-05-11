@@ -210,3 +210,84 @@ class PullRequestClientFactoryMaxRetriesTests(unittest.TestCase):
         factory = PullRequestClientFactory(_github_cfg(), 1, github_client_factory=lambda _: client)
         result = factory.get(Platform.GITHUB)
         self.assertIs(result, client)
+
+
+class DefaultFactoryFunctionsTests(unittest.TestCase):
+    """Cover the ``_default_*_factory`` helpers used when no explicit factory is injected.
+
+    Each helper does a lazy import of the corresponding provider core-lib
+    and instantiates ``XCoreLib(config).pull_request``. We patch the import
+    target so the test stays decoupled from the real provider clients
+    (which require auth, network, etc.).
+    """
+
+    def test_default_github_factory_constructs_github_core_lib_and_returns_pull_request(self) -> None:
+        from unittest.mock import patch, MagicMock
+        from repository_core_lib.repository_core_lib.client.pull_request_client_factory import (
+            _default_github_factory,
+        )
+        fake_pull_request_client = MagicMock(name='github-pr-client')
+        fake_core_lib_instance = MagicMock(pull_request=fake_pull_request_client)
+        fake_core_lib_cls = MagicMock(return_value=fake_core_lib_instance)
+
+        with patch(
+            'github_core_lib.github_core_lib.github_core_lib.GitHubCoreLib',
+            fake_core_lib_cls,
+        ):
+            result = _default_github_factory(_github_cfg())
+
+        fake_core_lib_cls.assert_called_once()
+        self.assertIs(result, fake_pull_request_client)
+
+    def test_default_gitlab_factory_constructs_gitlab_core_lib_and_returns_pull_request(self) -> None:
+        from unittest.mock import patch, MagicMock
+        from repository_core_lib.repository_core_lib.client.pull_request_client_factory import (
+            _default_gitlab_factory,
+        )
+        fake_pull_request_client = MagicMock(name='gitlab-pr-client')
+        fake_core_lib_instance = MagicMock(pull_request=fake_pull_request_client)
+        fake_core_lib_cls = MagicMock(return_value=fake_core_lib_instance)
+
+        with patch(
+            'gitlab_core_lib.gitlab_core_lib.gitlab_core_lib.GitLabCoreLib',
+            fake_core_lib_cls,
+        ):
+            result = _default_gitlab_factory(_gitlab_cfg())
+
+        fake_core_lib_cls.assert_called_once()
+        self.assertIs(result, fake_pull_request_client)
+
+    def test_default_bitbucket_factory_constructs_bitbucket_core_lib_and_returns_pull_request(self) -> None:
+        from unittest.mock import patch, MagicMock
+        from repository_core_lib.repository_core_lib.client.pull_request_client_factory import (
+            _default_bitbucket_factory,
+        )
+        fake_pull_request_client = MagicMock(name='bitbucket-pr-client')
+        fake_core_lib_instance = MagicMock(pull_request=fake_pull_request_client)
+        fake_core_lib_cls = MagicMock(return_value=fake_core_lib_instance)
+
+        with patch(
+            'bitbucket_core_lib.bitbucket_core_lib.bitbucket_core_lib.BitbucketCoreLib',
+            fake_core_lib_cls,
+        ):
+            result = _default_bitbucket_factory(_bitbucket_cfg())
+
+        fake_core_lib_cls.assert_called_once()
+        self.assertIs(result, fake_pull_request_client)
+
+
+class PullRequestClientFactoryUsesDefaultFactoriesWhenNoOverride(unittest.TestCase):
+    """End-to-end: the constructor wires up default factories when none are passed."""
+
+    def test_github_default_factory_is_used_when_not_overridden(self) -> None:
+        from unittest.mock import patch, MagicMock
+        fake_client = MagicMock(name='gh')
+        fake_instance = MagicMock(pull_request=fake_client)
+        with patch(
+            'github_core_lib.github_core_lib.github_core_lib.GitHubCoreLib',
+            return_value=fake_instance,
+        ):
+            # No github_client_factory passed → default is used.
+            factory = PullRequestClientFactory(_github_cfg(), 3)
+            result = factory.get(Platform.GITHUB)
+        self.assertIs(result, fake_client)
