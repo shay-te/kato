@@ -31,14 +31,14 @@ class _CompletedProcess:
 class ClaudeOneShotTests(unittest.TestCase):
     def test_returns_stdout_on_success(self) -> None:
         with patch(
-            'kato_core_lib.helpers.claude_one_shot_utils.subprocess.run',
+            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
             return_value=_CompletedProcess(0, 'the response'),
         ):
             self.assertEqual(claude_one_shot('hello'), 'the response')
 
     def test_passes_prompt_via_stdin(self) -> None:
         with patch(
-            'kato_core_lib.helpers.claude_one_shot_utils.subprocess.run',
+            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
             return_value=_CompletedProcess(0, 'ok'),
         ) as mock_run:
             claude_one_shot('the prompt content')
@@ -49,7 +49,7 @@ class ClaudeOneShotTests(unittest.TestCase):
 
     def test_command_includes_p_flag(self) -> None:
         with patch(
-            'kato_core_lib.helpers.claude_one_shot_utils.subprocess.run',
+            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
             return_value=_CompletedProcess(0, ''),
         ) as mock_run:
             claude_one_shot('x')
@@ -59,7 +59,7 @@ class ClaudeOneShotTests(unittest.TestCase):
 
     def test_model_flag_added_when_set(self) -> None:
         with patch(
-            'kato_core_lib.helpers.claude_one_shot_utils.subprocess.run',
+            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
             return_value=_CompletedProcess(0, ''),
         ) as mock_run:
             claude_one_shot('x', model='claude-haiku-4-5-20251001')
@@ -69,7 +69,7 @@ class ClaudeOneShotTests(unittest.TestCase):
 
     def test_model_flag_omitted_when_empty(self) -> None:
         with patch(
-            'kato_core_lib.helpers.claude_one_shot_utils.subprocess.run',
+            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
             return_value=_CompletedProcess(0, ''),
         ) as mock_run:
             claude_one_shot('x', model='')
@@ -78,7 +78,7 @@ class ClaudeOneShotTests(unittest.TestCase):
 
     def test_custom_binary_used(self) -> None:
         with patch(
-            'kato_core_lib.helpers.claude_one_shot_utils.subprocess.run',
+            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
             return_value=_CompletedProcess(0, ''),
         ) as mock_run:
             claude_one_shot('x', binary='/usr/local/bin/claude')
@@ -87,7 +87,7 @@ class ClaudeOneShotTests(unittest.TestCase):
 
     def test_nonzero_exit_raises(self) -> None:
         with patch(
-            'kato_core_lib.helpers.claude_one_shot_utils.subprocess.run',
+            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
             return_value=_CompletedProcess(1, '', 'auth required'),
         ):
             with self.assertRaisesRegex(ClaudeOneShotError, 'auth required'):
@@ -95,7 +95,7 @@ class ClaudeOneShotTests(unittest.TestCase):
 
     def test_timeout_raises(self) -> None:
         with patch(
-            'kato_core_lib.helpers.claude_one_shot_utils.subprocess.run',
+            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
             side_effect=subprocess.TimeoutExpired(cmd='claude', timeout=10),
         ):
             with self.assertRaisesRegex(ClaudeOneShotError, 'within'):
@@ -103,7 +103,7 @@ class ClaudeOneShotTests(unittest.TestCase):
 
     def test_missing_binary_raises(self) -> None:
         with patch(
-            'kato_core_lib.helpers.claude_one_shot_utils.subprocess.run',
+            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
             side_effect=OSError('no such file'),
         ):
             with self.assertRaisesRegex(ClaudeOneShotError, 'failed to invoke'):
@@ -113,7 +113,7 @@ class ClaudeOneShotTests(unittest.TestCase):
 class MakeClaudeOneShotTests(unittest.TestCase):
     def test_closure_forwards_config(self) -> None:
         with patch(
-            'kato_core_lib.helpers.claude_one_shot_utils.subprocess.run',
+            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
             return_value=_CompletedProcess(0, 'response'),
         ) as mock_run:
             fn = make_claude_one_shot(

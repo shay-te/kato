@@ -381,7 +381,7 @@ class ConfigureProjectTests(unittest.TestCase):
     @staticmethod
     def _validate_agent_env(values: dict[str, str]) -> list[str]:
         with patch(
-            'kato_core_lib.helpers.repository_discovery_utils.discover_git_repositories',
+            'git_core_lib.git_core_lib.helpers.repository_discovery_utils.discover_git_repositories',
             return_value=[],
         ):
             return validate_agent_env(values)
