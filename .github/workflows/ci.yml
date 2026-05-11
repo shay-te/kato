@@ -23,7 +23,17 @@ jobs:
 
       - name: Run unit tests with coverage
         run: |
+          # Top-level integration tests
           coverage run -m unittest discover -s tests
+          # Plus every core-lib's internal tests (per CLAUDE.md core-lib quality rule:
+          # "Tests live inside the lib at <lib>/<lib>/tests/"). Without this loop,
+          # ~1000+ unit tests living inside the libs never run in CI and coverage
+          # is artificially low (~73% instead of ~90%).
+          for tests_dir in */*/tests; do
+            if [ -d "$tests_dir" ] && ls "$tests_dir"/test_*.py >/dev/null 2>&1; then
+              coverage run --append -m unittest discover -s "$tests_dir" -t .
+            fi
+          done
           coverage report --show-missing
 
   shellcheck:

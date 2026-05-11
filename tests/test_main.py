@@ -240,6 +240,146 @@ class MainTests(unittest.TestCase):
         self.assertEqual(call_kwargs['task_id'], 'PROJ-2')
         self.assertEqual(call_kwargs['initial_prompt'], _RESUME_WAIT_PROMPT)
 
+    def test_resume_streaming_sessions_recovers_latest_claude_session_id_after_restart(self) -> None:
+        """End-to-end: a kato restart re-attaches the existing chat to its
+        most recently persisted Claude session id, not a fresh session.
+
+        Sets up a real ``ClaudeSessionManager`` (not a mock) pointed at a
+        temp state dir. Starts a session for PROJ-1 — this writes
+        ``claude_session_id`` to ``<state_dir>/PROJ-1.json``. Then
+        simulates "kato restart" by building a brand-new manager pointed
+        at the same dir and feeding it through ``_resume_streaming_sessions``.
+        Asserts that the resumed session inherits the persisted session id,
+        which is what makes the chat resume from where it left off instead
+        of starting a fresh conversation.
+        """
+        from claude_core_lib.claude_core_lib.session.manager import ClaudeSessionManager
+        from claude_core_lib.claude_core_lib.tests.session.test_manager import _FakeStreamingSession
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state_dir = Path(tmp)
+            first_fakes: list = []
+
+            def first_factory(**kwargs):
+                s = _FakeStreamingSession(**kwargs)
+                first_fakes.append(s)
+                return s
+
+            # --- Run 1: start a session, capture the persisted claude_session_id
+            first_manager = ClaudeSessionManager(
+                state_dir=state_dir, session_factory=first_factory,
+            )
+            first_manager.start_session(task_id='PROJ-1', task_summary='resume me')
+            persisted_session_id = first_fakes[0].claude_session_id
+            self.assertTrue(persisted_session_id)
+
+            # --- Simulated restart: new manager, same state_dir, no in-memory carry-over
+            second_fakes: list = []
+
+            def second_factory(**kwargs):
+                s = _FakeStreamingSession(**kwargs)
+                second_fakes.append(s)
+                return s
+
+            rebooted_manager = ClaudeSessionManager(
+                state_dir=state_dir, session_factory=second_factory,
+            )
+
+            workspace_root = types.SimpleNamespace(is_dir=Mock(return_value=True))
+            workspace_manager = types.SimpleNamespace(
+                list_workspaces=Mock(
+                    return_value=[
+                        types.SimpleNamespace(
+                            task_id='PROJ-1',
+                            task_summary='resume me',
+                            status='active',
+                            cwd='',
+                            repository_ids=['client'],
+                        )
+                    ]
+                ),
+                repository_path=Mock(return_value=workspace_root),
+            )
+            app = types.SimpleNamespace(
+                logger=Mock(),
+                session_manager=rebooted_manager,
+                workspace_manager=workspace_manager,
+                planning_session_runner=None,
+            )
+
+            _resume_streaming_sessions(app)
+
+            # Exactly one new session spawned, and it inherits the
+            # persisted claude_session_id as its resume target — proving
+            # the chat picks up where the previous kato run left off.
+            self.assertEqual(len(second_fakes), 1)
+            self.assertEqual(second_fakes[0].resume_session_id, persisted_session_id)
+
+    def test_resume_streaming_sessions_picks_up_latest_session_id_when_overwritten(self) -> None:
+        """If a task gets a new session_id mid-flight (e.g. operator
+        re-prompted, old session expired), the post-restart resume must
+        use the *latest* persisted id — not a stale one. Locks the
+        contract that the on-disk file is the source of truth and the
+        manager re-reads it on cold boot.
+        """
+        from claude_core_lib.claude_core_lib.session.manager import ClaudeSessionManager
+        from claude_core_lib.claude_core_lib.tests.session.test_manager import _FakeStreamingSession
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state_dir = Path(tmp)
+
+            # Manager 1: first session
+            fakes_1: list = []
+            mgr_1 = ClaudeSessionManager(
+                state_dir=state_dir,
+                session_factory=lambda **kw: fakes_1.append(_FakeStreamingSession(**kw)) or fakes_1[-1],
+            )
+            mgr_1.start_session(task_id='PROJ-1', task_summary='first run')
+            mgr_1.terminate_session('PROJ-1')
+
+            # Manager 2 (simulated restart 1): session re-spawned, new id
+            fakes_2: list = []
+            mgr_2 = ClaudeSessionManager(
+                state_dir=state_dir,
+                session_factory=lambda **kw: fakes_2.append(_FakeStreamingSession(**kw)) or fakes_2[-1],
+            )
+            # Force a new session_id by adopting one (overrides the prior persisted id).
+            mgr_2.adopt_session_id('PROJ-1', claude_session_id='newer-session-uuid')
+            latest_session_id = mgr_2.get_record('PROJ-1').claude_session_id
+            self.assertEqual(latest_session_id, 'newer-session-uuid')
+
+            # Manager 3 (simulated restart 2): _resume_streaming_sessions
+            # MUST pick up 'newer-session-uuid', not the original.
+            fakes_3: list = []
+            mgr_3 = ClaudeSessionManager(
+                state_dir=state_dir,
+                session_factory=lambda **kw: fakes_3.append(_FakeStreamingSession(**kw)) or fakes_3[-1],
+            )
+            workspace_manager = types.SimpleNamespace(
+                list_workspaces=Mock(
+                    return_value=[
+                        types.SimpleNamespace(
+                            task_id='PROJ-1',
+                            task_summary='first run',
+                            status='active',
+                            cwd='/repo',
+                            repository_ids=['client'],
+                        )
+                    ]
+                ),
+            )
+            app = types.SimpleNamespace(
+                logger=Mock(),
+                session_manager=mgr_3,
+                workspace_manager=workspace_manager,
+                planning_session_runner=None,
+            )
+
+            _resume_streaming_sessions(app)
+
+            self.assertEqual(len(fakes_3), 1)
+            self.assertEqual(fakes_3[0].resume_session_id, 'newer-session-uuid')
+
     def test_main_returns_one_without_traceback_when_startup_validation_fails(self) -> None:
         configured_logger = Mock()
         env_error = ValueError('unsupported issue platform: linear')
