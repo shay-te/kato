@@ -97,12 +97,12 @@ class RepositoryServiceTests(unittest.TestCase):
         service = RepositoryService(self.cfg.kato.repositories, 3)
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.RepositoryService._validate_destination_branch_tracking_state',
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             side_effect=[
                 Mock(returncode=0, stdout='refs/remotes/origin/master\n', stderr=''),
                 Mock(returncode=0, stdout='master\n', stderr=''),
@@ -120,7 +120,7 @@ class RepositoryServiceTests(unittest.TestCase):
         service = RepositoryService(self.cfg.kato.repositories, 3)
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.os.path.isdir',
@@ -128,7 +128,7 @@ class RepositoryServiceTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.RepositoryService._validate_destination_branch_tracking_state',
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             side_effect=[
                 Mock(returncode=0, stdout='feature/proj-1/backend\n', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
@@ -145,13 +145,13 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
             [
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'checkout', 'main'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'pull', '--ff-only', 'origin', 'main'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'checkout', 'main'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'pull', '--ff-only', 'origin', 'main'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
             ],
         )
 
@@ -159,7 +159,7 @@ class RepositoryServiceTests(unittest.TestCase):
         service = RepositoryService(self.cfg.kato.repositories, 3)
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.os.path.isdir',
@@ -167,7 +167,7 @@ class RepositoryServiceTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.RepositoryService._validate_destination_branch_tracking_state',
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             side_effect=[
                 Mock(returncode=0, stdout='main\n', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
@@ -181,11 +181,11 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
             [
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'pull', '--ff-only', 'origin', 'main'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'pull', '--ff-only', 'origin', 'main'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
             ],
         )
 
@@ -198,13 +198,13 @@ class RepositoryServiceTests(unittest.TestCase):
         service = RepositoryService([], 3)
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.os.path.isdir',
             return_value=True,
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             side_effect=[
                 Mock(returncode=0, stdout='feature/proj-1/client\n', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
@@ -217,9 +217,9 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
             [
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'checkout', 'master'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'checkout', 'master'],
             ],
         )
 
@@ -232,13 +232,13 @@ class RepositoryServiceTests(unittest.TestCase):
         service = RepositoryService([], 3)
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.os.path.isdir',
             return_value=True,
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             side_effect=[
                 Mock(returncode=0, stdout='feature/proj-1/client\n', stderr=''),
                 Mock(returncode=0, stdout=' M app.py\n', stderr=''),
@@ -251,10 +251,10 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
             [
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'checkout', '-f', 'master'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'clean', '-fd'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'checkout', '-f', 'master'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'clean', '-fd'],
             ],
         )
 
@@ -273,7 +273,7 @@ class RepositoryServiceTests(unittest.TestCase):
             service = RepositoryService([], 3)
 
             with patch(
-                'kato_core_lib.data_layers.service.repository_service.shutil.which',
+                'git_core_lib.git_core_lib.client.git_client.shutil.which',
                 return_value='/usr/bin/git',
             ):
                 restored_repositories = service.restore_task_repositories(
@@ -306,7 +306,7 @@ class RepositoryServiceTests(unittest.TestCase):
             service = RepositoryService([], 3)
 
             with patch(
-                'kato_core_lib.data_layers.service.repository_service.shutil.which',
+                'git_core_lib.git_core_lib.client.git_client.shutil.which',
                 return_value='/usr/bin/git',
             ):
                 restored_repositories = service.restore_task_repositories(
@@ -342,7 +342,7 @@ class RepositoryServiceTests(unittest.TestCase):
             service = RepositoryService([], 3)
 
             with patch(
-                'kato_core_lib.data_layers.service.repository_service.shutil.which',
+                'git_core_lib.git_core_lib.client.git_client.shutil.which',
                 return_value='/usr/bin/git',
             ):
                 restored_repositories = service.restore_task_repositories(
@@ -402,7 +402,7 @@ class RepositoryServiceTests(unittest.TestCase):
         )
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             return_value=Mock(returncode=0, stdout='', stderr=''),
         ) as mock_run:
             service._run_git_subprocess('.', ['status'], repository)
@@ -420,7 +420,7 @@ class RepositoryServiceTests(unittest.TestCase):
         service = RepositoryService(self.cfg.kato.repositories, 3)
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.os.path.isdir',
@@ -431,7 +431,7 @@ class RepositoryServiceTests(unittest.TestCase):
             'kato_core_lib.data_layers.service.repository_service.RepositoryService._git_reference_exists',
             return_value=False,
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             side_effect=[
                 Mock(returncode=0, stdout='main\n', stderr=''),  # rev-parse HEAD
                 Mock(returncode=0, stdout='', stderr=''),         # status --porcelain
@@ -448,13 +448,13 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
             [
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'fetch', 'origin'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'reset', '--hard', 'origin/main'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'checkout', '-b', 'UNA-2398'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'fetch', 'origin'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'reset', '--hard', 'origin/main'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'checkout', '-b', 'UNA-2398'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
             ],
         )
 
@@ -465,7 +465,7 @@ class RepositoryServiceTests(unittest.TestCase):
             return reference == 'refs/heads/UNA-2398'
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.os.path.isdir',
@@ -476,7 +476,7 @@ class RepositoryServiceTests(unittest.TestCase):
             'kato_core_lib.data_layers.service.repository_service.RepositoryService._git_reference_exists',
             side_effect=reference_exists,
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             side_effect=[
                 Mock(returncode=0, stdout='main\n', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
@@ -491,12 +491,12 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
             [
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'fetch', 'origin'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'checkout', 'UNA-2398'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'fetch', 'origin'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'checkout', 'UNA-2398'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
             ],
         )
 
@@ -507,7 +507,7 @@ class RepositoryServiceTests(unittest.TestCase):
             return reference in {'refs/heads/UNA-2398', 'origin/UNA-2398'}
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.os.path.isdir',
@@ -518,7 +518,7 @@ class RepositoryServiceTests(unittest.TestCase):
             'kato_core_lib.data_layers.service.repository_service.RepositoryService._git_reference_exists',
             side_effect=reference_exists,
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             side_effect=[
                 Mock(returncode=0, stdout='main\n', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
@@ -536,15 +536,15 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
             [
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'fetch', 'origin'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'checkout', 'UNA-2398'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'rebase', 'origin/UNA-2398'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'fetch', 'origin'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'checkout', 'UNA-2398'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rebase', 'origin/UNA-2398'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
             ],
         )
 
@@ -555,7 +555,7 @@ class RepositoryServiceTests(unittest.TestCase):
             return reference == 'refs/remotes/origin/UNA-2398'
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.os.path.isdir',
@@ -566,7 +566,7 @@ class RepositoryServiceTests(unittest.TestCase):
             'kato_core_lib.data_layers.service.repository_service.RepositoryService._git_reference_exists',
             side_effect=reference_exists,
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             side_effect=[
                 Mock(returncode=0, stdout='main\n', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
@@ -581,12 +581,12 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
             [
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'fetch', 'origin'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'checkout', '-b', 'UNA-2398', 'origin/UNA-2398'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'fetch', 'origin'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'checkout', '-b', 'UNA-2398', 'origin/UNA-2398'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
             ],
         )
 
@@ -607,7 +607,7 @@ class RepositoryServiceTests(unittest.TestCase):
             service = RepositoryService([], 3)
 
             with patch(
-                'kato_core_lib.data_layers.service.repository_service.shutil.which',
+                'git_core_lib.git_core_lib.client.git_client.shutil.which',
                 return_value='/usr/bin/git',
             ):
                 prepared_repositories = service.prepare_task_branches(
@@ -627,13 +627,13 @@ class RepositoryServiceTests(unittest.TestCase):
         service = RepositoryService(self.cfg.kato.repositories, 3)
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.os.path.isdir',
             return_value=True,
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             side_effect=[
                 Mock(returncode=0, stdout='feature/proj-1/backend\n', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
@@ -651,7 +651,7 @@ class RepositoryServiceTests(unittest.TestCase):
         service = RepositoryService(self.cfg.kato.repositories, 3)
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.os.path.isdir',
@@ -667,7 +667,7 @@ class RepositoryServiceTests(unittest.TestCase):
             RepositoryService,
             '_pull_destination_branch',
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             side_effect=[
                 Mock(returncode=0, stdout='feature/proj-1/backend\n', stderr=''),
                 Mock(returncode=0, stdout=' M app.py\n', stderr=''),
@@ -694,7 +694,7 @@ class RepositoryServiceTests(unittest.TestCase):
             service = RepositoryService([], 3)
 
             with patch(
-                'kato_core_lib.data_layers.service.repository_service.shutil.which',
+                'git_core_lib.git_core_lib.client.git_client.shutil.which',
                 return_value='/usr/bin/git',
             ), patch.object(
                 RepositoryService,
@@ -713,13 +713,13 @@ class RepositoryServiceTests(unittest.TestCase):
         service = RepositoryService(self.cfg.kato.repositories, 3)
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.os.path.isdir',
             return_value=True,
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             side_effect=[
                 Mock(returncode=0, stdout='main\n', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
@@ -738,13 +738,13 @@ class RepositoryServiceTests(unittest.TestCase):
         service = RepositoryService(self.cfg.kato.repositories, 3)
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.os.path.isdir',
             return_value=True,
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             side_effect=[
                 Mock(returncode=0, stdout='main\n', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
@@ -783,12 +783,12 @@ class RepositoryServiceTests(unittest.TestCase):
             )
 
             with patch(
-                'kato_core_lib.data_layers.service.repository_service.shutil.which',
+                'git_core_lib.git_core_lib.client.git_client.shutil.which',
                 return_value='/usr/bin/git',
             ), patch(
                 'kato_core_lib.data_layers.service.repository_service.RepositoryService._validate_destination_branch_tracking_state',
             ), patch(
-                'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+                'git_core_lib.git_core_lib.client.git_client.subprocess.run',
                 side_effect=[
                     Mock(returncode=0, stdout='refs/remotes/origin/main\n', stderr=''),
                     Mock(returncode=0, stdout='main\n', stderr=''),
@@ -829,7 +829,7 @@ class RepositoryServiceTests(unittest.TestCase):
             )
 
             with patch(
-                'kato_core_lib.data_layers.service.repository_service.shutil.which',
+                'git_core_lib.git_core_lib.client.git_client.shutil.which',
                 return_value='/usr/bin/git',
             ):
                 with self.assertRaisesRegex(
@@ -876,10 +876,10 @@ class RepositoryServiceTests(unittest.TestCase):
         repository = self.cfg.kato.repositories[0]
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             return_value=Mock(returncode=0, stdout='refs/remotes/origin/master\n'),
         ):
             self.assertEqual(service.destination_branch(repository), 'master')
@@ -889,10 +889,10 @@ class RepositoryServiceTests(unittest.TestCase):
         repository = self.cfg.kato.repositories[0]
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             return_value=Mock(returncode=1, stdout=''),
         ):
             with self.assertRaisesRegex(
@@ -918,7 +918,7 @@ class RepositoryServiceTests(unittest.TestCase):
         }
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.os.path.isdir',
@@ -972,7 +972,7 @@ class RepositoryServiceTests(unittest.TestCase):
         data_access.create_pull_request.side_effect = RuntimeError('provider down')
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.os.path.isdir',
@@ -1028,7 +1028,7 @@ class RepositoryServiceTests(unittest.TestCase):
             return pull_request_payload
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.os.path.isdir',
@@ -1080,7 +1080,7 @@ class RepositoryServiceTests(unittest.TestCase):
         repository = self.backend_repo
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.os.path.isdir',
@@ -1136,7 +1136,7 @@ class RepositoryServiceTests(unittest.TestCase):
         ]
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.os.path.isdir',
@@ -1160,7 +1160,7 @@ class RepositoryServiceTests(unittest.TestCase):
             'kato_core_lib.data_layers.service.repository_inventory_service.RepositoryInventoryService._pull_request_data_access',
             return_value=data_access,
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             side_effect=subprocess_results,
         ) as mock_run:
             service = RepositoryService(self.cfg.kato.repositories, 3)
@@ -1177,18 +1177,18 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
             [
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'add', '-A'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'add', '-A'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'commit', '-m', 'Implement PROJ-1'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'add', '-A'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'add', '-A'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'commit', '-m', 'Implement PROJ-1'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
                 # ``-c core.hooksPath=/dev/null`` added by the security
                 # hardening for risk #24 (pre-commit hook installation).
                 # Every kato git command now disables hooks so a malicious
                 # ``.git/hooks/`` Claude drops never fires on the host.
                 ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--verify', 'main'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-list', '--count', 'main..feature/proj-1/backend'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-list', '--count', 'main..feature/proj-1/backend'],
             ],
         )
         data_access.create_pull_request.assert_called_once_with(
@@ -1240,7 +1240,7 @@ class RepositoryServiceTests(unittest.TestCase):
         ]
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.os.path.isdir',
@@ -1259,7 +1259,7 @@ class RepositoryServiceTests(unittest.TestCase):
             'kato_core_lib.data_layers.service.repository_inventory_service.RepositoryInventoryService._pull_request_data_access',
             return_value=data_access,
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             side_effect=subprocess_results,
         ) as mock_run:
             service = RepositoryService(self.cfg.kato.repositories, 3)
@@ -1274,17 +1274,17 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
                 [
-                    ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                    ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
-                    ['git', '-c', 'safe.directory=.', '-C', '.', 'add', '-A'],
-                    ['git', '-c', 'safe.directory=.', '-C', '.', 'reset', 'HEAD', '--', 'validation_report.md'],
-                    ['git', '-c', 'safe.directory=.', '-C', '.', 'clean', '-fd', '--', 'validation_report.md'],
-                    ['git', '-c', 'safe.directory=.', '-C', '.', 'add', '-A'],
-                    ['git', '-c', 'safe.directory=.', '-C', '.', 'commit', '-m', 'Implement PROJ-1'],
-                    ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
+                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
+                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'add', '-A'],
+                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'reset', 'HEAD', '--', 'validation_report.md'],
+                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'clean', '-fd', '--', 'validation_report.md'],
+                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'add', '-A'],
+                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'commit', '-m', 'Implement PROJ-1'],
+                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
                     # ``core.hooksPath=/dev/null`` security hardening for risk #24.
                     ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--verify', 'main'],
-                    ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-list', '--count', 'main..feature/proj-1/backend'],
+                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-list', '--count', 'main..feature/proj-1/backend'],
                 ],
         )
         mock_restore_repositories.assert_called_once_with([repository], force=True)
@@ -1307,7 +1307,7 @@ class RepositoryServiceTests(unittest.TestCase):
         status_call_count = {'count': 0}
 
         def subprocess_side_effect(command, **kwargs):
-            tail = tuple(command[5:])
+            tail = tuple(command[7:])
             if tail == ('rev-parse', '--abbrev-ref', 'HEAD'):
                 return Mock(returncode=0, stdout='feature/proj-1/backend\n', stderr='')
             if tail == ('status', '--porcelain'):
@@ -1343,7 +1343,7 @@ class RepositoryServiceTests(unittest.TestCase):
             return path.endswith('/build') or path.endswith('\\build')
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.os.path.isdir',
@@ -1363,7 +1363,7 @@ class RepositoryServiceTests(unittest.TestCase):
             'kato_core_lib.data_layers.service.repository_inventory_service.RepositoryInventoryService._pull_request_data_access',
             return_value=data_access,
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             side_effect=subprocess_side_effect,
         ) as mock_run:
             service = RepositoryService(self.cfg.kato.repositories, 3)
@@ -1378,16 +1378,16 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
                 [
-                    ['git', '-c', 'safe.directory=.', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                    ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
-                    ['git', '-c', 'safe.directory=.', '-C', '.', 'add', '-A'],
-                    ['git', '-c', 'safe.directory=.', '-C', '.', 'reset', 'HEAD', '--', 'build'],
-                    ['git', '-c', 'safe.directory=.', '-C', '.', 'clean', '-fd', '--', 'build'],
-                    ['git', '-c', 'safe.directory=.', '-C', '.', 'reset', 'HEAD', '--', 'validation_report.md'],
-                    ['git', '-c', 'safe.directory=.', '-C', '.', 'clean', '-fd', '--', 'validation_report.md'],
-                    ['git', '-c', 'safe.directory=.', '-C', '.', 'add', '-A'],
-                    ['git', '-c', 'safe.directory=.', '-C', '.', 'commit', '-m', 'Implement PROJ-1'],
-                    ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
+                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
+                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'add', '-A'],
+                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'reset', 'HEAD', '--', 'build'],
+                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'clean', '-fd', '--', 'build'],
+                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'reset', 'HEAD', '--', 'validation_report.md'],
+                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'clean', '-fd', '--', 'validation_report.md'],
+                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'add', '-A'],
+                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'commit', '-m', 'Implement PROJ-1'],
+                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
                 ],
             )
         mock_restore_repositories.assert_called_once_with([repository], force=True)
@@ -1416,7 +1416,7 @@ class RepositoryServiceTests(unittest.TestCase):
         ]
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.os.path.isdir',
@@ -1424,7 +1424,7 @@ class RepositoryServiceTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.RepositoryService._validate_destination_branch_tracking_state',
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             side_effect=subprocess_results,
         ):
             service = RepositoryService(self.cfg.kato.repositories, 3)
@@ -1444,7 +1444,7 @@ class RepositoryServiceTests(unittest.TestCase):
         repository = self.backend_repo
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch.object(
             RepositoryService,
@@ -1473,10 +1473,10 @@ class RepositoryServiceTests(unittest.TestCase):
         repository = self.backend_repo
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             return_value=Mock(returncode=0, stdout=' M src/file.py\n', stderr=''),
         ) as mock_run:
             service = RepositoryService(self.cfg.kato.repositories, 3)
@@ -1487,7 +1487,7 @@ class RepositoryServiceTests(unittest.TestCase):
 
         self.assertEqual(result, [repository])
         mock_run.assert_called_once_with(
-            ['git', '-c', 'safe.directory=.', '-C', '.', 'status', '--porcelain'],
+            ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
             capture_output=True,
             text=True,
             # UTF-8 + replace pinned across every text-mode subprocess
@@ -1505,10 +1505,10 @@ class RepositoryServiceTests(unittest.TestCase):
         repository = self.backend_repo
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             return_value=Mock(returncode=0, stdout='', stderr=''),
         ) as mock_run:
             service = RepositoryService(self.cfg.kato.repositories, 3)
@@ -1524,6 +1524,8 @@ class RepositoryServiceTests(unittest.TestCase):
                 'git',
                 '-c',
                 'safe.directory=.',
+                '-c',
+                'core.hooksPath=/dev/null',
                 '-C',
                 '.',
                 'push',
@@ -1539,10 +1541,10 @@ class RepositoryServiceTests(unittest.TestCase):
         repository = self.backend_repo
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             return_value=Mock(
                 returncode=128,
                 stdout='',
@@ -1565,14 +1567,14 @@ class RepositoryServiceTests(unittest.TestCase):
 
     def test_validate_connections_checks_local_paths(self) -> None:
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.os.path.isdir',
             return_value=False,
         ):
             service = RepositoryService(self.cfg.kato.repositories, 3)
-            with self.assertRaisesRegex(ValueError, 'missing local repository path'):
+            with self.assertRaisesRegex(RuntimeError, 'missing local repository path'):
                 service.validate_connections()
 
     # NOTE: 2 obsolete tests removed here when ``validate_connections``
@@ -1593,12 +1595,13 @@ class RepositoryServiceTests(unittest.TestCase):
         repository = types.SimpleNamespace(
             provider='bitbucket',
             owner='workspace',
-            username='bb-user',
+            bitbucket_username='bb-user',
             remote_url='https://bitbucket.org/workspace/project.git',
             token='bb-token',
         )
+        service = RepositoryService(self.cfg.kato.repositories, 3)
 
-        header = RepositoryService._git_http_auth_header(repository)
+        header = service._build_git_http_auth_header(repository)
 
         expected_header = 'Authorization: Basic ' + base64.b64encode(
             b'bb-user:bb-token'
@@ -1612,8 +1615,9 @@ class RepositoryServiceTests(unittest.TestCase):
             remote_url='https://bitbucket.org/workspace/project.git',
             token='bb-token',
         )
+        service = RepositoryService(self.cfg.kato.repositories, 3)
 
-        header = RepositoryService._git_http_auth_header(repository)
+        header = service._build_git_http_auth_header(repository)
 
         expected_header = 'Authorization: Basic ' + base64.b64encode(
             b'x-token-auth:bb-token'
@@ -1631,7 +1635,7 @@ class RepositoryServiceTests(unittest.TestCase):
         service = RepositoryService(self.cfg.kato.repositories, 3)
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.os.path.isdir',
@@ -1644,7 +1648,7 @@ class RepositoryServiceTests(unittest.TestCase):
         service = RepositoryService(self.cfg.kato.repositories, 3)
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value=None,
         ):
             with self.assertRaisesRegex(
@@ -1674,14 +1678,14 @@ class RepositoryServiceTests(unittest.TestCase):
             {},
             clear=True,
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.os.path.isdir',
             return_value=True,
         ):
             with self.assertRaisesRegex(
-                ValueError,
+                RuntimeError,
                 'repository client uses an SSH git remote but SSH_AUTH_SOCK is not configured',
             ):
                 service.validate_connections()
@@ -1707,7 +1711,7 @@ class RepositoryServiceTests(unittest.TestCase):
             {'SSH_AUTH_SOCK': '/ssh-agent'},
             clear=True,
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.os.path.isdir',
@@ -1717,7 +1721,7 @@ class RepositoryServiceTests(unittest.TestCase):
             return_value=False,
         ):
             with self.assertRaisesRegex(
-                ValueError,
+                RuntimeError,
                 'repository client uses an SSH git remote but SSH_AUTH_SOCK does not exist: /ssh-agent',
             ):
                 service.validate_connections()
@@ -1743,7 +1747,7 @@ class RepositoryServiceTests(unittest.TestCase):
             {'SSH_AUTH_SOCK': '/ssh-agent'},
             clear=True,
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             side_effect=lambda name: None if name == 'ssh' else '/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.os.path.isdir',
@@ -1753,7 +1757,7 @@ class RepositoryServiceTests(unittest.TestCase):
             return_value=True,
         ):
             with self.assertRaisesRegex(
-                ValueError,
+                RuntimeError,
                 re.escape(
                     'repository client uses an SSH git remote but the ssh executable '
                     'is not available on PATH; install OpenSSH '
@@ -1776,10 +1780,10 @@ class RepositoryServiceTests(unittest.TestCase):
         ).decode('ascii')
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             return_value=Mock(returncode=0, stdout='', stderr=''),
         ) as mock_run:
             service._pull_destination_branch('.', 'main', repository)
@@ -1790,6 +1794,8 @@ class RepositoryServiceTests(unittest.TestCase):
                 'git',
                 '-c',
                 'safe.directory=.',
+                '-c',
+                'core.hooksPath=/dev/null',
                 '-C',
                 '.',
                 'pull',
@@ -1820,10 +1826,10 @@ class RepositoryServiceTests(unittest.TestCase):
         ).decode('ascii')
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             return_value=Mock(returncode=0, stdout='', stderr=''),
         ) as mock_run:
             service._push_branch('.', 'feature/proj-1/backend', repository)
@@ -1834,6 +1840,8 @@ class RepositoryServiceTests(unittest.TestCase):
                 'git',
                 '-c',
                 'safe.directory=.',
+                '-c',
+                'core.hooksPath=/dev/null',
                 '-C',
                 '.',
                 'push',
@@ -1862,10 +1870,10 @@ class RepositoryServiceTests(unittest.TestCase):
         service.logger = Mock()
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             side_effect=[
                 Mock(
                     returncode=1,
@@ -1887,11 +1895,13 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
             [
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'push', '-u', 'origin', 'UNA-2265'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'push', '-u', 'origin', 'UNA-2265'],
                 [
                     'git',
                     '-c',
                     'safe.directory=.',
+                    '-c',
+                    'core.hooksPath=/dev/null',
                     '-C',
                     '.',
                     'fetch',
@@ -1904,8 +1914,8 @@ class RepositoryServiceTests(unittest.TestCase):
                 # writes into ``.git/hooks/`` cannot fire on the host
                 # during kato's branch state checks.
                 ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--verify', 'origin/UNA-2265'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'rebase', 'origin/UNA-2265'],
-                ['git', '-c', 'safe.directory=.', '-C', '.', 'push', '-u', 'origin', 'UNA-2265'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rebase', 'origin/UNA-2265'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'push', '-u', 'origin', 'UNA-2265'],
             ],
         )
         service.logger.warning.assert_called_once_with(
@@ -1918,7 +1928,7 @@ class RepositoryServiceTests(unittest.TestCase):
         service = RepositoryService(self.cfg.kato.repositories, 3)
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value=None,
         ):
             with self.assertRaisesRegex(
@@ -1969,7 +1979,7 @@ class RepositoryServiceTests(unittest.TestCase):
         repository = self.backend_repo
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.shutil.which',
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
             return_value='/usr/bin/git',
         ), patch(
             'kato_core_lib.data_layers.service.repository_service.os.path.isdir',
@@ -2285,17 +2295,17 @@ class RepositoryServiceTests(unittest.TestCase):
         )
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             return_value=Mock(returncode=0, stdout='refs/heads/main\n', stderr=''),
         ) as mock_run:
             service._validate_repository_git_access(repository)
 
         argv = mock_run.call_args.args[0]
-        # The verification command must be ``ls-remote --heads origin`` —
+        # The verification command must be ``ls-remote origin HEAD`` —
         # cheap, read-only, exercises authentication without mutating
         # the repository.
         self.assertIn('ls-remote', argv)
-        self.assertIn('--heads', argv)
+        self.assertIn('HEAD', argv)
         self.assertIn('origin', argv)
         # The auth header is injected via env vars, not argv (so it
         # never lands in ``ps``-visible process state).
@@ -2328,7 +2338,7 @@ class RepositoryServiceTests(unittest.TestCase):
         )
 
         with patch(
-            'kato_core_lib.data_layers.service.repository_service.subprocess.run',
+            'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             return_value=Mock(
                 returncode=128,
                 stdout='',
