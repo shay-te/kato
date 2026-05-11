@@ -5,6 +5,7 @@ import json
 import threading
 import time
 import unittest
+import unittest.mock
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -882,13 +883,244 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
             session.send_permission_response(request_id='   ', allow=True)
 
     def test_bypass_permissions_clears_prompt_tool(self) -> None:
-        # Line 182: ``bypassPermissions`` with no prompt tool → tool cleared.
+        # Line 183-185: ``bypassPermissions`` with no prompt tool → tool cleared.
         session = StreamingClaudeSession(
             task_id='PROJ-1',
             permission_mode='bypassPermissions',
             permission_prompt_tool='',
         )
         self.assertEqual(session._permission_prompt_tool, '')
+
+    def test_explicit_prompt_tool_overrides_default(self) -> None:
+        # Line 182: ``normalized_prompt_tool`` truthy → use it as-is.
+        session = StreamingClaudeSession(
+            task_id='PROJ-1',
+            permission_prompt_tool='stdio',
+        )
+        self.assertEqual(session._permission_prompt_tool, 'stdio')
+
+    def test_start_raises_when_already_started(self) -> None:
+        # Line 326: starting an already-started session is a programming
+        # error — raise so the caller knows their state machine is wrong.
+        session = self._build_session()
+        session._proc = SimpleNamespace(poll=lambda: None)  # already running
+        with self.assertRaisesRegex(RuntimeError, 'already started'):
+            session.start()
+
+    def test_escalate_to_sigterm_returns_when_proc_exits_after_signal(self) -> None:
+        # Line 558 happy branch: SIGTERM is sent; if the proc exits cleanly
+        # within 2s, we don't escalate to kill.
+        session = self._build_session()
+        session.logger = MagicMock()
+        fake = _FakeProc()
+        fake._returncode = None
+        session._proc = fake
+        with patch(
+            'claude_core_lib.claude_core_lib.session.streaming._wait_for_exit',
+            return_value=True,
+        ):
+            session._escalate_to_sigterm(fake)
+        self.assertIn(15, fake.signals_sent)
+
+    def test_escalate_to_sigterm_falls_through_to_kill_on_hang(self) -> None:
+        # Line 558: SIGTERM-then-still-alive → _escalate_to_kill is invoked.
+        session = self._build_session()
+        session.logger = MagicMock()
+        fake = _FakeProc()
+        session._proc = fake
+        # First wait (post-SIGTERM) returns False → SIGKILL escalation;
+        # second wait (post-SIGKILL inside _escalate_to_kill) returns True.
+        with patch(
+            'claude_core_lib.claude_core_lib.session.streaming._wait_for_exit',
+            side_effect=[False, True],
+        ), patch.object(session, '_escalate_to_kill') as mock_kill:
+            session._escalate_to_sigterm(fake)
+        mock_kill.assert_called_once()
+
+    def test_events_iter_yields_through_empty_queue_waits(self) -> None:
+        # Lines 587-588: ``Empty`` exception → continue loop; eventually
+        # session becomes not-alive AND queue empty → loop ends.
+        session = self._build_session()
+        # Session never had a proc → not alive.
+        # Iterator should immediately end (queue empty + not alive).
+        result = list(session.events_iter())
+        self.assertEqual(result, [])
+
+    def test_events_iter_drains_queue_after_session_dies(self) -> None:
+        # Session is dead but queue has events → drain them before stopping.
+        session = self._build_session()
+        evt1 = SessionEvent(raw={'type': 'system'})
+        evt2 = SessionEvent(raw={'type': 'result'})  # terminal
+        session._event_queue.put(evt1)
+        session._event_queue.put(evt2)
+        result = list(session.events_iter())
+        self.assertEqual(len(result), 2)
+
+    def test_events_iter_continues_on_queue_timeout(self) -> None:
+        # Lines 587-588: ``Empty`` from queue.get → ``continue`` loop.
+        # Mock is_alive to flip from True → False between iterations so the
+        # loop enters once (queue Empty), then exits cleanly.
+        session = self._build_session()
+        alive_responses = iter([True, False, False, False])
+        with patch.object(
+            type(session), 'is_alive',
+            new_callable=unittest.mock.PropertyMock,
+            side_effect=lambda: next(alive_responses),
+        ):
+            result = list(session.events_iter())
+        self.assertEqual(result, [])
+
+    def test_build_command_includes_model_max_turns_effort_allowed_tools(self) -> None:
+        # Lines 688-694: optional CLI args appear when configured.
+        session = StreamingClaudeSession(
+            task_id='PROJ-X',
+            model='claude-opus-4-7',
+            max_turns=10,
+            effort='high',
+            allowed_tools='Bash,Edit',
+        )
+        with patch(
+            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ):
+            cmd = session._build_command()
+        self.assertIn('--model', cmd)
+        self.assertIn('claude-opus-4-7', cmd)
+        self.assertIn('--max-turns', cmd)
+        self.assertIn('10', cmd)
+        self.assertIn('--effort', cmd)
+        self.assertIn('high', cmd)
+        self.assertIn('--allowedTools', cmd)
+        self.assertIn('Bash,Edit', cmd)
+
+    def test_start_raises_when_sandbox_image_prep_fails(self) -> None:
+        # Lines 353-354: ensure_image raises SandboxError → wrapped as RuntimeError.
+        from sandbox_core_lib.sandbox_core_lib.manager import SandboxError
+        session = StreamingClaudeSession(
+            task_id='PROJ-1', cwd='/tmp', docker_mode_on=True,
+        )
+        with patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
+            side_effect=SandboxError('image pull failed'),
+        ), patch(
+            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'sandbox image'):
+                session.start()
+
+    def test_start_raises_when_sandbox_rate_limited(self) -> None:
+        # Lines 361-362: check_spawn_rate raises SandboxError.
+        from sandbox_core_lib.sandbox_core_lib.manager import SandboxError
+        session = StreamingClaudeSession(
+            task_id='PROJ-2', cwd='/tmp', docker_mode_on=True,
+        )
+        with patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
+            return_value=None,
+        ), patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.check_spawn_rate',
+            side_effect=SandboxError('too many spawns'),
+        ), patch(
+            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'rate-limited'):
+                session.start()
+
+    def test_start_raises_when_workspace_has_secrets(self) -> None:
+        # Lines 374-375: enforce_no_workspace_secrets raises → blocked.
+        from sandbox_core_lib.sandbox_core_lib.manager import SandboxError
+        session = StreamingClaudeSession(
+            task_id='PROJ-3', cwd='/tmp', docker_mode_on=True,
+        )
+        with patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
+            return_value=None,
+        ), patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.check_spawn_rate',
+            return_value=None,
+        ), patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.enforce_no_workspace_secrets',
+            side_effect=SandboxError('found .env with token'),
+        ), patch(
+            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'spawn blocked'):
+                session.start()
+
+    def test_start_raises_when_audit_log_fails(self) -> None:
+        # Lines 396-397: record_spawn raises → audit log failure.
+        from sandbox_core_lib.sandbox_core_lib.manager import SandboxError
+        session = StreamingClaudeSession(
+            task_id='PROJ-4', cwd='/tmp', docker_mode_on=True,
+        )
+        with patch.multiple(
+            'sandbox_core_lib.sandbox_core_lib.manager',
+            ensure_image=MagicMock(return_value=None),
+            check_spawn_rate=MagicMock(return_value=None),
+            enforce_no_workspace_secrets=MagicMock(return_value=None),
+            make_container_name=MagicMock(return_value='container'),
+            wrap_command=MagicMock(return_value=['docker', 'run']),
+            record_spawn=MagicMock(side_effect=SandboxError('audit log unavailable')),
+        ), patch(
+            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'audit log'):
+                session.start()
+
+    def test_start_sends_initial_prompt_when_provided(self) -> None:
+        # Line 425: start() with non-empty initial_prompt calls send_user_message.
+        fake_proc = _FakeProc(stdout_lines=[
+            json.dumps({'type': 'system', 'subtype': 'init', 'session_id': 'live'}),
+        ])
+        with patch(
+            'claude_core_lib.claude_core_lib.session.streaming.subprocess.Popen',
+            return_value=fake_proc,
+        ), patch(
+            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ):
+            session = StreamingClaudeSession(task_id='PROJ-prompt', cwd='/tmp')
+            session.start(initial_prompt='hello world')
+        # send_user_message wrote to stdin (the prompt is encoded into an envelope).
+        self.assertTrue(fake_proc.stdin.write.called)
+        # The envelope payload contains the prompt text.
+        written_data = b''.join(
+            call.args[0] for call in fake_proc.stdin.write.call_args_list
+        )
+        self.assertIn(b'hello world', written_data)
+
+    def test_start_raises_when_subprocess_popen_fails(self) -> None:
+        # Lines 413-414: OSError/FileNotFoundError from Popen → wrapped.
+        session = StreamingClaudeSession(task_id='PROJ-5', cwd='/tmp')
+        with patch(
+            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ), patch(
+            'claude_core_lib.claude_core_lib.session.streaming.subprocess.Popen',
+            side_effect=FileNotFoundError('no such binary'),
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'failed to launch claude CLI binary'):
+                session.start()
+
+    def test_stdout_reader_loop_skips_empty_and_non_event_lines(self) -> None:
+        # Line 774, 777: a blank line + a non-JSON line should both be
+        # skipped without crashing the reader.
+        session = self._build_session()
+        session.logger = MagicMock()
+        stdout_stream = io.BytesIO(
+            b'\n'   # blank line — line 774 ``if not text: continue``
+            b'garbage\n'   # non-JSON — _parse_stdout_line returns None
+            + json.dumps({'type': 'system'}).encode() + b'\n'
+        )
+        session._proc = SimpleNamespace(stdout=stdout_stream)
+        session._stdout_reader_loop()
+        # Only the valid event was published.
+        self.assertEqual(len(session._recent_events), 1)
+        self.assertEqual(session._recent_events[0].event_type, 'system')
 
     def test_terminate_no_op_when_proc_missing(self) -> None:
         # Line 535: terminate() early return when no proc.

@@ -457,6 +457,14 @@ class ReadArchitectureDocTests(unittest.TestCase):
         self.assertIn('orchestration layer', result)
         self.assertNotIn('Kato commits', result)
 
+    def test_directory_path_returns_empty(self) -> None:
+        # Line 44: stat() succeeds for a directory but ``is_file()`` is
+        # False → raise OSError → caught + return ''. Locks the rule that
+        # the architecture-doc path must be a file, not a folder.
+        directory = Path(self._tmp.name) / 'arch_dir'
+        directory.mkdir()
+        self.assertEqual(read_architecture_doc(str(directory)), '')
+
 
 # ---------------------------------------------------------------------------
 # lessons_doc_utils
@@ -629,6 +637,17 @@ class AgentsInstructionUtilsTests(unittest.TestCase):
         result = repository_agents_instructions_text([repo])
         self.assertIn('my-frontend', result)
 
+    def test_repository_with_blank_local_path_skipped(self) -> None:
+        # Line 61: ``local_path`` is the empty string → silent skip.
+        repo = _repo('blank', '')
+        self.assertEqual(repository_agents_instructions_text([repo]), '')
+
+    def test_repository_with_no_agents_files_skipped(self) -> None:
+        # Line 67: local_path is a real directory but contains no AGENTS.md
+        # anywhere → no entries → return ''.
+        repo = _repo('empty', str(self.root))
+        self.assertEqual(repository_agents_instructions_text([repo]), '')
+
 
 # ---------------------------------------------------------------------------
 # agent_prompt_utils
@@ -744,6 +763,23 @@ class PrependChatWorkspaceContextTests(unittest.TestCase):
             raw_ignored_value='hidden-repo',
         )
         self.assertIn('hidden-repo', result)
+
+    def test_returns_prompt_unchanged_when_all_blocks_empty(self) -> None:
+        # Line 133: defensive ``if not parts: return prompt``. In normal use
+        # the continuity block is always non-empty, so this branch can only
+        # fire if a future refactor makes continuity optional. Patch the
+        # block to return '' so we exercise the safety net.
+        from unittest.mock import patch as patch_obj
+        with patch_obj(
+            'claude_core_lib.claude_core_lib.helpers.agent_prompt_utils.'
+            'chat_continuity_ground_truth_block',
+            return_value='',
+        ):
+            result = prepend_chat_workspace_context(
+                'bare prompt',
+                cwd='', additional_dirs=None, raw_ignored_value='',
+            )
+        self.assertEqual(result, 'bare prompt')
 
 
 class SecurityGuardrailsTextTests(unittest.TestCase):
@@ -1046,6 +1082,31 @@ class ReviewCommentCodeSnippetTests(unittest.TestCase):
         self._write_file('blank.py', '')
         result = review_comment_code_snippet(
             _comment(file_path='blank.py', line_number=1), self.workspace,
+        )
+        self.assertEqual(result, '')
+
+    def test_snippet_truncates_when_total_budget_exceeded(self) -> None:
+        # Lines 344-345: ``total_bytes > _REVIEW_SNIPPET_MAX_BYTES`` →
+        # append the truncation marker and break. Build many medium-length
+        # lines so the cumulative byte budget is exceeded mid-render.
+        long_lines = '\n'.join('x' * 200 for _ in range(200))
+        self._write_file('many.py', long_lines)
+        result = review_comment_code_snippet(
+            _comment(file_path='many.py', line_number=100),
+            self.workspace,
+            context_lines=200,  # request a huge window so budget is hit
+        )
+        self.assertIn('snippet truncated', result)
+
+    def test_snippet_returns_empty_when_window_lands_past_file_end(self) -> None:
+        # Line 348: ``if not rendered: return ''``. When line_number is
+        # far past file end and context window doesn't reach back into
+        # the file, ``rendered`` is empty.
+        self._write_file('tiny.py', 'one\ntwo\nthree\n')
+        result = review_comment_code_snippet(
+            _comment(file_path='tiny.py', line_number=100),
+            self.workspace,
+            context_lines=1,  # window is [99, 101] but file only has 3 lines
         )
         self.assertEqual(result, '')
 

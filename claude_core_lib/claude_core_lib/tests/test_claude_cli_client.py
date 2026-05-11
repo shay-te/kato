@@ -4,8 +4,9 @@ import json
 import subprocess
 import unittest
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
 from claude_core_lib.claude_core_lib.data.fields import ImplementationFields
@@ -962,6 +963,591 @@ class ClaudeCliClientWorkspaceDelimiterWiringTests(unittest.TestCase):
         self.assertNotIn('source="pr-comment-thread"', prompt)
         # Exactly one wrap (for the leading body), not two.
         self.assertEqual(prompt.count(self._OPEN_MARKER), 1)
+
+
+class ValidateConnectionEdgeCases(unittest.TestCase):
+    def test_raises_when_subprocess_run_oserror(self) -> None:
+        # Lines 203-204: OSError on version probe → wrapped RuntimeError.
+        client = ClaudeCliClient(binary='claude')
+        with patch(
+            'claude_core_lib.claude_core_lib.cli_client.shutil.which',
+            return_value='/usr/bin/claude',
+        ), patch.object(
+            ClaudeCliClient, '_running_inside_docker', return_value=False,
+        ), patch(
+            'claude_core_lib.claude_core_lib.cli_client.subprocess.run',
+            side_effect=OSError('exec failure'),
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'failed to launch'):
+                client.validate_connection()
+
+    def test_raises_when_subprocess_timeout(self) -> None:
+        client = ClaudeCliClient(binary='claude')
+        with patch(
+            'claude_core_lib.claude_core_lib.cli_client.shutil.which',
+            return_value='/usr/bin/claude',
+        ), patch.object(
+            ClaudeCliClient, '_running_inside_docker', return_value=False,
+        ), patch(
+            'claude_core_lib.claude_core_lib.cli_client.subprocess.run',
+            side_effect=subprocess.TimeoutExpired('claude', 5),
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'failed to launch'):
+                client.validate_connection()
+
+    def test_raises_when_version_probe_returns_non_zero(self) -> None:
+        client = ClaudeCliClient(binary='claude')
+        with patch(
+            'claude_core_lib.claude_core_lib.cli_client.shutil.which',
+            return_value='/usr/bin/claude',
+        ), patch.object(
+            ClaudeCliClient, '_running_inside_docker', return_value=False,
+        ), patch(
+            'claude_core_lib.claude_core_lib.cli_client.subprocess.run',
+            return_value=_completed('', stderr='auth failure', returncode=1),
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'failed to report a version'):
+                client.validate_connection()
+
+
+class ValidateModelAccessTests(unittest.TestCase):
+    def test_delegates_to_smoke_test_helper(self) -> None:
+        # Line 220: public ``validate_model_access`` is a thin wrapper.
+        client = ClaudeCliClient(binary='claude')
+        with patch.object(
+            client, '_validate_model_access_smoke_test',
+        ) as mock_smoke:
+            client.validate_model_access()
+        mock_smoke.assert_called_once()
+
+    def test_smoke_test_no_op_when_disabled(self) -> None:
+        # Lines 1170-1171: ``_model_smoke_test_enabled = False`` → early return.
+        client = ClaudeCliClient(binary='claude', model_smoke_test_enabled=False)
+        with patch.object(
+            client, '_run_model_access_validation',
+        ) as mock_run:
+            client._validate_model_smoke_test()
+        mock_run.assert_not_called()
+
+    def test_smoke_test_delegates_when_enabled(self) -> None:
+        # Line 1172: enabled → delegate to _validate_model_access_smoke_test.
+        client = ClaudeCliClient(binary='claude', model_smoke_test_enabled=True)
+        with patch.object(
+            client, '_validate_model_access_smoke_test',
+        ) as mock_smoke:
+            client._validate_model_smoke_test()
+        mock_smoke.assert_called_once()
+
+    def test_smoke_test_runs_at_most_once(self) -> None:
+        # Lines 1175-1178: ``_model_access_smoke_test_ran`` short-circuits.
+        client = ClaudeCliClient(binary='claude')
+        with patch.object(
+            client, '_run_model_access_validation',
+        ) as mock_run:
+            client._validate_model_access_smoke_test()
+            client._validate_model_access_smoke_test()
+            client._validate_model_access_smoke_test()
+        # Even though we called it three times, only one underlying run.
+        mock_run.assert_called_once()
+
+    def test_smoke_test_raises_on_timeout(self) -> None:
+        # Lines 1211-1212: TimeoutExpired → wrapped RuntimeError.
+        client = ClaudeCliClient(binary='claude')
+        with patch(
+            'claude_core_lib.claude_core_lib.cli_client.shutil.which',
+            return_value='/usr/bin/claude',
+        ), patch(
+            'claude_core_lib.claude_core_lib.cli_client.subprocess.run',
+            side_effect=subprocess.TimeoutExpired('claude', 5),
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'smoke test did not finish'):
+                client._run_model_access_validation()
+
+    def test_smoke_test_raises_on_non_zero_exit(self) -> None:
+        # Lines 1216-1217: non-zero returncode → RuntimeError.
+        client = ClaudeCliClient(binary='claude')
+        with patch(
+            'claude_core_lib.claude_core_lib.cli_client.shutil.which',
+            return_value='/usr/bin/claude',
+        ), patch(
+            'claude_core_lib.claude_core_lib.cli_client.subprocess.run',
+            return_value=_completed('', stderr='boom', returncode=1),
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'smoke test failed'):
+                client._run_model_access_validation()
+
+    def test_smoke_test_raises_when_payload_reports_error(self) -> None:
+        # Lines 1220-1221: payload['is_error'] = True → RuntimeError.
+        client = ClaudeCliClient(binary='claude')
+        with patch(
+            'claude_core_lib.claude_core_lib.cli_client.shutil.which',
+            return_value='/usr/bin/claude',
+        ), patch(
+            'claude_core_lib.claude_core_lib.cli_client.subprocess.run',
+            return_value=_completed(
+                json.dumps({'is_error': True, 'result': 'model not available'}),
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'reported an error'):
+                client._run_model_access_validation()
+
+
+class CoerceMaxTurnsTests(unittest.TestCase):
+    def test_returns_none_for_none_or_empty(self) -> None:
+        self.assertIsNone(ClaudeCliClient._coerce_max_turns(None))
+        self.assertIsNone(ClaudeCliClient._coerce_max_turns(''))
+
+    def test_returns_none_for_garbage(self) -> None:
+        # Lines 1301-1302: ``ValueError`` from int() → None.
+        self.assertIsNone(ClaudeCliClient._coerce_max_turns('not a number'))
+
+    def test_returns_none_for_zero_or_negative(self) -> None:
+        # Line 1304: parsed <= 0 → None.
+        self.assertIsNone(ClaudeCliClient._coerce_max_turns(0))
+        self.assertIsNone(ClaudeCliClient._coerce_max_turns(-5))
+
+    def test_returns_int_for_positive(self) -> None:
+        self.assertEqual(ClaudeCliClient._coerce_max_turns(42), 42)
+        self.assertEqual(ClaudeCliClient._coerce_max_turns('10'), 10)
+
+
+class BuildCommandEffortTests(unittest.TestCase):
+    """Line 888: ``if self._effort: command.extend(['--effort', ...])``."""
+
+    def test_effort_flag_added_when_set(self) -> None:
+        client = ClaudeCliClient(
+            binary='claude', effort='high', model_smoke_test_enabled=False,
+        )
+        with patch(
+            'claude_core_lib.claude_core_lib.cli_client.shutil.which',
+            return_value='/usr/bin/claude',
+        ):
+            cmd = client._build_command(additional_dirs=[], session_id='')
+        self.assertIn('--effort', cmd)
+        self.assertIn('high', cmd)
+
+
+class CoerceEffortTests(unittest.TestCase):
+    def test_returns_empty_for_blank(self) -> None:
+        self.assertEqual(ClaudeCliClient._coerce_effort(''), '')
+        self.assertEqual(ClaudeCliClient._coerce_effort(None), '')
+
+    def test_returns_normalized_for_valid_values(self) -> None:
+        self.assertEqual(ClaudeCliClient._coerce_effort('LOW'), 'low')
+        self.assertEqual(ClaudeCliClient._coerce_effort('  high  '), 'high')
+
+    def test_raises_for_invalid_value(self) -> None:
+        # Lines 1319-1324: typo → raise so production catches it early.
+        with self.assertRaisesRegex(ValueError, 'invalid claude effort'):
+            ClaudeCliClient._coerce_effort('extreme')
+
+
+class ParseJsonPayloadEdgeCases(unittest.TestCase):
+    def test_returns_first_dict_from_list_payload(self) -> None:
+        # Lines 1117-1125: list payload → first dict element wins.
+        client = ClaudeCliClient(binary='claude')
+        payload = client._parse_json_payload('[{"a": 1}, {"b": 2}]')
+        self.assertEqual(payload, {'a': 1})
+
+    def test_returns_empty_dict_when_list_has_no_dicts(self) -> None:
+        client = ClaudeCliClient(binary='claude')
+        payload = client._parse_json_payload('[1, "string", 2]')
+        self.assertEqual(payload, {})
+
+    def test_warns_and_returns_empty_for_non_dict_payload(self) -> None:
+        # Lines 1121-1125: warning log + empty fallback. We need a payload
+        # that decodes to a non-dict, non-list type (e.g., a bare number).
+        client = ClaudeCliClient(binary='claude')
+        with patch.object(client, 'logger') as logger:
+            # ``42`` parses as an int → not dict, not list → warning.
+            result = client._parse_json_payload('42')
+        self.assertEqual(result, {})
+        logger.warning.assert_called_once()
+
+
+class ExtractFirstJsonObjectTests(unittest.TestCase):
+    def test_returns_empty_when_no_braces(self) -> None:
+        self.assertEqual(ClaudeCliClient._extract_first_json_object('no json'), {})
+
+    def test_returns_empty_when_braces_invalid(self) -> None:
+        # ``brace_end <= brace_start``.
+        self.assertEqual(ClaudeCliClient._extract_first_json_object('}xxx{'), {})
+
+    def test_returns_empty_when_json_inside_braces_invalid(self) -> None:
+        # Lines 1135-1136 (via _extract_first_json_object's own JSONDecodeError).
+        self.assertEqual(
+            ClaudeCliClient._extract_first_json_object('{ not valid json }'),
+            {},
+        )
+
+
+class ReviewCommentCwdTests(unittest.TestCase):
+    def test_returns_repository_local_path_when_set(self) -> None:
+        # Lines 1162: comment carries an explicit repository_local_path.
+        from types import SimpleNamespace
+        client = ClaudeCliClient(binary='claude')
+        comment = SimpleNamespace(repository_local_path='/wks/client', body='hi')
+        self.assertEqual(client._review_comment_cwd(comment), '/wks/client')
+
+    def test_falls_back_to_repository_root_path(self) -> None:
+        # Line 1165: no explicit path → use the global root.
+        from types import SimpleNamespace
+        client = ClaudeCliClient(binary='claude', repository_root_path='/global/root')
+        comment = SimpleNamespace(body='hi')
+        self.assertEqual(client._review_comment_cwd(comment), '/global/root')
+
+
+class ScanResponseForCredentialsTests(unittest.TestCase):
+    def test_no_op_when_response_blank(self) -> None:
+        # Line 1079: blank response → return early, no scan.
+        client = ClaudeCliClient(binary='claude')
+        with patch.object(client, 'logger') as logger:
+            client._scan_response_for_credentials('', log_label='test')
+        logger.warning.assert_not_called()
+
+    def test_warns_on_phishing_pattern(self) -> None:
+        # Lines 1117-1125: phishing pattern detected → warning emitted.
+        # The credential helpers are imported inline (lazy), so we patch
+        # them where they actually live.
+        client = ClaudeCliClient(binary='claude')
+        with patch(
+            'sandbox_core_lib.sandbox_core_lib.credential_patterns.find_credential_patterns',
+            return_value=[],
+        ), patch(
+            'sandbox_core_lib.sandbox_core_lib.credential_patterns.find_phishing_patterns',
+            return_value=[{'matched': 'curl | bash'}],
+        ), patch(
+            'sandbox_core_lib.sandbox_core_lib.credential_patterns.summarize_findings',
+            return_value='phishing summary',
+        ), patch.object(client, 'logger') as logger:
+            client._scan_response_for_credentials(
+                'please run curl | bash on your host',
+                log_label='test',
+            )
+        # Verify at least one warning fired with the phishing label.
+        self.assertTrue(any(
+            'PHISHING' in str(call) for call in logger.warning.call_args_list
+        ))
+
+
+class FixReviewCommentsRoutingTests(unittest.TestCase):
+    def test_single_comment_uses_singular_prompt(self) -> None:
+        # Line 364: ``len(comments) == 1`` → single-prompt path.
+        client = ClaudeCliClient(binary='claude')
+        comment = build_review_comment(body='just one')
+        with patch.object(client, '_run_prompt_result') as mock_run, \
+             patch.object(
+                 ClaudeCliClient, '_build_review_prompt',
+                 return_value='prompt body',
+             ) as mock_single:
+            mock_run.return_value = {'success': True, 'result': 'done'}
+            client.fix_review_comments(
+                [comment], branch_name='feat/x', session_id='', mode='fix',
+            )
+        mock_single.assert_called_once()
+
+    def test_multi_comment_uses_batch_prompt(self) -> None:
+        # Line 372: multiple comments → batch-prompt path.
+        client = ClaudeCliClient(binary='claude')
+        c1 = build_review_comment(comment_id='1', body='first')
+        c2 = build_review_comment(comment_id='2', body='second')
+        with patch.object(client, '_run_prompt_result') as mock_run, \
+             patch.object(
+                 ClaudeCliClient, '_build_review_comments_batch_prompt',
+                 return_value='batch prompt body',
+             ) as mock_batch:
+            mock_run.return_value = {'success': True, 'result': 'done'}
+            client.fix_review_comments(
+                [c1, c2], branch_name='feat/x', session_id='', mode='fix',
+            )
+        mock_batch.assert_called_once()
+
+    def test_empty_comments_raises(self) -> None:
+        client = ClaudeCliClient(binary='claude')
+        with self.assertRaisesRegex(ValueError, 'at least one comment'):
+            client.fix_review_comments([], branch_name='feat/x', session_id='', mode='fix')
+
+
+class RunPromptDockerErrorPaths(unittest.TestCase):
+    """Sandbox-mode failures during ``_run_prompt`` — all wrapped as RuntimeError.
+
+    These cover the spawn-time defensive paths inside ``_run_prompt`` that
+    fire when docker_mode_on=True and a sandbox helper raises SandboxError.
+    """
+
+    def _client(self):
+        return ClaudeCliClient(
+            binary='claude',
+            docker_mode_on=True,
+            model_smoke_test_enabled=False,
+        )
+
+    def test_ensure_image_failure_blocks_run(self) -> None:
+        # Lines 805-806: ensure_image raises → wrapped.
+        from sandbox_core_lib.sandbox_core_lib.manager import SandboxError
+        client = self._client()
+        with patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
+            side_effect=SandboxError('image pull failed'),
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'sandbox image'):
+                client._run_prompt(
+                    prompt='hi', cwd='/wks', additional_dirs=[],
+                    log_label='test', task_id='T-1',
+                )
+
+    def test_check_spawn_rate_failure_blocks_run(self) -> None:
+        # Lines 811-812: check_spawn_rate raises → wrapped.
+        from sandbox_core_lib.sandbox_core_lib.manager import SandboxError
+        client = self._client()
+        with patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
+            return_value=None,
+        ), patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.check_spawn_rate',
+            side_effect=SandboxError('rate limit'),
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'rate-limited'):
+                client._run_prompt(
+                    prompt='hi', cwd='/wks', additional_dirs=[],
+                    log_label='test', task_id='T-2',
+                )
+
+    def test_workspace_secrets_failure_blocks_run(self) -> None:
+        # Lines 818-819: enforce_no_workspace_secrets raises → wrapped.
+        from sandbox_core_lib.sandbox_core_lib.manager import SandboxError
+        client = self._client()
+        with patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
+            return_value=None,
+        ), patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.check_spawn_rate',
+            return_value=None,
+        ), patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.enforce_no_workspace_secrets',
+            side_effect=SandboxError('committed token found'),
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'spawn blocked'):
+                client._run_prompt(
+                    prompt='hi', cwd='/wks', additional_dirs=[],
+                    log_label='test', task_id='T-3',
+                )
+
+    def test_audit_log_failure_blocks_run(self) -> None:
+        # Lines 835-836: record_spawn raises → wrapped.
+        from sandbox_core_lib.sandbox_core_lib.manager import SandboxError
+        client = self._client()
+        with patch.multiple(
+            'sandbox_core_lib.sandbox_core_lib.manager',
+            ensure_image=MagicMock(return_value=None),
+            check_spawn_rate=MagicMock(return_value=None),
+            enforce_no_workspace_secrets=MagicMock(return_value=None),
+            make_container_name=MagicMock(return_value='cn'),
+            wrap_command=MagicMock(return_value=['docker', 'run']),
+            record_spawn=MagicMock(side_effect=SandboxError('audit log down')),
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'audit log'):
+                client._run_prompt(
+                    prompt='hi', cwd='/wks', additional_dirs=[],
+                    log_label='test', task_id='T-4',
+                )
+
+
+class RunPromptSubprocessErrorPaths(unittest.TestCase):
+    """Lines 860-861, 888: subprocess errors in ``_run_prompt`` → wrapped."""
+
+    def test_raises_timeout_error(self) -> None:
+        client = ClaudeCliClient(binary='claude', model_smoke_test_enabled=False)
+        with patch(
+            'claude_core_lib.claude_core_lib.cli_client.shutil.which',
+            return_value='/usr/bin/claude',
+        ), patch(
+            'claude_core_lib.claude_core_lib.cli_client.subprocess.run',
+            side_effect=subprocess.TimeoutExpired('claude', 30),
+        ):
+            with self.assertRaisesRegex(TimeoutError, 'did not finish within'):
+                client._run_prompt(
+                    prompt='hi', cwd='/wks', additional_dirs=[],
+                    log_label='test',
+                )
+
+    def test_raises_runtime_error_on_oserror(self) -> None:
+        client = ClaudeCliClient(binary='claude', model_smoke_test_enabled=False)
+        with patch(
+            'claude_core_lib.claude_core_lib.cli_client.shutil.which',
+            return_value='/usr/bin/claude',
+        ), patch(
+            'claude_core_lib.claude_core_lib.cli_client.subprocess.run',
+            side_effect=OSError('binary missing'),
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'failed to invoke'):
+                client._run_prompt(
+                    prompt='hi', cwd='/wks', additional_dirs=[],
+                    log_label='test',
+                )
+
+
+class WindowsNpmShimResolutionTests(unittest.TestCase):
+    """Lines 1248, 1262-1293: ``_resolve_windows_node_invocation`` and
+    ``_host_binary_argv`` paths exercised on non-Windows hosts by mocking
+    ``os.name``.
+    """
+
+    def test_returns_none_on_non_windows(self) -> None:
+        # POSIX → early return None.
+        self.assertIsNone(
+            ClaudeCliClient._resolve_windows_node_invocation('/usr/bin/claude'),
+        )
+
+    # The Windows-shim path uses ``pathlib.Path``; on POSIX we patch
+    # ``cli_client.os.name`` to bypass the early POSIX-bail check, and let
+    # the rest of the function operate on PosixPath instances (the I/O
+    # methods we patch — read_text/is_file/which/resolve — behave the
+    # same regardless of platform).
+
+    def _patch_os_name_only_for_function(self):
+        """Patch only the ``os.name`` lookup inside the function under test.
+
+        We can't patch the module-global ``os.name`` because
+        ``pathlib.Path()`` then dispatches to ``WindowsPath``, which crashes
+        on POSIX. Instead we replace the module's bound ``os`` attribute
+        with a SimpleNamespace whose ``name = 'nt'``.
+        """
+        from types import SimpleNamespace
+        import claude_core_lib.claude_core_lib.cli_client as cli_mod
+        return patch.object(cli_mod, 'os', SimpleNamespace(name='nt', getcwd=lambda: '/wks', environ={}))
+
+    def test_returns_none_for_non_shim_suffix(self) -> None:
+        with self._patch_os_name_only_for_function():
+            self.assertIsNone(
+                ClaudeCliClient._resolve_windows_node_invocation(
+                    '/bin/claude.exe',
+                )
+            )
+
+    def test_returns_none_when_shim_unreadable(self) -> None:
+        with self._patch_os_name_only_for_function(), \
+             patch.object(Path, 'read_text', side_effect=OSError('locked')):
+            self.assertIsNone(
+                ClaudeCliClient._resolve_windows_node_invocation(
+                    '/bin/claude.cmd',
+                )
+            )
+
+    def test_returns_none_when_shim_does_not_match_pattern(self) -> None:
+        with self._patch_os_name_only_for_function(), \
+             patch.object(Path, 'read_text', return_value='echo nothing here'):
+            self.assertIsNone(
+                ClaudeCliClient._resolve_windows_node_invocation(
+                    '/bin/claude.cmd',
+                )
+            )
+
+    def test_returns_none_when_js_target_missing(self) -> None:
+        with self._patch_os_name_only_for_function(), \
+             patch.object(
+                 Path, 'read_text',
+                 return_value='"%~dp0/node_modules/claude/bin.js"',
+             ), patch.object(Path, 'is_file', return_value=False):
+            self.assertIsNone(
+                ClaudeCliClient._resolve_windows_node_invocation(
+                    '/bin/claude.cmd',
+                )
+            )
+
+    def test_resolves_to_node_via_path_when_local_missing(self) -> None:
+        def is_file_selective(self_path):
+            return self_path.name.endswith('.js')
+
+        with self._patch_os_name_only_for_function(), \
+             patch.object(
+                 Path, 'read_text',
+                 return_value='"%~dp0/node_modules/claude/bin.js"',
+             ), patch.object(Path, 'is_file', is_file_selective), \
+             patch(
+                 'claude_core_lib.claude_core_lib.cli_client.shutil.which',
+                 return_value='/usr/local/bin/node',
+             ):
+            result = ClaudeCliClient._resolve_windows_node_invocation(
+                '/bin/claude.cmd',
+            )
+        self.assertIsNotNone(result)
+        self.assertEqual(len(result), 2)
+
+    def test_returns_none_when_node_unavailable_anywhere(self) -> None:
+        with self._patch_os_name_only_for_function(), \
+             patch.object(
+                 Path, 'read_text',
+                 return_value='"%~dp0/node_modules/claude/bin.js"',
+             ), patch.object(
+                 Path, 'is_file', lambda self: self.name.endswith('.js'),
+             ), patch(
+                 'claude_core_lib.claude_core_lib.cli_client.shutil.which',
+                 return_value=None,
+             ):
+            self.assertIsNone(
+                ClaudeCliClient._resolve_windows_node_invocation(
+                    '/bin/claude.cmd',
+                )
+            )
+
+    def test_uses_local_node_exe_when_available(self) -> None:
+        # All paths exist → no PATH fallback needed.
+        with self._patch_os_name_only_for_function(), \
+             patch.object(
+                 Path, 'read_text',
+                 return_value='"%~dp0/node_modules/claude/bin.js"',
+             ), patch.object(Path, 'is_file', return_value=True):
+            result = ClaudeCliClient._resolve_windows_node_invocation(
+                '/bin/claude.cmd',
+            )
+        self.assertIsNotNone(result)
+        self.assertEqual(len(result), 2)
+
+    def test_host_binary_argv_uses_node_invocation_on_windows(self) -> None:
+        # Line 1248: ``via_node`` returned → use it for the argv prefix.
+        client = ClaudeCliClient(binary='claude')
+        with patch.object(
+            ClaudeCliClient, '_resolve_windows_node_invocation',
+            return_value=['node.exe', 'bin.js'],
+        ):
+            argv = client._host_binary_argv()
+        self.assertEqual(argv, ['node.exe', 'bin.js'])
+
+
+class InvestigateTests(unittest.TestCase):
+    def test_requires_non_blank_prompt(self) -> None:
+        client = ClaudeCliClient(binary='claude')
+        with self.assertRaisesRegex(ValueError, 'prompt is required'):
+            client.investigate('')
+
+    def test_uses_repository_root_path_when_no_cwd_supplied(self) -> None:
+        # Line 294: ``cwd`` arg blank → fallback to repository_root_path.
+        client = ClaudeCliClient(
+            binary='claude', repository_root_path='/cfg/root',
+        )
+        captured = {}
+
+        def fake_run(*, prompt, cwd, additional_dirs, log_label, task_id):
+            captured['cwd'] = cwd
+            return {'result': 'investigation answer'}
+
+        with patch.object(client, '_run_prompt', side_effect=fake_run):
+            client.investigate('analyze the bug', cwd='')
+        self.assertEqual(captured['cwd'], '/cfg/root')
+
+    def test_restores_tool_allowlists_after_run(self) -> None:
+        # Line 297 (try/finally): tool allowlists are restored after the run.
+        client = ClaudeCliClient(
+            binary='claude',
+            allowed_tools='Bash,Edit',
+            disallowed_tools='Write',
+        )
+        with patch.object(client, '_run_prompt', return_value={'result': ''}):
+            client.investigate('do something', cwd='/wks')
+        # After the call, the originals are restored.
+        self.assertEqual(client._allowed_tools, 'Bash,Edit')
+        self.assertEqual(client._disallowed_tools, 'Write')
 
 
 if __name__ == '__main__':
