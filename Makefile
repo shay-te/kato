@@ -29,6 +29,9 @@ test:
 run:
 	$(VENV_PYTHON) scripts/run_local.py
 
+build-agent-server:
+	docker build -t kato-agent-server:$${KATO_AGENT_SERVER_IMAGE_TAG:-1.12.0-python} docker/agent-server
+
 compose-up:
 	$(VENV_PYTHON) scripts/run_local.py
 
