@@ -5,6 +5,7 @@ import json
 import threading
 import time
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from claude_core_lib.claude_core_lib.session.streaming import SessionEvent, StreamingClaudeSession
@@ -402,6 +403,663 @@ class StreamingClaudeSessionTests(unittest.TestCase):
         fake_proc.stdin.close.assert_called_once()
         # SIGTERM is the first escalation after the grace window.
         self.assertIn(15, fake_proc.signals_sent)
+
+
+class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
+    """Methods that can be tested without a live subprocess.
+
+    These exercise the parsing, event-classification, and detection
+    logic — the SSE tail loop, the stale-resume detector, the wait-planning
+    done-sentinel detection, and similar — by constructing fake events
+    or instantiating a session and exercising the helper directly.
+    """
+
+    def _build_session(self, *, resume_session_id: str = '') -> StreamingClaudeSession:
+        # Instantiate without ``start()`` — we only need the helper methods.
+        return StreamingClaudeSession(
+            task_id='PROJ-1',
+            cwd='/tmp/repo',
+            resume_session_id=resume_session_id,
+        )
+
+    def test_permission_request_details_reads_top_level_fields(self) -> None:
+        event = SessionEvent(raw={
+            'type': 'permission_request',
+            'tool_name': 'Bash',
+            'request_id': 'req-1',
+        })
+        tool, req_id = StreamingClaudeSession._permission_request_details(event)
+        self.assertEqual(tool, 'Bash')
+        self.assertEqual(req_id, 'req-1')
+
+    def test_permission_request_details_reads_nested_request_object(self) -> None:
+        # ``--permission-prompt-tool stdio`` nests the fields under request.
+        event = SessionEvent(raw={
+            'type': 'control_request',
+            'id': 'req-99',
+            'request': {'tool_name': 'Edit'},
+        })
+        tool, req_id = StreamingClaudeSession._permission_request_details(event)
+        self.assertEqual(tool, 'Edit')
+        self.assertEqual(req_id, 'req-99')
+
+    def test_permission_request_details_falls_back_to_placeholders(self) -> None:
+        event = SessionEvent(raw={'type': 'permission_request'})
+        tool, req_id = StreamingClaudeSession._permission_request_details(event)
+        self.assertEqual(tool, 'tool')
+        self.assertEqual(req_id, '?')
+
+    def test_parse_stdout_line_returns_none_on_non_json(self) -> None:
+        session = self._build_session()
+        # Bypass the noisy logger by replacing it.
+        session.logger = MagicMock()
+        result = session._parse_stdout_line('not-json{}')
+        self.assertIsNone(result)
+        session.logger.warning.assert_called_once()
+
+    def test_parse_stdout_line_returns_none_when_payload_not_dict(self) -> None:
+        session = self._build_session()
+        session.logger = MagicMock()
+        # Valid JSON but not a dict.
+        result = session._parse_stdout_line('[1, 2, 3]')
+        self.assertIsNone(result)
+
+    def test_parse_stdout_line_builds_event_from_dict_payload(self) -> None:
+        session = self._build_session()
+        event = session._parse_stdout_line('{"type": "system", "subtype": "init"}')
+        self.assertIsNotNone(event)
+        self.assertEqual(event.event_type, 'system')
+        self.assertEqual(event.subtype, 'init')
+
+    def test_stderr_indicates_stale_resume_false_when_no_resume_id(self) -> None:
+        session = self._build_session(resume_session_id='')
+        # No resume id configured → marker check short-circuits.
+        self.assertFalse(session._stderr_indicates_stale_resume([
+            'No conversation found with session ID: anything',
+        ]))
+
+    def test_stderr_indicates_stale_resume_true_when_marker_present(self) -> None:
+        session = self._build_session(resume_session_id='dead-uuid')
+        self.assertTrue(session._stderr_indicates_stale_resume([
+            'some chatter',
+            'No conversation found with session ID: dead-uuid',
+            'more chatter',
+        ]))
+
+    def test_stderr_indicates_stale_resume_false_when_marker_missing(self) -> None:
+        session = self._build_session(resume_session_id='alive-uuid')
+        self.assertFalse(session._stderr_indicates_stale_resume([
+            'No conversation found with session ID: different-uuid',
+            'something else',
+        ]))
+
+    def test_maybe_capture_session_id_pins_first_session_id_only(self) -> None:
+        session = self._build_session()
+        # First init event with session_id → pinned.
+        session._maybe_capture_session_id(SessionEvent(raw={
+            'type': 'system', 'subtype': 'init', 'session_id': 'first',
+        }))
+        self.assertEqual(session.claude_session_id, 'first')
+        # Subsequent events with different ids must not overwrite.
+        session._maybe_capture_session_id(SessionEvent(raw={
+            'type': 'system', 'session_id': 'second',
+        }))
+        self.assertEqual(session.claude_session_id, 'first')
+
+    def test_maybe_capture_session_id_ignores_empty_candidate(self) -> None:
+        session = self._build_session()
+        session._maybe_capture_session_id(SessionEvent(raw={
+            'type': 'system', 'session_id': '',
+        }))
+        self.assertEqual(session.claude_session_id, '')
+
+    def test_maybe_fire_done_sentinel_fires_callback_once(self) -> None:
+        callback_calls: list = []
+        session = self._build_session()
+        session._done_callback = callback_calls.append
+
+        sentinel_event = SessionEvent(raw={
+            'type': 'assistant',
+            'message': {
+                'content': [
+                    {'type': 'text', 'text': 'all set <KATO_TASK_DONE>'},
+                ],
+            },
+        })
+        session._maybe_fire_done_sentinel(sentinel_event)
+        session._maybe_fire_done_sentinel(sentinel_event)  # second fire → no-op
+        self.assertEqual(callback_calls, ['PROJ-1'])
+
+    def test_maybe_fire_done_sentinel_no_op_when_no_callback(self) -> None:
+        session = self._build_session()
+        session._done_callback = None
+        session._maybe_fire_done_sentinel(SessionEvent(raw={
+            'type': 'assistant',
+            'message': {'content': [{'type': 'text', 'text': '<KATO_TASK_DONE>'}]},
+        }))
+        # Must not raise — already covered by the early return.
+
+    def test_maybe_fire_done_sentinel_skips_non_assistant_events(self) -> None:
+        callback_calls: list = []
+        session = self._build_session()
+        session._done_callback = callback_calls.append
+        session._maybe_fire_done_sentinel(SessionEvent(raw={
+            'type': 'user',
+            'message': {'content': [{'type': 'text', 'text': '<KATO_TASK_DONE>'}]},
+        }))
+        self.assertEqual(callback_calls, [])
+
+    def test_maybe_fire_done_sentinel_skips_when_message_missing(self) -> None:
+        session = self._build_session()
+        session._done_callback = MagicMock()
+        session._maybe_fire_done_sentinel(SessionEvent(raw={'type': 'assistant'}))
+        session._done_callback.assert_not_called()
+
+    def test_maybe_fire_done_sentinel_swallows_callback_exception(self) -> None:
+        session = self._build_session()
+        session.logger = MagicMock()
+
+        def broken_callback(_task_id):
+            raise RuntimeError('publish failed')
+
+        session._done_callback = broken_callback
+        # Must not propagate — reader thread can't crash on a bad callback.
+        session._maybe_fire_done_sentinel(SessionEvent(raw={
+            'type': 'assistant',
+            'message': {'content': [{'type': 'text', 'text': '<KATO_TASK_DONE>'}]},
+        }))
+        session.logger.exception.assert_called_once()
+
+    def test_pending_control_request_tool_returns_empty_when_none_pending(self) -> None:
+        session = self._build_session()
+        self.assertEqual(session.pending_control_request_tool(), '')
+
+    def test_pending_control_request_tool_returns_tool_name(self) -> None:
+        session = self._build_session()
+        session._maybe_capture_control_request(SessionEvent(raw={
+            'type': 'control_request',
+            'request_id': 'req-1',
+            'request': {'tool_name': 'Bash'},
+        }))
+        self.assertEqual(session.pending_control_request_tool(), 'Bash')
+
+    def test_maybe_capture_control_request_ignores_non_control_event(self) -> None:
+        session = self._build_session()
+        session._maybe_capture_control_request(SessionEvent(raw={
+            'type': 'permission_request',
+            'request_id': 'req-1',
+            'request': {'tool_name': 'Bash'},
+        }))
+        self.assertEqual(session.pending_control_request_tool(), '')
+
+    def test_maybe_capture_control_request_ignores_blank_request_id(self) -> None:
+        session = self._build_session()
+        session._maybe_capture_control_request(SessionEvent(raw={
+            'type': 'control_request',
+            'request_id': '',
+            'request': {'tool_name': 'Bash'},
+        }))
+        self.assertEqual(session.pending_control_request_tool(), '')
+
+    def test_maybe_capture_control_request_ignores_non_dict_request(self) -> None:
+        session = self._build_session()
+        session._maybe_capture_control_request(SessionEvent(raw={
+            'type': 'control_request',
+            'request_id': 'req-1',
+            'request': 'not a dict',
+        }))
+        self.assertEqual(session.pending_control_request_tool(), '')
+
+    def test_stderr_snapshot_returns_copy_of_lines(self) -> None:
+        session = self._build_session()
+        session._stderr_lines.extend(['line a', 'line b'])
+        snapshot = session.stderr_snapshot()
+        self.assertEqual(snapshot, ['line a', 'line b'])
+        # Mutating the snapshot must not affect the session's buffer.
+        snapshot.append('mutated')
+        self.assertEqual(session.stderr_snapshot(), ['line a', 'line b'])
+
+    def test_events_after_returns_empty_when_index_past_end(self) -> None:
+        session = self._build_session()
+        # No events appended yet → empty + index 0.
+        events, idx = session.events_after(0)
+        self.assertEqual(events, [])
+        self.assertEqual(idx, 0)
+        # Past-end index → empty + same total.
+        session._recent_events.append(SessionEvent(raw={'type': 'system'}))
+        events, idx = session.events_after(99)
+        self.assertEqual(events, [])
+        self.assertEqual(idx, 1)
+
+    def test_events_after_returns_slice_from_index(self) -> None:
+        session = self._build_session()
+        evts = [SessionEvent(raw={'type': 'system', 'n': i}) for i in range(3)]
+        for e in evts:
+            session._recent_events.append(e)
+        events, idx = session.events_after(1)
+        self.assertEqual(len(events), 2)
+        self.assertEqual(idx, 3)
+
+    def test_events_after_handles_negative_index(self) -> None:
+        session = self._build_session()
+        session._recent_events.append(SessionEvent(raw={'type': 'system'}))
+        # Negative start clamps to 0.
+        events, idx = session.events_after(-5)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(idx, 1)
+
+    def test_recent_events_with_limit_returns_tail_only(self) -> None:
+        session = self._build_session()
+        for i in range(5):
+            session._recent_events.append(SessionEvent(raw={'type': 'system', 'n': i}))
+        # limit=2 → last 2 events.
+        result = session.recent_events(limit=2)
+        self.assertEqual(len(result), 2)
+
+    def test_recent_events_no_limit_returns_all(self) -> None:
+        session = self._build_session()
+        for i in range(3):
+            session._recent_events.append(SessionEvent(raw={'type': 'system'}))
+        self.assertEqual(len(session.recent_events()), 3)
+
+    def test_has_finished_false_before_terminal_event(self) -> None:
+        session = self._build_session()
+        self.assertFalse(session.has_finished)
+        self.assertIsNone(session.terminal_event)
+
+    def test_has_finished_true_after_terminal_event_assigned(self) -> None:
+        session = self._build_session()
+        terminal = SessionEvent(raw={
+            'type': 'result', 'subtype': 'final', 'is_error': False,
+        })
+        session._terminal_event = terminal
+        self.assertTrue(session.has_finished)
+        self.assertIs(session.terminal_event, terminal)
+
+    def test_is_working_false_when_not_alive(self) -> None:
+        session = self._build_session()
+        # No subprocess → not alive → not working.
+        self.assertFalse(session.is_working)
+
+    def test_session_event_is_terminal_true_for_result(self) -> None:
+        event = SessionEvent(raw={'type': 'result'})
+        self.assertTrue(event.is_terminal)
+
+    def test_session_event_is_terminal_false_for_normal_types(self) -> None:
+        for et in ('system', 'assistant', 'stream_event', 'user'):
+            event = SessionEvent(raw={'type': et})
+            self.assertFalse(event.is_terminal)
+
+    def test_session_event_to_dict_wraps_raw(self) -> None:
+        # ``to_dict`` envelopes the raw payload plus metadata; check structure.
+        raw = {'type': 'system', 'subtype': 'init'}
+        d = SessionEvent(raw=raw).to_dict()
+        self.assertEqual(d['raw'], raw)
+        self.assertIn('received_at_epoch', d)
+
+    def test_session_event_subtype_pulled_from_raw(self) -> None:
+        # Property access on raw {'subtype': ...}.
+        event = SessionEvent(raw={'type': 'system', 'subtype': 'init'})
+        self.assertEqual(event.subtype, 'init')
+
+    def test_task_id_and_cwd_properties_round_trip(self) -> None:
+        session = StreamingClaudeSession(task_id='PROJ-A', cwd='/repo/x')
+        self.assertEqual(session.task_id, 'PROJ-A')
+        self.assertEqual(session.cwd, '/repo/x')
+
+    def test_is_working_returns_true_during_assistant_streaming(self) -> None:
+        # ``is_working`` reads the recent-events log. We don't have a live
+        # subprocess (so ``is_alive`` is False) → it short-circuits to False.
+        # Cover the inverse by faking a live process.
+        session = self._build_session()
+        session._proc = SimpleNamespace(poll=lambda: None)  # alive
+        session._recent_events.append(SessionEvent(raw={'type': 'assistant'}))
+        self.assertTrue(session.is_working)
+
+    def test_is_working_returns_false_after_result_event(self) -> None:
+        session = self._build_session()
+        session._proc = SimpleNamespace(poll=lambda: None)  # alive
+        session._recent_events.append(SessionEvent(raw={'type': 'assistant'}))
+        session._recent_events.append(SessionEvent(raw={'type': 'result'}))
+        # Last event is ``result`` → turn closed → not working.
+        self.assertFalse(session.is_working)
+
+    def test_is_working_returns_false_when_only_system_events(self) -> None:
+        session = self._build_session()
+        session._proc = SimpleNamespace(poll=lambda: None)  # alive
+        session._recent_events.append(SessionEvent(raw={'type': 'system'}))
+        # No assistant/result events → not actively working.
+        self.assertFalse(session.is_working)
+
+    def test_validate_image_blocks_rejects_non_list_input(self) -> None:
+        from claude_core_lib.claude_core_lib.session.streaming import _validate_image_blocks
+        self.assertEqual(_validate_image_blocks('not a list'), [])
+        self.assertEqual(_validate_image_blocks(None), [])
+
+    def test_validate_image_blocks_drops_non_dict_entries(self) -> None:
+        from claude_core_lib.claude_core_lib.session.streaming import _validate_image_blocks
+        blocks = _validate_image_blocks(['plain string', {'media_type': 'image/png', 'data': 'abc'}])
+        self.assertEqual(len(blocks), 1)
+
+    def test_validate_image_blocks_drops_unknown_media_type(self) -> None:
+        from claude_core_lib.claude_core_lib.session.streaming import _validate_image_blocks
+        self.assertEqual(
+            _validate_image_blocks([{'media_type': 'video/mp4', 'data': 'x'}]),
+            [],
+        )
+
+    def test_validate_image_blocks_drops_oversized_entries(self) -> None:
+        from claude_core_lib.claude_core_lib.session.streaming import (
+            _validate_image_blocks, _MAX_IMAGE_BYTES,
+        )
+        # Data > base64-expanded cap → dropped.
+        oversized = 'x' * (int(_MAX_IMAGE_BYTES * 4 / 3) + 2000)
+        self.assertEqual(
+            _validate_image_blocks([{'media_type': 'image/png', 'data': oversized}]),
+            [],
+        )
+
+    def test_validate_image_blocks_drops_empty_data(self) -> None:
+        from claude_core_lib.claude_core_lib.session.streaming import _validate_image_blocks
+        self.assertEqual(
+            _validate_image_blocks([{'media_type': 'image/png', 'data': ''}]),
+            [],
+        )
+
+    def test_events_iter_yields_terminal_and_stops(self) -> None:
+        # The iterator yields events until the terminal event, then stops.
+        session = self._build_session()
+        session._proc = SimpleNamespace(poll=lambda: None)
+        # Queue one normal event + one terminal event.
+        session._event_queue.put(SessionEvent(raw={'type': 'assistant'}))
+        session._event_queue.put(SessionEvent(raw={'type': 'result'}))
+        collected = list(session.events_iter())
+        self.assertEqual(len(collected), 2)
+        self.assertTrue(collected[-1].is_terminal)
+
+    def test_poll_event_returns_none_when_queue_empty(self) -> None:
+        session = self._build_session()
+        # Don't put anything → poll returns None.
+        self.assertIsNone(session.poll_event(timeout=0.01))
+
+    def test_poll_event_returns_queued_event(self) -> None:
+        session = self._build_session()
+        evt = SessionEvent(raw={'type': 'system'})
+        session._event_queue.put(evt)
+        self.assertIs(session.poll_event(timeout=0.5), evt)
+
+    def test_pending_control_request_tool_returns_unknown_for_missing_name(self) -> None:
+        # The pending request dict is present but has no tool name → '<unknown>'.
+        session = self._build_session()
+        session._maybe_capture_control_request(SessionEvent(raw={
+            'type': 'control_request',
+            'request_id': 'req-1',
+            'request': {'something_else': 'value'},
+        }))
+        self.assertEqual(session.pending_control_request_tool(), '<unknown>')
+
+    def test_pending_control_request_tool_skips_non_dict_request(self) -> None:
+        # Defensive: stale entries where the request shape got corrupted.
+        session = self._build_session()
+        with session._pending_control_requests_lock:
+            session._pending_control_requests['req-1'] = 'not a dict'
+        self.assertEqual(session.pending_control_request_tool(), '')
+
+    def test_stderr_reader_loop_returns_when_proc_or_stderr_missing(self) -> None:
+        # Lines 1014-1015: defensive early return.
+        session = self._build_session()
+        session._proc = None
+        session._stderr_reader_loop()  # must not raise
+
+        session._proc = SimpleNamespace(stderr=None)
+        session._stderr_reader_loop()  # must not raise
+
+    def test_stdout_reader_loop_returns_when_proc_or_stdout_missing(self) -> None:
+        # Same defensive early return on the stdout reader.
+        session = self._build_session()
+        session._proc = None
+        session._stdout_reader_loop()  # must not raise
+
+        session._proc = SimpleNamespace(stdout=None)
+        session._stdout_reader_loop()  # must not raise
+
+    def test_close_stdin_locked_no_op_when_proc_missing(self) -> None:
+        session = self._build_session()
+        session._proc = None
+        session._close_stdin_locked()  # must not raise
+
+    def test_close_stdin_locked_swallows_close_exception(self) -> None:
+        # Some pipes raise when ``close()`` is double-called; swallow.
+        session = self._build_session()
+        fake_stdin = MagicMock()
+        fake_stdin.close.side_effect = OSError('already closed')
+        session._proc = SimpleNamespace(stdin=fake_stdin)
+        session._close_stdin_locked()  # must not raise
+
+    def test_send_signal_locked_no_op_when_proc_missing(self) -> None:
+        import signal as _signal
+        session = self._build_session()
+        session._proc = None
+        session._send_signal_locked(_signal.SIGTERM)  # must not raise
+
+    def test_send_signal_locked_swallows_oserror(self) -> None:
+        import signal as _signal
+        session = self._build_session()
+        fake_proc = MagicMock()
+        fake_proc.send_signal.side_effect = ProcessLookupError('gone')
+        session._proc = fake_proc
+        session._send_signal_locked(_signal.SIGTERM)  # must not raise
+
+    def test_write_stdin_line_raises_when_proc_missing(self) -> None:
+        session = self._build_session()
+        with self.assertRaisesRegex(RuntimeError, 'stdin closed'):
+            session._write_stdin_line({'type': 'user'})
+
+    def test_write_stdin_line_raises_on_broken_pipe(self) -> None:
+        session = self._build_session()
+        fake_stdin = MagicMock()
+        fake_stdin.write.side_effect = BrokenPipeError('pipe gone')
+        session._proc = SimpleNamespace(
+            stdin=fake_stdin,
+            poll=lambda: None,
+        )
+        with self.assertRaisesRegex(RuntimeError, 'stdin broke'):
+            session._write_stdin_line({'type': 'user'})
+
+    def test_send_user_message_raises_when_proc_dead(self) -> None:
+        # Already-dead proc → no write should be attempted.
+        session = self._build_session()
+        # stdin is non-None but poll() returns non-None (process exited).
+        session._proc = SimpleNamespace(stdin=MagicMock(), poll=lambda: 1)
+        with self.assertRaisesRegex(RuntimeError, 'stdin closed'):
+            session._write_stdin_line({'type': 'user'})
+
+    def test_send_permission_response_requires_request_id(self) -> None:
+        session = self._build_session()
+        with self.assertRaisesRegex(ValueError, 'request_id is required'):
+            session.send_permission_response(request_id='', allow=True)
+        with self.assertRaisesRegex(ValueError, 'request_id is required'):
+            session.send_permission_response(request_id='   ', allow=True)
+
+    def test_bypass_permissions_clears_prompt_tool(self) -> None:
+        # Line 182: ``bypassPermissions`` with no prompt tool → tool cleared.
+        session = StreamingClaudeSession(
+            task_id='PROJ-1',
+            permission_mode='bypassPermissions',
+            permission_prompt_tool='',
+        )
+        self.assertEqual(session._permission_prompt_tool, '')
+
+    def test_terminate_no_op_when_proc_missing(self) -> None:
+        # Line 535: terminate() early return when no proc.
+        session = self._build_session()
+        session._proc = None
+        session.terminate()  # must not raise
+
+    def test_escalate_to_kill_swallows_exception(self) -> None:
+        # Lines 561-571: ``proc.kill()`` raises → swallowed.
+        session = self._build_session()
+        fake_proc = MagicMock()
+        fake_proc.kill.side_effect = ProcessLookupError('already gone')
+        # _wait_for_exit needs poll(), wait()
+        fake_proc.poll.return_value = 0
+        fake_proc.wait.return_value = 0
+        session._escalate_to_kill(fake_proc)  # must not raise
+        fake_proc.kill.assert_called_once()
+
+    def test_wait_for_new_events_returns_immediately_when_events_present(self) -> None:
+        # Lines 633-647: ``wait_for_new_events`` happy path.
+        session = self._build_session()
+        session._proc = SimpleNamespace(poll=lambda: None)
+        # Pre-populate with one event past index 0.
+        session._recent_events.append(SessionEvent(raw={'type': 'system'}))
+        new_events, idx, alive = session.wait_for_new_events(
+            start_index=0, timeout=0.1,
+        )
+        self.assertEqual(len(new_events), 1)
+        self.assertEqual(idx, 1)
+        self.assertTrue(alive)
+
+    def test_wait_for_new_events_returns_empty_on_timeout(self) -> None:
+        session = self._build_session()
+        session._proc = SimpleNamespace(poll=lambda: None)  # alive
+        # No events past index 0 → block, then timeout returns empty.
+        new_events, idx, alive = session.wait_for_new_events(
+            start_index=0, timeout=0.05,
+        )
+        self.assertEqual(new_events, [])
+        self.assertEqual(idx, 0)
+
+    def test_wait_for_new_events_returns_alive_false_when_session_dies(self) -> None:
+        session = self._build_session()
+        # No proc → not alive → wait_for short-circuits.
+        new_events, idx, alive = session.wait_for_new_events(
+            start_index=0, timeout=0.05,
+        )
+        self.assertFalse(alive)
+
+    def test_scan_terminal_for_credentials_no_op_when_result_blank(self) -> None:
+        # Line 819: ``if not result_text: return``.
+        session = self._build_session()
+        session.logger = MagicMock()
+        terminal = SessionEvent(raw={
+            'type': 'result', 'subtype': 'final',
+            'is_error': False, 'result': '',
+        })
+        session._scan_terminal_for_credentials(terminal)
+        session.logger.warning.assert_not_called()
+
+    def test_maybe_fire_done_sentinel_non_list_content(self) -> None:
+        # Line 888: ``content`` is not a list → return.
+        session = self._build_session()
+        callback = MagicMock()
+        session._done_callback = callback
+        session._maybe_fire_done_sentinel(SessionEvent(raw={
+            'type': 'assistant',
+            'message': {'content': 'plain string with sentinel'},
+        }))
+        callback.assert_not_called()
+
+    def test_maybe_fire_done_sentinel_skips_non_text_block(self) -> None:
+        # Line 892: tool_use blocks etc. are skipped.
+        session = self._build_session()
+        callback = MagicMock()
+        session._done_callback = callback
+        session._maybe_fire_done_sentinel(SessionEvent(raw={
+            'type': 'assistant',
+            'message': {'content': [
+                {'type': 'tool_use', 'name': 'Edit'},
+                {'type': 'text', 'text': '<KATO_TASK_DONE>'},
+            ]},
+        }))
+        # Sentinel found in the text block (after non-text skip).
+        callback.assert_called_once_with('PROJ-1')
+
+    def test_log_event_for_operator_skips_unmatched_event_types(self) -> None:
+        # Lines 966-967: neither permission nor result → no logging.
+        session = self._build_session()
+        session.logger = MagicMock()
+        session._log_event_for_operator(SessionEvent(raw={'type': 'system'}))
+        session.logger.info.assert_not_called()
+        session.logger.warning.assert_not_called()
+
+    def test_log_event_for_operator_logs_permission_request(self) -> None:
+        session = self._build_session()
+        session.logger = MagicMock()
+        session._log_event_for_operator(SessionEvent(raw={
+            'type': 'permission_request',
+            'tool_name': 'Bash',
+            'request_id': 'r1',
+        }))
+        session.logger.info.assert_called_once()
+
+    def test_log_event_for_operator_logs_result_with_stderr(self) -> None:
+        # Lines 984-989: is_error + stderr_tail → warning log fires too.
+        session = self._build_session()
+        session.logger = MagicMock()
+        session._stderr_lines = ['some error output']
+        session._log_event_for_operator(SessionEvent(raw={
+            'type': 'result',
+            'is_error': True,
+            'result': 'something went wrong',
+        }))
+        session.logger.info.assert_called_once()
+        session.logger.warning.assert_called_once()
+
+    def test_log_event_for_operator_silences_stale_resume_error(self) -> None:
+        # Line 1001: stale-resume error path → debug log + early return.
+        session = self._build_session(resume_session_id='dead-uuid')
+        session.logger = MagicMock()
+        # Plant stderr line matching the stale-resume marker.
+        session._stderr_lines = [
+            'No conversation found with session ID: dead-uuid',
+        ]
+        session._log_event_for_operator(SessionEvent(raw={
+            'type': 'result', 'is_error': True, 'result': 'failed',
+        }))
+        # debug log fired; info log did NOT (silenced).
+        session.logger.debug.assert_called_once()
+        session.logger.info.assert_not_called()
+
+    def test_stderr_reader_loop_appends_lines(self) -> None:
+        # Lines 1019-1026: real reader loop with a fake stderr stream.
+        session = self._build_session()
+        session.logger = MagicMock()
+        # Build a fake stderr that yields three lines then EOF.
+        stderr_stream = io.BytesIO(b'line one\nline two\n\nline three\n')
+        session._proc = SimpleNamespace(stderr=stderr_stream)
+        session._stderr_reader_loop()
+        # Empty lines are skipped; we get 3 real lines.
+        self.assertEqual(len(session._stderr_lines), 3)
+        self.assertEqual(session._stderr_lines[0], 'line one')
+
+    def test_stderr_reader_loop_trims_buffer_when_oversized(self) -> None:
+        # Lines 1024-1026: stderr buffer caps at 500 lines.
+        session = self._build_session()
+        session.logger = MagicMock()
+        # Generate 510 stderr lines.
+        many = b''.join(f'line {i}\n'.encode() for i in range(510))
+        session._proc = SimpleNamespace(stderr=io.BytesIO(many))
+        session._stderr_reader_loop()
+        self.assertEqual(len(session._stderr_lines), 500)
+
+    def test_stdout_reader_loop_processes_event_and_publishes(self) -> None:
+        # Lines 774, 777: terminal event is captured and published.
+        session = self._build_session()
+        session.logger = MagicMock()
+        stdout_stream = io.BytesIO(
+            json.dumps({'type': 'system', 'subtype': 'init',
+                        'session_id': 'live-1'}).encode() + b'\n'
+            + json.dumps({
+                'type': 'result', 'is_error': False, 'result': 'done',
+            }).encode() + b'\n'
+        )
+        session._proc = SimpleNamespace(stdout=stdout_stream)
+        session._stdout_reader_loop()
+        # Terminal event captured.
+        self.assertIsNotNone(session.terminal_event)
+        # Session id pinned from the init event.
+        self.assertEqual(session.claude_session_id, 'live-1')
 
 
 class StreamingClaudeSessionDockerModeTests(unittest.TestCase):

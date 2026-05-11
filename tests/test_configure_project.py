@@ -584,5 +584,142 @@ class ConfigureProjectTests(unittest.TestCase):
         )
 
 
+class InputHelperFallbackTests(unittest.TestCase):
+    """Cover the local fallback paths of the ``input_*`` helpers.
+
+    The module imports ``core_input_string`` / ``core_input_yes_no`` /
+    ``core_is_int`` from ``core_lib`` at import time. When core_lib
+    is available these are the primary code paths; when it isn't the
+    helpers fall through to the ``_input_*_local`` functions defined
+    in this module. We force the fallback by patching the module-level
+    references to ``None``.
+    """
+
+    def _with_no_core_helpers(self):
+        return patch.multiple(
+            configure_project,
+            core_input_string=None,
+            core_input_yes_no=None,
+            core_is_int=None,
+        )
+
+    def test_input_yes_no_local_returns_default_on_empty(self) -> None:
+        with self._with_no_core_helpers(), patch('builtins.input', return_value=''):
+            self.assertTrue(configure_project.input_yes_no('continue?', default=True))
+            self.assertFalse(configure_project.input_yes_no('continue?', default=False))
+
+    def test_input_yes_no_local_accepts_y_and_n(self) -> None:
+        with self._with_no_core_helpers(), patch('builtins.input', return_value='y'):
+            self.assertTrue(configure_project.input_yes_no('continue?'))
+        with self._with_no_core_helpers(), patch('builtins.input', return_value='no'):
+            self.assertFalse(configure_project.input_yes_no('continue?'))
+
+    def test_input_yes_no_local_retries_on_garbage_input(self) -> None:
+        # First answer is bogus → loop re-prompts → second is valid.
+        with self._with_no_core_helpers(), \
+             patch('builtins.input', side_effect=['maybe', 'yes']):
+            self.assertTrue(configure_project.input_yes_no('continue?'))
+
+    def test_input_bool_delegates_to_input_yes_no(self) -> None:
+        with self._with_no_core_helpers(), patch('builtins.input', return_value='y'):
+            self.assertTrue(configure_project.input_bool('go?'))
+
+    def test_input_str_local_returns_default_when_empty(self) -> None:
+        with self._with_no_core_helpers(), patch('builtins.input', return_value=''):
+            self.assertEqual(
+                configure_project.input_str('name', default='alice'), 'alice',
+            )
+
+    def test_input_str_local_returns_value_when_provided(self) -> None:
+        with self._with_no_core_helpers(), patch('builtins.input', return_value='bob'):
+            self.assertEqual(configure_project.input_str('name'), 'bob')
+
+    def test_input_str_local_allows_empty_when_flagged(self) -> None:
+        # ``allow_empty=True`` short-circuits the "required" loop.
+        with self._with_no_core_helpers(), patch('builtins.input', return_value=''):
+            self.assertEqual(
+                configure_project.input_str('optional', allow_empty=True), '',
+            )
+
+    def test_input_str_local_loops_when_empty_and_required(self) -> None:
+        # First answer empty (required, no default) → retry → second valid.
+        with self._with_no_core_helpers(), \
+             patch('builtins.input', side_effect=['', 'real-value']):
+            self.assertEqual(configure_project.input_str('required'), 'real-value')
+
+    def test_input_int_returns_default_on_empty(self) -> None:
+        with self._with_no_core_helpers(), patch('builtins.input', return_value=''):
+            self.assertEqual(configure_project.input_int('count', default=5), 5)
+
+    def test_input_int_parses_valid_number(self) -> None:
+        with self._with_no_core_helpers(), patch('builtins.input', return_value='42'):
+            self.assertEqual(configure_project.input_int('count'), 42)
+
+    def test_input_int_retries_on_non_integer(self) -> None:
+        with self._with_no_core_helpers(), \
+             patch('builtins.input', side_effect=['abc', '7']):
+            self.assertEqual(configure_project.input_int('count'), 7)
+
+    def test_input_enum_returns_selection_by_number(self) -> None:
+        # Option 2 of ['red', 'green', 'blue'] is 'green'.
+        with self._with_no_core_helpers(), patch('builtins.input', return_value='2'):
+            self.assertEqual(
+                configure_project.input_enum(
+                    'color', ['red', 'green', 'blue'],
+                ),
+                'green',
+            )
+
+    def test_input_enum_uses_default_when_empty_input(self) -> None:
+        with self._with_no_core_helpers(), patch('builtins.input', return_value=''):
+            self.assertEqual(
+                configure_project.input_enum(
+                    'color', ['red', 'green', 'blue'], default='blue',
+                ),
+                'blue',
+            )
+
+    def test_input_enum_retries_on_invalid_selection(self) -> None:
+        with self._with_no_core_helpers(), \
+             patch('builtins.input', side_effect=['99', '1']):
+            self.assertEqual(
+                configure_project.input_enum(
+                    'color', ['red', 'green'],
+                ),
+                'red',
+            )
+
+    def test_input_list_splits_and_strips_csv(self) -> None:
+        with self._with_no_core_helpers(), \
+             patch('builtins.input', return_value=' alpha , beta ,, gamma '):
+            self.assertEqual(
+                configure_project.input_list('tags'),
+                ['alpha', 'beta', 'gamma'],
+            )
+
+    def test_input_list_uses_default_when_empty(self) -> None:
+        with self._with_no_core_helpers(), patch('builtins.input', return_value=''):
+            self.assertEqual(
+                configure_project.input_list('tags', default=['a', 'b']),
+                ['a', 'b'],
+            )
+
+
+class IsIntLocalFallbackTests(unittest.TestCase):
+    """When ``core_is_int`` is None, ``_is_int`` falls back to ``int()``."""
+
+    def test_returns_true_for_valid_int(self) -> None:
+        with patch.object(configure_project, 'core_is_int', None):
+            self.assertTrue(configure_project._is_int('123'))
+
+    def test_returns_false_for_non_int(self) -> None:
+        with patch.object(configure_project, 'core_is_int', None):
+            self.assertFalse(configure_project._is_int('not-a-number'))
+
+    def test_handles_negative_int(self) -> None:
+        with patch.object(configure_project, 'core_is_int', None):
+            self.assertTrue(configure_project._is_int('-42'))
+
+
 if __name__ == '__main__':
     unittest.main()

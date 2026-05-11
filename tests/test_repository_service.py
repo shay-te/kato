@@ -2381,3 +2381,363 @@ class RepositoryServiceTests(unittest.TestCase):
             ValueError, 'at least one repository must be configured',
         ):
             service._validate_inventory()
+
+
+class EnsureCloneTests(unittest.TestCase):
+    """``ensure_clone`` is the workspace-provisioning entry point.
+
+    Per-task workspaces call this once per repo at first task pickup.
+    Idempotent: subsequent calls see ``.git`` exists and short-circuit.
+    """
+
+    def _service(self):
+        # Minimal: skip __init__ entirely; we only need the helper.
+        from kato_core_lib.data_layers.service.repository_service import RepositoryService
+        svc = RepositoryService.__new__(RepositoryService)
+        svc._validate_git_executable = Mock()
+        svc._run_git = Mock()
+        return svc
+
+    def test_short_circuits_when_target_already_a_git_clone(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / 'existing'
+            (target / '.git').mkdir(parents=True)
+            svc = self._service()
+            repository = types.SimpleNamespace(
+                id='client', remote_url='git@github.com:org/client.git',
+            )
+            svc.ensure_clone(repository, target)
+            svc._run_git.assert_not_called()
+
+    def test_raises_when_no_remote_url(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / 'fresh'
+            svc = self._service()
+            repository = types.SimpleNamespace(id='client', remote_url='')
+            with self.assertRaisesRegex(ValueError, 'no remote_url configured'):
+                svc.ensure_clone(repository, target)
+            svc._run_git.assert_not_called()
+
+    def test_clones_to_parent_using_target_basename(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / 'fresh' / 'client'
+            svc = self._service()
+            repository = types.SimpleNamespace(
+                id='client',
+                remote_url='git@github.com:org/client.git',
+            )
+            svc.ensure_clone(repository, target)
+            # Validates the call shape: git -C <parent> clone <url> <name>.
+            args, _kwargs = svc._run_git.call_args
+            parent_path, git_args, _err_msg, repo_arg = args
+            self.assertEqual(parent_path, str(target.parent))
+            self.assertEqual(git_args, ['clone', 'git@github.com:org/client.git', 'client'])
+            self.assertIs(repo_arg, repository)
+
+    def test_creates_parent_directory_before_cloning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            # Parent doesn't exist yet.
+            target = Path(tmp) / 'deep' / 'nested' / 'client'
+            svc = self._service()
+            repository = types.SimpleNamespace(
+                id='client',
+                remote_url='git@github.com:org/client.git',
+            )
+            svc.ensure_clone(repository, target)
+            self.assertTrue(target.parent.is_dir())
+
+
+class BranchNeedsPushTests(unittest.TestCase):
+    """``branch_needs_push`` drives the Push button enable/disable state."""
+
+    def _service_with_stubs(self):
+        from kato_core_lib.data_layers.service.repository_service import RepositoryService
+        svc = RepositoryService.__new__(RepositoryService)
+        # Stub the underlying git methods called by branch_needs_push.
+        svc._current_branch = Mock(return_value='feat/task')
+        svc._working_tree_status = Mock(return_value='')
+        svc.destination_branch = Mock(return_value='master')
+        svc._comparison_reference = Mock(return_value='origin/master')
+        svc._ahead_count = Mock(return_value=1)
+        svc._git_reference_exists = Mock(return_value=False)
+        svc._left_right_commit_counts = Mock(return_value=(0, 0))
+        return svc
+
+    def test_false_for_blank_local_path(self) -> None:
+        svc = self._service_with_stubs()
+        repository = types.SimpleNamespace(id='c', local_path='')
+        self.assertFalse(svc.branch_needs_push(repository, 'feat/x'))
+
+    def test_false_for_blank_branch_name(self) -> None:
+        svc = self._service_with_stubs()
+        repository = types.SimpleNamespace(id='c', local_path='/repo')
+        self.assertFalse(svc.branch_needs_push(repository, ''))
+
+    def test_false_when_not_a_git_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._service_with_stubs()
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            # No .git dir in tmp.
+            self.assertFalse(svc.branch_needs_push(repository, 'feat/x'))
+
+    def test_false_when_on_wrong_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.git').mkdir()
+            svc = self._service_with_stubs()
+            svc._current_branch.return_value = 'master'  # not the task branch
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            self.assertFalse(svc.branch_needs_push(repository, 'feat/task'))
+
+    def test_true_when_dirty_tree_on_task_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.git').mkdir()
+            svc = self._service_with_stubs()
+            svc._working_tree_status.return_value = ' M file.txt\n'
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            # Dirty + on the right branch + ahead → push needed.
+            self.assertTrue(svc.branch_needs_push(repository, 'feat/task'))
+
+    def test_false_when_no_changes_ahead_and_clean(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.git').mkdir()
+            svc = self._service_with_stubs()
+            svc._ahead_count.return_value = 0  # no commits ahead of master
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            self.assertFalse(svc.branch_needs_push(repository, 'feat/task'))
+
+    def test_true_when_ahead_and_remote_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.git').mkdir()
+            svc = self._service_with_stubs()
+            # ahead_count=1 (default), remote doesn't exist → push needed.
+            svc._git_reference_exists.return_value = False
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            self.assertTrue(svc.branch_needs_push(repository, 'feat/task'))
+
+    def test_true_when_local_ahead_of_remote(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.git').mkdir()
+            svc = self._service_with_stubs()
+            svc._git_reference_exists.return_value = True
+            svc._left_right_commit_counts.return_value = (2, 0)  # 2 ahead of remote
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            self.assertTrue(svc.branch_needs_push(repository, 'feat/task'))
+
+    def test_false_when_remote_already_has_everything(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.git').mkdir()
+            svc = self._service_with_stubs()
+            svc._git_reference_exists.return_value = True
+            svc._left_right_commit_counts.return_value = (0, 0)  # nothing new
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            self.assertFalse(svc.branch_needs_push(repository, 'feat/task'))
+
+    def test_false_when_git_command_throws(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.git').mkdir()
+            svc = self._service_with_stubs()
+            svc._current_branch.side_effect = RuntimeError('git crashed')
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            # Best-effort: any git failure disables the button.
+            self.assertFalse(svc.branch_needs_push(repository, 'feat/task'))
+
+
+class PullWorkspaceCloneTests(unittest.TestCase):
+    """``pull_workspace_clone`` powers the planning UI's Pull button."""
+
+    def _service_with_stubs(self):
+        from kato_core_lib.data_layers.service.repository_service import RepositoryService
+        svc = RepositoryService.__new__(RepositoryService)
+        svc._current_branch = Mock(return_value='feat/task')
+        svc._working_tree_status = Mock(return_value='')
+        svc._run_git = Mock()
+        svc._git_reference_exists = Mock(return_value=True)
+        svc._left_right_commit_counts = Mock(return_value=(0, 0))
+        return svc
+
+    def test_refuses_when_no_local_path(self) -> None:
+        svc = self._service_with_stubs()
+        repository = types.SimpleNamespace(id='c', local_path='')
+        result = svc.pull_workspace_clone(repository, 'feat/task')
+        self.assertFalse(result['pulled'])
+        self.assertEqual(result['reason'], 'no_local_path')
+
+    def test_refuses_when_not_a_git_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._service_with_stubs()
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            result = svc.pull_workspace_clone(repository, 'feat/task')
+        self.assertEqual(result['reason'], 'not_a_git_repo')
+
+    def test_refuses_when_no_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.git').mkdir()
+            svc = self._service_with_stubs()
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            result = svc.pull_workspace_clone(repository, '')
+        self.assertEqual(result['reason'], 'no_branch')
+
+    def test_refuses_when_wrong_branch_checked_out(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.git').mkdir()
+            svc = self._service_with_stubs()
+            svc._current_branch.return_value = 'master'
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            result = svc.pull_workspace_clone(repository, 'feat/task')
+        self.assertEqual(result['reason'], 'wrong_branch_checked_out')
+
+    def test_refuses_when_dirty_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.git').mkdir()
+            svc = self._service_with_stubs()
+            svc._working_tree_status.return_value = ' M file.txt\n'
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            result = svc.pull_workspace_clone(repository, 'feat/task')
+        self.assertEqual(result['reason'], 'dirty_working_tree')
+
+    def test_no_op_when_remote_branch_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.git').mkdir()
+            svc = self._service_with_stubs()
+            svc._git_reference_exists.return_value = False
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            result = svc.pull_workspace_clone(repository, 'feat/task')
+        self.assertTrue(result['pulled'])
+        self.assertFalse(result['updated'])
+        self.assertEqual(result['commits_pulled'], 0)
+
+    def test_no_op_when_already_at_remote_tip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.git').mkdir()
+            svc = self._service_with_stubs()
+            svc._left_right_commit_counts.return_value = (0, 0)
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            result = svc.pull_workspace_clone(repository, 'feat/task')
+        self.assertTrue(result['pulled'])
+        self.assertFalse(result['updated'])
+
+    def test_fast_forwards_when_behind(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.git').mkdir()
+            svc = self._service_with_stubs()
+            svc._left_right_commit_counts.return_value = (0, 3)  # 3 behind
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            result = svc.pull_workspace_clone(repository, 'feat/task')
+        self.assertTrue(result['pulled'])
+        self.assertTrue(result['updated'])
+        self.assertEqual(result['commits_pulled'], 3)
+
+    def test_reports_fetch_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.git').mkdir()
+            svc = self._service_with_stubs()
+            # First _run_git call is the fetch — make it fail.
+            svc._run_git.side_effect = [RuntimeError('fetch failed')]
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            result = svc.pull_workspace_clone(repository, 'feat/task')
+        self.assertFalse(result['pulled'])
+        self.assertEqual(result['reason'], 'fetch_failed')
+
+    def test_reports_pull_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.git').mkdir()
+            svc = self._service_with_stubs()
+            svc._left_right_commit_counts.return_value = (0, 1)
+            # First call (fetch) succeeds; second call (pull) fails.
+            svc._run_git.side_effect = [None, RuntimeError('pull failed')]
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            result = svc.pull_workspace_clone(repository, 'feat/task')
+        self.assertFalse(result['pulled'])
+        self.assertEqual(result['reason'], 'pull_failed')
+
+    def test_reports_branch_lookup_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.git').mkdir()
+            svc = self._service_with_stubs()
+            svc._current_branch.side_effect = RuntimeError('git rev-parse died')
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            result = svc.pull_workspace_clone(repository, 'feat/task')
+        self.assertEqual(result['reason'], 'branch_lookup_failed')
+
+
+class UpdateSourceToTaskBranchTests(unittest.TestCase):
+    """``update_source_to_task_branch`` is the 'Update source' button path.
+
+    Switches the operator's live checkout to the task branch with safe
+    stash/pull/pop sequencing.
+    """
+
+    def _service_with_stubs(self):
+        from kato_core_lib.data_layers.service.repository_service import RepositoryService
+        svc = RepositoryService.__new__(RepositoryService)
+        svc.logger = Mock()
+        svc._working_tree_status = Mock(return_value='')
+        svc._run_git = Mock()
+        return svc
+
+    def test_raises_when_no_local_path(self) -> None:
+        svc = self._service_with_stubs()
+        repository = types.SimpleNamespace(id='c', local_path='')
+        with self.assertRaisesRegex(RuntimeError, 'no local_path set'):
+            svc.update_source_to_task_branch(repository, 'feat/task')
+
+    def test_raises_when_not_a_git_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc = self._service_with_stubs()
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            # No .git dir.
+            with self.assertRaisesRegex(RuntimeError, 'not a git repository'):
+                svc.update_source_to_task_branch(repository, 'feat/task')
+
+    def test_runs_full_pipeline_without_stash_on_clean_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.git').mkdir()
+            svc = self._service_with_stubs()
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            result = svc.update_source_to_task_branch(repository, 'feat/task')
+            # 3 git calls: fetch, checkout, pull (no stash since tree was clean).
+            self.assertEqual(svc._run_git.call_count, 3)
+            self.assertTrue(result['updated'])
+            self.assertFalse(result['stashed'])
+            self.assertFalse(result['stash_reapplied'])
+            self.assertFalse(result['stash_conflict'])
+
+    def test_stashes_and_pops_on_dirty_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.git').mkdir()
+            svc = self._service_with_stubs()
+            svc._working_tree_status.return_value = ' M file.txt\n'
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            result = svc.update_source_to_task_branch(repository, 'feat/task')
+            # 5 git calls: stash push, fetch, checkout, pull, stash pop.
+            self.assertEqual(svc._run_git.call_count, 5)
+            self.assertTrue(result['stashed'])
+            self.assertTrue(result['stash_reapplied'])
+            self.assertFalse(result['stash_conflict'])
+
+    def test_reports_stash_pop_conflict_without_raising(self) -> None:
+        # Stash pop conflict is a user-visible warning, not an error —
+        # the operator gets conflict markers in their working tree.
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.git').mkdir()
+            svc = self._service_with_stubs()
+            svc._working_tree_status.return_value = ' M file.txt\n'
+            # Sequence: stash push, fetch, checkout, pull, stash pop (fails).
+            svc._run_git.side_effect = [
+                None, None, None, None, RuntimeError('merge conflict'),
+            ]
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            result = svc.update_source_to_task_branch(repository, 'feat/task')
+            self.assertTrue(result['stashed'])
+            self.assertFalse(result['stash_reapplied'])
+            self.assertTrue(result['stash_conflict'])
+            self.assertIn('conflicts', result['warning'])
+
+    def test_raises_when_status_inspection_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.git').mkdir()
+            svc = self._service_with_stubs()
+            svc._working_tree_status.side_effect = OSError('disk full')
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            with self.assertRaisesRegex(RuntimeError, 'failed to inspect'):
+                svc.update_source_to_task_branch(repository, 'feat/task')

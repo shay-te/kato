@@ -520,6 +520,27 @@ class ReadLessonsFileTests(unittest.TestCase):
         second = read_lessons_file(str(path))
         self.assertEqual(first, second)
 
+    def test_directory_path_returns_empty(self) -> None:
+        # Hits line 41: ``if not file_path.is_file(): return ''``. A directory
+        # passes ``.stat()`` but ``.is_file()`` returns False — must be skipped
+        # so a misconfigured lessons path doesn't blow up the prompt builder.
+        directory = Path(self._tmp.name) / 'a_directory'
+        directory.mkdir()
+        self.assertEqual(read_lessons_file(str(directory)), '')
+
+    def test_unreadable_file_logs_warning_and_returns_empty(self) -> None:
+        # Hits lines 53-56: the ``OSError`` branch on ``read_text``. We force
+        # this by patching ``Path.read_text`` to raise after ``stat`` already
+        # succeeded — simulating a permission flip mid-read.
+        from unittest.mock import patch, MagicMock
+        path = Path(self._tmp.name) / 'will_break.md'
+        path.write_text('- Rule\n', encoding='utf-8')
+        mock_logger = MagicMock()
+        with patch.object(Path, 'read_text', side_effect=OSError('permission denied')):
+            result = read_lessons_file(str(path), logger=mock_logger)
+        self.assertEqual(result, '')
+        mock_logger.warning.assert_called_once()
+
 
 class StripTimestampHeaderTests(unittest.TestCase):
     def test_strips_matching_header(self) -> None:
@@ -899,6 +920,18 @@ class ReviewCommentContextTextTests(unittest.TestCase):
         result = review_comment_context_text(comment)
         self.assertIn('ok', result)
 
+    def test_returns_empty_when_all_entries_filtered_out(self) -> None:
+        # Hits line 282: ``if not lines: return ''`` — len > 1 passes the gate,
+        # but every entry is either blank or a kato self-reply, so the result
+        # is an empty list and the early-return fires.
+        comment = _comment(
+            all_comments=[
+                {'author': 'kato', 'body': 'Kato addressed review comment X'},
+                {'author': 'kato', 'body': 'Kato addressed this review comment'},
+            ],
+        )
+        self.assertEqual(review_comment_context_text(comment), '')
+
 
 class IsSelfReplyBodyTests(unittest.TestCase):
     def test_returns_true_for_kato_review_prefix(self) -> None:
@@ -1007,6 +1040,24 @@ class ReviewCommentCodeSnippetTests(unittest.TestCase):
             _comment(file_path='nonexistent.py', line_number=1), self.workspace,
         )
         self.assertEqual(result, '')
+
+    def test_blank_file_returns_empty(self) -> None:
+        # Hits line 330: ``if not lines: return ''`` for an empty file.
+        self._write_file('blank.py', '')
+        result = review_comment_code_snippet(
+            _comment(file_path='blank.py', line_number=1), self.workspace,
+        )
+        self.assertEqual(result, '')
+
+    def test_long_line_is_truncated_with_ellipsis(self) -> None:
+        # Hits line 339: ``if len(line_text) > 240: line_text = ...``.
+        self._write_file('long.py', 'x' * 500)
+        result = review_comment_code_snippet(
+            _comment(file_path='long.py', line_number=1), self.workspace,
+        )
+        self.assertIn('...', result)
+        # Original 500-char line should be cut down.
+        self.assertNotIn('x' * 300, result)
 
 
 class ReviewCommentsBatchTextTests(unittest.TestCase):

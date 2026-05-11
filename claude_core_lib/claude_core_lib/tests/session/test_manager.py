@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 from claude_core_lib.claude_core_lib.session.manager import (
     SESSION_STATUS_ACTIVE,
@@ -265,6 +267,906 @@ class PlanningSessionRecordTests(unittest.TestCase):
         )
         round_tripped = PlanningSessionRecord.from_dict(original.to_dict())
         self.assertEqual(round_tripped, original)
+
+
+class _StaleResumeFakeSession(_FakeStreamingSession):
+    """Fake session that simulates the Claude CLI rejecting a resume id.
+
+    Captures whether stderr should contain the "No conversation found with
+    session ID" marker — that's how the manager detects the stale-resume
+    case in production.
+    """
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._stale_marker_active = False
+
+    def start(self, initial_prompt: str = '') -> None:
+        super().start(initial_prompt)
+        if self._stale_marker_active and self.resume_session_id:
+            # Simulate Claude exiting almost immediately when --resume
+            # references a missing session.
+            self._alive = False
+
+    def stderr_snapshot(self) -> list[str]:
+        if self._stale_marker_active and self.resume_session_id:
+            return [
+                f'No conversation found with session ID: {self.resume_session_id}',
+            ]
+        return []
+
+
+class StaleResumeIdSelfHealTests(unittest.TestCase):
+    """The self-heal path that recovers from a missing-resume failure."""
+
+    def setUp(self) -> None:
+        self._tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tempdir.cleanup)
+        self.state_dir = Path(self._tempdir.name)
+        self._fakes: list[_StaleResumeFakeSession] = []
+
+    def _build_manager_with_stale_marker(self, mark_stale: bool):
+        def factory(**kwargs):
+            session = _StaleResumeFakeSession(**kwargs)
+            session._stale_marker_active = mark_stale
+            self._fakes.append(session)
+            return session
+
+        return ClaudeSessionManager(
+            state_dir=self.state_dir,
+            session_factory=factory,
+        )
+
+    def test_died_with_stale_resume_id_detects_stderr_marker(self) -> None:
+        session = _StaleResumeFakeSession(
+            task_id='PROJ-1', resume_session_id='dead-id',
+        )
+        session._stale_marker_active = True
+        session._alive = False
+        self.assertTrue(
+            ClaudeSessionManager._died_with_stale_resume_id(
+                session, 'dead-id',
+            )
+        )
+
+    def test_died_with_stale_resume_id_false_for_healthy_session(self) -> None:
+        session = _StaleResumeFakeSession(
+            task_id='PROJ-1', resume_session_id='some-id',
+        )
+        # No marker, no terminal event → not a stale-id death.
+        self.assertFalse(
+            ClaudeSessionManager._died_with_stale_resume_id(
+                session, 'some-id',
+            )
+        )
+
+    def test_died_with_stale_resume_id_handles_stderr_exception(self) -> None:
+        # If stderr_snapshot() blows up, the check must still return
+        # False rather than propagating (the manager treats that as
+        # "healthy" — safer to keep the session than infinite-restart).
+        session = SimpleNamespace_session = type(
+            'BrokenSession', (), {
+                'stderr_snapshot': lambda self: (_ for _ in ()).throw(RuntimeError('boom')),
+                'terminal_event': None,
+            },
+        )()
+        self.assertFalse(
+            ClaudeSessionManager._died_with_stale_resume_id(
+                session, 'any-id',
+            )
+        )
+
+    def test_resume_id_blanked_when_previous_session_died_with_stale_id(self) -> None:
+        # When Claude died because --resume referenced a missing session,
+        # _resume_id_for_spawn must return '' (fresh spawn) AND clear the
+        # persisted session id so the next call doesn't loop on the dead id.
+        manager = self._build_manager_with_stale_marker(False)
+        previous_record = PlanningSessionRecord(
+            task_id='PROJ-1',
+            claude_session_id='dead-session-uuid',
+        )
+        dead_session = _StaleResumeFakeSession(
+            task_id='PROJ-1', resume_session_id='dead-session-uuid',
+        )
+        dead_session._stale_marker_active = True
+        dead_session._alive = False
+
+        # Persist the record so _persist_record path works.
+        manager._records['PROJ-1'] = previous_record
+        manager._persist_record(previous_record)
+
+        resume_id = manager._resume_id_for_spawn(
+            'PROJ-1', previous_record, dead_session,
+        )
+        self.assertEqual(resume_id, '')
+        # Same record object was mutated in place.
+        self.assertEqual(previous_record.claude_session_id, '')
+
+    def test_resume_id_kept_when_previous_session_is_healthy(self) -> None:
+        # Healthy session → resume id should pass through unchanged.
+        manager = self._build_manager_with_stale_marker(False)
+        manager.start_session(task_id='PROJ-1')
+        original_id = self._fakes[0].claude_session_id
+        record = manager.get_record('PROJ-1')
+        resume_id = manager._resume_id_for_spawn(
+            'PROJ-1', record, self._fakes[0],
+        )
+        self.assertEqual(resume_id, original_id)
+
+    def test_resume_id_for_spawn_no_previous_record_returns_empty(self) -> None:
+        manager = self._build_manager_with_stale_marker(False)
+        self.assertEqual(
+            manager._resume_id_for_spawn('PROJ-1', None, None), '',
+        )
+
+    def test_resume_id_for_spawn_no_existing_session_returns_persisted(self) -> None:
+        # First boot after restart: no existing session yet, but a
+        # persisted record exists. The persisted id should be returned.
+        manager = self._build_manager_with_stale_marker(False)
+        record = PlanningSessionRecord(
+            task_id='PROJ-1', claude_session_id='persisted-id',
+        )
+        self.assertEqual(
+            manager._resume_id_for_spawn('PROJ-1', record, None),
+            'persisted-id',
+        )
+
+    def test_wait_for_stale_resume_failure_returns_false_on_timeout(self) -> None:
+        # Healthy session that never dies → must return False after the
+        # configured wait. We pass max_wait_seconds=0 so the loop exits
+        # immediately without sleeping.
+        session = _StaleResumeFakeSession(
+            task_id='PROJ-1', resume_session_id='any-id',
+        )
+        self.assertFalse(
+            ClaudeSessionManager._wait_for_stale_resume_failure(
+                session, 'any-id',
+                max_wait_seconds=0,
+                poll_interval_seconds=0,
+            )
+        )
+
+    def test_wait_for_stale_resume_failure_detects_already_dead_session(self) -> None:
+        session = _StaleResumeFakeSession(
+            task_id='PROJ-1', resume_session_id='dead-id',
+        )
+        session._stale_marker_active = True
+        session._alive = False  # already died before we polled
+        self.assertTrue(
+            ClaudeSessionManager._wait_for_stale_resume_failure(
+                session, 'dead-id',
+                max_wait_seconds=1,
+                poll_interval_seconds=0,
+            )
+        )
+
+
+class WorkspaceSeedingTests(unittest.TestCase):
+    """``_seed_records_from_workspaces`` runs on attach.
+
+    If a workspace exposes ``agent_session_id`` (the modern name) or the
+    legacy ``claude_session_id`` attribute, the manager imports it into
+    its own state so a chat tab opened against that workspace finds the
+    right id on the first ``start_session`` call.
+    """
+
+    def setUp(self) -> None:
+        self._tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tempdir.cleanup)
+        self.state_dir = Path(self._tempdir.name)
+
+        def factory(**kwargs):
+            return _FakeStreamingSession(**kwargs)
+
+        self.manager = ClaudeSessionManager(
+            state_dir=self.state_dir,
+            session_factory=factory,
+        )
+
+    def test_seeds_from_modern_agent_session_id_attribute(self) -> None:
+        ws = SimpleNamespace(
+            task_id='PROJ-A',
+            task_summary='from workspace',
+            agent_session_id='ws-session-id',
+            cwd='/wks/A',
+        )
+        workspace_manager = SimpleNamespace(
+            list_workspaces=lambda: [ws],
+            update_agent_session=lambda *a, **kw: None,
+        )
+        self.manager.attach_workspace_manager(workspace_manager)
+        record = self.manager.get_record('PROJ-A')
+        self.assertIsNotNone(record)
+        self.assertEqual(record.claude_session_id, 'ws-session-id')
+        self.assertEqual(record.cwd, '/wks/A')
+
+    def test_seeds_from_legacy_claude_session_id_attribute(self) -> None:
+        # Older workspaces still surface ``claude_session_id``.
+        ws = SimpleNamespace(
+            task_id='PROJ-B',
+            task_summary='legacy',
+            claude_session_id='legacy-id',
+            cwd='/wks/B',
+        )
+        workspace_manager = SimpleNamespace(
+            list_workspaces=lambda: [ws],
+            update_agent_session=lambda *a, **kw: None,
+        )
+        self.manager.attach_workspace_manager(workspace_manager)
+        record = self.manager.get_record('PROJ-B')
+        self.assertEqual(record.claude_session_id, 'legacy-id')
+
+    def test_skips_workspace_without_session_id(self) -> None:
+        ws = SimpleNamespace(
+            task_id='PROJ-C', task_summary='', cwd='/wks/C',
+        )
+        workspace_manager = SimpleNamespace(
+            list_workspaces=lambda: [ws],
+            update_agent_session=lambda *a, **kw: None,
+        )
+        self.manager.attach_workspace_manager(workspace_manager)
+        self.assertIsNone(self.manager.get_record('PROJ-C'))
+
+    def test_does_not_overwrite_existing_session_id(self) -> None:
+        # If the manager already has a session id from a prior start_session
+        # call, the workspace seed must not clobber it (live state wins).
+        self.manager.start_session(task_id='PROJ-D')
+        original_id = self.manager.get_record('PROJ-D').claude_session_id
+        ws = SimpleNamespace(
+            task_id='PROJ-D', agent_session_id='workspace-id', cwd='',
+        )
+        workspace_manager = SimpleNamespace(
+            list_workspaces=lambda: [ws],
+            update_agent_session=lambda *a, **kw: None,
+        )
+        self.manager.attach_workspace_manager(workspace_manager)
+        self.assertEqual(
+            self.manager.get_record('PROJ-D').claude_session_id,
+            original_id,
+        )
+
+    def test_handles_list_workspaces_exception(self) -> None:
+        def broken_list():
+            raise RuntimeError('workspace manager dead')
+
+        workspace_manager = SimpleNamespace(
+            list_workspaces=broken_list,
+            update_agent_session=lambda *a, **kw: None,
+        )
+        # Must not raise — manager logs and moves on.
+        self.manager.attach_workspace_manager(workspace_manager)
+        self.assertEqual(self.manager.list_records(), [])
+
+
+class WorkspaceSeedingEarlyReturnTests(unittest.TestCase):
+    """Line 172: ``_seed_records_from_workspaces`` early-returns when
+    no workspace_manager is attached."""
+
+    def test_no_op_when_no_workspace_manager(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = ClaudeSessionManager(
+                state_dir=Path(tmp),
+                session_factory=lambda **kw: _FakeStreamingSession(**kw),
+            )
+            # Calling the private seed directly with no workspace manager.
+            manager._seed_records_from_workspaces()  # must not raise.
+
+
+class NormalizeTaskIdValidation(unittest.TestCase):
+    """Line 653: ``_normalize_task_id`` raises on blank."""
+
+    def test_raises_on_blank(self) -> None:
+        with self.assertRaisesRegex(ValueError, 'task_id is required'):
+            ClaudeSessionManager._normalize_task_id('')
+        with self.assertRaisesRegex(ValueError, 'task_id is required'):
+            ClaudeSessionManager._normalize_task_id('   ')
+
+
+class WaitForStaleResumeFailurePolling(unittest.TestCase):
+    """Line 618: ``time.sleep(poll_interval_seconds)`` in the polling loop."""
+
+    def test_polls_until_session_dies(self) -> None:
+        # Healthy session → polling continues. Then it goes "dead" with
+        # the stale marker on the second check.
+        session = _StaleResumeFakeSession(
+            task_id='PROJ-1', resume_session_id='dead-id',
+        )
+        session._alive = True
+
+        poll_count = [0]
+        original_died = ClaudeSessionManager._died_with_stale_resume_id
+
+        @staticmethod
+        def selective_died(s, rid):
+            poll_count[0] += 1
+            if poll_count[0] < 2:
+                return False  # still alive, no marker
+            s._alive = False
+            s._stale_marker_active = True
+            return True
+
+        with patch.object(
+            ClaudeSessionManager, '_died_with_stale_resume_id', selective_died,
+        ):
+            result = ClaudeSessionManager._wait_for_stale_resume_failure(
+                session, 'dead-id',
+                max_wait_seconds=1,
+                poll_interval_seconds=0,  # No real wait
+            )
+        self.assertTrue(result)
+        self.assertGreaterEqual(poll_count[0], 2)
+
+
+class DiedWithStaleResumeIdAdditionalBranches(unittest.TestCase):
+    """Lines 643-647: ``_died_with_stale_resume_id`` terminal-event paths."""
+
+    def test_returns_false_when_no_terminal_event(self) -> None:
+        session = _StaleResumeFakeSession(
+            task_id='PROJ-1', resume_session_id='dead-id',
+        )
+        # No stderr_marker active AND no terminal event → False.
+        self.assertFalse(
+            ClaudeSessionManager._died_with_stale_resume_id(session, 'dead-id')
+        )
+
+    def test_returns_false_when_terminal_event_not_an_error(self) -> None:
+        session = SimpleNamespace(
+            stderr_snapshot=lambda: [],
+            terminal_event=SimpleNamespace(raw={'is_error': False, 'result': ''}),
+        )
+        self.assertFalse(
+            ClaudeSessionManager._died_with_stale_resume_id(session, 'any-id')
+        )
+
+    def test_returns_true_when_terminal_result_contains_marker(self) -> None:
+        session = SimpleNamespace(
+            stderr_snapshot=lambda: [],
+            terminal_event=SimpleNamespace(raw={
+                'is_error': True,
+                'result': 'No conversation found with session ID: dead-id',
+            }),
+        )
+        self.assertTrue(
+            ClaudeSessionManager._died_with_stale_resume_id(session, 'dead-id')
+        )
+
+    def test_returns_false_when_terminal_marker_for_different_session(self) -> None:
+        session = SimpleNamespace(
+            stderr_snapshot=lambda: [],
+            terminal_event=SimpleNamespace(raw={
+                'is_error': True,
+                'result': 'No conversation found with session ID: other-id',
+            }),
+        )
+        self.assertFalse(
+            ClaudeSessionManager._died_with_stale_resume_id(session, 'dead-id')
+        )
+
+
+class TerminateSessionExceptionPath(unittest.TestCase):
+    """Lines 572-573: session.terminate() throws → log + continue."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.state_dir = Path(self._tmp.name)
+
+    def test_logs_when_terminate_raises(self) -> None:
+        broken_session = MagicMock()
+        broken_session.terminate.side_effect = RuntimeError('term failed')
+
+        manager = ClaudeSessionManager(
+            state_dir=self.state_dir,
+            session_factory=lambda **kw: _FakeStreamingSession(**kw),
+        )
+        manager._sessions['PROJ-1'] = broken_session
+        manager._records['PROJ-1'] = PlanningSessionRecord(task_id='PROJ-1')
+
+        with patch.object(manager, 'logger', MagicMock()) as logger:
+            # Must not raise — log + continue.
+            manager.terminate_session('PROJ-1')
+        logger.exception.assert_called_once()
+
+
+class UpdateStatusNoOpForUnknownTask(unittest.TestCase):
+    """Line 560: ``record is None`` → silent return."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.state_dir = Path(self._tmp.name)
+
+    def test_no_op_when_task_id_unknown(self) -> None:
+        from claude_core_lib.claude_core_lib.session.manager import SESSION_STATUS_DONE
+        manager = ClaudeSessionManager(
+            state_dir=self.state_dir,
+            session_factory=lambda **kw: _FakeStreamingSession(**kw),
+        )
+        # No record exists for this task → silently no-ops.
+        manager.update_status('NO-SUCH-TASK', SESSION_STATUS_DONE)
+
+
+class MirrorEarlyReturnTests(unittest.TestCase):
+    """Line 675: ``not record.claude_session_id and not record.cwd`` early return."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.state_dir = Path(self._tmp.name)
+
+    def test_skips_mirror_when_record_has_no_id_or_cwd(self) -> None:
+        workspace_manager = MagicMock()
+        manager = ClaudeSessionManager(
+            state_dir=self.state_dir,
+            session_factory=lambda **kw: _FakeStreamingSession(**kw),
+        )
+        manager._workspace_manager = workspace_manager
+        empty_record = PlanningSessionRecord(
+            task_id='PROJ-1', claude_session_id='', cwd='',
+        )
+        manager._mirror_to_workspace_metadata(empty_record)
+        # Workspace was never touched because the record carries no useful info.
+        workspace_manager.update_agent_session.assert_not_called()
+
+
+class AdoptSessionIdMirrorTests(unittest.TestCase):
+    """Line 544: ``adopt_session_id`` mirrors to workspace metadata."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.state_dir = Path(self._tmp.name)
+
+    def test_adopt_mirrors_to_workspace_when_attached(self) -> None:
+        workspace_manager = MagicMock()
+        workspace_manager.list_workspaces.return_value = []
+        manager = ClaudeSessionManager(
+            state_dir=self.state_dir,
+            session_factory=lambda **kw: _FakeStreamingSession(**kw),
+        )
+        manager.attach_workspace_manager(workspace_manager)
+        manager.adopt_session_id('PROJ-1', claude_session_id='adopted-id')
+        # Mirror call was made.
+        workspace_manager.update_agent_session.assert_called()
+
+
+class LoadPersistedRecordsErrorPaths(unittest.TestCase):
+    """Lines 703, 715, 718: ``_load_persisted_records`` skip paths."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.state_dir = Path(self._tmp.name)
+
+    def test_unparseable_json_file_is_skipped(self) -> None:
+        # Line 703: ``OSError | json.JSONDecodeError`` → log + continue.
+        (self.state_dir / 'broken.json').write_text('{not valid json')
+        manager = ClaudeSessionManager(
+            state_dir=self.state_dir,
+            session_factory=lambda **kw: _FakeStreamingSession(**kw),
+        )
+        self.assertEqual(manager.list_records(), [])
+
+    def test_non_dict_payload_is_skipped(self) -> None:
+        # Line 715: payload not a dict → skip.
+        (self.state_dir / 'list.json').write_text('[1, 2, 3]')
+        manager = ClaudeSessionManager(
+            state_dir=self.state_dir,
+            session_factory=lambda **kw: _FakeStreamingSession(**kw),
+        )
+        self.assertEqual(manager.list_records(), [])
+
+    def test_record_without_task_id_is_skipped(self) -> None:
+        # Line 718: record.task_id blank → skip.
+        (self.state_dir / 'no_id.json').write_text(
+            json.dumps({'task_id': '', 'claude_session_id': 'abc'}),
+        )
+        manager = ClaudeSessionManager(
+            state_dir=self.state_dir,
+            session_factory=lambda **kw: _FakeStreamingSession(**kw),
+        )
+        self.assertEqual(manager.list_records(), [])
+
+
+class WithRefreshedSessionIdTests(unittest.TestCase):
+    """Lines 739-741: ``_with_refreshed_session_id`` updates record when
+    the live session reports a different id than the persisted one.
+
+    The method takes only ``record`` — the session is looked up from
+    ``self._sessions`` by task_id.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.state_dir = Path(self._tmp.name)
+        self.manager = ClaudeSessionManager(
+            state_dir=self.state_dir,
+            session_factory=lambda **kw: _FakeStreamingSession(**kw),
+        )
+
+    def test_returns_none_when_record_is_none(self) -> None:
+        self.assertIsNone(self.manager._with_refreshed_session_id(None))
+
+    def test_refreshes_when_live_session_id_differs(self) -> None:
+        record = PlanningSessionRecord(
+            task_id='PROJ-1', claude_session_id='old-id',
+        )
+        self.manager._records['PROJ-1'] = record
+        # Plant a fake session with a NEW id under the same task_id.
+        live = SimpleNamespace(claude_session_id='new-id')
+        self.manager._sessions['PROJ-1'] = live
+
+        refreshed = self.manager._with_refreshed_session_id(record)
+        self.assertEqual(refreshed.claude_session_id, 'new-id')
+
+    def test_returns_record_unchanged_when_no_live_session(self) -> None:
+        record = PlanningSessionRecord(
+            task_id='PROJ-1', claude_session_id='persisted',
+        )
+        # No session in self._sessions for this task.
+        refreshed = self.manager._with_refreshed_session_id(record)
+        self.assertEqual(refreshed.claude_session_id, 'persisted')
+
+    def test_no_op_when_live_id_matches_persisted(self) -> None:
+        record = PlanningSessionRecord(
+            task_id='PROJ-1', claude_session_id='same-id',
+        )
+        self.manager._sessions['PROJ-1'] = SimpleNamespace(claude_session_id='same-id')
+        refreshed = self.manager._with_refreshed_session_id(record)
+        self.assertEqual(refreshed.claude_session_id, 'same-id')
+
+
+class EnsureResumeJsonlBranches(unittest.TestCase):
+    """``_ensure_resume_jsonl_at_target_cwd`` recovery paths.
+
+    Each test patches one external collaborator (find_session_file,
+    migrate_session_to_workspace) so we can drive the function down its
+    individual branches without spinning up real Claude sessions.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.state_dir = Path(self._tmp.name)
+        self.manager = ClaudeSessionManager(
+            state_dir=self.state_dir,
+            session_factory=lambda **kw: _FakeStreamingSession(**kw),
+        )
+
+    def test_no_op_when_resume_id_blank(self) -> None:
+        # Early return before any patch — no exceptions, no work.
+        self.manager._ensure_resume_jsonl_at_target_cwd(
+            resume_session_id='', target_cwd='/repo',
+        )
+
+    def test_no_op_when_target_cwd_blank(self) -> None:
+        self.manager._ensure_resume_jsonl_at_target_cwd(
+            resume_session_id='abc', target_cwd='',
+        )
+
+    def test_silent_when_dynamic_import_fails(self) -> None:
+        # Lines 338-339: defensive ImportError handler — kicks in if the
+        # session.history / session.index submodules ever go missing.
+        # Force it by raising ImportError on the import. Patch ``__import__``
+        # to throw for the two submodules the manager pulls in dynamically.
+        import builtins
+        real_import = builtins.__import__
+
+        def selective(name, *args, **kwargs):
+            if name in (
+                'claude_core_lib.claude_core_lib.session.history',
+                'claude_core_lib.claude_core_lib.session.index',
+            ):
+                raise ImportError(f'mocked: {name} unavailable')
+            return real_import(name, *args, **kwargs)
+
+        with patch.object(builtins, '__import__', selective):
+            # Must return without raising — and crucially, without touching
+            # ``find_session_file`` since the import never resolved.
+            self.manager._ensure_resume_jsonl_at_target_cwd(
+                resume_session_id='abc', target_cwd='/repo',
+            )
+
+    def test_logs_when_find_session_file_raises(self) -> None:
+        # Lines 342-347: any exception from find_session_file is logged
+        # and swallowed — must not propagate up to start_session.
+        with patch(
+            'claude_core_lib.claude_core_lib.session.history.find_session_file',
+            side_effect=RuntimeError('disk error'),
+        ):
+            with patch.object(self.manager, 'logger', MagicMock()) as logger:
+                self.manager._ensure_resume_jsonl_at_target_cwd(
+                    resume_session_id='abc', target_cwd='/repo',
+                )
+            logger.exception.assert_called_once()
+
+    def test_no_op_when_source_not_found(self) -> None:
+        # Lines 353-355: find_session_file returned None → silent return.
+        with patch(
+            'claude_core_lib.claude_core_lib.session.history.find_session_file',
+            return_value=None,
+        ):
+            # No exception, no log — just returns.
+            self.manager._ensure_resume_jsonl_at_target_cwd(
+                resume_session_id='abc', target_cwd='/repo',
+            )
+
+    def test_logs_when_migrate_raises(self) -> None:
+        # Lines 369-370: migrate_session_to_workspace raised; the manager
+        # must log via exception() and swallow.
+        with patch(
+            'claude_core_lib.claude_core_lib.session.history.find_session_file',
+            return_value=Path('/fake/source.jsonl'),
+        ), patch(
+            'claude_core_lib.claude_core_lib.session.index.migrate_session_to_workspace',
+            side_effect=RuntimeError('copy failed'),
+        ):
+            with patch.object(self.manager, 'logger', MagicMock()) as logger:
+                self.manager._ensure_resume_jsonl_at_target_cwd(
+                    resume_session_id='abc', target_cwd='/never/seen',
+                )
+            logger.exception.assert_called_once()
+
+
+class SpawnWithResumeSelfHealRetryTests(unittest.TestCase):
+    """Lines 429-443: ``_spawn_with_resume_self_heal`` retry path.
+
+    First spawn dies because the resume id is stale → terminate + respawn
+    with empty resume id. The chat continues without manual intervention.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.state_dir = Path(self._tmp.name)
+
+    def test_terminates_and_respawns_when_first_session_dies_with_stale_id(self) -> None:
+        spawn_kwargs: list[dict] = []
+        terminate_calls: list[int] = []
+
+        def factory(**kwargs):
+            spawn_kwargs.append(dict(kwargs))
+            session = _FakeStreamingSession(**kwargs)
+            # Plant a terminate hook to confirm cleanup happens.
+            original_terminate = session.terminate
+
+            def tracked_terminate():
+                terminate_calls.append(1)
+                original_terminate()
+
+            session.terminate = tracked_terminate
+            return session
+
+        manager = ClaudeSessionManager(
+            state_dir=self.state_dir,
+            session_factory=factory,
+        )
+        # First call: stale-id check returns True → retry path.
+        # Second call (the respawn): never re-enters the check (empty resume).
+        with patch.object(
+            ClaudeSessionManager, '_wait_for_stale_resume_failure',
+            return_value=True,
+        ):
+            session = manager._spawn_with_resume_self_heal(
+                normalized_task_id='PROJ-1',
+                factory_kwargs={'task_id': 'PROJ-1', 'cwd': '/wks'},
+                initial_prompt='',
+                resume_session_id='dead-id',
+            )
+        # Two factory calls: first with the stale id, second with ''.
+        self.assertEqual(len(spawn_kwargs), 2)
+        self.assertEqual(spawn_kwargs[0]['resume_session_id'], 'dead-id')
+        self.assertEqual(spawn_kwargs[1]['resume_session_id'], '')
+        # First session was terminated before respawn.
+        self.assertEqual(len(terminate_calls), 1)
+
+    def test_first_session_terminate_failure_is_swallowed(self) -> None:
+        # Lines 436-438: terminate() raises → ignored, retry continues.
+        spawn_count = [0]
+
+        def factory(**kwargs):
+            spawn_count[0] += 1
+            session = _FakeStreamingSession(**kwargs)
+            if spawn_count[0] == 1:
+                # First session: terminate() blows up.
+                session.terminate = MagicMock(side_effect=RuntimeError('terminate failed'))
+            return session
+
+        manager = ClaudeSessionManager(
+            state_dir=self.state_dir,
+            session_factory=factory,
+        )
+        with patch.object(
+            ClaudeSessionManager, '_wait_for_stale_resume_failure',
+            return_value=True,
+        ):
+            # Must not raise — the second spawn still happens.
+            manager._spawn_with_resume_self_heal(
+                normalized_task_id='PROJ-1',
+                factory_kwargs={'task_id': 'PROJ-1', 'cwd': '/wks'},
+                initial_prompt='',
+                resume_session_id='dead-id',
+            )
+        self.assertEqual(spawn_count[0], 2)
+
+
+class LoadPersistedRecordsOsErrorTests(unittest.TestCase):
+    """Line 703: ``except (OSError, ...)`` covers OSError on read_text."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.state_dir = Path(self._tmp.name)
+
+    def test_oserror_reading_record_file_logs_and_skips(self) -> None:
+        # Create a valid record file but make read_text raise.
+        path = self.state_dir / 'PROJ-1.json'
+        path.write_text(json.dumps({
+            'task_id': 'PROJ-1', 'claude_session_id': 'abc',
+        }))
+
+        real_read = Path.read_text
+
+        def selective(self_path, *args, **kwargs):
+            if self_path.name == 'PROJ-1.json':
+                raise PermissionError('locked')
+            return real_read(self_path, *args, **kwargs)
+
+        with patch.object(Path, 'read_text', selective):
+            manager = ClaudeSessionManager(
+                state_dir=self.state_dir,
+                session_factory=lambda **kw: _FakeStreamingSession(**kw),
+            )
+        # Record was skipped without crashing the boot.
+        self.assertEqual(manager.list_records(), [])
+
+
+class EnsureResumeJsonlSourceAtTargetTests(unittest.TestCase):
+    """Lines 352-355: when ``source.parent.resolve() == target_dir.resolve()``
+    we no-op (already at the right location), and any OSError from resolve()
+    is swallowed.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.state_dir = Path(self._tmp.name)
+        self.manager = ClaudeSessionManager(
+            state_dir=self.state_dir,
+            session_factory=lambda **kw: _FakeStreamingSession(**kw),
+        )
+
+    def test_no_op_when_source_already_at_target_dir(self) -> None:
+        # Line 353: source.parent equals target_dir → no migrate call.
+        sessions_root = self.state_dir / 'sessions'
+        sessions_root.mkdir()
+        target_cwd_dir = sessions_root / '-tmp-task'
+        target_cwd_dir.mkdir()
+        jsonl = target_cwd_dir / 'sess-A.jsonl'
+        jsonl.write_text('')
+
+        from claude_core_lib.claude_core_lib.session.index import CLAUDE_SESSIONS_ROOT_ENV_KEY
+        with patch.dict(os.environ, {CLAUDE_SESSIONS_ROOT_ENV_KEY: str(sessions_root)}):
+            with patch(
+                'claude_core_lib.claude_core_lib.session.history.find_session_file',
+                return_value=jsonl,
+            ):
+                # If migrate were called we'd see a copy; we just verify no exception.
+                with patch(
+                    'claude_core_lib.claude_core_lib.session.index.migrate_session_to_workspace',
+                ) as mock_migrate:
+                    self.manager._ensure_resume_jsonl_at_target_cwd(
+                        resume_session_id='sess-A',
+                        target_cwd='/tmp/task',
+                    )
+                    # The equality check short-circuits before migrate runs.
+                    mock_migrate.assert_not_called()
+
+    def test_swallows_oserror_from_resolve_and_continues(self) -> None:
+        # Lines 354-355: resolve raises OSError on legacy py → swallow + fall through to migrate.
+        from unittest.mock import patch as patch_obj
+        with patch(
+            'claude_core_lib.claude_core_lib.session.history.find_session_file',
+            return_value=Path('/some/source.jsonl'),
+        ), patch(
+            'claude_core_lib.claude_core_lib.session.index.migrate_session_to_workspace',
+            return_value=None,  # noop
+        ), patch_obj.object(Path, 'resolve', side_effect=OSError('legacy py')):
+            # Must not raise.
+            self.manager._ensure_resume_jsonl_at_target_cwd(
+                resume_session_id='sess', target_cwd='/repo',
+            )
+
+
+class AdoptSessionIdTaskSummaryTests(unittest.TestCase):
+    """Line 544: when adopt is called with a non-empty task_summary AND the
+    pre-existing record has no summary, the new summary is stored.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.state_dir = Path(self._tmp.name)
+
+    def test_task_summary_is_filled_in_when_record_had_none(self) -> None:
+        manager = ClaudeSessionManager(
+            state_dir=self.state_dir,
+            session_factory=lambda **kw: _FakeStreamingSession(**kw),
+        )
+        # Existing record with NO task_summary.
+        manager._records['PROJ-X'] = PlanningSessionRecord(
+            task_id='PROJ-X', claude_session_id='old', task_summary='',
+        )
+        manager.adopt_session_id(
+            'PROJ-X', claude_session_id='new', task_summary='added later',
+        )
+        self.assertEqual(
+            manager.get_record('PROJ-X').task_summary, 'added later',
+        )
+
+
+class LoadPersistedRecordsMissingDirTests(unittest.TestCase):
+    """Line 703: ``return`` when state_dir does not exist on disk.
+
+    Constructor auto-mkdir's the state_dir, so we hit this by calling
+    ``_load_persisted_records`` directly after removing the dir.
+    """
+
+    def test_no_op_when_state_dir_was_removed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_dir = Path(tmp) / 'mgr_state'
+            manager = ClaudeSessionManager(
+                state_dir=state_dir,
+                session_factory=lambda **kw: _FakeStreamingSession(**kw),
+            )
+            # Simulate the dir being deleted out from under us between calls.
+            state_dir.rmdir()
+            self.assertFalse(state_dir.exists())
+            # Must not raise — silent return at line 703.
+            manager._load_persisted_records()
+
+
+class PersistedRecordHelperTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tempdir.cleanup)
+        self.state_dir = Path(self._tempdir.name)
+        self.manager = ClaudeSessionManager(
+            state_dir=self.state_dir,
+            session_factory=lambda **kw: _FakeStreamingSession(**kw),
+        )
+
+    def test_delete_persisted_record_silently_ignores_missing_file(self) -> None:
+        # Calling delete on a never-persisted task must not raise.
+        self.manager._delete_persisted_record('nonexistent-task')
+
+    def test_delete_persisted_record_logs_warning_on_oserror(self) -> None:
+        # Hit the OSError branch by patching ``Path.unlink``.
+        self.manager.start_session(task_id='PROJ-X')
+        with patch.object(Path, 'unlink', side_effect=PermissionError('locked')):
+            with patch.object(self.manager, 'logger', MagicMock()) as mock_logger:
+                self.manager._delete_persisted_record('PROJ-X')
+                mock_logger.warning.assert_called_once()
+
+    def test_mirror_to_workspace_metadata_no_op_when_no_workspace_manager(self) -> None:
+        record = PlanningSessionRecord(
+            task_id='PROJ-1', claude_session_id='id', cwd='/wks',
+        )
+        # Default manager has no workspace_manager — must not raise.
+        self.manager._mirror_to_workspace_metadata(record)
+
+    def test_mirror_to_workspace_metadata_handles_workspace_exception(self) -> None:
+        # Workspace update can fail; manager logs and moves on (does NOT raise).
+        workspace_manager = MagicMock()
+        workspace_manager.update_agent_session.side_effect = RuntimeError('boom')
+        self.manager._workspace_manager = workspace_manager
+        record = PlanningSessionRecord(
+            task_id='PROJ-1', claude_session_id='id', cwd='/wks',
+        )
+        with patch.object(self.manager, 'logger', MagicMock()) as mock_logger:
+            self.manager._mirror_to_workspace_metadata(record)
+            mock_logger.exception.assert_called_once()
 
 
 if __name__ == '__main__':

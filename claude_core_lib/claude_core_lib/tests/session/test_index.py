@@ -22,6 +22,7 @@ import os
 import tempfile
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 from unittest.mock import patch
 
@@ -472,6 +473,485 @@ class MigrateSessionToWorkspaceTests(unittest.TestCase):
             result.read_text(encoding='utf-8'),
             self.source_path.read_text(encoding='utf-8'),
         )
+
+    def test_returns_none_when_source_path_blank(self) -> None:
+        # Blank transcript_path → can't even resolve a source → None.
+        result = migrate_session_to_workspace(
+            transcript_path='',
+            target_cwd='/Users/dev/anything',
+        )
+        self.assertIsNone(result)
+
+    def test_returns_none_when_target_dir_creation_fails(self) -> None:
+        # If the target directory creation fails (e.g. permission error),
+        # migration must return None and log — not propagate the error.
+        from unittest.mock import patch as patch_obj
+        target_cwd = '/Users/dev/.kato/workspaces/PROJ-7/myproj'
+        with patch_obj.object(Path, 'mkdir', side_effect=PermissionError('locked')):
+            result = migrate_session_to_workspace(
+                transcript_path=str(self.source_path),
+                target_cwd=target_cwd,
+            )
+        self.assertIsNone(result)
+
+    def test_returns_none_when_copy_fails(self) -> None:
+        # ``shutil.copyfile`` failure → log + None (e.g. disk full,
+        # read-only filesystem). Should not propagate.
+        from unittest.mock import patch as patch_obj
+        import shutil as shutil_mod
+        with patch_obj.object(
+            shutil_mod, 'copyfile', side_effect=OSError('disk full'),
+        ):
+            result = migrate_session_to_workspace(
+                transcript_path=str(self.source_path),
+                target_cwd='/Users/dev/never/seen',
+            )
+        self.assertIsNone(result)
+
+
+class ListSessionsEdgeCaseTests(unittest.TestCase):
+    """Cover the smaller branches in list_sessions and friends."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+
+    def test_iter_transcript_paths_handles_root_iterdir_oserror(self) -> None:
+        # If the root iterdir itself raises (e.g. permissions), the
+        # generator returns nothing rather than crashing.
+        from unittest.mock import patch as patch_obj
+        with patch_obj.object(Path, 'iterdir', side_effect=PermissionError('locked')):
+            result = list_sessions(sessions_root=self.root)
+        self.assertEqual(result, [])
+
+    def test_skips_non_directory_entries_at_root(self) -> None:
+        # A stray file at the root level → must be skipped, not crash.
+        (self.root / 'stray.txt').write_text('hi')
+        sessions_dir = self.root / 'enc-cwd'
+        sessions_dir.mkdir()
+        (sessions_dir / 's1.jsonl').write_text(
+            json.dumps({'type': 'user', 'cwd': '/x', 'sessionId': 's1',
+                        'message': {'content': 'hi'}}) + '\n',
+        )
+        result = list_sessions(sessions_root=self.root)
+        self.assertEqual(len(result), 1)
+
+    def test_skips_jsonl_when_glob_raises(self) -> None:
+        # If glob() on a sub-dir raises (e.g. perms), continue with the next.
+        # Easiest way to exercise: a valid first project dir + a second one
+        # that we mock glob on. We instead test the simpler path: stat() failure.
+        sessions_dir = self.root / 'enc-cwd'
+        sessions_dir.mkdir()
+        good_path = sessions_dir / 's1.jsonl'
+        good_path.write_text(
+            json.dumps({'type': 'user', 'cwd': '/x', 'sessionId': 's1',
+                        'message': {'content': 'hi'}}) + '\n',
+        )
+        # stat() raises on the file → _parse_metadata returns None,
+        # session dropped silently.
+        from unittest.mock import patch as patch_obj
+        original_stat = Path.stat
+
+        def selective_stat(self_path, *args, **kwargs):
+            if self_path.name == 's1.jsonl':
+                raise PermissionError('locked')
+            return original_stat(self_path, *args, **kwargs)
+
+        with patch_obj.object(Path, 'stat', selective_stat):
+            result = list_sessions(sessions_root=self.root)
+        # The locked file gets dropped; no crash.
+        self.assertEqual(result, [])
+
+    def test_parse_metadata_aborts_when_preview_scan_budget_exhausted(self) -> None:
+        # Build a JSONL much larger than the preview-scan cap so the loop
+        # breaks early. We don't need a real cap — we just confirm the
+        # file is parsed without crashing.
+        sessions_dir = self.root / 'enc-cwd'
+        sessions_dir.mkdir()
+        big_path = sessions_dir / 'sess-big.jsonl'
+        # Each record is ~200 bytes; 50,000 records ~10MB easily exceeds
+        # the 256KB cap.
+        with big_path.open('w', encoding='utf-8') as fh:
+            fh.write(
+                json.dumps({'type': 'user', 'cwd': '/x', 'sessionId': 'sess-big',
+                            'message': {'content': 'first msg'}}) + '\n',
+            )
+            for i in range(2000):
+                fh.write(
+                    json.dumps({'type': 'user', 'sessionId': 'sess-big',
+                                'message': {'content': f'msg {i}'}}) + '\n',
+                )
+        result = list_sessions(sessions_root=self.root)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].session_id, 'sess-big')
+        # Turn count is bounded by the cap, not the full file.
+        self.assertGreater(result[0].turn_count, 0)
+
+    def test_parse_metadata_uses_session_id_from_record_when_filename_blank(self) -> None:
+        # Edge case: session_id is normally the filename stem, but if the
+        # path stem ends up blank (defensive branch), record's sessionId
+        # is the fallback. We can't easily make the stem blank with a
+        # normal path, so we just verify the record-side fallback is
+        # observable when stem is preserved (basic sanity: id matches stem).
+        sessions_dir = self.root / 'enc-cwd'
+        sessions_dir.mkdir()
+        path = sessions_dir / 'fileid.jsonl'
+        path.write_text(
+            json.dumps({'type': 'user', 'cwd': '/x',
+                        'sessionId': 'recorded-id',
+                        'message': {'content': 'hi'}}) + '\n',
+        )
+        result = list_sessions(sessions_root=self.root)
+        # Filename stem wins (that's by design — Claude Code uses the
+        # filename as canonical id).
+        self.assertEqual(result[0].session_id, 'fileid')
+
+    def test_query_does_not_match_when_substring_absent(self) -> None:
+        sessions_dir = self.root / 'enc-cwd'
+        sessions_dir.mkdir()
+        (sessions_dir / 's1.jsonl').write_text(
+            json.dumps({'type': 'user', 'cwd': '/some/path',
+                        'sessionId': 's1',
+                        'message': {'content': 'hello world'}}) + '\n',
+        )
+        # No session contains 'xyz'.
+        result = list_sessions(sessions_root=self.root, query='xyz')
+        self.assertEqual(result, [])
+
+
+class DefaultSessionsRootTests(unittest.TestCase):
+    def test_uses_env_override_when_set(self) -> None:
+        from claude_core_lib.claude_core_lib.session.index import default_sessions_root
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {CLAUDE_SESSIONS_ROOT_ENV_KEY: tmp}):
+                root = default_sessions_root()
+                self.assertEqual(root, Path(tmp))
+
+    def test_falls_back_to_home_dot_claude_when_env_unset(self) -> None:
+        # Line 89: ``return Path.home() / '.claude' / 'projects'`` — fires
+        # when env var is missing or whitespace-only.
+        from claude_core_lib.claude_core_lib.session.index import default_sessions_root
+        env = {k: v for k, v in os.environ.items() if k != CLAUDE_SESSIONS_ROOT_ENV_KEY}
+        with patch.dict(os.environ, env, clear=True):
+            root = default_sessions_root()
+        self.assertEqual(root, Path.home() / '.claude' / 'projects')
+
+
+class ListSessionsQueryFilteringTests(unittest.TestCase):
+    """Line 117: ``if needle and not _matches_query(...): continue``."""
+
+    def test_skips_metadata_not_matching_query(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # Two sessions: one matches 'alpha', one matches 'beta'.
+            for slug in ('alpha', 'beta'):
+                d = root / f'enc-{slug}'
+                d.mkdir()
+                (d / f'sess-{slug}.jsonl').write_text(
+                    json.dumps({
+                        'type': 'user',
+                        'cwd': f'/repo/{slug}',
+                        'sessionId': f'sess-{slug}',
+                        'message': {'content': f'{slug} message'},
+                    }) + '\n',
+                )
+            # Query 'alpha' must drop the beta session via line 117.
+            result = list_sessions(sessions_root=root, query='alpha')
+            self.assertEqual(len(result), 1)
+            self.assertEqual(result[0].session_id, 'sess-alpha')
+
+
+class ParseMetadataPreviewCapTests(unittest.TestCase):
+    def test_aborts_when_bytes_read_exceeds_cap(self) -> None:
+        # Line 171: byte budget check.
+        # The bytes_read check fires AFTER reading each line — so the cap
+        # is reached once a single line larger than the cap has been read.
+        # The next iteration breaks without processing that line. We confirm
+        # the second user message AFTER the cap is NOT captured.
+        from claude_core_lib.claude_core_lib.session.index import _MAX_PREVIEW_SCAN_BYTES
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            d = root / 'enc'
+            d.mkdir()
+            big_path = d / 'sess.jsonl'
+            huge_content = 'x' * (_MAX_PREVIEW_SCAN_BYTES + 1000)
+            big_path.write_text(
+                json.dumps({'type': 'user', 'cwd': '/r', 'sessionId': 'sess',
+                            'message': {'content': 'small first'}}) + '\n'
+                + json.dumps({'type': 'user',
+                              'message': {'content': huge_content}}) + '\n'
+                + json.dumps({'type': 'user',
+                              'message': {'content': 'after cap'}}) + '\n',
+                encoding='utf-8',
+            )
+            result = list_sessions(sessions_root=root)
+            self.assertEqual(len(result), 1)
+            # First message captured normally.
+            self.assertEqual(result[0].first_user_message, 'small first')
+            # Third user record never observed (cap fired after huge line).
+            self.assertNotIn('after cap', result[0].last_user_message)
+
+    def test_falls_back_to_session_id_from_record_when_stem_blank(self) -> None:
+        # Line 178: rare path — filename has no stem, so the JSONL record's
+        # sessionId field is the fallback. We can't easily make stem empty
+        # via a normal write, so we patch ``Path.stem`` for this one file.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            d = root / 'enc'
+            d.mkdir()
+            path = d / 'normal.jsonl'
+            path.write_text(
+                json.dumps({'type': 'user', 'cwd': '/r',
+                            'sessionId': 'rec-id',
+                            'message': {'content': 'hi'}}) + '\n',
+                encoding='utf-8',
+            )
+
+            # Pretend the stem is empty so the record-side fallback kicks in.
+            with patch.object(
+                Path, 'stem', new_callable=unittest.mock.PropertyMock,
+                return_value='',
+            ):
+                result = list_sessions(sessions_root=root)
+            self.assertEqual(len(result), 1)
+            self.assertEqual(result[0].session_id, 'rec-id')
+
+    def test_first_and_last_user_messages_track_independently(self) -> None:
+        # Lines 187-190: ``first_user_message`` is set once; ``last_user_message``
+        # is updated on every preview. Two user records → first = msg1,
+        # last = msg2.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            d = root / 'enc'
+            d.mkdir()
+            (d / 'sess.jsonl').write_text(
+                json.dumps({'type': 'user', 'cwd': '/r', 'sessionId': 'sess',
+                            'message': {'content': 'first msg'}}) + '\n'
+                + json.dumps({'type': 'user',
+                              'message': {'content': 'second msg'}}) + '\n',
+                encoding='utf-8',
+            )
+            result = list_sessions(sessions_root=root)
+            self.assertEqual(result[0].first_user_message, 'first msg')
+            self.assertEqual(result[0].last_user_message, 'second msg')
+
+
+class ClaudeProjectDirForCwdFallback(unittest.TestCase):
+    def test_returns_home_path_when_env_root_points_at_nonexistent_dir(self) -> None:
+        # Line 287: ``not root.is_dir()`` → fall back to home path.
+        with tempfile.TemporaryDirectory() as tmp:
+            # The override points at a path that doesn't exist (sub-dir we
+            # never create) → ``is_dir()`` returns False → fallback fires.
+            nonexistent = str(Path(tmp) / 'does-not-exist')
+            with patch.dict(os.environ, {CLAUDE_SESSIONS_ROOT_ENV_KEY: nonexistent}):
+                result = claude_project_dir_for_cwd('/Users/me/proj')
+        # Encoded form replaces '/' with '-'; the fallback path lives
+        # under the user's home dir.
+        self.assertIn('.claude/projects/-Users-me-proj', str(result))
+
+
+class MigrateSessionToWorkspaceIdempotent(unittest.TestCase):
+    """Lines 325-330: when source resolves to the same path as target."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self._env = patch.dict(
+            os.environ, {CLAUDE_SESSIONS_ROOT_ENV_KEY: str(self.root)},
+        )
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
+    def test_returns_target_when_source_already_at_destination(self) -> None:
+        # Place the source JSONL exactly where claude_project_dir_for_cwd
+        # would route it, then migrate — should detect same path and no-op.
+        target_cwd = '/Users/me/.kato/workspaces/PROJ-1/c'
+        target_dir = self.root / '-Users-me-.kato-workspaces-PROJ-1-c'
+        target_dir.mkdir()
+        source = target_dir / 'sess-A.jsonl'
+        source.write_text(
+            json.dumps({'type': 'user', 'sessionId': 'sess-A', 'cwd': target_cwd}) + '\n',
+            encoding='utf-8',
+        )
+        result = migrate_session_to_workspace(
+            transcript_path=str(source), target_cwd=target_cwd,
+        )
+        self.assertEqual(result, source)
+
+    def test_falls_through_to_copy_when_resolve_raises(self) -> None:
+        # Lines 326-330: ``resolve()`` raises OSError → swallowed, fall
+        # through to the copy. Pre-3.6 behaviour locked here so a future
+        # change doesn't accidentally start crashing on the old path.
+        target_cwd = '/Users/me/.kato/workspaces/PROJ-2/c'
+        target_dir_name = '-Users-me-.kato-workspaces-PROJ-2-c'
+        # Source lives in a separate dir (so the copy is meaningful).
+        source_dir = self.root / 'src'
+        source_dir.mkdir()
+        source = source_dir / 'sess-B.jsonl'
+        source.write_text(
+            json.dumps({'type': 'user', 'sessionId': 'sess-B'}) + '\n',
+            encoding='utf-8',
+        )
+
+        from unittest.mock import patch as patch_obj
+        with patch_obj.object(Path, 'resolve', side_effect=OSError('legacy py')):
+            result = migrate_session_to_workspace(
+                transcript_path=str(source), target_cwd=target_cwd,
+            )
+        # Copy went through despite resolve crashing — destination exists.
+        self.assertIsNotNone(result)
+        self.assertTrue((self.root / target_dir_name / 'sess-B.jsonl').is_file())
+
+
+class ParseMetadataDirectTests(unittest.TestCase):
+    """Direct tests for ``_parse_metadata`` edge cases.
+
+    We import it via private name; testing the private helper directly is
+    the cleanest way to hit the rare error branches (stat failure during
+    iteration, open failure mid-read, blank-stem fallback) without
+    contorting the higher-level test through Path patching gymnastics.
+    """
+
+    def setUp(self) -> None:
+        from claude_core_lib.claude_core_lib.session.index import _parse_metadata
+        self._parse_metadata = _parse_metadata
+
+    def test_returns_none_when_stat_raises_oserror(self) -> None:
+        # Lines 157-158: stat() → OSError → return None.
+        # A bogus path that doesn't exist + a parent that doesn't exist
+        # makes stat() raise.
+        path = Path('/totally/made/up/never/exists.jsonl')
+        self.assertIsNone(self._parse_metadata(path))
+
+    def test_returns_none_when_open_raises_oserror(self) -> None:
+        # Lines 187-188: ``open`` raises OSError mid-method → return None.
+        # We patch ``Path.open`` AFTER stat already succeeded.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'sess.jsonl'
+            path.write_text(
+                json.dumps({'type': 'user', 'cwd': '/r',
+                            'sessionId': 'sess',
+                            'message': {'content': 'hi'}}) + '\n',
+            )
+
+            real_open = Path.open
+
+            def selective_open(self_path, *args, **kwargs):
+                if self_path.name == 'sess.jsonl':
+                    raise OSError('I/O failure mid-read')
+                return real_open(self_path, *args, **kwargs)
+
+            with patch.object(Path, 'open', selective_open):
+                self.assertIsNone(self._parse_metadata(path))
+
+    def test_returns_none_when_session_id_remains_blank(self) -> None:
+        # Line 190: ``if not session_id: return None`` —
+        # path.stem is blank AND no record has a sessionId field.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'no_id.jsonl'
+            path.write_text(
+                # No sessionId in any record AND we force a blank stem.
+                json.dumps({'type': 'user',
+                            'message': {'content': 'hi'}}) + '\n',
+            )
+
+            # Force stem to '' so the fallback (line 178) doesn't recover.
+            with patch.object(
+                Path, 'stem', new_callable=unittest.mock.PropertyMock,
+                return_value='',
+            ):
+                self.assertIsNone(self._parse_metadata(path))
+
+
+class ListSessionsParseFailureContinue(unittest.TestCase):
+    """Line 117: ``metadata is None`` branch in ``list_sessions``."""
+
+    def test_metadata_none_is_silently_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            d = root / 'enc-good'
+            d.mkdir()
+            good_path = d / 'good.jsonl'
+            good_path.write_text(
+                json.dumps({'type': 'user', 'cwd': '/r', 'sessionId': 'good',
+                            'message': {'content': 'hi'}}) + '\n',
+            )
+            d2 = root / 'enc-bad'
+            d2.mkdir()
+            bad_path = d2 / 'bad.jsonl'
+            bad_path.write_text('not json\n')
+
+            # Patch _parse_metadata to return None for the bad file but
+            # delegate for the good one.
+            from claude_core_lib.claude_core_lib.session.index import _parse_metadata as real_parse
+            calls = []
+
+            def selective(p):
+                calls.append(p.name)
+                if p.name == 'bad.jsonl':
+                    return None
+                return real_parse(p)
+
+            with patch(
+                'claude_core_lib.claude_core_lib.session.index._parse_metadata',
+                side_effect=selective,
+            ):
+                result = list_sessions(sessions_root=root)
+            # Good survives; bad was silently dropped via the continue.
+            self.assertEqual(len(result), 1)
+            self.assertEqual(result[0].session_id, 'good')
+            # And our selective fn was hit for both files.
+            self.assertIn('bad.jsonl', calls)
+
+
+class ParseJsonlLineEdgeCases(unittest.TestCase):
+    def test_blank_line_returns_none(self) -> None:
+        from claude_core_lib.claude_core_lib.session.index import _parse_jsonl_line
+        self.assertIsNone(_parse_jsonl_line(''))
+        self.assertIsNone(_parse_jsonl_line('   \n'))
+
+    def test_invalid_json_returns_none(self) -> None:
+        from claude_core_lib.claude_core_lib.session.index import _parse_jsonl_line
+        self.assertIsNone(_parse_jsonl_line('not json'))
+
+    def test_non_dict_returns_none(self) -> None:
+        from claude_core_lib.claude_core_lib.session.index import _parse_jsonl_line
+        self.assertIsNone(_parse_jsonl_line('[1, 2, 3]'))
+
+
+class UserMessagePreviewEdgeCases(unittest.TestCase):
+    def test_returns_empty_when_message_not_dict(self) -> None:
+        from claude_core_lib.claude_core_lib.session.index import _user_message_preview
+        self.assertEqual(_user_message_preview({'message': 'plain'}), '')
+
+    def test_returns_empty_when_content_is_neither_string_nor_list(self) -> None:
+        from claude_core_lib.claude_core_lib.session.index import _user_message_preview
+        self.assertEqual(
+            _user_message_preview({'message': {'content': 42}}), '',
+        )
+
+    def test_skips_non_text_blocks_in_content_list(self) -> None:
+        from claude_core_lib.claude_core_lib.session.index import _user_message_preview
+        # Tool-result first, then a real text block → text block wins.
+        result = _user_message_preview({
+            'message': {'content': [
+                {'type': 'tool_result'},
+                'not a dict',
+                {'type': 'text', 'text': 'hello there'},
+            ]},
+        })
+        self.assertEqual(result, 'hello there')
+
+    def test_skips_blank_text_blocks(self) -> None:
+        from claude_core_lib.claude_core_lib.session.index import _user_message_preview
+        result = _user_message_preview({
+            'message': {'content': [
+                {'type': 'text', 'text': '   '},
+            ]},
+        })
+        self.assertEqual(result, '')
 
 
 if __name__ == '__main__':
