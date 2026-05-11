@@ -50,6 +50,7 @@ class TicketClientBase(RetryingClientBase):
     )
     AGENT_EXECUTION_BLOCKING_PREFIXES = AGENT_RETRY_BLOCKING_PREFIXES + (
         AGENT_COMPLETION_COMMENT_PREFIX,
+        'Kato agent started working on this task',
     )
     RETRY_OVERRIDE_COMMAND_PREFIXES = (
         'kato: retry approved',

@@ -8,7 +8,7 @@ import SessionDetail from './components/SessionDetail.jsx';
 import StatusBar from './components/StatusBar.jsx';
 import TabList from './components/TabList.jsx';
 import ToastContainer from './components/ToastContainer.jsx';
-import { forgetTaskWorkspace } from './api.js';
+import { forgetTaskWorkspace, triggerScan } from './api.js';
 import { ChatComposerContext } from './contexts/ChatComposerContext.jsx';
 import { useNotifications } from './hooks/useNotifications.js';
 import { useNotificationRouting } from './hooks/useNotificationRouting.js';
@@ -106,6 +106,14 @@ export default function App() {
     }
     refresh();
   }, [activeTaskId, refresh]);
+
+  const [scanPending, setScanPending] = useState(false);
+  const handleScanNow = useCallback(async () => {
+    setScanPending(true);
+    await triggerScan();
+    await refresh();
+    setScanPending(false);
+  }, [refresh]);
 
   const onTaskClickFromNotification = useCallback((taskId) => {
     setActiveTaskId(taskId);
@@ -213,6 +221,8 @@ export default function App() {
           onSelect={setActiveTaskId}
           onForget={handleForgetTask}
           onOpenAddTask={() => setAddTaskModalOpen(true)}
+          onScanNow={handleScanNow}
+          scanPending={scanPending}
         />
       }
       center={

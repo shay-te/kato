@@ -394,6 +394,43 @@ export async function createTaskPullRequest(taskId) {
   }
 }
 
+export function fetchModels() {
+  return fetchJson('/api/models');
+}
+
+export function fetchSessionModel(taskId) {
+  if (!taskId) { return Promise.resolve({ model: '' }); }
+  return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/model`);
+}
+
+export async function setSessionModel(taskId, modelId) {
+  if (!taskId) { return { ok: false, error: 'no task id' }; }
+  try {
+    const response = await fetch(
+      `/api/sessions/${encodeURIComponent(taskId)}/model`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: modelId }),
+      },
+    );
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+export async function triggerScan() {
+  try {
+    const response = await fetch('/api/scan/trigger', { method: 'POST' });
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
 export async function forgetTaskWorkspace(taskId) {
   if (!taskId) { return { ok: false, error: 'no task id' }; }
   try {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import signal
+import threading
 import time
 
 import hydra
@@ -33,6 +34,13 @@ from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (
 
 _STATUS_BROADCASTER = StatusBroadcaster()
 install_status_broadcast_handler(_STATUS_BROADCASTER)
+
+# Shared between the scan loop thread and the Flask webserver thread.
+# _FORCE_SCAN_EVENT: set by POST /api/scan/trigger to wake the idle loop early.
+# _SCAN_IN_PROGRESS: set while the scan job is running so the endpoint can
+# report the current state without doing anything.
+_FORCE_SCAN_EVENT: threading.Event = threading.Event()
+_SCAN_IN_PROGRESS: threading.Event = threading.Event()
 
 
 class _ProcessAssignedTasksJobProxy:
@@ -160,6 +168,7 @@ def main(cfg: DictConfig) -> int:
     app.logger.info('Starting kato agent')
     _recover_orphan_workspaces(app)
     _reconcile_workspace_branches(app)
+    _reset_stuck_workspace_statuses(app)
     _resume_streaming_sessions(app)
     _start_planning_webserver_if_enabled(app)
     _register_shutdown_hook(app)
@@ -169,6 +178,7 @@ def main(cfg: DictConfig) -> int:
         app,
         startup_delay_seconds=startup_delay_seconds,
         scan_interval_seconds=scan_interval_seconds,
+        force_scan_event=_FORCE_SCAN_EVENT,
     )
     return 0
 
@@ -238,6 +248,97 @@ def _reconcile_workspace_branches(app) -> None:
             '(dirty tree or missing branch): %s',
             len(skipped), ', '.join(skipped[:10]),
         )
+
+
+def _reset_stuck_workspace_statuses(app) -> None:
+    """Promote PROVISIONING workspaces that have valid git repos to ACTIVE.
+
+    A kato crash during provisioning leaves the workspace status stuck at
+    PROVISIONING even though all or some repos may already be cloned. When
+    _resume_streaming_sessions runs next, it tries to spawn Claude for every
+    ACTIVE or PROVISIONING workspace. Promoting the ones that have at least
+    one valid .git clone gives them a correct ACTIVE label before the resume
+    scan — Claude then gets the right "resume interrupted task" prompt rather
+    than being spawned inside an empty, half-provisioned workspace.
+
+    Workspaces in ERRORED state are flagged with a visible warning so the
+    operator knows they need attention (re-run the task or discard the
+    workspace). Best-effort: any per-workspace failure is logged and skipped.
+    """
+    workspace_manager = getattr(app, 'workspace_manager', None)
+    if workspace_manager is None:
+        return
+    try:
+        from kato_core_lib.data_layers.service.workspace_manager import (
+            WORKSPACE_STATUS_ACTIVE,
+            WORKSPACE_STATUS_ERRORED,
+            WORKSPACE_STATUS_PROVISIONING,
+        )
+    except ImportError:
+        return
+    try:
+        records = workspace_manager.list_workspaces()
+    except Exception:
+        app.logger.exception('failed to list workspaces during status reset')
+        return
+    promoted = 0
+    for record in records:
+        task_id = str(getattr(record, 'task_id', '') or '')
+        if not task_id:
+            continue
+        status = str(getattr(record, 'status', '') or '')
+        if status == WORKSPACE_STATUS_ERRORED:
+            app.logger.warning(
+                'workspace %s is in errored state from a previous run — '
+                'operator may need to re-run the task or discard the workspace',
+                task_id,
+            )
+            continue
+        if status != WORKSPACE_STATUS_PROVISIONING:
+            continue
+        has_valid_repo = _provisioning_workspace_has_git_repo(
+            workspace_manager, task_id, record,
+        )
+        if has_valid_repo:
+            try:
+                workspace_manager.update_status(task_id, WORKSPACE_STATUS_ACTIVE)
+                app.logger.info(
+                    'workspace %s promoted from provisioning to active '
+                    '(repos were cloned before the previous kato process stopped)',
+                    task_id,
+                )
+                promoted += 1
+            except Exception:
+                app.logger.exception(
+                    'failed to promote workspace %s from provisioning to active',
+                    task_id,
+                )
+        else:
+            app.logger.warning(
+                'workspace %s is stuck in provisioning state with no valid '
+                'git repos — the previous clone was incomplete. '
+                'Re-run the task to provision it correctly.',
+                task_id,
+            )
+    if promoted:
+        app.logger.info(
+            'promoted %d workspace(s) from provisioning to active at boot',
+            promoted,
+        )
+
+
+def _provisioning_workspace_has_git_repo(
+    workspace_manager, task_id: str, record,
+) -> bool:
+    """True when at least one repo clone under the workspace has a ``.git`` dir."""
+    for repo_id in (getattr(record, 'repository_ids', []) or []):
+        try:
+            repo_path = workspace_manager.repository_path(task_id, str(repo_id))
+        except Exception:
+            continue
+        if repo_path.is_dir() and (repo_path / '.git').exists():
+            return True
+    return False
 
 
 _RESUME_CONTINUE_PROMPT = (
@@ -448,6 +549,8 @@ def _start_planning_webserver_if_enabled(app) -> None:
         planning_session_runner=planning_session_runner,
         status_broadcaster=_STATUS_BROADCASTER,
         agent_service=getattr(app, 'service', None),
+        force_scan_event=_FORCE_SCAN_EVENT,
+        scan_in_progress_event=_SCAN_IN_PROGRESS,
     )
 
     # Silence Werkzeug's per-request access log — the planning UI polls
@@ -458,7 +561,7 @@ def _start_planning_webserver_if_enabled(app) -> None:
 
     def _serve() -> None:
         try:
-            flask_app.run(host=host, port=port, debug=False, use_reloader=False)
+            flask_app.run(host=host, port=port, debug=False, use_reloader=False, threaded=True)
         except Exception:
             app.logger.exception('planning webserver crashed')
 
@@ -558,6 +661,7 @@ def _run_task_scan_loop(
     scan_interval_seconds: float,
     sleep_fn=time.sleep,
     max_cycles: int | None = None,
+    force_scan_event: threading.Event | None = None,
 ) -> None:
     job = ProcessAssignedTasksJob()
     job.initialized(app)
@@ -576,6 +680,9 @@ def _run_task_scan_loop(
 
     cycles = 0
     while True:
+        if force_scan_event is not None:
+            force_scan_event.clear()
+        _SCAN_IN_PROGRESS.set()
         app.logger.info('Scanning for new tasks and reviews')
         try:
             job.run()
@@ -585,6 +692,8 @@ def _run_task_scan_loop(
                 'task scan failed; retrying in %s seconds',
                 scan_interval_seconds,
             )
+        finally:
+            _SCAN_IN_PROGRESS.clear()
 
         cycles += 1
         if max_cycles is not None and cycles >= max_cycles:
@@ -594,6 +703,7 @@ def _run_task_scan_loop(
                 scan_interval_seconds,
                 logger=app.logger,
                 sleep_fn=sleep_fn,
+                force_scan_event=force_scan_event,
             )
 
 
@@ -603,6 +713,7 @@ def _idle_with_heartbeat(
     logger,
     sleep_fn=time.sleep,
     heartbeat_seconds: float = 5.0,
+    force_scan_event: threading.Event | None = None,
 ) -> None:
     """Sleep ``interval_seconds`` between scan ticks.
 
@@ -624,6 +735,8 @@ def _idle_with_heartbeat(
     use_spinner = supports_inline_status()
     remaining = total
     while remaining > 0:
+        if force_scan_event is not None and force_scan_event.is_set():
+            break
         chunk = step if remaining >= step else remaining
         countdown = int(round(remaining))
         # Push the heartbeat to the SSE feed only — the broadcaster bypasses
@@ -643,7 +756,12 @@ def _idle_with_heartbeat(
                 sleep_fn=sleep_fn,
             )
         else:
-            sleep_fn(chunk)
+            # Use event.wait so a force-scan request wakes the loop
+            # immediately instead of waiting out the full chunk.
+            if force_scan_event is not None:
+                force_scan_event.wait(timeout=chunk)
+            else:
+                sleep_fn(chunk)
         remaining -= chunk
 
 

@@ -5,6 +5,7 @@ from kato_webserver.app import (
     _follow_live_session,
     _replay_session_backlog,
     _session_has_pending_permission,
+    _task_repository_ids,
     create_app,
 )
 
@@ -679,6 +680,141 @@ class MultiRepoEndpointShapeTests(unittest.TestCase):
         # hole, looking at git state instead of their config).
         self.assertIn("'backend'", backend_diff['error'])
         self.assertIn('destination_branch', backend_diff['error'])
+
+
+class _RepoIdsRecord:
+    def __init__(self, repository_ids=None):
+        self.repository_ids = repository_ids or []
+
+
+class _RepoIdsWorkspaceManager:
+    def __init__(self, record=None, workspace_path=None):
+        self._record = record
+        self._workspace_path = workspace_path
+
+    def get(self, task_id):  # noqa: ARG002
+        return self._record
+
+    def workspace_path(self, task_id):  # noqa: ARG002
+        if self._workspace_path is None:
+            raise ValueError('no workspace path')
+        return self._workspace_path
+
+
+class TaskRepositoryIdsTests(unittest.TestCase):
+    def test_returns_metadata_list_when_no_extra_repos_on_disk(self) -> None:
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = pathlib.Path(tmp) / 'TASK-1'
+            task_dir.mkdir()
+            for repo in ('backend', 'client'):
+                (task_dir / repo / '.git').mkdir(parents=True)
+            manager = _RepoIdsWorkspaceManager(
+                record=_RepoIdsRecord(repository_ids=['backend', 'client']),
+                workspace_path=task_dir,
+            )
+            self.assertEqual(_task_repository_ids(manager, 'TASK-1'), ['backend', 'client'])
+
+    def test_appends_disk_repo_not_in_metadata(self) -> None:
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = pathlib.Path(tmp) / 'TASK-1'
+            task_dir.mkdir()
+            for repo in ('backend', 'client', 'new-repo'):
+                (task_dir / repo / '.git').mkdir(parents=True)
+            manager = _RepoIdsWorkspaceManager(
+                record=_RepoIdsRecord(repository_ids=['backend', 'client']),
+                workspace_path=task_dir,
+            )
+            result = _task_repository_ids(manager, 'TASK-1')
+            self.assertEqual(result[:2], ['backend', 'client'])
+            self.assertIn('new-repo', result)
+
+    def test_falls_back_to_disk_when_metadata_has_no_ids(self) -> None:
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = pathlib.Path(tmp) / 'TASK-1'
+            task_dir.mkdir()
+            (task_dir / 'backend' / '.git').mkdir(parents=True)
+            manager = _RepoIdsWorkspaceManager(
+                record=_RepoIdsRecord(repository_ids=[]),
+                workspace_path=task_dir,
+            )
+            self.assertEqual(_task_repository_ids(manager, 'TASK-1'), ['backend'])
+
+    def test_falls_back_to_disk_when_no_record(self) -> None:
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = pathlib.Path(tmp) / 'TASK-1'
+            task_dir.mkdir()
+            (task_dir / 'backend' / '.git').mkdir(parents=True)
+            manager = _RepoIdsWorkspaceManager(record=None, workspace_path=task_dir)
+            self.assertEqual(_task_repository_ids(manager, 'TASK-1'), ['backend'])
+
+    def test_returns_empty_list_when_manager_is_none(self) -> None:
+        self.assertEqual(_task_repository_ids(None, 'TASK-1'), [])
+
+
+class ModelEndpointTests(unittest.TestCase):
+    def setUp(self):
+        self.app = create_app(session_manager=_FakeManager())
+        self.client = self.app.test_client()
+
+    def test_get_models_returns_list(self):
+        response = self.client.get('/api/models')
+        self.assertEqual(response.status_code, 200)
+        body = response.get_json()
+        self.assertIn('models', body)
+        ids = [m['id'] for m in body['models']]
+        self.assertIn('claude-sonnet-4-6', ids)
+
+    def test_set_and_get_session_model(self):
+        self.client.post('/api/sessions/PROJ-1/model', json={'model': 'claude-opus-4-7'})
+        response = self.client.get('/api/sessions/PROJ-1/model')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()['model'], 'claude-opus-4-7')
+
+    def test_clear_session_model_by_posting_empty(self):
+        self.client.post('/api/sessions/PROJ-1/model', json={'model': 'claude-opus-4-7'})
+        self.client.post('/api/sessions/PROJ-1/model', json={'model': ''})
+        response = self.client.get('/api/sessions/PROJ-1/model')
+        self.assertEqual(response.get_json()['model'], '')
+
+
+class ScanTriggerEndpointTests(unittest.TestCase):
+    def test_trigger_sets_force_event_and_returns_triggered(self):
+        import threading
+        force_event = threading.Event()
+        in_progress = threading.Event()
+        app = create_app(
+            session_manager=_FakeManager(),
+            force_scan_event=force_event,
+            scan_in_progress_event=in_progress,
+        )
+        response = app.test_client().post('/api/scan/trigger')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()['status'], 'triggered')
+        self.assertTrue(force_event.is_set())
+
+    def test_trigger_returns_scanning_when_scan_in_progress(self):
+        import threading
+        force_event = threading.Event()
+        in_progress = threading.Event()
+        in_progress.set()
+        app = create_app(
+            session_manager=_FakeManager(),
+            force_scan_event=force_event,
+            scan_in_progress_event=in_progress,
+        )
+        response = app.test_client().post('/api/scan/trigger')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()['status'], 'scanning')
+        self.assertFalse(force_event.is_set())
+
+    def test_trigger_returns_503_when_no_event_wired(self):
+        app = create_app(session_manager=_FakeManager())
+        response = app.test_client().post('/api/scan/trigger')
+        self.assertEqual(response.status_code, 503)
 
 
 if __name__ == '__main__':

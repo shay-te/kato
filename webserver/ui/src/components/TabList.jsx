@@ -8,6 +8,8 @@ export default function TabList({
   onSelect,
   onForget,
   onOpenAddTask,
+  onScanNow,
+  scanPending,
 }) {
   const tabs = (sessions || []).map((session) => {
     const isActive = session.task_id === activeTaskId;
@@ -38,6 +40,16 @@ export default function TabList({
       >
         <Icon name="plus" />
         <span>Add task</span>
+      </button>
+      <button
+        type="button"
+        id="tabs-scan-now"
+        data-tooltip={scanPending ? 'Scanning…' : 'Scan now — skip the idle wait and check for new tasks and review comments immediately.'}
+        aria-label="Scan now"
+        onClick={onScanNow}
+        disabled={scanPending || !onScanNow}
+      >
+        <Icon name={scanPending ? 'spinner' : 'refresh'} spin={scanPending} />
       </button>
     </header>
   );
