@@ -15,5 +15,3 @@ Public surface:
 """
 
 from openhands_core_lib.openhands_core_lib.openhands_client import OpenHandsClient  # noqa: F401
-
-KatoClient = OpenHandsClient  # backward-compatibility alias

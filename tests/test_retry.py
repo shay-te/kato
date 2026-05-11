@@ -72,7 +72,7 @@ class RetryTests(unittest.TestCase):
             result = run_with_retry(
                 operation,
                 2,
-                operation_name='KatoClient GET http://openhands:3000/api/v1/app-conversations/count',
+                operation_name='OpenHandsClient GET http://openhands:3000/api/v1/app-conversations/count',
             )
 
         self.assertEqual(result, 'ok')

@@ -134,11 +134,6 @@ def _operation_details(operation_name: str) -> tuple[str, str, str]:
 
 def _service_name_from_client_name(client_name: str) -> str:
     normalized_name = str(client_name or '').strip()
-    aliases = {
-        'KatoClient': 'OpenHands',
-    }
-    if normalized_name in aliases:
-        return aliases[normalized_name]
     if normalized_name.endswith('Client'):
         normalized_name = normalized_name[:-6]
     return normalized_name or 'Request'

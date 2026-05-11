@@ -79,7 +79,7 @@ class KatoCoreLibTests(unittest.TestCase):
             'kato_core_lib.kato_core_lib.TaskCoreLib',
         return_value=ticket_client,
         ), patch(
-            'openhands_core_lib.openhands_core_lib.openhands_client.KatoClient',
+            'openhands_core_lib.openhands_core_lib.openhands_client.OpenHandsClient',
             side_effect=[implementation_client, testing_client],
         ) as mock_kato_client_cls, patch(
             'kato_core_lib.kato_core_lib.RepositoryService',
@@ -112,7 +112,7 @@ class KatoCoreLibTests(unittest.TestCase):
         ) as mock_email_core_lib_cls, patch(
             'kato_core_lib.kato_core_lib.TaskCoreLib'
         ) as mock_TaskCoreLib, patch(
-            'openhands_core_lib.openhands_core_lib.openhands_client.KatoClient',
+            'openhands_core_lib.openhands_core_lib.openhands_client.OpenHandsClient',
             side_effect=[implementation_client, testing_client],
         ) as mock_kato_client_cls, patch(
             'kato_core_lib.kato_core_lib.TaskDataAccess'
@@ -275,7 +275,7 @@ class KatoCoreLibTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.kato_core_lib.TaskCoreLib'
         ), patch(
-            'openhands_core_lib.openhands_core_lib.openhands_client.KatoClient'
+            'openhands_core_lib.openhands_core_lib.openhands_client.OpenHandsClient'
         ), patch(
             'kato_core_lib.kato_core_lib.RepositoryService'
         ), patch(
@@ -317,7 +317,7 @@ class KatoCoreLibTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.kato_core_lib.TaskCoreLib'
         ), patch(
-            'openhands_core_lib.openhands_core_lib.openhands_client.KatoClient'
+            'openhands_core_lib.openhands_core_lib.openhands_client.OpenHandsClient'
         ) as mock_kato_client_cls, patch(
             'kato_core_lib.kato_core_lib.RepositoryService'
         ), patch(
@@ -461,7 +461,7 @@ class KatoCoreLibTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.kato_core_lib.TaskCoreLib'
         ), patch(
-            'openhands_core_lib.openhands_core_lib.openhands_client.KatoClient'
+            'openhands_core_lib.openhands_core_lib.openhands_client.OpenHandsClient'
         ), patch(
             'kato_core_lib.kato_core_lib.RepositoryService'
         ), patch(
@@ -492,7 +492,7 @@ class KatoCoreLibTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.kato_core_lib.TaskCoreLib'
         ), patch(
-            'openhands_core_lib.openhands_core_lib.openhands_client.KatoClient'
+            'openhands_core_lib.openhands_core_lib.openhands_client.OpenHandsClient'
         ), patch(
             'kato_core_lib.kato_core_lib.RepositoryService'
         ), patch(
@@ -525,7 +525,7 @@ class KatoCoreLibTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.kato_core_lib.TaskCoreLib'
         ) as mock_TaskCoreLib, patch(
-            'openhands_core_lib.openhands_core_lib.openhands_client.KatoClient'
+            'openhands_core_lib.openhands_core_lib.openhands_client.OpenHandsClient'
         ), patch(
             'kato_core_lib.kato_core_lib.RepositoryService'
         ), patch(
@@ -570,7 +570,7 @@ class KatoCoreLibTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.kato_core_lib.TaskCoreLib'
         ), patch(
-            'openhands_core_lib.openhands_core_lib.openhands_client.KatoClient'
+            'openhands_core_lib.openhands_core_lib.openhands_client.OpenHandsClient'
         ) as mock_kato_client_cls, patch(
             'claude_core_lib.claude_core_lib.cli_client.ClaudeCliClient'
         ) as mock_claude_client_cls, patch(
@@ -620,7 +620,7 @@ class KatoCoreLibTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.kato_core_lib.TaskCoreLib'
         ), patch(
-            'openhands_core_lib.openhands_core_lib.openhands_client.KatoClient'
+            'openhands_core_lib.openhands_core_lib.openhands_client.OpenHandsClient'
         ), patch(
             'claude_core_lib.claude_core_lib.cli_client.ClaudeCliClient'
         ) as mock_claude_client_cls, patch(
@@ -672,7 +672,7 @@ class KatoCoreLibTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.kato_core_lib.TaskCoreLib'
         ), patch(
-            'openhands_core_lib.openhands_core_lib.openhands_client.KatoClient'
+            'openhands_core_lib.openhands_core_lib.openhands_client.OpenHandsClient'
         ), patch(
             'claude_core_lib.claude_core_lib.cli_client.ClaudeCliClient'
         ) as mock_claude_client_cls, patch(
@@ -791,7 +791,7 @@ class KatoCoreLibTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.kato_core_lib.TaskCoreLib'
         ), patch(
-            'openhands_core_lib.openhands_core_lib.openhands_client.KatoClient'
+            'openhands_core_lib.openhands_core_lib.openhands_client.OpenHandsClient'
         ), patch(
             'kato_core_lib.kato_core_lib.RepositoryService'
         ):
@@ -807,7 +807,7 @@ class KatoCoreLibTests(unittest.TestCase):
         ) as mock_email_core_lib_cls, patch(
             'kato_core_lib.kato_core_lib.TaskCoreLib'
         ), patch(
-            'openhands_core_lib.openhands_core_lib.openhands_client.KatoClient'
+            'openhands_core_lib.openhands_core_lib.openhands_client.OpenHandsClient'
         ), patch(
             'kato_core_lib.kato_core_lib.RepositoryService'
         ), patch(

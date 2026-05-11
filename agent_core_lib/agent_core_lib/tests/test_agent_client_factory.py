@@ -410,7 +410,7 @@ class BuildOpenHandsTests(unittest.TestCase):
         if llm_settings is None:
             llm_settings = {'model': 'gpt-4o', 'api_key': 'k'}
         with patch(
-            'openhands_core_lib.openhands_core_lib.openhands_client.KatoClient',
+            'openhands_core_lib.openhands_core_lib.openhands_client.OpenHandsClient',
             return_value=mock_client,
         ) as MockClient, patch(
             'openhands_core_lib.openhands_core_lib.config_utils.resolved_openhands_base_url',
@@ -606,7 +606,7 @@ class FlowTests(unittest.TestCase):
         cfg = _make_open_cfg_for_openhands()
         mock_client = _make_compliant_backend()
         with patch(
-            'openhands_core_lib.openhands_core_lib.openhands_client.KatoClient',
+            'openhands_core_lib.openhands_core_lib.openhands_client.OpenHandsClient',
             return_value=mock_client,
         ), patch(
             'openhands_core_lib.openhands_core_lib.config_utils.resolved_openhands_base_url',

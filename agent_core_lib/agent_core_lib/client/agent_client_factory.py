@@ -118,14 +118,14 @@ class AgentClientFactory(object):
 
     def _build_openhands(self, open_cfg: Any) -> AgentProvider:
         # Imported lazily — see _build_claude for the rationale.
-        from openhands_core_lib.openhands_core_lib.openhands_client import KatoClient
+        from openhands_core_lib.openhands_core_lib.openhands_client import OpenHandsClient
         from openhands_core_lib.openhands_core_lib.config_utils import (
             resolved_openhands_base_url,
             resolved_openhands_llm_settings,
         )
 
         openhands_cfg = open_cfg.openhands
-        return KatoClient(
+        return OpenHandsClient(
             resolved_openhands_base_url(openhands_cfg, testing=self._testing),
             openhands_cfg.api_key,
             self._max_retries,
