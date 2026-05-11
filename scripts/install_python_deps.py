@@ -46,6 +46,7 @@ def main(argv: list[str]) -> int:
             'omegaconf>=2.3.0',
         ],
     )
+    webserver_path = REPO_ROOT / 'webserver'
     if install_mode == 'editable':
         run_step(
             'pip install -e . (editable)',
@@ -54,12 +55,26 @@ def main(argv: list[str]) -> int:
                 '--no-cache-dir', '--no-deps', '-e', str(REPO_ROOT),
             ],
         )
+        run_step(
+            'pip install -e webserver (editable)',
+            [
+                python_bin, '-m', 'pip', 'install',
+                '--no-cache-dir', '-e', str(webserver_path),
+            ],
+        )
     else:
         run_step(
             'pip install . (standard)',
             [
                 python_bin, '-m', 'pip', 'install',
                 '--no-cache-dir', '--no-deps', str(REPO_ROOT),
+            ],
+        )
+        run_step(
+            'pip install webserver (standard)',
+            [
+                python_bin, '-m', 'pip', 'install',
+                '--no-cache-dir', str(webserver_path),
             ],
         )
     return 0
