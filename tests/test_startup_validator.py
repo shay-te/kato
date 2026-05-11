@@ -2,15 +2,18 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from kato.validation.startup_dependency_validator import (
+from kato_core_lib.validation.startup_dependency_validator import (
     StartupDependencyValidator,
 )
 
 
 class StartupDependencyValidatorTests(unittest.TestCase):
     def setUp(self) -> None:
+        # Label-formatting reads the *materialised* inventory at
+        # ``_repositories`` to avoid forcing a lazy disk walk just to
+        # enumerate names. Mirror that here.
         repository_service = SimpleNamespace(
-            repositories=[
+            _repositories=[
                 SimpleNamespace(id='client'),
                 SimpleNamespace(id='backend'),
             ]
@@ -114,19 +117,15 @@ class StartupDependencyValidatorTests(unittest.TestCase):
     def test_validate_raises_when_repository_validation_fails(self) -> None:
         self.repository_connections_validator.validate.side_effect = RuntimeError('repo down')
 
-        with self.assertRaisesRegex(RuntimeError, 'repo down') as exc_context:
+        with self.assertRaisesRegex(RuntimeError, 'repo down'):
             self.validator.validate(self.logger)
 
         self.repository_connections_validator.validate.assert_called_once_with()
-        self.task_service.validate_connection.assert_not_called()
-        self.implementation_service.validate_connection.assert_not_called()
-        self.testing_service.validate_connection.assert_not_called()
-        self.logger.error.assert_called_once()
-        self.assertEqual(self.logger.error.call_args.args[0], 'failed to validate repositories connection: %s')
-        self.assertIsInstance(self.logger.error.call_args.args[1], RuntimeError)
-        self.assertEqual(str(self.logger.error.call_args.args[1]), 'repo down')
-        self.assertIsInstance(exc_context.exception.__cause__, RuntimeError)
-        self.assertEqual(str(exc_context.exception.__cause__), 'repo down')
+        # All validations run in parallel — task/impl/testing still execute even
+        # when repos fail.  Repo errors are surfaced first in the raised message.
+        self.task_service.validate_connection.assert_called_once_with()
+        self.implementation_service.validate_connection.assert_called_once_with()
+        self.testing_service.validate_connection.assert_called_once_with()
 
     def test_validate_logs_progress_without_inline_spinner(self) -> None:
         self.validator.validate(self.logger)
@@ -143,3 +142,52 @@ class StartupDependencyValidatorTests(unittest.TestCase):
                 unittest.mock.call('%s', 'Validating connection (4/4): openhands_testing'),
             ],
         )
+
+    def test_validate_uses_agent_backend_label_for_implementation_steps(self) -> None:
+        validator = StartupDependencyValidator(
+            self.repository_connections_validator,
+            self.task_service,
+            self.implementation_service,
+            self.testing_service,
+            skip_testing=False,
+            agent_backend='claude',
+        )
+
+        validator.validate(self.logger)
+
+        self.assertEqual(
+            self.logger.info.call_args_list,
+            [
+                unittest.mock.call(
+                    '%s',
+                    'Validating connection (1/4): repositories (client, backend)',
+                ),
+                unittest.mock.call('%s', 'Validating connection (2/4): youtrack'),
+                unittest.mock.call('%s', 'Validating connection (3/4): claude'),
+                unittest.mock.call('%s', 'Validating connection (4/4): claude_testing'),
+            ],
+        )
+
+    def test_validate_surfaces_claude_binary_missing_with_backend_label(self) -> None:
+        validator = StartupDependencyValidator(
+            self.repository_connections_validator,
+            self.task_service,
+            self.implementation_service,
+            self.testing_service,
+            skip_testing=True,
+            agent_backend='claude',
+        )
+        self.implementation_service.validate_connection = Mock(
+            side_effect=RuntimeError(
+                'Claude CLI binary "claude" was not found on PATH. '
+                'Install Claude Code from https://docs.claude.com/en/docs/claude-code/setup'
+            )
+        )
+
+        with self.assertRaisesRegex(RuntimeError, 'startup dependency validation failed') as exc_context:
+            validator.validate(self.logger)
+
+        message = str(exc_context.exception)
+        self.assertIn('- unable to validate claude:', message)
+        self.assertIn('Claude CLI binary "claude" was not found on PATH', message)
+        self.assertIn('[claude]', message)

@@ -2,16 +2,16 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from kato.validation.branch_publishability import (
+from kato_core_lib.validation.branch_publishability import (
     TaskBranchPublishabilityValidator,
 )
-from kato.validation.branch_push import (
+from kato_core_lib.validation.branch_push import (
     TaskBranchPushValidator,
 )
-from kato.validation.model_access import (
+from kato_core_lib.validation.model_access import (
     TaskModelAccessValidator,
 )
-from utils import build_task
+from tests.utils import build_task
 
 
 class TaskValidatorTests(unittest.TestCase):

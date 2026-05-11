@@ -11,13 +11,14 @@ do not do any git commit or push. let me inspect the changes
 - Keep components free of heavy logic; move overlapping, reusable, or similar behavior into helpers or shared services instead of scattering it inside a component.
 - Keep external API calls inside clients and data-access layers.
 - When `AgentService` starts accumulating a second coherent workflow cluster, split it into a dedicated service and inject that service through the constructor instead of adding more private helper methods there. Preflight/startup logic such as model-access checks, blocking-comment retries, repository resolution, branch preparation, and push validation should live in a dedicated service rather than in `AgentService`.
-- If a service starts collecting a grab-bag of pure helpers, formatting functions, or repeated logging wrappers, move them into `kato/helpers/*_utils.py` or split them into a smaller service instead of keeping one oversized file.
+- **`kato_core_lib/kato_core_lib.py` is composition-only.** Its job is to build the dependency graph (instantiate clients, services, validators) and inject them into `AgentService`. Do not add helper functions, prompt templates, config-key parsing, factory builders, or any other domain logic there. If a feature needs a small builder or parser, put it next to the feature: a classmethod on the owning service, a module-level helper in the service's file, or a `kato_core_lib/helpers/*_utils.py` module. The only content `kato_core_lib.py` should grow when you add a feature is more constructor calls and more keyword arguments.
+- If a service starts collecting a grab-bag of pure helpers, formatting functions, or repeated logging wrappers, move them into `kato_core_lib/helpers/*_utils.py` or split them into a smaller service instead of keeping one oversized file.
 - Do not add pass-through helper methods on `KatoCoreLib` when the service can be used directly.
-- Prefer constants from `kato/data_layers/data/fields.py` over free-text field names.
+- Prefer constants from `kato_core_lib/data_layers/data/fields.py` over free-text field names.
 - Reuse existing utilities before introducing duplicate helper logic.
 - Do not create compatibility shim modules, barrel exports, or `__all__` re-export files; import from the real module directly.
-- Put shared utility modules under `kato/helpers/` instead of scattering them across service or root packages, and name them with the `_utils.py` suffix.
-- Put validation rules under `kato/validation/` instead of `data_layers/service/validation/`.
+- Put shared utility modules under `kato_core_lib/helpers/` instead of scattering them across service or root packages, and name them with the `_utils.py` suffix.
+- Put validation rules under `kato_core_lib/validation/` instead of `data_layers/service/validation/`.
 - Give each service class a short responsibility comment or docstring. If the description clearly contains more than one job, split that class into smaller collaborators instead of letting it grow.
 
 ## Required Behavior
@@ -41,6 +42,8 @@ do not do any git commit or push. let me inspect the changes
 - Run the relevant tests before opening a pull request.
 - If tests fail, fix the code or the tests and rerun them until they pass.
 - Add edge-case coverage for malformed payloads, retries, timeouts, and degraded downstream behavior when relevant.
+- **Trust the gut.** If anything in the change feels even slightly under-tested — a new branch, a new exception, a new fallback, an interaction between two existing layers — write the test before moving on. Don't talk yourself out of it because "the happy path is covered" or "it would be over-testing." If you're considering whether a case needs coverage, the answer is yes; add the test.
+- When fixing a real bug surfaced by the user, the regression test is a *requirement*, not optional. Each bug fix should ship with a test that fails on the old code and passes on the new.
 - In tests, prefer existing entities and shared test helpers over ad hoc objects.
 - Do not add test bootstrap shims or fake package injectors to work around missing required dependencies.
 - Tests in this repository must run against the real installed packages and should fail fast if those packages are missing.
@@ -107,6 +110,11 @@ The goal is to keep the code:
 - For example, a `StartupDependencyValidator` class should live in `startup_dependency_validator.py`, not a differently named utility file.
 - Keep the branding image at the project root as `kato.png`.
 
+### Class Declarations
+
+- Always declare a base class explicitly. When a class doesn't extend anything else, write `class Foo(object):` instead of the bare `class Foo:`. This applies to data containers, namespaces, and ordinary services alike.
+- The two are functionally identical in Python 3, but the explicit form makes it obvious at a glance that this is a new-style root class and matches the rest of the codebase. Files like `kato_core_lib/data_layers/data/fields.py` and the streaming-session classes follow this pattern; new code should match.
+
 ### Avoid Duplication
 
 - If logic or values appear more than once, extract them.
@@ -117,3 +125,114 @@ The goal is to keep the code:
 - When service-layer orchestration repeats the same control-flow, error handling, or logging pattern, extract a small private helper in that service before introducing a broader shared abstraction.
 - When a service file starts carrying two different responsibilities, split the responsibilities into dedicated service/helper classes and keep the remaining class focused on one job.
 - When deduplicating code, preserve the existing behavior, task-state transitions, log messages, and test-visible outputs unless the task explicitly requires changing them.
+
+### Comments
+
+- Comments must be short — **max 2 lines, simple, only when the *why* is non-obvious**. No paragraph explanations, no rationale dumps, no "why this approach vs that approach" essays. If you find yourself writing more than two lines, the explanation belongs in a PR description or a design doc, not the code.
+- Do not reformat files. Pull-request diffs should show only the changes that were made — no whitespace churn, no import reorders unrelated to the change, no quote-style flips.
+
+---
+
+## React UI rules (`webserver/ui/`)
+
+The planning UI under [`webserver/ui/`](webserver/ui/) is a small Vite + React app. The rules below apply only to JS/JSX files there; they don't apply to Python.
+
+### No logic inside JSX
+
+**The JSX returned from a component renders variables and components — nothing else.** All logic, including conditions, loops, and derived values, is computed before the `return` statement and assigned to a variable.
+
+#### Anti-patterns to avoid
+
+```jsx
+// ❌ Inline logic / conditions / mapping inside JSX
+{props.items && props.items.length > 0 && <List items={props.items} />}
+{condition && renderMobileOnly()}
+{otherCondition ? <ComponentA /> : <ComponentB />}
+{options.map((item) => <Row {...item} />)}
+```
+
+```jsx
+// ❌ Creating JSX unconditionally then hiding it
+const content = <ExpensiveLabeledInputWrap>...</ExpensiveLabeledInputWrap>;
+return <div>{condition ? content : null}</div>;
+```
+
+#### Good patterns
+
+```jsx
+// ✓ Extract condition + render call to a variable, BEFORE return
+const mobileOnly = props.is_mobile_app_available && renderMobileOnly();
+return (
+  <div>
+    {mobileOnly}
+  </div>
+);
+```
+
+```jsx
+// ✓ Compute derived values before return
+const isEmpty = items.length === 0;
+const content = isEmpty ? <Empty /> : <List items={items} />;
+return <div>{content}</div>;
+```
+
+```jsx
+// ✓ For mapped lists, build the array before return
+const rows = items.map((item) => <Row key={item.id} {...item} />);
+return <ul>{rows}</ul>;
+```
+
+The `&&` and `?:` operators inside JSX *are* logic. Extract them.
+
+### Component logic extraction
+
+- **Components contain rendering only.** Any computation that isn't rendering — data transformations, filtering / grouping, set/map building, index translation, validation, domain rules, derived selectors — lives in a helper file, not in the component.
+- **Rule of thumb:** if a block of code could be unit-tested without mounting React, it does not belong in the component. Move it to the nearest domain-appropriate helper (e.g. `<Feature>Helpers.js` next to the component file) and import it.
+- **Where helpers live:** next to the feature, not in a top-level catch-all utilities module.
+- **What stays in the component:** state (`useState`, `useReducer`), refs, effect wiring, call sites for helpers, prop plumbing, and JSX. Nothing else.
+- **What specifically moves out:** `new Set()`/`new Map()` builders, `.forEach`/`.filter`/`.reduce` over props or derived data, boolean derivations beyond a single `&&`/ternary, loops that produce strings or objects for downstream use.
+
+### Single Responsibility Principle for components
+
+**One component does one thing.** A component renders one feature; it does not also contain three sibling features wedged into the same file.
+
+Concrete checks before adding code to an existing component:
+
+- **Does the new code share state with what's already there?** If no — it belongs in its own component, not bolted onto this one.
+- **Could a future reader summarise the component in one sentence after the change?** If "renders the chat header AND formats four kinds of toasts AND owns the adopt-session modal AND…" — the component is doing too much; split.
+- **Are the new computations testable on their own?** If yes, extract them to a sibling helper (see "Component logic extraction" above) so the component stays small and the logic gets covered by node-only tests.
+- **Is the file growing past ~200 lines of JSX + handlers?** That is a signal — not a hard rule, but worth pausing — to check whether the component has accumulated multiple responsibilities.
+
+When in doubt, prefer two small components over one branching component. The render path of each stays cheap; the diff of each future change stays small.
+
+### Arrow functions
+
+Always use curly braces `{}` and an explicit `return` in arrow functions. Never use the implicit-return (expression body) form.
+
+```jsx
+// ❌ Bad
+const lerp = (a, b, t) => a + (b - a) * t;
+const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+
+// ✓ Good
+const lerp = (a, b, t) => {
+  return a + (b - a) * t;
+};
+const clamp = (value, min, max) => {
+  return Math.min(Math.max(value, min), max);
+};
+```
+
+The exception is one-line callbacks passed inline (`items.map((x) => x.id)`); the rule targets *named* arrow functions you'd otherwise debug or step through.
+
+### Styling
+
+- Plain CSS lives in [`webserver/static/css/app.css`](webserver/static/css/app.css). Don't introduce SCSS, CSS-in-JS, or styled-components without an explicit ask — pick the existing convention.
+- Keep class names short and component-scoped (`status-bar`, `tab-forget-btn`, `files-tab-repo-header`). Don't introduce BEM (`__` / `--` separators).
+- For colors and sizes that repeat across the file, define a CSS custom property (`--color-bg-elevated`, `--space-2`) instead of repeating the hex / px value. Don't hardcode the same color in five places.
+
+### Tool preferences
+
+- For file searches and grep work, prefer `rg` (ripgrep) over `find` + `grep`. Always scope: `rg "pattern" webserver/ui/src --type js -l`.
+- For single-line edits / deletions, `sed -i` is fine. Don't read an entire file just to find one key — search first.
+- Don't run `git diff`, `git status`, or any git command unless the task explicitly involves git.

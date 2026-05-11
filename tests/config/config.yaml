@@ -52,17 +52,36 @@ kato:
     issue_states:
       - To Do
       - Open
+  github_core_lib:
+    core_lib:
+      github_core_lib:
+        base_url: https://api.github.com
+        token: test-github-issues-token
+        owner: test-owner
+        repo: test-repo
+        max_retries: 5
+  bitbucket_core_lib:
+    core_lib:
+      bitbucket_core_lib:
+        base_url: https://api.bitbucket.org/2.0
+        token: test-bitbucket-token
+        username: test-bitbucket-user
+        api_email: test-bitbucket-api-email@example.com
+        workspace: test-workspace
+        repo_slug: test-repo
+        max_retries: 5
   github_issues:
+    project: test-repo
     base_url: https://api.github.com
     token: test-github-issues-token
     owner: test-owner
     repo: test-repo
-    project: test-repo
     assignee: octocat
     review_state_field: labels
     review_state: In Review
     issue_states:
       - open
+    max_retries: 5
   gitlab_issues:
     base_url: http://localhost:8083/api/v4
     token: test-gitlab-issues-token
@@ -73,19 +92,20 @@ kato:
     issue_states:
       - opened
   bitbucket_issues:
-    base_url: https://api.bitbucket.org/2.0
-    token: test-bitbucket-issues-token
-    username: ""
-    api_email: test-bitbucket-api-email@example.com
-    workspace: test-workspace
-    repo_slug: test-repo
-    project: test-repo
+    base_url: ${core_lib.bitbucket_core_lib.base_url}
+    token: ${core_lib.bitbucket_core_lib.token}
+    username: ${core_lib.bitbucket_core_lib.username}
+    api_email: ${core_lib.bitbucket_core_lib.api_email}
+    workspace: ${core_lib.bitbucket_core_lib.workspace}
+    repo_slug: ${core_lib.bitbucket_core_lib.repo_slug}
+    project: ${core_lib.bitbucket_core_lib.repo_slug}
     assignee: reviewer
     review_state_field: state
     review_state: resolved
     issue_states:
       - new
       - open
+    max_retries: 5
   repositories:
     - id: client
       display_name: Client

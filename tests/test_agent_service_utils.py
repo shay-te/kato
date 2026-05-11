@@ -1,14 +1,14 @@
 import types
 import unittest
 
-from kato.helpers.pull_request_utils import (
+from kato_core_lib.helpers.pull_request_utils import (
     pull_request_description,
     pull_request_repositories_text,
     pull_request_summary_comment,
     pull_request_title,
 )
-from kato.helpers.mission_logging_utils import log_mission_step
-from kato.helpers.review_comment_utils import (
+from kato_core_lib.helpers.mission_logging_utils import log_mission_step
+from kato_core_lib.helpers.review_comment_utils import (
     is_kato_review_comment_reply,
     review_fix_context_from_mapping,
     review_fix_result,
@@ -16,7 +16,7 @@ from kato.helpers.review_comment_utils import (
     review_comment_processing_keys,
     review_comment_resolution_key,
 )
-from kato.helpers.task_execution_utils import (
+from kato_core_lib.helpers.task_execution_utils import (
     apply_testing_message,
     implementation_succeeded,
     skip_task_result,
@@ -24,7 +24,7 @@ from kato.helpers.task_execution_utils import (
     testing_failed_result,
     testing_succeeded,
 )
-from kato.helpers.task_context_utils import (
+from kato_core_lib.helpers.task_context_utils import (
     repository_branch_text,
     repository_destination_text,
     repository_ids_text,
@@ -32,15 +32,15 @@ from kato.helpers.task_context_utils import (
     task_has_actionable_definition,
     task_started_comment,
 )
-from kato.data_layers.data.fields import (
+from kato_core_lib.data_layers.data.fields import (
     ImplementationFields,
     PullRequestFields,
     ReviewCommentFields,
     StatusFields,
     TaskFields,
 )
-from kato.data_layers.data.task import Task
-from utils import build_review_comment, build_task
+from kato_core_lib.data_layers.data.task import Task
+from tests.utils import build_review_comment, build_task
 
 
 class AgentServiceUtilsTests(unittest.TestCase):
@@ -207,7 +207,12 @@ class AgentServiceUtilsTests(unittest.TestCase):
         self.assertNotIn('Validation report:', summary)
         self.assertIn('Published review links:', summary)
         self.assertIn('- client: https://example.com/pr/17', summary)
-        self.assertIn('Failed repositories: backend', summary)
+        # Multi-line failure section: header on its own line, repos as
+        # bullet entries below. Per-repo error reasons are appended
+        # after a colon when callers pass dicts/tuples, but a plain id
+        # list (legacy) renders as a bare bullet.
+        self.assertIn('Failed repositories:', summary)
+        self.assertIn('- backend', summary)
 
     def test_pull_request_summary_comment_includes_validation_report_when_present(self) -> None:
         task = build_task(task_id='PROJ-1', summary='Fix bug')

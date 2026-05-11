@@ -1,0 +1,62 @@
+from core_lib.client.client_base import ClientBase
+
+from provider_client_base.provider_client_base.helpers.logging_utils import configure_logger
+from provider_client_base.provider_client_base.helpers.retry_utils import run_with_retry
+
+
+class RetryingClientBase(ClientBase):
+    def __init__(
+        self,
+        base_url: str,
+        token: str,
+        timeout: int,
+        max_retries: int = 3,
+    ) -> None:
+        super().__init__(base_url.rstrip('/'))
+        self.logger = configure_logger(self.__class__.__name__)
+        self.set_headers({'Authorization': f'Bearer {token}'})
+        self.set_timeout(timeout)
+        self.max_retries = max(1, max_retries)
+
+    def _get_with_retry(self, path: str, **kwargs):
+        return run_with_retry(
+            lambda: self._get(path, **kwargs),
+            self.max_retries,
+            operation_name=self._retry_operation_name('GET', path),
+        )
+
+    def _post_with_retry(self, path: str, **kwargs):
+        return run_with_retry(
+            lambda: self._post(path, **kwargs),
+            self.max_retries,
+            operation_name=self._retry_operation_name('POST', path),
+        )
+
+    def _put_with_retry(self, path: str, **kwargs):
+        return run_with_retry(
+            lambda: self._put(path, **kwargs),
+            self.max_retries,
+            operation_name=self._retry_operation_name('PUT', path),
+        )
+
+    def _patch(self, path: str, **kwargs):
+        url = f'{self.base_url.rstrip("/")}/{path.lstrip("/")}'
+        return self.session.patch(url, **self.process_kwargs(**kwargs))
+
+    def _patch_with_retry(self, path: str, **kwargs):
+        return run_with_retry(
+            lambda: self._patch(path, **kwargs),
+            self.max_retries,
+            operation_name=self._retry_operation_name('PATCH', path),
+        )
+
+    def _delete_with_retry(self, path: str, **kwargs):
+        return run_with_retry(
+            lambda: self._delete(path, **kwargs),
+            self.max_retries,
+            operation_name=self._retry_operation_name('DELETE', path),
+        )
+
+    def _retry_operation_name(self, method: str, path: str) -> str:
+        url = f'{self.base_url.rstrip("/")}/{path.lstrip("/")}'
+        return f'{self.__class__.__name__} {method} {url}'

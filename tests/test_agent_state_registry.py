@@ -1,7 +1,7 @@
 import unittest
 
-from kato.data_layers.data.fields import PullRequestFields, ReviewCommentFields, StatusFields
-from kato.data_layers.service.agent_state_registry import AgentStateRegistry
+from kato_core_lib.data_layers.data.fields import PullRequestFields, ReviewCommentFields, StatusFields
+from kato_core_lib.data_layers.service.agent_state_registry import AgentStateRegistry
 
 
 class AgentStateRegistryTests(unittest.TestCase):

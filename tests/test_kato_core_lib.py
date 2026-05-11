@@ -1,9 +1,10 @@
 import unittest
 from unittest.mock import ANY, Mock, patch
 
-from kato.kato_core_lib import KatoCoreLib
-from kato.data_layers.data.fields import PullRequestFields, StatusFields
-from utils import build_task, build_test_cfg
+from kato_core_lib.kato_core_lib import KatoCoreLib
+from kato_core_lib.data_layers.data.fields import PullRequestFields, StatusFields
+from task_core_lib.task_core_lib.platform import Platform
+from tests.utils import build_task, build_test_cfg
 
 
 class KatoCoreLibTests(unittest.TestCase):
@@ -23,6 +24,7 @@ class KatoCoreLibTests(unittest.TestCase):
         ticket_client.provider_name = 'youtrack'
         ticket_client.max_retries = cfg.kato.retry.max_retries
         ticket_client.get_assigned_tasks.return_value = [task]
+        ticket_client.issue = ticket_client
 
         implementation_client = Mock(name='implementation_kato_client')
         implementation_client.max_retries = cfg.kato.retry.max_retries
@@ -42,6 +44,10 @@ class KatoCoreLibTests(unittest.TestCase):
 
         repository = cfg.kato.repositories[0]
         repository_service = Mock()
+        # validate_connections is now lazy: if ``_repositories`` is None
+        # the connection validator skips per-repo iteration. Mock() would
+        # otherwise auto-create a non-iterable Mock for this attribute.
+        repository_service._repositories = None
         repository_service.repositories = [repository]
         repository_service.resolve_task_repositories.return_value = [repository]
         repository_service.prepare_task_repositories.side_effect = lambda repositories: repositories
@@ -58,17 +64,30 @@ class KatoCoreLibTests(unittest.TestCase):
             PullRequestFields.DESTINATION_BRANCH: 'main',
         }
 
+        # The Restricted Execution Protocol gate would refuse the
+        # synthetic test repos because they're not on any approval
+        # sidecar. These tests cover workflow routing, not REP, so
+        # patch the service to a stub that pretends every repo is
+        # already approved.
+        approval_service_stub = Mock()
+        approval_service_stub.unapproved_repository_ids.return_value = []
+        approval_service_stub.restricted_mode_repository_ids.return_value = []
+
         with patch(
-            'kato.kato_core_lib.EmailCoreLib'
+            'kato_core_lib.kato_core_lib.EmailCoreLib'
         ) as mock_email_core_lib_cls, patch(
-            'kato.kato_core_lib.build_ticket_client',
+            'kato_core_lib.kato_core_lib.TaskCoreLib',
         return_value=ticket_client,
         ), patch(
-            'kato.kato_core_lib.KatoClient',
+            'openhands_core_lib.openhands_core_lib.openhands_client.KatoClient',
             side_effect=[implementation_client, testing_client],
         ) as mock_kato_client_cls, patch(
-            'kato.kato_core_lib.RepositoryService',
+            'kato_core_lib.kato_core_lib.RepositoryService',
             return_value=repository_service,
+        ), patch.object(
+            KatoCoreLib,
+            '_build_repository_approval_service',
+            return_value=approval_service_stub,
         ):
             app = KatoCoreLib(cfg)
 
@@ -89,40 +108,40 @@ class KatoCoreLibTests(unittest.TestCase):
         testing_client = Mock(name='testing_kato_client')
 
         with patch(
-            'kato.kato_core_lib.EmailCoreLib'
+            'kato_core_lib.kato_core_lib.EmailCoreLib'
         ) as mock_email_core_lib_cls, patch(
-            'kato.kato_core_lib.build_ticket_client'
-        ) as mock_build_ticket_client, patch(
-            'kato.kato_core_lib.KatoClient',
+            'kato_core_lib.kato_core_lib.TaskCoreLib'
+        ) as mock_TaskCoreLib, patch(
+            'openhands_core_lib.openhands_core_lib.openhands_client.KatoClient',
             side_effect=[implementation_client, testing_client],
         ) as mock_kato_client_cls, patch(
-            'kato.kato_core_lib.TaskDataAccess'
+            'kato_core_lib.kato_core_lib.TaskDataAccess'
         ) as mock_task_da_cls, patch(
-            'kato.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.TaskService'
         ) as mock_task_service_cls, patch(
-            'kato.kato_core_lib.TaskStateService'
+            'kato_core_lib.kato_core_lib.TaskStateService'
         ) as mock_task_state_service_cls, patch(
-            'kato.kato_core_lib.ImplementationService'
+            'kato_core_lib.kato_core_lib.ImplementationService'
         ) as mock_impl_service_cls, patch(
-            'kato.kato_core_lib.TestingService'
+            'kato_core_lib.kato_core_lib.TestingService'
         ) as mock_testing_service_cls, patch(
-            'kato.kato_core_lib.RepositoryService'
+            'kato_core_lib.kato_core_lib.RepositoryService'
         ) as mock_repository_service_cls, patch(
-            'kato.kato_core_lib.NotificationService'
+            'kato_core_lib.kato_core_lib.NotificationService'
         ) as mock_notification_service_cls, patch(
-            'kato.kato_core_lib.TaskPreflightService'
+            'kato_core_lib.kato_core_lib.TaskPreflightService'
         ) as mock_task_preflight_service_cls, patch(
-            'kato.kato_core_lib.TaskFailureHandler'
+            'kato_core_lib.kato_core_lib.TaskFailureHandler'
         ) as mock_task_failure_handler_cls, patch(
-            'kato.kato_core_lib.TaskPublisher'
+            'kato_core_lib.kato_core_lib.TaskPublisher'
         ) as mock_task_publisher_cls, patch(
-            'kato.kato_core_lib.AgentService'
+            'kato_core_lib.kato_core_lib.AgentService'
         ) as mock_service_cls:
             app = KatoCoreLib(self.cfg)
 
         mock_email_core_lib_cls.assert_called_once_with(self.cfg)
-        mock_build_ticket_client.assert_called_once_with(
-            'youtrack',
+        mock_TaskCoreLib.assert_called_once_with(
+            Platform.YOUTRACK,
             self.cfg.kato.youtrack,
             self.cfg.kato.retry.max_retries,
         )
@@ -177,6 +196,10 @@ class KatoCoreLibTests(unittest.TestCase):
             repository_service=mock_repository_service_cls.return_value,
             task_branch_push_validator=ANY,
             task_branch_publishability_validator=ANY,
+            workspace_provisioner=ANY,
+            security_scanner_service=ANY,
+            repository_approval_service=ANY,
+            runtime_posture_supplier=ANY,
         )
         mock_task_failure_handler_cls.assert_called_once_with(
             task_service=mock_task_service_cls.return_value,
@@ -191,10 +214,11 @@ class KatoCoreLibTests(unittest.TestCase):
             notification_service=mock_notification_service_cls.return_value,
             state_registry=ANY,
             failure_handler=mock_task_failure_handler_cls.return_value,
+            publish_max_retries=ANY,
         )
         mock_task_da_cls.assert_called_once_with(
             self.cfg.kato.youtrack,
-            mock_build_ticket_client.return_value,
+            mock_TaskCoreLib.return_value.issue,
         )
         mock_task_service_cls.assert_called_once_with(
             self.cfg.kato.youtrack,
@@ -227,6 +251,14 @@ class KatoCoreLibTests(unittest.TestCase):
             startup_validator=ANY,
             task_preflight_service=mock_task_preflight_service_cls.return_value,
             skip_testing=False,
+            planning_session_runner=None,
+            session_manager=None,
+            workspace_manager=ANY,
+            parallel_task_runner=ANY,
+            wait_planning_service=ANY,
+            triage_service=ANY,
+            review_workspace_ttl_seconds=ANY,
+            lessons_service=ANY,
         )
         mock_service_cls.return_value.validate_connections.assert_called_once_with()
         self.assertIs(app.service, mock_service_cls.return_value)
@@ -236,36 +268,36 @@ class KatoCoreLibTests(unittest.TestCase):
         cfg.kato.source_fingerprint = 'expected-fingerprint'
 
         with patch(
-            'kato.kato_core_lib.runtime_source_fingerprint',
+            'kato_core_lib.kato_core_lib.runtime_source_fingerprint',
             return_value='current-fingerprint',
         ), patch(
-            'kato.kato_core_lib.EmailCoreLib'
+            'kato_core_lib.kato_core_lib.EmailCoreLib'
         ), patch(
-            'kato.kato_core_lib.build_ticket_client'
+            'kato_core_lib.kato_core_lib.TaskCoreLib'
         ), patch(
-            'kato.kato_core_lib.KatoClient'
+            'openhands_core_lib.openhands_core_lib.openhands_client.KatoClient'
         ), patch(
-            'kato.kato_core_lib.RepositoryService'
+            'kato_core_lib.kato_core_lib.RepositoryService'
         ), patch(
-            'kato.kato_core_lib.TaskDataAccess'
+            'kato_core_lib.kato_core_lib.TaskDataAccess'
         ), patch(
-            'kato.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.TaskService'
         ), patch(
-            'kato.kato_core_lib.TaskStateService'
+            'kato_core_lib.kato_core_lib.TaskStateService'
         ), patch(
-            'kato.kato_core_lib.ImplementationService'
+            'kato_core_lib.kato_core_lib.ImplementationService'
         ), patch(
-            'kato.kato_core_lib.TestingService'
+            'kato_core_lib.kato_core_lib.TestingService'
         ), patch(
-            'kato.kato_core_lib.NotificationService'
+            'kato_core_lib.kato_core_lib.NotificationService'
         ), patch(
-            'kato.kato_core_lib.TaskPreflightService'
+            'kato_core_lib.kato_core_lib.TaskPreflightService'
         ), patch(
-            'kato.kato_core_lib.TaskFailureHandler'
+            'kato_core_lib.kato_core_lib.TaskFailureHandler'
         ), patch(
-            'kato.kato_core_lib.TaskPublisher'
+            'kato_core_lib.kato_core_lib.TaskPublisher'
         ), patch(
-            'kato.kato_core_lib.AgentService'
+            'kato_core_lib.kato_core_lib.AgentService'
         ):
             with self.assertRaises(RuntimeError) as exc:
                 KatoCoreLib(cfg)
@@ -281,27 +313,27 @@ class KatoCoreLibTests(unittest.TestCase):
         cfg.kato.openhands.testing_llm_base_url = 'https://api.openai.com/v1'
 
         with patch(
-            'kato.kato_core_lib.EmailCoreLib'
+            'kato_core_lib.kato_core_lib.EmailCoreLib'
         ), patch(
-            'kato.kato_core_lib.build_ticket_client'
+            'kato_core_lib.kato_core_lib.TaskCoreLib'
         ), patch(
-            'kato.kato_core_lib.KatoClient'
+            'openhands_core_lib.openhands_core_lib.openhands_client.KatoClient'
         ) as mock_kato_client_cls, patch(
-            'kato.kato_core_lib.RepositoryService'
+            'kato_core_lib.kato_core_lib.RepositoryService'
         ), patch(
-            'kato.kato_core_lib.TaskDataAccess'
+            'kato_core_lib.kato_core_lib.TaskDataAccess'
         ), patch(
-            'kato.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.TaskService'
         ), patch(
-            'kato.kato_core_lib.TaskStateService'
+            'kato_core_lib.kato_core_lib.TaskStateService'
         ), patch(
-            'kato.kato_core_lib.ImplementationService'
+            'kato_core_lib.kato_core_lib.ImplementationService'
         ), patch(
-            'kato.kato_core_lib.TestingService'
+            'kato_core_lib.kato_core_lib.TestingService'
         ), patch(
-            'kato.kato_core_lib.NotificationService'
+            'kato_core_lib.kato_core_lib.NotificationService'
         ), patch(
-            'kato.kato_core_lib.AgentService'
+            'kato_core_lib.kato_core_lib.AgentService'
         ):
             KatoCoreLib(cfg)
 
@@ -334,7 +366,7 @@ class KatoCoreLibTests(unittest.TestCase):
             mock_kato_client_cls,
         ) = self._build_workflow_app(testing_container_enabled=True)
 
-        assigned_task = app.service.get_assigned_tasks()[0]
+        assigned_task = _task
         result = app.service.process_assigned_task(assigned_task)
 
         self.assertEqual(
@@ -387,7 +419,7 @@ class KatoCoreLibTests(unittest.TestCase):
             mock_kato_client_cls,
         ) = self._build_workflow_app(testing_container_enabled=False)
 
-        assigned_task = app.service.get_assigned_tasks()[0]
+        assigned_task = _task
         result = app.service.process_assigned_task(assigned_task)
 
         self.assertEqual(
@@ -425,27 +457,27 @@ class KatoCoreLibTests(unittest.TestCase):
 
     def test_exposes_service_instance(self) -> None:
         with patch(
-            'kato.kato_core_lib.EmailCoreLib'
+            'kato_core_lib.kato_core_lib.EmailCoreLib'
         ), patch(
-            'kato.kato_core_lib.build_ticket_client'
+            'kato_core_lib.kato_core_lib.TaskCoreLib'
         ), patch(
-            'kato.kato_core_lib.KatoClient'
+            'openhands_core_lib.openhands_core_lib.openhands_client.KatoClient'
         ), patch(
-            'kato.kato_core_lib.RepositoryService'
+            'kato_core_lib.kato_core_lib.RepositoryService'
         ), patch(
-            'kato.kato_core_lib.TaskDataAccess'
+            'kato_core_lib.kato_core_lib.TaskDataAccess'
         ), patch(
-            'kato.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.TaskService'
         ), patch(
-            'kato.kato_core_lib.TaskStateService'
+            'kato_core_lib.kato_core_lib.TaskStateService'
         ), patch(
-            'kato.kato_core_lib.ImplementationService'
+            'kato_core_lib.kato_core_lib.ImplementationService'
         ), patch(
-            'kato.kato_core_lib.TestingService'
+            'kato_core_lib.kato_core_lib.TestingService'
         ), patch(
-            'kato.kato_core_lib.NotificationService'
+            'kato_core_lib.kato_core_lib.NotificationService'
         ), patch(
-            'kato.kato_core_lib.AgentService'
+            'kato_core_lib.kato_core_lib.AgentService'
         ) as mock_service_cls:
             mock_service_cls.return_value.get_assigned_tasks.return_value = ["task-1"]
             mock_service_cls.return_value.process_assigned_task.return_value = {"id": "17"}
@@ -456,27 +488,27 @@ class KatoCoreLibTests(unittest.TestCase):
 
     def test_service_handles_comment_operations(self) -> None:
         with patch(
-            'kato.kato_core_lib.EmailCoreLib'
+            'kato_core_lib.kato_core_lib.EmailCoreLib'
         ), patch(
-            'kato.kato_core_lib.build_ticket_client'
+            'kato_core_lib.kato_core_lib.TaskCoreLib'
         ), patch(
-            'kato.kato_core_lib.KatoClient'
+            'openhands_core_lib.openhands_core_lib.openhands_client.KatoClient'
         ), patch(
-            'kato.kato_core_lib.RepositoryService'
+            'kato_core_lib.kato_core_lib.RepositoryService'
         ), patch(
-            'kato.kato_core_lib.TaskDataAccess'
+            'kato_core_lib.kato_core_lib.TaskDataAccess'
         ), patch(
-            'kato.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.TaskService'
         ), patch(
-            'kato.kato_core_lib.TaskStateService'
+            'kato_core_lib.kato_core_lib.TaskStateService'
         ), patch(
-            'kato.kato_core_lib.ImplementationService'
+            'kato_core_lib.kato_core_lib.ImplementationService'
         ), patch(
-            'kato.kato_core_lib.TestingService'
+            'kato_core_lib.kato_core_lib.TestingService'
         ), patch(
-            'kato.kato_core_lib.NotificationService'
+            'kato_core_lib.kato_core_lib.NotificationService'
         ), patch(
-            'kato.kato_core_lib.AgentService'
+            'kato_core_lib.kato_core_lib.AgentService'
         ) as mock_service_cls:
             mock_service_cls.return_value.handle_pull_request_comment.return_value = {"status": "updated"}
             app = KatoCoreLib(self.cfg)
@@ -489,60 +521,307 @@ class KatoCoreLibTests(unittest.TestCase):
         cfg.kato.issue_platform = 'jira'
 
         with patch(
-            'kato.kato_core_lib.EmailCoreLib'
+            'kato_core_lib.kato_core_lib.EmailCoreLib'
         ), patch(
-            'kato.kato_core_lib.build_ticket_client'
-        ) as mock_build_ticket_client, patch(
-            'kato.kato_core_lib.KatoClient'
+            'kato_core_lib.kato_core_lib.TaskCoreLib'
+        ) as mock_TaskCoreLib, patch(
+            'openhands_core_lib.openhands_core_lib.openhands_client.KatoClient'
         ), patch(
-            'kato.kato_core_lib.RepositoryService'
+            'kato_core_lib.kato_core_lib.RepositoryService'
         ), patch(
-            'kato.kato_core_lib.TaskDataAccess'
+            'kato_core_lib.kato_core_lib.TaskDataAccess'
         ), patch(
-            'kato.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.TaskService'
         ), patch(
-            'kato.kato_core_lib.TaskStateService'
+            'kato_core_lib.kato_core_lib.TaskStateService'
         ), patch(
-            'kato.kato_core_lib.ImplementationService'
+            'kato_core_lib.kato_core_lib.ImplementationService'
         ), patch(
-            'kato.kato_core_lib.TestingService'
+            'kato_core_lib.kato_core_lib.TestingService'
         ), patch(
-            'kato.kato_core_lib.NotificationService'
+            'kato_core_lib.kato_core_lib.NotificationService'
         ), patch(
-            'kato.kato_core_lib.AgentService'
+            'kato_core_lib.kato_core_lib.AgentService'
         ):
             KatoCoreLib(cfg)
 
-        mock_build_ticket_client.assert_called_once_with(
-            'jira',
+        mock_TaskCoreLib.assert_called_once_with(
+            Platform.JIRA,
             cfg.kato.jira,
             cfg.kato.retry.max_retries,
         )
+
+    def test_uses_claude_cli_backend_when_configured(self) -> None:
+        cfg = build_test_cfg()
+        cfg.kato.agent_backend = 'claude'
+        cfg.kato.claude = {
+            'binary': 'claude',
+            'model': 'claude-opus-4-7',
+            'max_turns': '',
+            'allowed_tools': '',
+            'disallowed_tools': '',
+            'bypass_permissions': True,
+            'timeout_seconds': 1800,
+            'model_smoke_test_enabled': False,
+        }
+
+        with patch(
+            'kato_core_lib.kato_core_lib.EmailCoreLib'
+        ), patch(
+            'kato_core_lib.kato_core_lib.TaskCoreLib'
+        ), patch(
+            'openhands_core_lib.openhands_core_lib.openhands_client.KatoClient'
+        ) as mock_kato_client_cls, patch(
+            'claude_core_lib.claude_core_lib.cli_client.ClaudeCliClient'
+        ) as mock_claude_client_cls, patch(
+            'kato_core_lib.kato_core_lib.RepositoryService'
+        ), patch(
+            'kato_core_lib.kato_core_lib.TaskDataAccess'
+        ), patch(
+            'kato_core_lib.kato_core_lib.TaskService'
+        ), patch(
+            'kato_core_lib.kato_core_lib.TaskStateService'
+        ), patch(
+            'kato_core_lib.kato_core_lib.ImplementationService'
+        ), patch(
+            'kato_core_lib.kato_core_lib.TestingService'
+        ), patch(
+            'kato_core_lib.kato_core_lib.NotificationService'
+        ), patch(
+            'kato_core_lib.kato_core_lib.AgentService'
+        ):
+            KatoCoreLib(cfg)
+
+        mock_kato_client_cls.assert_not_called()
+        # Two clients (implementation + testing) created via Claude CLI factory.
+        self.assertEqual(mock_claude_client_cls.call_count, 2)
+        first_kwargs = mock_claude_client_cls.call_args_list[0].kwargs
+        self.assertEqual(first_kwargs['binary'], 'claude')
+        self.assertEqual(first_kwargs['model'], 'claude-opus-4-7')
+        self.assertIs(first_kwargs['bypass_permissions'], True)
+
+    def test_docker_mode_env_threads_through_to_claude_client(self) -> None:
+        """``KATO_CLAUDE_DOCKER=true`` must reach every Claude spawn point."""
+        cfg = build_test_cfg()
+        cfg.kato.agent_backend = 'claude'
+        cfg.kato.claude = {
+            'binary': 'claude',
+            'model': 'claude-opus-4-7',
+            'max_turns': '',
+            'allowed_tools': '',
+            'disallowed_tools': '',
+            'bypass_permissions': False,
+            'timeout_seconds': 1800,
+            'model_smoke_test_enabled': False,
+        }
+
+        with patch(
+            'kato_core_lib.kato_core_lib.EmailCoreLib'
+        ), patch(
+            'kato_core_lib.kato_core_lib.TaskCoreLib'
+        ), patch(
+            'openhands_core_lib.openhands_core_lib.openhands_client.KatoClient'
+        ), patch(
+            'claude_core_lib.claude_core_lib.cli_client.ClaudeCliClient'
+        ) as mock_claude_client_cls, patch(
+            'kato_core_lib.kato_core_lib.RepositoryService'
+        ), patch(
+            'kato_core_lib.kato_core_lib.TaskDataAccess'
+        ), patch(
+            'kato_core_lib.kato_core_lib.TaskService'
+        ), patch(
+            'kato_core_lib.kato_core_lib.TaskStateService'
+        ), patch(
+            'kato_core_lib.kato_core_lib.ImplementationService'
+        ), patch(
+            'kato_core_lib.kato_core_lib.TestingService'
+        ), patch(
+            'kato_core_lib.kato_core_lib.NotificationService'
+        ), patch(
+            'kato_core_lib.kato_core_lib.AgentService'
+        ), patch(
+            'kato_core_lib.kato_core_lib.PlanningSessionRunner'
+        ) as mock_runner_cls, patch(
+            'kato_core_lib.kato_core_lib.is_docker_mode_enabled', return_value=True,
+        ):
+            KatoCoreLib(cfg)
+
+        # Both clients (implementation + testing) get docker_mode_on=True.
+        for call in mock_claude_client_cls.call_args_list:
+            self.assertIs(call.kwargs['docker_mode_on'], True)
+        # PlanningSessionRunner.from_config also sees docker_mode_on=True.
+        from_config_kwargs = mock_runner_cls.from_config.call_args.kwargs
+        self.assertIs(from_config_kwargs['docker_mode_on'], True)
+
+    def test_docker_mode_default_off_threads_through_to_claude_client(self) -> None:
+        cfg = build_test_cfg()
+        cfg.kato.agent_backend = 'claude'
+        cfg.kato.claude = {
+            'binary': 'claude',
+            'model': 'claude-opus-4-7',
+            'max_turns': '',
+            'allowed_tools': '',
+            'disallowed_tools': '',
+            'bypass_permissions': False,
+            'timeout_seconds': 1800,
+            'model_smoke_test_enabled': False,
+        }
+
+        with patch(
+            'kato_core_lib.kato_core_lib.EmailCoreLib'
+        ), patch(
+            'kato_core_lib.kato_core_lib.TaskCoreLib'
+        ), patch(
+            'openhands_core_lib.openhands_core_lib.openhands_client.KatoClient'
+        ), patch(
+            'claude_core_lib.claude_core_lib.cli_client.ClaudeCliClient'
+        ) as mock_claude_client_cls, patch(
+            'kato_core_lib.kato_core_lib.RepositoryService'
+        ), patch(
+            'kato_core_lib.kato_core_lib.TaskDataAccess'
+        ), patch(
+            'kato_core_lib.kato_core_lib.TaskService'
+        ), patch(
+            'kato_core_lib.kato_core_lib.TaskStateService'
+        ), patch(
+            'kato_core_lib.kato_core_lib.ImplementationService'
+        ), patch(
+            'kato_core_lib.kato_core_lib.TestingService'
+        ), patch(
+            'kato_core_lib.kato_core_lib.NotificationService'
+        ), patch(
+            'kato_core_lib.kato_core_lib.AgentService'
+        ), patch(
+            'kato_core_lib.kato_core_lib.is_docker_mode_enabled', return_value=False,
+        ):
+            KatoCoreLib(cfg)
+
+        for call in mock_claude_client_cls.call_args_list:
+            self.assertIs(call.kwargs['docker_mode_on'], False)
+
+    def test_env_var_to_spawn_argv_end_to_end(self) -> None:
+        """End-to-end: ``KATO_CLAUDE_DOCKER=true`` env → ClaudeCliClient
+        spawn-argv contains the docker wrap.
+
+        Bridges the link-by-link chain tests (env-var detection,
+        kato_core_lib threading, ClaudeCliClient sandbox-wrap) with one
+        assertion that proves the chain actually produces a wrapped
+        spawn end-to-end. Catches the regression class where each layer
+        forwards correctly in isolation but the chain breaks at one
+        layer that was modified without its forwarding test being kept.
+        """
+        import json
+        import os
+        import subprocess
+
+        from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
+        from kato_core_lib.kato_core_lib import KatoCoreLib
+        from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (
+            is_docker_mode_enabled,
+        )
+
+        cfg = build_test_cfg()
+        cfg.kato.agent_backend = 'claude'
+        cfg.kato.claude = {
+            'binary': 'claude',
+            'model': 'claude-opus-4-7',
+            'max_turns': '',
+            'allowed_tools': '',
+            'disallowed_tools': '',
+            'bypass_permissions': False,
+            'timeout_seconds': 1800,
+            'model_smoke_test_enabled': False,
+        }
+
+        completed = subprocess.CompletedProcess(
+            args=['docker'],
+            returncode=0,
+            stdout=json.dumps({'is_error': False, 'result': 'ok', 'session_id': 's'}),
+            stderr='',
+        )
+
+        with patch.dict(os.environ, {'KATO_CLAUDE_DOCKER': 'true'}, clear=False):
+            # Read 1: validator helper sees the env var.
+            self.assertTrue(is_docker_mode_enabled())
+            # Build the ClaudeCliClient via the production builder
+            # (the same path KatoCoreLib uses now — through the
+            # ``agent_core_lib`` factory) — this is the chain under
+            # test.
+            client = KatoCoreLib._build_agent_client(
+                cfg.kato,
+                cfg.kato.retry.max_retries,
+                docker_mode_on=is_docker_mode_enabled(),
+            )
+            self.assertIsInstance(client, ClaudeCliClient)
+            self.assertTrue(client._docker_mode_on)
+
+            # Trigger a per-task spawn and verify the docker wrap fires.
+            with patch(
+                'claude_core_lib.claude_core_lib.cli_client.subprocess.run',
+                return_value=completed,
+            ) as mock_run, patch(
+                'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
+            ), patch(
+                'sandbox_core_lib.sandbox_core_lib.manager.check_spawn_rate',
+            ), patch(
+                'sandbox_core_lib.sandbox_core_lib.manager.enforce_no_workspace_secrets',
+            ), patch(
+                'sandbox_core_lib.sandbox_core_lib.manager.record_spawn',
+            ), patch(
+                'sandbox_core_lib.sandbox_core_lib.manager.wrap_command',
+                return_value=['docker', 'run', '--rm', 'kato-sandbox', 'claude'],
+            ) as mock_wrap, patch(
+                'sandbox_core_lib.sandbox_core_lib.manager.make_container_name',
+                return_value='kato-sandbox-PROJ-1-end2end',
+            ):
+                client.test_task(build_task())
+
+        # End-to-end assertion: env var → builder → client → spawn-argv
+        # is a docker wrap, not a raw claude command.
+        mock_wrap.assert_called_once()
+        spawn_argv = mock_run.call_args.args[0]
+        self.assertEqual(spawn_argv[:2], ['docker', 'run'])
+
+    def test_rejects_unsupported_agent_backend(self) -> None:
+        cfg = build_test_cfg()
+        cfg.kato.agent_backend = 'gemini'
+
+        with patch(
+            'kato_core_lib.kato_core_lib.EmailCoreLib'
+        ), patch(
+            'kato_core_lib.kato_core_lib.TaskCoreLib'
+        ), patch(
+            'openhands_core_lib.openhands_core_lib.openhands_client.KatoClient'
+        ), patch(
+            'kato_core_lib.kato_core_lib.RepositoryService'
+        ):
+            with self.assertRaisesRegex(ValueError, 'unsupported KATO_AGENT_BACKEND'):
+                KatoCoreLib(cfg)
 
     def test_always_instantiates_email_core_lib_directly(self) -> None:
         cfg = build_test_cfg()
         delattr(cfg.core_lib, 'email_core_lib')
 
         with patch(
-            'kato.kato_core_lib.EmailCoreLib'
+            'kato_core_lib.kato_core_lib.EmailCoreLib'
         ) as mock_email_core_lib_cls, patch(
-            'kato.kato_core_lib.build_ticket_client'
+            'kato_core_lib.kato_core_lib.TaskCoreLib'
         ), patch(
-            'kato.kato_core_lib.KatoClient'
+            'openhands_core_lib.openhands_core_lib.openhands_client.KatoClient'
         ), patch(
-            'kato.kato_core_lib.RepositoryService'
+            'kato_core_lib.kato_core_lib.RepositoryService'
         ), patch(
-            'kato.kato_core_lib.TaskDataAccess'
+            'kato_core_lib.kato_core_lib.TaskDataAccess'
         ), patch(
-            'kato.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.TaskService'
         ), patch(
-            'kato.kato_core_lib.ImplementationService'
+            'kato_core_lib.kato_core_lib.ImplementationService'
         ), patch(
-            'kato.kato_core_lib.TestingService'
+            'kato_core_lib.kato_core_lib.TestingService'
         ), patch(
-            'kato.kato_core_lib.NotificationService'
+            'kato_core_lib.kato_core_lib.NotificationService'
         ), patch(
-            'kato.kato_core_lib.AgentService'
+            'kato_core_lib.kato_core_lib.AgentService'
         ):
             KatoCoreLib(cfg)
 

@@ -1,6 +1,6 @@
 import unittest
 
-from kato.helpers.git_clean_utils import (
+from git_core_lib.git_core_lib.helpers.git_clean_utils import (
     generated_artifact_paths_from_status,
     git_ready_command_summary,
     status_contains_only_removable_artifacts,

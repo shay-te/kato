@@ -3,8 +3,9 @@ from pathlib import Path
 import tempfile
 from unittest.mock import patch
 
-from kato.validate_env import (
+from kato_core_lib.validate_env import (
     validate_agent_env,
+    validate_claude_env,
     validate_openhands_env,
 )
 
@@ -13,8 +14,8 @@ class ValidateEnvTests(unittest.TestCase):
     def test_validate_agent_env_accepts_complete_configuration(self) -> None:
         errors = self._validate_agent_env(
             {
-                'YOUTRACK_BASE_URL': 'https://youtrack.example',
-                'YOUTRACK_TOKEN': 'yt-token',
+                'YOUTRACK_API_BASE_URL': 'https://youtrack.example',
+                'YOUTRACK_API_TOKEN': 'yt-token',
                 'YOUTRACK_PROJECT': 'PROJ',
                 'YOUTRACK_ASSIGNEE': 'developer',
                 'REPOSITORY_ROOT_PATH': '.',
@@ -28,8 +29,8 @@ class ValidateEnvTests(unittest.TestCase):
     def test_validate_agent_env_requires_email_fields_when_enabled(self) -> None:
         errors = self._validate_agent_env(
             {
-                'YOUTRACK_BASE_URL': 'https://youtrack.example',
-                'YOUTRACK_TOKEN': 'yt-token',
+                'YOUTRACK_API_BASE_URL': 'https://youtrack.example',
+                'YOUTRACK_API_TOKEN': 'yt-token',
                 'YOUTRACK_PROJECT': 'PROJ',
                 'YOUTRACK_ASSIGNEE': 'developer',
                 'REPOSITORY_ROOT_PATH': '.',
@@ -51,8 +52,8 @@ class ValidateEnvTests(unittest.TestCase):
     def test_validate_agent_env_requires_youtrack_assignee(self) -> None:
         errors = self._validate_agent_env(
             {
-                'YOUTRACK_BASE_URL': 'https://youtrack.example',
-                'YOUTRACK_TOKEN': 'yt-token',
+                'YOUTRACK_API_BASE_URL': 'https://youtrack.example',
+                'YOUTRACK_API_TOKEN': 'yt-token',
                 'YOUTRACK_PROJECT': 'PROJ',
                 'REPOSITORY_ROOT_PATH': '.',
                 'OPENHANDS_BASE_URL': 'http://localhost:3000',
@@ -66,8 +67,8 @@ class ValidateEnvTests(unittest.TestCase):
         errors = self._validate_agent_env(
             {
                 'KATO_ISSUE_PLATFORM': 'jira',
-                'JIRA_BASE_URL': 'https://jira.example',
-                'JIRA_TOKEN': 'jira-token',
+                'JIRA_API_BASE_URL': 'https://jira.example',
+                'JIRA_API_TOKEN': 'jira-token',
                 'JIRA_PROJECT': 'PROJ',
                 'JIRA_ASSIGNEE': 'developer',
                 'REPOSITORY_ROOT_PATH': '.',
@@ -82,11 +83,28 @@ class ValidateEnvTests(unittest.TestCase):
         errors = self._validate_agent_env(
             {
                 'KATO_ISSUE_PLATFORM': 'github',
-                'GITHUB_ISSUES_BASE_URL': 'https://api.github.com',
+                'GITHUB_API_BASE_URL': 'https://api.github.com',
                 'GITHUB_API_TOKEN': 'gh-token',
-                'GITHUB_ISSUES_OWNER': 'workspace',
-                'GITHUB_ISSUES_REPO': 'repo',
-                'GITHUB_ISSUES_ASSIGNEE': 'octocat',
+                'GITHUB_OWNER': 'workspace',
+                'GITHUB_REPO': 'repo',
+                'GITHUB_ASSIGNEE': 'octocat',
+                'REPOSITORY_ROOT_PATH': '.',
+                'OPENHANDS_BASE_URL': 'http://localhost:3000',
+                'OPENHANDS_API_KEY': 'local',
+            }
+        )
+
+        self.assertEqual(errors, [])
+
+    def test_validate_agent_env_accepts_github_core_lib_token(self) -> None:
+        errors = self._validate_agent_env(
+            {
+                'KATO_ISSUE_PLATFORM': 'github',
+                'GITHUB_API_BASE_URL': 'https://api.github.com',
+                'GITHUB_API_TOKEN': 'gh-token',
+                'GITHUB_OWNER': 'workspace',
+                'GITHUB_REPO': 'repo',
+                'GITHUB_ASSIGNEE': 'octocat',
                 'REPOSITORY_ROOT_PATH': '.',
                 'OPENHANDS_BASE_URL': 'http://localhost:3000',
                 'OPENHANDS_API_KEY': 'local',
@@ -99,10 +117,10 @@ class ValidateEnvTests(unittest.TestCase):
         errors = self._validate_agent_env(
             {
                 'KATO_ISSUE_PLATFORM': 'gitlab',
-                'GITLAB_ISSUES_BASE_URL': 'https://gitlab.example/api/v4',
+                'GITLAB_API_BASE_URL': 'https://gitlab.example/api/v4',
                 'GITLAB_API_TOKEN': 'gl-token',
-                'GITLAB_ISSUES_PROJECT': 'group/repo',
-                'GITLAB_ISSUES_ASSIGNEE': 'developer',
+                'GITLAB_PROJECT': 'group/repo',
+                'GITLAB_ASSIGNEE': 'developer',
                 'REPOSITORY_ROOT_PATH': '.',
                 'OPENHANDS_BASE_URL': 'http://localhost:3000',
                 'OPENHANDS_API_KEY': 'local',
@@ -115,13 +133,13 @@ class ValidateEnvTests(unittest.TestCase):
         errors = self._validate_agent_env(
             {
                 'KATO_ISSUE_PLATFORM': 'bitbucket',
-                'BITBUCKET_ISSUES_BASE_URL': 'https://api.bitbucket.org/2.0',
+                'BITBUCKET_API_BASE_URL': 'https://api.bitbucket.org/2.0',
                 'BITBUCKET_API_TOKEN': 'bb-token',
                 'BITBUCKET_USERNAME': 'bb-user',
                 'BITBUCKET_API_EMAIL': 'bb-user@example.com',
-                'BITBUCKET_ISSUES_WORKSPACE': 'workspace',
-                'BITBUCKET_ISSUES_REPO_SLUG': 'repo',
-                'BITBUCKET_ISSUES_ASSIGNEE': 'reviewer',
+                'BITBUCKET_WORKSPACE': 'workspace',
+                'BITBUCKET_REPO_SLUG': 'repo',
+                'BITBUCKET_ASSIGNEE': 'reviewer',
                 'REPOSITORY_ROOT_PATH': '.',
                 'OPENHANDS_BASE_URL': 'http://localhost:3000',
                 'OPENHANDS_API_KEY': 'local',
@@ -130,34 +148,45 @@ class ValidateEnvTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
 
-    def test_validate_agent_env_requires_provider_token_for_discovered_bitbucket_repo(self) -> None:
+    # NOTE: ``test_validate_agent_env_requires_provider_token_for_discovered_bitbucket_repo``
+    # was removed when the eager ``REPOSITORY_ROOT_PATH`` walk in
+    # ``validate_agent_env`` was deliberately deleted (see
+    # ``_validate_repository_provider_env`` in
+    # ``kato_core_lib/validate_env.py`` — it's now a documented
+    # no-op hook). Provider-credential errors no longer surface at
+    # boot at all; they fire lazily on first per-task repository
+    # use. There's no equivalent boot-time assertion to lock — the
+    # behaviour was removed by design, not relocated.
+
+    def test_validate_agent_env_skips_ignored_folders_during_provider_discovery(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            repo_path = Path(temp_dir) / 'project'
+            root = Path(temp_dir)
             self._create_git_repository(
-                repo_path,
+                root / 'bitbucket-repo',
                 'git@bitbucket.org:workspace/project.git',
+            )
+            self._create_git_repository(
+                root / 'github-repo',
+                'git@github.com:owner/project.git',
             )
 
             errors = validate_agent_env(
                 {
-                    'YOUTRACK_BASE_URL': 'https://youtrack.example',
-                    'YOUTRACK_TOKEN': 'yt-token',
+                    'YOUTRACK_API_BASE_URL': 'https://youtrack.example',
+                    'YOUTRACK_API_TOKEN': 'yt-token',
                     'YOUTRACK_PROJECT': 'PROJ',
                     'YOUTRACK_ASSIGNEE': 'developer',
-                    'REPOSITORY_ROOT_PATH': str(repo_path),
+                    'REPOSITORY_ROOT_PATH': str(root),
+                    'KATO_IGNORED_REPOSITORY_FOLDERS': 'github-repo',
+                    'BITBUCKET_API_TOKEN': 'bb-token',
+                    'BITBUCKET_USERNAME': 'bb-user',
+                    'BITBUCKET_API_EMAIL': 'bb-user@example.com',
                     'OPENHANDS_BASE_URL': 'http://localhost:3000',
                     'OPENHANDS_API_KEY': 'local',
                 }
             )
 
-        self.assertIn(
-            'missing required repository provider env var: BITBUCKET_API_TOKEN',
-            errors,
-        )
-        self.assertIn(
-            'missing required repository provider env var: BITBUCKET_API_EMAIL',
-            errors,
-        )
+        self.assertEqual(errors, [])
 
     def test_validate_agent_env_accepts_provider_token_for_discovered_bitbucket_repo(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -169,8 +198,8 @@ class ValidateEnvTests(unittest.TestCase):
 
             errors = validate_agent_env(
                 {
-                    'YOUTRACK_BASE_URL': 'https://youtrack.example',
-                    'YOUTRACK_TOKEN': 'yt-token',
+                    'YOUTRACK_API_BASE_URL': 'https://youtrack.example',
+                    'YOUTRACK_API_TOKEN': 'yt-token',
                     'YOUTRACK_PROJECT': 'PROJ',
                     'YOUTRACK_ASSIGNEE': 'developer',
                     'REPOSITORY_ROOT_PATH': str(repo_path),
@@ -188,10 +217,10 @@ class ValidateEnvTests(unittest.TestCase):
         errors = self._validate_agent_env(
             {
                 'KATO_ISSUE_PLATFORM': 'github',
-                'GITHUB_ISSUES_BASE_URL': 'https://api.github.com',
-                'GITHUB_ISSUES_OWNER': 'workspace',
-                'GITHUB_ISSUES_REPO': 'repo',
-                'GITHUB_ISSUES_ASSIGNEE': 'octocat',
+                'GITHUB_API_BASE_URL': 'https://api.github.com',
+                'GITHUB_OWNER': 'workspace',
+                'GITHUB_REPO': 'repo',
+                'GITHUB_ASSIGNEE': 'octocat',
                 'REPOSITORY_ROOT_PATH': '.',
                 'OPENHANDS_BASE_URL': 'http://localhost:3000',
                 'OPENHANDS_API_KEY': 'local',
@@ -203,8 +232,8 @@ class ValidateEnvTests(unittest.TestCase):
     def test_validate_agent_env_rejects_progress_and_review_states_in_issue_queue(self) -> None:
         errors = self._validate_agent_env(
             {
-                'YOUTRACK_BASE_URL': 'https://youtrack.example',
-                'YOUTRACK_TOKEN': 'yt-token',
+                'YOUTRACK_API_BASE_URL': 'https://youtrack.example',
+                'YOUTRACK_API_TOKEN': 'yt-token',
                 'YOUTRACK_PROJECT': 'PROJ',
                 'YOUTRACK_ASSIGNEE': 'developer',
                 'YOUTRACK_PROGRESS_STATE': 'In Progress',
@@ -225,9 +254,9 @@ class ValidateEnvTests(unittest.TestCase):
         errors = self._validate_agent_env(
             {
                 'KATO_ISSUE_PLATFORM': 'gitlab',
-                'GITLAB_ISSUES_BASE_URL': 'https://gitlab.example/api/v4',
-                'GITLAB_ISSUES_PROJECT': 'group/repo',
-                'GITLAB_ISSUES_ASSIGNEE': 'developer',
+                'GITLAB_API_BASE_URL': 'https://gitlab.example/api/v4',
+                'GITLAB_PROJECT': 'group/repo',
+                'GITLAB_ASSIGNEE': 'developer',
                 'REPOSITORY_ROOT_PATH': '.',
                 'OPENHANDS_BASE_URL': 'http://localhost:3000',
                 'OPENHANDS_API_KEY': 'local',
@@ -426,6 +455,71 @@ class ValidateEnvTests(unittest.TestCase):
             ],
         )
 
+    def test_validate_agent_env_with_claude_backend_does_not_require_openhands_keys(self) -> None:
+        errors = self._validate_agent_env(
+            {
+                'KATO_AGENT_BACKEND': 'claude',
+                'YOUTRACK_API_BASE_URL': 'https://youtrack.example',
+                'YOUTRACK_API_TOKEN': 'yt-token',
+                'YOUTRACK_PROJECT': 'PROJ',
+                'YOUTRACK_ASSIGNEE': 'developer',
+                'REPOSITORY_ROOT_PATH': '.',
+            }
+        )
+
+        self.assertEqual(errors, [])
+
+    def test_validate_agent_env_rejects_unsupported_backend(self) -> None:
+        errors = self._validate_agent_env(
+            {
+                'KATO_AGENT_BACKEND': 'gemini',
+                'YOUTRACK_API_BASE_URL': 'https://youtrack.example',
+                'YOUTRACK_API_TOKEN': 'yt-token',
+                'YOUTRACK_PROJECT': 'PROJ',
+                'YOUTRACK_ASSIGNEE': 'developer',
+                'REPOSITORY_ROOT_PATH': '.',
+                'OPENHANDS_BASE_URL': 'http://localhost:3000',
+                'OPENHANDS_API_KEY': 'local',
+            }
+        )
+
+        self.assertTrue(
+            any('unsupported KATO_AGENT_BACKEND' in error for error in errors),
+            errors,
+        )
+
+    def test_validate_claude_env_passes_when_binary_exists(self) -> None:
+        with patch('kato_core_lib.validate_env.which', return_value='/usr/local/bin/claude'):
+            errors = validate_claude_env({'KATO_CLAUDE_BINARY': 'claude'})
+        self.assertEqual(errors, [])
+
+    def test_validate_claude_env_reports_missing_binary(self) -> None:
+        with patch('kato_core_lib.validate_env.which', return_value=None):
+            errors = validate_claude_env({'KATO_CLAUDE_BINARY': 'claude-not-installed'})
+        self.assertEqual(len(errors), 1)
+        self.assertIn('Claude CLI binary', errors[0])
+
+    def test_validate_claude_env_reports_invalid_timeout(self) -> None:
+        with patch('kato_core_lib.validate_env.which', return_value='/usr/local/bin/claude'):
+            errors = validate_claude_env(
+                {
+                    'KATO_CLAUDE_BINARY': 'claude',
+                    'KATO_CLAUDE_TIMEOUT_SECONDS': '5',
+                }
+            )
+        self.assertEqual(errors, ['KATO_CLAUDE_TIMEOUT_SECONDS must be at least 60'])
+
+    def test_validate_claude_env_reports_non_integer_max_turns(self) -> None:
+        with patch('kato_core_lib.validate_env.which', return_value='/usr/local/bin/claude'):
+            errors = validate_claude_env(
+                {
+                    'KATO_CLAUDE_BINARY': 'claude',
+                    'KATO_CLAUDE_MAX_TURNS': 'lots',
+                }
+            )
+        self.assertEqual(len(errors), 1)
+        self.assertIn('KATO_CLAUDE_MAX_TURNS', errors[0])
+
     @staticmethod
     def _create_git_repository(path: Path, remote_url: str) -> None:
         git_dir = path / '.git'
@@ -440,5 +534,4 @@ class ValidateEnvTests(unittest.TestCase):
 
     @staticmethod
     def _validate_agent_env(env: dict[str, str]) -> list[str]:
-        with patch('kato.validate_env.discover_git_repositories', return_value=[]):
-            return validate_agent_env(env)
+        return validate_agent_env(env)

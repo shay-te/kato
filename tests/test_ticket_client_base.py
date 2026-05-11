@@ -1,8 +1,8 @@
 import unittest
 
-from kato.client.ticket_client_base import TicketClientBase
-from kato.data_layers.data.task import Task
-from kato.data_layers.data.fields import TaskCommentFields
+from kato_core_lib.client.ticket_client_base import TicketClientBase
+from kato_core_lib.data_layers.data.task import Task
+from kato_core_lib.data_layers.data.fields import TaskCommentFields
 
 
 class TicketClientBaseTests(unittest.TestCase):
@@ -159,6 +159,73 @@ class TicketClientBaseTests(unittest.TestCase):
                     TaskCommentFields.AUTHOR: 'reviewer',
                     TaskCommentFields.BODY: 'kato: retry approved for this task.',
                 },
+            ]
+        )
+
+        self.assertEqual(comment, '')
+
+    def test_active_execution_blocking_comment_tracks_started_working_comment(self) -> None:
+        comment = TicketClientBase.active_execution_blocking_comment(
+            [
+                {
+                    TaskCommentFields.AUTHOR: 'kato',
+                    TaskCommentFields.BODY: (
+                        'Kato agent started working on this task in repository backend.'
+                    ),
+                }
+            ]
+        )
+
+        self.assertEqual(
+            comment,
+            'Kato agent started working on this task in repository backend.',
+        )
+
+    def test_active_execution_blocking_comment_started_working_clears_after_retry_instruction(self) -> None:
+        comment = TicketClientBase.active_execution_blocking_comment(
+            [
+                {
+                    TaskCommentFields.AUTHOR: 'kato',
+                    TaskCommentFields.BODY: (
+                        'Kato agent started working on this task in repository backend.'
+                    ),
+                },
+                {
+                    TaskCommentFields.AUTHOR: 'shay',
+                    TaskCommentFields.BODY: 'kato: retry approved',
+                },
+            ]
+        )
+
+        self.assertEqual(comment, '')
+
+    def test_active_execution_blocking_comment_completion_supersedes_started_working(self) -> None:
+        comment = TicketClientBase.active_execution_blocking_comment(
+            [
+                {
+                    TaskCommentFields.AUTHOR: 'kato',
+                    TaskCommentFields.BODY: (
+                        'Kato agent started working on this task in repository backend.'
+                    ),
+                },
+                {
+                    TaskCommentFields.AUTHOR: 'kato',
+                    TaskCommentFields.BODY: 'Kato completed task PROJ-1: Fix the auth flow.',
+                },
+            ]
+        )
+
+        self.assertEqual(comment, 'Kato completed task PROJ-1: Fix the auth flow.')
+
+    def test_active_execution_blocking_comment_started_working_not_in_retry_blocking_prefixes(self) -> None:
+        comment = TicketClientBase.active_retry_blocking_comment(
+            [
+                {
+                    TaskCommentFields.AUTHOR: 'kato',
+                    TaskCommentFields.BODY: (
+                        'Kato agent started working on this task in repository backend.'
+                    ),
+                }
             ]
         )
 

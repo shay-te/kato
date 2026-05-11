@@ -10,16 +10,22 @@ import os
 import unittest
 from unittest.mock import patch
 
-from kato.validate_env import validate_environment
+from kato_core_lib.validate_env import validate_environment
 
 
 class TestDockerConfigValidation(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        # Save original environment variables
+        # Save original environment variables.
         self.original_env = dict(os.environ)
-        
+        # Wipe slate clean. The kato dispatcher loads ``.env`` into
+        # the parent process before invoking the test runner, so any
+        # ``YOUTRACK_*`` / ``OPENHANDS_*`` / etc. value present in
+        # the operator's ``.env`` would otherwise leak into tests
+        # that rely on env vars being absent.
+        os.environ.clear()
+
     def tearDown(self):
         """Restore original environment."""
         # Restore original environment
@@ -29,8 +35,8 @@ class TestDockerConfigValidation(unittest.TestCase):
     def test_validate_environment_with_minimal_valid_config(self):
         """Test validation with minimal but valid configuration."""
         # Set up minimal valid environment
-        os.environ['YOUTRACK_BASE_URL'] = 'https://example.youtrack.cloud'
-        os.environ['YOUTRACK_TOKEN'] = 'test-token'
+        os.environ['YOUTRACK_API_BASE_URL'] = 'https://example.youtrack.cloud'
+        os.environ['YOUTRACK_API_TOKEN'] = 'test-token'
         os.environ['YOUTRACK_PROJECT'] = 'TEST'
         os.environ['YOUTRACK_ASSIGNEE'] = 'developer'
         os.environ['KATO_ISSUE_PLATFORM'] = 'youtrack'
@@ -49,8 +55,8 @@ class TestDockerConfigValidation(unittest.TestCase):
     def test_validate_environment_missing_required_variables(self):
         """Test validation fails when required variables are missing."""
         # Only set partial environment
-        os.environ['YOUTRACK_BASE_URL'] = 'https://example.youtrack.cloud'
-        # Missing YOUTRACK_TOKEN, YOUTRACK_PROJECT
+        os.environ['YOUTRACK_API_BASE_URL'] = 'https://example.youtrack.cloud'
+        # Missing YOUTRACK_API_TOKEN, YOUTRACK_PROJECT
         
         # Should raise ValueError since required fields are missing
         with self.assertRaises(ValueError):

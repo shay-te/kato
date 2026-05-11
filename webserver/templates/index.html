@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Kato — Planning UI</title>
+  <!-- SVG favicon first — modern browsers prefer it, scales perfectly,
+       renders correctly on light AND dark tabs (uses currentColor). PNG
+       fallback for browsers that don't support SVG favicons. -->
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='kato-favicon.svg') }}?v=2" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png?v=3" />
+  <link rel="shortcut icon" href="/favicon.png?v=3" />
+  <!-- Vite-built CSS comes first so the global app.css can override
+       library defaults (react-diff-view ships a light theme; we want dark). -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='build/app.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
+</head>
+<body>
+  <div id="root"></div>
+  <script src="{{ url_for('static', filename='build/app.js') }}"></script>
+</body>
+</html>

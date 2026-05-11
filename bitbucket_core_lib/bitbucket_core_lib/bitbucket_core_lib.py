@@ -1,0 +1,32 @@
+from __future__ import annotations
+
+from core_lib.core_lib import CoreLib
+from omegaconf import DictConfig
+
+from bitbucket_core_lib.bitbucket_core_lib.client.bitbucket_client import BitbucketClient
+from bitbucket_core_lib.bitbucket_core_lib.client.bitbucket_issues_client import (
+    BitbucketIssuesClient,
+)
+
+
+class BitbucketCoreLib(CoreLib):
+    """Compose Bitbucket repository and issue clients."""
+
+    def __init__(self, cfg: DictConfig) -> None:
+        super().__init__()
+        bitbucket_cfg = cfg.core_lib.bitbucket_core_lib
+        pr_username = bitbucket_cfg.get('api_email', '') or bitbucket_cfg.get('username', '')
+        self.pull_request = BitbucketClient(
+            bitbucket_cfg.base_url,
+            bitbucket_cfg.token,
+            bitbucket_cfg.max_retries,
+            username=pr_username,
+        )
+        self.issue = BitbucketIssuesClient(
+            bitbucket_cfg.base_url,
+            bitbucket_cfg.token,
+            bitbucket_cfg.workspace,
+            bitbucket_cfg.get('repo_slug', ''),
+            bitbucket_cfg.max_retries,
+            username=bitbucket_cfg.get('username', ''),
+        )

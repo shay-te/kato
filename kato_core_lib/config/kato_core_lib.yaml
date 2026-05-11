@@ -1,0 +1,189 @@
+# @package _global_
+defaults:
+  - youtrack_core_lib: youtrack_core_lib
+  - github_core_lib: github_core_lib
+  - bitbucket_core_lib: bitbucket_core_lib
+  - gitlab_core_lib: gitlab_core_lib
+  - jira_core_lib: jira_core_lib
+  - _self_
+
+core_lib:
+  app:
+    name: kato
+  data: {}
+  email_core_lib:
+    client:
+      _target_: email_core_lib.client.send_in_blue_client.SendInBlueClient
+      api_key: ${oc.env:EMAIL_CORE_LIB_SEND_IN_BLUE_API_KEY,""}
+      slack_email_error_url: ${oc.env:SLACK_WEBHOOK_URL_ERRORS_EMAIL,""}
+
+kato:
+  issue_platform: ${oc.env:KATO_ISSUE_PLATFORM,"youtrack"}
+  agent_backend: ${oc.env:KATO_AGENT_BACKEND,"openhands"}
+  # Per-task workspace folders that hold fresh clones of every repo a
+  # task touches. Each folder is named after the ticket id and survives
+  # kato restart; the planning UI's tab list is derived from this root.
+  workspaces_root: ${oc.env:KATO_WORKSPACES_ROOT,""}
+  # How many tasks the orchestrator runs in parallel. The main scan
+  # thread still gates each task one-at-a-time (validate, reserve slot,
+  # move to In Progress); the heavy execute / test / publish work runs
+  # in a thread pool sized by this value.
+  max_parallel_tasks: ${oc.decode:${oc.env:KATO_MAX_PARALLEL_TASKS,"2"}}
+  retry:
+    max_retries: ${oc.decode:${oc.env:KATO_EXTERNAL_API_MAX_RETRIES,"3"}}
+  failure_email:
+    enabled: ${oc.decode:${oc.env:KATO_FAILURE_EMAIL_ENABLED,"false"}}
+    template_id: ${oc.env:KATO_FAILURE_EMAIL_TEMPLATE_ID,0}
+    body_template: failure_email.j2
+    recipients:
+      - ${oc.env:KATO_FAILURE_EMAIL_TO,null}
+    sender:
+      name: ${oc.env:KATO_FAILURE_EMAIL_SENDER_NAME,"Kato"}
+      email: ${oc.env:KATO_FAILURE_EMAIL_SENDER_EMAIL,"noreply@example.com"}
+  completion_email:
+    enabled: ${oc.decode:${oc.env:KATO_COMPLETION_EMAIL_ENABLED,"false"}}
+    template_id: ${oc.env:KATO_COMPLETION_EMAIL_TEMPLATE_ID,0}
+    body_template: completion_email.j2
+    recipients:
+      - ${oc.env:KATO_COMPLETION_EMAIL_TO,null}
+    sender:
+      name: ${oc.env:KATO_COMPLETION_EMAIL_SENDER_NAME,"Kato"}
+      email: ${oc.env:KATO_COMPLETION_EMAIL_SENDER_EMAIL,"noreply@example.com"}
+  # Pre-execution security scanner. Walks the per-task workspace
+  # before the agent runs, looking for committed secrets, vulnerable
+  # dependencies, and dangerous code patterns. Blocks the task on
+  # CRITICAL/HIGH findings (configurable).
+  security_scanner:
+    enabled: ${oc.decode:${oc.env:KATO_SECURITY_SCANNER_ENABLED,"true"}}
+    # Severities that abort the task. Operators can tighten to also
+    # block on MEDIUM, or loosen to only CRITICAL.
+    block_on_severity:
+      - critical
+      - high
+    runners:
+      env_file: ${oc.decode:${oc.env:KATO_SECURITY_RUNNER_ENV_FILE,"true"}}
+      detect_secrets: ${oc.decode:${oc.env:KATO_SECURITY_RUNNER_DETECT_SECRETS,"true"}}
+      bandit: ${oc.decode:${oc.env:KATO_SECURITY_RUNNER_BANDIT,"true"}}
+      safety: ${oc.decode:${oc.env:KATO_SECURITY_RUNNER_SAFETY,"true"}}
+      npm_audit: ${oc.decode:${oc.env:KATO_SECURITY_RUNNER_NPM_AUDIT,"true"}}
+    timeouts:
+      secrets: ${oc.decode:${oc.env:KATO_SECURITY_TIMEOUT_SECRETS,"60"}}
+      dependencies: ${oc.decode:${oc.env:KATO_SECURITY_TIMEOUT_DEPENDENCIES,"120"}}
+      code_patterns: ${oc.decode:${oc.env:KATO_SECURITY_TIMEOUT_CODE_PATTERNS,"120"}}
+  youtrack:
+    base_url: ${core_lib.youtrack_core_lib.base_url}
+    token: ${core_lib.youtrack_core_lib.token}
+    project: ${core_lib.youtrack_core_lib.project}
+    assignee: ${core_lib.youtrack_core_lib.assignee}
+    progress_state_field: ${core_lib.youtrack_core_lib.progress_state_field}
+    progress_state: ${core_lib.youtrack_core_lib.progress_state}
+    review_state_field: ${core_lib.youtrack_core_lib.review_state_field}
+    review_state: ${core_lib.youtrack_core_lib.review_state}
+    issue_states: ${core_lib.youtrack_core_lib.issue_states}
+    max_retries: ${core_lib.youtrack_core_lib.max_retries}
+  jira:
+    base_url: ${core_lib.jira_core_lib.base_url}
+    token: ${core_lib.jira_core_lib.token}
+    email: ${core_lib.jira_core_lib.email}
+    project: ${core_lib.jira_core_lib.project}
+    assignee: ${oc.env:JIRA_ASSIGNEE,""}
+    progress_state_field: ${oc.env:JIRA_PROGRESS_STATE_FIELD,"status"}
+    progress_state: ${oc.env:JIRA_PROGRESS_STATE,"In Progress"}
+    review_state_field: ${oc.env:JIRA_REVIEW_STATE_FIELD,"status"}
+    review_state: ${oc.env:JIRA_REVIEW_STATE,"In Review"}
+    issue_states: ${oc.env:JIRA_ISSUE_STATES,"To Do,Open"}
+    max_retries: ${core_lib.jira_core_lib.max_retries}
+  github_issues:
+    base_url: ${core_lib.github_core_lib.base_url}
+    token: ${core_lib.github_core_lib.token}
+    owner: ${core_lib.github_core_lib.owner}
+    repo: ${core_lib.github_core_lib.repo}
+    project: ${core_lib.github_core_lib.repo}
+    assignee: ${oc.env:GITHUB_ASSIGNEE,""}
+    progress_state_field: ${oc.env:GITHUB_PROGRESS_STATE_FIELD,"labels"}
+    progress_state: ${oc.env:GITHUB_PROGRESS_STATE,"In Progress"}
+    review_state_field: ${oc.env:GITHUB_REVIEW_STATE_FIELD,"labels"}
+    review_state: ${oc.env:GITHUB_REVIEW_STATE,"In Review"}
+    issue_states: ${oc.env:GITHUB_ISSUE_STATES,"open"}
+    max_retries: ${core_lib.github_core_lib.max_retries}
+  gitlab_issues:
+    base_url: ${core_lib.gitlab_core_lib.base_url}
+    token: ${core_lib.gitlab_core_lib.token}
+    project: ${core_lib.gitlab_core_lib.project}
+    assignee: ${oc.env:GITLAB_ASSIGNEE,""}
+    progress_state_field: ${oc.env:GITLAB_PROGRESS_STATE_FIELD,"labels"}
+    progress_state: ${oc.env:GITLAB_PROGRESS_STATE,"In Progress"}
+    review_state_field: ${oc.env:GITLAB_REVIEW_STATE_FIELD,"labels"}
+    review_state: ${oc.env:GITLAB_REVIEW_STATE,"In Review"}
+    issue_states: ${oc.env:GITLAB_ISSUE_STATES,"opened"}
+    max_retries: ${core_lib.gitlab_core_lib.max_retries}
+  bitbucket_issues:
+    base_url: ${core_lib.bitbucket_core_lib.base_url}
+    token: ${core_lib.bitbucket_core_lib.token}
+    username: ${core_lib.bitbucket_core_lib.username}
+    api_email: ${core_lib.bitbucket_core_lib.api_email}
+    workspace: ${core_lib.bitbucket_core_lib.workspace}
+    repo_slug: ${core_lib.bitbucket_core_lib.repo_slug}
+    project: ${core_lib.bitbucket_core_lib.repo_slug}
+    assignee: ${oc.env:BITBUCKET_ASSIGNEE,""}
+    progress_state_field: ${oc.env:BITBUCKET_PROGRESS_STATE_FIELD,"state"}
+    progress_state: ${oc.env:BITBUCKET_PROGRESS_STATE,"open"}
+    review_state_field: ${oc.env:BITBUCKET_REVIEW_STATE_FIELD,"state"}
+    review_state: ${oc.env:BITBUCKET_REVIEW_STATE,"resolved"}
+    issue_states: ${oc.env:BITBUCKET_ISSUE_STATES,"new,open"}
+    max_retries: ${core_lib.bitbucket_core_lib.max_retries}
+  repository_root_path: ${oc.env:REPOSITORY_ROOT_PATH,""}
+  ignored_repository_folders: ${oc.env:KATO_IGNORED_REPOSITORY_FOLDERS,""}
+  source_fingerprint: ${oc.env:KATO_SOURCE_FINGERPRINT,""}
+  repositories: []
+  openhands:
+    base_url: ${oc.env:OPENHANDS_BASE_URL}
+    api_key: ${oc.env:OPENHANDS_API_KEY}
+    llm_model: ${oc.env:OPENHANDS_LLM_MODEL,""}
+    llm_base_url: ${oc.env:OPENHANDS_LLM_BASE_URL,""}
+    model_smoke_test_enabled: ${oc.decode:${oc.env:OPENHANDS_MODEL_SMOKE_TEST_ENABLED,"true"}}
+    testing_container_enabled: ${oc.decode:${oc.env:OPENHANDS_TESTING_CONTAINER_ENABLED,"false"}}
+    skip_testing: ${oc.decode:${oc.env:OPENHANDS_SKIP_TESTING,"false"}}
+    testing_base_url: ${oc.env:OPENHANDS_TESTING_BASE_URL,""}
+    testing_llm_model: ${oc.env:OPENHANDS_TESTING_LLM_MODEL,""}
+    testing_llm_base_url: ${oc.env:OPENHANDS_TESTING_LLM_BASE_URL,""}
+    poll_interval_seconds: ${oc.decode:${oc.env:OPENHANDS_POLL_INTERVAL_SECONDS,"2.0"}}
+    max_poll_attempts: ${oc.decode:${oc.env:OPENHANDS_MAX_POLL_ATTEMPTS,"900"}}
+  claude:
+    binary: ${oc.env:KATO_CLAUDE_BINARY,"claude"}
+    model: ${oc.env:KATO_CLAUDE_MODEL,""}
+    max_turns: ${oc.env:KATO_CLAUDE_MAX_TURNS,""}
+    # Reasoning depth: low | medium | high | xhigh | max. Empty leaves
+    # Claude on its built-in default. Higher levels think harder before
+    # acting (more tokens, more time).
+    effort: ${oc.env:KATO_CLAUDE_EFFORT,""}
+    allowed_tools: ${oc.env:KATO_CLAUDE_ALLOWED_TOOLS,""}
+    disallowed_tools: ${oc.env:KATO_CLAUDE_DISALLOWED_TOOLS,""}
+    bypass_permissions: ${oc.decode:${oc.env:KATO_CLAUDE_BYPASS_PERMISSIONS,"false"}}
+    timeout_seconds: ${oc.decode:${oc.env:KATO_CLAUDE_TIMEOUT_SECONDS,"1800"}}
+    model_smoke_test_enabled: ${oc.decode:${oc.env:KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED,"false"}}
+    # Optional path to an architecture / project-context document that
+    # kato appends to Claude's system prompt on every spawn (autonomous
+    # runs, planning sessions, and review-fix retries). Empty disables.
+    architecture_doc_path: ${oc.env:KATO_ARCHITECTURE_DOC_PATH,""}
+    # Path to the global compacted lessons file. Re-read on every
+    # Claude spawn so newly-extracted lessons (after a "done" click or
+    # a periodic compact) take effect on the next turn without
+    # restarting kato. Empty falls back to ``~/.kato/lessons.md``.
+    lessons_path: ${oc.env:KATO_LESSONS_PATH,""}
+  task_scan:
+    startup_delay_seconds: ${oc.decode:${oc.env:OPENHANDS_TASK_SCAN_STARTUP_DELAY_SECONDS,"5"}}
+    scan_interval_seconds: ${oc.decode:${oc.env:OPENHANDS_TASK_SCAN_INTERVAL_SECONDS,"60"}}
+  task_publish:
+    # Retries for the publish step (per-repo PR creation + the
+    # YouTrack/Jira move-to-review call). Implementation work is NOT
+    # re-run on retry; only the publish-side network/API calls are
+    # retried with exponential backoff. 2 retries → up to 3 attempts.
+    max_retries: ${oc.decode:${oc.env:KATO_TASK_PUBLISH_MAX_RETRIES,"2"}}
+  # How long a workspace in `review` state survives before the cleanup
+  # loop deletes it, even if the ticket is still in the review bucket.
+  # Default 3600s = 1 hour. After this window, kato re-clones on demand
+  # if a review comment fires for an already-cleaned task. Set to 0 to
+  # disable TTL-based cleanup (workspace persists for the full review
+  # bucket lifetime, which is the legacy behavior).
+  review_workspace_ttl_seconds: ${oc.decode:${oc.env:KATO_WORKSPACE_REVIEW_TTL_SECONDS,"3600"}}

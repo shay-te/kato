@@ -25,7 +25,7 @@ class DeploymentFilesTests(unittest.TestCase):
         compose_text = (REPO_ROOT / 'docker-compose.yaml').read_text(encoding='utf-8')
         makefile_text = (REPO_ROOT / 'Makefile').read_text(encoding='utf-8')
         env_example_text = (REPO_ROOT / '.env.example').read_text(encoding='utf-8')
-        core_lib_yaml_text = (REPO_ROOT / 'kato/config/kato_core_lib.yaml').read_text(
+        core_lib_yaml_text = (REPO_ROOT / 'kato_core_lib/config/kato_core_lib.yaml').read_text(
             encoding='utf-8'
         )
 
@@ -47,7 +47,7 @@ class DeploymentFilesTests(unittest.TestCase):
             compose_text,
         )
         self.assertIn(
-            'LOG_ALL_EVENTS: ${OPENHANDS_CONTAINER_LOG_ALL_EVENTS}',
+            'LOG_ALL_EVENTS: ${OPENHANDS_CONTAINER_LOG_ALL_EVENTS:-true}',
             compose_text,
         )
         self.assertIn('AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}', compose_text)
@@ -132,27 +132,27 @@ class DeploymentFilesTests(unittest.TestCase):
             compose_text,
         )
         self.assertIn(
-            'GITHUB_ISSUES_ISSUE_STATES: ${GITHUB_ISSUES_ISSUE_STATES:-open}',
+            'GITHUB_ISSUE_STATES: ${GITHUB_ISSUE_STATES:-open}',
             compose_text,
         )
         self.assertIn(
-            'GITHUB_ISSUES_PROGRESS_STATE: ${GITHUB_ISSUES_PROGRESS_STATE:-In Progress}',
+            'GITHUB_PROGRESS_STATE: ${GITHUB_PROGRESS_STATE:-In Progress}',
             compose_text,
         )
         self.assertIn(
-            'GITLAB_ISSUES_ISSUE_STATES: ${GITLAB_ISSUES_ISSUE_STATES:-opened}',
+            'GITLAB_ISSUE_STATES: ${GITLAB_ISSUE_STATES:-opened}',
             compose_text,
         )
         self.assertIn(
-            'GITLAB_ISSUES_PROGRESS_STATE: ${GITLAB_ISSUES_PROGRESS_STATE:-In Progress}',
+            'GITLAB_PROGRESS_STATE: ${GITLAB_PROGRESS_STATE:-In Progress}',
             compose_text,
         )
         self.assertIn(
-            'BITBUCKET_ISSUES_ISSUE_STATES: ${BITBUCKET_ISSUES_ISSUE_STATES:-new,open}',
+            'BITBUCKET_ISSUE_STATES: ${BITBUCKET_ISSUE_STATES:-new,open}',
             compose_text,
         )
         self.assertIn(
-            'BITBUCKET_ISSUES_PROGRESS_STATE: ${BITBUCKET_ISSUES_PROGRESS_STATE:-open}',
+            'BITBUCKET_PROGRESS_STATE: ${BITBUCKET_PROGRESS_STATE:-open}',
             compose_text,
         )
         self.assertIn('GITHUB_API_TOKEN: ${GITHUB_API_TOKEN:-}', compose_text)
@@ -195,7 +195,7 @@ class DeploymentFilesTests(unittest.TestCase):
         )
         self.assertIn('OH_PERSISTENCE_DIR: /data', compose_text)
         self.assertIn(
-            'KATO_SOURCE_FINGERPRINT := $(shell $(PYTHON) -m kato.helpers.runtime_identity_utils --root .)',
+            'KATO_SOURCE_FINGERPRINT := $(shell $(PYTHON) -m kato_core_lib.helpers.runtime_identity_utils --root .)',
             makefile_text,
         )
         self.assertIn(
@@ -213,9 +213,36 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertNotIn('OPENHANDS_CONTAINER_AWS_SESSION_TOKEN', compose_text)
         self.assertNotIn('OPENHANDS_CONTAINER_AWS_DEFAULT_REGION', compose_text)
         self.assertIn(
-            'max_retries: ${oc.decode:${oc.env:KATO_EXTERNAL_API_MAX_RETRIES,"3"}}',
+            'defaults:\n  - youtrack_core_lib: youtrack_core_lib\n  - github_core_lib: github_core_lib\n  - bitbucket_core_lib: bitbucket_core_lib\n  - gitlab_core_lib: gitlab_core_lib\n  - jira_core_lib: jira_core_lib\n  - _self_',
             core_lib_yaml_text,
         )
+        self.assertIn('base_url: ${core_lib.youtrack_core_lib.base_url}', core_lib_yaml_text)
+        self.assertIn('token: ${core_lib.youtrack_core_lib.token}', core_lib_yaml_text)
+        self.assertIn('project: ${core_lib.youtrack_core_lib.project}', core_lib_yaml_text)
+        self.assertIn('max_retries: ${core_lib.youtrack_core_lib.max_retries}', core_lib_yaml_text)
+        self.assertIn(
+            'base_url: ${core_lib.github_core_lib.base_url}',
+            core_lib_yaml_text,
+        )
+        self.assertIn(
+            'max_retries: ${core_lib.github_core_lib.max_retries}',
+            core_lib_yaml_text,
+        )
+        self.assertIn(
+            'base_url: ${core_lib.bitbucket_core_lib.base_url}',
+            core_lib_yaml_text,
+        )
+        self.assertIn(
+            'max_retries: ${core_lib.bitbucket_core_lib.max_retries}',
+            core_lib_yaml_text,
+        )
+        self.assertIn('base_url: ${core_lib.gitlab_core_lib.base_url}', core_lib_yaml_text)
+        self.assertIn('project: ${core_lib.gitlab_core_lib.project}', core_lib_yaml_text)
+        self.assertIn('max_retries: ${core_lib.gitlab_core_lib.max_retries}', core_lib_yaml_text)
+        self.assertIn('base_url: ${core_lib.jira_core_lib.base_url}', core_lib_yaml_text)
+        self.assertIn('email: ${core_lib.jira_core_lib.email}', core_lib_yaml_text)
+        self.assertIn('project: ${core_lib.jira_core_lib.project}', core_lib_yaml_text)
+        self.assertIn('max_retries: ${core_lib.jira_core_lib.max_retries}', core_lib_yaml_text)
 
     def test_env_example_includes_openhands_llm_variables(self) -> None:
         env_example_text = (REPO_ROOT / '.env.example').read_text(encoding='utf-8')
@@ -230,29 +257,29 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('KATO_COMPLETION_EMAIL_ENABLED=', env_example_text)
         self.assertIn('KATO_AGENT_SERVER_IMAGE_REPOSITORY=', env_example_text)
         self.assertIn('KATO_AGENT_SERVER_IMAGE_TAG=', env_example_text)
-        self.assertLess(env_example_text.index('KATO_ISSUE_PLATFORM='), env_example_text.index('YOUTRACK_BASE_URL='))
-        self.assertLess(env_example_text.index('KATO_AGENT_SERVER_IMAGE_TAG='), env_example_text.index('YOUTRACK_BASE_URL='))
+        self.assertLess(env_example_text.index('KATO_ISSUE_PLATFORM='), env_example_text.index('YOUTRACK_API_BASE_URL='))
+        self.assertLess(env_example_text.index('KATO_AGENT_SERVER_IMAGE_TAG='), env_example_text.index('YOUTRACK_API_BASE_URL='))
         self.assertIn('REPOSITORY_ROOT_PATH=', env_example_text)
-        self.assertIn('JIRA_BASE_URL=', env_example_text)
-        self.assertIn('JIRA_TOKEN=', env_example_text)
+        self.assertIn('JIRA_API_BASE_URL=', env_example_text)
+        self.assertIn('JIRA_API_TOKEN=', env_example_text)
         self.assertIn('YOUTRACK_PROGRESS_STATE=', env_example_text)
         self.assertIn('YOUTRACK_ISSUE_STATES=', env_example_text)
         self.assertIn('JIRA_PROGRESS_STATE=', env_example_text)
         self.assertIn('JIRA_ISSUE_STATES=', env_example_text)
-        self.assertIn('GITHUB_ISSUES_BASE_URL=', env_example_text)
+        self.assertIn('GITHUB_API_BASE_URL=', env_example_text)
         self.assertIn('GITHUB_API_TOKEN=', env_example_text)
-        self.assertIn('GITHUB_ISSUES_PROGRESS_STATE=', env_example_text)
-        self.assertIn('GITHUB_ISSUES_ISSUE_STATES=', env_example_text)
-        self.assertIn('GITLAB_ISSUES_BASE_URL=', env_example_text)
+        self.assertIn('GITHUB_PROGRESS_STATE=', env_example_text)
+        self.assertIn('GITHUB_ISSUE_STATES=', env_example_text)
+        self.assertIn('GITLAB_API_BASE_URL=', env_example_text)
         self.assertIn('GITLAB_API_TOKEN=', env_example_text)
-        self.assertIn('GITLAB_ISSUES_PROGRESS_STATE=', env_example_text)
-        self.assertIn('GITLAB_ISSUES_ISSUE_STATES=', env_example_text)
-        self.assertIn('BITBUCKET_ISSUES_BASE_URL=', env_example_text)
+        self.assertIn('GITLAB_PROGRESS_STATE=', env_example_text)
+        self.assertIn('GITLAB_ISSUE_STATES=', env_example_text)
+        self.assertIn('BITBUCKET_API_BASE_URL=', env_example_text)
         self.assertIn('BITBUCKET_API_TOKEN=', env_example_text)
         self.assertIn('BITBUCKET_USERNAME=', env_example_text)
         self.assertIn('BITBUCKET_API_EMAIL=', env_example_text)
-        self.assertIn('BITBUCKET_ISSUES_PROGRESS_STATE=', env_example_text)
-        self.assertIn('BITBUCKET_ISSUES_ISSUE_STATES=', env_example_text)
+        self.assertIn('BITBUCKET_PROGRESS_STATE=', env_example_text)
+        self.assertIn('BITBUCKET_ISSUE_STATES=', env_example_text)
         self.assertIn('OPENHANDS_BASE_URL=', env_example_text)
         self.assertIn('OPENHANDS_SKIP_TESTING=', env_example_text)
         self.assertIn('OPENHANDS_TESTING_CONTAINER_ENABLED=', env_example_text)
@@ -309,10 +336,14 @@ class DeploymentFilesTests(unittest.TestCase):
             ordered_kato_keys,
             [
                 'KATO_ISSUE_PLATFORM',
+                'KATO_AGENT_BACKEND',
                 'KATO_LOG_LEVEL',
                 'KATO_WORKFLOW_LOG_LEVEL',
                 'KATO_EXTERNAL_API_MAX_RETRIES',
+                'KATO_WORKSPACES_ROOT',
+                'KATO_MAX_PARALLEL_TASKS',
                 'KATO_IGNORED_REPOSITORY_FOLDERS',
+                'KATO_REPOSITORY_DENYLIST',
                 'KATO_SOURCE_FINGERPRINT',
                 'KATO_FAILURE_EMAIL_ENABLED',
                 'KATO_FAILURE_EMAIL_TEMPLATE_ID',
@@ -326,6 +357,30 @@ class DeploymentFilesTests(unittest.TestCase):
                 'KATO_COMPLETION_EMAIL_SENDER_EMAIL',
                 'KATO_AGENT_SERVER_IMAGE_REPOSITORY',
                 'KATO_AGENT_SERVER_IMAGE_TAG',
+                'KATO_WEBSERVER_PORT',
+                'KATO_CLAUDE_BINARY',
+                'KATO_CLAUDE_MODEL',
+                'KATO_CLAUDE_MAX_TURNS',
+                'KATO_CLAUDE_EFFORT',
+                'KATO_CLAUDE_ALLOWED_TOOLS',
+                'KATO_CLAUDE_DISALLOWED_TOOLS',
+                'KATO_CLAUDE_BYPASS_PERMISSIONS',
+                'KATO_SECURITY_SCANNER_ENABLED',
+                'KATO_SECURITY_RUNNER_ENV_FILE',
+                'KATO_SECURITY_RUNNER_DETECT_SECRETS',
+                'KATO_SECURITY_RUNNER_BANDIT',
+                'KATO_SECURITY_RUNNER_SAFETY',
+                'KATO_SECURITY_RUNNER_NPM_AUDIT',
+                'KATO_SECURITY_TIMEOUT_SECRETS',
+                'KATO_SECURITY_TIMEOUT_DEPENDENCIES',
+                'KATO_SECURITY_TIMEOUT_CODE_PATTERNS',
+                'KATO_APPROVED_REPOSITORIES_PATH',
+                'KATO_OPERATOR_EMAIL',
+                'KATO_CLAUDE_TIMEOUT_SECONDS',
+                'KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED',
+                'KATO_ARCHITECTURE_DOC_PATH',
+                'KATO_TASK_PUBLISH_MAX_RETRIES',
+                'KATO_WORKSPACE_REVIEW_TTL_SECONDS',
             ],
         )
 
@@ -335,11 +390,7 @@ class DeploymentFilesTests(unittest.TestCase):
 
         self.assertIn('Keep orchestration logic in services.', agents_text)
         self.assertIn(
-            'Keep components free of heavy logic; move overlapping, reusable, or similar behavior into helpers or shared services instead of scattering it inside a component.',
-            agents_text,
-        )
-        self.assertIn(
-            'Prefer constants from `kato/data_layers/data/fields.py` over free-text field names.',
+            'Prefer constants from `kato_core_lib/data_layers/data/fields.py` over free-text field names.',
             agents_text,
         )
         self.assertIn('Write tests for new behavior when possible.', agents_text)
@@ -350,14 +401,14 @@ class DeploymentFilesTests(unittest.TestCase):
         )
         self.assertNotIn('/Users/shaytessler/', readme_text)
         self.assertIn('make configure', readme_text)
-        self.assertFalse((REPO_ROOT / 'kato' / 'fields.py').exists())
-        self.assertFalse((REPO_ROOT / 'kato' / 'error_handling.py').exists())
+        self.assertFalse((REPO_ROOT / 'kato_core_lib' / 'fields.py').exists())
+        self.assertFalse((REPO_ROOT / 'kato_core_lib' / 'error_handling.py').exists())
         self.assertFalse(
-            any((REPO_ROOT / 'kato' / 'data_layers' / 'service' / 'validation').glob('*.py'))
+            any((REPO_ROOT / 'kato_core_lib' / 'data_layers' / 'service' / 'validation').glob('*.py'))
         )
 
     def test_helper_modules_use_utils_suffix(self) -> None:
-        helpers_dir = REPO_ROOT / 'kato' / 'helpers'
+        helpers_dir = REPO_ROOT / 'kato_core_lib' / 'helpers'
 
         helper_modules = [
             path
@@ -370,7 +421,7 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertEqual(non_utils_modules, [])
 
     def test_validation_modules_live_in_top_level_validation_package(self) -> None:
-        validation_dir = REPO_ROOT / 'kato' / 'validation'
+        validation_dir = REPO_ROOT / 'kato_core_lib' / 'validation'
 
         validation_modules = [
             path.name
@@ -395,15 +446,24 @@ class DeploymentFilesTests(unittest.TestCase):
             REPO_ROOT / 'docker' / 'entrypoint-run.sh'
         ).read_text(encoding='utf-8')
         config_text = (
-            REPO_ROOT / 'kato' / 'config' / 'kato_core_lib.yaml'
+            REPO_ROOT / 'kato_core_lib' / 'config' / 'kato_core_lib.yaml'
         ).read_text(encoding='utf-8')
+        # install-python-deps.sh is now a thin POSIX wrapper around the
+        # cross-platform Python script. Probe the canonical Python file
+        # for dependency content.
         install_deps_text = (
-            REPO_ROOT / 'scripts' / 'install-python-deps.sh'
+            REPO_ROOT / 'scripts' / 'install_python_deps.py'
         ).read_text(encoding='utf-8')
 
-        self.assertIn('cp .env.example .env', bootstrap_text)
-        self.assertIn('sh ./scripts/install-python-deps.sh .venv/bin/python editable', bootstrap_text)
-        self.assertIn('.venv/bin/python -m unittest discover -s tests', bootstrap_text)
+        # bootstrap.sh is now a thin POSIX wrapper around the canonical
+        # cross-platform Python entrypoint at scripts/bootstrap.py.
+        self.assertIn('python3 scripts/bootstrap.py', bootstrap_text)
+        bootstrap_py_text = (
+            REPO_ROOT / 'scripts' / 'bootstrap.py'
+        ).read_text(encoding='utf-8')
+        self.assertIn('.env.example', bootstrap_py_text)
+        self.assertIn('install_python_deps.py', bootstrap_py_text)
+        self.assertIn("'unittest', 'discover', '-s', 'tests'", bootstrap_py_text)
         self.assertIn('hydra-core>=1.3.2', install_deps_text)
         self.assertIn('core-lib>=0.2.0', install_deps_text)
         self.assertNotIn('alembic', install_deps_text)
@@ -412,18 +472,18 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertNotIn('deps-only', install_deps_text)
         self.assertNotIn('--install-only', run_local_text)
         self.assertNotIn('kato.install', run_local_text)
-        self.assertNotIn('kato.validate_env --mode agent', run_local_text)
+        self.assertNotIn('kato_core_lib.validate_env --mode agent', run_local_text)
         self.assertIn('bootstrap:', makefile_text)
         self.assertIn('configure:', makefile_text)
         self.assertIn('scripts/generate_env.py --output .env', makefile_text)
         self.assertIn('doctor:', makefile_text)
         self.assertIn('run:', makefile_text)
         self.assertIn('--profile testing', makefile_text)
+        self.assertIn('--profile openhands', makefile_text)
+        self.assertIn('KATO_AGENT_BACKEND', makefile_text)
         self.assertIn('OPENHANDS_SKIP_TESTING', makefile_text)
-        self.assertIn('docker compose --profile testing up --build -d', makefile_text)
-        self.assertIn('docker compose up --build -d', makefile_text)
-        self.assertIn('docker compose --profile testing ps -q kato', makefile_text)
-        self.assertIn('docker compose ps -q kato', makefile_text)
+        self.assertIn('docker compose $$PROFILES up --build -d', makefile_text)
+        self.assertIn('docker compose $$PROFILES ps -q kato', makefile_text)
         self.assertIn('docker attach "$$KATO_CONTAINER_ID"', makefile_text)
         self.assertNotIn('.docker-compose.selected-repos.yaml', makefile_text)
         self.assertIn('OPENHANDS_TESTING_CONTAINER_ENABLED', run_entrypoint_text)
@@ -486,7 +546,7 @@ class DeploymentFilesTests(unittest.TestCase):
             compose_text,
         )
         self.assertIn('repositories:', config_text)
-        self.assertIn('YOUTRACK_ISSUE_STATES', config_text)
+        self.assertIn('issue_states: ${core_lib.youtrack_core_lib.issue_states}', config_text)
         self.assertIn('poll_interval_seconds:', config_text)
         self.assertIn('max_poll_attempts:', config_text)
         self.assertIn('skip_testing:', config_text)
@@ -512,7 +572,7 @@ class DeploymentFilesTests(unittest.TestCase):
 
     def test_repo_does_not_use_all_export_shims(self) -> None:
         forbidden_locations = []
-        for path in (REPO_ROOT / 'kato').rglob('*.py'):
+        for path in (REPO_ROOT / 'kato_core_lib').rglob('*.py'):
             text = path.read_text(encoding='utf-8')
             if '__all__ =' in text:
                 forbidden_locations.append(str(path.relative_to(REPO_ROOT)))

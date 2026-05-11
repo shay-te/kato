@@ -4,7 +4,38 @@
 
 # Kato
 
+<p align="center">
+  <img src="./docs/img/bruce-lee-kato.jpg" alt="Bruce Lee as Kato in The Green Hornet (1966)" width="180" />
+  <br />
+  <em>Kato will help you kick all your tasks.</em>
+</p>
+
 Welcome to Kato! This repository is structured as a [`core-lib`](https://shay-te.github.io/core-lib/) application and follows the documented `core-lib` package layout.
+
+> **🛡 Security layers.** Three gates run before any agent touches a
+> repository:
+>
+> - **Repository denylist** (`KATO_REPOSITORY_DENYLIST`) — repos
+>   matched against this list are dropped from kato's inventory at
+>   load time. There is no override; if a repo id is on the denylist,
+>   kato will not see it.
+> - **Pre-execution security scanner** — every per-task workspace
+>   clone is scanned by `detect-secrets`, `bandit`, `safety`, `npm
+>   audit`, and a `.env`-file checker before the agent spawns. Real
+>   secrets / CVEs / dangerous patterns block the task with a ticket
+>   comment.
+> - **Restricted Execution Protocol (REP)** — kato refuses to run
+>   an agent against any repository the operator hasn't explicitly
+>   approved. Run `./kato approve-repo` to open the picker — it
+>   shows every repo kato can find with `[x]` next to the ones
+>   already approved; toggle indices, press Enter to apply. REP is
+>   always on. There is no off switch. New repos start in
+>   `restricted` mode; the operator elevates to `trusted` after
+>   reviewing the first agent run.
+>
+> Combined, these catch the most common breach patterns in
+> small-team codebases — committed `.env` files, vulnerable deps,
+> and misrouted task tags.
 
 ## Why Kato
 
@@ -32,6 +63,133 @@ Reference:
 - https://shay-te.github.io/core-lib/
 - https://shay-te.github.io/core-lib/advantages.html
 
+## Core-lib map
+
+Kato is a thin orchestrator on top of a stack of focused libraries. Each one has a clear responsibility and either implements a contract (provider impls) or wraps several providers behind a typed factory (wrapping libs).
+
+```
+   ┌─────────────────────────────────────────────────────────────────────┐
+   │                                                                     │
+   │                          kato_core_lib                              │
+   │                                                                     │
+   │  product orchestrator: assigned-task scan → REP gate → workspace    │
+   │  clone → preflight → planning session → publish → review-fix loop   │
+   │                                                                     │
+   │  webserver/   planning UI (Flask + React) lives here                │
+   │                                                                     │
+   └──┬──────────────┬───────────────────┬──────────────────┬────────────┘
+      │              │                   │                  │
+      │ wraps        │ wraps             │ wraps            │ uses
+      ▼              ▼                   ▼                  ▼
+
+  ┌─────────┐  ┌──────────────┐  ┌──────────────┐  ┌────────────────┐
+  │ task_   │  │ repository_  │  │ agent_       │  │ sandbox_       │
+  │ core_lib│  │ core_lib     │  │ core_lib     │  │ core_lib       │
+  │         │  │              │  │              │  │                │
+  │ factory │  │ factory +    │  │ factory +    │  │ INDEPENDENT    │
+  │ +       │  │ provider     │  │ AgentPlatform│  │ (no contracts, │
+  │ Platform│  │ routing      │  │ enum         │  │  no providers, │
+  │ enum    │  │              │  │              │  │  self-contained)│
+  └────┬────┘  └──────┬───────┘  └──────┬───────┘  │                │
+       │              │                 │          │ Dockerfile +   │
+       │ depends on   │ depends on      │ depends  │ tls_pin +      │
+       ▼              ▼                 │ on       │ audit_log +    │
+  ┌────────────────────────────┐ ┌─────────────────────┐│ workspace_  │
+  │ vcs_provider_contracts     │ │ agent_provider_      ││ delimiter + │
+  │                            │ │ contracts            ││ credential_ │
+  │  IssueProvider     (ABC)   │ │                      ││ patterns +  │
+  │  PullRequestProvider (ABC) │ │  AgentProvider       ││ bypass_     │
+  │  DTOs: Issue, PullRequest, │ │   (Protocol)         ││ permissions │
+  │  ReviewComment,            │ │  DTOs: AgentTask,    ││ _validator  │
+  │  IssueComment              │ │   AgentReviewComment,│└────────────────┘
+  │                            │ │   AgentResult        │
+  │  pure ABCs + DTOs, no impl │ │   pure ABCs + DTOs   │
+  └────────────────────────────┘ └─────────────────────┘
+       ▲              ▲                 ▲
+       │ implements   │ implements      │ implements
+       │              │                 │
+   ┌───┴───┐      ┌───┴────┐      ┌─────┴──────┬───────────────┐
+   │       │      │        │      │            │               │
+   │       │      │        │      │            │               │
+youtrack jira_  github_  gitlab_  claude_   openhands_     codex_
+_core_   core   core_lib core_lib core_lib  core_lib       core_lib
+ lib    _lib                                                (future)
+
+                bitbucket_
+                core_lib                  subprocess     HTTP/RPC      subprocess
+                                          + NDJSON       no stream     + NDJSON
+                                          stream                       stream
+```
+
+Five layers, top to bottom:
+
+1. **`kato_core_lib`** — the product. Orchestration loop + planning UI. Calls the four wrapping libs through their typed contracts; never reaches into a provider directly.
+2. **Wrapping factory libs** — `task_core_lib`, `repository_core_lib`, `agent_core_lib`, plus `sandbox_core_lib` (the odd one out — see below). Each is a thin factory + Platform enum. No business logic.
+3. **Contracts packages** — `vcs_provider_contracts` and `agent_provider_contracts`. Pure `Protocol` + frozen DTOs. Zero implementation, zero dependencies on anything else in the repo. Implementations import from contracts; contracts import from nothing.
+4. **Provider implementations** — one per concrete backend. `youtrack_core_lib`, `jira_core_lib`, `github_core_lib`, `gitlab_core_lib`, `bitbucket_core_lib` for VCS/issues; `claude_core_lib`, `openhands_core_lib` (and future `codex_core_lib`) for agents. Each implements one or more contracts.
+5. **Independent units** — `sandbox_core_lib` is the only one today. It's a flat self-contained library, not a contracts/factory/provider triangle, because the domain doesn't have alternatives — there's only one sandbox model (hardened-Docker-for-CLI-agents).
+
+Adding a new provider (e.g. a `gerrit_core_lib` for code review, or a `codex_core_lib` for the OpenAI Codex agent) follows the same playbook every time: implement the contract, wire it into the factory, add a Platform enum value. Kato itself doesn't change.
+
+## Choosing an Agent Backend
+
+Kato can drive its implementation, testing, and review-fix work through one of two agent backends. Selection is a single environment variable:
+
+```env
+# default
+KATO_AGENT_BACKEND=openhands
+
+# OR
+KATO_AGENT_BACKEND=claude
+```
+
+- `openhands` (default) drives the OpenHands HTTP server. Uses the `OPENHANDS_*` block of `.env`. The Docker Compose stack still ships an `openhands` container by default.
+- `claude` drives Anthropic's Claude Code CLI locally with `claude -p` (non-interactive print mode). Uses the `KATO_CLAUDE_*` block of `.env`. The CLI must be installed and authenticated on the host that runs Kato (`claude login`); the OpenHands container is not required.
+
+Everything that works with OpenHands also works with `claude -p`:
+
+- Implementation conversations per task.
+- Optional testing-validation conversations (controlled by `OPENHANDS_SKIP_TESTING`).
+- Review-comment fix conversations on existing pull requests, including session resume so the agent keeps context across review rounds (mapped to `claude --resume <session_id>`).
+- Repository scope, security guardrails, and the `validation_report.md` PR-description handoff are identical in both backends.
+
+Switching is one env value: change `KATO_AGENT_BACKEND`, run `make doctor`, restart Kato.
+
+### Setting Up the Claude CLI Backend
+
+```env
+KATO_AGENT_BACKEND=claude
+
+# Path to the binary (default: claude on PATH).
+KATO_CLAUDE_BINARY=claude
+
+# Optional model override; leave empty to use the CLI's configured default.
+# Examples: claude-opus-4-7 | claude-sonnet-4-6 | claude-haiku-4-5-20251001
+KATO_CLAUDE_MODEL=
+
+# Optional turn cap, allow/deny tool lists, permission mode.
+KATO_CLAUDE_MAX_TURNS=
+KATO_CLAUDE_ALLOWED_TOOLS=
+KATO_CLAUDE_DISALLOWED_TOOLS=
+# When true, kato runs Claude with `--permission-mode bypassPermissions`.
+# When false (default), kato uses acceptEdits and routes permission asks
+# back through the planning UI.
+KATO_CLAUDE_BYPASS_PERMISSIONS=false
+
+# Per-task subprocess timeout (seconds) and an optional startup smoke test.
+KATO_CLAUDE_TIMEOUT_SECONDS=1800
+KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED=false
+```
+
+Notes:
+
+- Install Claude Code: https://docs.claude.com/en/docs/claude-code/setup
+- Authenticate once interactively (`claude login`) on the host. Kato runs the CLI with `-p`, which uses the credentials stored by `claude login`.
+- The CLI runs locally and edits files directly in the prepared task branch, so the orchestration layer does not need OpenHands credentials, the agent-server image, or the dedicated testing container when this backend is active. The `OPENHANDS_*` block of `.env` can stay empty.
+- `KATO_CLAUDE_PERMISSION_MODE` defaults to `bypassPermissions` because the orchestration layer pins the agent to a prepared branch and runs unattended. Use `acceptEdits` if you would rather have Claude prompt for tool grants in interactive setups.
+- The CLI is invoked with `--output-format json` so the orchestration parses `result` and `session_id` from the structured output. Review-comment follow-ups pass that `session_id` back via `--resume`.
+- The agent still produces `validation_report.md` in the repository root; the existing publication flow uses it as the pull request description and removes it before pushing — same as the OpenHands path.
+
 The agent is designed to:
 
 1. Read tasks assigned to it from the configured issue platform.
@@ -48,42 +206,126 @@ The agent is designed to:
 ## Structure
 
 ```text
-kato/
-  client/
-    bitbucket_issues_client.py
-    bitbucket_client.py
-    github_issues_client.py
-    gitlab_issues_client.py
-    jira_client.py
-    kato_client.py
-    ticket_client_base.py
-    ticket_client_factory.py
-    youtrack_client.py
+kato_core_lib/
+  client/                        # external services kato talks to
+    agent_client.py              # AgentClient Protocol — the contract
+    retrying_client_base.py      # shared retry / HTTP plumbing
+    pull_request_client_*.py     # cross-provider PR abstraction
+    ticket_client_*.py           # cross-provider issue abstraction
+    bitbucket/                   # Bitbucket auth + PR + issues
+    github/                      # GitHub PR + issues
+    gitlab/                      # GitLab PR + issues
+    jira/                        # Jira issues
+    youtrack/                    # YouTrack issues
+    claude/                      # Claude Code CLI backend
+      cli_client.py              #   one-shot autonomous client
+      streaming_session.py       #   long-lived planning subprocess
+      session_manager.py         #   per-task session registry + persistence
+    openhands/                   # OpenHands HTTP backend (kato_client.py)
+    openrouter/                  # OpenRouter helpers (used by openhands)
   config/
     kato_core_lib.yaml
-  templates/
-    email/
-      completion_email.j2
-      failure_email.j2
   data_layers/
-    data/
-    data_access/
-      pull_request_data_access.py
-      task_data_access.py
-    service/
-      agent_service.py
-      implementation_service.py
-  jobs/
-    process_assigned_tasks.py
-  main.py
-  kato_core_lib.py
-  kato_instance.py
+    data/                        # YouTrack / git / agent value types
+    data_access/                 # raw fetch + parse layer
+    service/                     # orchestration: scan → plan → execute
+      agent_service.py           #   top-level loop, tag handling
+      task_preflight_service.py  #   resolve repos, prep branches
+      task_publisher.py          #   commit, push, open PR
+      planning_session_runner.py #   route to streaming Claude
+      review_comment_service.py  #   handle PR review feedback
+  helpers/                       # cross-cutting *_utils.py modules
+  validation/                    # startup + per-task safety checks
+  jobs/process_assigned_tasks.py # the cron-scheduled scan loop
+  main.py                        # process entrypoint
+  kato_core_lib.py               # core-lib wiring: builds AgentService
+webserver/                       # planning UI (Flask + React)
+  kato_webserver/
+    app.py                       #   Flask routes (SSE + POST)
+    git_diff_utils.py            #   tree / diff for the right pane
+    session_registry.py          #   in-memory tab list (legacy)
+  templates/index.html           # HTML shell
+  static/css/app.css             # dark-theme styles
+  static/js/app.js               # vanilla-JS chat + SSE + status bar
+  ui/                            # Vite + React source for the right pane
+    src/{App,FilesTab,ChangesTab}.jsx
 scripts/
-  generate_env.py
+  bootstrap.sh                   # Mac/Linux first-time setup
+  bootstrap.ps1                  # Windows PowerShell equivalent
 tests/
-  config/
-    config.yaml
+  config/config.yaml             # test fixture config
 ```
+
+### Architecture at a glance
+
+```text
+                       ┌──────────────────────────────┐
+                       │  YouTrack / Jira / GitHub …  │
+                       │   (issues, comments, tags)   │
+                       └──────────────┬───────────────┘
+                                      │ poll
+                                      ▼
+                  ┌────────────────────────────────────┐
+                  │  kato.main  ─  ProcessAssignedTasks │
+                  │   30s scan loop, signal handling   │
+                  └──────────────┬─────────────────────┘
+                                 │
+                                 ▼
+              ┌──────────────────────────────────────────┐
+              │              AgentService                │
+              │  • wait-planning short-circuit (chat tab)│
+              │  • TaskPreflightService (resolve+prep)   │
+              │  • runner OR one-shot client (implement) │
+              │  • TestingService (validate)             │
+              │  • TaskPublisher (commit / push / PR)    │
+              └──────────────┬───────────────────────────┘
+                             │
+                ┌────────────┴────────────┐
+                ▼                         ▼
+   ┌─────────────────────┐   ┌────────────────────────────┐
+   │  ClaudeCliClient    │   │     KatoClient (OpenHands) │
+   │  (one-shot -p)      │   │     HTTP API client        │
+   └──────────┬──────────┘   └────────────────────────────┘
+              │ also used by:
+              ▼
+   ┌─────────────────────────────────────────────────────┐
+   │           PlanningSessionRunner                     │
+   │  uses ClaudeSessionManager + StreamingClaudeSession │
+   │  (long-lived `claude -p --input-format stream-json` │
+   │   subprocess, one per task id, persisted records)   │
+   └──────────┬──────────────────────────────────────────┘
+              │ shared in-memory ↕ persisted on disk
+              ▼
+   ┌─────────────────────────────────────────────────────┐
+   │      Planning UI webserver (daemon thread)          │
+   │  Flask + SSE  →  vanilla JS  +  React right-pane    │
+   │  • tab list, chat, permission modal                 │
+   │  • Files / Changes tabs (git tree + diff)           │
+   │  • status bar (kato logger → ring buffer → SSE)     │
+   │  • browser notifications on key events              │
+   └─────────────────────────────────────────────────────┘
+```
+
+Key invariants:
+
+* **One workspace folder per task.** Each ticket id (`PROJ-12`) gets
+  `~/.kato/workspaces/PROJ-12/` with fresh clones of every repo its
+  `kato:repo:*` tags name. Two parallel tasks against the same repo are
+  physically isolated checkouts — no shared branch state, no cross-task
+  git races. Sized by `KATO_MAX_PARALLEL_TASKS`.
+* **One subprocess per task id.** `ClaudeSessionManager` keyed on the
+  ticket id; `--resume` keeps context across kato restarts.
+* **The orchestrator and the webserver share the same managers.**
+  `WorkspaceManager` (tab list source of truth) and
+  `ClaudeSessionManager` (live subprocess + chat events) live in one
+  Python process so the planning UI sees both in real time without IPC.
+* **Workspace lifecycle = ticket state.** Workspaces are created when
+  kato starts a task, persist across restarts via `.kato-meta.json`,
+  and are deleted when the ticket leaves the Open + Review states
+  (e.g. PR merged → Done).
+* **Single-threaded gate, multi-threaded execute.** The scan loop
+  pulls tasks from the ticket system one at a time; heavy execution
+  (clone, run agent, test, publish) fans out across a thread pool.
 
 ## How It Works
 
@@ -106,7 +348,7 @@ That separation matters because the service flow should read like the real agent
 
 ### Startup Flow
 
-1. `python -m kato.main`, `make run`, or the Docker entrypoint loads Hydra config and values from `.env`.
+1. `python -m kato_core_lib.main`, `make run`, or the Docker entrypoint loads Hydra config and values from `.env`.
 2. Environment validation runs before the application is built. Missing required values fail fast.
 3. `KatoCoreLib` builds the active issue-platform client, repository service, OpenHands implementation service, OpenHands testing service, notification service, task publisher, preflight service, and review-comment service.
 4. Startup dependency validation checks repository connections, the active issue-platform connection, the main OpenHands connection, and the testing OpenHands connection unless `OPENHANDS_SKIP_TESTING=true`.
@@ -199,6 +441,29 @@ cp .env.example .env
 
 Use `KATO_ISSUE_PLATFORM` for all new setups.
 
+## Tag reference
+
+Kato uses ticket-platform tags (YouTrack tags / Jira labels / GitHub labels / GitLab labels) namespaced under `kato:` to control per-task behavior. Apply or remove them on the ticket itself; kato reads them on every scan tick and reacts on the next pass.
+
+| Tag | What it does |
+|---|---|
+| `kato:repo:<repo-name>` | **Required for any task that should produce a PR.** Names the repository folder (under `REPOSITORY_ROOT_PATH`) that kato should clone for this task. Add multiple tags to drive a multi-repo task — one PR per tag. The folder name must match the directory; case-sensitive. |
+| `kato:wait-planning` | **Don't run autonomously — open a chat tab.** Kato registers the task in the planning UI and waits for the operator to chat with the agent. No implementation, no testing, no PR. Remove the tag to hand control back to the orchestrator. |
+| `kato:wait-before-git-push` | **Run the agent, but pause before push + PR.** Kato runs implementation and testing as usual, commits to the local task branch, then stops. The operator approves the push via the planning UI's "Approve push" button (or by removing the tag and re-triggering the task). The push and PR creation are still done by kato — never by Claude. |
+| `kato:triage:investigate` | **Classify the task instead of working it.** Kato spends one read-only Claude turn analyzing the task description and writes back exactly one `kato:triage:<level>` outcome tag (see below), then removes this tag. No code edits, no PR. Useful for triaging a backlog. |
+| `kato:triage:critical` | Outcome: real, urgent. Set by the triage flow. |
+| `kato:triage:high` | Outcome: real, work soon. |
+| `kato:triage:medium` | Outcome: real, normal priority. |
+| `kato:triage:low` | Outcome: real, low priority. |
+| `kato:triage:duplicate` | Outcome: covered by another ticket. |
+| `kato:triage:wontfix` | Outcome: real but won't be worked. |
+| `kato:triage:invalid` | Outcome: not a real issue. |
+| `kato:triage:needs-info` | Outcome: not enough info to act on. |
+| `kato:triage:blocked` | Outcome: blocked by something external. |
+| `kato:triage:question` | Outcome: a question, not a task. |
+
+**Cross-platform tag mutation.** Native APIs are used where available (YouTrack, Jira, GitHub Issues, GitLab Issues). Platforms without native tag support (Bitbucket Issues today) fall through to a structured comment-marker fallback — kato posts `<!-- kato-tag {"action": "add", "tag": "..."} -->` as a comment.
+
 ## Third-Party Setup
 
 Pick one issue platform with `KATO_ISSUE_PLATFORM`, then fill in the matching block below. Keep the other issue-platform blocks empty unless you are switching providers or using their repository API credentials for pull requests.
@@ -215,8 +480,8 @@ Use this when tasks are coming from YouTrack:
 
 ```env
 KATO_ISSUE_PLATFORM=youtrack
-YOUTRACK_BASE_URL=https://your-company.youtrack.cloud
-YOUTRACK_TOKEN=...
+YOUTRACK_API_BASE_URL=https://your-company.youtrack.cloud
+YOUTRACK_API_TOKEN=...
 YOUTRACK_PROJECT=PROJ
 YOUTRACK_ASSIGNEE=your-youtrack-login
 YOUTRACK_ISSUE_STATES=Todo,Open
@@ -234,8 +499,8 @@ Use this when tasks are coming from Jira:
 
 ```env
 KATO_ISSUE_PLATFORM=jira
-JIRA_BASE_URL=https://your-company.atlassian.net
-JIRA_TOKEN=...
+JIRA_API_BASE_URL=https://your-company.atlassian.net
+JIRA_API_TOKEN=...
 JIRA_EMAIL=you@example.com
 JIRA_PROJECT=PROJ
 JIRA_ASSIGNEE=assignee-account-id-or-username
@@ -246,7 +511,7 @@ JIRA_REVIEW_STATE_FIELD=status
 JIRA_REVIEW_STATE=In Review
 ```
 
-`JIRA_TOKEN` is the API token. Keep `JIRA_EMAIL` set for Atlassian authentication flows that need the account email.
+`JIRA_API_TOKEN` is the API token. Keep `JIRA_EMAIL` set for Atlassian authentication flows that need the account email.
 
 ### Setting Up GitHub Issues
 
@@ -254,16 +519,16 @@ Use this when tasks are coming from GitHub Issues:
 
 ```env
 KATO_ISSUE_PLATFORM=github
-GITHUB_ISSUES_BASE_URL=https://api.github.com
+GITHUB_API_BASE_URL=https://api.github.com
 GITHUB_API_TOKEN=...
-GITHUB_ISSUES_OWNER=owner-or-org
-GITHUB_ISSUES_REPO=repo-name
-GITHUB_ISSUES_ASSIGNEE=assignee-login
-GITHUB_ISSUES_ISSUE_STATES=open
-GITHUB_ISSUES_PROGRESS_STATE_FIELD=labels
-GITHUB_ISSUES_PROGRESS_STATE=In Progress
-GITHUB_ISSUES_REVIEW_STATE_FIELD=labels
-GITHUB_ISSUES_REVIEW_STATE=In Review
+GITHUB_OWNER=owner-or-org
+GITHUB_REPO=repo-name
+GITHUB_ASSIGNEE=assignee-login
+GITHUB_ISSUE_STATES=open
+GITHUB_PROGRESS_STATE_FIELD=labels
+GITHUB_PROGRESS_STATE=In Progress
+GITHUB_REVIEW_STATE_FIELD=labels
+GITHUB_REVIEW_STATE=In Review
 ```
 
 `GITHUB_API_TOKEN` is also used for GitHub git push and pull request creation when discovered repositories live on GitHub.
@@ -274,15 +539,15 @@ Use this when tasks are coming from GitLab Issues:
 
 ```env
 KATO_ISSUE_PLATFORM=gitlab
-GITLAB_ISSUES_BASE_URL=https://gitlab.com/api/v4
+GITLAB_API_BASE_URL=https://gitlab.com/api/v4
 GITLAB_API_TOKEN=...
-GITLAB_ISSUES_PROJECT=group/project
-GITLAB_ISSUES_ASSIGNEE=assignee-username
-GITLAB_ISSUES_ISSUE_STATES=opened
-GITLAB_ISSUES_PROGRESS_STATE_FIELD=labels
-GITLAB_ISSUES_PROGRESS_STATE=In Progress
-GITLAB_ISSUES_REVIEW_STATE_FIELD=labels
-GITLAB_ISSUES_REVIEW_STATE=In Review
+GITLAB_PROJECT=group/project
+GITLAB_ASSIGNEE=assignee-username
+GITLAB_ISSUE_STATES=opened
+GITLAB_PROGRESS_STATE_FIELD=labels
+GITLAB_PROGRESS_STATE=In Progress
+GITLAB_REVIEW_STATE_FIELD=labels
+GITLAB_REVIEW_STATE=In Review
 ```
 
 `GITLAB_API_TOKEN` is also used for GitLab git push and merge request creation when discovered repositories live on GitLab.
@@ -293,18 +558,18 @@ Use this when tasks are coming from Bitbucket Issues:
 
 ```env
 KATO_ISSUE_PLATFORM=bitbucket
-BITBUCKET_ISSUES_BASE_URL=https://api.bitbucket.org/2.0
+BITBUCKET_API_BASE_URL=https://api.bitbucket.org/2.0
 BITBUCKET_API_TOKEN=...
 BITBUCKET_USERNAME=bitbucket-username
 BITBUCKET_API_EMAIL=you@example.com
-BITBUCKET_ISSUES_WORKSPACE=workspace
-BITBUCKET_ISSUES_REPO_SLUG=repo-slug
-BITBUCKET_ISSUES_ASSIGNEE=assignee-username
-BITBUCKET_ISSUES_ISSUE_STATES=new,open
-BITBUCKET_ISSUES_PROGRESS_STATE_FIELD=state
-BITBUCKET_ISSUES_PROGRESS_STATE=open
-BITBUCKET_ISSUES_REVIEW_STATE_FIELD=state
-BITBUCKET_ISSUES_REVIEW_STATE=resolved
+BITBUCKET_WORKSPACE=workspace
+BITBUCKET_REPO_SLUG=repo-slug
+BITBUCKET_ASSIGNEE=assignee-username
+BITBUCKET_ISSUE_STATES=new,open
+BITBUCKET_PROGRESS_STATE_FIELD=state
+BITBUCKET_PROGRESS_STATE=open
+BITBUCKET_REVIEW_STATE_FIELD=state
+BITBUCKET_REVIEW_STATE=resolved
 ```
 
 `BITBUCKET_API_TOKEN` is used for Bitbucket git auth and REST API calls. `BITBUCKET_API_EMAIL` is required for Bitbucket pull request API auth.
@@ -357,8 +622,9 @@ The list below mirrors `.env.example`.
 | Variable | What it does |
 | --- | --- |
 | `KATO_ISSUE_PLATFORM` | Selects the active issue platform. Supported values are `youtrack`, `jira`, `github`, `gitlab`, and `bitbucket`. |
-| `YOUTRACK_BASE_URL` | YouTrack API base URL. |
-| `YOUTRACK_TOKEN` | YouTrack API token. |
+| `KATO_AGENT_BACKEND` | Selects the active agent backend. Supported values are `openhands` (default) and `claude`. |
+| `YOUTRACK_API_BASE_URL` | YouTrack API base URL. |
+| `YOUTRACK_API_TOKEN` | YouTrack API token. |
 | `YOUTRACK_PROJECT` | YouTrack project key used to fetch tasks. |
 | `YOUTRACK_ASSIGNEE` | YouTrack assignee to scan for tasks. |
 | `YOUTRACK_PROGRESS_STATE_FIELD` | YouTrack field used for the in-progress transition. |
@@ -366,8 +632,8 @@ The list below mirrors `.env.example`.
 | `YOUTRACK_REVIEW_STATE_FIELD` | YouTrack field used for the review transition. |
 | `YOUTRACK_REVIEW_STATE` | YouTrack value used for the review transition. |
 | `YOUTRACK_ISSUE_STATES` | YouTrack issue states that qualify for processing. |
-| `JIRA_BASE_URL` | Jira API base URL. |
-| `JIRA_TOKEN` | Jira API token. |
+| `JIRA_API_BASE_URL` | Jira API base URL. |
+| `JIRA_API_TOKEN` | Jira API token. |
 | `JIRA_EMAIL` | Jira user email for authentication. |
 | `JIRA_PROJECT` | Jira project key used to fetch tasks. |
 | `JIRA_ASSIGNEE` | Jira assignee to scan for tasks. |
@@ -376,37 +642,37 @@ The list below mirrors `.env.example`.
 | `JIRA_REVIEW_STATE_FIELD` | Jira field used for the review transition. |
 | `JIRA_REVIEW_STATE` | Jira value used for the review transition. |
 | `JIRA_ISSUE_STATES` | Jira issue states that qualify for processing. |
-| `GITHUB_ISSUES_BASE_URL` | GitHub Issues API base URL. |
+| `GITHUB_API_BASE_URL` | GitHub Issues API base URL. |
 | `GITHUB_API_TOKEN` | GitHub API token. Also used for GitHub git push and PR creation when needed. |
-| `GITHUB_ISSUES_OWNER` | GitHub repository owner used to scope issues. |
-| `GITHUB_ISSUES_REPO` | GitHub repository name used to scope issues. |
-| `GITHUB_ISSUES_ASSIGNEE` | GitHub assignee to scan for tasks. |
-| `GITHUB_ISSUES_PROGRESS_STATE_FIELD` | GitHub Issues field used for the in-progress transition. |
-| `GITHUB_ISSUES_PROGRESS_STATE` | GitHub Issues value used for the in-progress transition. |
-| `GITHUB_ISSUES_REVIEW_STATE_FIELD` | GitHub Issues field used for the review transition. |
-| `GITHUB_ISSUES_REVIEW_STATE` | GitHub Issues value used for the review transition. |
-| `GITHUB_ISSUES_ISSUE_STATES` | GitHub Issues states that qualify for processing. |
-| `GITLAB_ISSUES_BASE_URL` | GitLab Issues API base URL. |
+| `GITHUB_OWNER` | GitHub repository owner used to scope issues. |
+| `GITHUB_REPO` | GitHub repository name used to scope issues. |
+| `GITHUB_ASSIGNEE` | GitHub assignee to scan for tasks. |
+| `GITHUB_PROGRESS_STATE_FIELD` | GitHub Issues field used for the in-progress transition. |
+| `GITHUB_PROGRESS_STATE` | GitHub Issues value used for the in-progress transition. |
+| `GITHUB_REVIEW_STATE_FIELD` | GitHub Issues field used for the review transition. |
+| `GITHUB_REVIEW_STATE` | GitHub Issues value used for the review transition. |
+| `GITHUB_ISSUE_STATES` | GitHub Issues states that qualify for processing. |
+| `GITLAB_API_BASE_URL` | GitLab Issues API base URL. |
 | `GITLAB_API_TOKEN` | GitLab API token. Also used for GitLab git push and merge request creation when needed. |
-| `GITLAB_ISSUES_PROJECT` | GitLab project path used to scope issues. |
-| `GITLAB_ISSUES_ASSIGNEE` | GitLab assignee to scan for tasks. |
-| `GITLAB_ISSUES_PROGRESS_STATE_FIELD` | GitLab Issues field used for the in-progress transition. |
-| `GITLAB_ISSUES_PROGRESS_STATE` | GitLab Issues value used for the in-progress transition. |
-| `GITLAB_ISSUES_REVIEW_STATE_FIELD` | GitLab Issues field used for the review transition. |
-| `GITLAB_ISSUES_REVIEW_STATE` | GitLab Issues value used for the review transition. |
-| `GITLAB_ISSUES_ISSUE_STATES` | GitLab Issues states that qualify for processing. |
-| `BITBUCKET_ISSUES_BASE_URL` | Bitbucket Issues API base URL. |
+| `GITLAB_PROJECT` | GitLab project path used to scope issues. |
+| `GITLAB_ASSIGNEE` | GitLab assignee to scan for tasks. |
+| `GITLAB_PROGRESS_STATE_FIELD` | GitLab Issues field used for the in-progress transition. |
+| `GITLAB_PROGRESS_STATE` | GitLab Issues value used for the in-progress transition. |
+| `GITLAB_REVIEW_STATE_FIELD` | GitLab Issues field used for the review transition. |
+| `GITLAB_REVIEW_STATE` | GitLab Issues value used for the review transition. |
+| `GITLAB_ISSUE_STATES` | GitLab Issues states that qualify for processing. |
+| `BITBUCKET_API_BASE_URL` | Bitbucket Issues API base URL. |
 | `BITBUCKET_API_TOKEN` | Bitbucket API token. Used as the password for Bitbucket git auth and Bitbucket REST API auth. |
 | `BITBUCKET_USERNAME` | Bitbucket username used for git push auth. |
 | `BITBUCKET_API_EMAIL` | Atlassian account email used for Bitbucket REST API auth with API tokens. |
-| `BITBUCKET_ISSUES_WORKSPACE` | Bitbucket workspace used to scope issues. |
-| `BITBUCKET_ISSUES_REPO_SLUG` | Bitbucket repository slug used to scope issues. |
-| `BITBUCKET_ISSUES_ASSIGNEE` | Bitbucket assignee to scan for tasks. |
-| `BITBUCKET_ISSUES_PROGRESS_STATE_FIELD` | Bitbucket Issues field used for the in-progress transition. |
-| `BITBUCKET_ISSUES_PROGRESS_STATE` | Bitbucket Issues value used for the in-progress transition. |
-| `BITBUCKET_ISSUES_REVIEW_STATE_FIELD` | Bitbucket Issues field used for the review transition. |
-| `BITBUCKET_ISSUES_REVIEW_STATE` | Bitbucket Issues value used for the review transition. |
-| `BITBUCKET_ISSUES_ISSUE_STATES` | Bitbucket Issues states that qualify for processing. |
+| `BITBUCKET_WORKSPACE` | Bitbucket workspace used to scope issues. |
+| `BITBUCKET_REPO_SLUG` | Bitbucket repository slug used to scope issues. |
+| `BITBUCKET_ASSIGNEE` | Bitbucket assignee to scan for tasks. |
+| `BITBUCKET_PROGRESS_STATE_FIELD` | Bitbucket Issues field used for the in-progress transition. |
+| `BITBUCKET_PROGRESS_STATE` | Bitbucket Issues value used for the in-progress transition. |
+| `BITBUCKET_REVIEW_STATE_FIELD` | Bitbucket Issues field used for the review transition. |
+| `BITBUCKET_REVIEW_STATE` | Bitbucket Issues value used for the review transition. |
+| `BITBUCKET_ISSUE_STATES` | Bitbucket Issues states that qualify for processing. |
 | `REPOSITORY_ROOT_PATH` | Root folder where the agent scans for checked-out repositories. |
 | `MOUNT_DOCKER_DATA_ROOT` | Host folder that holds all Docker bind-mounted data under one parent directory. |
 | `KATO_IGNORED_REPOSITORY_FOLDERS` | Comma-separated folder names to exclude from repository auto-discovery. |
@@ -480,8 +746,25 @@ The `openhands` container reuses the same `OPENHANDS_LLM_*` and `AWS_*` values f
 | `AWS_SESSION_TOKEN` | Optional AWS session token for temporary Bedrock credentials. |
 | `AWS_BEARER_TOKEN_BEDROCK` | Bedrock bearer token alternative to AWS access keys. |
 
+### Claude CLI Backend
+
+| Variable | What it does |
+| --- | --- |
+| `KATO_CLAUDE_BINARY` | Path to (or PATH name of) the Claude Code CLI binary. Defaults to `claude`. |
+| `KATO_CLAUDE_MODEL` | Optional model id passed via `--model` (e.g. `claude-opus-4-7`). Empty uses the CLI default. |
+| `KATO_CLAUDE_MAX_TURNS` | Optional cap on agent turns per task, passed via `--max-turns`. Empty means no cap. |
+| `KATO_CLAUDE_EFFORT` | Optional reasoning depth passed via `--effort` (`low`/`medium`/`high`/`xhigh`/`max`). Empty leaves Claude on its built-in default. |
+| `KATO_CLAUDE_ALLOWED_TOOLS` | Comma-separated allowlist passed via `--allowedTools`. |
+| `KATO_CLAUDE_DISALLOWED_TOOLS` | Comma-separated denylist passed via `--disallowedTools`. |
+| `KATO_CLAUDE_BYPASS_PERMISSIONS` | When `true`, kato runs Claude with `--permission-mode bypassPermissions` (no per-tool prompts) inside the hardened Docker sandbox. When `false` (the default), kato runs in `acceptEdits` mode and routes any permission asks back over the planning UI. Refused under root, refused under CI/Docker/cron (no TTY for confirmation), and double-prompted on the terminal at every interactive startup. See [BYPASS_PROTECTIONS.md](BYPASS_PROTECTIONS.md). |
+| `KATO_CLAUDE_TIMEOUT_SECONDS` | Per-task subprocess timeout. Defaults to 1800. Minimum 60. |
+| `KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED` | Runs a small `claude -p` prompt during startup validation. Off by default. |
+| `KATO_ARCHITECTURE_DOC_PATH` | Optional path to a project-architecture markdown file. When set, kato appends the file's contents to Claude's system prompt on every spawn (autonomous, planning, chat-respawn) via `--append-system-prompt`. Re-read on each spawn so edits land without a kato restart. |
+| `KATO_TASK_PUBLISH_MAX_RETRIES` | Retries for the publish step (per-repo PR creation + the move-to-review transition). Implementation work is not re-run. Defaults to `2` (up to 3 attempts) with exponential backoff. |
+| `KATO_WORKSPACE_REVIEW_TTL_SECONDS` | How long a workspace in `review` state persists before the cleanup loop deletes it, regardless of whether the ticket is still in the review bucket. Default `3600` (1 hour). Set to `0` to disable TTL-based cleanup (legacy behavior: workspace persists until the ticket leaves both assigned and review). Review-comment processing for cleaned tickets re-clones on demand. |
+
 The active issue provider comes from `kato.issue_platform`, which defaults to `youtrack`.
-Issue states can be configured directly in `.env` with `YOUTRACK_ISSUE_STATES`, `JIRA_ISSUE_STATES`, `GITHUB_ISSUES_ISSUE_STATES`, `GITLAB_ISSUES_ISSUE_STATES`, and `BITBUCKET_ISSUES_ISSUE_STATES`.
+Issue states can be configured directly in `.env` with `YOUTRACK_ISSUE_STATES`, `JIRA_ISSUE_STATES`, `GITHUB_ISSUE_STATES`, `GITLAB_ISSUE_STATES`, and `BITBUCKET_ISSUE_STATES`.
 The review-state target also comes from the active provider config:
 - YouTrack uses `kato.youtrack.review_state_field` and `kato.youtrack.review_state`.
 - Jira uses `kato.jira.review_state_field` and `kato.jira.review_state`.
@@ -490,11 +773,11 @@ The review-state target also comes from the active provider config:
 - Bitbucket Issues uses `kato.bitbucket_issues.review_state_field` and `kato.bitbucket_issues.review_state`.
 Processed task state, processed review-comment ids, and pull-request comment context are kept in memory during a run so the agent can skip already-completed work and poll for new review comments without writing local state.
 If email notifications are enabled, install the optional dependency set with `python -m pip install -e ".[notifications]"`.
-The email body text comes from [`completion_email.j2`](kato/templates/email/completion_email.j2) and [`failure_email.j2`](kato/templates/email/failure_email.j2), rendered with Jinja2 template variables at runtime.
+The email body text comes from [`completion_email.j2`](kato_core_lib/templates/email/completion_email.j2) and [`failure_email.j2`](kato_core_lib/templates/email/failure_email.j2), rendered with Jinja2 template variables at runtime.
 The Hydra config is registered through [`hydra_plugins/kato/kato_searchpath.py`](hydra_plugins/kato/kato_searchpath.py), so standard Hydra overrides work. Example:
 
 ```bash
-python -m kato.main kato.retry.max_retries=7
+python -m kato_core_lib.main kato.retry.max_retries=7
 ```
 
 ### Open Source Notes
@@ -644,7 +927,7 @@ pip install -e .
 
 2. Fill `.env` instead of exporting variables one by one. Start from `.env.example` and update the values you need there.
 
-3. Adjust `kato/config/kato_core_lib.yaml` only if you need settings beyond what `.env` exposes, such as extra repositories or retry tuning via `KATO_EXTERNAL_API_MAX_RETRIES`. Issue states, review columns, and review-ready email recipients can now be configured directly in `.env`.
+3. Adjust `kato_core_lib/config/kato_core_lib.yaml` only if you need settings beyond what `.env` exposes, such as extra repositories or retry tuning via `KATO_EXTERNAL_API_MAX_RETRIES`. Issue states, review columns, and review-ready email recipients can now be configured directly in `.env`.
 
 ```yaml
 kato:
@@ -705,7 +988,7 @@ kato:
 set -a
 source .env
 set +a
-python -m kato.main
+python -m kato_core_lib.main
 ```
 
 ### Docker Compose
@@ -725,7 +1008,7 @@ What the compose stack does:
 - starts an `openhands` container on port `3000`
 - builds and starts an `kato` container from this repo
 - makes the agent wait until OpenHands is reachable at `http://openhands:3000`
-- then runs `python -m kato.main`
+- then runs `python -m kato_core_lib.main`
 
 The compose file uses the current official OpenHands container image pattern from the OpenHands docs:
 
@@ -761,6 +1044,86 @@ If a task spans multiple repositories and one pull request succeeds while anothe
 - sends the failure notification path with the failing repositories in the error text
 
 That behavior is deliberate: the agent prefers explicit partial visibility over trying to revert repository state automatically.
+
+## Planning UI Build & Cleanup
+
+The right-pane planning UI is a Vite + React app that compiles to a single bundle served by the Flask webserver. The Python side reads the prebuilt files from `webserver/static/build/` at runtime — there is no live transpile step in production.
+
+### Building the bundle
+
+```bash
+cd webserver/ui
+npm install        # first run only
+npm run build      # outputs webserver/static/build/app.{js,css}
+```
+
+`npm run build` is idempotent and finishes in ~1s. There is also `npm run dev` if you want Vite's hot-reload while iterating on the UI; it serves on a separate port and proxies through to the Flask backend.
+
+After a rebuild, **hard-refresh the browser** (Cmd+Shift+R on macOS, Ctrl+Shift+R elsewhere) so it doesn't keep serving the cached `app.js`. That's the most common gotcha when changes don't appear.
+
+### Cleaning between runs
+
+For a normal Ctrl+C → `make compose-up` cycle there is nothing to clean. The table below covers the cases where something does need a wipe.
+
+| What | When to clean | How |
+| --- | --- | --- |
+| Browser cache | After a UI rebuild looks stale | Cmd+Shift+R (hard refresh) |
+| `__pycache__` | Almost never; only if you suspect a stale `.pyc` | `find . -name __pycache__ -prune -exec rm -rf {} +` |
+| `webserver/ui/node_modules` | After a `package.json` dependency change misbehaves | `rm -rf webserver/ui/node_modules && (cd webserver/ui && npm install)` |
+| `webserver/static/build/` | When a build seems half-applied | `rm -rf webserver/static/build && (cd webserver/ui && npm run build)` |
+| Per-task workspaces (`~/.kato/workspaces/`) | To wipe a stuck tab | `rm -rf ~/.kato/workspaces/<task-id>` |
+| Session records (`~/.kato/sessions/`) | To forget Claude session ids | `rm -rf ~/.kato/sessions` (the workspace's `.kato-meta.json` re-seeds the id on next boot if it has one) |
+| Claude transcripts (`~/.claude/projects/<encoded>/<id>.jsonl`) | To erase chat history replay for a task | Delete the matching JSONL — but you'll lose history-replay for that tab |
+
+`clean.sh` exists for Docker-side cleanup (containers, volumes); it is destructive and prunes unused Docker resources without prompting.
+
+## Security model — note
+
+Kato hands large amounts of trust to the underlying agent (Claude / OpenHands): the agent reads the task description, decides which files to edit, and writes the changes. What kato actually does to contain a misbehaving agent today:
+
+- **Prompt-level guardrails** baked into every kato prompt ([cli_client.py](kato_core_lib/client/claude/cli_client.py)) ask the agent not to touch credentials, escape the repository, or run git commands. These are advisory — a sufficiently determined or compromised model can ignore them.
+- **Per-tool permission prompts via the planning UI** when `KATO_CLAUDE_BYPASS_PERMISSIONS=false` (the default). Each Bash / write-style tool call fires a modal that you Approve / Deny by hand, and the decision is sent back to Claude before it can act. This is the real interactive safety layer; it only works when you're watching.
+- **Per-task workspace isolation on the filesystem.** Each task gets a fresh clone under `~/.kato/workspaces/<task-id>/`. Two parallel tasks don't share branch state. This is isolation between *tasks*, not between *the agent and your machine*.
+
+What kato does **not** do today:
+
+- Network isolation for the agent (it has the same network access as the host kato process).
+- Filesystem sandboxing (the agent can read anything the kato process can).
+- Per-task containerization for the agent.
+
+`KATO_CLAUDE_BYPASS_PERMISSIONS=true` removes the planning-UI prompt layer in exchange for unattended speed. To make this state impossible to enable silently or by accident, kato applies the following defense-in-depth layers:
+
+- **Refused under root.** Kato will not start when `KATO_CLAUDE_BYPASS_PERMISSIONS=true` and the process runs as root. There is no exception and no override.
+- **Refused under CI / Docker / cron / systemd.** When stdin is not a TTY, kato refuses to start with bypass on — there is no flag-only escape hatch. Acknowledgement must come from a real terminal. Either run kato interactively to confirm, or unset the flag.
+- **Double-prompt on every interactive boot.** When stdin is a TTY, kato asks the operator twice with `prompt_yes_no` ("are you sure?" then "final confirmation, this disables every per-tool prompt for the entire session?"). Either no aborts startup. A fat-fingered Enter cannot slip through.
+- **Unmissable stderr banner** at every boot, written before logger configuration so log level cannot suppress it.
+- **Persistent red banner across the top of the planning UI** — every operator looking at the browser sees the bypass state.
+- **Configurator requires typing `I ACCEPT`** before writing the flag (`python -m kato_core_lib.configure_project`).
+- **Per-spawn `WARNING` log** on every Claude turn naming the loss of per-tool prompts.
+
+Only enable bypass when you've already locked the agent down at a different layer (devcontainer, dedicated VM, scoped credentials, egress firewall — see SECURITY.md).
+
+The actual safety net is the same one you use for human contributors: **review every diff before merging**. Treat the agent's output as untrusted and gate it through normal code review.
+
+### Recommended sandbox: Claude Code devcontainer
+
+For unattended runs (especially with `KATO_CLAUDE_BYPASS_PERMISSIONS=true`) the recommended isolation layer is [Claude Code's devcontainer](https://code.claude.com/docs/en/devcontainer): run the `claude` binary inside a container with no network and only the per-task workspace mounted in. Kato itself does not yet wire this automatically, but operators can set it up today by configuring `KATO_CLAUDE_BINARY` to a wrapper script that launches `claude` inside the devcontainer. If you are running kato unattended, this is the layer that turns "advisory guardrails" into actual containment.
+
+### Operator responsibilities
+
+By running kato — and especially by setting `KATO_CLAUDE_BYPASS_PERMISSIONS=true` — you, the operator, accept the following:
+
+- **You authorize the agent to act with your credentials.** Anything the kato process can reach (git remotes, ticket platforms, the local filesystem, the network, any environment variable you pass in) is reachable by the agent. There is no internal privilege boundary between kato and the agent it spawns.
+- **You are responsible for the systems kato touches.** Kato is intended for use against repositories and ticket platforms you own or are explicitly authorized to modify. Do not point it at third-party systems without that authorization.
+- **You are responsible for reviewing the agent's output.** Every PR kato opens must go through normal human code review before merging. The MIT no-warranty disclaimer below covers the maintainers; it does not move review responsibility off the operator.
+- **You are responsible for your own sandbox.** If your use case requires network isolation, filesystem sandboxing, secret-scope reduction, or any compliance property (SOC 2, HIPAA, GDPR, export control, etc.), build that layer yourself — devcontainer, separate VM, scoped credentials — before pointing kato at production work.
+- **You are responsible for what you set true.** `KATO_CLAUDE_BYPASS_PERMISSIONS=true` and any future flag of similar weight ship off-by-default. Flipping them on is an explicit operator decision, recorded in your `.env`, and surfaced in kato's logs as a `WARNING`. The decision and its consequences are yours.
+
+Vulnerability disclosure path and the longer threat model live in [SECURITY.md](SECURITY.md).
+
+### No warranty
+
+Kato is provided under the [MIT License](LICENSE) — no warranty, express or implied. You run kato on your code, your repos, and your credentials at your own risk. The maintainers do not take responsibility for damage caused by the agent (a compromised model, a misconfigured environment, an exfiltrated secret, a force-pushed branch, anything else). If your use case requires guaranteed isolation or compliance properties, build that layer yourself before pointing kato at production work.
 
 ## Testing
 

@@ -1,14 +1,16 @@
 import types
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import Mock, patch
 
-from kato.client.ticket_client_base import TicketClientBase
-from kato.data_layers.data.fields import PullRequestFields, StatusFields
-from kato.data_layers.service.task_preflight_service import (
+from kato_core_lib.client.ticket_client_base import TicketClientBase
+from kato_core_lib.data_layers.data.fields import PullRequestFields, StatusFields
+from kato_core_lib.data_layers.service.task_preflight_service import (
     TaskPreflightService,
 )
-from kato.helpers.task_context_utils import PreparedTaskContext
-from utils import build_task
+from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
+from tests.utils import build_task
 
 
 class TaskPreflightServiceTests(unittest.TestCase):
@@ -71,6 +73,18 @@ class TaskPreflightServiceTests(unittest.TestCase):
             self.repositories,
             {'client': 'feature/proj-1/client'},
         )
+
+    def test_prepare_task_execution_context_attaches_repository_agents_instructions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'AGENTS.md').write_text('repo-specific rule\n', encoding='utf-8')
+            self.repository.local_path = str(root)
+
+            result = self.service.prepare_task_execution_context(self.task)
+
+        self.assertIsInstance(result, PreparedTaskContext)
+        self.assertIn('Repository AGENTS.md instructions:', result.agents_instructions)
+        self.assertIn('AGENTS.md:\nrepo-specific rule', result.agents_instructions)
 
     def test_prepare_task_execution_context_reports_model_access_failure(self) -> None:
         self.task_model_access_validator.validate.side_effect = RuntimeError('model offline')

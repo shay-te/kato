@@ -2,7 +2,7 @@ import types
 import unittest
 from unittest.mock import Mock, patch
 
-from kato.helpers.shell_status_utils import (
+from kato_core_lib.helpers.shell_status_utils import (
     clear_active_inline_status,
     run_with_inline_status_spinner,
     sleep_with_scan_spinner,
@@ -28,7 +28,7 @@ class ShellStatusUtilsTests(unittest.TestCase):
         stream = _Stream()
         spinner = None
 
-        from kato.helpers import shell_status_utils
+        from kato_core_lib.helpers import shell_status_utils
 
         try:
             spinner = shell_status_utils.InlineStatusSpinner(
@@ -66,7 +66,7 @@ class ShellStatusUtilsTests(unittest.TestCase):
         spinner = Mock()
 
         with patch(
-            'kato.helpers.shell_status_utils.InlineStatusSpinner',
+            'kato_core_lib.helpers.shell_status_utils.InlineStatusSpinner',
             return_value=spinner,
         ) as mock_spinner_cls:
             result = run_with_inline_status_spinner(
@@ -89,7 +89,7 @@ class ShellStatusUtilsTests(unittest.TestCase):
         spinner = Mock()
 
         with patch(
-            'kato.helpers.shell_status_utils.InlineStatusSpinner',
+            'kato_core_lib.helpers.shell_status_utils.InlineStatusSpinner',
             return_value=spinner,
         ) as mock_spinner_cls:
             result = run_with_inline_status_spinner(
@@ -125,7 +125,7 @@ class ShellStatusUtilsTests(unittest.TestCase):
         stream = _Stream()
         spinner = None
 
-        from kato.helpers import shell_status_utils
+        from kato_core_lib.helpers import shell_status_utils
 
         try:
             spinner = shell_status_utils.InlineStatusSpinner(

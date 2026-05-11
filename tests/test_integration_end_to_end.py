@@ -14,29 +14,29 @@ from pathlib import Path
 import types
 
 
-from kato.data_layers.service.agent_service import AgentService
-from kato.data_layers.service.implementation_service import ImplementationService
-from kato.helpers.review_comment_utils import review_comment_from_payload
-from kato.data_layers.service.repository_service import RepositoryService
-from kato.data_layers.service.notification_service import NotificationService
-from kato.data_layers.service.task_state_service import TaskStateService
-from kato.data_layers.service.task_service import TaskService
-from kato.data_layers.service.testing_service import TestingService
-from kato.data_layers.data_access.task_data_access import TaskDataAccess
-from kato.data_layers.data.task import Task
-from kato.data_layers.data.review_comment import ReviewComment
-from kato.client.kato_client import KatoClient
-from kato.data_layers.data.fields import (
+from kato_core_lib.data_layers.service.agent_service import AgentService
+from kato_core_lib.data_layers.service.implementation_service import ImplementationService
+from kato_core_lib.helpers.review_comment_utils import review_comment_from_payload
+from kato_core_lib.data_layers.service.repository_service import RepositoryService
+from kato_core_lib.data_layers.service.notification_service import NotificationService
+from kato_core_lib.data_layers.service.task_state_service import TaskStateService
+from kato_core_lib.data_layers.service.task_service import TaskService
+from kato_core_lib.data_layers.service.testing_service import TestingService
+from kato_core_lib.data_layers.data_access.task_data_access import TaskDataAccess
+from kato_core_lib.data_layers.data.task import Task
+from provider_client_base.provider_client_base.data.review_comment import ReviewComment
+from openhands_core_lib.openhands_core_lib.openhands_client import KatoClient
+from kato_core_lib.data_layers.data.fields import (
     ImplementationFields,
     PullRequestFields,
     ReviewCommentFields,
     StatusFields,
     TaskCommentFields,
 )
-from utils import build_review_comment, build_task, build_test_cfg
+from tests.utils import build_review_comment, build_task, build_test_cfg
 
 
-class InMemoryTicketClient:
+class InMemoryTicketClient(object):
     provider_name = 'youtrack'
 
     def __init__(self, task_id: str, summary: str, description: str, initial_state: str) -> None:
@@ -520,7 +520,7 @@ class TestAgentEndToEndIntegration(unittest.TestCase):
         # Similar to the docker-compose pattern we've established
         
         # Create a realistic minimal config scenario
-        from kato.validate_env import validate_openhands_env, validate_agent_env
+        from kato_core_lib.validate_env import validate_openhands_env, validate_agent_env
         import os
         
         # Simulate what would be used in docker-compose context
@@ -531,8 +531,8 @@ class TestAgentEndToEndIntegration(unittest.TestCase):
             'OPENHANDS_BASE_URL': 'http://openhands:3000',
             'OPENHANDS_API_KEY': 'test-api-key',
             'REPOSITORY_ROOT_PATH': '/tmp/repos',
-            'YOUTRACK_BASE_URL': 'https://example.youtrack.cloud',
-            'YOUTRACK_TOKEN': 'test-youtrack-token',
+            'YOUTRACK_API_BASE_URL': 'https://example.youtrack.cloud',
+            'YOUTRACK_API_TOKEN': 'test-youtrack-token',
             'YOUTRACK_PROJECT': 'TEST',
             'YOUTRACK_ASSIGNEE': 'developer',
         }

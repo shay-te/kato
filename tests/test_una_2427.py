@@ -1,8 +1,8 @@
 import unittest
 from unittest.mock import patch
 
-from kato.kato_core_lib import KatoCoreLib
-from utils import build_test_cfg
+from kato_core_lib.kato_core_lib import KatoCoreLib
+from tests.utils import build_test_cfg
 
 
 class TestUna2427(unittest.TestCase):
@@ -14,16 +14,16 @@ class TestUna2427(unittest.TestCase):
     def test_core_lib_initialization_with_default_configs(self) -> None:
         """Test that CoreLib initializes correctly with default configurations"""
         # This validates basic initialization of the CoreLib component
-        with patch('kato.kato_core_lib.EmailCoreLib'), \
-             patch('kato.kato_core_lib.build_ticket_client'), \
-             patch('kato.kato_core_lib.KatoClient'), \
-             patch('kato.kato_core_lib.RepositoryService'), \
-             patch('kato.kato_core_lib.TaskDataAccess'), \
-             patch('kato.kato_core_lib.TaskService'), \
-             patch('kato.kato_core_lib.ImplementationService'), \
-             patch('kato.kato_core_lib.TestingService'), \
-             patch('kato.kato_core_lib.NotificationService'), \
-             patch('kato.kato_core_lib.AgentService'):
+        with patch('kato_core_lib.kato_core_lib.EmailCoreLib'), \
+             patch('kato_core_lib.kato_core_lib.TaskCoreLib'), \
+             patch('openhands_core_lib.openhands_core_lib.openhands_client.KatoClient'), \
+             patch('kato_core_lib.kato_core_lib.RepositoryService'), \
+             patch('kato_core_lib.kato_core_lib.TaskDataAccess'), \
+             patch('kato_core_lib.kato_core_lib.TaskService'), \
+             patch('kato_core_lib.kato_core_lib.ImplementationService'), \
+             patch('kato_core_lib.kato_core_lib.TestingService'), \
+             patch('kato_core_lib.kato_core_lib.NotificationService'), \
+             patch('kato_core_lib.kato_core_lib.AgentService'):
             
             # Test instantiation
             core_lib = KatoCoreLib(self.cfg)
@@ -36,16 +36,16 @@ class TestUna2427(unittest.TestCase):
         # Test with different configurations
         cfg_copy = build_test_cfg()
         
-        with patch('kato.kato_core_lib.EmailCoreLib'), \
-             patch('kato.kato_core_lib.build_ticket_client'), \
-             patch('kato.kato_core_lib.KatoClient'), \
-             patch('kato.kato_core_lib.RepositoryService'), \
-             patch('kato.kato_core_lib.TaskDataAccess'), \
-             patch('kato.kato_core_lib.TaskService'), \
-             patch('kato.kato_core_lib.ImplementationService'), \
-             patch('kato.kato_core_lib.TestingService'), \
-             patch('kato.kato_core_lib.NotificationService'), \
-             patch('kato.kato_core_lib.AgentService'):
+        with patch('kato_core_lib.kato_core_lib.EmailCoreLib'), \
+             patch('kato_core_lib.kato_core_lib.TaskCoreLib'), \
+             patch('openhands_core_lib.openhands_core_lib.openhands_client.KatoClient'), \
+             patch('kato_core_lib.kato_core_lib.RepositoryService'), \
+             patch('kato_core_lib.kato_core_lib.TaskDataAccess'), \
+             patch('kato_core_lib.kato_core_lib.TaskService'), \
+             patch('kato_core_lib.kato_core_lib.ImplementationService'), \
+             patch('kato_core_lib.kato_core_lib.TestingService'), \
+             patch('kato_core_lib.kato_core_lib.NotificationService'), \
+             patch('kato_core_lib.kato_core_lib.AgentService'):
             
             # Test instantiation
             core_lib = KatoCoreLib(cfg_copy)

@@ -17,23 +17,23 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import ANY, Mock, call
 
-from kato.data_layers.data.fields import (
+from kato_core_lib.data_layers.data.fields import (
     ImplementationFields,
     PullRequestFields,
     StatusFields,
     TaskCommentFields,
 )
-from kato.data_layers.data_access.task_data_access import TaskDataAccess
-from kato.data_layers.service.agent_service import AgentService
-from kato.data_layers.service.agent_state_registry import AgentStateRegistry
-from kato.data_layers.service.implementation_service import ImplementationService
-from kato.data_layers.service.notification_service import NotificationService
-from kato.data_layers.service.review_comment_service import ReviewCommentService
-from kato.data_layers.service.task_service import TaskService
-from kato.data_layers.service.task_state_service import TaskStateService
-from kato.data_layers.service.testing_service import TestingService
-from kato.validation.startup_dependency_validator import StartupDependencyValidator
-from utils import build_review_comment, build_task, build_test_cfg
+from kato_core_lib.data_layers.data_access.task_data_access import TaskDataAccess
+from kato_core_lib.data_layers.service.agent_service import AgentService
+from kato_core_lib.data_layers.service.agent_state_registry import AgentStateRegistry
+from kato_core_lib.data_layers.service.implementation_service import ImplementationService
+from kato_core_lib.data_layers.service.notification_service import NotificationService
+from kato_core_lib.data_layers.service.review_comment_service import ReviewCommentService
+from kato_core_lib.data_layers.service.task_service import TaskService
+from kato_core_lib.data_layers.service.task_state_service import TaskStateService
+from kato_core_lib.data_layers.service.testing_service import TestingService
+from kato_core_lib.validation.startup_dependency_validator import StartupDependencyValidator
+from tests.utils import build_review_comment, build_task, build_test_cfg
 
 
 # ---------------------------------------------------------------------------

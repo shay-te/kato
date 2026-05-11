@@ -5,7 +5,7 @@ import os
 import unittest
 from unittest.mock import Mock, patch
 
-from kato.helpers import logging_utils
+from kato_core_lib.helpers import logging_utils
 
 
 class LoggingUtilsTests(unittest.TestCase):
@@ -98,7 +98,7 @@ class LoggingUtilsTests(unittest.TestCase):
             exc_info=None,
         )
 
-        with patch('kato.helpers.logging_utils.clear_active_inline_status') as mock_clear_status:
+        with patch('kato_core_lib.helpers.logging_utils.clear_active_inline_status') as mock_clear_status:
             handler.emit(record)
 
         mock_clear_status.assert_called_once_with()

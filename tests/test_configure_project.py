@@ -5,8 +5,8 @@ from pathlib import Path
 import unittest
 from unittest.mock import Mock, patch
 
-import kato.configure_project as configure_project
-from kato.validate_env import _read_env_file, validate_agent_env, validate_openhands_env
+import kato_core_lib.configure_project as configure_project
+from kato_core_lib.validate_env import _read_env_file, validate_agent_env, validate_openhands_env
 
 
 class ConfigureProjectTests(unittest.TestCase):
@@ -37,6 +37,7 @@ class ConfigureProjectTests(unittest.TestCase):
         with self._patch_prompts(
             {
                 'Where are your tasks tracked': 'youtrack',
+                'Which agent should run implementation/testing/review work': 'openhands',
                 'YouTrack base URL': 'https://youtrack.example',
                 'YouTrack token': 'yt-token',
                 'YouTrack assignee login': 'developer',
@@ -80,6 +81,7 @@ class ConfigureProjectTests(unittest.TestCase):
         with self._patch_prompts(
             {
                 'Where are your tasks tracked': 'youtrack',
+                'Which agent should run implementation/testing/review work': 'openhands',
                 'YouTrack base URL': 'https://youtrack.example',
                 'YouTrack token': 'yt-token',
                 'YouTrack assignee login': 'developer',
@@ -115,6 +117,7 @@ class ConfigureProjectTests(unittest.TestCase):
         with self._patch_prompts(
             {
                 'Where are your tasks tracked': 'jira',
+                'Which agent should run implementation/testing/review work': 'openhands',
                 'Jira base URL': 'https://company.atlassian.net',
                 'Jira token': 'jira-token',
                 'Jira assignee account id or username': 'dev-user',
@@ -167,6 +170,7 @@ class ConfigureProjectTests(unittest.TestCase):
         with self._patch_prompts(
             {
                 'Where are your tasks tracked': 'bitbucket',
+                'Which agent should run implementation/testing/review work': 'openhands',
                 'Bitbucket Issues base URL': 'https://api.bitbucket.org/2.0',
                 'Bitbucket Issues token': 'bb-token',
                 'Bitbucket Issues username for git auth': 'bb-user',
@@ -198,8 +202,8 @@ class ConfigureProjectTests(unittest.TestCase):
         self.assertEqual(values['BITBUCKET_USERNAME'], 'bb-user')
         self.assertEqual(values['BITBUCKET_API_EMAIL'], 'bb-user@example.com')
         self.assertEqual(values['BITBUCKET_API_TOKEN'], 'bb-token')
-        self.assertEqual(values['BITBUCKET_ISSUES_WORKSPACE'], 'workspace')
-        self.assertEqual(values['BITBUCKET_ISSUES_REPO_SLUG'], 'repo')
+        self.assertEqual(values['BITBUCKET_WORKSPACE'], 'workspace')
+        self.assertEqual(values['BITBUCKET_REPO_SLUG'], 'repo')
         self.assertEqual(self._validate_agent_env(values), [])
         self.assertEqual(validate_openhands_env(values), [])
 
@@ -207,6 +211,7 @@ class ConfigureProjectTests(unittest.TestCase):
         with self._patch_prompts(
             {
                 'Where are your tasks tracked': 'youtrack',
+                'Which agent should run implementation/testing/review work': 'openhands',
                 'YouTrack base URL': 'https://youtrack.example',
                 'YouTrack token': 'yt-token',
                 'YouTrack assignee login': 'developer',
@@ -249,6 +254,7 @@ class ConfigureProjectTests(unittest.TestCase):
         with self._patch_prompts(
             {
                 'Where are your tasks tracked': 'youtrack',
+                'Which agent should run implementation/testing/review work': 'openhands',
                 'YouTrack base URL': 'https://youtrack.example',
                 'YouTrack token': 'yt-token',
                 'YouTrack assignee login': 'developer',
@@ -374,7 +380,10 @@ class ConfigureProjectTests(unittest.TestCase):
 
     @staticmethod
     def _validate_agent_env(values: dict[str, str]) -> list[str]:
-        with patch('kato.validate_env.discover_git_repositories', return_value=[]):
+        with patch(
+            'git_core_lib.git_core_lib.helpers.repository_discovery_utils.discover_git_repositories',
+            return_value=[],
+        ):
             return validate_agent_env(values)
 
     def test_main_writes_env_file(self) -> None:
@@ -384,8 +393,8 @@ class ConfigureProjectTests(unittest.TestCase):
             output_path = temp_path / '.env'
             template_path.write_text(
                 'KATO_ISSUE_PLATFORM=youtrack\n'
-                'YOUTRACK_BASE_URL=\n'
-                'YOUTRACK_TOKEN=\n'
+                'YOUTRACK_API_BASE_URL=\n'
+                'YOUTRACK_API_TOKEN=\n'
                 'YOUTRACK_PROJECT=\n'
                 'YOUTRACK_ASSIGNEE=\n'
                 'YOUTRACK_PROGRESS_STATE_FIELD=State\n'
@@ -429,6 +438,7 @@ class ConfigureProjectTests(unittest.TestCase):
 
             responses = {
                 'Where are your tasks tracked': 'youtrack',
+                'Which agent should run implementation/testing/review work': 'openhands',
                 'YouTrack base URL': 'https://youtrack.example',
                 'YouTrack token': 'yt-token',
                 'YouTrack assignee login': 'me',
@@ -479,8 +489,8 @@ class ConfigureProjectTests(unittest.TestCase):
             output_path = temp_path / '.env'
             template_path.write_text(
                 'KATO_ISSUE_PLATFORM=youtrack\n'
-                'YOUTRACK_BASE_URL=\n'
-                'YOUTRACK_TOKEN=\n'
+                'YOUTRACK_API_BASE_URL=\n'
+                'YOUTRACK_API_TOKEN=\n'
                 'YOUTRACK_PROJECT=\n'
                 'YOUTRACK_ASSIGNEE=\n'
                 'YOUTRACK_PROGRESS_STATE_FIELD=State\n'
@@ -524,6 +534,7 @@ class ConfigureProjectTests(unittest.TestCase):
 
             responses = {
                 'Where are your tasks tracked': 'youtrack',
+                'Which agent should run implementation/testing/review work': 'openhands',
                 'YouTrack base URL': 'https://youtrack.example',
                 'YouTrack token': '',
                 'YouTrack assignee login': 'me',

@@ -2,7 +2,7 @@ import types
 import unittest
 
 
-from kato.helpers.text_utils import (
+from kato_core_lib.helpers.text_utils import (
     alphanumeric_lower_text,
     condensed_text,
     normalized_lower_text,

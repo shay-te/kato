@@ -9,6 +9,15 @@ dependencies = [
   "hydra-core>=1.3.2",
   "omegaconf>=2.3.0",
   "jinja2>=3.1.6",
+  # Security scanner runners (kato_core_lib/data_layers/service/
+  # security_scanner_runners/). Each runner gracefully degrades to a
+  # ``RunnerUnavailableError`` warning if its tool is missing, so
+  # operators who really want to skip can ``pip uninstall`` them
+  # individually — but they ship by default because the breach
+  # categories they catch are the most common in committed code.
+  "detect-secrets>=1.5",
+  "bandit>=1.7",
+  "safety>=3.0",
 ]
 
 [build-system]
@@ -18,7 +27,36 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 
 [tool.setuptools.packages.find]
-include = ["kato*", "hydra_plugins*"]
+include = [
+  "kato_core_lib*",
+  "repository_core_lib*",
+  "sandbox_core_lib*",
+  "task_core_lib*",
+  "youtrack_core_lib*",
+  "github_core_lib*",
+  "bitbucket_core_lib*",
+  "gitlab_core_lib*",
+  "jira_core_lib*",
+  "hydra_plugins*",
+  "vcs_provider_contracts*",
+  "agent_provider_contracts*",
+  "claude_core_lib*",
+  "openhands_core_lib*",
+  "agent_core_lib*",
+  "security_scanner_core_lib*",
+  "openrouter_core_lib*",
+  "provider_client_base*",
+  "workspace_core_lib*",
+]
 
 [tool.setuptools.package-data]
-"kato.templates.email" = ["*.j2"]
+"kato_core_lib.templates.email" = ["*.j2"]
+# Dockerfile + entrypoint scripts ship with the sandbox image
+# build path; without this they would not be installed when
+# sandbox_core_lib is consumed via wheel.
+"sandbox_core_lib.sandbox_core_lib" = ["Dockerfile", "*.sh"]
+"youtrack_core_lib.youtrack_core_lib.config" = ["*.yaml"]
+"github_core_lib.github_core_lib.config" = ["*.yaml"]
+"bitbucket_core_lib.bitbucket_core_lib.config" = ["*.yaml"]
+"gitlab_core_lib.gitlab_core_lib.config" = ["*.yaml"]
+"jira_core_lib.jira_core_lib.config" = ["*.yaml"]

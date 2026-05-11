@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 
-from kato.helpers.retry_utils import (
+from kato_core_lib.helpers.retry_utils import (
     _retry_delay_seconds,
     is_retryable_exception,
     is_retryable_response,
@@ -52,8 +52,8 @@ class RetryTests(unittest.TestCase):
     def test_run_with_retry_sleeps_before_retrying_exceptions(self) -> None:
         operation = Mock(side_effect=[ConnectTimeout('timeout'), 'ok'])
 
-        with patch('kato.helpers.retry_utils.random.uniform', return_value=1.5) as mock_uniform, patch(
-            'kato.helpers.retry_utils.time.sleep'
+        with patch('kato_core_lib.helpers.retry_utils.random.uniform', return_value=1.5) as mock_uniform, patch(
+            'kato_core_lib.helpers.retry_utils.time.sleep'
         ) as mock_sleep:
             result = run_with_retry(operation, 2)
 
@@ -64,10 +64,10 @@ class RetryTests(unittest.TestCase):
     def test_run_with_retry_logs_readable_exception_retry_message(self) -> None:
         operation = Mock(side_effect=[ConnectTimeout('timeout'), 'ok'])
 
-        with patch('kato.helpers.retry_utils.random.uniform', return_value=1.5), patch(
-            'kato.helpers.retry_utils.time.sleep'
-        ), patch('kato.helpers.retry_utils.clear_active_inline_status') as mock_clear_status, patch(
-            'kato.helpers.retry_utils.logger.warning'
+        with patch('kato_core_lib.helpers.retry_utils.random.uniform', return_value=1.5), patch(
+            'kato_core_lib.helpers.retry_utils.time.sleep'
+        ), patch('kato_core_lib.helpers.retry_utils.clear_active_inline_status') as mock_clear_status, patch(
+            'kato_core_lib.helpers.retry_utils.logger.warning'
         ) as mock_warning:
             result = run_with_retry(
                 operation,
@@ -100,10 +100,10 @@ class RetryTests(unittest.TestCase):
             ]
         )
 
-        with patch('kato.helpers.retry_utils.random.uniform', return_value=1.5), patch(
-            'kato.helpers.retry_utils.time.sleep'
-        ), patch('kato.helpers.retry_utils.clear_active_inline_status') as mock_clear_status, patch(
-            'kato.helpers.retry_utils.logger.warning'
+        with patch('kato_core_lib.helpers.retry_utils.random.uniform', return_value=1.5), patch(
+            'kato_core_lib.helpers.retry_utils.time.sleep'
+        ), patch('kato_core_lib.helpers.retry_utils.clear_active_inline_status') as mock_clear_status, patch(
+            'kato_core_lib.helpers.retry_utils.logger.warning'
         ) as mock_warning:
             result = run_with_retry(
                 operation,
@@ -128,7 +128,7 @@ class RetryTests(unittest.TestCase):
     def test_run_with_retry_raises_after_exhausting_all_retries(self) -> None:
         operation = Mock(side_effect=ConnectTimeout('always fails'))
 
-        with patch('kato.helpers.retry_utils.time.sleep') as mock_sleep:
+        with patch('kato_core_lib.helpers.retry_utils.time.sleep') as mock_sleep:
             with self.assertRaises(ConnectTimeout):
                 run_with_retry(operation, 3)
 
@@ -142,7 +142,7 @@ class RetryTests(unittest.TestCase):
             {'status_code': 429, 'headers': {'Retry-After': '3'}},
         )()
 
-        with patch('kato.helpers.retry_utils.random.uniform') as mock_uniform:
+        with patch('kato_core_lib.helpers.retry_utils.random.uniform') as mock_uniform:
             self.assertEqual(_retry_delay_seconds(0, response), 3.0)
 
         mock_uniform.assert_not_called()
@@ -154,7 +154,7 @@ class RetryTests(unittest.TestCase):
             {'status_code': 429, 'headers': {}},
         )()
 
-        with patch('kato.helpers.retry_utils.random.uniform', return_value=5.5) as mock_uniform:
+        with patch('kato_core_lib.helpers.retry_utils.random.uniform', return_value=5.5) as mock_uniform:
             self.assertEqual(_retry_delay_seconds(2, response), 5.5)
 
         mock_uniform.assert_called_once_with(4.0, 8.0)
@@ -166,7 +166,7 @@ class RetryTests(unittest.TestCase):
             {'status_code': 429, 'headers': {'Retry-After': 'abc'}},
         )()
 
-        with patch('kato.helpers.retry_utils.random.uniform', return_value=3.25) as mock_uniform:
+        with patch('kato_core_lib.helpers.retry_utils.random.uniform', return_value=3.25) as mock_uniform:
             self.assertEqual(_retry_delay_seconds(1, response), 3.25)
 
         mock_uniform.assert_called_once_with(2.0, 4.0)
@@ -178,7 +178,7 @@ class RetryTests(unittest.TestCase):
             {'status_code': 503, 'headers': {'Retry-After': '3'}},
         )()
 
-        with patch('kato.helpers.retry_utils.random.uniform', return_value=1.75) as mock_uniform:
+        with patch('kato_core_lib.helpers.retry_utils.random.uniform', return_value=1.75) as mock_uniform:
             self.assertEqual(_retry_delay_seconds(0, response), 1.75)
 
         mock_uniform.assert_called_once_with(1.0, 2.0)
@@ -187,10 +187,10 @@ class RetryTests(unittest.TestCase):
         response = type('Response', (), {'status_code': 503})()
         operation = Mock(side_effect=[response, 'ok'])
 
-        with patch('kato.helpers.retry_utils.random.uniform', return_value=1.75), patch(
-            'kato.helpers.retry_utils.time.sleep'
-        ), patch('kato.helpers.retry_utils.clear_active_inline_status') as mock_clear_status, patch(
-            'kato.helpers.retry_utils.logger.warning'
+        with patch('kato_core_lib.helpers.retry_utils.random.uniform', return_value=1.75), patch(
+            'kato_core_lib.helpers.retry_utils.time.sleep'
+        ), patch('kato_core_lib.helpers.retry_utils.clear_active_inline_status') as mock_clear_status, patch(
+            'kato_core_lib.helpers.retry_utils.logger.warning'
         ) as mock_warning:
             result = run_with_retry(
                 operation,

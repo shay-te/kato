@@ -1,12 +1,12 @@
 import unittest
 
 
-from kato.data_layers.data.fields import (
+from kato_core_lib.data_layers.data.fields import (
     ImplementationFields,
     PullRequestFields,
     TaskFields,
 )
-from kato.helpers.pull_request_context_utils import (
+from kato_core_lib.helpers.pull_request_context_utils import (
     build_pull_request_context,
     pull_request_context_key,
 )

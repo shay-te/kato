@@ -1,12 +1,12 @@
 import unittest
 
-from kato.helpers.kato_config_utils import (
+from kato_core_lib.helpers.kato_config_utils import (
     is_bedrock_model,
     is_openrouter_model,
     resolved_openhands_base_url,
     resolved_openhands_llm_settings,
 )
-from utils import build_test_cfg
+from tests.utils import build_test_cfg
 
 
 class KatoConfigUtilsTests(unittest.TestCase):

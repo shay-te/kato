@@ -2,7 +2,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from kato.helpers.runtime_identity_utils import runtime_source_fingerprint
+from kato_core_lib.helpers.runtime_identity_utils import runtime_source_fingerprint
 
 
 class RuntimeIdentityUtilsTests(unittest.TestCase):

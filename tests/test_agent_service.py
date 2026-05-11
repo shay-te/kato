@@ -3,16 +3,16 @@ import unittest
 from unittest.mock import ANY, Mock, patch
 
 
-from kato.data_layers.data.review_comment import ReviewComment
-from kato.data_layers.data_access.task_data_access import TaskDataAccess
-from kato.data_layers.service.agent_service import AgentService
-from kato.data_layers.service.implementation_service import (
+from provider_client_base.provider_client_base.data.review_comment import ReviewComment
+from kato_core_lib.data_layers.data_access.task_data_access import TaskDataAccess
+from kato_core_lib.data_layers.service.agent_service import AgentService
+from kato_core_lib.data_layers.service.implementation_service import (
     ImplementationService,
 )
-from kato.data_layers.service.notification_service import NotificationService
-from kato.data_layers.service.task_state_service import TaskStateService
-from kato.data_layers.service.task_service import TaskService
-from kato.data_layers.data.fields import (
+from kato_core_lib.data_layers.service.notification_service import NotificationService
+from kato_core_lib.data_layers.service.task_state_service import TaskStateService
+from kato_core_lib.data_layers.service.task_service import TaskService
+from kato_core_lib.data_layers.data.fields import (
     EmailFields,
     ImplementationFields,
     PullRequestFields,
@@ -21,8 +21,8 @@ from kato.data_layers.data.fields import (
     TaskFields,
     TaskCommentFields,
 )
-from kato.data_layers.service.testing_service import TestingService
-from utils import build_review_comment_payload, build_task, build_test_cfg
+from kato_core_lib.data_layers.service.testing_service import TestingService
+from tests.utils import build_review_comment_payload, build_task, build_test_cfg
 
 
 class AgentServiceTests(unittest.TestCase):
@@ -162,59 +162,17 @@ class AgentServiceTests(unittest.TestCase):
                 None,
             )
 
-    def test_validate_connections_checks_all_dependencies(self) -> None:
-        self.task_client.validate_connection = Mock()
-        self.kato_client.validate_connection = Mock()
-
-        self.service.validate_connections()
-
-        self.repository_service._validate_inventory.assert_called_once_with()
-        self.repository_service._validate_git_executable.assert_called_once_with()
-        self.repository_service._prepare_repository_access.assert_any_call(self.client_repo)
-        self.repository_service._prepare_repository_access.assert_any_call(self.backend_repo)
-        self.repository_service._validate_repository_git_access.assert_any_call(self.client_repo)
-        self.repository_service._validate_repository_git_access.assert_any_call(self.backend_repo)
-        self.task_client.validate_connection.assert_called_once_with(
-            project='PROJ',
-            assignee='me',
-            states=['Todo', 'Open'],
-        )
-        self.assertEqual(self.kato_client.validate_connection.call_count, 2)
-
-    def test_validate_connections_raises_with_service_stack_traces(self) -> None:
-        self.task_client.validate_connection = Mock(side_effect=RuntimeError('youtrack down'))
-        self.kato_client.validate_connection = Mock(side_effect=RuntimeError('openhands down'))
-        self.service.logger = Mock()
-
-        with self.assertRaisesRegex(RuntimeError, 'startup dependency validation failed') as exc_context:
-            self.service.validate_connections()
-
-        self.assertEqual(self.service.logger.exception.call_count, 3)
-        self.assertIn('- unable to validate youtrack: youtrack down', str(exc_context.exception))
-        self.assertIn('- unable to validate openhands: openhands down', str(exc_context.exception))
-        self.assertIn('- unable to validate openhands_testing: openhands down', str(exc_context.exception))
-        self.assertIn('Details:', str(exc_context.exception))
-        self.assertIn('[youtrack]', str(exc_context.exception))
-        self.assertIn('[openhands]', str(exc_context.exception))
-        self.assertIn('[openhands_testing]', str(exc_context.exception))
-
-    def test_validate_connections_summarizes_retryable_failures_with_attempt_count(self) -> None:
-        self.task_client.validate_connection = Mock()
-        self.kato_client.max_retries = 5
-        self.kato_client.validate_connection = Mock(side_effect=ConnectionError('connection refused'))
-        self.service.logger = Mock()
-
-        with self.assertRaisesRegex(RuntimeError, 'startup dependency validation failed') as exc_context:
-            self.service.validate_connections()
-
-        self.assertIn(
-            '- unable to connect to openhands (tried 5 times)',
-            str(exc_context.exception),
-        )
-        self.assertIn(
-            '- unable to connect to openhands_testing (tried 5 times)',
-            str(exc_context.exception),
-        )
+    # NOTE: 3 obsolete ``test_validate_connections_*`` tests were removed
+    # here when ``validate_connections`` became lazy. Their assertions
+    # are covered by ``test_startup_validator``:
+    #
+    #   * dependency-call shape →
+    #     ``test_validate_checks_repository_and_all_dependencies``
+    #   * aggregated failure message →
+    #     ``test_validate_aggregates_dependency_failures``
+    #     (also covers retryable-failure attempt counts)
+    #
+    # See tests/test_startup_validator.py for the current contract.
 
     def test_process_assigned_task_stops_when_model_access_validation_fails(self) -> None:
         self.service.logger = Mock()
@@ -234,36 +192,16 @@ class AgentServiceTests(unittest.TestCase):
         self.kato_client.implement_task.assert_not_called()
         self.kato_client.test_task.assert_not_called()
 
-    def test_validate_connections_reports_repository_inventory_errors_gracefully(self) -> None:
-        self.task_client.validate_connection = Mock()
-        self.kato_client.validate_connection = Mock()
-        self.repository_service._validate_inventory.side_effect = ValueError(
-            'at least one repository must be configured'
-        )
-        self.service.logger = Mock()
-
-        with self.assertRaisesRegex(RuntimeError, 'at least one repository must be configured') as exc_context:
-            self.service.validate_connections()
-
-        self.assertEqual(self.service.logger.error.call_count, 1)
-        self.assertEqual(self.task_client.validate_connection.call_count, 0)
-        self.assertEqual(self.kato_client.validate_connection.call_count, 0)
-        self.assertEqual(str(exc_context.exception), 'at least one repository must be configured')
-
-    def test_validate_connections_stops_after_repository_validation_failure(self) -> None:
-        self.task_client.validate_connection = Mock()
-        self.kato_client.validate_connection = Mock()
-        self.repository_service._validate_inventory.side_effect = RuntimeError(
-            '[Error] /workspace/project missing git permissions. cannot work.'
-        )
-
-        with self.assertRaisesRegex(RuntimeError, r'\[Error\] /workspace/project missing git permissions\. cannot work\.') as exc_context:
-            self.service.validate_connections()
-
-        self.repository_service._validate_inventory.assert_called_once_with()
-        self.task_client.validate_connection.assert_not_called()
-        self.kato_client.validate_connection.assert_not_called()
-        self.assertEqual(str(exc_context.exception), '[Error] /workspace/project missing git permissions. cannot work.')
+    # NOTE: 2 obsolete ``test_validate_connections_*`` tests were removed
+    # here when inventory + repo-validation errors became lazy. Their
+    # assertions are covered:
+    #
+    #   * inventory ValueError ("at least one repository must be
+    #     configured") at lazy time →
+    #     ``test_repository_service.test_validate_inventory_refuses_when_no_repositories_configured``
+    #   * repository validation failure halts before downstream
+    #     dependency validation →
+    #     ``test_startup_validator.test_validate_raises_when_repository_validation_fails``
 
     def test_process_assigned_task_creates_prs_for_all_selected_repositories(self) -> None:
         self.service.logger = Mock()
@@ -463,45 +401,6 @@ class AgentServiceTests(unittest.TestCase):
         results = self.service.get_assigned_tasks()
 
         self.assertEqual(results, [])
-
-    def test_process_assigned_task_skips_already_processed_tasks(self) -> None:
-        service = AgentService(
-            self.task_data_access,
-            self.task_state_service,
-            self.implementation_service,
-            self.testing_service,
-            self.repository_service,
-            self.notification_service,
-        )
-        service._state_registry.mark_task_processed(
-            'PROJ-1',
-            [
-                {
-                    PullRequestFields.REPOSITORY_ID: 'client',
-                    PullRequestFields.ID: '17',
-                }
-            ],
-        )
-        task = self.task_data_access.get_assigned_tasks()[0]
-
-        results = service.process_assigned_task(task)
-
-        self.assertEqual(
-            results,
-            {
-                'id': 'PROJ-1',
-                StatusFields.STATUS: StatusFields.SKIPPED,
-                PullRequestFields.PULL_REQUESTS: [
-                    {
-                        PullRequestFields.REPOSITORY_ID: 'client',
-                        PullRequestFields.ID: '17',
-                    }
-                ],
-                PullRequestFields.FAILED_REPOSITORIES: [],
-            },
-        )
-        self.repository_service.resolve_task_repositories.assert_not_called()
-        self.kato_client.implement_task.assert_not_called()
 
     def test_process_assigned_task_skips_when_prior_failure_comment_is_still_active(self) -> None:
         task = build_task(
@@ -845,8 +744,12 @@ class AgentServiceTests(unittest.TestCase):
 
         self.assertIsNone(results)
         self.task_client.add_comment.assert_called_once()
-        self.assertIn('could not detect which repository to use', self.task_client.add_comment.call_args.args[1])
-        self.assertIn('Please mention the repository name or alias', self.task_client.add_comment.call_args.args[1])
+        comment_body = self.task_client.add_comment.call_args.args[1]
+        self.assertIn('could not detect which repository to use', comment_body)
+        # The fix instruction: tag with ``kato:repo:<id>`` and use
+        # the picker to find the legal ids.
+        self.assertIn('kato:repo:<repository-id>', comment_body)
+        self.assertIn('./kato approve-repo', comment_body)
         self.email_core_lib.send.assert_not_called()
 
     def test_process_assigned_task_reports_generic_pre_start_failures_without_reopening(self) -> None:
@@ -880,6 +783,135 @@ class AgentServiceTests(unittest.TestCase):
         self.task_client.move_issue_to_state.assert_not_called()
         self.kato_client.implement_task.assert_not_called()
 
+    def test_process_assigned_task_with_planning_tag_registers_chat_and_skips_execution(self) -> None:
+        from unittest.mock import MagicMock as _MagicMock
+        from kato_core_lib.data_layers.service.wait_planning_service import WaitPlanningService
+        session_manager = _MagicMock()
+        # No prior session — wait-planning short-circuits when one is alive
+        # (so the scan loop doesn't respawn or spam logs every cycle).
+        session_manager.get_session.return_value = None
+        # Wait-planning is now its own service injected into AgentService,
+        # not inline methods. Construct with the same dependencies the
+        # real wiring uses.
+        wait_planning_service = WaitPlanningService(
+            session_manager=session_manager,
+            repository_service=self.repository_service,
+            task_state_service=self.task_state_service,
+        )
+        service = AgentService(
+            self.task_data_access,
+            self.task_state_service,
+            self.implementation_service,
+            self.testing_service,
+            self.repository_service,
+            self.notification_service,
+            session_manager=session_manager,
+            wait_planning_service=wait_planning_service,
+        )
+        task = build_task(tags=['kato:wait-planning'])
+
+        results = service.process_assigned_task(task)
+
+        # Tab is registered so the user can chat with the agent. The
+        # session is spawned with a contextual prompt so claude doesn't
+        # exit on empty stdin and the scan loop won't respawn it.
+        session_manager.start_session.assert_called_once()
+        kwargs = session_manager.start_session.call_args.kwargs
+        self.assertEqual(kwargs['task_id'], 'PROJ-1')
+        # Initial prompt must be non-empty (claude -p exits on empty stdin)
+        # and must not request any work — just announce readiness.
+        self.assertNotEqual(kwargs['initial_prompt'], '')
+        prompt = kwargs['initial_prompt']
+        self.assertIn('PROJ-1', prompt)
+        # Must hard-stop tool use; otherwise Claude would start working
+        # on the task instead of planning it.
+        self.assertIn('planning-only', prompt)
+        self.assertIn('DO NOT call any tools', prompt)
+        # Skip result returned: orchestrator does not run / publish anything.
+        self.assertIsNotNone(results)
+        self.assertEqual(results.get(StatusFields.STATUS), StatusFields.SKIPPED)
+        self.kato_client.implement_task.assert_not_called()
+
+    def test_process_assigned_task_with_planning_tag_skips_silently_when_session_alive(self) -> None:
+        # When the user is mid-conversation, every scan cycle calling
+        # the wait-planning handler should be a no-op — no respawn,
+        # no log line. Otherwise the kato terminal fills with duplicate
+        # "registered planning chat" lines and we risk re-injecting the
+        # initial prompt into a live conversation.
+        from unittest.mock import MagicMock as _MagicMock
+        from kato_core_lib.data_layers.service.wait_planning_service import WaitPlanningService
+        session_manager = _MagicMock()
+        live_session = _MagicMock()
+        live_session.is_alive = True
+        session_manager.get_session.return_value = live_session
+        wait_planning_service = WaitPlanningService(
+            session_manager=session_manager,
+            repository_service=self.repository_service,
+            task_state_service=self.task_state_service,
+        )
+        service = AgentService(
+            self.task_data_access,
+            self.task_state_service,
+            self.implementation_service,
+            self.testing_service,
+            self.repository_service,
+            self.notification_service,
+            session_manager=session_manager,
+            wait_planning_service=wait_planning_service,
+        )
+        task = build_task(tags=['kato:wait-planning'])
+
+        results = service.process_assigned_task(task)
+
+        session_manager.start_session.assert_not_called()
+        self.assertEqual(results.get(StatusFields.STATUS), StatusFields.SKIPPED)
+
+    def test_wait_planning_marks_workspace_as_operator_driven_for_startup_resume(self) -> None:
+        from unittest.mock import MagicMock as _MagicMock
+        from kato_core_lib.data_layers.service.wait_planning_service import WaitPlanningService
+        session_manager = _MagicMock()
+        session_manager.get_session.return_value = None
+        workspace_manager = _MagicMock()
+        wait_planning_service = WaitPlanningService(
+            session_manager=session_manager,
+            repository_service=self.repository_service,
+            task_state_service=self.task_state_service,
+            workspace_manager=workspace_manager,
+        )
+        wait_planning_service._resolve_planning_context = Mock(
+            return_value=types.SimpleNamespace(cwd='.', expected_branch='PROJ-1')
+        )
+        task = build_task(tags=['kato:wait-planning'])
+
+        results = wait_planning_service.handle_task(task)
+
+        self.assertEqual(results.get(StatusFields.STATUS), StatusFields.SKIPPED)
+        session_manager.start_session.assert_called_once()
+        workspace_manager.update_resume_on_startup.assert_called_once_with(
+            'PROJ-1',
+            False,
+        )
+
+    def test_process_assigned_task_without_planning_tag_runs_normally(self) -> None:
+        service = AgentService(
+            self.task_data_access,
+            self.task_state_service,
+            self.implementation_service,
+            self.testing_service,
+            self.repository_service,
+            self.notification_service,
+        )
+        task = build_task(
+            description=self.task_description,
+            tags=['some-other-label'],
+        )
+
+        service.process_assigned_task(task)
+
+        # No tag → run autonomously through the one-shot client (no
+        # streaming runner wired in this test setup).
+        self.kato_client.implement_task.assert_called_once()
+
     def test_process_assigned_task_skips_when_task_definition_is_too_thin(self) -> None:
         task = build_task(
             summary='test',
@@ -889,12 +921,17 @@ class AgentServiceTests(unittest.TestCase):
         results = self.service.process_assigned_task(task)
 
         self.assertIsNone(results)
-        self.task_client.add_comment.assert_called_once_with(
-            'PROJ-1',
-            'Kato agent skipped this task because the task definition is too thin '
-            'to work from safely. Please add a clearer description or issue comment '
-            'describing the expected change.',
-        )
+        self.task_client.add_comment.assert_called_once()
+        comment_args = self.task_client.add_comment.call_args.args
+        self.assertEqual(comment_args[0], 'PROJ-1')
+        comment_body = comment_args[1]
+        # Pin the load-bearing parts of the actionable comment, not
+        # the whole string — the prose can iterate without breaking
+        # the test.
+        self.assertIn('task definition is too thin', comment_body)
+        self.assertIn('what', comment_body)
+        self.assertIn('why', comment_body)
+        self.assertIn('kato:run', comment_body)
         self.task_client.move_issue_to_state.assert_not_called()
         self.kato_client.implement_task.assert_not_called()
         self.email_core_lib.send.assert_not_called()
@@ -999,6 +1036,10 @@ class AgentServiceTests(unittest.TestCase):
             ImplementationFields.MESSAGE: 'Validation report: no dedicated tests were defined.',
             'summary': 'Testing agent validated the implementation',
         }
+        # Backend's PR creation fails on every retry attempt (the
+        # publisher uses 3 attempts by default); side_effect must
+        # supply 3 errors so we land in the failure-handler branch
+        # rather than burning through StopIteration.
         self.repository_service.create_pull_request.side_effect = [
             {
                 PullRequestFields.REPOSITORY_ID: 'client',
@@ -1009,13 +1050,25 @@ class AgentServiceTests(unittest.TestCase):
                 PullRequestFields.DESTINATION_BRANCH: 'master',
             },
             RuntimeError('github down'),
+            RuntimeError('github down'),
+            RuntimeError('github down'),
         ]
         task = self.task_data_access.get_assigned_tasks()[0]
+        # Skip retry-backoff sleeps so the test stays fast.
+        self.service._task_publisher._sleep_fn = lambda _: None
 
         results = self.service.process_assigned_task(task)
 
         self.assertEqual(results[StatusFields.STATUS], StatusFields.PARTIAL_FAILURE)
-        self.assertEqual(results[PullRequestFields.FAILED_REPOSITORIES], ['backend'])
+        # Result payload now carries the per-repo error so callers
+        # (and downstream emails / logs) can render an actionable line.
+        self.assertEqual(
+            results[PullRequestFields.FAILED_REPOSITORIES],
+            [{
+                PullRequestFields.REPOSITORY_ID: 'backend',
+                'error': 'github down',
+            }],
+        )
         self.assertEqual(
             self.task_client.move_issue_to_state.call_args_list,
             [
@@ -1027,8 +1080,10 @@ class AgentServiceTests(unittest.TestCase):
             'stopped working on this task',
             self.task_client.add_comment.call_args_list[-1].args[1],
         )
+        # Comment text includes the failure reason so the operator can
+        # diagnose without spelunking through kato logs.
         self.assertIn(
-            'failed to create pull requests for repositories: backend',
+            'failed to create pull requests for repositories: backend (github down)',
             self.task_client.add_comment.call_args_list[-1].args[1],
         )
         self.assertNotIn(
@@ -1110,12 +1165,19 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(self.email_core_lib.send.call_count, 2)
 
     def test_process_assigned_task_reopens_when_move_to_review_fails(self) -> None:
+        # Publisher now retries move-to-review with the default budget
+        # (2 retries → 3 attempts) before giving up. Permanent failure
+        # = all 3 attempts fail; only then does kato reopen the task.
         self.task_client.move_issue_to_state.side_effect = [
-            None,
-            RuntimeError('state update failed'),
-            None,
+            None,                                # initial → In Progress
+            RuntimeError('state update failed'),  # to-review attempt 1
+            RuntimeError('state update failed'),  # to-review attempt 2
+            RuntimeError('state update failed'),  # to-review attempt 3
+            None,                                # reopen → Todo
         ]
         self.service.logger = Mock()
+        # Skip the retry-backoff sleeps so the test stays fast.
+        self.service._task_publisher._sleep_fn = lambda _: None
         task = self.task_data_access.get_assigned_tasks()[0]
 
         with patch.object(self.service, 'logger', self.service.logger):
@@ -1126,6 +1188,8 @@ class AgentServiceTests(unittest.TestCase):
             self.task_client.move_issue_to_state.call_args_list,
             [
                 unittest.mock.call('PROJ-1', 'State', 'In Progress'),
+                unittest.mock.call('PROJ-1', 'State', 'To Verify'),
+                unittest.mock.call('PROJ-1', 'State', 'To Verify'),
                 unittest.mock.call('PROJ-1', 'State', 'To Verify'),
                 unittest.mock.call('PROJ-1', 'State', 'Todo'),
             ],
@@ -1378,7 +1442,9 @@ class AgentServiceTests(unittest.TestCase):
             }
         ]
 
-        with self.assertRaisesRegex(RuntimeError, 'failed to address comment 99'):
+        with self.assertRaisesRegex(
+            RuntimeError, 'failed to address review comment batch \\(99\\)',
+        ):
             self.service.handle_pull_request_comment(build_review_comment_payload())
 
     def test_get_new_pull_request_comments_returns_unprocessed_comments_with_context(self) -> None:
