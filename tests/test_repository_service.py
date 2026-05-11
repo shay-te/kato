@@ -788,6 +788,8 @@ class RepositoryServiceTests(unittest.TestCase):
             ), patch(
                 'kato_core_lib.data_layers.service.repository_service.RepositoryService._validate_destination_branch_tracking_state',
             ), patch(
+                'kato_core_lib.data_layers.service.repository_inventory_service.RepositoryInventoryService._validate_git_remote_auth',
+            ), patch(
                 'git_core_lib.git_core_lib.client.git_client.subprocess.run',
                 side_effect=[
                     Mock(returncode=0, stdout='refs/remotes/origin/main\n', stderr=''),
@@ -831,6 +833,8 @@ class RepositoryServiceTests(unittest.TestCase):
             with patch(
                 'git_core_lib.git_core_lib.client.git_client.shutil.which',
                 return_value='/usr/bin/git',
+            ), patch(
+                'kato_core_lib.data_layers.service.repository_inventory_service.RepositoryInventoryService._validate_git_remote_auth',
             ):
                 with self.assertRaisesRegex(
                     ValueError,
