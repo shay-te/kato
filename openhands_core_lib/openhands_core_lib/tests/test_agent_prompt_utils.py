@@ -226,6 +226,36 @@ class ReviewCommentLocationTextTests(unittest.TestCase):
         self.assertNotIn('src/a.py:', out)
 
 
+class ReviewCommentCodeSnippetBudgetTests(unittest.TestCase):
+    """Lines 231-232 & 235 in agent_prompt_utils.py — snippet budget paths."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.workspace = Path(self._tmp.name)
+
+    def test_snippet_truncates_when_budget_exceeded(self) -> None:
+        # Lines 231-232: ``total_bytes > _REVIEW_SNIPPET_MAX_BYTES`` → append
+        # truncation marker and break the render loop.
+        long_lines = '\n'.join('x' * 200 for _ in range(200))
+        (self.workspace / 'big.py').write_text(long_lines)
+        comment = SimpleNamespace(file_path='big.py', line_number=100)
+        snippet = review_comment_code_snippet(
+            comment, str(self.workspace), context_lines=200,
+        )
+        self.assertIn('snippet truncated', snippet)
+
+    def test_snippet_returns_empty_when_window_past_file_end(self) -> None:
+        # Line 235: ``if not rendered: return ''`` — context window lands
+        # entirely past the file's end → no rendered lines.
+        (self.workspace / 'tiny.py').write_text('one\ntwo\nthree\n')
+        comment = SimpleNamespace(file_path='tiny.py', line_number=100)
+        snippet = review_comment_code_snippet(
+            comment, str(self.workspace), context_lines=1,
+        )
+        self.assertEqual(snippet, '')
+
+
 if __name__ == '__main__':
     import unittest.mock  # noqa: F401 used by IgnoredRepositoryFolderNamesTests
     unittest.main()

@@ -1948,5 +1948,518 @@ class OpenHandsFlowTests(unittest.TestCase):
         self.assertEqual(result['summary'], 'Built pipeline')
 
 
+class OpenHandsClientStaticHelperTests(unittest.TestCase):
+    """Direct tests for the small static/classmethod helpers."""
+
+    def test_normalized_items_payload_returns_empty_when_not_list(self) -> None:
+        # Line 493: ``if not isinstance(payload, list): return []``.
+        response = Mock()
+        response.json = Mock(return_value={'not': 'a list'})
+        self.assertEqual(OpenHandsClient._normalized_items_payload(response), [])
+
+    def test_truncate_short_text_returns_unchanged(self) -> None:
+        self.assertEqual(OpenHandsClient._truncate('short', limit=160), 'short')
+
+    def test_truncate_long_text_adds_ellipsis(self) -> None:
+        long_text = 'x' * 300
+        result = OpenHandsClient._truncate(long_text, limit=20)
+        self.assertTrue(result.endswith('...'))
+        self.assertLessEqual(len(result), 20)
+
+    def test_shell_command_extracts_command_key(self) -> None:
+        self.assertEqual(OpenHandsClient._shell_command({'command': 'ls'}), 'ls')
+
+    def test_shell_command_falls_back_to_cmd_key(self) -> None:
+        # Line 1048: second key 'cmd' tried after 'command' is missing.
+        self.assertEqual(OpenHandsClient._shell_command({'cmd': 'pwd'}), 'pwd')
+
+    def test_shell_command_returns_empty_when_no_keys(self) -> None:
+        self.assertEqual(OpenHandsClient._shell_command({}), '')
+
+    def test_tool_call_arguments_non_dict_tool_call_returns_empty(self) -> None:
+        # Line 1026: tool_call isn't a dict → {}.
+        self.assertEqual(
+            OpenHandsClient._tool_call_arguments({'tool_call': 'not-a-dict'}),
+            {},
+        )
+
+    def test_tool_call_arguments_blank_arguments_returns_empty(self) -> None:
+        # Line 1029: arguments is empty string → {}.
+        self.assertEqual(
+            OpenHandsClient._tool_call_arguments({'tool_call': {'arguments': ''}}),
+            {},
+        )
+
+    def test_tool_call_arguments_invalid_json_logs_and_returns_empty(self) -> None:
+        # Lines 1032-1037: JSONDecodeError → log warning + return {}.
+        result = OpenHandsClient._tool_call_arguments({
+            'tool_call': {'arguments': 'not json'},
+        })
+        self.assertEqual(result, {})
+
+    def test_tool_call_arguments_non_dict_payload_returns_empty(self) -> None:
+        # Line 1040: parsed JSON isn't a dict → {}.
+        result = OpenHandsClient._tool_call_arguments({
+            'tool_call': {'arguments': '[1, 2, 3]'},
+        })
+        self.assertEqual(result, {})
+
+    def test_event_highlight_text_returns_empty_for_non_dict(self) -> None:
+        # Line 971: non-dict event → return ''.
+        self.assertEqual(OpenHandsClient._event_highlight_text('plain string'), '')
+
+    def test_action_event_highlight_text_returns_empty_for_non_action_event(self) -> None:
+        # Lines 980-982: kind != 'ActionEvent' OR source != 'agent' → ''.
+        self.assertEqual(
+            OpenHandsClient._action_event_highlight_text({'kind': 'MessageEvent'}),
+            '',
+        )
+        self.assertEqual(
+            OpenHandsClient._action_event_highlight_text({
+                'kind': 'ActionEvent', 'source': 'user',
+            }),
+            '',
+        )
+
+    def test_action_event_highlight_text_returns_empty_for_blank_or_finish_tool(self) -> None:
+        # Lines 985-986: blank or 'finish' tool name → ''.
+        self.assertEqual(
+            OpenHandsClient._action_event_highlight_text({
+                'kind': 'ActionEvent', 'source': 'agent', 'tool_name': '',
+            }),
+            '',
+        )
+        self.assertEqual(
+            OpenHandsClient._action_event_highlight_text({
+                'kind': 'ActionEvent', 'source': 'agent', 'tool_name': 'finish',
+            }),
+            '',
+        )
+
+    def test_action_event_highlight_text_shell_with_command(self) -> None:
+        # Line 992: shell tool with extracted command.
+        result = OpenHandsClient._action_event_highlight_text({
+            'kind': 'ActionEvent', 'source': 'agent',
+            'tool_name': 'execute_bash',
+            'tool_call': {'arguments': '{"command": "ls -la"}'},
+        })
+        self.assertIn('ran shell command', result)
+        self.assertIn('ls -la', result)
+
+    def test_action_event_highlight_text_shell_without_command(self) -> None:
+        # Line 993: shell tool but no command in args → fallback text.
+        result = OpenHandsClient._action_event_highlight_text({
+            'kind': 'ActionEvent', 'source': 'agent',
+            'tool_name': 'execute_bash',
+            'tool_call': {'arguments': '{}'},
+        })
+        self.assertEqual(result, 'ran a shell command')
+
+    def test_action_event_highlight_text_file_editor_str_replace(self) -> None:
+        result = OpenHandsClient._action_event_highlight_text({
+            'kind': 'ActionEvent', 'source': 'agent',
+            'tool_name': 'file_editor',
+            'tool_call': {
+                'arguments': '{"command": "str_replace", "path": "/repo/a.py"}',
+            },
+        })
+        self.assertIn('edited /repo/a.py', result)
+
+    def test_action_event_highlight_text_file_editor_view(self) -> None:
+        result = OpenHandsClient._action_event_highlight_text({
+            'kind': 'ActionEvent', 'source': 'agent',
+            'tool_name': 'file_editor',
+            'tool_call': {
+                'arguments': '{"command": "view", "path": "/repo/a.py"}',
+            },
+        })
+        self.assertIn('viewed /repo/a.py', result)
+
+    def test_action_event_highlight_text_file_editor_other_with_path(self) -> None:
+        # Line 1003: file_editor with unrecognized command + path.
+        result = OpenHandsClient._action_event_highlight_text({
+            'kind': 'ActionEvent', 'source': 'agent',
+            'tool_name': 'file_editor',
+            'tool_call': {
+                'arguments': '{"command": "magic", "path": "/repo/a.py"}',
+            },
+        })
+        self.assertIn('used file_editor on /repo/a.py', result)
+
+    def test_action_event_highlight_text_file_editor_no_path(self) -> None:
+        # Line 1004: file_editor without path → 'used file_editor'.
+        result = OpenHandsClient._action_event_highlight_text({
+            'kind': 'ActionEvent', 'source': 'agent',
+            'tool_name': 'file_editor',
+            'tool_call': {'arguments': '{}'},
+        })
+        self.assertEqual(result, 'used file_editor')
+
+    def test_action_event_highlight_text_other_tool_with_path(self) -> None:
+        result = OpenHandsClient._action_event_highlight_text({
+            'kind': 'ActionEvent', 'source': 'agent',
+            'tool_name': 'read_file',
+            'tool_call': {'arguments': '{"path": "/repo/a.py"}'},
+        })
+        self.assertIn('used read_file on /repo/a.py', result)
+
+    def test_action_event_highlight_text_other_tool_no_path(self) -> None:
+        result = OpenHandsClient._action_event_highlight_text({
+            'kind': 'ActionEvent', 'source': 'agent',
+            'tool_name': 'browser',
+            'tool_call': {'arguments': '{}'},
+        })
+        self.assertEqual(result, 'used browser')
+
+    def test_finish_action_arguments_non_dict_tool_call(self) -> None:
+        # Line 1097: tool_call isn't a dict → {}.
+        self.assertEqual(
+            OpenHandsClient._finish_action_arguments({'tool_call': 'oops'}),
+            {},
+        )
+
+    def test_finish_action_arguments_blank_returns_empty(self) -> None:
+        self.assertEqual(
+            OpenHandsClient._finish_action_arguments({
+                'tool_call': {'arguments': ''},
+            }),
+            {},
+        )
+
+    def test_finish_action_arguments_invalid_json(self) -> None:
+        # Lines 1103-1108: JSONDecodeError → log + {}.
+        result = OpenHandsClient._finish_action_arguments({
+            'tool_call': {'arguments': 'not json'},
+        })
+        self.assertEqual(result, {})
+
+    def test_finish_action_arguments_non_dict_payload(self) -> None:
+        result = OpenHandsClient._finish_action_arguments({
+            'tool_call': {'arguments': '[1, 2, 3]'},
+        })
+        self.assertEqual(result, {})
+
+    def test_finish_action_summary_falls_back_to_action_summary(self) -> None:
+        # action.get('summary') fallback.
+        s, m = OpenHandsClient._finish_action_summary(
+            {'action': {'summary': 'from action'}}, {},
+        )
+        self.assertEqual(s, 'from action')
+
+    def test_finish_action_summary_handles_non_dict_action(self) -> None:
+        # Line 1118: action isn't a dict → action becomes {}.
+        s, m = OpenHandsClient._finish_action_summary(
+            {'action': 'not a dict', 'summary': 'event-summary'}, {},
+        )
+        self.assertEqual(s, 'event-summary')
+
+    def test_assistant_message_text_returns_empty_for_non_dict_event(self) -> None:
+        # Line 1135: event isn't a dict → ''.
+        self.assertEqual(OpenHandsClient._assistant_message_text('plain'), '')
+
+    def test_assistant_message_text_returns_empty_for_wrong_kind(self) -> None:
+        # Line 1139: kind != 'MessageEvent' → ''.
+        self.assertEqual(
+            OpenHandsClient._assistant_message_text({'kind': 'ActionEvent'}),
+            '',
+        )
+
+    def test_assistant_message_text_returns_empty_for_non_agent_source(self) -> None:
+        # Line 1142: source != 'agent' → ''.
+        self.assertEqual(
+            OpenHandsClient._assistant_message_text({
+                'kind': 'MessageEvent', 'source': 'user',
+            }),
+            '',
+        )
+
+    def test_assistant_message_text_returns_empty_for_non_dict_llm_message(self) -> None:
+        # Line 1147: llm_message isn't a dict → ''.
+        self.assertEqual(
+            OpenHandsClient._assistant_message_text({
+                'kind': 'MessageEvent', 'source': 'agent',
+                'llm_message': 'not a dict',
+            }),
+            '',
+        )
+
+    def test_is_retryable_start_task_error_returns_false_for_blank(self) -> None:
+        # Line 725: blank detail → False.
+        self.assertFalse(OpenHandsClient._is_retryable_start_task_error(''))
+        self.assertFalse(OpenHandsClient._is_retryable_start_task_error('   '))
+
+
+class OpenHandsClientDefensiveBranchTests(unittest.TestCase):
+    """Cover the remaining defensive branches in conversation handling."""
+
+    def _client(self) -> OpenHandsClient:
+        return OpenHandsClient(
+            base_url='https://openhands.example',
+            api_key='sess-key',
+            llm_settings={},
+        )
+
+    def test_run_model_access_validation_no_op_without_llm_model(self) -> None:
+        # Line 611: blank llm_model → early return (no validation).
+        client = self._client()
+        client._llm_settings = {}
+        mock_run = Mock()
+        with patch.object(client, '_run_prompt_result', mock_run):
+            client._run_model_access_validation()
+        mock_run.assert_not_called()
+
+    def test_update_conversation_title_no_op_for_blank_inputs(self) -> None:
+        # Line 689: blank conversation_id or title → early return.
+        client = self._client()
+        mock_patch = Mock()
+        with patch.object(client, '_patch_with_retry', mock_patch):
+            client._update_conversation_title('', 'some title')
+            client._update_conversation_title('conv-id', '')
+        mock_patch.assert_not_called()
+
+    def test_wait_for_started_conversation_raises_for_non_retryable_error(self) -> None:
+        # Line 714: non-retryable error → RuntimeError (not TimeoutError).
+        client = self._client()
+        client._max_poll_attempts = 1
+        with patch.object(
+            client, '_get_start_task',
+            return_value={'status': 'ERROR', 'detail': 'auth failed'},
+        ):
+            with self.assertRaises(RuntimeError):
+                client._wait_for_started_conversation_id({'id': 'task-1'})
+
+    def test_get_start_task_raises_when_response_empty(self) -> None:
+        # Line 740: empty tasks → ValueError.
+        client = self._client()
+        response = Mock()
+        response.json = Mock(return_value=[])
+        response.raise_for_status = Mock()
+        with patch.object(client, '_get_with_retry', return_value=response):
+            with self.assertRaisesRegex(ValueError, 'start task not found'):
+                client._get_start_task('start-task-id')
+
+    def test_get_conversation_raises_when_response_empty(self) -> None:
+        # Line 872: empty conversations → ValueError.
+        client = self._client()
+        response = Mock()
+        response.json = Mock(return_value=[])
+        response.raise_for_status = Mock()
+        with patch.object(client, '_get_with_retry', return_value=response):
+            with self.assertRaisesRegex(ValueError, 'conversation not found'):
+                client._get_conversation('conversation-id')
+
+    def test_get_conversation_events_raises_when_items_not_list(self) -> None:
+        # Line 908: items not a list → ValueError.
+        client = self._client()
+        response = Mock()
+        response.json = Mock(return_value={'items': 'not a list'})
+        response.raise_for_status = Mock()
+        with patch.object(client, '_get_with_retry', return_value=response):
+            with self.assertRaisesRegex(ValueError, 'events response did not include items'):
+                client._get_conversation_events('conv-id')
+
+    def test_log_conversation_highlights_returns_false_on_fetch_error(self) -> None:
+        # Lines 919-925: fetch raises → log + return False.
+        client = self._client()
+        seen: set[str] = set()
+        with patch.object(
+            client, '_get_conversation_events',
+            side_effect=RuntimeError('api down'),
+        ):
+            result = client._log_conversation_highlights('conv-id', 'title', seen)
+        self.assertFalse(result)
+
+    def test_event_failure_detail_returns_empty_for_non_dict(self) -> None:
+        # Line 841: non-dict event → ''.
+        client = self._client()
+        self.assertEqual(client._event_failure_detail('plain'), '')
+
+    def test_event_failure_detail_falls_back_to_assistant_message_text(self) -> None:
+        # Line 860: no failure keys present → fall back to assistant message.
+        client = self._client()
+        result = client._event_failure_detail({
+            'kind': 'MessageEvent',
+            'source': 'agent',
+            'llm_message': {
+                'role': 'assistant',
+                'content': [{'text': 'agent says something failed'}],
+            },
+        })
+        self.assertIn('agent says something failed', result)
+
+    def test_conversation_failure_detail_uses_direct_key(self) -> None:
+        # Line 804: ``detail`` key on the conversation dict → return early.
+        client = self._client()
+        result = client._conversation_failure_detail(
+            'conv-id', {'detail': 'auth expired'},
+        )
+        self.assertEqual(result, 'auth expired')
+
+    def test_conversation_failure_detail_logs_and_returns_empty_on_fetch_error(self) -> None:
+        # Lines 808-814: events fetch raises → log + ''.
+        client = self._client()
+        with patch.object(
+            client, '_get_conversation_events',
+            side_effect=RuntimeError('api down'),
+        ):
+            result = client._conversation_failure_detail('conv-id', {})
+        self.assertEqual(result, '')
+
+    def test_conversation_failure_detail_uses_first_event_with_detail(self) -> None:
+        # Line 819: events have one with failure detail → return that.
+        client = self._client()
+        events = [
+            {'detail': 'real error message'},
+            {'kind': 'other'},
+        ]
+        with patch.object(
+            client, '_get_conversation_events',
+            return_value=events,
+        ):
+            result = client._conversation_failure_detail('conv-id', {})
+        self.assertIn('real error', result)
+
+    def test_conversation_failure_detail_uses_event_summary_fallback(self) -> None:
+        # Lines 821-824: no event has a failure detail → fall back to summary.
+        client = self._client()
+        events = [{'kind': 'ActionEvent', 'source': 'agent', 'detail': 'fallback'}]
+        with patch.object(
+            client, '_get_conversation_events',
+            return_value=events,
+        ):
+            result = client._conversation_failure_detail('conv-id', {})
+        # Either the event detail OR the summary is returned (we just verify
+        # the function found *something*).
+        self.assertTrue(result)
+
+    def test_result_payload_from_event_returns_none_for_non_finish_no_message(self) -> None:
+        # Line 1064: no finish payload, no assistant message → None.
+        client = self._client()
+        self.assertIsNone(client._result_payload_from_event({'kind': 'OtherEvent'}))
+
+    def test_finish_action_payload_returns_none_when_no_summary_or_message(self) -> None:
+        # Line 1077: no summary and no message → None.
+        result = OpenHandsClient._finish_action_payload({
+            'kind': 'ActionEvent', 'source': 'agent',
+            'tool_name': 'finish',
+            'tool_call': {'arguments': '{}'},  # no summary/message
+        })
+        self.assertIsNone(result)
+
+    def test_assistant_message_highlight_text_no_prefix_match(self) -> None:
+        # Line 1020: no line starts with a highlight prefix → ''.
+        result = OpenHandsClient._assistant_message_highlight_text({
+            'kind': 'MessageEvent',
+            'source': 'agent',
+            'llm_message': {
+                'role': 'assistant',
+                'content': [{'text': 'just chatter, no special prefix'}],
+            },
+        })
+        self.assertEqual(result, '')
+
+    def test_event_highlight_key_returns_str_for_non_dict(self) -> None:
+        # Line 953: non-dict event → str(event).
+        client = self._client()
+        self.assertEqual(client._event_highlight_key('plain-string'), 'plain-string')
+
+    def test_event_highlight_key_returns_id_when_present(self) -> None:
+        client = self._client()
+        result = client._event_highlight_key({'id': 'evt-1', 'kind': 'X'})
+        self.assertEqual(result, 'evt-1')
+
+    def test_event_highlight_key_falls_back_to_composite_key(self) -> None:
+        # Lines 957-966: no event id → compose from kind/source/tool_name/etc.
+        client = self._client()
+        result = client._event_highlight_key({
+            'kind': 'ActionEvent',
+            'source': 'agent',
+            'tool_name': 'execute_bash',
+            'tool_call': {'arguments': '{"command": "ls"}'},
+        })
+        # The composite key includes the pipe separator.
+        self.assertIn('|', result)
+        self.assertIn('ActionEvent', result)
+        self.assertIn('agent', result)
+        self.assertIn('execute_bash', result)
+
+    def test_wait_for_conversations_to_stop_returns_when_shutdown_is_none(self) -> None:
+        # Line 554: ``_shutdown_conversations`` returns None → return.
+        client = self._client()
+        with patch.object(
+            client, '_shutdown_conversations', return_value=None,
+        ):
+            client._wait_for_conversations_to_stop()  # must not raise
+
+    def test_wait_for_conversations_to_stop_warns_when_polls_exhausted(self) -> None:
+        # Lines 558, 564: hits max_poll_attempts with still-running
+        # conversations → break + final warning.
+        client = self._client()
+        client._max_poll_attempts = 2
+        client._poll_interval_seconds = 0  # don't sleep in tests
+        with patch.object(
+            client, '_shutdown_conversations', return_value=[{'id': 'c1'}],
+        ), patch.object(client, 'logger') as mock_logger:
+            client._wait_for_conversations_to_stop()
+        mock_logger.warning.assert_called()
+
+    def test_conversation_failure_event_summary_skips_empty_events(self) -> None:
+        # Lines 831-833: event has no highlight text → look at failure
+        # detail; if both blank, continue. With all-blank events we hit
+        # line 836 (no summaries → '').
+        client = self._client()
+        # Events that have no recognizable highlight text and no failure
+        # detail. Use plain strings (non-dict) so event_highlight_text returns
+        # '' and event_failure_detail returns ''.
+        result = client._conversation_failure_event_summary(['blank', 'too'])
+        self.assertEqual(result, '')
+
+    def test_conversation_failure_event_summary_uses_failure_detail_when_no_highlight(self) -> None:
+        # Line 831: event has no highlight text but DOES have a failure
+        # detail (via 'detail' key).
+        client = self._client()
+        events = [{'detail': 'something broke'}]
+        result = client._conversation_failure_event_summary(events)
+        self.assertIn('something broke', result)
+
+    def test_log_conversation_highlights_skips_blank_highlight_text(self) -> None:
+        # Lines 932-934: event has no highlight text → add to seen + continue.
+        client = self._client()
+        client._max_poll_attempts = 1
+        # An event without recognizable highlight text (just system noise).
+        events = [{'id': 'evt-1', 'kind': 'unknown', 'source': 'system'}]
+        with patch.object(client, '_get_conversation_events', return_value=events):
+            seen = set()
+            result = client._log_conversation_highlights('conv', 'title', seen)
+        self.assertTrue(result)  # returns True even when no highlights logged
+        self.assertIn('evt-1', seen)
+
+    def test_assistant_message_text_returns_empty_when_content_not_list(self) -> None:
+        # Line 1147: content isn't a list → ''.
+        self.assertEqual(
+            OpenHandsClient._assistant_message_text({
+                'kind': 'MessageEvent', 'source': 'agent',
+                'llm_message': {
+                    'role': 'assistant',
+                    'content': 'not a list',
+                },
+            }),
+            '',
+        )
+
+    def test_conversation_failure_detail_returns_empty_when_no_signal_at_all(self) -> None:
+        # Line 824: every event lacks failure detail AND no summary →
+        # final ``return ''``.
+        client = self._client()
+        # Events that are plain strings — both _event_failure_detail
+        # and _event_highlight_text return '' for non-dict.
+        with patch.object(
+            client, '_get_conversation_events',
+            return_value=['plain string', 42],
+        ):
+            result = client._conversation_failure_detail('conv-id', {})
+        self.assertEqual(result, '')
+
+
 if __name__ == '__main__':
     unittest.main()

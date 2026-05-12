@@ -918,6 +918,17 @@ class YouTrackClientDefensiveBranchTests(unittest.TestCase):
             result = client._issue_tag_id('PROJ-1', 'bug')
         self.assertEqual(result, '99')
 
+    def test_task_tags_skips_non_dict_items(self) -> None:
+        # Line 256: non-dict entry in tag list → skip.
+        client = self._client()
+        response = mock_response(
+            json_data=['junk-not-a-dict', {'name': 'bug'}, {'name': 'urgent'}],
+        )
+        response.raise_for_status = lambda: None
+        with patch.object(client, '_get_with_retry', return_value=response):
+            tags = client._task_tags('PROJ-1')
+        self.assertEqual(tags, ['bug', 'urgent'])
+
     def test_format_screenshot_skips_non_dict(self) -> None:
         # Line 434: non-dict attachment → skip in _format_screenshot_attachments.
         client = self._client()
@@ -998,6 +1009,20 @@ class YouTrackClientBaseEdgeCases(unittest.TestCase):
         response = mock_response(json_data=['list'])
         result = YouTrackClient._json_items(response, items_key='issues')
         self.assertEqual(result, [])
+
+    def test_download_text_attachment_returns_empty_when_raw_content_blank(self) -> None:
+        # Line 300: ``raw_content`` is empty bytes → return ''.
+        from unittest.mock import MagicMock
+        client = YouTrackClient('https://youtrack.example', 'yt-token')
+        response = MagicMock()
+        response.text = ''  # not a usable string
+        response.content = b''  # falsy → triggers line 299-300
+        response.raise_for_status = lambda: None
+        client._get_attachment_with_retry = MagicMock(return_value=response)
+        result = client._download_text_attachment(
+            'https://x', attachment_name='x.txt', max_chars=100,
+        )
+        self.assertEqual(result, '')
 
 
 if __name__ == '__main__':
