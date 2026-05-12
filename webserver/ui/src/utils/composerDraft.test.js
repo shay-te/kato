@@ -146,6 +146,27 @@ test('drafts for different tasks are isolated (Bug 3 root cause)', function () {
 });
 
 
+test('readDraft / writeDraft fall back to window.localStorage when no storage is passed', function () {
+  // Exercises the defaultStorage() branch — the production path the
+  // composer actually takes (no storage arg, runs in a real browser).
+  const store = fakeStorage();
+  global.window = { localStorage: store };
+  try {
+    writeDraft('T1', 'production-path');
+    assert.equal(readDraft('T1'), 'production-path');
+    assert.equal(store.getItem(`${DRAFT_STORAGE_PREFIX}T1`), 'production-path');
+  } finally {
+    delete global.window;
+  }
+});
+
+test('readDraft / writeDraft return / no-op gracefully when window is absent', function () {
+  // SSR / Node-no-window path: must not throw, must return empty.
+  assert.equal(readDraft('T1'), '');
+  writeDraft('T1', 'should-vanish');
+});
+
+
 test('round-trip survives a simulated tab unmount/remount', function () {
   // Mirrors what happens when the operator types in tab A, switches
   // to tab B, then comes back: MessageForm unmounts, remounts, and on

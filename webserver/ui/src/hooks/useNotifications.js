@@ -1,50 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { NOTIFICATION_KIND } from '../constants/notificationKind.js';
 import { cssEscapeAttr } from '../utils/dom.js';
-
-const STORAGE_KEY = 'kato.notifications';
-const KIND_STORAGE_KEY = 'kato.notifications.kinds';
-const ALL_KINDS = Object.values(NOTIFICATION_KIND);
-
-// Sensible defaults: notify only on actionable events (task start, end,
-// approval needed, errors). The chatty kinds (every Claude reply, every
-// platform-state transition) are off by default — they spam the bell
-// during normal task flow.
-const DEFAULT_KIND_PREFS = {
-  [NOTIFICATION_KIND.STARTED]: true,
-  [NOTIFICATION_KIND.STATUS_CHANGE]: false,
-  [NOTIFICATION_KIND.COMPLETED]: true,
-  [NOTIFICATION_KIND.ATTENTION]: true,
-  [NOTIFICATION_KIND.ERROR]: true,
-  [NOTIFICATION_KIND.REPLY]: false,
-};
-
-function _defaultKindPrefs() {
-  return { ...DEFAULT_KIND_PREFS };
-}
-
-function _readKindPrefs() {
-  if (typeof localStorage === 'undefined') {
-    return _defaultKindPrefs();
-  }
-  try {
-    const raw = localStorage.getItem(KIND_STORAGE_KEY);
-    if (!raw) {
-      return _defaultKindPrefs();
-    }
-    const parsed = JSON.parse(raw);
-    // Operator's stored prefs take priority; fall back to default for any
-    // kind they haven't explicitly set yet.
-    return Object.fromEntries(
-      ALL_KINDS.map((k) => [
-        k,
-        parsed[k] !== undefined ? parsed[k] !== false : DEFAULT_KIND_PREFS[k] !== false,
-      ]),
-    );
-  } catch (_) {
-    return _defaultKindPrefs();
-  }
-}
+import {
+  readEnabled,
+  readKindPrefs,
+  writeEnabled,
+  writeKindPrefs,
+} from '../utils/notificationsStorage.js';
 
 export function useNotifications({ activeTaskId, onTaskClick }) {
   const supported = typeof window !== 'undefined' && 'Notification' in window;
@@ -52,12 +13,9 @@ export function useNotifications({ activeTaskId, onTaskClick }) {
     supported ? Notification.permission : 'denied',
   );
   const [enabled, setEnabled] = useState(() => (
-    supported
-    && permission === 'granted'
-    && (typeof localStorage !== 'undefined'
-        && localStorage.getItem(STORAGE_KEY) === 'on')
+    supported && permission === 'granted' && readEnabled()
   ));
-  const [kindPrefs, setKindPrefs] = useState(_readKindPrefs);
+  const [kindPrefs, setKindPrefs] = useState(() => readKindPrefs());
   const onTaskClickRef = useRef(onTaskClick);
   onTaskClickRef.current = onTaskClick;
   const activeTaskIdRef = useRef(activeTaskId);
@@ -67,15 +25,13 @@ export function useNotifications({ activeTaskId, onTaskClick }) {
 
   const persistEnabled = useCallback((value) => {
     setEnabled(value);
-    try { localStorage.setItem(STORAGE_KEY, value ? 'on' : 'off'); }
-    catch (_) { /* private mode / quota */ }
+    writeEnabled(value);
   }, []);
 
   const setKindEnabled = useCallback((kind, on) => {
     setKindPrefs((prev) => {
       const next = { ...prev, [kind]: !!on };
-      try { localStorage.setItem(KIND_STORAGE_KEY, JSON.stringify(next)); }
-      catch (_) { /* private mode / quota */ }
+      writeKindPrefs(next);
       return next;
     });
   }, []);

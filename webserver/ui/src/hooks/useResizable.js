@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { readPersistedWidth, writePersistedWidth } from '../utils/resizableStorage.js';
 
 export function useResizable({
   storageKey,
@@ -13,9 +14,8 @@ export function useResizable({
   );
 
   const [width, setWidth] = useState(() => {
-    if (typeof localStorage === 'undefined') { return defaultWidth; }
-    const stored = parseInt(localStorage.getItem(storageKey) || '', 10);
-    return Number.isFinite(stored) ? clamp(stored) : defaultWidth;
+    const stored = readPersistedWidth(storageKey);
+    return stored !== null ? clamp(stored) : defaultWidth;
   });
 
   const startStateRef = useRef(null);
@@ -42,8 +42,7 @@ export function useResizable({
   }, [anchor, clamp, width]);
 
   useEffect(() => {
-    if (typeof localStorage === 'undefined') { return; }
-    try { localStorage.setItem(storageKey, String(width)); } catch (_) {}
+    writePersistedWidth(storageKey, width);
   }, [storageKey, width]);
 
   return { width, onPointerDown };
