@@ -187,6 +187,13 @@ class WorkspaceDataAccessTests(unittest.TestCase):
         self.assertEqual(path1, path2)
         self.assertTrue(path2.is_dir())
 
+    def test_delete_swallows_oserror_during_rmtree(self) -> None:
+        # Lines 190-191: ``shutil.rmtree`` fails → log warning, do not raise.
+        from unittest.mock import patch
+        self.data_access.ensure_workspace_dir('LOCKED-1')
+        with patch('shutil.rmtree', side_effect=PermissionError('locked')):
+            self.data_access.delete('LOCKED-1')
+
 
 if __name__ == '__main__':
     unittest.main()

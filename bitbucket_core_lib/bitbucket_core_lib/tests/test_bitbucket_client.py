@@ -634,3 +634,47 @@ class BitbucketClientTests(unittest.TestCase):
                 client.reply_to_review_comment(
                     'workspace', 'repo', comment, 'fixed it',
                 )
+
+
+class BitbucketClientDefensiveBranchTests(unittest.TestCase):
+    def test_find_pull_requests_skips_when_title_prefix_mismatch(self) -> None:
+        # Line 108: title doesn't start with prefix → skip.
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+        pr_keep = {
+            'id': 1, 'title': 'PROJ-1: keep',
+            'source': {'branch': {'name': 'feat/1'}},
+            'destination': {'branch': {'name': 'main'}},
+            'description': '', 'links': {}, 'state': 'OPEN',
+        }
+        pr_drop = {
+            'id': 2, 'title': 'other: drop',
+            'source': {'branch': {'name': 'feat/2'}},
+            'destination': {'branch': {'name': 'main'}},
+            'description': '', 'links': {}, 'state': 'OPEN',
+        }
+        get_response = mock_response(json_data={'values': [pr_keep, pr_drop]})
+        with patch.object(client, '_get_with_retry', return_value=get_response):
+            results = client.find_pull_requests(
+                'workspace', 'repo', title_prefix='PROJ-1:',
+            )
+        self.assertEqual(len(results), 1)
+
+    def test_reply_swallows_exception_reading_response_text(self) -> None:
+        # Lines 160-161: ``response.text`` raises → swallow, build error
+        # message with empty detail.
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+        response = mock_response()
+        response.ok = False
+        response.status_code = 500
+        # Force ``response.text`` accessor to raise.
+        type(response).text = property(
+            lambda self: (_ for _ in ()).throw(RuntimeError('cannot decode')),
+        )
+        comment = build_review_comment(
+            resolution_target_id='99',
+            resolution_target_type='comment',
+            resolvable=True,
+        )
+        with patch.object(client, '_post', return_value=response):
+            with self.assertRaisesRegex(RuntimeError, 'HTTP 500'):
+                client.reply_to_review_comment('workspace', 'repo', comment, 'fix')

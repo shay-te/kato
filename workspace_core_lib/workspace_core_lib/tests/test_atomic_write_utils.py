@@ -164,6 +164,44 @@ class AtomicWriteJsonErrorTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 atomic_write_json(self.root / 'out.json', {'x': 1}, logger=None)
 
+    def test_finally_swallows_close_oserror(self) -> None:
+        # Lines 64-65: ``os.close(fd)`` raises during cleanup → swallow.
+        # We force this by patching ``os.close`` to raise once during the
+        # finally block. The atomic_write_json call should still complete
+        # without raising.
+        target = self.root / 'close-fails.json'
+        real_close = os.close
+        # Track which close call to fail.
+        with patch(
+            'workspace_core_lib.workspace_core_lib.helpers.atomic_write_utils.os.close',
+            side_effect=OSError('close error'),
+        ):
+            # Force an early exit so the finally block runs with fd != -1.
+            with patch(
+                'workspace_core_lib.workspace_core_lib.helpers.atomic_write_utils.os.fdopen',
+                side_effect=RuntimeError('fdopen fail'),
+            ):
+                with self.assertRaises(RuntimeError):
+                    atomic_write_json(target, {'x': 1}, logger=None)
+        # Must not have raised OSError from the finally — the RuntimeError
+        # from fdopen surfaces, not the OSError from close.
+
+    def test_finally_swallows_unlink_oserror(self) -> None:
+        # Lines 69-70: ``os.unlink(tmp_path)`` raises during cleanup → swallow.
+        target = self.root / 'unlink-fails.json'
+        # Force fdopen to fail so tmp_path exists and the finally tries to
+        # clean it up; patch ``os.unlink`` to raise so we exercise that
+        # particular swallow.
+        with patch(
+            'workspace_core_lib.workspace_core_lib.helpers.atomic_write_utils.os.fdopen',
+            side_effect=RuntimeError('fdopen fail'),
+        ), patch(
+            'workspace_core_lib.workspace_core_lib.helpers.atomic_write_utils.os.unlink',
+            side_effect=OSError('unlink locked'),
+        ):
+            with self.assertRaises(RuntimeError):
+                atomic_write_json(target, {'x': 1}, logger=None)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -434,3 +434,69 @@ class GitLabClientReplyToCommentTests(unittest.TestCase):
             '/projects/group%2Fsubgroup%2Frepo/merge_requests/17/discussions/discussion-1/notes',
             json={'body': 'Done. The custom field column now resizes correctly.'},
         )
+
+
+class GitLabClientDefensiveBranchTests(unittest.TestCase):
+    def test_find_pull_requests_skips_non_dict_entries_in_payload(self) -> None:
+        # Line 78: ``if not isinstance(item, dict): continue``.
+        client = GitLabClient('https://gitlab.example/api/v4', 'gl-token')
+        valid_pr = {
+            'iid': 17, 'title': 'feat: foo', 'source_branch': 'feat/foo',
+            'target_branch': 'main', 'description': '',
+            'web_url': 'https://gitlab/pr/17',
+            'state': 'opened', 'merged': False,
+        }
+        get_response = mock_response(json_data=['junk-not-a-dict', valid_pr])
+        with patch.object(client, '_get_with_retry', return_value=get_response):
+            results = client.find_pull_requests('grp', 'repo')
+        self.assertEqual(len(results), 1)
+
+    def test_find_pull_requests_skips_when_title_does_not_match_prefix(self) -> None:
+        # Line 83: title doesn't start with the requested prefix → skip.
+        client = GitLabClient('https://gitlab.example/api/v4', 'gl-token')
+        pr_keep = {
+            'iid': 1, 'title': 'PROJ-1: keep me',
+            'source_branch': 'feat/1', 'target_branch': 'main',
+            'description': '', 'web_url': 'u', 'state': 'opened', 'merged': False,
+        }
+        pr_drop = {
+            'iid': 2, 'title': 'random: drop me',
+            'source_branch': 'feat/2', 'target_branch': 'main',
+            'description': '', 'web_url': 'u', 'state': 'opened', 'merged': False,
+        }
+        get_response = mock_response(json_data=[pr_keep, pr_drop])
+        with patch.object(client, '_get_with_retry', return_value=get_response):
+            results = client.find_pull_requests(
+                'grp', 'repo', title_prefix='PROJ-1:',
+            )
+        self.assertEqual(len(results), 1)
+
+    def test_normalize_comments_returns_empty_for_non_list_payload(self) -> None:
+        # Line 149: defensive ``if not isinstance(payload, list): return []``.
+        result = GitLabClient._normalize_comments({'not': 'a list'}, '17')
+        self.assertEqual(result, [])
+
+    def test_discussion_id_for_comment_skips_non_dict_entries(self) -> None:
+        # Line 226: skips garbage entries in the discussion payload list.
+        client = GitLabClient('https://gitlab.example/api/v4', 'gl-token')
+        valid_discussion = {
+            'id': 'disc-1',
+            'notes': [{'id': 'note-id', 'body': 'hi'}],
+        }
+        with patch.object(
+            client, '_discussion_payload',
+            return_value=['not a dict', valid_discussion],
+        ):
+            result = client._discussion_id_for_comment('grp', 'repo', '17', 'note-id')
+        self.assertEqual(result, 'disc-1')
+
+
+class GitLabIssuesClientJsonItemsTests(unittest.TestCase):
+    def test_returns_empty_when_items_key_set_but_payload_not_dict(self) -> None:
+        # Line 260: items_key requested but payload isn't a dict → [].
+        from gitlab_core_lib.gitlab_core_lib.client.gitlab_issues_client import (
+            GitLabIssuesClient,
+        )
+        response = mock_response(json_data=['junk'])
+        result = GitLabIssuesClient._json_items(response, items_key='items')
+        self.assertEqual(result, [])

@@ -904,5 +904,101 @@ class YouTrackQueryBuilderTests(unittest.TestCase):
             YouTrackClient._build_assigned_tasks_query('PROJ', 'me', [])
 
 
+class YouTrackClientDefensiveBranchTests(unittest.TestCase):
+    def _client(self):
+        return YouTrackClient('https://youtrack.example', 'yt-token')
+
+    def test_issue_tag_id_skips_non_dict_items(self) -> None:
+        # Line 152: non-dict tag → skip.
+        client = self._client()
+        response = mock_response(
+            json_data=['not a dict', {'name': 'bug', 'id': '99'}],
+        )
+        with patch.object(client, '_get_with_retry', return_value=response):
+            result = client._issue_tag_id('PROJ-1', 'bug')
+        self.assertEqual(result, '99')
+
+    def test_format_screenshot_skips_non_dict(self) -> None:
+        # Line 434: non-dict attachment → skip in _format_screenshot_attachments.
+        client = self._client()
+        result = client._format_screenshot_attachments([
+            'junk',
+            {'mimeType': 'image/png', 'name': 'shot.png',
+             'metadata': '100x200', 'url': '/api/files/1'},
+        ])
+        self.assertEqual(len(result), 1)
+        self.assertIn('shot.png', result[0])
+
+    def test_field_value_name_returns_empty_when_value_not_dict(self) -> None:
+        # Line 364: ``value`` isn't a dict → return ''.
+        self.assertEqual(YouTrackClient._field_value_name({'value': 'a string'}), '')
+        self.assertEqual(YouTrackClient._field_value_name({'value': None}), '')
+        self.assertEqual(YouTrackClient._field_value_name({}), '')
+
+    def test_matching_state_machine_event_skips_non_dict_entries(self) -> None:
+        # Line 342: non-dict entry in ``possibleEvents`` → skip.
+        from youtrack_core_lib.youtrack_core_lib.data.fields import (
+            YouTrackCustomFieldFields,
+        )
+        result = YouTrackClient._matching_state_machine_event(
+            {'possibleEvents': [
+                'junk-not-a-dict',
+                {YouTrackCustomFieldFields.ID: 'EV-1', 'presentation': 'In Progress'},
+            ]},
+            'In Progress',
+        )
+        self.assertIsNotNone(result)
+
+
+class YouTrackClientPostMoveVerificationTests(unittest.TestCase):
+    """Lines 216-225: post-move state verification path."""
+
+    def _client(self):
+        return YouTrackClient('https://youtrack.example', 'yt-token')
+
+    def test_verification_passes_when_refetched_state_matches(self) -> None:
+        # updated_field doesn't show the target yet → refresh succeeds.
+        client = self._client()
+        verified_field = {'value': {'name': 'In Progress'}}
+        with patch.object(
+            client, '_get_issue_custom_field', return_value=verified_field,
+        ):
+            client._assert_issue_state(
+                'PROJ-1', 'State', 'In Progress',
+                updated_field={'value': {'name': 'Stale'}},
+            )
+
+    def test_verification_raises_when_state_still_wrong(self) -> None:
+        # Neither updated nor verified state matches → raise.
+        client = self._client()
+        verified_field = {'value': {'name': 'Still Wrong'}}
+        with patch.object(
+            client, '_get_issue_custom_field', return_value=verified_field,
+        ):
+            with self.assertRaisesRegex(ValueError, 'did not move to state'):
+                client._assert_issue_state(
+                    'PROJ-1', 'State', 'In Progress',
+                    updated_field={'value': {'name': 'Old'}},
+                )
+
+
+class YouTrackClientBaseEdgeCases(unittest.TestCase):
+    def test_download_text_attachment_swallows_exception(self) -> None:
+        # Line 300: any exception in the attachment download path → log + None.
+        from unittest.mock import MagicMock
+        client = YouTrackClient('https://youtrack.example', 'yt-token')
+        client._get_attachment_with_retry = MagicMock(side_effect=RuntimeError('boom'))
+        result = client._download_text_attachment(
+            'https://x', attachment_name='x.txt', max_chars=100,
+        )
+        self.assertIsNone(result)
+
+    def test_json_items_returns_empty_when_items_key_set_but_payload_not_dict(self) -> None:
+        # Line 321: items_key requested but payload isn't a dict → [].
+        response = mock_response(json_data=['list'])
+        result = YouTrackClient._json_items(response, items_key='issues')
+        self.assertEqual(result, [])
+
+
 if __name__ == '__main__':
     unittest.main()

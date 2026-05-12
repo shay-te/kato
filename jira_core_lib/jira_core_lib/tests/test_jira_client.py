@@ -856,3 +856,101 @@ class JiraClientFlowTests(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].id, 'ACME-77')
         self.assertEqual(records[0].summary, 'Task A')
+
+
+class JiraClientDefensiveBranchTests(unittest.TestCase):
+    """Cover the small ``isinstance``/skip defensive branches."""
+
+    def _client(self):
+        return JiraClient('https://jira.example.com', 'jira-token', 'alice@example')
+
+    def test_find_transition_skips_non_dict_entries(self) -> None:
+        # Line 140: non-dict transition in the list → skip.
+        client = self._client()
+        valid_transition = {
+            'id': '21',
+            'name': 'In Progress',
+            'to': {'name': 'In Progress'},
+        }
+        response = mock_response(json_data={
+            'transitions': ['not a dict', valid_transition],
+        })
+        with patch.object(client, '_get_with_retry', return_value=response):
+            t = client._find_transition('ACME-1', 'In Progress')
+        self.assertEqual(t['id'], '21')
+
+    def test_to_record_coerces_non_dict_fields_to_empty(self) -> None:
+        # Line 156: ``fields`` isn't a dict → fall back to {}.
+        client = self._client()
+        record = client._to_record({
+            'key': 'ACME-9', 'fields': 'oops-not-a-dict',
+        })
+        self.assertEqual(record.id, 'ACME-9')
+
+    def test_normalize_issue_records_skips_when_include_returns_false(self) -> None:
+        # Line 349: ``include`` is provided and returns False → skip.
+        client = self._client()
+        result = client._normalize_issue_records(
+            [
+                {'key': 'KEEP-1', 'fields': {'summary': 'keep'}},
+                {'key': 'DROP-1', 'fields': {'summary': 'drop'}},
+            ],
+            to_record=lambda item: IssueRecord(
+                id=item['key'], summary=item['fields']['summary'], description='',
+            ),
+            include=lambda item: item['key'].startswith('KEEP'),
+        )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].id, 'KEEP-1')
+
+    def test_comment_lines_skips_non_dict_comment_entries(self) -> None:
+        # Line 243: non-dict comment in comments list → skip.
+        client = self._client()
+        result = client._comment_lines([
+            'not a dict',
+            {ISSUE_COMMENT_AUTHOR: 'alice', ISSUE_COMMENT_BODY: 'real comment'},
+        ])
+        self.assertEqual(len(result), 1)
+        self.assertIn('real comment', result[0])
+
+    def test_format_screenshot_attachments_skips_non_dict_entries(self) -> None:
+        # Line 271: non-dict attachment → skip.
+        client = self._client()
+        result = client._format_screenshot_attachments([
+            'not a dict',
+            {'mimeType': 'image/png', 'filename': 'x.png',
+             'content': 'http://x', 'size': 100},
+        ])
+        self.assertEqual(len(result), 1)
+        self.assertIn('x.png', result[0])
+
+    def test_normalize_issue_records_skips_non_dict_items(self) -> None:
+        # Line 349: non-dict item → skip.
+        client = self._client()
+        result = client._normalize_issue_records(
+            ['junk-not-a-dict', {'key': 'ACME-1', 'fields': {'summary': 's'}}],
+            to_record=lambda item: IssueRecord(
+                id=item['key'], summary=item['fields']['summary'], description='',
+            ),
+        )
+        self.assertEqual(len(result), 1)
+
+    def test_json_items_returns_empty_when_items_key_set_but_payload_not_dict(self) -> None:
+        # Line 379: items_key requested but payload is a list → return [].
+        response = mock_response(json_data=['list', 'not', 'dict'])
+        result = JiraClient._json_items(response, items_key='issues')
+        self.assertEqual(result, [])
+
+    def test_build_comment_entries_skips_non_dict_and_blank_body(self) -> None:
+        # Lines 394, 397: non-dict skipped; blank body skipped.
+        result = JiraClient._build_comment_entries(
+            [
+                'not a dict',  # skipped (line 394)
+                {'author': 'alice', 'body': ''},  # blank body skipped (line 397)
+                {'author': 'bob', 'body': 'real'},
+            ],
+            extract_body=lambda c: c.get('body', ''),
+            extract_author=lambda c: c.get('author', ''),
+        )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0][ISSUE_COMMENT_AUTHOR], 'bob')

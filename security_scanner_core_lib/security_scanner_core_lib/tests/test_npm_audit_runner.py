@@ -309,6 +309,19 @@ class NpmAuditRunTests(unittest.TestCase):
             run(str(self.workspace), timeout_seconds=45)
         self.assertEqual(captured['timeout'], 45)
 
+    def test_findings_from_v7_skips_via_without_advisory_id(self) -> None:
+        # Line 144: ``via`` entry has neither ``source`` nor ``url`` → skip.
+        findings = _findings_from_v7({
+            'lodash': {
+                'severity': 'high',
+                'via': [
+                    {'title': 'no ids here'},   # missing source/url → skip
+                    {'source': 'GHSA-1', 'title': 'real one'},
+                ],
+            },
+        }, manifest_path='/repo/package.json')
+        self.assertEqual(len(findings), 1)
+
 
 if __name__ == '__main__':
     unittest.main()

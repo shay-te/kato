@@ -479,3 +479,108 @@ class GitHubClientTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, 'invalid GitHub pull request id'):
             client._review_thread_nodes('owner', 'repo', 'not-a-number')
+
+
+class GitHubClientDefensiveBranchTests(unittest.TestCase):
+    def test_find_pull_requests_skips_non_dict_entries(self) -> None:
+        # Line 124: ``if not isinstance(item, dict): continue``.
+        client = GitHubClient('https://api.github.com', 'gh-token')
+        valid_pr = {
+            'number': 17, 'title': 'feat: foo',
+            'head': {'ref': 'feat/foo'}, 'base': {'ref': 'main'},
+            'body': '', 'html_url': 'https://github/pr/17',
+            'state': 'open', 'merged': False,
+        }
+        get_response = mock_response(json_data=['not a dict', valid_pr])
+        with patch.object(client, '_get_with_retry', return_value=get_response):
+            results = client.find_pull_requests('octo', 'repo')
+        self.assertEqual(len(results), 1)
+
+    def test_find_pull_requests_skips_when_title_prefix_mismatch(self) -> None:
+        # Line 131: title doesn't start with prefix → skip.
+        client = GitHubClient('https://api.github.com', 'gh-token')
+        pr_keep = {
+            'number': 1, 'title': 'PROJ-1: keep',
+            'head': {'ref': 'feat/1'}, 'base': {'ref': 'main'},
+            'body': '', 'html_url': 'u',
+            'state': 'open', 'merged': False,
+        }
+        pr_drop = {
+            'number': 2, 'title': 'other: drop',
+            'head': {'ref': 'feat/2'}, 'base': {'ref': 'main'},
+            'body': '', 'html_url': 'u',
+            'state': 'open', 'merged': False,
+        }
+        get_response = mock_response(json_data=[pr_keep, pr_drop])
+        with patch.object(client, '_get_with_retry', return_value=get_response):
+            results = client.find_pull_requests(
+                'octo', 'repo', title_prefix='PROJ-1:',
+            )
+        self.assertEqual(len(results), 1)
+
+    def test_normalize_comments_returns_empty_for_non_list(self) -> None:
+        # Line 182: non-list payload short-circuits.
+        result = GitHubClient._normalize_comments({'not': 'a list'}, '17')
+        self.assertEqual(result, [])
+
+    def test_normalize_comments_skips_non_dict_nodes(self) -> None:
+        # Line 203: a node in the thread's comments list isn't a dict → skip.
+        thread_with_junk_node = {
+            'id': 'thread-1',
+            'isResolved': False,
+            'path': 'src/a.py',
+            'line': 10,
+            'comments': {
+                'nodes': [
+                    'not a dict',
+                    {
+                        'id': 'note-1', 'databaseId': 1,
+                        'body': 'ok', 'author': {'login': 'alice'},
+                        'commit': {'oid': 'abc'},
+                    },
+                ],
+            },
+        }
+        result = GitHubClient._normalize_comments([thread_with_junk_node], '17')
+        self.assertEqual(len(result), 1)
+
+    def test_discussion_id_skips_non_dict_threads(self) -> None:
+        # Line 257: skips non-dict entries in the thread search.
+        client = GitHubClient('https://api.github.com', 'gh-token')
+        valid_thread = {
+            'id': 'thread-1',
+            'comments': {'nodes': [{'databaseId': 99}]},
+        }
+        with patch.object(
+            client, '_review_thread_nodes',
+            return_value=['junk-not-a-dict', valid_thread],
+        ):
+            result = client._thread_id_for_comment('owner', 'repo', '17', '99')
+        self.assertEqual(result, 'thread-1')
+
+    def test_graphql_returns_payload_when_no_errors(self) -> None:
+        # Line 292: the happy path — no ``errors`` key → return the raw payload.
+        client = GitHubClient('https://api.github.com', 'gh-token')
+        payload = {'data': {'viewer': {'login': 'octocat'}}}
+        response = mock_response(json_data=payload)
+        with patch.object(client.session, 'post', return_value=response):
+            result = client._graphql_with_retry('query { viewer { login } }', {})
+        self.assertEqual(result, payload)
+
+    def test_graphql_raises_on_errors_array(self) -> None:
+        # Line 292: ``payload`` contains ``errors`` → wrap as RuntimeError.
+        client = GitHubClient('https://api.github.com', 'gh-token')
+        response = mock_response(json_data={
+            'errors': [{'message': 'syntax error in query'}],
+        })
+        with patch.object(client.session, 'post', return_value=response):
+            with self.assertRaisesRegex(RuntimeError, 'syntax error'):
+                client._graphql_with_retry('query { viewer { login } }', {})
+
+    def test_graphql_url_appends_graphql_to_bare_host(self) -> None:
+        # Line 306: base_url ends with neither ``/graphql`` nor ``/api/v3`` →
+        # append ``/graphql`` to the existing path.
+        client = GitHubClient('https://ghe.example.com/custom/path', 'gh-token')
+        url = client._graphql_url()
+        self.assertTrue(url.endswith('/graphql'))
+        self.assertIn('/custom/path', url)

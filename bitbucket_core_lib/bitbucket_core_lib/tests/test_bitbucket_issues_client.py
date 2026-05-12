@@ -617,3 +617,67 @@ class BitbucketIssuesClientFlowTests(unittest.TestCase):
         with patch.object(client, '_put', return_value=move_resp) as mock_put:
             client.move_issue_to_state('42', 'state', 'in progress')
         mock_put.assert_called_once()
+
+
+class BitbucketIssuesClientDefensiveBranchTests(unittest.TestCase):
+    def _client(self):
+        return BitbucketIssuesClient(
+            'https://bitbucket.example', 'bb-token',
+            workspace='workspace', repo_slug='repo',
+        )
+
+    def test_to_record_coerces_non_dict_content(self) -> None:
+        # Line 144: ``content`` isn't a dict → fall back to {}.
+        client = self._client()
+        with patch.object(client, '_issue_comments', return_value=[]):
+            record = client._to_record({
+                'id': 42, 'title': 'Issue title',
+                'content': 'oops not a dict',
+            })
+        self.assertEqual(record.id, '42')
+
+    def test_comment_lines_skips_non_dict_entries(self) -> None:
+        # Line 224: non-dict comment → skip.
+        client = self._client()
+        result = client._comment_lines([
+            'not a dict',
+            {ISSUE_COMMENT_AUTHOR: 'alice', ISSUE_COMMENT_BODY: 'real comment'},
+        ])
+        self.assertEqual(len(result), 1)
+
+    def test_normalize_issue_records_logs_on_to_record_failure(self) -> None:
+        # Lines 249-250: ``to_record`` raises → log + continue.
+        client = self._client()
+        with patch.object(client, 'logger') as mock_logger:
+            result = client._normalize_issue_records(
+                [
+                    {'key': 'bad'},
+                    {'key': 'good'},
+                ],
+                to_record=lambda item: (
+                    (_ for _ in ()).throw(KeyError('missing'))
+                    if item['key'] == 'bad'
+                    else IssueRecord(id=item['key'], summary='ok', description='')
+                ),
+            )
+        self.assertEqual(len(result), 1)
+        mock_logger.exception.assert_called_once()
+
+    def test_json_items_returns_empty_when_items_key_set_but_payload_not_dict(self) -> None:
+        # Line 298: items_key requested but payload isn't a dict.
+        response = mock_response(json_data=['list'])
+        result = BitbucketIssuesClient._json_items(response, items_key='values')
+        self.assertEqual(result, [])
+
+    def test_build_comment_entries_skips_non_dict_and_blank(self) -> None:
+        # Lines 330, 333: non-dict and blank-body entries are skipped.
+        result = BitbucketIssuesClient._build_comment_entries(
+            [
+                'not a dict',
+                {'author': 'a', 'body': ''},
+                {'author': 'b', 'body': 'real'},
+            ],
+            extract_body=lambda c: c.get('body', ''),
+            extract_author=lambda c: c.get('author', ''),
+        )
+        self.assertEqual(len(result), 1)

@@ -103,6 +103,28 @@ class OrphanWorkspaceScannerServiceTests(unittest.TestCase):
         names = [o.task_id for o in custom_scanner.scan()]
         self.assertIn('LOOKS-MANAGED', names)
 
+    def test_git_subdirs_returns_empty_when_iterdir_fails(self) -> None:
+        # Lines 109-110: ``orphan_dir.iterdir()`` raises OSError → return ().
+        # Set up: one orphan directory (no .kato-meta.json), then patch
+        # iterdir to raise selectively on that directory.
+        orphan = self.root / 'ORPHAN-1'
+        orphan.mkdir()
+        # Build the result via the public scan API which calls _git_subdirs_in.
+        from unittest.mock import patch
+        real_iterdir = Path.iterdir
+
+        def selective(self_path):
+            # Allow iterdir on root (parent), fail on the orphan dir.
+            if self_path == orphan:
+                raise PermissionError('locked')
+            return real_iterdir(self_path)
+
+        with patch.object(Path, 'iterdir', selective):
+            results = self.scanner.scan()
+        # The orphan is still listed; just its git_repository_dirs is empty.
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].git_repository_dirs, ())
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -179,5 +179,69 @@ class DetectSecretsRunTests(unittest.TestCase):
         self.assertEqual(result[0].severity, Severity.HIGH)
 
 
+class DetectSecretsDefensiveBranchTests(unittest.TestCase):
+    """Lines 107-113: ``scan_file`` raising for binary files → log + continue.
+    Lines 144-146: ``_files_to_scan`` recurses into subdirectories.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.workspace = Path(self._tmp.name)
+
+    def test_scan_file_exception_logs_and_continues(self) -> None:
+        # Files exist that will trigger scan_file → make scan_file raise on
+        # one of them. The runner must log debug and skip, not crash.
+        (self.workspace / 'good.py').write_text('hi')
+        (self.workspace / 'bad.bin').write_bytes(b'\x00\x01\x02')
+
+        mock_collection_instance = MagicMock()
+        # Make scan_file raise on the .bin file only.
+        def selective_scan(path_str):
+            if path_str.endswith('.bin'):
+                raise RuntimeError('binary scan choked')
+        mock_collection_instance.scan_file.side_effect = selective_scan
+        mock_collection_instance.__iter__ = MagicMock(return_value=iter([]))
+        mock_collection_class = MagicMock(return_value=mock_collection_instance)
+        mock_settings_ctx = MagicMock()
+        mock_settings_ctx.__enter__ = MagicMock(return_value=None)
+        mock_settings_ctx.__exit__ = MagicMock(return_value=False)
+        mock_default_settings = MagicMock(return_value=mock_settings_ctx)
+        mock_ds = MagicMock(SecretsCollection=mock_collection_class)
+        mock_ds_settings = MagicMock(default_settings=mock_default_settings)
+        mock_logger = MagicMock()
+        with patch.dict('sys.modules', {
+            'detect_secrets': mock_ds,
+            'detect_secrets.settings': mock_ds_settings,
+        }):
+            from security_scanner_core_lib.security_scanner_core_lib.runners.detect_secrets_runner import (
+                run as run_detect_secrets,
+            )
+            result = run_detect_secrets(str(self.workspace), logger=mock_logger)
+        # No findings, no crash, debug log emitted for the bad file.
+        self.assertEqual(result, [])
+        mock_logger.debug.assert_called()
+
+    def test_files_to_scan_recurses_into_subdirectories(self) -> None:
+        # Lines 144-146: directory branch recurses (yields files in subdirs).
+        from security_scanner_core_lib.security_scanner_core_lib.runners.detect_secrets_runner import (
+            _files_to_scan,
+        )
+        (self.workspace / 'top.py').write_text('hi')
+        sub = self.workspace / 'src'
+        sub.mkdir()
+        (sub / 'inner.py').write_text('world')
+        # Also create an excluded dir.
+        excluded = self.workspace / '.git'
+        excluded.mkdir()
+        (excluded / 'config').write_text('skip me')
+
+        files = sorted(p.name for p in _files_to_scan(self.workspace))
+        self.assertIn('top.py', files)
+        self.assertIn('inner.py', files)
+        # .git directory is excluded.
+        self.assertNotIn('config', files)
+
+
 if __name__ == '__main__':
     unittest.main()

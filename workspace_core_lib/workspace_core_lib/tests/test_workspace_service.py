@@ -445,5 +445,82 @@ class WorkspaceServiceTests(unittest.TestCase):
         self.assertEqual(record.status, WORKSPACE_STATUS_DONE)
 
 
+class WorkspaceServicePreflightLogTests(unittest.TestCase):
+    """Cover the defensive paths in append/read of the preflight log."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        from workspace_core_lib.workspace_core_lib.data_layers.service.workspace_service import (
+            WorkspaceService,
+        )
+        from workspace_core_lib.workspace_core_lib.data_layers.data_access.workspace_data_access import (
+            WorkspaceDataAccess,
+        )
+        self.service = WorkspaceService(WorkspaceDataAccess(root=self.root))
+
+    def test_append_preflight_log_swallows_oserror(self) -> None:
+        # Lines 249-250: ``Path.open`` raises → log warning, don't propagate.
+        from unittest.mock import patch
+        self.service.create(task_id='PROJ-7', task_summary='', repository_ids=[])
+        with patch.object(
+            Path, 'open', side_effect=PermissionError('locked'),
+        ):
+            self.service.append_preflight_log('PROJ-7', 'a message')  # must not raise
+
+    def test_read_preflight_log_skips_blank_lines(self) -> None:
+        # Line 273: blank line in log → skip without appending.
+        self.service.create(task_id='PROJ-8', task_summary='', repository_ids=[])
+        path = self.service.preflight_log_path('PROJ-8')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('100\tfirst\n\n200\tsecond\n', encoding='utf-8')
+        entries = self.service.read_preflight_log('PROJ-8')
+        self.assertEqual(len(entries), 2)
+
+    def test_read_preflight_log_handles_lines_without_tab(self) -> None:
+        # Line 274-276: line without tab → epoch=0.
+        self.service.create(task_id='PROJ-9', task_summary='', repository_ids=[])
+        path = self.service.preflight_log_path('PROJ-9')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('legacy-no-tab\n', encoding='utf-8')
+        entries = self.service.read_preflight_log('PROJ-9')
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0][0], 0.0)
+        self.assertEqual(entries[0][1], 'legacy-no-tab')
+
+    def test_read_preflight_log_swallows_oserror_and_returns_empty(self) -> None:
+        # Lines 283-288: ``Path.open`` raises → log warning + return [].
+        from unittest.mock import patch
+        self.service.create(task_id='PROJ-10', task_summary='', repository_ids=[])
+        path = self.service.preflight_log_path('PROJ-10')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('100\ta\n', encoding='utf-8')  # so is_file() is True
+        # Now patch open to fail.
+        real_open = Path.open
+
+        def selective(self_path, *args, **kwargs):
+            if self_path == path:
+                raise PermissionError('locked')
+            return real_open(self_path, *args, **kwargs)
+
+        with patch.object(Path, 'open', selective):
+            entries = self.service.read_preflight_log('PROJ-10')
+        self.assertEqual(entries, [])
+
+
+class WorkspaceServiceNormalizeTextHelper(unittest.TestCase):
+    """Line 317: module-level ``_normalize_text`` helper (currently unused
+    but kept as a public-shaped utility — lock its contract)."""
+
+    def test_normalizes_none_to_empty(self) -> None:
+        from workspace_core_lib.workspace_core_lib.data_layers.service.workspace_service import (
+            _normalize_text,
+        )
+        self.assertEqual(_normalize_text(None), '')
+        self.assertEqual(_normalize_text(''), '')
+        self.assertEqual(_normalize_text('  hi  '), 'hi')
+
+
 if __name__ == '__main__':
     unittest.main()
