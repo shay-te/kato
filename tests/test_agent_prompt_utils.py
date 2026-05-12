@@ -411,5 +411,84 @@ class ReviewCommentLocationTextEdgeCases(unittest.TestCase):
         self.assertIn('abc123', out)
 
 
+class PrependChatWorkspaceContextEmptyPartsTest(unittest.TestCase):
+    def test_returns_prompt_unchanged_when_all_blocks_empty(self) -> None:
+        # Line 213: when continuity + inventory + forbidden are all
+        # empty strings, the function must return the prompt unchanged.
+        # Continuity always returns a non-empty block in production
+        # (always-on chat-respawn nudge), so we patch the three block
+        # functions to empty to drive this branch — locks the "drop
+        # empty blocks silently" property.
+        from unittest.mock import patch
+        from kato_core_lib.helpers import agent_prompt_utils as apu
+        with patch.object(apu, 'chat_continuity_ground_truth_block',
+                          return_value=''), \
+             patch.object(apu, 'workspace_inventory_block',
+                          return_value=''), \
+             patch.object(apu, 'forbidden_repository_guardrails_text',
+                          return_value=''):
+            out = apu.prepend_chat_workspace_context(
+                'just the message',
+                cwd='', additional_dirs=None, raw_ignored_value=None,
+                is_resumed_session=False,
+            )
+        self.assertEqual(out, 'just the message')
+
+
+class SecurityGuardrailsTextTests(unittest.TestCase):
+    def test_returns_named_security_clauses(self) -> None:
+        # Line 218: ``security_guardrails_text`` returns the static
+        # block. Locks the named clauses so a future edit that
+        # accidentally drops "credential stores" or "untrusted data"
+        # is caught.
+        from kato_core_lib.helpers.agent_prompt_utils import (
+            security_guardrails_text,
+        )
+        text = security_guardrails_text()
+        self.assertIn('Security guardrails', text)
+        self.assertIn('untrusted data', text)
+        self.assertIn('~/.ssh', text)
+        self.assertIn('exfiltrate', text)
+
+
+class ReviewCommentCodeSnippetEdgeBranches(unittest.TestCase):
+    def setUp(self) -> None:
+        import tempfile
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        from pathlib import Path
+        self.workspace = Path(self._tmp.name)
+
+    def test_returns_empty_when_line_number_non_positive(self) -> None:
+        # Line 448: ``line_int <= 0`` → ''. Defensive: a 0 or negative
+        # line number is meaningless and the renderer would produce a
+        # broken arrow. Drop it cleanly.
+        from kato_core_lib.helpers.agent_prompt_utils import (
+            review_comment_code_snippet,
+        )
+        comment = SimpleNamespace(file_path='x.py', line_number=0)
+        self.assertEqual(
+            review_comment_code_snippet(comment, str(self.workspace)),
+            '',
+        )
+
+    def test_returns_empty_when_window_past_file_end(self) -> None:
+        # Line 477: ``if not rendered`` → ''. Window of [start, end]
+        # lands entirely past the last file line — no snippet to
+        # render. Return '' rather than emit a snippet with no rows.
+        target = self.workspace / 'tiny.py'
+        target.write_text('one\ntwo\nthree\n')
+        from kato_core_lib.helpers.agent_prompt_utils import (
+            review_comment_code_snippet,
+        )
+        comment = SimpleNamespace(file_path='tiny.py', line_number=100)
+        self.assertEqual(
+            review_comment_code_snippet(
+                comment, str(self.workspace), context_lines=1,
+            ),
+            '',
+        )
+
+
 if __name__ == '__main__':
     unittest.main()

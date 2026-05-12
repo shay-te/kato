@@ -1,0 +1,833 @@
+"""Coverage for the major method clusters in ``AgentService``.
+
+Focuses on:
+- Constructor validation (required-argument refusals)
+- shutdown cleanup (per-step exception swallow)
+- ``process_assigned_task`` short-circuits (triage, wait-planning, preflight)
+- Comment-store thin wrappers (add/resolve/mark/reopen/delete/list)
+- ``approve_push`` / ``is_awaiting_push_approval``
+- Cleanup of stale planning sessions + workspace cleanup
+- ``_task_pull_request_id`` lookup paths
+"""
+
+from __future__ import annotations
+
+import unittest
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+from kato_core_lib.data_layers.service.agent_service import AgentService
+
+
+def _kwargs(**overrides):
+    """Build minimum valid kwargs for AgentService(...)."""
+    defaults = dict(
+        task_service=MagicMock(),
+        task_state_service=MagicMock(),
+        implementation_service=MagicMock(),
+        testing_service=MagicMock(),
+        repository_service=MagicMock(),
+        notification_service=MagicMock(),
+    )
+    defaults.update(overrides)
+    return defaults
+
+
+class ConstructorValidationTests(unittest.TestCase):
+    def test_rejects_missing_task_service(self) -> None:
+        with self.assertRaisesRegex(ValueError, 'task_service is required'):
+            AgentService(**_kwargs(task_service=None))
+
+    def test_rejects_missing_task_state_service(self) -> None:
+        with self.assertRaisesRegex(ValueError, 'task_state_service is required'):
+            AgentService(**_kwargs(task_state_service=None))
+
+    def test_rejects_missing_implementation_service(self) -> None:
+        with self.assertRaisesRegex(ValueError, 'implementation_service is required'):
+            AgentService(**_kwargs(implementation_service=None))
+
+    def test_rejects_missing_testing_service(self) -> None:
+        with self.assertRaisesRegex(ValueError, 'testing_service is required'):
+            AgentService(**_kwargs(testing_service=None))
+
+    def test_rejects_missing_repository_service(self) -> None:
+        with self.assertRaisesRegex(ValueError, 'repository_service is required'):
+            AgentService(**_kwargs(repository_service=None))
+
+    def test_rejects_missing_notification_service(self) -> None:
+        with self.assertRaisesRegex(ValueError, 'notification_service is required'):
+            AgentService(**_kwargs(notification_service=None))
+
+    def test_rejects_state_registry_mismatch(self) -> None:
+        # ``state_registry must match review_comment_service.state_registry``.
+        review = MagicMock()
+        review.state_registry = MagicMock()  # one identity
+        wrong = MagicMock()  # different
+        with self.assertRaisesRegex(ValueError, 'must match'):
+            AgentService(**_kwargs(
+                review_comment_service=review,
+                state_registry=wrong,
+            ))
+
+    def test_uses_review_comment_state_registry_when_provided(self) -> None:
+        review = MagicMock()
+        registry = MagicMock()
+        review.state_registry = registry
+        service = AgentService(**_kwargs(review_comment_service=review))
+        self.assertIs(service._state_registry, registry)
+
+
+class NotificationServicePropertyTests(unittest.TestCase):
+    def test_returns_constructor_arg(self) -> None:
+        notification = MagicMock()
+        service = AgentService(**_kwargs(notification_service=notification))
+        self.assertIs(service.notification_service, notification)
+
+
+class ShutdownTests(unittest.TestCase):
+    def test_swallows_parallel_runner_shutdown_exception(self) -> None:
+        runner = MagicMock()
+        runner.shutdown.side_effect = RuntimeError('runner fail')
+        service = AgentService(**_kwargs(parallel_task_runner=runner))
+        service.logger = MagicMock()
+        service.shutdown()
+        service.logger.exception.assert_called()
+
+    def test_swallows_implementation_stop_exception(self) -> None:
+        impl = MagicMock()
+        impl.stop_all_conversations.side_effect = RuntimeError('stop fail')
+        service = AgentService(**_kwargs(implementation_service=impl))
+        service.logger = MagicMock()
+        service.shutdown()
+        service.logger.exception.assert_called()
+
+    def test_swallows_testing_stop_exception(self) -> None:
+        testing = MagicMock()
+        testing.stop_all_conversations.side_effect = RuntimeError('stop fail')
+        service = AgentService(**_kwargs(testing_service=testing))
+        service.logger = MagicMock()
+        service.shutdown()
+        service.logger.exception.assert_called()
+
+    def test_swallows_session_manager_shutdown_exception(self) -> None:
+        session = MagicMock()
+        session.shutdown.side_effect = RuntimeError('session fail')
+        service = AgentService(**_kwargs(session_manager=session))
+        service.logger = MagicMock()
+        service.shutdown()
+        service.logger.exception.assert_called()
+
+
+class GetAssignedTasksTests(unittest.TestCase):
+    def test_delegates_to_task_service(self) -> None:
+        task_service = MagicMock()
+        task_service.get_assigned_tasks.return_value = ['task-a']
+        service = AgentService(**_kwargs(task_service=task_service))
+        self.assertEqual(service.get_assigned_tasks(), ['task-a'])
+
+
+class ParallelTaskRunnerPropertyTests(unittest.TestCase):
+    def test_returns_constructor_arg(self) -> None:
+        runner = MagicMock()
+        service = AgentService(**_kwargs(parallel_task_runner=runner))
+        self.assertIs(service.parallel_task_runner, runner)
+
+
+class WarmUpRepositoryInventoryTests(unittest.TestCase):
+    def test_spawns_warmup_thread_silently_on_exception(self) -> None:
+        repo = MagicMock()
+        repo._ensure_repositories.side_effect = RuntimeError('boom')
+        service = AgentService(**_kwargs(repository_service=repo))
+        # Must not raise; thread swallows internally.
+        service.warm_up_repository_inventory()
+        # Give the background thread a chance to run.
+        import time
+        time.sleep(0.05)
+
+
+class GetNewPullRequestCommentsTests(unittest.TestCase):
+    def test_runs_cleanup_then_delegates(self) -> None:
+        review = MagicMock()
+        review.state_registry = MagicMock()
+        review.get_new_pull_request_comments.return_value = ['c1']
+        service = AgentService(**_kwargs(review_comment_service=review))
+        with patch.object(service, '_cleanup_done_task_conversations') as cleanup:
+            result = service.get_new_pull_request_comments()
+        cleanup.assert_called_once()
+        self.assertEqual(result, ['c1'])
+
+
+class CleanupDoneTaskConversationsTests(unittest.TestCase):
+    def test_swallows_review_tasks_exception(self) -> None:
+        task_service = MagicMock()
+        task_service.get_review_tasks.side_effect = RuntimeError('fail')
+        service = AgentService(**_kwargs(task_service=task_service))
+        service.logger = MagicMock()
+        service._cleanup_done_task_conversations()
+        service.logger.warning.assert_called()
+
+    def test_swallows_delete_conversation_exception(self) -> None:
+        task_service = MagicMock()
+        task_service.get_review_tasks.return_value = []
+        registry = MagicMock()
+        registry.tracked_task_ids.return_value = {'T1'}
+        registry.session_ids_for_task.return_value = ['s1']
+        impl = MagicMock()
+        impl.delete_conversation.side_effect = RuntimeError('delete fail')
+        review = MagicMock()
+        review.state_registry = registry
+        service = AgentService(**_kwargs(
+            task_service=task_service,
+            implementation_service=impl,
+            review_comment_service=review,
+        ))
+        service.logger = MagicMock()
+        service._cleanup_done_task_conversations()
+        # The conversation-delete failure is logged at WARNING.
+        service.logger.warning.assert_called()
+
+
+class CleanupDonePlanningSessionsTests(unittest.TestCase):
+    def test_returns_early_when_no_managers(self) -> None:
+        service = AgentService(**_kwargs())
+        # No raise.
+        service._cleanup_done_planning_sessions({'T1'})
+
+    def test_swallows_assigned_tasks_exception(self) -> None:
+        task_service = MagicMock()
+        task_service.get_assigned_tasks.side_effect = RuntimeError('fail')
+        service = AgentService(**_kwargs(
+            task_service=task_service,
+            session_manager=MagicMock(),
+        ))
+        service.logger = MagicMock()
+        service._cleanup_done_planning_sessions({'T1'})
+        service.logger.warning.assert_called()
+
+    def test_terminates_stale_sessions(self) -> None:
+        task_service = MagicMock()
+        task_service.get_assigned_tasks.return_value = []
+        session = MagicMock()
+        session.list_records.return_value = [
+            SimpleNamespace(task_id='STALE-1'),
+        ]
+        workspace = MagicMock()
+        workspace.list_workspaces.return_value = []
+        service = AgentService(**_kwargs(
+            task_service=task_service,
+            session_manager=session,
+            workspace_manager=workspace,
+        ))
+        service.logger = MagicMock()
+        service._cleanup_done_planning_sessions(set())
+        session.terminate_session.assert_called_with('STALE-1', remove_record=True)
+
+
+class StalePlanningTaskIdsTests(unittest.TestCase):
+    def test_swallows_session_list_records_exception(self) -> None:
+        session = MagicMock()
+        session.list_records.side_effect = RuntimeError('fail')
+        service = AgentService(**_kwargs(session_manager=session))
+        service.logger = MagicMock()
+        result = service._stale_planning_task_ids({'T1'})
+        self.assertEqual(result, set())
+        service.logger.exception.assert_called()
+
+    def test_swallows_workspace_list_exception(self) -> None:
+        workspace = MagicMock()
+        workspace.list_workspaces.side_effect = RuntimeError('fail')
+        service = AgentService(**_kwargs(workspace_manager=workspace))
+        service.logger = MagicMock()
+        result = service._stale_planning_task_ids({'T1'})
+        # No raise; just an empty result.
+        self.assertEqual(result, set())
+
+    def test_protects_active_and_provisioning_workspaces_from_cleanup(
+        self,
+    ) -> None:
+        from kato_core_lib.data_layers.service.workspace_manager import (
+            WORKSPACE_STATUS_ACTIVE,
+        )
+        workspace = MagicMock()
+        workspace.list_workspaces.return_value = [
+            SimpleNamespace(
+                task_id='ACTIVE-1', status=WORKSPACE_STATUS_ACTIVE,
+                updated_at_epoch=0.0,
+            ),
+            SimpleNamespace(
+                task_id='STALE-1', status='done',
+                updated_at_epoch=0.0,
+            ),
+        ]
+        service = AgentService(**_kwargs(workspace_manager=workspace))
+        # live_task_ids is empty — STALE-1 is fully eligible.
+        result = service._stale_planning_task_ids(set())
+        self.assertIn('STALE-1', result)
+        self.assertNotIn('ACTIVE-1', result)
+
+    def test_review_ttl_expired_workspaces_become_stale(self) -> None:
+        from kato_core_lib.data_layers.service.workspace_manager import (
+            WORKSPACE_STATUS_REVIEW,
+        )
+        import time
+        workspace = MagicMock()
+        old_epoch = time.time() - 7200  # 2 hours ago
+        workspace.list_workspaces.return_value = [
+            SimpleNamespace(
+                task_id='OLD-REVIEW', status=WORKSPACE_STATUS_REVIEW,
+                updated_at_epoch=old_epoch,
+            ),
+        ]
+        service = AgentService(**_kwargs(
+            workspace_manager=workspace,
+            review_workspace_ttl_seconds=3600.0,  # 1 hour
+        ))
+        # Live task ids includes OLD-REVIEW — should still be stale via TTL.
+        result = service._stale_planning_task_ids({'OLD-REVIEW'})
+        self.assertIn('OLD-REVIEW', result)
+
+
+class TerminateSessionSilentTests(unittest.TestCase):
+    def test_noop_when_session_manager_none(self) -> None:
+        service = AgentService(**_kwargs())
+        service._terminate_session_silent('T1')  # no raise
+
+    def test_swallows_terminate_exception(self) -> None:
+        session = MagicMock()
+        session.terminate_session.side_effect = RuntimeError('fail')
+        service = AgentService(**_kwargs(session_manager=session))
+        service.logger = MagicMock()
+        service._terminate_session_silent('T1')
+        service.logger.exception.assert_called()
+
+
+class DeleteWorkspaceSilentTests(unittest.TestCase):
+    def test_noop_when_workspace_manager_none(self) -> None:
+        service = AgentService(**_kwargs())
+        service._delete_workspace_silent('T1')
+
+    def test_swallows_delete_exception(self) -> None:
+        workspace = MagicMock()
+        workspace.delete.side_effect = RuntimeError('fail')
+        service = AgentService(**_kwargs(workspace_manager=workspace))
+        service.logger = MagicMock()
+        service._delete_workspace_silent('T1')
+        service.logger.exception.assert_called()
+
+
+class UpdateWorkspaceStatusAfterPublishTests(unittest.TestCase):
+    def test_noop_when_workspace_manager_none(self) -> None:
+        service = AgentService(**_kwargs())
+        service._update_workspace_status_after_publish('T1', {'status': 'x'})
+
+    def test_noop_when_publish_result_blank(self) -> None:
+        workspace = MagicMock()
+        service = AgentService(**_kwargs(workspace_manager=workspace))
+        service._update_workspace_status_after_publish('T1', None)
+        workspace.update_status.assert_not_called()
+
+    def test_updates_to_review_on_ready_for_review(self) -> None:
+        from kato_core_lib.data_layers.data.fields import StatusFields
+        from kato_core_lib.data_layers.service.workspace_manager import (
+            WORKSPACE_STATUS_REVIEW,
+        )
+        workspace = MagicMock()
+        service = AgentService(**_kwargs(workspace_manager=workspace))
+        service._update_workspace_status_after_publish(
+            'T1', {StatusFields.STATUS: StatusFields.READY_FOR_REVIEW},
+        )
+        workspace.update_status.assert_called_with('T1', WORKSPACE_STATUS_REVIEW)
+
+    def test_updates_to_errored_on_partial_failure(self) -> None:
+        from kato_core_lib.data_layers.data.fields import StatusFields
+        from kato_core_lib.data_layers.service.workspace_manager import (
+            WORKSPACE_STATUS_ERRORED,
+        )
+        workspace = MagicMock()
+        service = AgentService(**_kwargs(workspace_manager=workspace))
+        service._update_workspace_status_after_publish(
+            'T1', {StatusFields.STATUS: StatusFields.PARTIAL_FAILURE},
+        )
+        workspace.update_status.assert_called_with('T1', WORKSPACE_STATUS_ERRORED)
+
+    def test_swallows_update_exception(self) -> None:
+        from kato_core_lib.data_layers.data.fields import StatusFields
+        workspace = MagicMock()
+        workspace.update_status.side_effect = RuntimeError('update fail')
+        service = AgentService(**_kwargs(workspace_manager=workspace))
+        service.logger = MagicMock()
+        service._update_workspace_status_after_publish(
+            'T1', {StatusFields.STATUS: StatusFields.READY_FOR_REVIEW},
+        )
+        service.logger.exception.assert_called()
+
+
+class ThinDelegatesTests(unittest.TestCase):
+    def test_handle_pull_request_comment_delegates(self) -> None:
+        review = MagicMock()
+        review.state_registry = MagicMock()
+        review.handle_pull_request_comment.return_value = {'ok': True}
+        service = AgentService(**_kwargs(review_comment_service=review))
+        self.assertEqual(
+            service.handle_pull_request_comment({'p': 1}), {'ok': True},
+        )
+
+    def test_process_review_comment_delegates(self) -> None:
+        review = MagicMock()
+        review.state_registry = MagicMock()
+        review.process_review_comment.return_value = {'ok': True}
+        service = AgentService(**_kwargs(review_comment_service=review))
+        self.assertEqual(
+            service.process_review_comment(SimpleNamespace()), {'ok': True},
+        )
+
+    def test_process_review_comment_batch_delegates(self) -> None:
+        review = MagicMock()
+        review.state_registry = MagicMock()
+        review.process_review_comment_batch.return_value = [{'ok': True}]
+        service = AgentService(**_kwargs(review_comment_service=review))
+        self.assertEqual(
+            service.process_review_comment_batch([SimpleNamespace()]),
+            [{'ok': True}],
+        )
+
+    def test_task_id_for_review_comment_delegates(self) -> None:
+        review = MagicMock()
+        review.state_registry = MagicMock()
+        review.task_id_for_comment.return_value = 'PROJ-1'
+        service = AgentService(**_kwargs(review_comment_service=review))
+        self.assertEqual(
+            service.task_id_for_review_comment(SimpleNamespace()), 'PROJ-1',
+        )
+
+
+class ProcessAssignedTaskShortCircuitsTests(unittest.TestCase):
+    def test_triage_short_circuit_returns_result(self) -> None:
+        triage = MagicMock()
+        triage.handle_task.return_value = {'status': 'triaged'}
+        service = AgentService(**_kwargs(triage_service=triage))
+        from kato_core_lib.data_layers.data.task import Task
+        result = service.process_assigned_task(Task(id='PROJ-1'))
+        self.assertEqual(result, {'status': 'triaged'})
+
+    def test_wait_planning_short_circuit_returns_result(self) -> None:
+        wait = MagicMock()
+        wait.handle_task.return_value = {'status': 'planning'}
+        service = AgentService(**_kwargs(wait_planning_service=wait))
+        from kato_core_lib.data_layers.data.task import Task
+        result = service.process_assigned_task(Task(id='PROJ-1'))
+        self.assertEqual(result, {'status': 'planning'})
+
+    def test_returns_when_preflight_skips_task(self) -> None:
+        preflight = MagicMock()
+        preflight.prepare_task_execution_context.return_value = None
+        service = AgentService(**_kwargs(task_preflight_service=preflight))
+        from kato_core_lib.data_layers.data.task import Task
+        result = service.process_assigned_task(Task(id='PROJ-1'))
+        self.assertIsNone(result)
+
+    def test_returns_dict_when_preflight_returns_dict(self) -> None:
+        preflight = MagicMock()
+        preflight.prepare_task_execution_context.return_value = {'status': 'skipped'}
+        service = AgentService(**_kwargs(task_preflight_service=preflight))
+        from kato_core_lib.data_layers.data.task import Task
+        result = service.process_assigned_task(Task(id='PROJ-1'))
+        self.assertEqual(result, {'status': 'skipped'})
+
+
+class TaskHasWaitBeforePushTagTests(unittest.TestCase):
+    def test_returns_true_when_tag_present(self) -> None:
+        from kato_core_lib.data_layers.data.fields import TaskTags
+        from kato_core_lib.data_layers.data.task import Task
+        self.assertTrue(AgentService._task_has_wait_before_push_tag(
+            Task(id='T1', tags=[TaskTags.WAIT_BEFORE_GIT_PUSH]),
+        ))
+
+    def test_returns_false_when_tag_absent(self) -> None:
+        from kato_core_lib.data_layers.data.task import Task
+        self.assertFalse(AgentService._task_has_wait_before_push_tag(
+            Task(id='T1', tags=['other-tag']),
+        ))
+
+
+class PauseForPushApprovalTests(unittest.TestCase):
+    def test_stashes_pending_publish_and_posts_comment(self) -> None:
+        from kato_core_lib.data_layers.data.task import Task
+        from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
+
+        task_service = MagicMock()
+        workspace = MagicMock()
+        service = AgentService(**_kwargs(
+            task_service=task_service,
+            workspace_manager=workspace,
+        ))
+        prepared = PreparedTaskContext(
+            repositories=[], repository_branches={}, branch_name='b',
+        )
+        result = service._pause_for_push_approval(
+            Task(id='T1'), prepared, {'success': True},
+        )
+        self.assertEqual(result['status'], 'awaiting_push_approval')
+        self.assertEqual(result['task_id'], 'T1')
+        task_service.add_comment.assert_called_once()
+        workspace.update_status.assert_called_once()
+
+    def test_swallows_add_comment_failure(self) -> None:
+        from kato_core_lib.data_layers.data.task import Task
+        from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
+
+        task_service = MagicMock()
+        task_service.add_comment.side_effect = RuntimeError('fail')
+        service = AgentService(**_kwargs(task_service=task_service))
+        service.logger = MagicMock()
+        prepared = PreparedTaskContext(
+            repositories=[], repository_branches={}, branch_name='b',
+        )
+        service._pause_for_push_approval(
+            Task(id='T1'), prepared, {'success': True},
+        )
+        service.logger.exception.assert_called()
+
+    def test_swallows_workspace_status_update_failure(self) -> None:
+        from kato_core_lib.data_layers.data.task import Task
+        from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
+
+        workspace = MagicMock()
+        workspace.update_status.side_effect = RuntimeError('fail')
+        service = AgentService(**_kwargs(workspace_manager=workspace))
+        service.logger = MagicMock()
+        prepared = PreparedTaskContext(
+            repositories=[], repository_branches={}, branch_name='b',
+        )
+        service._pause_for_push_approval(
+            Task(id='T1'), prepared, {'success': True},
+        )
+        service.logger.exception.assert_called()
+
+
+class ApprovePushTests(unittest.TestCase):
+    def test_returns_none_for_blank_task_id(self) -> None:
+        service = AgentService(**_kwargs())
+        self.assertIsNone(service.approve_push(''))
+
+    def test_returns_none_when_no_pending_publish(self) -> None:
+        service = AgentService(**_kwargs())
+        self.assertIsNone(service.approve_push('T1'))
+
+    def test_publishes_pending_task(self) -> None:
+        from kato_core_lib.data_layers.data.task import Task
+        from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
+
+        publisher = MagicMock()
+        publisher.publish_task_execution.return_value = {'status': 'published'}
+        service = AgentService(**_kwargs(task_publisher=publisher))
+        prepared = PreparedTaskContext(
+            repositories=[], repository_branches={}, branch_name='b',
+        )
+        # Pre-stash a pending publish.
+        service._pending_publish['T1'] = (
+            Task(id='T1'), prepared, {'success': True},
+        )
+        result = service.approve_push('T1')
+        self.assertEqual(result, {'status': 'published'})
+
+
+class IsAwaitingPushApprovalTests(unittest.TestCase):
+    def test_returns_false_for_blank_id(self) -> None:
+        service = AgentService(**_kwargs())
+        self.assertFalse(service.is_awaiting_push_approval(''))
+
+    def test_returns_true_when_pending(self) -> None:
+        service = AgentService(**_kwargs())
+        service._pending_publish['T1'] = ('task', 'prep', 'exec')
+        self.assertTrue(service.is_awaiting_push_approval('T1'))
+
+
+class CommentStoreForTests(unittest.TestCase):
+    def test_returns_none_when_workspace_manager_missing(self) -> None:
+        service = AgentService(**_kwargs())
+        self.assertIsNone(service._comment_store_for('T1'))
+
+    def test_returns_none_for_blank_task_id(self) -> None:
+        service = AgentService(**_kwargs(workspace_manager=MagicMock()))
+        self.assertIsNone(service._comment_store_for(''))
+
+    def test_returns_none_on_workspace_path_exception(self) -> None:
+        workspace = MagicMock()
+        workspace.workspace_path.side_effect = RuntimeError('fail')
+        service = AgentService(**_kwargs(workspace_manager=workspace))
+        self.assertIsNone(service._comment_store_for('T1'))
+
+    def test_returns_none_when_workspace_dir_missing(self) -> None:
+        workspace = MagicMock()
+        workspace_dir = MagicMock()
+        workspace_dir.is_dir.return_value = False
+        workspace.workspace_path.return_value = workspace_dir
+        service = AgentService(**_kwargs(workspace_manager=workspace))
+        self.assertIsNone(service._comment_store_for('T1'))
+
+    def test_returns_local_comment_store_when_workspace_exists(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as td:
+            workspace = MagicMock()
+            workspace.workspace_path.return_value = Path(td)
+            service = AgentService(**_kwargs(workspace_manager=workspace))
+            store = service._comment_store_for('T1')
+        self.assertIsNotNone(store)
+
+
+class ListTaskCommentsTests(unittest.TestCase):
+    def test_returns_empty_when_store_missing(self) -> None:
+        service = AgentService(**_kwargs())
+        self.assertEqual(service.list_task_comments('T1'), [])
+
+    def test_returns_per_repo_when_repo_id_given(self) -> None:
+        from kato_core_lib.comment_core_lib import CommentRecord
+
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        record = CommentRecord(
+            id='c1', body='hi', repo_id='r1', author='a', source='local',
+        )
+        store.list_for_repo.return_value = [record]
+        with patch.object(service, '_comment_store_for', return_value=store):
+            result = service.list_task_comments('T1', 'r1')
+        self.assertEqual(len(result), 1)
+        store.list_for_repo.assert_called_once_with('r1')
+
+    def test_returns_all_when_no_repo_id(self) -> None:
+        from kato_core_lib.comment_core_lib import CommentRecord
+
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        record = CommentRecord(
+            id='c1', body='hi', repo_id='r1', author='a', source='local',
+        )
+        store.list.return_value = [record]
+        with patch.object(service, '_comment_store_for', return_value=store):
+            result = service.list_task_comments('T1')
+        self.assertEqual(len(result), 1)
+        store.list.assert_called_once()
+
+
+class AddTaskCommentTests(unittest.TestCase):
+    def test_returns_error_when_no_workspace(self) -> None:
+        service = AgentService(**_kwargs())
+        result = service.add_task_comment(
+            'T1', repo_id='r1', file_path='f.py', body='comment',
+        )
+        self.assertFalse(result['ok'])
+        self.assertIn('no workspace', result['error'])
+
+    def test_returns_error_when_add_raises_value_error(self) -> None:
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        store.add.side_effect = ValueError('bad body')
+        with patch.object(service, '_comment_store_for', return_value=store):
+            result = service.add_task_comment(
+                'T1', repo_id='r1', file_path='f.py', body='',
+            )
+        self.assertFalse(result['ok'])
+
+    def test_reply_does_not_trigger_kato_run(self) -> None:
+        from kato_core_lib.comment_core_lib import CommentRecord
+
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        persisted = CommentRecord(
+            id='c1', body='reply', repo_id='r1', author='a',
+            source='local', parent_id='c0',
+        )
+        store.add.return_value = persisted
+        with patch.object(service, '_comment_store_for', return_value=store), \
+             patch.object(service, '_maybe_trigger_comment_run') as trigger:
+            result = service.add_task_comment(
+                'T1', repo_id='r1', file_path='f.py',
+                body='reply', parent_id='c0',
+            )
+        self.assertTrue(result['ok'])
+        trigger.assert_not_called()
+
+    def test_top_level_comment_triggers_kato_run(self) -> None:
+        from kato_core_lib.comment_core_lib import CommentRecord
+
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        persisted = CommentRecord(
+            id='c1', body='comment', repo_id='r1', author='a',
+            source='local',
+        )
+        store.add.return_value = persisted
+        store.get.return_value = persisted
+        with patch.object(service, '_comment_store_for', return_value=store), \
+             patch.object(service, '_maybe_trigger_comment_run',
+                          return_value=True) as trigger:
+            result = service.add_task_comment(
+                'T1', repo_id='r1', file_path='f.py', body='comment',
+            )
+        self.assertTrue(result['ok'])
+        trigger.assert_called_once()
+        self.assertTrue(result['triggered_immediately'])
+
+
+class ResolveTaskCommentTests(unittest.TestCase):
+    def test_returns_error_when_no_workspace(self) -> None:
+        service = AgentService(**_kwargs())
+        result = service.resolve_task_comment('T1', 'c1')
+        self.assertFalse(result['ok'])
+
+    def test_returns_error_when_comment_not_found(self) -> None:
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        store.update_status.return_value = None
+        with patch.object(service, '_comment_store_for', return_value=store):
+            result = service.resolve_task_comment('T1', 'c1')
+        self.assertFalse(result['ok'])
+
+    def test_resolves_local_comment_without_remote_sync(self) -> None:
+        from kato_core_lib.comment_core_lib import (
+            CommentRecord, CommentSource, CommentStatus,
+        )
+        record = CommentRecord(
+            id='c1', body='b', repo_id='r1', author='a',
+            source=CommentSource.LOCAL.value,
+            status=CommentStatus.RESOLVED.value,
+        )
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        store.update_status.return_value = record
+        with patch.object(service, '_comment_store_for', return_value=store):
+            result = service.resolve_task_comment('T1', 'c1')
+        self.assertTrue(result['ok'])
+        self.assertFalse(result['remote_sync']['attempted'])
+
+
+class MarkCommentAddressedTests(unittest.TestCase):
+    def test_returns_error_when_no_workspace(self) -> None:
+        service = AgentService(**_kwargs())
+        result = service.mark_comment_addressed('T1', 'c1')
+        self.assertFalse(result['ok'])
+
+    def test_returns_error_when_comment_not_found(self) -> None:
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        store.update_kato_status.return_value = None
+        with patch.object(service, '_comment_store_for', return_value=store):
+            result = service.mark_comment_addressed('T1', 'c1')
+        self.assertFalse(result['ok'])
+
+
+class ReopenTaskCommentTests(unittest.TestCase):
+    def test_returns_error_when_no_workspace(self) -> None:
+        service = AgentService(**_kwargs())
+        result = service.reopen_task_comment('T1', 'c1')
+        self.assertFalse(result['ok'])
+
+    def test_returns_error_when_comment_not_found(self) -> None:
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        store.update_status.return_value = None
+        with patch.object(service, '_comment_store_for', return_value=store):
+            result = service.reopen_task_comment('T1', 'c1')
+        self.assertFalse(result['ok'])
+
+    def test_reopen_succeeds_when_comment_present(self) -> None:
+        from kato_core_lib.comment_core_lib import CommentRecord
+        service = AgentService(**_kwargs())
+        record = CommentRecord(
+            id='c1', body='b', repo_id='r1', author='a', source='local',
+        )
+        store = MagicMock()
+        store.update_status.return_value = record
+        with patch.object(service, '_comment_store_for', return_value=store):
+            result = service.reopen_task_comment('T1', 'c1')
+        self.assertTrue(result['ok'])
+
+
+class DeleteTaskCommentTests(unittest.TestCase):
+    def test_returns_error_when_no_workspace(self) -> None:
+        service = AgentService(**_kwargs())
+        result = service.delete_task_comment('T1', 'c1')
+        self.assertFalse(result['ok'])
+
+    def test_returns_ok_true_when_delete_succeeds(self) -> None:
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        store.delete.return_value = True
+        with patch.object(service, '_comment_store_for', return_value=store):
+            result = service.delete_task_comment('T1', 'c1')
+        self.assertTrue(result['ok'])
+
+    def test_returns_ok_false_when_delete_returns_false(self) -> None:
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        store.delete.return_value = False
+        with patch.object(service, '_comment_store_for', return_value=store):
+            result = service.delete_task_comment('T1', 'c1')
+        self.assertFalse(result['ok'])
+
+
+class TaskHasBusyTurnTests(unittest.TestCase):
+    def test_returns_false_when_no_session_manager(self) -> None:
+        service = AgentService(**_kwargs())
+        self.assertFalse(service._task_has_busy_turn('T1'))
+
+    def test_returns_false_on_session_exception(self) -> None:
+        session = MagicMock()
+        session.get_session.side_effect = RuntimeError('fail')
+        service = AgentService(**_kwargs(session_manager=session))
+        self.assertFalse(service._task_has_busy_turn('T1'))
+
+    def test_returns_false_when_session_dead(self) -> None:
+        session = MagicMock()
+        session.get_session.return_value = SimpleNamespace(
+            is_alive=False, is_working=True,
+        )
+        service = AgentService(**_kwargs(session_manager=session))
+        self.assertFalse(service._task_has_busy_turn('T1'))
+
+    def test_returns_true_when_session_working(self) -> None:
+        session = MagicMock()
+        session.get_session.return_value = SimpleNamespace(
+            is_alive=True, is_working=True,
+        )
+        service = AgentService(**_kwargs(session_manager=session))
+        self.assertTrue(service._task_has_busy_turn('T1'))
+
+
+class TaskPullRequestIdTests(unittest.TestCase):
+    def test_returns_empty_for_blank_input(self) -> None:
+        service = AgentService(**_kwargs())
+        self.assertEqual(service._task_pull_request_id('', 'r'), '')
+        self.assertEqual(service._task_pull_request_id('T', ''), '')
+
+    def test_returns_pr_id_from_registry(self) -> None:
+        registry = MagicMock()
+        registry.list_pull_request_contexts.return_value = [
+            {'task_id': 'T1', 'repository_id': 'r1', 'pull_request_id': '17'},
+        ]
+        review = MagicMock()
+        review.state_registry = registry
+        service = AgentService(**_kwargs(review_comment_service=review))
+        result = service._task_pull_request_id('T1', 'r1')
+        self.assertEqual(result, '17')
+
+    def test_swallows_registry_exception(self) -> None:
+        registry = MagicMock()
+        registry.list_pull_request_contexts.side_effect = RuntimeError('fail')
+        review = MagicMock()
+        review.state_registry = registry
+        repo = MagicMock()
+        repo.get_repository.side_effect = RuntimeError('also fail')
+        service = AgentService(**_kwargs(
+            review_comment_service=review,
+            repository_service=repo,
+        ))
+        result = service._task_pull_request_id('T1', 'r1')
+        self.assertEqual(result, '')
+
+
+if __name__ == '__main__':
+    unittest.main()

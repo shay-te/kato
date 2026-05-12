@@ -590,7 +590,7 @@ class TaskPublisher(Service):
                 self._sleep_fn(delay_seconds)
         # Defensive: the loop either returns or raises.
         assert last_exc is not None  # pragma: no cover
-        raise last_exc
+        raise last_exc  # pragma: no cover
 
 
 def _record_task_completed(task, prepared_task, pull_requests) -> None:

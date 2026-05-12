@@ -1,0 +1,1197 @@
+"""Additional coverage for ``AgentService`` remote-sync + publish flow."""
+
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+from kato_core_lib.data_layers.service.agent_service import AgentService
+
+
+def _kwargs(**overrides):
+    defaults = dict(
+        task_service=MagicMock(),
+        task_state_service=MagicMock(),
+        implementation_service=MagicMock(),
+        testing_service=MagicMock(),
+        repository_service=MagicMock(),
+        notification_service=MagicMock(),
+    )
+    defaults.update(overrides)
+    return defaults
+
+
+class ResolveTaskCommentRemoteSyncTests(unittest.TestCase):
+    def test_includes_remote_sync_when_kato_addressed(self) -> None:
+        # Lines 749-754: include_reply=True when kato_status is ADDRESSED.
+        from kato_core_lib.comment_core_lib import (
+            CommentRecord, CommentSource, KatoCommentStatus,
+        )
+        service = AgentService(**_kwargs())
+        addressed = CommentRecord(
+            id='c1', body='b', repo_id='r1', author='a',
+            source=CommentSource.REMOTE.value, remote_id='rem-1',
+            kato_status=KatoCommentStatus.ADDRESSED.value,
+        )
+        store = MagicMock()
+        store.update_status.return_value = addressed
+        with patch.object(service, '_comment_store_for', return_value=store), \
+             patch.object(service, '_sync_resolve_to_remote',
+                          return_value={'attempted': True}) as sync:
+            result = service.resolve_task_comment('T1', 'c1')
+        sync.assert_called_once()
+        # include_reply was True.
+        self.assertTrue(sync.call_args.kwargs.get('include_reply'))
+
+
+class MarkCommentAddressedRemoteSyncTests(unittest.TestCase):
+    def test_includes_remote_reply_for_remote_comments(self) -> None:
+        # Lines 800-806.
+        from kato_core_lib.comment_core_lib import CommentRecord, CommentSource
+        service = AgentService(**_kwargs())
+        remote = CommentRecord(
+            id='c1', body='b', repo_id='r1', author='a',
+            source=CommentSource.REMOTE.value, remote_id='rem-1',
+        )
+        store = MagicMock()
+        store.update_kato_status.return_value = remote
+        with patch.object(service, '_comment_store_for', return_value=store), \
+             patch.object(service, '_sync_addressed_reply_to_remote',
+                          return_value={'attempted': True}) as sync:
+            result = service.mark_comment_addressed('T1', 'c1')
+        sync.assert_called_once()
+        self.assertTrue(result['ok'])
+
+
+class SyncRemoteCommentsTests(unittest.TestCase):
+    def test_returns_error_when_no_workspace(self) -> None:
+        service = AgentService(**_kwargs())
+        result = service.sync_remote_comments('T1', 'r1')
+        self.assertFalse(result['ok'])
+
+    def test_returns_error_when_blank_repo_id(self) -> None:
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        with patch.object(service, '_comment_store_for', return_value=store):
+            result = service.sync_remote_comments('T1', '')
+        self.assertFalse(result['ok'])
+
+    def test_returns_error_when_workspace_manager_missing(self) -> None:
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        with patch.object(service, '_comment_store_for', return_value=store):
+            result = service.sync_remote_comments('T1', 'r1')
+        self.assertFalse(result['ok'])
+
+    def test_returns_error_on_workspace_path_exception(self) -> None:
+        workspace = MagicMock()
+        workspace.repository_path.side_effect = RuntimeError('fail')
+        service = AgentService(**_kwargs(workspace_manager=workspace))
+        store = MagicMock()
+        with patch.object(service, '_comment_store_for', return_value=store):
+            result = service.sync_remote_comments('T1', 'r1')
+        self.assertIn('no workspace clone', result['error'])
+
+    def test_returns_error_when_clone_lacks_git_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            workspace = MagicMock()
+            workspace.repository_path.return_value = Path(td)  # no .git
+            service = AgentService(**_kwargs(workspace_manager=workspace))
+            store = MagicMock()
+            with patch.object(service, '_comment_store_for', return_value=store):
+                result = service.sync_remote_comments('T1', 'r1')
+        self.assertFalse(result['ok'])
+
+    def test_records_pull_failure_in_response(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td) / '.git').mkdir()
+            workspace = MagicMock()
+            workspace.repository_path.return_value = Path(td)
+            repo = MagicMock()
+            repo._run_git = MagicMock(side_effect=RuntimeError('git fail'))
+            service = AgentService(**_kwargs(
+                workspace_manager=workspace, repository_service=repo,
+            ))
+            store = MagicMock()
+            with patch.object(service, '_comment_store_for', return_value=store):
+                result = service.sync_remote_comments('T1', 'r1')
+        # Pull failed but the overall call still proceeds. The pull
+        # result reflects the failure though.
+        self.assertFalse(result['pull']['ok'])
+
+    def test_returns_note_when_list_comments_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td) / '.git').mkdir()
+            workspace = MagicMock()
+            workspace.repository_path.return_value = Path(td)
+            repo = MagicMock()
+            # No list_pull_request_comments method.
+            del repo.list_pull_request_comments
+            service = AgentService(**_kwargs(
+                workspace_manager=workspace, repository_service=repo,
+            ))
+            store = MagicMock()
+            with patch.object(service, '_comment_store_for', return_value=store):
+                result = service.sync_remote_comments('T1', 'r1')
+        self.assertIn('platform listing unavailable', result.get('note', ''))
+
+    def test_returns_note_when_no_pr_id(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td) / '.git').mkdir()
+            workspace = MagicMock()
+            workspace.repository_path.return_value = Path(td)
+            repo = MagicMock()
+            repo.list_pull_request_comments = MagicMock()
+            service = AgentService(**_kwargs(
+                workspace_manager=workspace, repository_service=repo,
+            ))
+            store = MagicMock()
+            with patch.object(service, '_comment_store_for',
+                              return_value=store), \
+                 patch.object(service, '_task_pull_request_id',
+                              return_value=''):
+                result = service.sync_remote_comments('T1', 'r1')
+        self.assertIn('no pull request', result.get('note', ''))
+
+    def test_upserts_remote_comments_from_pr(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td) / '.git').mkdir()
+            workspace = MagicMock()
+            workspace.repository_path.return_value = Path(td)
+            repo = MagicMock()
+            repo.list_pull_request_comments.return_value = [
+                {
+                    'id': 'rem-1', 'body': 'fix this', 'file_path': 'a.py',
+                    'line': 5, 'author': 'reviewer', 'resolved': False,
+                },
+                # entry with blank body — skipped.
+                {'id': 'rem-2', 'body': ''},
+            ]
+            service = AgentService(**_kwargs(
+                workspace_manager=workspace, repository_service=repo,
+            ))
+            store = MagicMock()
+            with patch.object(service, '_comment_store_for',
+                              return_value=store), \
+                 patch.object(service, '_task_pull_request_id',
+                              return_value='pr-1'):
+                result = service.sync_remote_comments('T1', 'r1')
+        self.assertEqual(len(result['synced']), 1)
+        self.assertEqual(result['synced'][0]['remote_id'], 'rem-1')
+
+
+class SyncResolveToRemoteTests(unittest.TestCase):
+    def test_returns_error_on_repository_lookup_failure(self) -> None:
+        repo = MagicMock()
+        repo.get_repository.side_effect = RuntimeError('unknown')
+        service = AgentService(**_kwargs(repository_service=repo))
+        comment = SimpleNamespace(repo_id='r1', remote_id='rem-1')
+        result = service._sync_resolve_to_remote('T1', comment, include_reply=False)
+        self.assertIn('inventory lookup failed', result['error'])
+
+    def test_returns_error_when_no_pull_request_id(self) -> None:
+        service = AgentService(**_kwargs())
+        comment = SimpleNamespace(
+            repo_id='r1', remote_id='rem-1', kato_status='', kato_addressed_sha='',
+        )
+        with patch.object(service, '_task_pull_request_id', return_value=''):
+            result = service._sync_resolve_to_remote('T1', comment, include_reply=False)
+        self.assertIn('no pull request id', result['error'])
+
+    def test_resolves_remote_and_records_success(self) -> None:
+        repo = MagicMock()
+        repo.get_repository.return_value = SimpleNamespace(id='r1')
+        service = AgentService(**_kwargs(repository_service=repo))
+        comment = SimpleNamespace(
+            repo_id='r1', remote_id='rem-1', kato_status='',
+            kato_addressed_sha='abc123',
+        )
+        with patch.object(service, '_task_pull_request_id', return_value='pr-1'):
+            result = service._sync_resolve_to_remote(
+                'T1', comment, include_reply=True,
+            )
+        self.assertTrue(result.get('reply_posted'))
+        self.assertTrue(result.get('resolved'))
+
+    def test_records_reply_error_when_reply_fails(self) -> None:
+        repo = MagicMock()
+        repo.get_repository.return_value = SimpleNamespace(id='r1')
+        repo.reply_to_review_comment.side_effect = RuntimeError('reply fail')
+        service = AgentService(**_kwargs(repository_service=repo))
+        comment = SimpleNamespace(
+            repo_id='r1', remote_id='rem-1', kato_status='',
+            kato_addressed_sha='abc123',
+        )
+        with patch.object(service, '_task_pull_request_id', return_value='pr-1'):
+            result = service._sync_resolve_to_remote(
+                'T1', comment, include_reply=True,
+            )
+        self.assertIn('reply_error', result)
+
+    def test_records_resolve_error_when_resolve_fails(self) -> None:
+        repo = MagicMock()
+        repo.get_repository.return_value = SimpleNamespace(id='r1')
+        repo.resolve_review_comment.side_effect = RuntimeError('resolve fail')
+        service = AgentService(**_kwargs(repository_service=repo))
+        comment = SimpleNamespace(
+            repo_id='r1', remote_id='rem-1', kato_status='', kato_addressed_sha='',
+        )
+        with patch.object(service, '_task_pull_request_id', return_value='pr-1'):
+            result = service._sync_resolve_to_remote(
+                'T1', comment, include_reply=False,
+            )
+        self.assertIn('resolve_error', result)
+
+
+class SyncAddressedReplyToRemoteTests(unittest.TestCase):
+    def test_returns_error_on_repository_lookup_failure(self) -> None:
+        repo = MagicMock()
+        repo.get_repository.side_effect = RuntimeError('unknown')
+        service = AgentService(**_kwargs(repository_service=repo))
+        comment = SimpleNamespace(repo_id='r1', remote_id='rem-1')
+        result = service._sync_addressed_reply_to_remote('T1', comment)
+        self.assertIn('inventory lookup', result['error'])
+
+    def test_returns_error_when_no_pull_request_id(self) -> None:
+        service = AgentService(**_kwargs())
+        comment = SimpleNamespace(
+            repo_id='r1', remote_id='rem-1', kato_addressed_sha='',
+        )
+        with patch.object(service, '_task_pull_request_id', return_value=''):
+            result = service._sync_addressed_reply_to_remote('T1', comment)
+        self.assertIn('no pull request id', result['error'])
+
+    def test_posts_reply_with_commit_sha(self) -> None:
+        repo = MagicMock()
+        repo.get_repository.return_value = SimpleNamespace(id='r1')
+        service = AgentService(**_kwargs(repository_service=repo))
+        comment = SimpleNamespace(
+            repo_id='r1', remote_id='rem-1', kato_addressed_sha='abc12345',
+        )
+        with patch.object(service, '_task_pull_request_id', return_value='pr-1'):
+            result = service._sync_addressed_reply_to_remote('T1', comment)
+        self.assertTrue(result.get('reply_posted'))
+
+    def test_posts_reply_without_commit_sha(self) -> None:
+        # ``kato_addressed_sha`` blank → 'Addressed.' fallback text.
+        repo = MagicMock()
+        repo.get_repository.return_value = SimpleNamespace(id='r1')
+        service = AgentService(**_kwargs(repository_service=repo))
+        comment = SimpleNamespace(
+            repo_id='r1', remote_id='rem-1', kato_addressed_sha='',
+        )
+        with patch.object(service, '_task_pull_request_id', return_value='pr-1'):
+            result = service._sync_addressed_reply_to_remote('T1', comment)
+        self.assertTrue(result.get('reply_posted'))
+
+    def test_records_reply_error_when_reply_fails(self) -> None:
+        repo = MagicMock()
+        repo.get_repository.return_value = SimpleNamespace(id='r1')
+        repo.reply_to_review_comment.side_effect = RuntimeError('post fail')
+        service = AgentService(**_kwargs(repository_service=repo))
+        comment = SimpleNamespace(
+            repo_id='r1', remote_id='rem-1', kato_addressed_sha='abc',
+        )
+        with patch.object(service, '_task_pull_request_id', return_value='pr-1'):
+            result = service._sync_addressed_reply_to_remote('T1', comment)
+        self.assertIn('reply_error', result)
+
+
+class MaybeTriggerCommentRunTests(unittest.TestCase):
+    def test_returns_false_when_no_store(self) -> None:
+        service = AgentService(**_kwargs())
+        self.assertFalse(service._maybe_trigger_comment_run('T1', 'c1'))
+
+    def test_returns_false_when_record_missing(self) -> None:
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        store.get.return_value = None
+        with patch.object(service, '_comment_store_for', return_value=store):
+            self.assertFalse(service._maybe_trigger_comment_run('T1', 'c1'))
+
+    def test_returns_false_when_turn_busy(self) -> None:
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        store.get.return_value = MagicMock()
+        with patch.object(service, '_comment_store_for', return_value=store), \
+             patch.object(service, '_task_has_busy_turn', return_value=True):
+            self.assertFalse(service._maybe_trigger_comment_run('T1', 'c1'))
+
+    def test_swallows_run_comment_agent_exception(self) -> None:
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        record = MagicMock(id='c1')
+        store.get.return_value = record
+        service.logger = MagicMock()
+        with patch.object(service, '_comment_store_for', return_value=store), \
+             patch.object(service, '_task_has_busy_turn', return_value=False), \
+             patch.object(service, '_run_comment_agent',
+                          side_effect=RuntimeError('agent fail')):
+            result = service._maybe_trigger_comment_run('T1', 'c1')
+        self.assertFalse(result)
+        service.logger.exception.assert_called()
+
+    def test_returns_true_on_successful_run(self) -> None:
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        record = MagicMock(id='c1')
+        store.get.return_value = record
+        with patch.object(service, '_comment_store_for', return_value=store), \
+             patch.object(service, '_task_has_busy_turn', return_value=False), \
+             patch.object(service, '_run_comment_agent'):
+            result = service._maybe_trigger_comment_run('T1', 'c1')
+        self.assertTrue(result)
+
+
+class RunCommentAgentTests(unittest.TestCase):
+    def test_returns_silently_when_no_session_manager(self) -> None:
+        service = AgentService(**_kwargs())
+        # No raise.
+        service._run_comment_agent('T1', SimpleNamespace(id='c1'))
+
+    def test_queues_when_session_dead(self) -> None:
+        session = MagicMock()
+        session.get_session.return_value = SimpleNamespace(is_alive=False)
+        service = AgentService(**_kwargs(session_manager=session))
+        store = MagicMock()
+        with patch.object(service, '_comment_store_for', return_value=store):
+            service._run_comment_agent(
+                'T1', SimpleNamespace(id='c1', file_path='', line=-1, body=''),
+            )
+        store.update_kato_status.assert_called()
+
+    def test_sends_prompt_to_live_session(self) -> None:
+        session_obj = SimpleNamespace(
+            is_alive=True, send_user_message=MagicMock(),
+        )
+        session = MagicMock()
+        session.get_session.return_value = session_obj
+        service = AgentService(**_kwargs(session_manager=session))
+        service._run_comment_agent(
+            'T1',
+            SimpleNamespace(
+                id='c1', file_path='a.py', line=5, body='fix this',
+            ),
+        )
+        session_obj.send_user_message.assert_called_once()
+
+    def test_no_op_when_session_lacks_send_method(self) -> None:
+        # Lines 1180-1181: ``if not callable(send): return``.
+        session_obj = SimpleNamespace(is_alive=True)
+        session = MagicMock()
+        session.get_session.return_value = session_obj
+        service = AgentService(**_kwargs(session_manager=session))
+        # No raise.
+        service._run_comment_agent(
+            'T1',
+            SimpleNamespace(id='c1', file_path='a.py', line=5, body='b'),
+        )
+
+
+class TaskPullRequestIdLiveLookupTests(unittest.TestCase):
+    def test_uses_repository_service_find_when_registry_empty(self) -> None:
+        # Lines 1232-1256: fall back to find_pull_requests when registry
+        # has no matching context.
+        review = MagicMock()
+        review.state_registry.list_pull_request_contexts.return_value = []
+        repo = MagicMock()
+        inventory = SimpleNamespace(id='r1')
+        repo.get_repository.return_value = inventory
+        repo.build_branch_name.return_value = 'T1'
+        repo.find_pull_requests.return_value = [
+            {'id': '17', 'url': 'https://example.com/pr/17'},
+        ]
+        service = AgentService(**_kwargs(
+            review_comment_service=review,
+            repository_service=repo,
+        ))
+        result = service._task_pull_request_id('T1', 'r1')
+        self.assertEqual(result, '17')
+
+    def test_returns_empty_when_build_branch_name_fails(self) -> None:
+        # Lines 1240-1241.
+        review = MagicMock()
+        review.state_registry.list_pull_request_contexts.return_value = []
+        repo = MagicMock()
+        repo.get_repository.return_value = SimpleNamespace(id='r1')
+        repo.build_branch_name.side_effect = RuntimeError('fail')
+        service = AgentService(**_kwargs(
+            review_comment_service=review,
+            repository_service=repo,
+        ))
+        self.assertEqual(service._task_pull_request_id('T1', 'r1'), '')
+
+    def test_returns_empty_when_find_pull_requests_fails(self) -> None:
+        # Lines 1247-1249.
+        review = MagicMock()
+        review.state_registry.list_pull_request_contexts.return_value = []
+        repo = MagicMock()
+        repo.get_repository.return_value = SimpleNamespace(id='r1')
+        repo.build_branch_name.return_value = 'T1'
+        repo.find_pull_requests.side_effect = RuntimeError('api fail')
+        service = AgentService(**_kwargs(
+            review_comment_service=review,
+            repository_service=repo,
+        ))
+        self.assertEqual(service._task_pull_request_id('T1', 'r1'), '')
+
+
+class CreatePullRequestForTaskTests(unittest.TestCase):
+    def test_returns_error_for_blank_task_id(self) -> None:
+        service = AgentService(**_kwargs())
+        result = service.create_pull_request_for_task('')
+        self.assertFalse(result['created'])
+
+    def test_returns_error_when_no_workspace_context(self) -> None:
+        service = AgentService(**_kwargs())
+        with patch.object(service, '_resolve_publish_context',
+                          return_value=([], '', None)):
+            result = service.create_pull_request_for_task('T1')
+        self.assertFalse(result['created'])
+
+    def test_skips_existing_pr(self) -> None:
+        repo_obj = SimpleNamespace(id='r1')
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'T1'
+        repo.find_pull_requests.return_value = [
+            {'url': 'https://example.com/pr/17'},
+        ]
+        service = AgentService(**_kwargs(repository_service=repo))
+        with patch.object(service, '_resolve_publish_context',
+                          return_value=([repo_obj], 'T1',
+                                        SimpleNamespace(id='T1', summary='x'))):
+            result = service.create_pull_request_for_task('T1')
+        self.assertFalse(result['created'])
+        self.assertEqual(len(result['skipped_existing']), 1)
+
+    def test_creates_pr_when_none_exists(self) -> None:
+        repo_obj = SimpleNamespace(id='r1')
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'T1'
+        repo.find_pull_requests.return_value = []
+        repo.create_pull_request.return_value = {
+            'url': 'https://example.com/pr/17',
+        }
+        service = AgentService(**_kwargs(repository_service=repo))
+        with patch.object(service, '_resolve_publish_context',
+                          return_value=([repo_obj], 'T1',
+                                        SimpleNamespace(id='T1', summary='x'))):
+            result = service.create_pull_request_for_task('T1')
+        self.assertTrue(result['created'])
+
+    def test_swallows_find_pull_requests_exception_and_proceeds(self) -> None:
+        repo_obj = SimpleNamespace(id='r1')
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'T1'
+        repo.find_pull_requests.side_effect = RuntimeError('api')
+        repo.create_pull_request.return_value = {
+            'url': 'https://example.com/pr/17',
+        }
+        service = AgentService(**_kwargs(repository_service=repo))
+        service.logger = MagicMock()
+        with patch.object(service, '_resolve_publish_context',
+                          return_value=([repo_obj], 'T1',
+                                        SimpleNamespace(id='T1', summary='x'))):
+            result = service.create_pull_request_for_task('T1')
+        # find_pull_requests crashed → existing=[] → create_pull_request fires.
+        self.assertTrue(result['created'])
+
+    def test_records_expected_exception_as_failure(self) -> None:
+        from kato_core_lib.data_layers.service.repository_service import (
+            RepositoryHasNoChangesError,
+        )
+        repo_obj = SimpleNamespace(id='r1')
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'T1'
+        repo.find_pull_requests.return_value = []
+        repo.create_pull_request.side_effect = RepositoryHasNoChangesError('no')
+        service = AgentService(**_kwargs(repository_service=repo))
+        service.logger = MagicMock()
+        with patch.object(service, '_resolve_publish_context',
+                          return_value=([repo_obj], 'T1',
+                                        SimpleNamespace(id='T1', summary='x'))):
+            result = service.create_pull_request_for_task('T1')
+        self.assertEqual(len(result['failed_repositories']), 1)
+
+    def test_records_workspace_drift_runtime_error_as_failure(self) -> None:
+        # Line 2076: 'expected repository' → warn + record.
+        repo_obj = SimpleNamespace(id='r1')
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'T1'
+        repo.find_pull_requests.return_value = []
+        repo.create_pull_request.side_effect = RuntimeError(
+            'expected repository to be on T1',
+        )
+        service = AgentService(**_kwargs(repository_service=repo))
+        service.logger = MagicMock()
+        with patch.object(service, '_resolve_publish_context',
+                          return_value=([repo_obj], 'T1',
+                                        SimpleNamespace(id='T1', summary='x'))):
+            result = service.create_pull_request_for_task('T1')
+        self.assertEqual(len(result['failed_repositories']), 1)
+
+    def test_records_unexpected_runtime_error_with_stacktrace(self) -> None:
+        # Line 2084-2091: RuntimeError that doesn't match the known
+        # patterns → log.exception + record.
+        repo_obj = SimpleNamespace(id='r1')
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'T1'
+        repo.find_pull_requests.return_value = []
+        repo.create_pull_request.side_effect = RuntimeError('something else')
+        service = AgentService(**_kwargs(repository_service=repo))
+        service.logger = MagicMock()
+        with patch.object(service, '_resolve_publish_context',
+                          return_value=([repo_obj], 'T1',
+                                        SimpleNamespace(id='T1', summary='x'))):
+            result = service.create_pull_request_for_task('T1')
+        self.assertEqual(len(result['failed_repositories']), 1)
+        service.logger.exception.assert_called()
+
+    def test_records_generic_exception(self) -> None:
+        # Lines 2092-2099.
+        repo_obj = SimpleNamespace(id='r1')
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'T1'
+        repo.find_pull_requests.return_value = []
+        repo.create_pull_request.side_effect = OSError('FS fail')
+        service = AgentService(**_kwargs(repository_service=repo))
+        service.logger = MagicMock()
+        with patch.object(service, '_resolve_publish_context',
+                          return_value=([repo_obj], 'T1',
+                                        SimpleNamespace(id='T1', summary='x'))):
+            result = service.create_pull_request_for_task('T1')
+        self.assertEqual(len(result['failed_repositories']), 1)
+
+
+class FinishTaskPlanningSessionTests(unittest.TestCase):
+    def test_returns_error_for_blank_task_id(self) -> None:
+        service = AgentService(**_kwargs())
+        self.assertFalse(service.finish_task_planning_session('')['finished'])
+
+    def test_moves_to_review_on_success(self) -> None:
+        task_state = MagicMock()
+        service = AgentService(**_kwargs(task_state_service=task_state))
+        with patch.object(service, 'push_task',
+                          return_value={'pushed': True}), \
+             patch.object(service, 'create_pull_request_for_task',
+                          return_value={'created': True}), \
+             patch.object(service, '_kick_lesson_extraction'):
+            result = service.finish_task_planning_session('T1')
+        self.assertTrue(result['finished'])
+        task_state.move_task_to_review.assert_called_once()
+
+    def test_records_move_error_on_failure(self) -> None:
+        task_state = MagicMock()
+        task_state.move_task_to_review.side_effect = RuntimeError('move fail')
+        service = AgentService(**_kwargs(task_state_service=task_state))
+        service.logger = MagicMock()
+        with patch.object(service, 'push_task', return_value={}), \
+             patch.object(service, 'create_pull_request_for_task',
+                          return_value={}), \
+             patch.object(service, '_kick_lesson_extraction'):
+            result = service.finish_task_planning_session('T1')
+        self.assertFalse(result['finished'])
+        self.assertIn('move fail', result['move_error'])
+
+
+class KickLessonExtractionTests(unittest.TestCase):
+    def test_returns_silently_when_no_lessons_service(self) -> None:
+        service = AgentService(**_kwargs())
+        # No raise.
+        service._kick_lesson_extraction('T1', {}, {})
+
+    def test_spawns_worker_thread_and_swallows_extract_exception(self) -> None:
+        # Lines 2195-2208.
+        lessons = MagicMock()
+        lessons.extract_and_save.side_effect = RuntimeError('llm fail')
+        service = AgentService(**_kwargs(lessons_service=lessons))
+        # Task service raises when fetching the task — drives lines
+        # 2184-2186 (the fallback to blank summary/description).
+        service._task_service.get_task = MagicMock(
+            side_effect=RuntimeError('fail'),
+        )
+        service._kick_lesson_extraction('T1', {}, {})
+        # Worker fires async — give it a moment.
+        import time
+        time.sleep(0.05)
+
+
+class TaskPublishStateTests(unittest.TestCase):
+    def test_returns_default_for_blank_task_id(self) -> None:
+        service = AgentService(**_kwargs())
+        result = service.task_publish_state('')
+        self.assertFalse(result['has_workspace'])
+
+    def test_returns_default_when_no_workspace_context(self) -> None:
+        service = AgentService(**_kwargs())
+        with patch.object(service, '_resolve_publish_context',
+                          return_value=([], '', None)):
+            result = service.task_publish_state('T1')
+        self.assertFalse(result['has_workspace'])
+
+    def test_reports_changes_to_push(self) -> None:
+        repo_obj = SimpleNamespace(id='r1')
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'T1'
+        repo.branch_needs_push.return_value = True
+        repo.find_pull_requests.return_value = []
+        service = AgentService(**_kwargs(repository_service=repo))
+        with patch.object(service, '_resolve_publish_context',
+                          return_value=([repo_obj], 'T1',
+                                        SimpleNamespace(id='T1'))):
+            result = service.task_publish_state('T1')
+        self.assertTrue(result['has_workspace'])
+        self.assertTrue(result['has_changes_to_push'])
+
+    def test_reports_existing_pull_request(self) -> None:
+        repo_obj = SimpleNamespace(id='r1')
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'T1'
+        repo.branch_needs_push.return_value = False
+        repo.find_pull_requests.return_value = [
+            {'url': 'https://example.com/pr/17'},
+        ]
+        service = AgentService(**_kwargs(repository_service=repo))
+        with patch.object(service, '_resolve_publish_context',
+                          return_value=([repo_obj], 'T1',
+                                        SimpleNamespace(id='T1'))):
+            result = service.task_publish_state('T1')
+        self.assertTrue(result['has_pull_request'])
+
+    def test_swallows_branch_needs_push_exception(self) -> None:
+        repo_obj = SimpleNamespace(id='r1')
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'T1'
+        repo.branch_needs_push.side_effect = RuntimeError('fail')
+        repo.find_pull_requests.return_value = []
+        service = AgentService(**_kwargs(repository_service=repo))
+        service.logger = MagicMock()
+        with patch.object(service, '_resolve_publish_context',
+                          return_value=([repo_obj], 'T1',
+                                        SimpleNamespace(id='T1'))):
+            result = service.task_publish_state('T1')
+        # Defaults to False on error.
+        self.assertFalse(result['has_changes_to_push'])
+        service.logger.exception.assert_called()
+
+    def test_swallows_find_pull_requests_exception(self) -> None:
+        repo_obj = SimpleNamespace(id='r1')
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'T1'
+        repo.branch_needs_push.return_value = False
+        repo.find_pull_requests.side_effect = RuntimeError('api fail')
+        service = AgentService(**_kwargs(repository_service=repo))
+        service.logger = MagicMock()
+        with patch.object(service, '_resolve_publish_context',
+                          return_value=([repo_obj], 'T1',
+                                        SimpleNamespace(id='T1'))):
+            result = service.task_publish_state('T1')
+        self.assertFalse(result['has_pull_request'])
+        service.logger.exception.assert_called()
+
+
+class ResolvePublishContextTests(unittest.TestCase):
+    def test_returns_empty_when_no_workspace_manager(self) -> None:
+        service = AgentService(**_kwargs())
+        self.assertEqual(
+            service._resolve_publish_context('T1'),
+            ([], '', None),
+        )
+
+    def test_returns_empty_when_workspace_missing(self) -> None:
+        workspace = MagicMock()
+        workspace.get.return_value = None
+        service = AgentService(**_kwargs(workspace_manager=workspace))
+        self.assertEqual(
+            service._resolve_publish_context('T1'),
+            ([], '', None),
+        )
+
+    def test_skips_unknown_repository_ids(self) -> None:
+        workspace = MagicMock()
+        workspace.get.return_value = SimpleNamespace(
+            repository_ids=['known', 'unknown'],
+            task_summary='x',
+        )
+        workspace.repository_path.return_value = Path('/clone')
+        repo = MagicMock()
+
+        def fake_get(rid):
+            if rid == 'unknown':
+                raise ValueError('not in inventory')
+            return SimpleNamespace(id='known', local_path='/inventory')
+
+        repo.get_repository.side_effect = fake_get
+        repo.build_branch_name.return_value = 'T1'
+        service = AgentService(**_kwargs(
+            workspace_manager=workspace, repository_service=repo,
+        ))
+        service.logger = MagicMock()
+        repos, branch, _ = service._resolve_publish_context('T1')
+        self.assertEqual(len(repos), 1)
+        self.assertEqual(repos[0].id, 'known')
+        # local_path is rewritten to the workspace clone path.
+        self.assertEqual(repos[0].local_path, '/clone')
+        service.logger.warning.assert_called()
+
+    def test_returns_empty_when_all_repos_unknown(self) -> None:
+        # Line 2310-2311: rewritten is empty → return empty tuple.
+        workspace = MagicMock()
+        workspace.get.return_value = SimpleNamespace(
+            repository_ids=['unknown1', 'unknown2'],
+            task_summary='x',
+        )
+        repo = MagicMock()
+        repo.get_repository.side_effect = ValueError('unknown')
+        service = AgentService(**_kwargs(
+            workspace_manager=workspace, repository_service=repo,
+        ))
+        service.logger = MagicMock()
+        result = service._resolve_publish_context('T1')
+        self.assertEqual(result, ([], '', None))
+
+
+class StartTaskProcessingTests(unittest.TestCase):
+    def test_returns_true_on_successful_move(self) -> None:
+        from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
+        from kato_core_lib.data_layers.data.task import Task
+        publisher = MagicMock()
+        service = AgentService(**_kwargs(task_publisher=publisher))
+        prepared = PreparedTaskContext(
+            repositories=[], repository_branches={}, branch_name='b',
+        )
+        result = service._start_task_processing(Task(id='T1'), prepared)
+        self.assertTrue(result)
+
+    def test_returns_false_on_move_failure(self) -> None:
+        from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
+        from kato_core_lib.data_layers.data.task import Task
+        task_state = MagicMock()
+        task_state.move_task_to_in_progress.side_effect = RuntimeError('fail')
+        handler = MagicMock()
+        service = AgentService(**_kwargs(
+            task_state_service=task_state,
+            task_failure_handler=handler,
+        ))
+        prepared = PreparedTaskContext(
+            repositories=[], repository_branches={}, branch_name='b',
+        )
+        result = service._start_task_processing(Task(id='T1'), prepared)
+        self.assertFalse(result)
+        handler.handle_task_failure.assert_called_once()
+
+
+class RunTaskImplementationTests(unittest.TestCase):
+    def test_uses_planning_runner_when_wired(self) -> None:
+        from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
+        from kato_core_lib.data_layers.data.task import Task
+
+        runner = MagicMock()
+        runner.implement_task.return_value = {'success': True}
+        service = AgentService(**_kwargs(planning_session_runner=runner))
+        prepared = PreparedTaskContext(
+            repositories=[], repository_branches={}, branch_name='b',
+        )
+        execution = service._run_task_implementation(Task(id='T1'), prepared)
+        self.assertEqual(execution['success'], True)
+        runner.implement_task.assert_called_once()
+
+    def test_returns_none_on_implementation_exception(self) -> None:
+        from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
+        from kato_core_lib.data_layers.data.task import Task
+
+        impl = MagicMock()
+        impl.implement_task.side_effect = RuntimeError('impl fail')
+        handler = MagicMock()
+        service = AgentService(**_kwargs(
+            implementation_service=impl,
+            task_failure_handler=handler,
+        ))
+        service.logger = MagicMock()
+        prepared = PreparedTaskContext(
+            repositories=[], repository_branches={}, branch_name='b',
+        )
+        execution = service._run_task_implementation(Task(id='T1'), prepared)
+        self.assertIsNone(execution)
+        handler.handle_started_task_failure.assert_called_once()
+
+    def test_returns_none_when_implementation_failed(self) -> None:
+        from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
+        from kato_core_lib.data_layers.data.task import Task
+
+        impl = MagicMock()
+        impl.implement_task.return_value = {'success': False}
+        handler = MagicMock()
+        service = AgentService(**_kwargs(
+            implementation_service=impl,
+            task_failure_handler=handler,
+        ))
+        prepared = PreparedTaskContext(
+            repositories=[], repository_branches={}, branch_name='b',
+        )
+        execution = service._run_task_implementation(Task(id='T1'), prepared)
+        self.assertIsNone(execution)
+        handler.handle_implementation_failure.assert_called_once()
+
+
+class RunTaskTestingValidationTests(unittest.TestCase):
+    def test_skips_when_skip_testing_set(self) -> None:
+        from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
+        from kato_core_lib.data_layers.data.task import Task
+        service = AgentService(**_kwargs(skip_testing=True))
+        prepared = PreparedTaskContext(
+            repositories=[], repository_branches={}, branch_name='b',
+        )
+        ok, result, execution = service._run_task_testing_validation(
+            Task(id='T1'), prepared, {'success': True},
+        )
+        self.assertTrue(ok)
+        self.assertIsNone(result)
+
+    def test_returns_false_when_publishability_fails(self) -> None:
+        from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
+        from kato_core_lib.data_layers.data.task import Task
+
+        preflight = MagicMock()
+        preflight.validate_task_branch_publishability.return_value = False
+        service = AgentService(**_kwargs(task_preflight_service=preflight))
+        prepared = PreparedTaskContext(
+            repositories=[], repository_branches={}, branch_name='b',
+        )
+        ok, result, _ = service._run_task_testing_validation(
+            Task(id='T1'), prepared, {},
+        )
+        self.assertFalse(ok)
+
+    def test_returns_false_when_testing_request_returns_none(self) -> None:
+        from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
+        from kato_core_lib.data_layers.data.task import Task
+
+        preflight = MagicMock()
+        preflight.validate_task_branch_publishability.return_value = True
+        testing = MagicMock()
+        testing.test_task.side_effect = RuntimeError('testing fail')
+        handler = MagicMock()
+        service = AgentService(**_kwargs(
+            task_preflight_service=preflight,
+            testing_service=testing,
+            task_failure_handler=handler,
+        ))
+        service.logger = MagicMock()
+        prepared = PreparedTaskContext(
+            repositories=[], repository_branches={}, branch_name='b',
+        )
+        ok, _, _ = service._run_task_testing_validation(
+            Task(id='T1'), prepared, {},
+        )
+        self.assertFalse(ok)
+
+    def test_returns_failure_when_testing_unsuccessful(self) -> None:
+        from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
+        from kato_core_lib.data_layers.data.task import Task
+
+        preflight = MagicMock()
+        preflight.validate_task_branch_publishability.return_value = True
+        testing = MagicMock()
+        testing.test_task.return_value = {'success': False}
+        handler = MagicMock()
+        service = AgentService(**_kwargs(
+            task_preflight_service=preflight,
+            testing_service=testing,
+            task_failure_handler=handler,
+        ))
+        prepared = PreparedTaskContext(
+            repositories=[], repository_branches={}, branch_name='b',
+        )
+        ok, result, _ = service._run_task_testing_validation(
+            Task(id='T1'), prepared, {'success': True},
+        )
+        self.assertFalse(ok)
+        self.assertIsNotNone(result)
+        handler.handle_testing_failure.assert_called_once()
+
+    def test_returns_success_with_message_applied(self) -> None:
+        from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
+        from kato_core_lib.data_layers.data.task import Task
+
+        preflight = MagicMock()
+        preflight.validate_task_branch_publishability.return_value = True
+        testing = MagicMock()
+        testing.test_task.return_value = {'success': True, 'message': 'all good'}
+        service = AgentService(**_kwargs(
+            task_preflight_service=preflight,
+            testing_service=testing,
+        ))
+        prepared = PreparedTaskContext(
+            repositories=[], repository_branches={}, branch_name='b',
+        )
+        ok, _, execution = service._run_task_testing_validation(
+            Task(id='T1'), prepared, {'success': True},
+        )
+        self.assertTrue(ok)
+
+
+class FinalEdgeCaseTests(unittest.TestCase):
+    """Final close-out coverage for residual defensive lines."""
+
+    def test_update_workspace_status_returns_early_for_unknown_status(
+        self,
+    ) -> None:
+        # Line 440: status not in READY_FOR_REVIEW / PARTIAL_FAILURE → return.
+        workspace = MagicMock()
+        service = AgentService(**_kwargs(workspace_manager=workspace))
+        service._update_workspace_status_after_publish(
+            'T1', {'status': 'something_else'},
+        )
+        workspace.update_status.assert_not_called()
+
+    def test_process_assigned_task_pauses_when_wait_before_push_tag_present(
+        self,
+    ) -> None:
+        # Line 521: ``_pause_for_push_approval`` invoked.
+        from kato_core_lib.data_layers.data.fields import TaskTags
+        from kato_core_lib.data_layers.data.task import Task
+
+        preflight = MagicMock()
+        from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
+        prepared = PreparedTaskContext(
+            repositories=[], repository_branches={}, branch_name='b',
+        )
+        preflight.prepare_task_execution_context.return_value = prepared
+        preflight.validate_task_branch_publishability.return_value = True
+        impl = MagicMock()
+        impl.implement_task.return_value = {'success': True}
+        testing = MagicMock()
+        testing.test_task.return_value = {'success': True}
+        publisher = MagicMock()
+        service = AgentService(**_kwargs(
+            task_preflight_service=preflight,
+            implementation_service=impl,
+            testing_service=testing,
+            task_publisher=publisher,
+        ))
+        result = service.process_assigned_task(
+            Task(id='T1', tags=[TaskTags.WAIT_BEFORE_GIT_PUSH]),
+        )
+        self.assertEqual(result['status'], 'awaiting_push_approval')
+        # publish_task_execution was NOT called — pause intercepted.
+        publisher.publish_task_execution.assert_not_called()
+
+    def test_sync_remote_comments_handles_inventory_lookup_failure(self) -> None:
+        # Lines 886-887: inventory_repo lookup raises → set inventory_repo
+        # to None. Subsequent listing branch then returns the
+        # "platform listing unavailable" note (line 906 detects
+        # inventory_repo is None).
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td) / '.git').mkdir()
+            workspace = MagicMock()
+            workspace.repository_path.return_value = Path(td)
+            repo = MagicMock()
+            repo.get_repository.side_effect = RuntimeError('unknown repo')
+            repo.list_pull_request_comments = MagicMock()
+            service = AgentService(**_kwargs(
+                workspace_manager=workspace, repository_service=repo,
+            ))
+            store = MagicMock()
+            with patch.object(service, '_comment_store_for', return_value=store):
+                result = service.sync_remote_comments('T1', 'r1')
+        # The "no inventory repo" path returns the platform-listing
+        # note (line 906 sees inventory_repo is None).
+        self.assertIn('platform listing unavailable', result.get('note', ''))
+
+    def test_sync_remote_comments_records_exception_during_listing(self) -> None:
+        # Lines 945-950: outer try/except wrapping the listing loop.
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td) / '.git').mkdir()
+            workspace = MagicMock()
+            workspace.repository_path.return_value = Path(td)
+            repo = MagicMock()
+            repo.list_pull_request_comments.side_effect = RuntimeError('fail')
+            service = AgentService(**_kwargs(
+                workspace_manager=workspace, repository_service=repo,
+            ))
+            service.logger = MagicMock()
+            store = MagicMock()
+            with patch.object(service, '_comment_store_for',
+                              return_value=store), \
+                 patch.object(service, '_task_pull_request_id',
+                              return_value='pr-1'):
+                result = service.sync_remote_comments('T1', 'r1')
+        self.assertFalse(result['ok'])
+        service.logger.exception.assert_called()
+
+    def test_task_pull_request_id_skips_non_dict_contexts(self) -> None:
+        # Line 1218: ``if not isinstance(context, dict): continue``.
+        review = MagicMock()
+        review.state_registry.list_pull_request_contexts.return_value = [
+            'not a dict',  # skipped
+            42,            # skipped
+            {'task_id': 'T1', 'repository_id': 'r1', 'pull_request_id': '17'},
+        ]
+        service = AgentService(**_kwargs(review_comment_service=review))
+        self.assertEqual(service._task_pull_request_id('T1', 'r1'), '17')
+
+    def test_adopt_task_swallows_approval_service_exception(self) -> None:
+        # Lines 1510-1518.
+        task = SimpleNamespace(id='T1', summary='x', description='', tags=[])
+        repo = MagicMock()
+        repo.resolve_task_repositories.return_value = [
+            SimpleNamespace(id='r1'),
+        ]
+        service = AgentService(**_kwargs(
+            workspace_manager=MagicMock(), repository_service=repo,
+        ))
+        service.logger = MagicMock()
+        with patch.object(service, '_lookup_assigned_or_review_task',
+                          return_value=task), \
+             patch(
+                 'kato_core_lib.data_layers.service.repository_approval_service.'
+                 'RepositoryApprovalService',
+                 side_effect=RuntimeError('approval boom'),
+             ), \
+             patch(
+                 'kato_core_lib.data_layers.service.workspace_provisioning_service.'
+                 'provision_task_workspace_clones',
+                 return_value=[SimpleNamespace(id='r1')],
+             ):
+            result = service.adopt_task('T1')
+        self.assertTrue(result['adopted'])
+        service.logger.exception.assert_called()
+
+    def test_lookup_assigned_or_review_task_skips_non_callable_helper(
+        self,
+    ) -> None:
+        # Line 1562: ``if not callable(fetch): continue``.
+        # Build a task_service whose list_all_assigned_tasks attribute is
+        # not callable.
+        task_service = SimpleNamespace(
+            list_all_assigned_tasks='not callable',
+            get_assigned_tasks=lambda: [SimpleNamespace(id='T1')],
+        )
+        service = AgentService(**_kwargs(task_service=task_service))
+        self.assertEqual(
+            service._lookup_assigned_or_review_task('T1').id, 'T1',
+        )
+
+    def test_add_task_repository_swallows_repositories_property_exception(
+        self,
+    ) -> None:
+        # Lines 1635-1636: ``except Exception: inventory_ids = set()``.
+        repo = MagicMock()
+        type(repo).repositories = property(
+            lambda self: (_ for _ in ()).throw(RuntimeError('fail')),
+        )
+        service = AgentService(**_kwargs(repository_service=repo))
+        result = service.add_task_repository('T1', 'r1')
+        # Repository not in inventory (set is empty) → returns error.
+        self.assertFalse(result['added'])
+
+    def test_add_task_repository_extracts_tags_from_object_with_name_attr(
+        self,
+    ) -> None:
+        # Lines 1661-1665 (the else branch — non-dict tag entry).
+        from kato_core_lib.data_layers.data.fields import RepositoryFields
+        repo = MagicMock()
+        type(repo).repositories = property(
+            lambda self: [SimpleNamespace(id='r1')],
+        )
+        task_service = MagicMock()
+        service = AgentService(**_kwargs(
+            repository_service=repo, task_service=task_service,
+            workspace_manager=MagicMock(),
+        ))
+        # Tags are object instances with a .name attribute.
+        existing = SimpleNamespace(
+            id='T1',
+            tags=[SimpleNamespace(
+                name=f'{RepositoryFields.REPOSITORY_TAG_PREFIX}r1',
+            )],
+        )
+        with patch.object(service, '_lookup_task_for_sync',
+                          return_value=existing), \
+             patch.object(service, 'sync_task_repositories',
+                          return_value={'synced': True}):
+            result = service.add_task_repository('T1', 'r1')
+        # Already tagged via object-with-name path.
+        self.assertFalse(result['tag_added'])
+
+    def test_add_task_repository_extracts_tag_from_dict_entry(self) -> None:
+        # Line 1661: dict tag entries are normalized via ``.get('name')``.
+        from kato_core_lib.data_layers.data.fields import RepositoryFields
+        repo = MagicMock()
+        type(repo).repositories = property(
+            lambda self: [SimpleNamespace(id='r1')],
+        )
+        task_service = MagicMock()
+        service = AgentService(**_kwargs(
+            repository_service=repo, task_service=task_service,
+            workspace_manager=MagicMock(),
+        ))
+        # Tags are dicts (YouTrack-style).
+        existing = SimpleNamespace(
+            id='T1',
+            tags=[{'name': f'{RepositoryFields.REPOSITORY_TAG_PREFIX}r1'}],
+        )
+        with patch.object(service, '_lookup_task_for_sync',
+                          return_value=existing), \
+             patch.object(service, 'sync_task_repositories',
+                          return_value={'synced': True}):
+            result = service.add_task_repository('T1', 'r1')
+        # Already tagged via dict path.
+        self.assertFalse(result['tag_added'])
+        task_service.add_tag.assert_not_called()
+
+    def test_add_task_repository_actually_adds_tag_when_not_present(self) -> None:
+        # Line 1672: ``tag_added = True`` when add_tag fires.
+        repo = MagicMock()
+        type(repo).repositories = property(
+            lambda self: [SimpleNamespace(id='r1')],
+        )
+        task_service = MagicMock()
+        service = AgentService(**_kwargs(
+            repository_service=repo, task_service=task_service,
+            workspace_manager=MagicMock(),
+        ))
+        existing = SimpleNamespace(id='T1', tags=[])  # no tags yet
+        with patch.object(service, '_lookup_task_for_sync',
+                          return_value=existing), \
+             patch.object(service, 'sync_task_repositories',
+                          return_value={'synced': True}):
+            result = service.add_task_repository('T1', 'r1')
+        self.assertTrue(result['tag_added'])
+        task_service.add_tag.assert_called_once()
+
+    def test_lookup_task_for_sync_returns_none_when_not_in_any_queue(self) -> None:
+        # Line 1832: loop completes without match → return None.
+        task_service = MagicMock()
+        task_service.get_assigned_tasks.return_value = []
+        task_service.get_review_tasks.return_value = []
+        service = AgentService(**_kwargs(task_service=task_service))
+        self.assertIsNone(service._lookup_task_for_sync('T1'))
+
+    def test_kick_lesson_extraction_uses_task_summary_when_get_task_succeeds(
+        self,
+    ) -> None:
+        # Lines 2181-2183 + 2190: get_task returns a real task with
+        # description set.
+        task_service = MagicMock()
+        task_service.get_task.return_value = SimpleNamespace(
+            id='T1', summary='Fix things', description='Long body',
+        )
+        lessons = MagicMock()
+        service = AgentService(**_kwargs(
+            lessons_service=lessons, task_service=task_service,
+        ))
+        service._kick_lesson_extraction('T1', {}, {})
+        # Worker thread fires async; give it a moment.
+        import time
+        time.sleep(0.05)
+        # Extract was called (best-effort).
+        lessons.extract_and_save.assert_called()
+
+
+if __name__ == '__main__':
+    unittest.main()

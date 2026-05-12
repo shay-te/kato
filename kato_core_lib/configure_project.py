@@ -27,7 +27,7 @@ try:
         input_yes_no as core_input_yes_no,
     )
     from core_lib.helpers.validation import is_int as core_is_int
-except (ImportError, ModuleNotFoundError):
+except (ImportError, ModuleNotFoundError):  # pragma: no cover
     core_input_string = None
     core_input_yes_no = None
     core_is_int = None
@@ -1051,5 +1051,5 @@ def _normalize_repository_path(raw_path: str) -> str:
     return str(path.resolve())
 
 
-if __name__ == '__main__':
+if __name__ == '__main__':  # pragma: no cover
     raise SystemExit(main())

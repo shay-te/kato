@@ -350,3 +350,59 @@ class PullRequestDataAccessTests(unittest.TestCase):
 
         with self.assertRaisesRegex(PermissionError, 'body'):
             data_access.reply_to_review_comment(comment, ['not text'])
+
+    def test_provider_name_falls_back_when_client_omits_attribute(self) -> None:
+        # Line 57: ``getattr(self._client, 'provider_name', 'repository')``
+        # — the fallback string is what kato logs name when a custom
+        # client doesn't surface its own provider tag.
+        config = types.SimpleNamespace(
+            base_url='https://bitbucket.example',
+            token='t', owner='w', repo_slug='r', destination_branch='main',
+        )
+        # Client without a ``provider_name`` attribute.
+        client = types.SimpleNamespace(repository_type=Platform.BITBUCKET)
+        data_access = PullRequestDataAccess(config, client)
+        self.assertEqual(data_access.provider_name, 'repository')
+
+    def test_validate_connection_passes_repo_kwargs_to_client(self) -> None:
+        # Lines 59-63: ``validate_connection`` delegates to the client
+        # with the repo kwargs assembled from config.
+        config = types.SimpleNamespace(
+            base_url='https://bitbucket.example',
+            token='t', owner='w', repo_slug='r', destination_branch='main',
+        )
+        client = types.SimpleNamespace(
+            provider_name='bitbucket',
+            repository_type=Platform.BITBUCKET,
+            validate_connection=Mock(),
+        )
+        data_access = PullRequestDataAccess(config, client)
+        data_access.validate_connection()
+        client.validate_connection.assert_called_once()
+        call = client.validate_connection.call_args
+        self.assertEqual(call.args[0], Platform.BITBUCKET)
+        self.assertEqual(call.kwargs.get('repo_owner'), 'w')
+        self.assertEqual(call.kwargs.get('repo_slug'), 'r')
+
+
+class TaskDataAccessTagTests(unittest.TestCase):
+    """Coverage for the thin ``add_tag`` / ``remove_tag`` delegators
+    (task_data_access.py lines 91-95)."""
+
+    def _data_access(self) -> TaskDataAccess:
+        config = types.SimpleNamespace(
+            base_url='https://yt.example', token='t',
+            project='PROJ', assignee='me', issue_states=['Open'],
+        )
+        client = Mock()
+        return TaskDataAccess(config, client), client
+
+    def test_add_tag_delegates_to_client(self) -> None:
+        data_access, client = self._data_access()
+        data_access.add_tag('PROJ-1', 'review-requested')
+        client.add_tag.assert_called_once_with('PROJ-1', 'review-requested')
+
+    def test_remove_tag_delegates_to_client(self) -> None:
+        data_access, client = self._data_access()
+        data_access.remove_tag('PROJ-1', 'review-requested')
+        client.remove_tag.assert_called_once_with('PROJ-1', 'review-requested')
