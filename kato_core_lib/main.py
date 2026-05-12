@@ -169,7 +169,13 @@ def main(cfg: DictConfig) -> int:
     _recover_orphan_workspaces(app)
     _reconcile_workspace_branches(app)
     _reset_stuck_workspace_statuses(app)
-    _resume_streaming_sessions(app)
+    # Sessions are lazy after restart: opening a tab replays the disk
+    # JSONL via SSE so the conversation history is visible immediately.
+    # Claude is re-spawned (with ``--resume <id>``) only when the operator
+    # actually sends a follow-up message — same UX as VS Code Claude Code.
+    # The old autoresume sent ``_RESUME_CONTINUE_PROMPT`` to every active
+    # workspace at boot, which burned tokens and made the chat look like
+    # Claude was starting over.
     _start_planning_webserver_if_enabled(app)
     _register_shutdown_hook(app)
     startup_delay_seconds, scan_interval_seconds = _task_scan_settings(cfg)
@@ -254,12 +260,11 @@ def _reset_stuck_workspace_statuses(app) -> None:
     """Promote PROVISIONING workspaces that have valid git repos to ACTIVE.
 
     A kato crash during provisioning leaves the workspace status stuck at
-    PROVISIONING even though all or some repos may already be cloned. When
-    _resume_streaming_sessions runs next, it tries to spawn Claude for every
-    ACTIVE or PROVISIONING workspace. Promoting the ones that have at least
-    one valid .git clone gives them a correct ACTIVE label before the resume
-    scan — Claude then gets the right "resume interrupted task" prompt rather
-    than being spawned inside an empty, half-provisioned workspace.
+    PROVISIONING even though all or some repos may already be cloned. The
+    on-demand chat-respawn path needs an ACTIVE workspace to attach to;
+    promoting the ones that have at least one valid .git clone gives them
+    a correct ACTIVE label so the lazy session spawn (on the operator's
+    first follow-up message) lands in a workspace that's actually ready.
 
     Workspaces in ERRORED state are flagged with a visible warning so the
     operator knows they need attention (re-run the task or discard the

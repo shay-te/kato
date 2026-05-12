@@ -178,6 +178,7 @@ export default function SessionDetail({
           />
         <MessageForm
           ref={composerRef}
+          taskId={taskId}
           turnInFlight={stream.turnInFlight}
           onSubmit={onSendMessage}
           disabled={composerDisabled}

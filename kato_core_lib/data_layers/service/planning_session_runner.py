@@ -171,19 +171,34 @@ class PlanningSessionRunner(object):
         normalized_message = str(message or '').strip()
         if not normalized_message:
             raise ValueError('message is required to resume a chat session')
-        # Front-load BOTH the workspace inventory AND the forbidden
-        # block. The inventory anchors Claude to the actual cloned
-        # repos for this task — without it the model has been
-        # mapping operator shorthand like "the front end" onto names
-        # it sees in the forbidden list (e.g.
-        # ``ob-love-admin-client-new``) instead of the
-        # ``ob-love-admin-client`` clone that's right there in the
-        # workspace.
-        initial_prompt = agent_prompt_utils.prepend_chat_workspace_context(
-            normalized_message,
-            cwd=cwd,
-            additional_dirs=additional_dirs,
+        # When we have a saved session id, ``start_session`` will pass
+        # ``--resume <id>`` to Claude — the prior conversation (workspace
+        # inventory, continuity, forbidden-repo guardrails, every prior
+        # turn) is already loaded by the CLI. Wrapping the user's
+        # follow-up in another inventory/continuity block was making
+        # Claude treat each respawn as a fresh task and re-explore the
+        # workspace from scratch.
+        #
+        # Only inject the chat-workspace context on the FIRST spawn for
+        # this task — when there's no session id to resume from.
+        existing_record = (
+            self._session_manager.get_record(normalized_task_id)
+            if self._session_manager is not None
+            else None
         )
+        resume_session_id = (
+            str(getattr(existing_record, 'claude_session_id', '') or '').strip()
+            if existing_record is not None
+            else ''
+        )
+        if resume_session_id:
+            initial_prompt = normalized_message
+        else:
+            initial_prompt = agent_prompt_utils.prepend_chat_workspace_context(
+                normalized_message,
+                cwd=cwd,
+                additional_dirs=additional_dirs,
+            )
         return self._session_manager.start_session(
             task_id=normalized_task_id,
             task_summary=normalized_text(task_summary),

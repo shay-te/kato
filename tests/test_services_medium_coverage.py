@@ -917,6 +917,59 @@ class PlanningSessionRunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'message is required'):
             runner.resume_session_for_chat(task_id='T1', message='   ')
 
+    def test_resume_session_for_chat_sends_raw_message_when_session_id_persisted(
+        self,
+    ) -> None:
+        # Bug-fix lock: when ``--resume <session_id>`` will be used,
+        # Claude already has the workspace context from the prior JSONL.
+        # Wrapping the follow-up message in another inventory/continuity
+        # block makes Claude treat each respawn as a fresh task and
+        # re-explore the workspace — burning tokens and producing the
+        # "starts everything from scratch" behavior the operator sees.
+        from kato_core_lib.data_layers.service.planning_session_runner import (
+            PlanningSessionRunner, StreamingSessionDefaults,
+        )
+        manager = MagicMock()
+        # Existing record with a persisted session id.
+        manager.get_record.return_value = SimpleNamespace(
+            claude_session_id='abc-123',
+        )
+        runner = PlanningSessionRunner(
+            session_manager=manager, defaults=StreamingSessionDefaults(),
+        )
+        runner.resume_session_for_chat(
+            task_id='T1', message='please look at the bug',
+            cwd='/wks/T1', additional_dirs=['/wks/T1/repo-b'],
+        )
+        # The raw message went through verbatim — NO ``Repositories
+        # available`` / ``Trust it`` / ``Forbidden`` wrapper.
+        sent_prompt = manager.start_session.call_args.kwargs['initial_prompt']
+        self.assertEqual(sent_prompt, 'please look at the bug')
+
+    def test_resume_session_for_chat_wraps_message_on_first_spawn(self) -> None:
+        # Symmetric guarantee: when there's no session id to resume from
+        # (first message after kato adopt / fresh workspace), DO wrap the
+        # message so Claude sees the workspace inventory + guardrails on
+        # its very first turn. This is the only path that justifies the
+        # workspace-context preamble.
+        from kato_core_lib.data_layers.service.planning_session_runner import (
+            PlanningSessionRunner, StreamingSessionDefaults,
+        )
+        manager = MagicMock()
+        # No record yet → first spawn → wrap.
+        manager.get_record.return_value = None
+        runner = PlanningSessionRunner(
+            session_manager=manager, defaults=StreamingSessionDefaults(),
+        )
+        runner.resume_session_for_chat(
+            task_id='T1', message='start the work',
+            cwd='/wks/T1',
+        )
+        sent_prompt = manager.start_session.call_args.kwargs['initial_prompt']
+        # Continuity block leads.
+        self.assertIn('Trust it', sent_prompt)
+        self.assertIn('start the work', sent_prompt)
+
     def test_fix_review_comments_rejects_empty(self) -> None:
         # Line 266.
         from kato_core_lib.data_layers.service.planning_session_runner import (

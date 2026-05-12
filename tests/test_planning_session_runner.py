@@ -69,6 +69,15 @@ class _FakeManager:
         # forwarding test cares about.
         return None
 
+    def get_record(self, task_id: str):  # noqa: ARG002
+        # No persisted record → first-spawn path through
+        # resume_session_for_chat, which wraps the message with the
+        # forbidden / inventory / continuity preamble. (When a record
+        # IS persisted the message goes through raw — covered by
+        # test_resume_session_for_chat_sends_raw_message_when_session_id_persisted
+        # in test_services_medium_coverage.py.)
+        return None
+
 
 def _terminal(*, is_error: bool = False, result: str = 'all done') -> SessionEvent:
     return SessionEvent(
