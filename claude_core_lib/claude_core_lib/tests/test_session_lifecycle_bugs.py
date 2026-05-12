@@ -388,6 +388,134 @@ class Bug2ResumePassesSameSessionIdTests(unittest.TestCase):
             command = session._build_command()
         self.assertNotIn('--resume', command)
 
+    def test_mid_work_continuity_second_spawn_reuses_first_spawn_id(self) -> None:
+        # The operator's complaint: "every follow-up message creates a
+        # new session and re-explores the workspace." That happens iff
+        # the second spawn drops the first spawn's session id.
+        #
+        # Real flow: first spawn auto-generates a uuid inside
+        # ``_build_command``; the manager's ``_with_refreshed_session_id``
+        # mirrors it onto the record on the next ``get_record`` /
+        # ``list_records`` call. Second spawn pulls the resume id from
+        # that record. This test wires those two ends together and
+        # asserts the SAME id flows through end-to-end.
+        from claude_core_lib.claude_core_lib.session.manager import (
+            ClaudeSessionManager,
+        )
+        with tempfile.TemporaryDirectory() as td:
+            recorded = {}
+            stub = self._stub_session_class(recorded)
+            manager = ClaudeSessionManager(
+                state_dir=td, session_factory=stub,
+            )
+            # First spawn: stub auto-adopts ``fresh-id`` (the real
+            # session generates a uuid synchronously in _build_command).
+            manager.start_session(
+                task_id='T1',
+                task_summary='do work',
+                initial_prompt='first message',
+                cwd='/tmp/T1',
+            )
+            first_kwargs = recorded['kwargs']
+            self.assertEqual(first_kwargs.get('resume_session_id', ''), '')
+
+            # The manager's get_record() path is what refreshes the
+            # record with the live session's id. Real kato code calls
+            # this on every UI poll + before the next start_session.
+            record = manager.get_record('T1')
+            self.assertEqual(record.claude_session_id, 'fresh-id')
+
+            # Subprocess exits (Claude finished its turn, idle timeout
+            # fired, etc).
+            manager.terminate_session('T1')
+
+            # Operator types a follow-up. Second spawn MUST resume the
+            # same id — otherwise Claude starts a new conversation and
+            # re-reads the whole workspace.
+            recorded.clear()
+            manager.start_session(
+                task_id='T1',
+                task_summary='do work',
+                initial_prompt='follow-up message',
+                cwd='/tmp/T1',
+            )
+            second_kwargs = recorded['kwargs']
+            self.assertEqual(
+                second_kwargs.get('resume_session_id'),
+                'fresh-id',
+                'second spawn dropped the first spawn\'s session id — '
+                'follow-up messages will fork a new session and waste tokens',
+            )
+
+    def test_cross_restart_persistence_survives_a_fresh_manager(self) -> None:
+        # The operator's complaint: "if I stop kato and restart it he
+        # forgets the entire session." That happens iff the manager
+        # built by the new kato process doesn't re-read the on-disk
+        # record from the previous process.
+        #
+        # This test simulates kato restart by discarding manager #1
+        # and building manager #2 against the SAME ``state_dir``. The
+        # second manager must hydrate the record from disk so the
+        # first message after restart respawns with ``--resume <id>``,
+        # not as a fresh session.
+        from claude_core_lib.claude_core_lib.session.manager import (
+            ClaudeSessionManager,
+        )
+        with tempfile.TemporaryDirectory() as td:
+            # ---- kato run #1 ----
+            recorded_run1 = {}
+            stub1 = self._stub_session_class(recorded_run1)
+            manager_run1 = ClaudeSessionManager(
+                state_dir=td, session_factory=stub1,
+            )
+            manager_run1.start_session(
+                task_id='T1',
+                task_summary='do work',
+                initial_prompt='first message',
+                cwd='/tmp/T1',
+            )
+            # Adopt a concrete id (mirrors what the real session
+            # captures via _build_command + auto-refresh on get_record).
+            manager_run1.adopt_session_id(
+                'T1', claude_session_id='surviving-id-xyz',
+                task_summary='do work',
+            )
+            manager_run1.terminate_session('T1')
+            del manager_run1  # operator stops kato
+
+            # ---- kato run #2 ----
+            # Fresh process: build a new manager pointed at the same
+            # state_dir. _load_persisted_records runs in __init__ and
+            # rehydrates the record off disk.
+            recorded_run2 = {}
+            stub2 = self._stub_session_class(recorded_run2)
+            manager_run2 = ClaudeSessionManager(
+                state_dir=td, session_factory=stub2,
+            )
+
+            # Sanity: the record is back, with its session id intact.
+            record = manager_run2.get_record('T1')
+            self.assertIsNotNone(
+                record,
+                'manager rebuilt against same state_dir failed to '
+                'hydrate per-task record — restart will start fresh',
+            )
+            self.assertEqual(record.claude_session_id, 'surviving-id-xyz')
+
+            # First message in the new run: must --resume the saved id.
+            manager_run2.start_session(
+                task_id='T1',
+                task_summary='do work',
+                initial_prompt='first message after restart',
+                cwd='/tmp/T1',
+            )
+            self.assertEqual(
+                recorded_run2['kwargs'].get('resume_session_id'),
+                'surviving-id-xyz',
+                'fresh manager did not pass --resume to the spawn — '
+                'kato restart will start a brand-new Claude session',
+            )
+
     def test_claude_session_id_adopted_before_first_event_arrives(self) -> None:
         # The webserver SSE handler resolves the session id from the
         # live session BEFORE any event has been streamed. The session
