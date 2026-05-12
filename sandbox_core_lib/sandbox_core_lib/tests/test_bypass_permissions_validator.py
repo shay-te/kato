@@ -522,5 +522,104 @@ class SecurityPostureBannerVariantTests(unittest.TestCase):
         self.fail('read-only row not found in banner')
 
 
+class InteractiveStdinDefensiveTests(unittest.TestCase):
+    """Lines 199-203: ``_is_interactive_stdin`` security helper.
+
+    Used to decide whether to prompt the operator. Must fail-closed
+    (return False) on any unusual stdin to prevent silent auto-yes.
+    """
+
+    def test_returns_false_when_stream_has_no_isatty(self) -> None:
+        # Line 199: stream missing isatty → False (not interactive).
+        from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (
+            _is_interactive_stdin,
+        )
+        class _NoIsatty:
+            pass
+        self.assertFalse(_is_interactive_stdin(_NoIsatty()))
+
+    def test_returns_false_when_isatty_raises(self) -> None:
+        # Lines 202-203: ``isatty()`` raises → False. Reads "could not
+        # determine" as "not interactive" — safer than auto-yes.
+        from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (
+            _is_interactive_stdin,
+        )
+        class _BrokenIsatty:
+            def isatty(self):
+                raise OSError('stdin closed')
+        self.assertFalse(_is_interactive_stdin(_BrokenIsatty()))
+
+    def test_returns_true_for_tty_stream(self) -> None:
+        from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (
+            _is_interactive_stdin,
+        )
+        class _Tty:
+            def isatty(self):
+                return True
+        self.assertTrue(_is_interactive_stdin(_Tty()))
+
+
+class EmitBannerDefensiveTests(unittest.TestCase):
+    """Lines 211-213: ``_emit_banner`` must never crash the process."""
+
+    def test_swallows_oserror_writing_banner(self) -> None:
+        # Line 211: stderr.write raises → swallow (process continues).
+        from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (
+            _emit_banner,
+        )
+        class _BrokenStderr:
+            def write(self, text):
+                raise OSError('closed')
+            def flush(self):
+                pass
+        _emit_banner(_BrokenStderr())  # must not raise
+
+
+class SecurityPostureBannerExtraPathsTests(unittest.TestCase):
+    """Lines 462-465, 552, 558, 565-566, 572-573: banner warning paths.
+
+    These exercise the warnings appended to the boot banner —
+    SECURITY-RELEVANT because they're the operator's first signal
+    about a misconfigured posture.
+    """
+
+    def test_widened_allowed_tools_with_bypass_emits_warning(self) -> None:
+        # Lines 462-465 + 552-556: bypass=true + extra tools → WARNING line.
+        stream = io.StringIO()
+        print_security_posture(
+            stderr=stream,
+            env={
+                BYPASS_ENV_KEY: 'true',
+                DOCKER_ENV_KEY: 'true',
+                'KATO_CLAUDE_ALLOWED_TOOLS': 'Bash,WebFetch',
+            },
+        )
+        out = stream.getvalue()
+        self.assertIn('WARNING', out)
+        self.assertIn('WebFetch', out)
+
+    def test_running_as_root_without_bypass_emits_warning(self) -> None:
+        # Lines 558-561: running as root, no docker, no bypass → WARNING.
+        stream = io.StringIO()
+        with patch(
+            'sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator.is_running_as_root',
+            return_value=True,
+        ):
+            print_security_posture(stderr=stream, env={})
+        out = stream.getvalue()
+        self.assertIn('WARNING', out)
+        self.assertIn('root', out)
+
+    def test_banner_swallows_write_oserror(self) -> None:
+        # Lines 572-573: ``target.write`` raises → swallow.
+        class _BrokenStream:
+            def write(self, text):
+                raise OSError('pipe closed')
+            def flush(self):
+                pass
+        # Must not raise — the boot banner can never crash kato startup.
+        print_security_posture(stderr=_BrokenStream(), env={})
+
+
 if __name__ == '__main__':
     unittest.main()

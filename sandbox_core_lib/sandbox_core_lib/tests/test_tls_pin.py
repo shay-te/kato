@@ -589,5 +589,392 @@ class PinFileFormatTests(unittest.TestCase):
         self.assertTrue(second_line.startswith('# pinned:'))
 
 
+# --------------------------------------------------------------------------
+# OG4 defensive branches — every protection-critical path must fail closed
+# or degrade safely without weakening the pin contract.
+# --------------------------------------------------------------------------
+
+
+class TlsPinDefensiveBranchTests(unittest.TestCase):
+    """OG4 TLS-pinning security: defensive paths that must fail-closed
+    or degrade gracefully without weakening the pin contract.
+
+    Each test names the exact protection-critical branch it locks down.
+    Lines covered: 111, 130-144, 159-165, 185, 188-189, 210-211, 239-243,
+    272, 367-368, 418-419, 424, 534.
+    """
+
+    def test_default_pin_file_path_lives_under_home(self) -> None:
+        # Line 111: ``_default_pin_file_path`` — operator-visible
+        # location for the TOFU pin file. Locked so a refactor can't
+        # silently move the pin file to a less-private location.
+        from sandbox_core_lib.sandbox_core_lib.tls_pin import (
+            _default_pin_file_path,
+        )
+        path = _default_pin_file_path()
+        self.assertEqual(path.name, 'anthropic-tls-pin')
+        self.assertEqual(path.parent.name, '.kato')
+
+    def test_spki_fingerprint_falls_back_to_whole_cert_when_cryptography_missing(
+        self,
+    ) -> None:
+        # Lines 139-143: when the ``cryptography`` package isn't
+        # installed, hash the whole DER cert instead. This preserves
+        # the security property ("trust THIS byte sequence, not any
+        # CA-signed cert") even though the pin breaks on rotation.
+        import builtins
+        from unittest.mock import patch
+        from sandbox_core_lib.sandbox_core_lib.tls_pin import (
+            _spki_fingerprint_from_der_cert,
+        )
+        real_import = builtins.__import__
+
+        def fail_cryptography(name, *args, **kwargs):
+            if name.startswith('cryptography'):
+                raise ImportError('mocked: cryptography not installed')
+            return real_import(name, *args, **kwargs)
+
+        with patch.object(builtins, '__import__', fail_cryptography):
+            fingerprint = _spki_fingerprint_from_der_cert(
+                b'\x00fake-der-cert-bytes',
+            )
+        # Output shape is preserved: 44-char base64 SHA-256.
+        self.assertEqual(len(fingerprint), 44)
+        # Deterministic: the same DER bytes must hash to the same pin.
+        import base64
+        import hashlib
+        expected = base64.b64encode(
+            hashlib.sha256(b'\x00fake-der-cert-bytes').digest(),
+        ).decode('ascii')
+        self.assertEqual(fingerprint, expected)
+
+    def test_spki_fingerprint_uses_cryptography_when_available(self) -> None:
+        # Lines 130-138: the normal SPKI extraction path. Pin computed
+        # from the cert's public key (SPKI), not the whole DER cert —
+        # so the pin survives routine cert rotation.
+        try:
+            from cryptography import x509  # noqa: F401
+            from cryptography.hazmat.primitives.asymmetric import rsa
+            from cryptography.hazmat.primitives import hashes, serialization
+            from cryptography import x509 as _x509
+            from datetime import datetime, timedelta, timezone
+        except ImportError:
+            self.skipTest('cryptography not installed')
+
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        subject = issuer = _x509.Name([
+            _x509.NameAttribute(_x509.NameOID.COMMON_NAME, 'test'),
+        ])
+        cert = (
+            _x509.CertificateBuilder()
+            .subject_name(subject)
+            .issuer_name(issuer)
+            .public_key(key.public_key())
+            .serial_number(_x509.random_serial_number())
+            .not_valid_before(datetime.now(timezone.utc))
+            .not_valid_after(datetime.now(timezone.utc) + timedelta(days=1))
+            .sign(key, hashes.SHA256())
+        )
+        der = cert.public_bytes(serialization.Encoding.DER)
+
+        from sandbox_core_lib.sandbox_core_lib.tls_pin import (
+            _spki_fingerprint_from_der_cert,
+        )
+        spki_pin = _spki_fingerprint_from_der_cert(der)
+        # SPKI path used: re-hashing the WHOLE cert yields a different
+        # value (proves the function extracted the SPKI, not the cert).
+        import base64
+        import hashlib
+        whole_cert_hash = base64.b64encode(
+            hashlib.sha256(der).digest(),
+        ).decode('ascii')
+        self.assertNotEqual(spki_pin, whole_cert_hash)
+        self.assertEqual(len(spki_pin), 44)
+
+    def test_fetch_live_spki_fingerprint_opens_tls_and_extracts(self) -> None:
+        # Lines 159-165: the live-fetch glue. Mocks ssl/socket so no
+        # real network call, but exercises the connect→wrap→getpeercert
+        # plumbing that feeds the live pin into the lifecycle.
+        from unittest.mock import MagicMock, patch
+        from sandbox_core_lib.sandbox_core_lib.tls_pin import (
+            _fetch_live_spki_fingerprint,
+        )
+
+        fake_der = b'\x00fake-peer-cert-der'
+        fake_tls = MagicMock()
+        fake_tls.getpeercert.return_value = fake_der
+        fake_tls.__enter__ = MagicMock(return_value=fake_tls)
+        fake_tls.__exit__ = MagicMock(return_value=False)
+
+        fake_raw = MagicMock()
+        fake_raw.__enter__ = MagicMock(return_value=fake_raw)
+        fake_raw.__exit__ = MagicMock(return_value=False)
+
+        fake_ctx = MagicMock()
+        fake_ctx.wrap_socket.return_value = fake_tls
+
+        with patch('sandbox_core_lib.sandbox_core_lib.tls_pin.ssl.create_default_context',
+                   return_value=fake_ctx), \
+             patch('sandbox_core_lib.sandbox_core_lib.tls_pin.socket.create_connection',
+                   return_value=fake_raw), \
+             patch(
+                 'sandbox_core_lib.sandbox_core_lib.tls_pin._spki_fingerprint_from_der_cert',
+                 return_value=_FAKE_PRIMARY_PIN,
+             ) as fake_hash:
+            result = _fetch_live_spki_fingerprint(
+                host='example.com', port=443, timeout=1.0,
+            )
+        # Glue passes the live DER bytes through to the hash function.
+        fake_hash.assert_called_once_with(fake_der)
+        self.assertEqual(result, _FAKE_PRIMARY_PIN)
+
+    def test_fetch_live_spki_fingerprint_raises_oserror_on_empty_cert(
+        self,
+    ) -> None:
+        # Lines 163-164: empty getpeercert → OSError. Critical: if the
+        # peer somehow returns no cert, we must refuse rather than
+        # silently pin the empty bytes.
+        from unittest.mock import MagicMock, patch
+        from sandbox_core_lib.sandbox_core_lib.tls_pin import (
+            _fetch_live_spki_fingerprint,
+        )
+
+        fake_tls = MagicMock()
+        fake_tls.getpeercert.return_value = None
+        fake_tls.__enter__ = MagicMock(return_value=fake_tls)
+        fake_tls.__exit__ = MagicMock(return_value=False)
+        fake_raw = MagicMock()
+        fake_raw.__enter__ = MagicMock(return_value=fake_raw)
+        fake_raw.__exit__ = MagicMock(return_value=False)
+        fake_ctx = MagicMock()
+        fake_ctx.wrap_socket.return_value = fake_tls
+
+        with patch('sandbox_core_lib.sandbox_core_lib.tls_pin.ssl.create_default_context',
+                   return_value=fake_ctx), \
+             patch('sandbox_core_lib.sandbox_core_lib.tls_pin.socket.create_connection',
+                   return_value=fake_raw):
+            with self.assertRaises(OSError) as ctx:
+                _fetch_live_spki_fingerprint(
+                    host='example.com', port=443, timeout=1.0,
+                )
+        self.assertIn('no peer cert', str(ctx.exception))
+
+    def test_is_tty_false_when_stream_has_no_isatty(self) -> None:
+        # Line 185: stream lacking ``isatty`` attribute → False. Used
+        # so we don't crash when stderr is a custom buffer.
+        from sandbox_core_lib.sandbox_core_lib.tls_pin import _is_tty
+
+        class _NoIsatty:
+            pass
+
+        self.assertFalse(_is_tty(_NoIsatty()))
+
+    def test_is_tty_false_when_isatty_raises_valueerror(self) -> None:
+        # Lines 188-189: closed/odd streams raise on isatty() — must
+        # be swallowed so kato startup banners never crash. Without
+        # this swallow, a closed stderr in CI containers could prevent
+        # the security warning from rendering at all.
+        from sandbox_core_lib.sandbox_core_lib.tls_pin import _is_tty
+
+        class _RaisesValueError:
+            def isatty(self):
+                raise ValueError('I/O operation on closed file')
+
+        self.assertFalse(_is_tty(_RaisesValueError()))
+
+    def test_is_tty_false_when_isatty_raises_oserror(self) -> None:
+        # Line 188-189: also swallows OSError (Bad file descriptor).
+        from sandbox_core_lib.sandbox_core_lib.tls_pin import _is_tty
+
+        class _RaisesOSError:
+            def isatty(self):
+                raise OSError(9, 'Bad file descriptor')
+
+        self.assertFalse(_is_tty(_RaisesOSError()))
+
+    def test_write_stderr_swallows_oserror(self) -> None:
+        # Lines 210-211: ``_write_stderr`` must swallow OSError so a
+        # broken stderr never crashes the security message path. If
+        # the warning can't be displayed, the operator still gets the
+        # TlsPinError exception — but kato must not die mid-write.
+        from sandbox_core_lib.sandbox_core_lib.tls_pin import _write_stderr
+
+        class _BrokenStream:
+            def write(self, _text):
+                raise OSError('disk full')
+
+            def flush(self):
+                pass
+
+        # Must not raise.
+        _write_stderr('x', _BrokenStream())
+
+    def test_write_stderr_swallows_valueerror(self) -> None:
+        # Lines 210-211: also swallows ValueError (closed stream).
+        from sandbox_core_lib.sandbox_core_lib.tls_pin import _write_stderr
+
+        class _ClosedStream:
+            def write(self, _text):
+                raise ValueError('I/O operation on closed file')
+
+            def flush(self):
+                pass
+
+        _write_stderr('x', _ClosedStream())
+
+    def test_write_stderr_falls_back_to_sys_stderr_when_none(self) -> None:
+        # Line 206: ``stderr=None`` falls back to ``sys.stderr`` so the
+        # security message always has somewhere to go even when the
+        # caller forgot to pass an explicit stream.
+        import sys
+        from unittest.mock import patch
+        from sandbox_core_lib.sandbox_core_lib.tls_pin import _write_stderr
+
+        with patch.object(sys, 'stderr', new=io.StringIO()) as fake:
+            _write_stderr('hello', None)
+        self.assertEqual(fake.getvalue(), 'hello')
+
+    def test_save_pin_file_swallows_chmod_oserror(self) -> None:
+        # Lines 239-243: chmod failure on the parent dir (some
+        # filesystems silently reject chmod — network mounts, WSL
+        # paths to Windows-side drives) must NOT abort the save.
+        # The pin data isn't a secret; it's operator-private metadata.
+        # Aborting here would prevent first-run TOFU on those FSes.
+        from unittest.mock import patch
+        path = _temp_pin_path()
+        with patch(
+            'sandbox_core_lib.sandbox_core_lib.tls_pin.os.chmod',
+            side_effect=OSError('chmod not supported'),
+        ):
+            _save_pin_file(path, _FAKE_PRIMARY_PIN)
+        # File still written despite chmod failure.
+        self.assertTrue(path.exists())
+        first_line = path.read_text().splitlines()[0]
+        self.assertEqual(first_line, _FAKE_PRIMARY_PIN)
+
+    def test_read_pin_file_rejects_empty_first_line(self) -> None:
+        # Line 272: first line is blank after strip() → ValueError.
+        # Prevents an attacker from creating a pin file whose first
+        # line is whitespace, which would otherwise sneak past the
+        # 'not lines' check and fail later in a less-obvious way.
+        path = _temp_pin_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('   \nsome trailing line\n')
+        with self.assertRaises(ValueError) as ctx:
+            _read_pin_file(path)
+        self.assertIn('no fingerprint', str(ctx.exception))
+
+    def test_mismatch_refusal_lists_all_pins_when_multiple_configured(
+        self,
+    ) -> None:
+        # Lines 367-368: env-var pin can be a comma-separated list
+        # (primary + backup). The mismatch refusal must enumerate
+        # ALL configured pins so the operator can compare. If we
+        # showed only the first, the operator couldn't tell which
+        # backup, if any, was supposed to match.
+        env = {
+            _PIN_ENV_KEY: f'{_FAKE_PRIMARY_PIN},{_FAKE_BACKUP_PIN}',
+        }
+        stderr = _NonTtyStringIO()
+        with self.assertRaises(TlsPinError):
+            validate_anthropic_tls_pin_or_refuse(
+                env=env,
+                stderr=stderr,
+                fetch_live_fingerprint=lambda: _FAKE_WRONG_FINGERPRINT,
+                pin_file_path=_temp_pin_path(),
+            )
+        message = stderr.getvalue()
+        # Both saved pins enumerated.
+        self.assertIn(_FAKE_PRIMARY_PIN, message)
+        self.assertIn(_FAKE_BACKUP_PIN, message)
+        # Live (wrong) fingerprint named so operator can investigate.
+        self.assertIn(_FAKE_WRONG_FINGERPRINT, message)
+        # 'Saved pins' plural header used (not 'Saved pin').
+        self.assertIn('Saved pins:', message)
+
+    def test_tilde_path_falls_back_when_home_unavailable(self) -> None:
+        # Lines 418-419: Path.home() can raise RuntimeError or
+        # KeyError in odd environments (no $HOME, no user db).
+        # Must not crash — fall back to str(path).
+        from unittest.mock import patch
+        from sandbox_core_lib.sandbox_core_lib.tls_pin import _tilde_path
+        path = Path('/some/absolute/path')
+        with patch(
+            'sandbox_core_lib.sandbox_core_lib.tls_pin.Path.home',
+            side_effect=RuntimeError("no $HOME"),
+        ):
+            result = _tilde_path(path)
+        self.assertEqual(result, '/some/absolute/path')
+
+    def test_tilde_path_falls_back_when_home_keyerror(self) -> None:
+        # Lines 418-419: also handles KeyError (passwd lookup miss).
+        from unittest.mock import patch
+        from sandbox_core_lib.sandbox_core_lib.tls_pin import _tilde_path
+        path = Path('/some/absolute/path')
+        with patch(
+            'sandbox_core_lib.sandbox_core_lib.tls_pin.Path.home',
+            side_effect=KeyError('USER'),
+        ):
+            result = _tilde_path(path)
+        self.assertEqual(result, '/some/absolute/path')
+
+    def test_tilde_path_renders_with_tilde_when_under_home(self) -> None:
+        # Line 424: success branch. When the path sits under $HOME,
+        # render it with the leading ``~/`` for operator-friendly
+        # display in the warning boxes.
+        from unittest.mock import patch
+        from sandbox_core_lib.sandbox_core_lib.tls_pin import _tilde_path
+        with tempfile.TemporaryDirectory() as fake_home_str:
+            fake_home = Path(fake_home_str)
+            inside = fake_home / 'subdir' / 'file.txt'
+            inside.parent.mkdir(parents=True)
+            inside.write_text('x')
+            with patch(
+                'sandbox_core_lib.sandbox_core_lib.tls_pin.Path.home',
+                return_value=fake_home,
+            ):
+                result = _tilde_path(inside)
+        self.assertTrue(result.startswith('~/'))
+        self.assertIn('subdir/file.txt', result)
+
+    def test_first_run_logs_when_logger_provided(self) -> None:
+        # Line 534: logger.info() — operational telemetry that the
+        # TOFU first-run pin was established. Helps operators audit
+        # *when* their pin was created from logs.
+        import logging
+        logger = logging.getLogger('test_tls_pin_telemetry')
+        captured: list[tuple[str, tuple]] = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record):
+                captured.append((record.getMessage(), record.args))
+
+        handler = _Capture()
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+        try:
+            stderr = _NonTtyStringIO()
+            validate_anthropic_tls_pin_or_refuse(
+                env={},
+                stderr=stderr,
+                fetch_live_fingerprint=lambda: _FAKE_PRIMARY_PIN,
+                pin_file_path=_temp_pin_path(),
+                logger=logger,
+            )
+        finally:
+            logger.removeHandler(handler)
+
+        self.assertTrue(
+            any('TLS pin established' in msg for msg, _ in captured),
+            f'expected pin-established log entry, got {captured!r}',
+        )
+
+
+# Re-export env key name used inside the multi-pin test above.
+from sandbox_core_lib.sandbox_core_lib.tls_pin import (  # noqa: E402
+    _PIN_ENV_KEY,
+)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -356,5 +356,99 @@ class RecordSpawnIntegrationTests(unittest.TestCase):
         self.assertTrue(self.audit_path.exists())
 
 
+class ShipToHttpsSecurityTests(unittest.TestCase):
+    """OG2 security: HTTPS-only audit shipping, fail-closed on errors.
+
+    Audit entries can carry sensitive workspace paths and task IDs,
+    so plaintext shipping is refused and any network/TLS failure
+    surfaces as ``AuditShipError`` — never silently drop an entry.
+    """
+
+    def test_refuses_http_target_to_prevent_plaintext_leakage(self) -> None:
+        # Line 83 (block): plaintext shipping refused. SECURITY-CRITICAL.
+        from sandbox_core_lib.sandbox_core_lib.audit_log_shipping import (
+            _ship_to_https, AuditShipError,
+        )
+        with self.assertRaisesRegex(AuditShipError, 'plaintext shipping is refused'):
+            _ship_to_https('http://insecure.example/audit', {'event': 'spawn'})
+
+    def test_raises_on_non_2xx_response(self) -> None:
+        # Lines 102-105: non-2xx status → AuditShipError.
+        from sandbox_core_lib.sandbox_core_lib.audit_log_shipping import (
+            _ship_to_https, AuditShipError,
+        )
+        mock_response = MagicMock()
+        mock_response.getcode.return_value = 503
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        with patch(
+            'sandbox_core_lib.sandbox_core_lib.audit_log_shipping.urlopen',
+            return_value=mock_response,
+        ):
+            with self.assertRaisesRegex(AuditShipError, 'returned status 503'):
+                _ship_to_https('https://audit.example/sink', {'event': 'spawn'})
+
+    def test_raises_on_oserror_network_failure(self) -> None:
+        # Lines 106-111: OSError (TLS/network) → AuditShipError.
+        from sandbox_core_lib.sandbox_core_lib.audit_log_shipping import (
+            _ship_to_https, AuditShipError,
+        )
+        with patch(
+            'sandbox_core_lib.sandbox_core_lib.audit_log_shipping.urlopen',
+            side_effect=OSError('connection refused'),
+        ):
+            with self.assertRaisesRegex(AuditShipError, 'failed: connection refused'):
+                _ship_to_https('https://audit.example/sink', {'event': 'spawn'})
+
+
+class ShipToFileSecurityTests(unittest.TestCase):
+    """OG2 security: local-file audit sink fail-closed paths."""
+
+    def test_refuses_file_url_without_path(self) -> None:
+        # Lines 127-130: ``file://`` with no path → reject (operator typo).
+        from sandbox_core_lib.sandbox_core_lib.audit_log_shipping import (
+            _ship_to_file, AuditShipError,
+        )
+        with self.assertRaisesRegex(AuditShipError, 'has no path component'):
+            _ship_to_file('file://', {'event': 'spawn'})
+
+    def test_raises_when_parent_dir_creation_fails(self) -> None:
+        # Lines 134-137: ``mkdir`` raises → AuditShipError.
+        from sandbox_core_lib.sandbox_core_lib.audit_log_shipping import (
+            _ship_to_file, AuditShipError,
+        )
+        with patch.object(Path, 'mkdir', side_effect=PermissionError('locked')):
+            with self.assertRaisesRegex(AuditShipError, 'cannot create parent'):
+                _ship_to_file('file:///some/path/audit.log', {'event': 'spawn'})
+
+    def test_raises_when_write_fails(self) -> None:
+        # Lines 152-153: ``os.write`` fails → AuditShipError.
+        from sandbox_core_lib.sandbox_core_lib.audit_log_shipping import (
+            _ship_to_file, AuditShipError,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            target = f'file://{tmp}/audit.log'
+            with patch(
+                'sandbox_core_lib.sandbox_core_lib.audit_log_shipping.os.write',
+                side_effect=OSError('disk full'),
+            ):
+                with self.assertRaisesRegex(AuditShipError, 'write to .* failed'):
+                    _ship_to_file(target, {'event': 'spawn'})
+
+    def test_raises_when_open_fails(self) -> None:
+        # Lines 145-146: ``os.open`` fails → AuditShipError.
+        from sandbox_core_lib.sandbox_core_lib.audit_log_shipping import (
+            _ship_to_file, AuditShipError,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            target = f'file://{tmp}/audit.log'
+            with patch(
+                'sandbox_core_lib.sandbox_core_lib.audit_log_shipping.os.open',
+                side_effect=PermissionError('locked'),
+            ):
+                with self.assertRaisesRegex(AuditShipError, 'cannot open sink'):
+                    _ship_to_file(target, {'event': 'spawn'})
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -132,3 +132,30 @@ class VerifyMainContainerRunTests(unittest.TestCase):
     def test_returns_2_on_container_exit_2(self):
         result, _ = self._run_main(returncode=2)
         self.assertEqual(result, 2)
+
+
+class VerifyModuleEntryPointTests(unittest.TestCase):
+    """Line 215: ``if __name__ == '__main__': sys.exit(main())`` —
+    the module-as-script entry point.
+
+    Security-relevant: the entry point is what operators run from the
+    shell. We use ``runpy`` to execute the module exactly as Python
+    would when invoked as ``python -m sandbox_core_lib.sandbox_core_lib.verify``,
+    so the entry point is exercised end-to-end (not just simulated).
+    All Docker calls are still mocked — no real container spawns.
+    """
+
+    def test_running_as_script_calls_main_via_sys_exit(self):
+        import runpy
+        with patch('sandbox_core_lib.sandbox_core_lib.verify.docker_available',
+                   return_value=False), \
+             patch('sys.stderr', new_callable=StringIO):
+            # Running as ``__main__`` triggers ``sys.exit(main())`` which
+            # raises SystemExit. Catch it and verify the exit code.
+            with self.assertRaises(SystemExit) as ctx:
+                runpy.run_module(
+                    'sandbox_core_lib.sandbox_core_lib.verify',
+                    run_name='__main__',
+                )
+            # ``docker_available=False`` → main() returns 1 → sys.exit(1).
+            self.assertEqual(ctx.exception.code, 1)
