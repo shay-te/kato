@@ -5,6 +5,7 @@ import {
 } from '../utils/imageAttachment.js';
 import { toast } from '../stores/toastStore.js';
 import { appendComposerFragment } from '../utils/chatComposerHelpers.js';
+import { readDraft, writeDraft } from '../utils/composerDraft.js';
 
 // Composer state (the textarea contents + attached images) lives
 // INSIDE this component on purpose — typing should not re-render
@@ -21,43 +22,13 @@ import { appendComposerFragment } from '../utils/chatComposerHelpers.js';
 // paths stay correct without an O(tree) re-render.
 //
 // Draft text survives tab switches via localStorage keyed by
-// ``taskId``. SessionDetail keys this component on ``activeTaskId``,
-// so React unmounts it when the operator switches tabs and the
-// in-memory ``value`` state is dropped. Persisting to localStorage
-// on every keystroke lets the next mount (on tab return) read the
-// in-progress draft back out — matches VS Code's per-tab draft
-// behaviour. Submit / clear / mount-on-empty all wipe the key.
-const _DRAFT_STORAGE_PREFIX = 'kato.composer.draft.';
-
-function _draftStorageKey(taskId) {
-  return taskId ? `${_DRAFT_STORAGE_PREFIX}${taskId}` : '';
-}
-
-function _readPersistedDraft(taskId) {
-  const key = _draftStorageKey(taskId);
-  if (!key) { return ''; }
-  try {
-    return window.localStorage.getItem(key) || '';
-  } catch (_err) {
-    // localStorage can throw in private browsing / quota-exceeded.
-    // The composer must still work — fall through with empty draft.
-    return '';
-  }
-}
-
-function _writePersistedDraft(taskId, value) {
-  const key = _draftStorageKey(taskId);
-  if (!key) { return; }
-  try {
-    if (value) {
-      window.localStorage.setItem(key, value);
-    } else {
-      window.localStorage.removeItem(key);
-    }
-  } catch (_err) {
-    // Swallow — draft persistence is best-effort.
-  }
-}
+// ``taskId`` — see ``utils/composerDraft.js`` for the pure helpers.
+// SessionDetail keys this component on ``activeTaskId``, so React
+// unmounts it when the operator switches tabs and the in-memory
+// ``value`` state is dropped. Persisting to localStorage on every
+// keystroke lets the next mount (on tab return) read the in-progress
+// draft back out — matches VS Code's per-tab draft behaviour.
+// Submit / clear / mount-on-empty all wipe the key.
 
 const MessageForm = forwardRef(function MessageForm({
   taskId,
@@ -72,7 +43,7 @@ const MessageForm = forwardRef(function MessageForm({
   // Lazy initializer reads the persisted draft once on mount.
   // SessionDetail keys this component on the active task, so this
   // hydrates correctly when the operator tabs back to the task.
-  const [value, setValue] = useState(() => _readPersistedDraft(taskId));
+  const [value, setValue] = useState(() => readDraft(taskId));
   // Attached images live in component state (not lifted) because the
   // composer is the only thing that reads / writes them — no other
   // pane needs to know what the operator pasted before they hit Send.
@@ -86,7 +57,7 @@ const MessageForm = forwardRef(function MessageForm({
   // Mirror every text change into localStorage so the next mount
   // (on tab return) hydrates with the same in-progress draft.
   useEffect(() => {
-    _writePersistedDraft(taskId, value);
+    writeDraft(taskId, value);
   }, [taskId, value]);
 
   // Expose the imperative API App uses for "paste this fragment"
@@ -100,7 +71,7 @@ const MessageForm = forwardRef(function MessageForm({
     clear() {
       setValue('');
       setAttachments([]);
-      _writePersistedDraft(taskId, '');
+      writeDraft(taskId, '');
     },
     getValue() { return value; },
   }), [taskId, value]);
@@ -113,7 +84,7 @@ const MessageForm = forwardRef(function MessageForm({
     onSubmit(trimmed, attachments.map((a) => a.part));
     setValue('');
     setAttachments([]);
-    _writePersistedDraft(taskId, '');
+    writeDraft(taskId, '');
   }
 
   const placeholder = disabled
