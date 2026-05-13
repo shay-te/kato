@@ -488,8 +488,12 @@ class StreamingClaudeSession(object):
         request_id_str = str(request_id or '').strip()
         if not request_id_str:
             raise ValueError('request_id is required')
+        # Read the original input WITHOUT popping yet — if the stdin
+        # write below fails (broken pipe, dead subprocess), the request
+        # must stay in the live dict so the operator's orange-dot
+        # indicator stays accurate and the next retry can find it.
         with self._pending_control_requests_lock:
-            request = self._pending_control_requests.pop(request_id_str, {})
+            request = self._pending_control_requests.get(request_id_str, {})
         original_input = (
             request.get('input') if isinstance(request, dict) else {}
         ) or {}
@@ -508,7 +512,12 @@ class StreamingClaudeSession(object):
                 'response': decision,
             },
         }
+        # Write FIRST; only pop on success. If write raises, the
+        # caller re-tries with the same request_id and the operator
+        # sees the orange dot stay until the response actually lands.
         self._write_stdin_line(envelope)
+        with self._pending_control_requests_lock:
+            self._pending_control_requests.pop(request_id_str, None)
         # Mirror the response into the event log so any browser that
         # reconnects (or another tab opened on the same task) replays a
         # signal that this request is no longer pending — otherwise the

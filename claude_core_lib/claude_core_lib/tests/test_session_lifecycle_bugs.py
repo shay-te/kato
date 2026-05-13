@@ -474,13 +474,16 @@ class Bug2ResumePassesSameSessionIdTests(unittest.TestCase):
                 initial_prompt='first message',
                 cwd='/tmp/T1',
             )
-            # Adopt a concrete id (mirrors what the real session
-            # captures via _build_command + auto-refresh on get_record).
+            # adopt_session_id refuses while a live subprocess exists
+            # for this task (so the next start_session won't silently
+            # reuse the live session and discard the adopted id).
+            # Terminate FIRST, then adopt — mirrors what the planning
+            # UI does on the adoption path.
+            manager_run1.terminate_session('T1')
             manager_run1.adopt_session_id(
                 'T1', claude_session_id='surviving-id-xyz',
                 task_summary='do work',
             )
-            manager_run1.terminate_session('T1')
             del manager_run1  # operator stops kato
 
             # ---- kato run #2 ----

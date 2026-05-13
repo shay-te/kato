@@ -531,6 +531,25 @@ class ClaudeSessionManager(object):
         normalized_task_id = self._normalize_task_id(task_id)
         now = time.time()
         with self._lock:
+            # Refuse adoption when a live subprocess is still running
+            # for this task. The next ``start_session`` would reuse the
+            # live session (the one-per-task invariant short-circuits at
+            # ``is_alive``) which silently discards the adoption — the
+            # operator's intent (continue from external session) gets
+            # dropped. Force the caller to terminate first so the
+            # lifecycle change is explicit.
+            existing_session = self._sessions.get(normalized_task_id)
+            if existing_session is not None and getattr(
+                existing_session, 'is_alive', False,
+            ):
+                raise RuntimeError(
+                    f'cannot adopt session id for task {normalized_task_id}: '
+                    f'a live Claude subprocess is still running for this '
+                    f'task. Terminate the live session first '
+                    f'(``terminate_session(task_id)``) before adopting; '
+                    f'otherwise the next message would silently reuse the '
+                    f'running subprocess instead of resuming the adopted id.'
+                )
             record = self._records.get(normalized_task_id)
             if record is None:
                 record = PlanningSessionRecord(
@@ -628,7 +647,20 @@ class ClaudeSessionManager(object):
         terminal result text. The check is conservative — false positives
         only cost us a fresh session, but a missed positive would loop
         forever.
+
+        The function REQUIRES the subprocess to have actually exited.
+        An alive subprocess whose stderr happens to contain the marker
+        text (e.g., a log line from Claude or a tool that echoes the
+        session id for diagnostics) MUST NOT trigger the self-heal
+        path. Without this gate, healthy sessions get spuriously torn
+        down and respawned fresh, burning tokens and losing context.
         """
+        # Only an exited subprocess can be "died with stale resume id".
+        # A still-alive session that happens to surface the marker in
+        # stderr (e.g., a tool output) is NOT the failure mode we're
+        # detecting.
+        if bool(getattr(session, 'is_alive', False)):
+            return False
         marker = f'No conversation found with session ID: {resume_session_id}'
         try:
             stderr_lines = session.stderr_snapshot()

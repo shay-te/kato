@@ -133,7 +133,11 @@ function appendEntryIfNew(state, entry) {
   };
 }
 
-function reducer(state, action) {
+// Exported for unit tests. Pure function — the hook is just a thin
+// `useReducer` wrapper around this. Tests pass in `{type, ...}` actions
+// with the constants below as type strings ("lifecycle", "mark_turn_busy",
+// "incoming_event", "incoming_history", "hydrate", "dismiss_permission").
+export function reducer(state, action) {
   switch (action.type) {
     case ACTION_HYDRATE:
       return action.value;
@@ -157,11 +161,19 @@ function reducer(state, action) {
     }
     case ACTION_LIFECYCLE:
       // CLOSED / IDLE / MISSING all mean "nothing live is waiting for input"
-      // — drop any stale permission so the modal doesn't pop on a finished tab.
+      // — drop any stale permission AND reset turnInFlight. Without
+      // the turnInFlight reset, the WorkingIndicator stays "Claude is
+      // thinking…" forever on a subprocess that died mid-turn (no
+      // RESULT event was emitted before the subprocess exited).
       if (action.value === SESSION_LIFECYCLE.CLOSED
           || action.value === SESSION_LIFECYCLE.IDLE
           || action.value === SESSION_LIFECYCLE.MISSING) {
-        return { ...state, lifecycle: action.value, pendingPermission: null };
+        return {
+          ...state,
+          lifecycle: action.value,
+          pendingPermission: null,
+          turnInFlight: false,
+        };
       }
       return { ...state, lifecycle: action.value };
     case ACTION_DISMISS_PERMISSION:
