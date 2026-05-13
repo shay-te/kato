@@ -347,7 +347,9 @@ export default function FilesTab({
 //   * added N — green, lists the names so the operator can see what
 //     showed up in the tree
 //   * partial / failed — red or amber, surfaces the error
-function formatSyncResult(result) {
+// Exported for tests. Pure mapping from a sync api result to the
+// kind/title/message of the operator-facing toast.
+export function formatSyncResult(result) {
   const body = (result && result.body) || {};
   if (!result || !result.ok) {
     return {

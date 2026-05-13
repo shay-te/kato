@@ -7,6 +7,7 @@ import { stringifyShort } from '../utils/dom.js';
 import { formatToolUse } from '../utils/formatToolUse.js';
 import { MessageFilter } from '../utils/MessageFilter.js';
 import {
+  TOOL_DETAILS_COLLAPSE_THRESHOLD,
   TOOL_DETAILS_HARD_CAP,
   computeEventLogWindow,
   computeToolDetailsRender,

@@ -43,7 +43,9 @@ export const commentSubmitLock = {
 
   subscribe(fn) {
     _listeners.add(fn);
-    fn(_busy);
+    // Wrapped in try/catch so a throwing subscriber can't take down
+    // the caller of subscribe() — same defense as _emit().
+    try { fn(_busy); } catch (_) { /* see _emit */ }
     return () => { _listeners.delete(fn); };
   },
 };

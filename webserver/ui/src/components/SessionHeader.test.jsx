@@ -1,0 +1,332 @@
+// Tests for SessionHeader. Mocks the api module + the two hooks
+// (usePushApproval, useTaskPublish) so we test only the header's
+// own logic: status-dot rendering, button enablement, action
+// dispatch, modal opening.
+
+import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+
+vi.mock('../api.js', () => ({
+  finishTask: vi.fn().mockResolvedValue({ ok: true, body: { finished: true } }),
+  postSession: vi.fn().mockResolvedValue({ ok: true }),
+  updateTaskSource: vi.fn().mockResolvedValue({
+    ok: true,
+    body: { updated_repositories: [], failed_repositories: [], warnings: [] },
+  }),
+}));
+
+vi.mock('../hooks/usePushApproval.js', () => ({
+  usePushApproval: vi.fn(),
+}));
+vi.mock('../hooks/useTaskPublish.js', () => ({
+  useTaskPublish: vi.fn(),
+}));
+vi.mock('../stores/toastStore.js', () => ({
+  toast: { show: vi.fn() },
+}));
+
+import { postSession } from '../api.js';
+import { usePushApproval } from '../hooks/usePushApproval.js';
+import { useTaskPublish } from '../hooks/useTaskPublish.js';
+import { toast } from '../stores/toastStore.js';
+import SessionHeader from './SessionHeader.jsx';
+import { SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
+import { TAB_STATUS } from '../constants/tabStatus.js';
+
+
+function _session(overrides = {}) {
+  return {
+    task_id: 'PROJ-1',
+    task_summary: 'Fix the login bug',
+    status: TAB_STATUS.ACTIVE,
+    live: true,
+    working: false,
+    claude_session_id: 'sess-1',
+    ...overrides,
+  };
+}
+
+function _defaultPushApproval(overrides = {}) {
+  return {
+    awaiting: false,
+    busy: false,
+    approve: vi.fn().mockResolvedValue({ ok: true }),
+    ...overrides,
+  };
+}
+
+function _defaultTaskPublish(overrides = {}) {
+  return {
+    hasWorkspace: true,
+    hasChangesToPush: false,
+    hasPullRequest: false,
+    pullRequestUrls: [],
+    pushBusy: false,
+    pullBusy: false,
+    prBusy: false,
+    push: vi.fn(),
+    pull: vi.fn().mockResolvedValue({ ok: true }),
+    createPullRequest: vi.fn(),
+    refresh: vi.fn(),
+    ...overrides,
+  };
+}
+
+
+beforeEach(() => {
+  usePushApproval.mockReturnValue(_defaultPushApproval());
+  useTaskPublish.mockReturnValue(_defaultTaskPublish());
+});
+
+
+describe('SessionHeader — null guard', () => {
+
+  test('returns null when no session is passed', () => {
+    const { container } = render(<SessionHeader session={null} />);
+    expect(container.firstChild).toBeNull();
+  });
+});
+
+
+describe('SessionHeader — task summary + status dot', () => {
+
+  test('renders the task summary', () => {
+    render(<SessionHeader session={_session()} streamLifecycle={SESSION_LIFECYCLE.STREAMING} />);
+    expect(screen.getByText('Fix the login bug')).toBeInTheDocument();
+  });
+
+  test('renders a status dot with the active class', () => {
+    const { container } = render(
+      <SessionHeader session={_session()} streamLifecycle={SESSION_LIFECYCLE.STREAMING} />,
+    );
+    expect(container.querySelector('.status-dot.status-active')).toBeInTheDocument();
+  });
+
+  test('needsAttention=true paints the dot with status-attention', () => {
+    const { container } = render(
+      <SessionHeader
+        session={_session()}
+        needsAttention={true}
+        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
+      />,
+    );
+    expect(container.querySelector('.status-dot.status-attention')).toBeInTheDocument();
+  });
+
+  test('PROVISIONING status paints is-loading on the dot', () => {
+    const { container } = render(
+      <SessionHeader
+        session={_session({ status: TAB_STATUS.PROVISIONING })}
+        streamLifecycle={SESSION_LIFECYCLE.CONNECTING}
+      />,
+    );
+    expect(container.querySelector('.status-dot.is-loading')).toBeInTheDocument();
+  });
+});
+
+
+describe('SessionHeader — Stop vs Resume button', () => {
+
+  test('STREAMING lifecycle shows the Stop button', () => {
+    render(
+      <SessionHeader
+        session={_session()}
+        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
+      />,
+    );
+    expect(screen.getByRole('button', { name: /^stop/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^resume/i }))
+      .not.toBeInTheDocument();
+  });
+
+  test('CLOSED lifecycle shows the Resume button', () => {
+    render(
+      <SessionHeader
+        session={_session()}
+        streamLifecycle={SESSION_LIFECYCLE.CLOSED}
+        onResume={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('button', { name: /^resume/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^stop/i }))
+      .not.toBeInTheDocument();
+  });
+
+  test('IDLE lifecycle also shows Resume', () => {
+    render(
+      <SessionHeader
+        session={_session()}
+        streamLifecycle={SESSION_LIFECYCLE.IDLE}
+        onResume={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('button', { name: /^resume/i })).toBeInTheDocument();
+  });
+
+  test('MISSING lifecycle shows Resume', () => {
+    render(
+      <SessionHeader
+        session={_session()}
+        streamLifecycle={SESSION_LIFECYCLE.MISSING}
+        onResume={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('button', { name: /^resume/i })).toBeInTheDocument();
+  });
+
+  test('clicking Stop calls postSession(task_id, "stop")', async () => {
+    render(
+      <SessionHeader
+        session={_session()}
+        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
+        onStopped={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /^stop/i }));
+    await waitFor(() => {
+      expect(postSession).toHaveBeenCalledWith('PROJ-1', 'stop');
+    });
+  });
+
+  test('clicking Resume calls the onResume callback', async () => {
+    const onResume = vi.fn().mockResolvedValue();
+    render(
+      <SessionHeader
+        session={_session()}
+        streamLifecycle={SESSION_LIFECYCLE.CLOSED}
+        onResume={onResume}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /^resume/i }));
+    await waitFor(() => { expect(onResume).toHaveBeenCalled(); });
+  });
+
+  test('Resume is disabled when onResume is not a function', () => {
+    render(
+      <SessionHeader
+        session={_session()}
+        streamLifecycle={SESSION_LIFECYCLE.CLOSED}
+        onResume={null}
+      />,
+    );
+    expect(screen.getByRole('button', { name: /^resume/i })).toBeDisabled();
+  });
+});
+
+
+describe('SessionHeader — Approve push banner', () => {
+
+  test('approve-push button is hidden when not awaiting', () => {
+    render(
+      <SessionHeader
+        session={_session()}
+        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: /approve push/i }))
+      .not.toBeInTheDocument();
+  });
+
+  test('approve-push button visible + clickable when awaiting=true', async () => {
+    const approve = vi.fn().mockResolvedValue({ ok: true });
+    usePushApproval.mockReturnValue(_defaultPushApproval({
+      awaiting: true, approve,
+    }));
+
+    render(
+      <SessionHeader
+        session={_session()}
+        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
+      />,
+    );
+    const btn = screen.getByRole('button', { name: /approve push/i });
+    fireEvent.click(btn);
+    await waitFor(() => { expect(approve).toHaveBeenCalled(); });
+  });
+
+  test('approve-push button disabled while busy', () => {
+    usePushApproval.mockReturnValue(_defaultPushApproval({
+      awaiting: true, busy: true,
+    }));
+    render(
+      <SessionHeader
+        session={_session()}
+        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
+      />,
+    );
+    expect(screen.getByRole('button', { name: /pushing…/i })).toBeDisabled();
+  });
+});
+
+
+describe('SessionHeader — Push / Pull / PR buttons', () => {
+
+  test('Push button disabled when hasChangesToPush=false', () => {
+    useTaskPublish.mockReturnValue(_defaultTaskPublish({
+      hasChangesToPush: false,
+    }));
+    render(
+      <SessionHeader
+        session={_session()}
+        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
+      />,
+    );
+    expect(screen.getByRole('button', { name: /^push$/i })).toBeDisabled();
+  });
+
+  test('Push button enabled when hasChangesToPush=true', () => {
+    useTaskPublish.mockReturnValue(_defaultTaskPublish({
+      hasChangesToPush: true,
+    }));
+    render(
+      <SessionHeader
+        session={_session()}
+        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
+      />,
+    );
+    expect(screen.getByRole('button', { name: /^push$/i })).not.toBeDisabled();
+  });
+
+  test('Pull button disabled when no workspace', () => {
+    useTaskPublish.mockReturnValue(_defaultTaskPublish({
+      hasWorkspace: false,
+    }));
+    render(
+      <SessionHeader
+        session={_session()}
+        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
+      />,
+    );
+    expect(screen.getByRole('button', { name: /^pull$/i })).toBeDisabled();
+  });
+
+  test('Pull request button disabled when PR already exists', () => {
+    useTaskPublish.mockReturnValue(_defaultTaskPublish({
+      hasWorkspace: true,
+      hasPullRequest: true,
+    }));
+    render(
+      <SessionHeader
+        session={_session()}
+        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
+      />,
+    );
+    expect(screen.getByRole('button', { name: /pull request/i })).toBeDisabled();
+  });
+
+  test('Push action calls taskPublish.push and refreshes', async () => {
+    const push = vi.fn().mockResolvedValue({ ok: true });
+    const refresh = vi.fn();
+    useTaskPublish.mockReturnValue(_defaultTaskPublish({
+      hasChangesToPush: true, push, refresh,
+    }));
+    render(
+      <SessionHeader
+        session={_session()}
+        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /^push$/i }));
+    await waitFor(() => { expect(push).toHaveBeenCalled(); });
+  });
+});

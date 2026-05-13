@@ -224,7 +224,9 @@ export default function ChangesTab({
 // header label so a "still has a diff" tab doesn't look like uncommitted
 // work after publish. Empty string for the active/in-flight case — the
 // "Changes" tab title already says what the body is.
-function diffLabelForStatus(status) {
+// Exported for tests. Pure mapping from server status string to
+// the header chip text.
+export function diffLabelForStatus(status) {
   switch (String(status || '').toLowerCase()) {
     case 'review':
       return 'already pushed (PR open)';
@@ -292,7 +294,8 @@ function normalizeDiff(entry) {
   };
 }
 
-function basenameOf(path) {
+// Exported for tests.
+export function basenameOf(path) {
   if (!path) { return ''; }
   const trimmed = path.replace(/[\\/]+$/, '');
   const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
@@ -444,7 +447,8 @@ function RepoDiff({
 // see a fresh `[]` every parent render when a file has no comments.
 const EMPTY_COMMENTS = [];
 
-function diffFileKey(file) {
+// Exported for tests.
+export function diffFileKey(file) {
   const oldPath = file.oldPath || '';
   const newPath = file.newPath || '';
   return `${file.type}:${oldPath}->${newPath}`;
