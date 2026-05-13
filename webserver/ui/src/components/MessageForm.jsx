@@ -76,12 +76,28 @@ const MessageForm = forwardRef(function MessageForm({
     getValue() { return value; },
   }), [taskId, value]);
 
-  function submit(event) {
+  async function submit(event) {
     event.preventDefault();
     if (disabled) { return; }
     const trimmed = (value || '').trim();
     if (!trimmed && attachments.length === 0) { return; }
-    onSubmit(trimmed, attachments.map((a) => a.part));
+    // AWAIT onSubmit and only clear local state on a truthy result
+    // (or undefined — back-compat with callers that return nothing
+    // but never throw). If the send failed, KEEP the draft so the
+    // operator can retry — losing the text on a network failure
+    // was a real operator pain point.
+    let result;
+    try {
+      result = await onSubmit(trimmed, attachments.map((a) => a.part));
+    } catch (_err) {
+      // Send threw — caller will have surfaced an error bubble.
+      // Preserve the draft + textarea so the operator can retry.
+      return;
+    }
+    // Explicit ``false`` return signals "send failed" without throw;
+    // keep the draft. Anything else (including undefined / true) is
+    // treated as success.
+    if (result === false) { return; }
     setValue('');
     setAttachments([]);
     writeDraft(taskId, '');

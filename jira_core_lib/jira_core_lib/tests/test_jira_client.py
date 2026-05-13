@@ -408,16 +408,40 @@ class JiraClientMoveIssueToStateTests(unittest.TestCase):
                 client.move_issue_to_state('PROJ-1', 'status', 'In Review')
 
     def test_puts_field_update_for_non_status_fields(self) -> None:
+        # After the update, move_issue_to_state re-fetches the issue
+        # to verify the field actually changed. Both calls must be
+        # mocked: the PUT (update) and the GET (verify).
         client = _make_client()
-        response = mock_response()
+        put_response = mock_response()
+        verify_response = mock_response(
+            json_data={'fields': {'priority': 'High'}},
+        )
 
-        with patch.object(client, '_put', return_value=response) as mock_put:
+        with patch.object(client, '_put', return_value=put_response) as mock_put, \
+             patch.object(client, '_get', return_value=verify_response):
             client.move_issue_to_state('PROJ-1', 'priority', 'High')
 
         mock_put.assert_called_once_with(
             '/rest/api/3/issue/PROJ-1',
             json={'fields': {'priority': 'High'}},
         )
+
+    def test_raises_when_field_update_silently_ignored(self) -> None:
+        # The bug this verification catches: Jira accepts the PUT
+        # with 200 OK but the field isn't actually updated (read-only
+        # field, wrong custom field id, workflow validation). Without
+        # the verify, kato would believe the state changed when it
+        # hadn't, leaving the operator's UI out of sync with Jira.
+        client = _make_client()
+        put_response = mock_response()
+        verify_response = mock_response(
+            json_data={'fields': {'priority': 'Low'}},  # unchanged
+        )
+
+        with patch.object(client, '_put', return_value=put_response), \
+             patch.object(client, '_get', return_value=verify_response):
+            with self.assertRaisesRegex(RuntimeError, 'still'):
+                client.move_issue_to_state('PROJ-1', 'priority', 'High')
 
     def test_handles_empty_transitions_list(self) -> None:
         client = _make_client()

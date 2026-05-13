@@ -92,13 +92,16 @@ export default function SessionDetail({
           source: ENTRY_SOURCE.LOCAL, kind: BUBBLE_KIND.SYSTEM, text: '✓ delivered',
         });
       }
-    } else {
-      stream.appendLocalEvent({
-        source: ENTRY_SOURCE.LOCAL, kind: BUBBLE_KIND.ERROR,
-        text: `send failed: ${result.error}`,
-      });
-      stream.markTurnBusy(false);
+      return true;
     }
+    stream.appendLocalEvent({
+      source: ENTRY_SOURCE.LOCAL, kind: BUBBLE_KIND.ERROR,
+      text: `send failed: ${result.error}`,
+    });
+    stream.markTurnBusy(false);
+    // Return false so MessageForm preserves the operator's draft —
+    // they can edit + retry instead of having to retype.
+    return false;
   }
 
   async function submitPermissionResponse({ requestId, allow, rationale }) {

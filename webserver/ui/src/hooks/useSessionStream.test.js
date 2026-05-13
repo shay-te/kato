@@ -97,6 +97,74 @@ test('Bug A: lifecycle STREAMING does NOT touch turnInFlight', function () {
 // when it's STREAMING.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Bug: PERMISSION_RESPONSE clears pendingPermission on mismatched/empty id.
+// A synthetic or malformed response (request_id='') would wipe a legitimate
+// pending modal, leaving the operator without a way to approve.
+// ---------------------------------------------------------------------------
+
+test('Bug PERM-1: PERMISSION_RESPONSE with empty id does NOT clear matched pending', function () {
+  const stateWithPending = {
+    events: [],
+    eventKeys: new Set(),
+    lifecycle: SESSION_LIFECYCLE.STREAMING,
+    turnInFlight: false,
+    pendingPermission: { type: 'permission_request', request_id: 'req-A', tool_name: 'Bash' },
+    lastEventAt: Date.now(),
+    streamGeneration: 0,
+  };
+  // Unrelated synthetic response with no request_id.
+  const next = reducer(stateWithPending, {
+    type: 'incoming_event',
+    event: { type: 'permission_response', request_id: '' },
+    receivedAtEpoch: Date.now(),
+  });
+  assert.deepEqual(
+    next.pendingPermission?.request_id, 'req-A',
+    'permission for req-A should still be pending — an empty-id response is not a match',
+  );
+});
+
+test('Bug PERM-1: PERMISSION_RESPONSE with WRONG id does NOT clear pending', function () {
+  const stateWithPending = {
+    events: [],
+    eventKeys: new Set(),
+    lifecycle: SESSION_LIFECYCLE.STREAMING,
+    turnInFlight: false,
+    pendingPermission: { type: 'permission_request', request_id: 'req-A', tool_name: 'Bash' },
+    lastEventAt: Date.now(),
+    streamGeneration: 0,
+  };
+  const next = reducer(stateWithPending, {
+    type: 'incoming_event',
+    event: { type: 'permission_response', request_id: 'req-B' },
+    receivedAtEpoch: Date.now(),
+  });
+  assert.deepEqual(
+    next.pendingPermission?.request_id, 'req-A',
+    'mismatched response should not clear the pending of a different request',
+  );
+});
+
+test('PERMISSION_RESPONSE with MATCHING id clears pending (normal case)', function () {
+  const stateWithPending = {
+    events: [],
+    eventKeys: new Set(),
+    lifecycle: SESSION_LIFECYCLE.STREAMING,
+    turnInFlight: false,
+    pendingPermission: { type: 'permission_request', request_id: 'req-A', tool_name: 'Bash' },
+    lastEventAt: Date.now(),
+    streamGeneration: 0,
+  };
+  const next = reducer(stateWithPending, {
+    type: 'incoming_event',
+    event: { type: 'permission_response', request_id: 'req-A' },
+    receivedAtEpoch: Date.now(),
+  });
+  assert.equal(next.pendingPermission, null);
+});
+
+
 test('Bug B: HYDRATE preserves the lifecycle value it is given', function () {
   // The reducer itself is correct — it simply replaces state with the
   // hydrated value. The bug is in the *caller* (useEffect). This test

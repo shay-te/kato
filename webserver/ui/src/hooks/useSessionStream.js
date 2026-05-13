@@ -214,9 +214,19 @@ function reduceIncomingEvent(state, raw, receivedAtEpoch) {
       next.pendingPermission = raw;
       break;
     case CLAUDE_EVENT.PERMISSION_RESPONSE: {
+      // Only clear pending when we can MATCH the response to it.
+      // Previously we also cleared on empty respondedId — but an
+      // unrelated response (e.g., synthetic event with no id) would
+      // then wipe a legitimate pending modal. Require a positive
+      // match: either both ids present and equal, OR the pending
+      // side has no id at all (legacy shape with no way to verify).
       const respondedId = String(raw.request_id || '');
       const pendingId = pendingRequestId(state.pendingPermission);
-      if (!respondedId || !pendingId || respondedId === pendingId) {
+      if (pendingId && respondedId && respondedId === pendingId) {
+        next.pendingPermission = null;
+      } else if (!pendingId && state.pendingPermission) {
+        // Pending exists but has no id — best-effort clear so we
+        // don't deadlock on a malformed legacy event.
         next.pendingPermission = null;
       }
       break;

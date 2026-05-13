@@ -205,13 +205,34 @@ class GitLabClient(PullRequestClientBase):
         repo_slug: str,
         pull_request_id: str,
     ) -> list[dict[str, Any]]:
-        response = self._get_with_retry(
-            f'/projects/{self._project_path(repo_owner, repo_slug)}/merge_requests/{pull_request_id}/discussions',
-            params={'per_page': 100},
+        # Paginate via ``page`` + ``per_page`` so MRs with more than
+        # one page of discussions don't silently miss comments
+        # beyond the first 100. GitLab exposes the "next page" via
+        # the X-Next-Page header; we stop when it's empty.
+        endpoint = (
+            f'/projects/{self._project_path(repo_owner, repo_slug)}/'
+            f'merge_requests/{pull_request_id}/discussions'
         )
-        response.raise_for_status()
-        payload = response.json() or []
-        return payload if isinstance(payload, list) else []
+        all_items: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            response = self._get_with_retry(
+                endpoint,
+                params={'per_page': 100, 'page': page},
+            )
+            response.raise_for_status()
+            payload = response.json() or []
+            if not isinstance(payload, list):
+                break
+            all_items.extend(payload)
+            next_page = (response.headers or {}).get('X-Next-Page', '').strip()
+            if not next_page:
+                break
+            try:
+                page = int(next_page)
+            except (TypeError, ValueError):
+                break
+        return all_items
 
     def _discussion_id_for_comment(
         self,

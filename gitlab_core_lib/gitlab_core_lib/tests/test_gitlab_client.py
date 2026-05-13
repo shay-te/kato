@@ -129,7 +129,7 @@ class GitLabClientListPullRequestCommentsTests(unittest.TestCase):
         )
         mock_get.assert_called_once_with(
             '/projects/group%2Fsubgroup%2Frepo/merge_requests/17/discussions',
-            params={'per_page': 100},
+            params={'per_page': 100, 'page': 1},
         )
 
     def test_skips_resolved_discussions(self) -> None:

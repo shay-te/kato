@@ -90,14 +90,34 @@ class YouTrackClient(YouTrackClientBase):
         response.raise_for_status()
 
     def get_assigned_tasks(self, project: str, assignee: str, states: list[str]) -> list[Task]:
+        # Paginate via ``$top`` + ``$skip`` so teams with more than
+        # one page of in-progress issues don't silently miss tasks
+        # beyond the first 100. YouTrack returns whatever's available;
+        # we stop once a page comes back smaller than the page size.
         query = self._build_assigned_tasks_query(project, assignee, states)
-        response = self._get_with_retry(
-            '/api/issues',
-            params={'query': query, 'fields': 'idReadable,summary,description', '$top': 100},
-        )
-        response.raise_for_status()
+        page_size = 100
+        skip = 0
+        all_items: list[object] = []
+        while True:
+            response = self._get_with_retry(
+                '/api/issues',
+                params={
+                    'query': query,
+                    'fields': 'idReadable,summary,description',
+                    '$top': page_size,
+                    '$skip': skip,
+                },
+            )
+            response.raise_for_status()
+            page = list(self._json_items(response))
+            if not page:
+                break
+            all_items.extend(page)
+            if len(page) < page_size:
+                break
+            skip += page_size
         return self._normalize_issue_tasks(
-            self._json_items(response),
+            all_items,
             to_task=self._to_task,
         )
 
@@ -138,15 +158,20 @@ class YouTrackClient(YouTrackClientBase):
         response.raise_for_status()
 
     def _issue_tag_id(self, issue_id: str, tag_name: str) -> str:
-        """Return the YouTrack tag id for ``tag_name`` on this issue, or ''."""
+        """Return the YouTrack tag id for ``tag_name`` on this issue, or ''.
+
+        Raises on API failure rather than returning ''. Previously the
+        try/except swallowed ALL exceptions, so callers (notably
+        ``remove_tag``) couldn't distinguish "tag not present" (a
+        no-op success) from "API failed" (operator should retry).
+        That mask let silent removal failures look like normal
+        no-ops in the logs.
+        """
         response = self._get_with_retry(
             f'/api/issues/{issue_id}/tags',
             params={'fields': 'id,name', '$top': 200},
         )
-        try:
-            response.raise_for_status()
-        except Exception:
-            return ''
+        response.raise_for_status()
         for item in self._json_items(response):
             if not isinstance(item, dict):
                 continue

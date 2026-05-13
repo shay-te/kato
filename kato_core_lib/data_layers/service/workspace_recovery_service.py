@@ -91,6 +91,7 @@ class WorkspaceRecoveryService(object):
             )
             return []
         adopted: list[WorkspaceRecord] = []
+        failed: list[Path] = []
         for orphan_dir in orphan_dirs:
             try:
                 record = self._recover_one(orphan_dir, live_tasks_by_id)
@@ -98,9 +99,23 @@ class WorkspaceRecoveryService(object):
                 self.logger.exception(
                     'failed to recover orphan workspace %s', orphan_dir,
                 )
+                failed.append(orphan_dir)
                 continue
             if record is not None:
                 adopted.append(record)
+        # Surface a one-line summary even when some folders failed so
+        # operators reviewing boot logs see the count without digging
+        # through the per-folder exception traces. Previously a
+        # permission-denied on one folder was invisible unless the
+        # operator scrolled through tracebacks.
+        if failed:
+            self.logger.warning(
+                'orphan recovery completed with errors: '
+                'adopted %d, failed %d. Failed folders: %s. '
+                'Re-check filesystem permissions and re-run kato to retry.',
+                len(adopted), len(failed),
+                ', '.join(str(p) for p in failed),
+            )
         return adopted
 
     def _collect_orphan_directories(self) -> list[Path]:

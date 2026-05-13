@@ -77,8 +77,8 @@ describe('MessageForm — draft persistence (operator scenario)', () => {
     expect(screen.getByRole('textbox')).toHaveValue('message-for-A');
   });
 
-  test('submit clears both the textarea AND the persisted draft', () => {
-    const onSubmit = vi.fn();
+  test('submit clears both the textarea AND the persisted draft on success', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(true);
     const { container } = renderForm({ taskId: 'T1', onSubmit });
 
     const textarea = screen.getByRole('textbox');
@@ -90,8 +90,41 @@ describe('MessageForm — draft persistence (operator scenario)', () => {
     fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
 
     expect(onSubmit).toHaveBeenCalledWith('send this', []);
+    // Submit is now async; wait for the post-await state clear.
+    await new Promise((r) => setTimeout(r, 0));
     expect(textarea).toHaveValue('');
     expect(window.localStorage.getItem(`${DRAFT_STORAGE_PREFIX}T1`)).toBeNull();
+  });
+
+  test('Bug: draft + textarea survive when onSubmit returns false (send failed)', async () => {
+    // Operator clicks Send → backend returns an error envelope →
+    // SessionDetail's onSendMessage returns false. The draft must
+    // stay intact so the operator can retry without retyping.
+    const onSubmit = vi.fn().mockResolvedValue(false);
+    renderForm({ taskId: 'T1', onSubmit });
+
+    const textarea = screen.getByRole('textbox');
+    fireEvent.change(textarea, { target: { value: 'might fail' } });
+    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(textarea).toHaveValue('might fail');
+    expect(window.localStorage.getItem(`${DRAFT_STORAGE_PREFIX}T1`))
+      .toBe('might fail');
+  });
+
+  test('Bug: draft + textarea survive when onSubmit throws (network error)', async () => {
+    const onSubmit = vi.fn().mockRejectedValue(new Error('network down'));
+    renderForm({ taskId: 'T1', onSubmit });
+
+    const textarea = screen.getByRole('textbox');
+    fireEvent.change(textarea, { target: { value: 'mid-flight' } });
+    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(textarea).toHaveValue('mid-flight');
+    expect(window.localStorage.getItem(`${DRAFT_STORAGE_PREFIX}T1`))
+      .toBe('mid-flight');
   });
 
   test('Shift+Enter inserts a newline and does NOT submit', () => {

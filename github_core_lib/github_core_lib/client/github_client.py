@@ -19,10 +19,14 @@ from provider_client_base.provider_client_base.helpers.text_utils import (
 class GitHubClient(PullRequestClientBase):
     provider_name = 'github'
     _REVIEW_THREADS_QUERY = '''
-query($owner: String!, $name: String!, $number: Int!) {
+query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
-      reviewThreads(first: 100) {
+      reviewThreads(first: 100, after: $cursor) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
         nodes {
           id
           isResolved
@@ -231,18 +235,57 @@ mutation($threadId: ID!) {
             pull_request_number = int(normalized_text(pull_request_id))
         except ValueError as exc:
             raise ValueError(f'invalid GitHub pull request id: {pull_request_id}') from exc
-        payload = self._graphql_with_retry(
-            self._REVIEW_THREADS_QUERY,
-            {
-                'owner': repo_owner,
-                'name': repo_slug,
-                'number': pull_request_number,
-            },
-        )
-        repository = payload.get('data', {}).get('repository', {})
-        pull_request = dict_from_mapping(repository, 'pullRequest')
-        review_threads = dict_from_mapping(pull_request, 'reviewThreads')
-        return list_from_mapping(review_threads, 'nodes')
+        # Paginate via GraphQL relay cursors so PRs with >100 review
+        # threads are NOT silently truncated. Previously the query
+        # capped at ``first: 100`` and threads 101+ were invisible.
+        # Also: a null ``data.repository`` (permission denied, PR
+        # moved/deleted) was silently treated as "no threads" by
+        # dict_from_mapping. Now we distinguish "API returned null"
+        # from "API returned an empty list" — the former is an error.
+        all_nodes: list[object] = []
+        cursor: str | None = None
+        while True:
+            payload = self._graphql_with_retry(
+                self._REVIEW_THREADS_QUERY,
+                {
+                    'owner': repo_owner,
+                    'name': repo_slug,
+                    'number': pull_request_number,
+                    'cursor': cursor,
+                },
+            )
+            data = payload.get('data')
+            if data is None:
+                # GraphQL-level error or auth failure — raise rather
+                # than return ``[]`` so the operator sees the failure.
+                errors = payload.get('errors') or 'no data block in response'
+                raise RuntimeError(
+                    f'GitHub GraphQL returned no data for PR '
+                    f'{repo_owner}/{repo_slug}#{pull_request_number}: {errors}'
+                )
+            repository = data.get('repository')
+            if repository is None:
+                raise RuntimeError(
+                    f'GitHub GraphQL returned null repository for '
+                    f'{repo_owner}/{repo_slug} (permission denied or '
+                    f'repository deleted)'
+                )
+            pull_request = repository.get('pullRequest')
+            if pull_request is None:
+                raise RuntimeError(
+                    f'GitHub GraphQL returned null pullRequest for '
+                    f'{repo_owner}/{repo_slug}#{pull_request_number} '
+                    f'(PR deleted or no access)'
+                )
+            review_threads = dict_from_mapping(pull_request, 'reviewThreads')
+            all_nodes.extend(list_from_mapping(review_threads, 'nodes'))
+            page_info = dict_from_mapping(review_threads, 'pageInfo')
+            if not page_info.get('hasNextPage'):
+                break
+            cursor = page_info.get('endCursor')
+            if not cursor:
+                break
+        return all_nodes
 
     def _thread_id_for_comment(
         self,

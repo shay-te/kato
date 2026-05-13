@@ -127,6 +127,37 @@ class JiraClient(RetryingClientBase):
             json={'fields': {field_name: state_name}},
         )
         response.raise_for_status()
+        # Verify the field actually changed. Jira's REST API can
+        # return 200/204 with the field unchanged when the value is
+        # read-only, the workflow forbids it, or the field name is
+        # wrong (Jira reports success but silently ignores the
+        # update). Without this re-fetch, "moved to In Review" in
+        # kato's UI doesn't match the actual ticket state.
+        verified_value = self._fetch_issue_field(issue_id, field_name)
+        if verified_value != state_name:
+            raise RuntimeError(
+                f'Jira accepted the update to {field_name}={state_name!r} '
+                f'on {issue_id} but the field is still {verified_value!r}. '
+                f'The field may be read-only or the value rejected by '
+                f'workflow validation.'
+            )
+
+    def _fetch_issue_field(self, issue_id: str, field_name: str) -> str:
+        """Re-fetch a single field for verification after an update."""
+        response = self._get_with_retry(
+            f'/rest/api/3/issue/{issue_id}',
+            params={'fields': field_name},
+        )
+        response.raise_for_status()
+        payload = response.json() or {}
+        fields = payload.get('fields', {}) if isinstance(payload, dict) else {}
+        value = fields.get(field_name)
+        # Jira returns field values in various shapes (string, dict
+        # with ``value``, dict with ``name``). Normalize to a string
+        # for the equality check.
+        if isinstance(value, dict):
+            return str(value.get('value') or value.get('name') or '')
+        return str(value or '')
 
     def _find_transition(self, issue_id: str, state_name: str) -> dict[str, Any]:
         response = self._get_with_retry(

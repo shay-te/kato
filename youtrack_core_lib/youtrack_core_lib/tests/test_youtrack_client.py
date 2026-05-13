@@ -151,6 +151,7 @@ class YouTrackGetAssignedTasksTests(unittest.TestCase):
                         'query': 'project: PROJ assignee: me State: {Todo}, {Open}',
                         'fields': 'idReadable,summary,description',
                         '$top': 100,
+                        '$skip': 0,
                     },
                 ),
                 unittest.mock.call(
@@ -652,15 +653,21 @@ class YouTrackRemoveTagTests(unittest.TestCase):
 
         mock_delete.assert_not_called()
 
-    def test_noop_when_tags_request_fails(self) -> None:
+    def test_raises_when_tags_request_fails(self) -> None:
+        # Previously this method silently swallowed API failures and
+        # returned, leaving callers believing the tag had been
+        # removed. New contract: API failure raises so callers can
+        # retry or surface to the operator.
         client = YouTrackClient('https://youtrack.example', 'yt-token')
         bad_response = mock_response(status_code=500)
         bad_response.raise_for_status.side_effect = Exception('server error')
 
         with patch.object(client, '_get', return_value=bad_response), \
              patch.object(client, '_delete') as mock_delete:
-            client.remove_tag('PROJ-1', 'any-tag')
+            with self.assertRaises(Exception):
+                client.remove_tag('PROJ-1', 'any-tag')
 
+        # Delete never fired because the tag lookup failed.
         mock_delete.assert_not_called()
 
 

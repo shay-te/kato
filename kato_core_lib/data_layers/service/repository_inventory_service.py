@@ -240,7 +240,15 @@ class RepositoryInventoryService(Service):
             return None
         try:
             discovered = build_discovered_repository(candidate_dir.resolve())
-        except OSError:
+        except OSError as exc:
+            # Surface the cause so operators investigating "task X
+            # says no repository matched" can see that the folder
+            # WAS there but couldn't be read (permission denied,
+            # filesystem error, etc.). Previously silently dropped.
+            self.logger.warning(
+                'skipping repository folder %s during discovery: %s',
+                candidate_dir, exc,
+            )
             return None
         return self._build_repository_entry(discovered)
 
