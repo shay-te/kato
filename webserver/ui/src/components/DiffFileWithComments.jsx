@@ -21,6 +21,15 @@ import {
 } from './CommentWidgets.jsx';
 import { countDiffLines, isLargeFile } from './diffFileSize.js';
 
+// Default ``initiallyExpanded`` resolver: per-file rule only (no
+// awareness of sibling files). The parent ``ChangesTab`` overrides
+// this by passing ``initiallyExpanded`` derived from
+// ``decideAutoExpand`` over the FULL file list so the cumulative
+// budget can kick in.
+function _defaultInitiallyExpanded(file) {
+  return !isLargeFile(file);
+}
+
 // One <Diff> + per-line comment threads + file-level thread, all
 // in one component so the comments state is shared across the
 // gutter widgets and the bottom panel. Wraps react-diff-view's
@@ -31,6 +40,7 @@ import { countDiffLines, isLargeFile } from './diffFileSize.js';
 // bottom panel below the diff.
 export default function DiffFileWithComments({
   file, conflicted = false, repoId = '', taskId = '',
+  initiallyExpanded,
   onAddToChat,
   comments = [],
   commentsLoading = false,
@@ -51,7 +61,15 @@ export default function DiffFileWithComments({
   // — the operator's normal flow is unchanged. The collapsed
   // placeholder is one ``<button>``, costing nothing.
   const lineCount = useMemo(() => countDiffLines(file), [file]);
-  const [expanded, setExpanded] = useState(() => !isLargeFile(file));
+  // ``initiallyExpanded`` (when passed by ChangesTab) reflects the
+  // cumulative-budget decision over the full file list. Fall back
+  // to the per-file rule when called from a context that doesn't
+  // know about siblings (e.g. CommitDiffModal showing one file).
+  const [expanded, setExpanded] = useState(() => (
+    typeof initiallyExpanded === 'boolean'
+      ? initiallyExpanded
+      : _defaultInitiallyExpanded(file)
+  ));
 
   // Tokenisation walks every hunk synchronously and is by far the
   // hottest first-paint cost on big diffs. Skip it entirely when

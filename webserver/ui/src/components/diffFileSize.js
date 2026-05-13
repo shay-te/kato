@@ -17,6 +17,15 @@
 // operator can still expand on demand.
 export const LARGE_FILE_LINE_THRESHOLD = 500;
 
+// Cumulative budget across ALL files in the Changes tab. A PR with
+// many medium files (e.g. 30 × 200 lines = 6 000 lines) was making
+// the page unresponsive even though no single file tripped
+// ``LARGE_FILE_LINE_THRESHOLD``. The budget caps the total expanded
+// lines: once the running sum would exceed it, remaining files
+// auto-collapse, even if individually small. Operator can still
+// expand any file on demand.
+export const CUMULATIVE_EXPANDED_LINE_BUDGET = 2000;
+
 export function countDiffLines(file) {
   if (!file || !Array.isArray(file.hunks)) { return 0; }
   let total = 0;
@@ -29,4 +38,40 @@ export function countDiffLines(file) {
 
 export function isLargeFile(file) {
   return countDiffLines(file) > LARGE_FILE_LINE_THRESHOLD;
+}
+
+// Decide which files in a list should auto-expand vs auto-collapse.
+//
+// Returns an array of booleans the same length as ``files``: ``true``
+// means "auto-expand on first render," ``false`` means "auto-collapse
+// (show the Show diff button)."
+//
+// Per-file rule (existing, kept): file > LARGE_FILE_LINE_THRESHOLD
+// always auto-collapses regardless of position in the list.
+//
+// Cumulative rule (new): walk files in order, accumulate the line
+// count of every auto-expanded file. Once that running sum would
+// exceed CUMULATIVE_EXPANDED_LINE_BUDGET, auto-collapse every
+// subsequent file even if individually small. Without this gate, a
+// PR with many medium files freezes the browser even though no
+// single file is large.
+export function decideAutoExpand(files) {
+  const list = Array.isArray(files) ? files : [];
+  const out = new Array(list.length);
+  let cumulative = 0;
+  for (let i = 0; i < list.length; i += 1) {
+    const file = list[i];
+    if (isLargeFile(file)) {
+      out[i] = false;
+      continue;
+    }
+    const lines = countDiffLines(file);
+    if (cumulative + lines > CUMULATIVE_EXPANDED_LINE_BUDGET) {
+      out[i] = false;
+      continue;
+    }
+    cumulative += lines;
+    out[i] = true;
+  }
+  return out;
 }

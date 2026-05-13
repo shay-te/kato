@@ -232,7 +232,7 @@ class ClaudeSessionManagerTests(unittest.TestCase):
             status='terminated',
             cwd='/tmp/old/repo',
         )
-        self.manager._records['PROJ-77'] = record
+        self.manager._records[self.manager._lookup_key('PROJ-77')] = record
         self.manager._persist_record(record)
 
         os.environ['KATO_CLAUDE_SESSIONS_ROOT'] = str(sessions_root)
@@ -372,7 +372,7 @@ class StaleResumeIdSelfHealTests(unittest.TestCase):
         dead_session._alive = False
 
         # Persist the record so _persist_record path works.
-        manager._records['PROJ-1'] = previous_record
+        manager._records[manager._lookup_key('PROJ-1')] = previous_record
         manager._persist_record(previous_record)
 
         resume_id = manager._resume_id_for_spawn(
@@ -659,8 +659,9 @@ class TerminateSessionExceptionPath(unittest.TestCase):
             state_dir=self.state_dir,
             session_factory=lambda **kw: _FakeStreamingSession(**kw),
         )
-        manager._sessions['PROJ-1'] = broken_session
-        manager._records['PROJ-1'] = PlanningSessionRecord(task_id='PROJ-1')
+        lookup_key = manager._lookup_key('PROJ-1')
+        manager._sessions[lookup_key] = broken_session
+        manager._records[lookup_key] = PlanningSessionRecord(task_id='PROJ-1')
 
         with patch.object(manager, 'logger', MagicMock()) as logger:
             # Must not raise — log + continue.
@@ -792,10 +793,11 @@ class WithRefreshedSessionIdTests(unittest.TestCase):
         record = PlanningSessionRecord(
             task_id='PROJ-1', claude_session_id='old-id',
         )
-        self.manager._records['PROJ-1'] = record
+        lookup_key = self.manager._lookup_key('PROJ-1')
+        self.manager._records[lookup_key] = record
         # Plant a fake session with a NEW id under the same task_id.
         live = SimpleNamespace(claude_session_id='new-id')
-        self.manager._sessions['PROJ-1'] = live
+        self.manager._sessions[lookup_key] = live
 
         refreshed = self.manager._with_refreshed_session_id(record)
         self.assertEqual(refreshed.claude_session_id, 'new-id')
@@ -812,7 +814,9 @@ class WithRefreshedSessionIdTests(unittest.TestCase):
         record = PlanningSessionRecord(
             task_id='PROJ-1', claude_session_id='same-id',
         )
-        self.manager._sessions['PROJ-1'] = SimpleNamespace(claude_session_id='same-id')
+        self.manager._sessions[self.manager._lookup_key('PROJ-1')] = (
+            SimpleNamespace(claude_session_id='same-id')
+        )
         refreshed = self.manager._with_refreshed_session_id(record)
         self.assertEqual(refreshed.claude_session_id, 'same-id')
 
@@ -1095,7 +1099,7 @@ class AdoptSessionIdTaskSummaryTests(unittest.TestCase):
             session_factory=lambda **kw: _FakeStreamingSession(**kw),
         )
         # Existing record with NO task_summary.
-        manager._records['PROJ-X'] = PlanningSessionRecord(
+        manager._records[manager._lookup_key('PROJ-X')] = PlanningSessionRecord(
             task_id='PROJ-X', claude_session_id='old', task_summary='',
         )
         manager.adopt_session_id(

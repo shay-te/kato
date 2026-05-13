@@ -225,7 +225,7 @@ class FlowMultiTurnContinuityTests(unittest.TestCase):
         )
         # Manually inject the empty-id record into the manager.
         with manager._lock:
-            manager._records['T1'] = PlanningSessionRecord(
+            manager._records[manager._lookup_key('T1')] = PlanningSessionRecord(
                 task_id='T1',
                 task_summary='hung first spawn',
                 claude_session_id='',
@@ -258,7 +258,7 @@ class FlowMultiTurnContinuityTests(unittest.TestCase):
             PlanningSessionRecord, SESSION_STATUS_TERMINATED,
         )
         with manager._lock:
-            manager._records['T1'] = PlanningSessionRecord(
+            manager._records[manager._lookup_key('T1')] = PlanningSessionRecord(
                 task_id='T1',
                 claude_session_id='   ',  # whitespace only
                 status=SESSION_STATUS_TERMINATED,

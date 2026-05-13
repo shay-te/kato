@@ -3,6 +3,7 @@ import { parseDiff } from 'react-diff-view';
 import 'react-diff-view/style/index.css';
 import { fetchDiff, fetchTaskComments, syncTaskComments } from './api.js';
 import DiffFileWithComments from './components/DiffFileWithComments.jsx';
+import { decideAutoExpand } from './components/diffFileSize.js';
 import Icon from './components/Icon.jsx';
 import { useChatComposer } from './contexts/ChatComposerContext.jsx';
 import { toast } from './stores/toastStore.js';
@@ -407,23 +408,32 @@ function RepoDiff({
               <code>{repoDiff.head}</code>.
             </p>
           )}
-          {!repoDiff.error && repoDiff.files.map((file) => {
-            const path = file.newPath || file.oldPath || '(unknown)';
-            return (
-              <DiffFileWithComments
-                key={diffFileKey(file)}
-                file={file}
-                conflicted={isFileConflicted(file, repoDiff.conflictedFiles)}
-                repoId={repoDiff.repo_id}
-                onAddToChat={onAddToChat}
-                taskId={taskId}
-                comments={commentsByFile.get(path) || EMPTY_COMMENTS}
-                commentsLoading={commentsLoading}
-                commentsError={commentsError}
-                onMutated={bumpRepoComments}
-              />
-            );
-          })}
+          {!repoDiff.error && (() => {
+            // Cumulative-budget auto-collapse: many medium files
+            // would freeze the page even when no individual file
+            // tripped the per-file LARGE_FILE_LINE_THRESHOLD. The
+            // budget caps how many lines reach the DOM by default;
+            // operator can expand any collapsed file on demand.
+            const autoExpand = decideAutoExpand(repoDiff.files);
+            return repoDiff.files.map((file, fileIndex) => {
+              const path = file.newPath || file.oldPath || '(unknown)';
+              return (
+                <DiffFileWithComments
+                  key={diffFileKey(file)}
+                  file={file}
+                  initiallyExpanded={autoExpand[fileIndex]}
+                  conflicted={isFileConflicted(file, repoDiff.conflictedFiles)}
+                  repoId={repoDiff.repo_id}
+                  onAddToChat={onAddToChat}
+                  taskId={taskId}
+                  comments={commentsByFile.get(path) || EMPTY_COMMENTS}
+                  commentsLoading={commentsLoading}
+                  commentsError={commentsError}
+                  onMutated={bumpRepoComments}
+                />
+              );
+            });
+          })()}
         </div>
       )}
     </section>

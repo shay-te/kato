@@ -218,7 +218,8 @@ function composerDisabledReason(lifecycle, session) {
 // - CONNECTING / IDLE / MISSING / CLOSED → always show the explanatory text.
 // - STREAMING → show "Connected, waiting…" *only* until at least one
 //   bubble appears, then suppress so the chat reads cleanly.
-function lifecycleBanner(lifecycle, taskId, hasVisible) {
+// Exported for unit tests. Pure function with no React deps.
+export function lifecycleBanner(lifecycle, taskId, hasVisible) {
   switch (lifecycle) {
     case SESSION_LIFECYCLE.CONNECTING:
       return `Connecting to session for ${taskId}…`;
@@ -240,7 +241,8 @@ function lifecycleBanner(lifecycle, taskId, hasVisible) {
 // True when at least one entry would produce a visible bubble. Used by
 // the banner so we don't show "waiting for first reply" once chat
 // content actually arrives. Mirrors EventLog's filtering rules.
-function hasVisibleBubbles(entries) {
+// Exported for unit tests. Pure function with no React deps.
+export function hasVisibleBubbles(entries) {
   return entries.some((entry) => {
     if (entry?.source === ENTRY_SOURCE.LOCAL) { return true; }
     if (entry?.source === ENTRY_SOURCE.HISTORY) { return true; }

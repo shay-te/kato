@@ -189,7 +189,8 @@ class ClaudeSessionManager(object):
                 ).strip()
                 if not session_id:
                     continue
-                existing = self._records.get(workspace.task_id)
+                lookup_key = self._lookup_key(workspace.task_id)
+                existing = self._records.get(lookup_key)
                 if existing is not None and existing.claude_session_id:
                     continue
                 record = existing or PlanningSessionRecord(
@@ -202,7 +203,7 @@ class ClaudeSessionManager(object):
                 if cwd and not record.cwd:
                     record.cwd = cwd
                 record.updated_at_epoch = time.time()
-                self._records[workspace.task_id] = record
+                self._records[lookup_key] = record
                 self._persist_record(record)
 
     # ----- public API -----
@@ -236,6 +237,7 @@ class ClaudeSessionManager(object):
         picks up where it left off.
         """
         normalized_task_id = self._normalize_task_id(task_id)
+        lookup_key = self._lookup_key(task_id)
         factory_kwargs = {
             'task_id': normalized_task_id,
             'binary': binary,
@@ -261,14 +263,14 @@ class ClaudeSessionManager(object):
         # was held across the spawn and serialised everything.
         with self._lock:
             spawn_lock = self._spawn_locks.setdefault(
-                normalized_task_id, threading.Lock(),
+                lookup_key, threading.Lock(),
             )
         with spawn_lock:
             with self._lock:
-                existing = self._sessions.get(normalized_task_id)
+                existing = self._sessions.get(lookup_key)
                 if existing is not None and existing.is_alive:
                     return existing
-                previous_record = self._records.get(normalized_task_id)
+                previous_record = self._records.get(lookup_key)
                 resume_session_id = self._resume_id_for_spawn(
                     normalized_task_id, previous_record, existing,
                 )
@@ -297,7 +299,7 @@ class ClaudeSessionManager(object):
                 resume_session_id=resume_session_id,
             )
             with self._lock:
-                self._sessions[normalized_task_id] = session
+                self._sessions[lookup_key] = session
                 self._record_session_metadata(
                     normalized_task_id=normalized_task_id,
                     session=session,
@@ -472,16 +474,16 @@ class ClaudeSessionManager(object):
             # silently re-arm a stale lock from a prior buggy run.
             expected_branch=normalized_text(expected_branch),
         )
-        self._records[normalized_task_id] = record
+        self._records[self._lookup_key(normalized_task_id)] = record
         self._persist_record(record)
 
     def get_session(self, task_id: str) -> StreamingClaudeSession | None:
         with self._lock:
-            return self._sessions.get(self._normalize_task_id(task_id))
+            return self._sessions.get(self._lookup_key(task_id))
 
     def get_record(self, task_id: str) -> PlanningSessionRecord | None:
         with self._lock:
-            record = self._records.get(self._normalize_task_id(task_id))
+            record = self._records.get(self._lookup_key(task_id))
             return self._with_refreshed_session_id(record)
 
     def list_records(self) -> list[PlanningSessionRecord]:
@@ -529,6 +531,7 @@ class ClaudeSessionManager(object):
         if not new_id:
             raise ValueError('claude_session_id must be non-empty')
         normalized_task_id = self._normalize_task_id(task_id)
+        lookup_key = self._lookup_key(task_id)
         now = time.time()
         with self._lock:
             # Refuse adoption when a live subprocess is still running
@@ -538,7 +541,7 @@ class ClaudeSessionManager(object):
             # operator's intent (continue from external session) gets
             # dropped. Force the caller to terminate first so the
             # lifecycle change is explicit.
-            existing_session = self._sessions.get(normalized_task_id)
+            existing_session = self._sessions.get(lookup_key)
             if existing_session is not None and getattr(
                 existing_session, 'is_alive', False,
             ):
@@ -550,14 +553,14 @@ class ClaudeSessionManager(object):
                     f'otherwise the next message would silently reuse the '
                     f'running subprocess instead of resuming the adopted id.'
                 )
-            record = self._records.get(normalized_task_id)
+            record = self._records.get(lookup_key)
             if record is None:
                 record = PlanningSessionRecord(
                     task_id=normalized_task_id,
                     task_summary=str(task_summary or ''),
                     status=SESSION_STATUS_TERMINATED,
                 )
-                self._records[normalized_task_id] = record
+                self._records[lookup_key] = record
             record.claude_session_id = new_id
             if task_summary and not record.task_summary:
                 record.task_summary = str(task_summary)
@@ -573,8 +576,9 @@ class ClaudeSessionManager(object):
                 f'supported: {sorted(SUPPORTED_SESSION_STATUSES)}'
             )
         normalized_task_id = self._normalize_task_id(task_id)
+        lookup_key = self._lookup_key(task_id)
         with self._lock:
-            record = self._records.get(normalized_task_id)
+            record = self._records.get(lookup_key)
             if record is None:
                 return
             record.status = status
@@ -583,8 +587,9 @@ class ClaudeSessionManager(object):
 
     def terminate_session(self, task_id: str, *, remove_record: bool = False) -> None:
         normalized_task_id = self._normalize_task_id(task_id)
+        lookup_key = self._lookup_key(task_id)
         with self._lock:
-            session = self._sessions.pop(normalized_task_id, None)
+            session = self._sessions.pop(lookup_key, None)
             if session is not None:
                 try:
                     session.terminate()
@@ -594,10 +599,10 @@ class ClaudeSessionManager(object):
                         normalized_task_id,
                     )
             if remove_record:
-                self._records.pop(normalized_task_id, None)
+                self._records.pop(lookup_key, None)
                 self._delete_persisted_record(normalized_task_id)
             else:
-                record = self._records.get(normalized_task_id)
+                record = self._records.get(lookup_key)
                 if record is not None:
                     record.status = SESSION_STATUS_TERMINATED
                     record.updated_at_epoch = time.time()
@@ -680,15 +685,31 @@ class ClaudeSessionManager(object):
 
     @staticmethod
     def _normalize_task_id(task_id: str) -> str:
+        # Strip whitespace, PRESERVE original case. This value is what
+        # gets stored on ``record.task_id`` so error messages, audit
+        # logs, and the on-disk record's display field match what the
+        # ticket system uses (e.g. ``PROJ-1``).
         normalized = str(task_id or '').strip()
         if not normalized:
             raise ValueError('task_id is required')
         return normalized
 
+    @staticmethod
+    def _lookup_key(task_id: str) -> str:
+        # Canonical key for in-memory dicts (``_records``, ``_sessions``,
+        # ``_spawn_locks``) AND for the on-disk filename. Lowercased so
+        # ``PROJ-1`` and ``proj-1`` resolve to the same logical task.
+        # Without this, two casings produce two records on Linux
+        # (case-sensitive FS) and silent overwrite on macOS
+        # (case-insensitive FS).
+        return ClaudeSessionManager._normalize_task_id(task_id).lower()
+
     def _record_path(self, task_id: str) -> Path:
         # task ids in YouTrack/Jira/etc. tend to be filename-safe (e.g.
-        # PROJ-123). We still strip any path separators just in case.
-        safe_name = task_id.replace('/', '_').replace(os.sep, '_')
+        # PROJ-123). We still strip any path separators just in case,
+        # and lowercase via _lookup_key so different casings of the
+        # same logical task share one file on disk.
+        safe_name = self._lookup_key(task_id).replace('/', '_').replace(os.sep, '_')
         return self._state_dir / f'{safe_name}.json'
 
     def _persist_record(self, record: PlanningSessionRecord) -> None:
@@ -755,7 +776,10 @@ class ClaudeSessionManager(object):
             if record.status == SESSION_STATUS_ACTIVE:
                 record.status = SESSION_STATUS_TERMINATED
                 record.updated_at_epoch = time.time()
-            self._records[record.task_id] = record
+            # Key by lowercased task_id so case-mismatched lookups
+            # find the same record. ``record.task_id`` itself keeps
+            # its original case from disk for display purposes.
+            self._records[self._lookup_key(record.task_id)] = record
 
     def _with_refreshed_session_id(
         self,
@@ -763,7 +787,7 @@ class ClaudeSessionManager(object):
     ) -> PlanningSessionRecord | None:
         if record is None:
             return None
-        session = self._sessions.get(record.task_id)
+        session = self._sessions.get(self._lookup_key(record.task_id))
         if session is None:
             return record
         live_id = session.claude_session_id

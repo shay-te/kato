@@ -27,10 +27,16 @@ export default function PermissionModal({ raw, onDecide }) {
   }
 
   return (
-    <div id="permission-modal" className="modal">
+    <div
+      id="permission-modal"
+      className="modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="permission-modal-title"
+    >
       <div className="modal-card">
         <header className="modal-head">
-          <h2>Approval requested</h2>
+          <h2 id="permission-modal-title">Approval requested</h2>
           <span id="permission-tool-name">{toolName}</span>
         </header>
         <div id="permission-fields">{fields}</div>

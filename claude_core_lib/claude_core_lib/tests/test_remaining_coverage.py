@@ -249,8 +249,9 @@ class SessionManagerLoadPersistedRecordsTests(unittest.TestCase):
             }
             (state_dir / 'T1.json').write_text(json.dumps(record_payload))
             manager = ClaudeSessionManager(state_dir=str(state_dir))
-        # Active → terminated after load.
-        record = manager._records.get('T1')
+        # Active → terminated after load. The dict key is lowercased
+        # so that case-mismatched lookups still find the same record.
+        record = manager._records.get(manager._lookup_key('T1'))
         self.assertIsNotNone(record)
         self.assertEqual(record.status, SESSION_STATUS_TERMINATED)
 

@@ -190,12 +190,13 @@ class FlowAdoptPersistenceTests(unittest.TestCase):
             )
             # Seed an existing record with a summary.
             with mgr._lock:
-                mgr._records['T1'] = PlanningSessionRecord(
+                lookup_key = mgr._lookup_key('T1')
+                mgr._records[lookup_key] = PlanningSessionRecord(
                     task_id='T1',
                     task_summary='original summary',
                     status=SESSION_STATUS_TERMINATED,
                 )
-                mgr._persist_record(mgr._records['T1'])
+                mgr._persist_record(mgr._records[lookup_key])
 
             mgr.adopt_session_id('T1', claude_session_id='new-id')
 

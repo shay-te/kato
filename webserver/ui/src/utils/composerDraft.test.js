@@ -183,3 +183,96 @@ test('round-trip survives a simulated tab unmount/remount', function () {
   // ...switches back. Tab A remounts and re-hydrates.
   assert.equal(readDraft('TASK-A', store), 'half a sentence about');
 });
+
+test('full operator scenario: type in A → switch to B → type in B → back to A → drafts preserved', function () {
+  // The exact scenario the operator described: type something in
+  // task A, switch to task B, come back, the input still holds the
+  // original prompt. Plus: B should hold its own draft when you
+  // switch from A → B → A → B.
+  const store = fakeStorage();
+
+  // Mount tab A — empty initial draft.
+  let valueA = readDraft('A', store);
+  assert.equal(valueA, '');
+
+  // Operator types in A character-by-character. Each keystroke
+  // mirrors to localStorage (what MessageForm's useEffect does).
+  for (const char of ['h', 'he', 'hel', 'hell', 'hello', 'hello?']) {
+    writeDraft('A', char, store);
+  }
+  assert.equal(readDraft('A', store), 'hello?');
+
+  // Operator switches to tab B. MessageForm for A unmounts; for B
+  // mounts. The lazy useState initializer runs readDraft('B').
+  let valueB = readDraft('B', store);
+  assert.equal(valueB, '', 'tab B should start empty — it has no prior draft');
+
+  // Operator types in B.
+  for (const char of ['n', 'no', 'now', 'now ', 'now t', 'now this']) {
+    writeDraft('B', char, store);
+  }
+  assert.equal(readDraft('B', store), 'now this');
+
+  // Switch back to A. The operator-reported scenario: input must
+  // STILL show 'hello?'. If THIS assertion fails, the draft
+  // persistence is broken.
+  valueA = readDraft('A', store);
+  assert.equal(
+    valueA, 'hello?',
+    'tab A lost its draft after switching to B and back — operator '
+    + 'sees an empty composer when they expected their in-progress '
+    + 'message to still be there',
+  );
+
+  // Switch to B one more time — its draft should also be intact.
+  valueB = readDraft('B', store);
+  assert.equal(
+    valueB, 'now this',
+    'tab B lost its draft on the second visit — drafts not isolated',
+  );
+});
+
+test('clearing a draft on one task does not affect other tasks', function () {
+  // Submit-handler does writeDraft(taskId, '') which removes the
+  // entry. The operator's other-tab drafts MUST survive.
+  const store = fakeStorage();
+
+  writeDraft('A', 'draft for A', store);
+  writeDraft('B', 'draft for B', store);
+  writeDraft('C', 'draft for C', store);
+
+  // Submit on A clears its draft.
+  clearDraft('A', store);
+
+  assert.equal(readDraft('A', store), '');
+  assert.equal(readDraft('B', store), 'draft for B');
+  assert.equal(readDraft('C', store), 'draft for C');
+});
+
+test('special characters and unicode survive the round-trip', function () {
+  // Adversarial: emoji, newlines, code snippets, quotes, backticks.
+  // The operator's drafts often contain pasted code or markdown.
+  const store = fakeStorage();
+  const messy = (
+    `Please fix this:\n`
+    + '```python\n'
+    + 'def foo("hello"):\n'
+    + "    return f'{bar}'  # noqa\n"
+    + '```\n\n'
+    + 'Also handle 🤔 emojis and "smart quotes".'
+  );
+
+  writeDraft('A', messy, store);
+  assert.equal(readDraft('A', store), messy);
+});
+
+test('very long drafts persist (operator pastes a long block)', function () {
+  // The operator might paste a long traceback or a chunk of file
+  // content. localStorage has a quota (typically 5MB per origin)
+  // but a single multi-KB draft is well within limits.
+  const store = fakeStorage();
+  const longText = 'x'.repeat(50 * 1024);  // 50 KB
+  writeDraft('A', longText, store);
+  assert.equal(readDraft('A', store), longText);
+  assert.equal(readDraft('A', store).length, 50 * 1024);
+});

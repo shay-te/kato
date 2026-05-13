@@ -289,9 +289,23 @@ export function useSessionStream(taskId, onIncomingEvent) {
     // would render an empty list until the server's history catches
     // up.
     taskIdRef.current = taskId;
+    // When the cache says we were STREAMING (or IDLE), preserve
+    // that lifecycle through the re-open. The SSE side will refresh
+    // it as soon as a new event lands. Forcing CONNECTING here
+    // showed a misleading "Connecting…" banner on every send (the
+    // sendMessage handler calls ``reconnect()`` after a respawn) —
+    // operator saw a flicker even though the session itself was
+    // still live.
+    const cached = readCachedState(taskId);
+    const carriedLifecycle = (
+      cached.lifecycle === SESSION_LIFECYCLE.STREAMING
+      || cached.lifecycle === SESSION_LIFECYCLE.IDLE
+    )
+      ? cached.lifecycle
+      : SESSION_LIFECYCLE.CONNECTING;
     dispatch({
       type: ACTION_HYDRATE,
-      value: { ...readCachedState(taskId), lifecycle: SESSION_LIFECYCLE.CONNECTING },
+      value: { ...cached, lifecycle: carriedLifecycle },
     });
 
     const stream = new EventSource(
