@@ -637,6 +637,37 @@ class FlowTests(unittest.TestCase):
                 f'alias {alias!r} did not produce an AgentProvider',
             )
 
+    def test_build_openhands_raises_runtimeerror_when_openhands_block_missing(self) -> None:
+        # Adversarial regression test (Bug-hunt finding):
+        # ``_build_claude`` correctly raises a clear ``RuntimeError``
+        # when the ``claude`` config block is missing (line 87-92).
+        # ``_build_openhands`` does ``open_cfg.openhands`` directly
+        # (line 127), so a missing block raises a cryptic AttributeError
+        # instead of the operator-actionable RuntimeError.
+        #
+        # Symmetry contract: both backends MUST raise RuntimeError with
+        # an actionable message when their config block is missing.
+        factory = AgentClientFactory(max_retries=1)
+        cfg_without_openhands = types.SimpleNamespace()  # no .openhands
+        with patch(
+            'openhands_core_lib.openhands_core_lib.openhands_client.OpenHandsClient',
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                factory._build_openhands(cfg_without_openhands)
+        # Operator-actionable message must reference "openhands" so the
+        # operator can find the missing config block.
+        self.assertIn('openhands', str(ctx.exception).lower())
+
+    def test_build_openhands_raises_runtimeerror_when_openhands_is_none(self) -> None:
+        # Symmetric to the Claude path's ``test_raises_when_claude_config_is_explicitly_none``.
+        factory = AgentClientFactory(max_retries=1)
+        cfg = types.SimpleNamespace(openhands=None)
+        with patch(
+            'openhands_core_lib.openhands_core_lib.openhands_client.OpenHandsClient',
+        ):
+            with self.assertRaises(RuntimeError):
+                factory._build_openhands(cfg)
+
     def test_core_lib_composition_end_to_end(self) -> None:
         # resolve_platform → AgentCoreLib → .agent is usable
         platform = resolve_platform('claude')

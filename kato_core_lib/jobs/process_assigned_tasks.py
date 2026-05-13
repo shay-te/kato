@@ -109,11 +109,19 @@ def _process_review_comment_batch_best_effort(service, comments) -> list[dict]:
     fan out so behaviour stays correct even without the batched
     optimisation.
     """
+    logger = configure_logger(__name__)
     batch_method = getattr(service, 'process_review_comment_batch', None)
     if callable(batch_method):
         try:
             result = batch_method(comments)
         except Exception:
+            # Log so the operator triaging "review comments not being
+            # processed" has a trail to follow. Returning ``[]`` keeps
+            # the scan loop's best-effort contract (we'll retry next
+            # tick) but the silent swallow hid every transient failure.
+            logger.exception(
+                'review-comment batch failed; retrying on the next scan tick',
+            )
             return []
         # Real service returns list[dict]. A test Mock will auto-create
         # an attribute that returns another Mock — fall through to the
@@ -125,6 +133,13 @@ def _process_review_comment_batch_best_effort(service, comments) -> list[dict]:
         try:
             single = service.process_review_comment(comment)
         except Exception:
+            # Same diagnostic gap as the batch path: a silent skip
+            # leaves the operator with no signal that a particular
+            # comment is repeatedly failing. Log it.
+            logger.exception(
+                'review-comment singular processing failed for comment %s',
+                getattr(comment, 'comment_id', '<unknown>'),
+            )
             continue
         if single is not None:
             results.append(single)

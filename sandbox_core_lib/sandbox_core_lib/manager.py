@@ -722,13 +722,20 @@ def build_image(
             image_tag,
         )
     cmd = ['docker', 'build', '-t', image_tag]
+    # Read pin overrides from the SAME env source the validators used.
+    # Previously this read ``os.environ`` directly while validators
+    # honored the ``env`` parameter — a CI/test caller that passes a
+    # pinned env dict could pass validation and then silently fall
+    # back to floating tags during the actual build (supply-chain
+    # pin bypass).
+    env_source = env if env is not None else os.environ
     # Operator-side supply-chain pin: if KATO_SANDBOX_BASE_IMAGE is set
     # (typically to ``node:22-bookworm-slim@sha256:<digest>``), pass it
     # as the BASE_IMAGE build-arg so the Dockerfile pulls that exact
     # immutable digest instead of the mutable ``node:22-bookworm-slim``
     # tag. Recommended for any deployment that cares about base-image
     # tampering or reproducibility.
-    base_override = os.environ.get('KATO_SANDBOX_BASE_IMAGE', '').strip()
+    base_override = str(env_source.get('KATO_SANDBOX_BASE_IMAGE', '') or '').strip()
     if base_override:
         cmd.extend(['--build-arg', f'BASE_IMAGE={base_override}'])
         if logger is not None:
@@ -744,7 +751,7 @@ def build_image(
     # be pushed to npm between operator builds. Default ``latest``
     # preserves existing behavior — operators opt into pinning when
     # their threat model requires it.
-    cli_override = os.environ.get('KATO_SANDBOX_CLAUDE_CLI_VERSION', '').strip()
+    cli_override = str(env_source.get('KATO_SANDBOX_CLAUDE_CLI_VERSION', '') or '').strip()
     if cli_override:
         cmd.extend(['--build-arg', f'CLAUDE_CLI_VERSION={cli_override}'])
         if logger is not None:

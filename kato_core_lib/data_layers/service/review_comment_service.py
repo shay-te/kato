@@ -494,6 +494,13 @@ class ReviewCommentService(Service):
             if is_kato_review_comment_reply(comment):
                 last_kato_reply_index[review_comment_resolution_key(comment)] = index
 
+        # Walk backwards for thread dedup (keep the newest comment per
+        # thread), but reverse before returning so the output order
+        # matches the documented contract — comments returned in
+        # chronological order, same as the reviewer wrote them.
+        # Without the final reverse the agent sees the newest comment
+        # first, which is wrong for batches where a later comment
+        # depends on context from an earlier one.
         new_comments: list[ReviewComment] = []
         seen_resolution_targets: set = set()
         for index in range(len(comments) - 1, -1, -1):
@@ -514,6 +521,7 @@ class ReviewCommentService(Service):
             if self._is_review_comment_processed(repository_id, pull_request_id, comment):
                 continue
             new_comments.append(comment)
+        new_comments.reverse()
         return new_comments
 
     def _review_fix_context(self, comment: ReviewComment) -> ReviewFixContext:

@@ -124,7 +124,12 @@ class AgentClientFactory(object):
             resolved_openhands_llm_settings,
         )
 
-        openhands_cfg = open_cfg.openhands
+        openhands_cfg = getattr(open_cfg, 'openhands', None)
+        if openhands_cfg is None:
+            raise RuntimeError(
+                'agent_backend=openhands requires an openhands configuration block; '
+                'rebuild the configuration template'
+            )
         return OpenHandsClient(
             resolved_openhands_base_url(openhands_cfg, testing=self._testing),
             openhands_cfg.api_key,
