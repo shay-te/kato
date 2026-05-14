@@ -275,7 +275,14 @@ def _dedupe(findings: list[SecurityFinding]) -> list[SecurityFinding]:
 
 
 def default_config() -> SecurityScannerConfig:
-    """Default runner set — every runner enabled with sane timeouts.
+    """Default runner set — runners enabled with sane timeouts.
+
+    Blocks on CRITICAL only — HIGH+ findings surface as warnings
+    but don't refuse the task. The npm-audit runner is included in
+    the default set, but operators who want the kato-side
+    over-blocking protection should disable it via
+    ``KATO_SECURITY_RUNNER_NPM_AUDIT=false`` (every non-trivial JS
+    project has dozens of transitive-dep CVEs).
 
     Operators override per-runner enable / timeout via
     ``kato.security_scanner.runners`` in the config file or by
@@ -290,7 +297,7 @@ def default_config() -> SecurityScannerConfig:
     )
     return SecurityScannerConfig(
         enabled=True,
-        block_on_severity=(Severity.CRITICAL, Severity.HIGH),
+        block_on_severity=(Severity.CRITICAL,),
         runners=[
             RunnerConfig('env-file', env_file_runner.run, timeout_seconds=30),
             RunnerConfig('detect-secrets', detect_secrets_runner.run, timeout_seconds=60),

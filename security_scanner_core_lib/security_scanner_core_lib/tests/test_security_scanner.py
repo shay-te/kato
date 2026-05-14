@@ -457,6 +457,16 @@ class SecurityScannerConfigTests(unittest.TestCase):
         config = default_config()
         self.assertTrue(config.enabled)
 
+    def test_default_config_blocks_on_critical_only(self) -> None:
+        # Pins the policy decision: default-block on CRITICAL only.
+        # HIGH+ findings surface as warnings in the ticket comment
+        # but don't refuse the task — transitive-dep CVE noise on
+        # routine codebases would otherwise self-DoS the operator.
+        # Operators who want a stricter gate tighten this via YAML
+        # (kato.security_scanner.block_on_severity).
+        config = default_config()
+        self.assertEqual(config.block_on_severity, (Severity.CRITICAL,))
+
 
 # ----- summarisers -----------------------------------------------------------
 

@@ -39,10 +39,71 @@ header #kato-logo {
   display: block;
 }
 header h1 { margin: 0; font-size: 18px; }
-header .subtitle { color: #a3a3a3; font-size: 13px; flex: 1; }
+header .subtitle { color: #a3a3a3; font-size: 13px; }
 header button { background: transparent; color: #a3a3a3; border: 1px solid #262626;
   padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 14px; }
 header button:hover { color: #e5e5e5; border-color: #e5e5e5; }
+
+/* Inline status pill — lives between the kato subtitle and the
+ * notification actions. Replaces the old standalone #status-bar
+ * row so the top of the app is one line instead of two. */
+header .header-status {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: #d4d4d4;
+  font: 12px/1 ui-monospace, monospace;
+  min-width: 0;
+  margin-left: 4px;
+  margin-right: 4px;
+}
+header .header-status.is-error {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.35);
+  color: #fecaca;
+}
+header .header-status.is-warn {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.35);
+  color: #fde68a;
+}
+header .header-status.is-stale {
+  background: rgba(64, 64, 64, 0.20);
+  border-color: rgba(64, 64, 64, 0.45);
+  color: #a3a3a3;
+}
+header .header-status-pulse {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #34d399;
+  animation: kato-status-pulse 1.6s ease-in-out infinite;
+}
+header .header-status.is-error .header-status-pulse {
+  background: #ef4444;
+  animation: none;
+}
+header .header-status.is-warn .header-status-pulse { background: #f59e0b; }
+header .header-status.is-stale .header-status-pulse {
+  background: #404040;
+  animation: none;
+}
+header .header-status-text {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@keyframes kato-status-pulse {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50%      { opacity: 1;    transform: scale(1.15); }
+}
 
 #status-bar {
   display: flex;
@@ -117,6 +178,13 @@ header button:hover { color: #e5e5e5; border-color: #e5e5e5; }
 #status-bar-history .lvl { color: #404040; min-width: 38px; flex-shrink: 0; }
 #status-bar-history .msg { white-space: pre-wrap; word-break: break-word; }
 
+/* ───── layout grid ──────────────────────────────────────────────
+ *
+ * Default: 3-column flex (left sidebar, center, right pane).
+ * ``.has-top-tabs``: drops the left sidebar in favour of a full-
+ *   width top row that hosts the iOS-style task segmented controller.
+ *   The remaining row is a 2-column grid (center, right).
+ */
 #layout {
   display: grid;
   grid-template-columns: 280px 1fr var(--right-pane-width, 380px);
@@ -125,48 +193,323 @@ header button:hover { color: #e5e5e5; border-color: #e5e5e5; }
   max-width: 100vw;
   overflow: hidden;
 }
+#layout.has-top-tabs {
+  grid-template-columns: 1fr var(--right-pane-width, 380px);
+  grid-template-rows: auto 1fr;
+}
+#layout.has-top-tabs > #tabs-pane {
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
 
-#tabs-pane {
+/* ───── task segmented controller (top of app) ───────────────────
+ *
+ * Horizontal pill row of task segments. Each ``.tab`` is one
+ * segment; the active one lifts visually. The strip scrolls
+ * horizontally when its content overflows the viewport; flanking
+ * chevron buttons appear automatically (disabled when there's
+ * nothing to scroll in that direction). Trailing slot holds the
+ * Add-task / Scan-now actions.
+ *
+ * Material: same frosted-glass family as the composer + chat
+ * search bar — keeps the floating-iOS theme consistent across
+ * the top, middle, and bottom of the chat. */
+.tabs-pane-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background:
+    linear-gradient(180deg,
+      rgba(28, 28, 30, 0.65) 0%,
+      rgba(16, 16, 18, 0.75) 100%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+  min-width: 0;
+  max-width: 100vw;
+  /* On narrow widths we still need to fit chevrons + scroller +
+   * trailing actions on a single row. ``box-sizing: border-box``
+   * + ``min-width: 0`` keep the flex children honest; the inner
+   * scroller (``flex: 1; min-width: 0``) absorbs whatever space
+   * is left after the fixed-width chevrons and actions claim
+   * theirs. */
+  box-sizing: border-box;
+}
+/* Below this width the segment summary text is more noise than
+ * signal — the task ID alone is the operator's anchor. Hide the
+ * summary and tighten internal padding so the strip still fits
+ * a half-dozen segments + the trailing actions without the
+ * chevrons getting clipped. */
+@media (max-width: 880px) {
+  .tabs-pane-top { padding: 8px 8px; gap: 6px; }
+  .tabs-pane-top .tab { padding: 5px 10px 5px 8px; max-width: 160px; }
+  .tabs-pane-top .tab p { display: none; }
+}
+.tabs-pane-top.is-empty {
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
+
+.tabs-scroller {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* Slim, always-visible custom scrollbar that matches the glass
+   * aesthetic. Sits just below the segment row; operators who
+   * prefer the scrollbar can drag it, the chevrons handle long
+   * hops, and the wheel-to-horizontal handler covers the
+   * scroll-wheel case. */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.32) rgba(255, 255, 255, 0.04);
+  padding-bottom: 4px;
+}
+.tabs-scroller::-webkit-scrollbar { height: 8px; }
+.tabs-scroller::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+}
+.tabs-scroller::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.32);
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.tabs-scroller::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.50);
+}
+.tabs-scroller #tab-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+
+/* One segment. Pill-shaped, frosted, with the active segment
+ * raised to a brighter background so it reads as the foreground
+ * choice. `<li>` is kept (instead of <button>) for compatibility
+ * with existing tests that match `li.tab` for class assertions. */
+.tabs-pane-top .tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px 6px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: rgba(245, 245, 247, 0.78);
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 220px;
+  min-width: 0;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease, transform 90ms ease;
+}
+.tabs-pane-top .tab:hover {
+  background: rgba(255, 255, 255, 0.10);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #f5f5f7;
+}
+.tabs-pane-top .tab.active {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: #ffffff;
+  box-shadow:
+    0 1px 8px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.10);
+}
+.tabs-pane-top .tab:active { transform: scale(0.97); }
+.tabs-pane-top .tab strong {
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.01em;
+}
+.tabs-pane-top .tab p {
+  margin: 0;
+  color: rgba(245, 245, 247, 0.55);
+  font-size: 11px;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tabs-pane-top .tab .tab-changes-indicator {
+  display: inline-flex;
+  color: #fbbf24;
+  font-size: 10px;
+}
+.tabs-pane-top .tab .tab-forget-btn {
+  background: transparent;
+  border: none;
+  color: rgba(245, 245, 247, 0.45);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 50%;
+  visibility: hidden;
+  transition: background 120ms ease, color 120ms ease;
+}
+.tabs-pane-top .tab:hover .tab-forget-btn,
+.tabs-pane-top .tab.active .tab-forget-btn {
+  visibility: visible;
+}
+.tabs-pane-top .tab .tab-forget-btn:hover {
+  background: rgba(220, 38, 38, 0.85);
+  color: #fff7ed;
+}
+.tabs-pane-top .tab.needs-attention {
+  background: rgba(249, 115, 22, 0.22);
+  border-color: rgba(249, 115, 22, 0.55);
+  color: #fff;
+}
+
+/* Status dot inside a top-mounted tab segment.
+ *
+ * The base ``.status-dot`` rule (further up the file) is sized
+ * for the old vertical sidebar — ``display: inline-block`` with
+ * a 4px ``margin-top`` to align with multi-line text. Inside a
+ * horizontal flex pill, those two settings squashed it:
+ *   - inline-block + flex parent → no flex-shrink → compressed to
+ *     an ellipse when the segment ran out of horizontal room.
+ *   - margin-top: 4px → dot floated above the text baseline.
+ *
+ * Overriding here keeps the sidebar layout untouched while
+ * forcing a true circle inside the segmented controller. */
+.tabs-pane-top .tab .status-dot {
+  flex-shrink: 0;
+  margin-top: 0;
+  width: 10px;
+  height: 10px;
+  border-width: 1px;
+  box-sizing: border-box;
+}
+/* The attention spinner ring (`::after`) inherits its size from
+ * the dot. When the parent flex shrank the dot the ring became
+ * an ellipse too — pinning ``flex-shrink: 0`` above is enough to
+ * fix it, but we also tighten the ring offset to match the
+ * smaller dot size so the orange halo doesn't extend past the
+ * segment's vertical centre. */
+.tabs-pane-top .tab .status-dot.status-attention::after {
+  inset: -4px;
+}
+.tabs-pane-top .tab .status-dot.is-loading::after {
+  inset: -3px;
+}
+
+/* Chevron buttons that flank the scroller. Hidden state is just
+ * disabled-style (operator still sees the affordance so they
+ * learn the strip can scroll). */
+.tabs-nav-button {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.05);
+  color: #f5f5f7;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  line-height: 1;
+  transition: background 120ms ease, opacity 120ms ease, transform 90ms ease;
+}
+.tabs-nav-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.13);
+}
+.tabs-nav-button:active:not(:disabled) { transform: scale(0.92); }
+.tabs-nav-button:disabled {
+  opacity: 0.28;
+  cursor: not-allowed;
+}
+
+/* Trailing actions (Add task, Scan now). Same round-button family
+ * as session-header actions so the visual language is consistent. */
+.tabs-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding-left: 6px;
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  margin-left: 4px;
+}
+.tabs-action {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.08);
+  color: #f5f5f7;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0;
+  transition: background 120ms ease, transform 90ms ease;
+}
+.tabs-action:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.16);
+}
+.tabs-action:active:not(:disabled) { transform: scale(0.94); }
+.tabs-action:disabled {
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(245, 245, 247, 0.28);
+  cursor: not-allowed;
+}
+/* Add-task gets a soft blue accent — primary entry point to kato. */
+#tabs-add-task.tabs-action {
+  background: rgba(10, 132, 255, 0.85);
+  border-color: rgba(10, 132, 255, 0.55);
+  color: #f0f9ff;
+  box-shadow: 0 1px 6px rgba(10, 132, 255, 0.35);
+}
+#tabs-add-task.tabs-action:hover {
+  background: rgba(41, 151, 255, 0.95);
+  box-shadow: 0 1px 10px rgba(10, 132, 255, 0.55);
+}
+
+/* Empty-state copy when no tabs exist yet — sits inline in the
+ * tabs row so the operator still sees the Add-task button on the
+ * right. */
+.tabs-pane-top .empty {
+  flex: 1;
+  margin: 0;
+  padding: 0 4px;
+  color: rgba(245, 245, 247, 0.55);
+  font-size: 12px;
+  white-space: normal;
+}
+.tabs-pane-top .empty code {
+  background: rgba(255, 255, 255, 0.10);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+/* ── Legacy left-pane styles (kept for any consumer still using
+ * the sidebar layout). When ``#layout.has-top-tabs`` is set, the
+ * tab strip uses ``.tabs-pane-top`` rules above; the rules below
+ * apply only to the original aside-style sidebar. */
+#tabs-pane:not(.tabs-pane-top) {
   border-right: 1px solid #171717;
   overflow-y: auto;
   padding: 0 0 12px;
   display: flex;
   flex-direction: column;
 }
-
-#tabs-pane-header {
-  padding: 10px 12px;
-  border-bottom: 1px solid #171717;
-  background: #0f0f0f;
-  position: sticky;
-  top: 0;
-  z-index: 1;
-}
-
-#tabs-add-task {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: #1d4ed8;
-  color: #eff6ff;
-  border: 1px solid #2563eb;
-  border-radius: 4px;
-  padding: 6px 12px;
-  font: 12px/1 inherit;
-  cursor: pointer;
-  width: 100%;
-  justify-content: center;
-}
-#tabs-add-task:hover { background: #2563eb; color: #fff; }
-#tabs-add-task svg { width: 10px; height: 10px; }
-
-#tab-list {
+#tabs-pane:not(.tabs-pane-top) #tab-list {
   list-style: none;
   margin: 0;
   padding: 0;
 }
-
-.tab {
+#tabs-pane:not(.tabs-pane-top) .tab {
   padding: 10px 16px;
   cursor: pointer;
   border-left: 3px solid transparent;
@@ -175,18 +518,19 @@ header button:hover { color: #e5e5e5; border-color: #e5e5e5; }
   gap: 8px;
   align-items: start;
 }
-
-.tab:hover { background: #171717; }
-.tab.active { background: #171717; border-left-color: #e5e5e5; }
-.tab strong { display: block; }
-.tab p {
+#tabs-pane:not(.tabs-pane-top) .tab:hover { background: #171717; }
+#tabs-pane:not(.tabs-pane-top) .tab.active {
+  background: #171717;
+  border-left-color: #e5e5e5;
+}
+#tabs-pane:not(.tabs-pane-top) .tab strong { display: block; }
+#tabs-pane:not(.tabs-pane-top) .tab p {
   margin: 2px 0 0;
   color: #a3a3a3;
   font-size: 12px;
   grid-column: 2;
 }
-
-.tab-forget-btn {
+#tabs-pane:not(.tabs-pane-top) .tab-forget-btn {
   grid-column: 4;
   grid-row: 1 / span 2;
   align-self: center;
@@ -200,9 +544,9 @@ header button:hover { color: #e5e5e5; border-color: #e5e5e5; }
   border-radius: 4px;
   visibility: hidden;
 }
-.tab:hover .tab-forget-btn,
-.tab.active .tab-forget-btn { visibility: visible; }
-.tab-forget-btn:hover {
+#tabs-pane:not(.tabs-pane-top) .tab:hover .tab-forget-btn,
+#tabs-pane:not(.tabs-pane-top) .tab.active .tab-forget-btn { visibility: visible; }
+#tabs-pane:not(.tabs-pane-top) .tab-forget-btn:hover {
   background: #b91c1c;
   color: #fff7ed;
 }
@@ -298,6 +642,9 @@ header button:hover { color: #e5e5e5; border-color: #e5e5e5; }
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  /* Positioning context for the absolutely-floating #message-form
+   * composer capsule (defined below). */
+  position: relative;
 }
 
 #session-header {
@@ -340,31 +687,89 @@ header button:hover { color: #e5e5e5; border-color: #e5e5e5; }
   text-overflow: ellipsis;
 }
 
-#session-stop {
-  background: #7f1d1d;
-  color: #fee2e2;
-  border: 1px solid #b91c1c;
-  border-radius: 4px;
-  padding: 4px 12px;
-  font: 12px/1 inherit;
-  cursor: pointer;
+/* ───── round icon buttons in the session header ─────────────────────
+ *
+ * All header actions (push, pull, PR, update, done, adopt, stop /
+ * resume, approve-push, search toggle) share a single round-button
+ * shape. Mood is signalled by a class modifier:
+ *
+ *   .session-action            default (slate, neutral actions)
+ *   .session-action.is-primary green (Done — task-level commit)
+ *   .session-action.is-warning amber (Resume — restart subprocess)
+ *   .session-action.is-danger  red   (Stop — kill subprocess)
+ *
+ * The data-tooltip attribute provides the verbose hover label so
+ * shrinking each button to a 34px circle doesn't lose the meaning
+ * it used to convey via inline text.
+ */
+.session-action {
   flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.06);
+  color: #f5f5f7;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    transform 90ms ease,
+    color 120ms ease;
 }
-#session-stop:hover { background: #b91c1c; color: #fff; }
-#session-stop:disabled { background: #262626; border-color: #262626; color: #525252; cursor: not-allowed; }
-
-#session-resume {
-  background: #78350f;
+.session-action:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.20);
+}
+.session-action:active { transform: scale(0.94); }
+.session-action:disabled {
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(245, 245, 247, 0.28);
+  border-color: rgba(255, 255, 255, 0.05);
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.session-action.is-primary {
+  background: rgba(5, 150, 105, 0.85);          /* emerald-600 */
+  border-color: rgba(16, 185, 129, 0.65);
+  color: #ecfdf5;
+  box-shadow: 0 1px 6px rgba(5, 150, 105, 0.35);
+}
+.session-action.is-primary:hover {
+  background: rgba(16, 185, 129, 0.95);
+  box-shadow: 0 1px 10px rgba(16, 185, 129, 0.55);
+}
+.session-action.is-warning {
+  background: rgba(217, 119, 6, 0.85);          /* amber-600 */
+  border-color: rgba(245, 158, 11, 0.65);
   color: #fef3c7;
-  border: 1px solid #d97706;
-  border-radius: 4px;
-  padding: 4px 12px;
-  font: 12px/1 inherit;
-  cursor: pointer;
-  flex-shrink: 0;
+  box-shadow: 0 1px 6px rgba(217, 119, 6, 0.35);
 }
-#session-resume:hover { background: #d97706; color: #fff; }
-#session-resume:disabled { background: #262626; border-color: #262626; color: #525252; cursor: not-allowed; }
+.session-action.is-warning:hover {
+  background: rgba(245, 158, 11, 0.95);
+  box-shadow: 0 1px 10px rgba(245, 158, 11, 0.55);
+}
+.session-action.is-danger {
+  background: rgba(185, 28, 28, 0.85);          /* red-700 */
+  border-color: rgba(220, 38, 38, 0.65);
+  color: #fee2e2;
+  box-shadow: 0 1px 6px rgba(185, 28, 28, 0.35);
+}
+.session-action.is-danger:hover {
+  background: rgba(220, 38, 38, 0.95);
+  box-shadow: 0 1px 10px rgba(220, 38, 38, 0.55);
+}
+/* Legacy text-button per-id rules (stop / resume / push / pull /
+ * etc.) were removed when the round .session-action design landed.
+ * Identifiers themselves are still on the elements so tests + dev
+ * tools find them by id — only the visual rules moved up. */
 
 #event-log {
   flex: 1;
@@ -617,32 +1022,245 @@ header button:hover { color: #e5e5e5; border-color: #e5e5e5; }
   100% { transform: translateX(128px); }
 }
 
-#message-form {
-  display: grid;
-  grid-template-columns: 1fr auto auto;
+/* ───── iOS-style floating glass composer ───────────────────────────
+ *
+ * The composer floats above the chat as a frosted-glass capsule.
+ * EventLog (#event-log) scrolls underneath it; its bottom padding
+ * keeps the last bubble clear of the floating bar.
+ *
+ * Anchored absolutely inside #session-detail (already ``position:
+ * relative`` — see its base rule above). On a chat tab the operator
+ * never has to scroll past it — it stays glued to the bottom while
+ * content flows behind it with a real backdrop blur. */
+
+#event-log {
+  /* Reserve enough room at the bottom so the last bubble isn't
+   * permanently obscured by the floating capsule. Picked to fit
+   * a single-row composer + attachments preview row + outer
+   * margins (24px below + ~110px capsule). */
+  padding-bottom: 120px;
+}
+
+/* ───── chat search: bubble match / no-match states ──────────────
+ *
+ * EventLog walks the rendered DOM after each render to tag bubbles
+ * with .bubble--match / .bubble--no-match against the current
+ * search query. The chat container also gets .is-searching while
+ * a non-empty query is active so we can dim non-matches without
+ * making the "no query" state look stale. */
+#event-log.is-searching .bubble--no-match {
+  opacity: 0.18;
+  transition: opacity 120ms ease;
+}
+#event-log.is-searching .bubble--match {
+  opacity: 1;
+}
+#event-log.is-searching .bubble--match .bubble-body {
+  /* Faint highlight ring so the operator can scan matches
+   * without losing the bubble's own kind-color signal. */
+  box-shadow: 0 0 0 2px rgba(10, 132, 255, 0.35);
+  border-radius: 8px;
+  transition: box-shadow 120ms ease, background 120ms ease;
+}
+/* The one match the prev/next cursor is currently parked on —
+ * brighter ring + soft glow so the operator can tell their
+ * Enter/Shift-Enter actually moved the cursor without having
+ * to count. */
+#event-log.is-searching .bubble--match-current .bubble-body {
+  box-shadow:
+    0 0 0 2px rgba(10, 132, 255, 0.95),
+    0 0 18px rgba(10, 132, 255, 0.35);
+  background: rgba(10, 132, 255, 0.06);
+}
+
+/* ───── chat-search toggle + capsule (top of chat) ───────────────
+ *
+ * Closed state = a round .session-action-shaped icon button in the
+ * header. Open state = a frosted-glass capsule that mirrors the
+ * composer at the bottom — same width, same blur, anchored 16px
+ * below the header. Live match-count chip + close button live
+ * inline so the operator never leaves the keyboard. */
+.chat-search-toggle {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.06);
+  color: #f5f5f7;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+  transition: background 120ms ease, border-color 120ms ease, transform 90ms ease;
+}
+.chat-search-toggle:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.20);
+}
+.chat-search-toggle:active:not(:disabled) { transform: scale(0.94); }
+.chat-search-toggle:disabled {
+  /* Search bar is already open — show that this toggle is
+   * effectively the "active" state for it, rather than fading it
+   * to grey like a normal disabled button. */
+  background: rgba(10, 132, 255, 0.18);
+  border-color: rgba(10, 132, 255, 0.40);
+  color: rgba(245, 245, 247, 0.85);
+  cursor: default;
+}
+
+.chat-search {
+  /* Float above the chat just below the header. Same shape /
+   * material as #message-form so the two read as a pair. The
+   * top offset clears the typical SessionHeader height (two-row
+   * status + action-button bar at 12px padding). If the header
+   * wraps on narrow widths the capsule lands a few pixels behind
+   * it, which the blur masks gracefully — no magic resize-observer
+   * dance needed for the first cut. */
+  position: absolute;
+  top: var(--chat-search-top, 90px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(720px, calc(100% - 32px));
+  display: flex;
+  align-items: center;
   gap: 8px;
-  padding: 12px 24px;
-  border-top: 1px solid #171717;
-  position: relative;
+  padding: 6px 8px 6px 14px;
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg,
+      rgba(28, 28, 30, 0.62) 0%,
+      rgba(20, 20, 22, 0.55) 100%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.45),
+    0 2px 8px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  z-index: 11;
+}
+.chat-search-icon {
+  color: rgba(245, 245, 247, 0.7);
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.chat-search-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #f5f5f7;
+  font: inherit;
+  padding: 6px 4px;
+}
+.chat-search-input::placeholder { color: rgba(245, 245, 247, 0.42); }
+.chat-search-count {
+  font-size: 11px;
+  color: rgba(245, 245, 247, 0.65);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.chat-search-count.is-empty {
+  background: rgba(220, 38, 38, 0.18);
+  color: rgba(254, 226, 226, 0.85);
+}
+.chat-search-nav,
+.chat-search-close {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.06);
+  color: #f5f5f7;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  line-height: 1;
+  padding: 0;
+  transition: background 120ms ease, transform 90ms ease, color 120ms ease;
+}
+.chat-search-nav:hover:not(:disabled),
+.chat-search-close:hover { background: rgba(255, 255, 255, 0.14); }
+.chat-search-nav:active:not(:disabled),
+.chat-search-close:active { transform: scale(0.92); }
+.chat-search-nav:disabled {
+  color: rgba(245, 245, 247, 0.22);
+  cursor: not-allowed;
+}
+
+#message-form {
+  /* The capsule itself — absolute-positioned over the chat. */
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  width: min(720px, calc(100% - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 28px;
+
+  /* Frosted glass — translucent dark base + backdrop blur + a
+   * faint inner highlight makes it read as a physical pane
+   * sitting over the chat. */
+  background:
+    linear-gradient(180deg,
+      rgba(28, 28, 30, 0.62) 0%,
+      rgba(20, 20, 22, 0.55) 100%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    /* outer drop shadow — capsule hovers above the chat */
+    0 12px 32px rgba(0, 0, 0, 0.45),
+    0 2px 8px rgba(0, 0, 0, 0.35),
+    /* inner highlight — the glass "edge" */
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  z-index: 10;
 }
 #message-form.is-drop-target {
-  outline: 2px dashed #fbbf24;
-  outline-offset: -8px;
+  outline: 2px dashed rgba(251, 191, 36, 0.85);
+  outline-offset: -10px;
 }
+
+/* The actual input row inside the capsule. Buttons left + right,
+ * textarea expands. */
+.composer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* Attachments preview lives ABOVE the input row inside the same
+ * capsule — drag-drop / paste lands here. */
 .message-attachments {
-  grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  padding: 0 4px;
 }
 .message-attachment {
   position: relative;
-  width: 60px;
-  height: 60px;
-  border: 1px solid #262626;
-  border-radius: 4px;
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
   overflow: hidden;
-  background: #0a0a0a;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 .message-attachment img {
   width: 100%;
@@ -652,14 +1270,14 @@ header button:hover { color: #e5e5e5; border-color: #e5e5e5; }
 }
 .message-attachment-remove {
   position: absolute;
-  top: 1px;
-  right: 1px;
+  top: 3px;
+  right: 3px;
   width: 18px;
   height: 18px;
   border-radius: 50%;
   border: none;
-  background: rgba(0, 0, 0, 0.8);
-  color: #e5e5e5;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
   font-size: 14px;
   line-height: 1;
   cursor: pointer;
@@ -668,65 +1286,122 @@ header button:hover { color: #e5e5e5; border-color: #e5e5e5; }
   align-items: center;
   justify-content: center;
 }
-.message-attachment-remove:hover {
-  background: #b91c1c;
-}
-#message-attach {
-  background: #262626;
-  color: #e5e5e5;
-  border: 1px solid #404040;
-  border-radius: 4px;
-  padding: 0 10px;
-  cursor: pointer;
-  font-size: 16px;
-  line-height: 1;
-}
-#message-attach:hover { background: #404040; }
-#message-attach:disabled {
-  background: #171717;
-  color: #525252;
-  cursor: not-allowed;
-}
+.message-attachment-remove:hover { background: rgba(185, 28, 28, 0.95); }
 
+/* The textarea — no visible chrome inside the glass capsule. */
 #message-input {
-  background: #050505;
-  color: #e5e5e5;
-  border: 1px solid #262626;
-  border-radius: 4px;
-  padding: 8px 10px;
-  font: inherit;
-  resize: vertical;
-}
-
-#message-form button {
-  /* Primary action of the form. Bright background with dark text so
-   * the enabled state is unmistakably distinct from the disabled
-   * state below (#262626 on muted gray). The previous combo
-   * (white text on near-white background) read as disabled at a
-   * glance. */
-  background: #e5e5e5;
-  color: #171717;
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  color: #f5f5f7;
   border: none;
-  padding: 0 16px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-weight: 600;
-  transition: background 120ms ease, color 120ms ease;
+  padding: 8px 6px;
+  font: inherit;
+  line-height: 1.4;
+  resize: none;
+  max-height: 160px;
+  outline: none;
 }
-#message-form button:hover { background: #fff; color: #000; }
-
-#message-form button.is-steering {
-  background: #f59e0b;
-  color: #1f1300;
-}
-#message-form button.is-steering:hover { background: #fbbf24; }
-
-#message-form button:disabled { background: #262626; cursor: not-allowed; color: #a3a3a3; }
+#message-input::placeholder { color: rgba(245, 245, 247, 0.42); }
 #message-input:disabled {
-  background: #000000;
-  color: #525252;
-  border-color: #171717;
+  color: rgba(245, 245, 247, 0.32);
   cursor: not-allowed;
+}
+
+/* Round attach button — the iOS "+". Sits in the leading slot. */
+#message-attach {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.10);
+  color: #f5f5f7;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  padding: 0;
+  font-size: 20px;
+  font-weight: 400;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 120ms ease, transform 90ms ease, border-color 120ms ease;
+}
+#message-attach:hover {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+#message-attach:active { transform: scale(0.94); }
+#message-attach:disabled {
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(245, 245, 247, 0.22);
+  cursor: not-allowed;
+  border-color: rgba(255, 255, 255, 0.04);
+}
+
+/* Round send button — iOS-blue accent when armed, dimmed when
+ * empty. Glows softly to telegraph the primary action without
+ * shouting. */
+.message-send {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  background: #0a84ff;                  /* iOS systemBlue */
+  color: #ffffff;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 6px rgba(10, 132, 255, 0.45);
+  transition:
+    background 120ms ease,
+    box-shadow 120ms ease,
+    transform 90ms ease,
+    opacity 120ms ease;
+}
+.message-send:hover {
+  background: #2997ff;
+  box-shadow: 0 1px 10px rgba(10, 132, 255, 0.6);
+}
+.message-send:active { transform: scale(0.94); }
+.message-send:disabled {
+  background: rgba(255, 255, 255, 0.10);
+  color: rgba(245, 245, 247, 0.32);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+/* Steer mode (mid-turn message) — amber to telegraph "interrupt". */
+.message-send.is-steering {
+  background: #f59e0b;
+  box-shadow: 0 1px 10px rgba(245, 158, 11, 0.55);
+}
+.message-send.is-steering:hover { background: #fbbf24; }
+
+/* Compact, pill-shaped model picker living inside the capsule. */
+#message-form #model-selector {
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.08);
+  color: #f5f5f7;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 16px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+#message-form #model-selector:hover {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 code {
@@ -872,6 +1547,17 @@ code {
   position: relative;
 }
 
+/* VS Code-style column resizer between the center chat and the
+ * right pane.
+ *
+ * Three visual states:
+ *   - default → invisible 6px-wide grip (just a hit target)
+ *   - hover   → faint blue tint on a 2px line down the boundary
+ *   - active  → solid iOS-systemBlue line + soft glow while dragging
+ *
+ * The drag handler still lives in ``useResizable`` and toggles the
+ * ``kato-resizing`` body class to drive the active visual; the
+ * drag math itself didn't change. */
 #right-pane-resizer {
   position: absolute;
   left: -3px;
@@ -881,11 +1567,30 @@ code {
   cursor: col-resize;
   background: transparent;
   z-index: 10;
-  transition: background 120ms ease;
 }
-#right-pane-resizer:hover,
-body.kato-resizing #right-pane-resizer {
-  background: #e5e5e5;
+#right-pane-resizer::before {
+  /* The actual visible "line" lives in an ::before so the grip
+   * stays a generous 6px hit target while the visible blue line
+   * is the crisp 2px the operator sees. */
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+  background: transparent;
+  transition:
+    background 120ms ease,
+    box-shadow 120ms ease;
+}
+#right-pane-resizer:hover::before {
+  background: rgba(10, 132, 255, 0.45);
+}
+body.kato-resizing #right-pane-resizer::before {
+  background: #0a84ff;
+  box-shadow:
+    0 0 0 1px rgba(10, 132, 255, 0.35),
+    0 0 12px rgba(10, 132, 255, 0.55);
 }
 body.kato-resizing { user-select: none; cursor: col-resize; }
 
@@ -911,25 +1616,51 @@ body.kato-resizing { user-select: none; cursor: col-resize; }
   min-height: 0;
 }
 
+/* ───── right pane — iOS-style segmented controller ───────────────
+ *
+ * Replaces the old underline-tab pattern (text + bottom border)
+ * with a glass-pill segmented controller that matches the task
+ * tabs at the top + the composer at the bottom. */
 .right-pane-tabs {
   display: flex;
-  border-bottom: 1px solid #171717;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   flex-shrink: 0;
+  background:
+    linear-gradient(180deg,
+      rgba(28, 28, 30, 0.55) 0%,
+      rgba(20, 20, 22, 0.45) 100%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
 }
 .right-pane-tabs button {
   flex: 1;
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: #a3a3a3;
-  padding: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: rgba(245, 245, 247, 0.78);
+  padding: 7px 10px;
   font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border-radius: 999px;
   cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease, transform 90ms ease;
 }
-.right-pane-tabs button:hover { color: #e5e5e5; }
+.right-pane-tabs button:hover {
+  background: rgba(255, 255, 255, 0.10);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #f5f5f7;
+}
+.right-pane-tabs button:active { transform: scale(0.97); }
 .right-pane-tabs button.active {
-  color: #e5e5e5;
-  border-bottom-color: #e5e5e5;
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: #ffffff;
+  box-shadow:
+    0 1px 6px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.10);
 }
 
 .right-pane-body {
@@ -950,17 +1681,17 @@ body.kato-resizing { user-select: none; cursor: col-resize; }
 
 .files-tab-header,
 .changes-tab-header {
-  padding: 8px 12px;
-  border-bottom: 1px solid #171717;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   font-size: 12px;
-  color: #a3a3a3;
-  font-family: ui-monospace, monospace;
+  color: rgba(245, 245, 247, 0.65);
   display: flex;
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
 }
 
+/* ───── iOS-style search pill — files tab filter ────────────────── */
 .files-tab-filter {
   position: relative;
   flex: 1;
@@ -969,87 +1700,114 @@ body.kato-resizing { user-select: none; cursor: col-resize; }
 }
 .files-tab-filter-input {
   width: 100%;
-  background: #050505;
-  color: #e5e5e5;
-  border: 1px solid #262626;
-  border-radius: 4px;
-  padding: 4px 24px 4px 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #f5f5f7;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  padding: 6px 28px 6px 14px;
   font: inherit;
   font-size: 12px;
-  font-family: ui-monospace, monospace;
+  outline: none;
+  transition: background 120ms ease, border-color 120ms ease;
 }
 .files-tab-filter-input:focus {
-  outline: none;
-  border-color: #404040;
+  background: rgba(255, 255, 255, 0.10);
+  border-color: rgba(10, 132, 255, 0.55);
 }
 .files-tab-filter-input::placeholder {
-  color: #525252;
+  color: rgba(245, 245, 247, 0.42);
 }
-/* Native search input in WebKit ships an "x" clear control we don't
- * use — hide it so the only clear affordance is our own button. */
 .files-tab-filter-input::-webkit-search-cancel-button {
   display: none;
 }
 .files-tab-filter-clear {
   position: absolute;
-  right: 4px;
+  right: 6px;
   top: 50%;
   transform: translateY(-50%);
-  background: none;
+  background: rgba(255, 255, 255, 0.12);
   border: none;
-  color: #a3a3a3;
+  color: #f5f5f7;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 11px;
   line-height: 1;
-  padding: 0 4px;
+  padding: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
-.files-tab-filter-clear:hover { color: #e5e5e5; }
+.files-tab-filter-clear:hover { background: rgba(255, 255, 255, 0.22); }
 
+/* ───── iOS round icon toolbar — files + changes ────────────────── */
 .files-tab-toolbar,
 .changes-tab-toolbar {
   margin-left: auto;
   display: flex;
-  gap: 4px;
+  gap: 6px;
 }
 .files-tab-icon-btn,
 .changes-tab-icon-btn {
-  background: transparent;
-  border: 1px solid #262626;
-  color: #a3a3a3;
-  width: 22px;
-  height: 22px;
-  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: rgba(245, 245, 247, 0.85);
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
   cursor: pointer;
   padding: 0;
-  font-size: 14px;
-  line-height: 20px;
-  font-weight: 600;
+  font-size: 11px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 120ms ease, border-color 120ms ease, transform 90ms ease;
 }
 .files-tab-icon-btn:hover,
 .changes-tab-icon-btn:hover {
-  background: #171717;
-  color: #e5e5e5;
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #f5f5f7;
+}
+.files-tab-icon-btn:active,
+.changes-tab-icon-btn:active { transform: scale(0.94); }
+.files-tab-icon-btn:disabled,
+.changes-tab-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
+/* iOS-style accordion cards (files-repo, diff-repo, diff-file).
+ * Soft rounded glass instead of dark squares with hard borders. */
 .files-tab-repo {
-  border: 1px solid #171717;
-  border-radius: 4px;
-  margin-bottom: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  margin-bottom: 10px;
   overflow: hidden;
+  background: rgba(255, 255, 255, 0.03);
 }
 .files-tab-repo-header {
   display: flex;
   gap: 8px;
   align-items: center;
-  padding: 8px 10px;
-  background: #171717;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.04);
   cursor: pointer;
-  font-family: ui-monospace, monospace;
   font-size: 12px;
+  font-weight: 600;
+  transition: background 120ms ease;
 }
-.files-tab-repo-header:hover { background: #1f1f1f; }
-.files-tab-repo-chevron { color: #a3a3a3; width: 12px; }
-.files-tab-repo-name { color: #e5e5e5; font-weight: 600; flex: 1; }
+.files-tab-repo-header:hover { background: rgba(255, 255, 255, 0.08); }
+.files-tab-repo-chevron {
+  color: rgba(245, 245, 247, 0.65);
+  width: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.files-tab-repo-name { color: #f5f5f7; font-weight: 600; flex: 1; }
 
 /* Per-repo "view commit" affordance + dropdown menu (FilesTab). */
 .files-tab-repo-commits-btn {
@@ -1344,25 +2102,33 @@ body.kato-resizing { user-select: none; cursor: col-resize; }
 }
 
 .diff-repo {
-  border: 1px solid #171717;
-  border-radius: 4px;
-  margin-bottom: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  margin-bottom: 10px;
   overflow: hidden;
+  background: rgba(255, 255, 255, 0.03);
 }
 .diff-repo-header {
   display: flex;
   gap: 8px;
   align-items: center;
-  padding: 8px 10px;
-  background: #171717;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.04);
   cursor: pointer;
-  font-family: ui-monospace, monospace;
   font-size: 12px;
+  font-weight: 600;
+  transition: background 120ms ease;
 }
-.diff-repo-header:hover { background: #1f1f1f; }
-.diff-repo-chevron { color: #a3a3a3; width: 12px; }
-.diff-repo-name { color: #e5e5e5; font-weight: 600; }
-.diff-repo-range { color: #525252; margin-left: auto; }
+.diff-repo-header:hover { background: rgba(255, 255, 255, 0.08); }
+.diff-repo-chevron {
+  color: rgba(245, 245, 247, 0.65);
+  width: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.diff-repo-name { color: #f5f5f7; font-weight: 600; }
+.diff-repo-range { color: rgba(245, 245, 247, 0.42); margin-left: auto; font-weight: 400; }
 .diff-repo-body { padding: 8px; }
 
 .files-tab-body {
@@ -1389,18 +2155,31 @@ body.kato-resizing { user-select: none; cursor: col-resize; }
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 8px;
+  padding: 0 10px;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
+  border-radius: 6px;
+  transition: background 90ms ease;
 }
-.tree-row:hover { background: #171717; }
-.tree-row.selected { background: #262626; }
-.tree-row-icon { width: 12px; color: #e5e5e5; flex-shrink: 0; }
+.tree-row:hover { background: rgba(255, 255, 255, 0.06); }
+.tree-row.selected {
+  background: rgba(10, 132, 255, 0.20);
+  color: #ffffff;
+}
+.tree-row-icon {
+  width: 12px;
+  color: rgba(245, 245, 247, 0.78);
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.tree-row.selected .tree-row-icon { color: #f5f5f7; }
 .tree-row-name {
   overflow: hidden;
   text-overflow: ellipsis;
-  color: #e5e5e5;
+  color: #f5f5f7;
 }
 
 /* Changes tab */
@@ -1413,18 +2192,20 @@ body.kato-resizing { user-select: none; cursor: col-resize; }
 
 .diff-file {
   margin-bottom: 12px;
-  border: 1px solid #171717;
-  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
   overflow: hidden;
+  background: rgba(255, 255, 255, 0.025);
 }
 .diff-file-header {
   display: flex;
   gap: 8px;
   align-items: center;
-  padding: 6px 10px;
-  background: #171717;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.05);
   font-size: 12px;
   font-family: ui-monospace, monospace;
+  color: #f5f5f7;
 }
 .diff-file-conflicted {
   margin-left: 8px;
@@ -1636,69 +2417,13 @@ body.kato-resizing { user-select: none; cursor: col-resize; }
   flex-shrink: 0;
 }
 
-#session-approve-push {
-  background: #047857;
-  color: #d1fae5;
-  border: 1px solid #059669;
-  border-radius: 4px;
-  padding: 4px 12px;
-  font: 12px/1 inherit;
-  cursor: pointer;
-  flex-shrink: 0;
-  margin-right: 6px;
-}
-#session-approve-push:hover { background: #059669; color: #fff; }
-#session-approve-push:disabled {
-  background: #262626;
-  border-color: #262626;
-  color: #525252;
-  cursor: not-allowed;
-}
-
-#session-push,
-#session-pull-request,
-#session-update-source {
-  background: #1e3a8a;
-  color: #dbeafe;
-  border: 1px solid #2563eb;
-  border-radius: 4px;
-  padding: 4px 12px;
-  font: 12px/1 inherit;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-#session-push:hover,
-#session-pull-request:hover,
-#session-update-source:hover { background: #2563eb; color: #fff; }
-#session-push:disabled,
-#session-pull-request:disabled,
-#session-update-source:disabled {
-  background: #262626;
-  border-color: #262626;
-  color: #525252;
-  cursor: not-allowed;
-}
-
-/* Done = the one-click finalizer (push + PR + move-to-review).
- * Green to distinguish "I'm finishing this task" from the
- * incremental Push / Pull-request actions next to it. */
-#session-finish {
-  background: #047857;
-  color: #d1fae5;
-  border: 1px solid #059669;
-  border-radius: 4px;
-  padding: 4px 12px;
-  font: 12px/1 inherit;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-#session-finish:hover { background: #059669; color: #fff; }
-#session-finish:disabled {
-  background: #262626;
-  border-color: #262626;
-  color: #525252;
-  cursor: not-allowed;
-}
+/* Legacy text-button rules for header actions (approve-push, push,
+ * pull-request, update-source, finish) were removed — these now
+ * share the round .session-action shape defined further up.
+ *
+ * Done (#session-finish) carries .is-primary for the green accent,
+ * Stop carries .is-danger, Resume carries .is-warning. The other
+ * actions stay neutral. */
 
 .claude-status {
   font: 11px/1 ui-monospace, monospace;

@@ -326,13 +326,15 @@ export default function DiffFileWithComments({
     [fileLevelComments],
   );
 
-  // The file-level comment form is shown either when nothing has
-  // been said yet (zero threads) OR when the operator explicitly
-  // opened it (activeLine === -1, set by either a Reply on a
-  // thread OR the new "Add file-level comment" button below).
-  // Without the explicit-open path the form was unreachable once
-  // any file-level thread existed — clicking nothing did nothing.
-  const fileFormOpen = activeLine === -1 || fileThreads.length === 0;
+  // The file-level comment form is shown ONLY when the operator
+  // explicitly opens it (activeLine === -1, set by Reply on a
+  // thread OR the "Add file-level comment" entry button). Previously
+  // the form auto-opened on every file that had no comments yet,
+  // which planted an unrequested textarea + Add-comment button
+  // under every clean file in a diff — visual noise that operators
+  // never asked for. The entry button below still surfaces the form
+  // when needed.
+  const fileFormOpen = activeLine === -1;
   const fileFormReplyMode = !!replyTo && activeLine === -1;
   const conflictedBadge = conflicted ? (
     <span
@@ -414,10 +416,10 @@ export default function DiffFileWithComments({
         {!commentsLoading && commentsError && (
           <p className="diff-file-comments-empty error">{commentsError}</p>
         )}
-        {!commentsLoading && !commentsError && fileThreads.length === 0 && commentsByLine.size === 0 && (
+        {!commentsLoading && !commentsError && fileThreads.length === 0 && commentsByLine.size === 0 && !fileFormOpen && (
           <p className="diff-file-comments-empty">
             Click a diff line's gutter to add an inline comment, or use
-            the form below for a file-level comment. Kato runs on it
+            <strong> + Add file-level comment</strong> below. Kato runs on it
             immediately if idle, or queues it.
           </p>
         )}

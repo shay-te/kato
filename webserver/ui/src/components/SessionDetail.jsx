@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import ChatSearch from './ChatSearch.jsx';
 import EventLog from './EventLog.jsx';
 import MessageForm from './MessageForm.jsx';
 import PermissionDecisionContainer from './PermissionDecisionContainer.jsx';
@@ -161,6 +162,53 @@ export default function SessionDetail({
   const banner = lifecycleBanner(stream.lifecycle, taskId, hasVisible);
   const composerDisabled = !canSend(stream.lifecycle, session);
   const composerHint = composerDisabledReason(stream.lifecycle, session);
+  // Chat search state. Lifted here (not in EventLog) so the search
+  // bar — which lives at the top of the chat area as a peer of
+  // EventLog — and the highlight pass inside EventLog stay in sync
+  // through a single source of truth. ``matchCount`` is reported
+  // back by EventLog after its post-render DOM walk so the search
+  // bar can show "X / N". ``currentMatchIndex`` is the navigation
+  // cursor across that match run; EventLog scrolls and accents
+  // whichever match is at this index.
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchMatchCount, setSearchMatchCount] = useState(0);
+  const [searchCurrentIndex, setSearchCurrentIndex] = useState(0);
+  // Reset the query (and the navigation cursor) when switching
+  // tasks — a query that was open on task A shouldn't silently dim
+  // task B's chat on tab switch.
+  useEffect(() => {
+    setSearchQuery('');
+    setSearchCurrentIndex(0);
+  }, [taskId]);
+  // New query → reset cursor to first match. Clamp cursor if the
+  // match count shrank from under it (e.g. a bubble was filtered
+  // out by dedupe between renders).
+  const handleSearchQueryChange = useCallback((next) => {
+    setSearchQuery(next);
+    setSearchCurrentIndex(0);
+  }, []);
+  const handleSearchMatchCount = useCallback((count) => {
+    setSearchMatchCount(count);
+    setSearchCurrentIndex((idx) => {
+      if (count <= 0) { return 0; }
+      if (idx >= count) { return count - 1; }
+      return idx;
+    });
+  }, []);
+  // Prev/next wrap around so the operator can step through without
+  // hitting a "stuck at end" dead-state.
+  const handlePrevMatch = useCallback(() => {
+    setSearchCurrentIndex((idx) => {
+      if (searchMatchCount <= 0) { return 0; }
+      return (idx - 1 + searchMatchCount) % searchMatchCount;
+    });
+  }, [searchMatchCount]);
+  const handleNextMatch = useCallback(() => {
+    setSearchCurrentIndex((idx) => {
+      if (searchMatchCount <= 0) { return 0; }
+      return (idx + 1) % searchMatchCount;
+    });
+  }, [searchMatchCount]);
   return (
     <main id="session-pane">
       <section id="session-detail">
@@ -172,8 +220,24 @@ export default function SessionDetail({
           onSessionAdopted={onSessionAdopted}
           streamLifecycle={stream.lifecycle}
           turnInFlight={stream.turnInFlight}
+          searchSlot={
+            <ChatSearch
+              query={searchQuery}
+              onQueryChange={handleSearchQueryChange}
+              matchCount={searchMatchCount}
+              currentMatchIndex={searchCurrentIndex}
+              onPrevMatch={handlePrevMatch}
+              onNextMatch={handleNextMatch}
+            />
+          }
         />
-        <EventLog entries={stream.events} banner={banner} />
+        <EventLog
+          entries={stream.events}
+          banner={banner}
+          searchQuery={searchQuery}
+          searchCurrentIndex={searchCurrentIndex}
+          onSearchMatchCount={handleSearchMatchCount}
+        />
           <WorkingIndicator
             active={stream.turnInFlight || !!stream.pendingPermission}
             waitingForApproval={!!stream.pendingPermission}

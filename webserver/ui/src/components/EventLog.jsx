@@ -14,7 +14,13 @@ import {
   computeToolDetailsToggleLabel,
 } from './eventLogTruncation.js';
 
-export default function EventLog({ entries, banner }) {
+export default function EventLog({
+  entries,
+  banner,
+  searchQuery = '',
+  searchCurrentIndex = 0,
+  onSearchMatchCount,
+}) {
   const containerRef = useRef(null);
   const [showAll, setShowAll] = useState(false);
   // Dedupe is O(N) over the entire event list; without memoization
@@ -34,6 +40,69 @@ export default function EventLog({ entries, banner }) {
     const node = containerRef.current;
     if (node) { node.scrollTop = node.scrollHeight; }
   }, [window.visible.length, banner]);
+
+  // ----- chat search highlighting + navigation ------------------
+  // We do this as a post-render DOM walk rather than threading the
+  // query into every bubble's children — bubble bodies are arbitrary
+  // React subtrees (markdown, tool widgets, diffs) and walking the
+  // pre-render tree to substring-match would mean re-implementing
+  // half of React's renderer. Reading ``textContent`` from the
+  // already-rendered DOM is one cheap pass and stays correct no
+  // matter what shape a bubble's children take.
+  //
+  // After tagging matches, we accent ``searchCurrentIndex`` with
+  // ``.bubble--match-current`` and scroll it into view — that's
+  // what the prev/next buttons in ChatSearch drive.
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node) {
+      if (typeof onSearchMatchCount === 'function') {
+        onSearchMatchCount(0);
+      }
+      return;
+    }
+    const query = (searchQuery || '').trim().toLowerCase();
+    const bubbles = node.querySelectorAll('.bubble');
+    if (!query) {
+      bubbles.forEach((b) => {
+        b.classList.remove(
+          'bubble--match', 'bubble--no-match', 'bubble--match-current',
+        );
+      });
+      node.classList.remove('is-searching');
+      if (typeof onSearchMatchCount === 'function') {
+        onSearchMatchCount(0);
+      }
+      return;
+    }
+    node.classList.add('is-searching');
+    const matched = [];
+    bubbles.forEach((b) => {
+      const haystack = (b.textContent || '').toLowerCase();
+      if (haystack.includes(query)) {
+        b.classList.add('bubble--match');
+        b.classList.remove('bubble--no-match', 'bubble--match-current');
+        matched.push(b);
+      } else {
+        b.classList.add('bubble--no-match');
+        b.classList.remove('bubble--match', 'bubble--match-current');
+      }
+    });
+    if (matched.length > 0) {
+      const clampedIndex = Math.max(
+        0, Math.min(searchCurrentIndex, matched.length - 1),
+      );
+      const current = matched[clampedIndex];
+      current.classList.add('bubble--match-current');
+      // Scroll into view smoothly so the operator can follow the
+      // jump. ``center`` keeps the active bubble vertically centred
+      // — the eye doesn't have to find it after each press.
+      current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    if (typeof onSearchMatchCount === 'function') {
+      onSearchMatchCount(matched.length);
+    }
+  });
 
   const bannerBubble = banner && <Bubble kind={BUBBLE_KIND.SYSTEM}>{banner}</Bubble>;
   const eventBubbles = useMemo(

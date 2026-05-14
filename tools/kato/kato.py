@@ -136,9 +136,10 @@ _TARGETS: dict[str, tuple[str, bool, list[str]]] = {
         'Manage the REP approval list. Drops into a picker that '
         'shows every repo (from your kato config, your kato '
         'workspaces, AND your REPOSITORY_ROOT_PATH checkouts). '
-        'Approved repos start pre-checked; type indices like '
-        '``1,3,5-7`` to toggle, press Enter to apply. One command '
-        'for add+edit+remove.',
+        'Approved repos start pre-checked. Commands: ``1,3,5-7`` to '
+        'toggle add/revoke; ``t26`` to mark trusted; ``r26`` to mark '
+        'restricted; Enter to apply. One command for '
+        'add+edit+remove+mode-change.',
         True,
         ['scripts/approve_repository.py'],
     ),

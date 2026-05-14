@@ -7,6 +7,7 @@ import { deriveTabStatus, resolveTabStatus, tabStatusTitle } from '../utils/tabS
 import { SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
 import { toast } from '../stores/toastStore.js';
 import AdoptSessionModal from './AdoptSessionModal.jsx';
+import Icon from './Icon.jsx';
 import {
   formatFinishResult,
   formatPullResult,
@@ -21,6 +22,7 @@ export default function SessionHeader({
   onSessionAdopted,
   streamLifecycle,
   turnInFlight = false,
+  searchSlot = null,
 }) {
   const [stopping, setStopping] = useState(false);
   const [resuming, setResuming] = useState(false);
@@ -157,11 +159,13 @@ export default function SessionHeader({
     <button
       id="session-approve-push"
       type="button"
+      className="session-action tooltip-below"
       data-tooltip="Approve push: kato will push the branch and open the pull request."
       onClick={pushApproval.approve}
       disabled={pushApproval.busy}
+      aria-label={pushLabel}
     >
-      {pushLabel}
+      <Icon name={pushApproval.busy ? 'spinner' : 'check'} spin={pushApproval.busy} />
     </button>
   );
 
@@ -203,21 +207,25 @@ export default function SessionHeader({
     <button
       id="session-resume"
       type="button"
+      className="session-action tooltip-below is-warning"
       data-tooltip="Resume the Claude session — kato will respawn the subprocess and ask Claude to pick up where it left off."
       onClick={onResumeClick}
       disabled={resuming || typeof onResume !== 'function'}
+      aria-label={resumeLabel}
     >
-      {resumeLabel}
+      <Icon name={resuming ? 'spinner' : 'play'} spin={resuming} />
     </button>
   ) : (
     <button
       id="session-stop"
       type="button"
+      className="session-action tooltip-below is-danger"
       data-tooltip="Stop the live Claude subprocess for this task. The chat history is preserved; you can resume from this header when the subprocess has ended."
       onClick={onStop}
       disabled={stopping || baseStatus !== TAB_STATUS.ACTIVE}
+      aria-label={stopLabel}
     >
-      {stopLabel}
+      <Icon name={stopping ? 'spinner' : 'stop'} spin={stopping} />
     </button>
   );
   const adoptModal = adoptModalOpen ? (
@@ -253,59 +261,72 @@ export default function SessionHeader({
           >
             Claude: {claudeStatus.label}
           </span>
+          {searchSlot}
           {approvePushButton}
           <button
             id="session-push"
             type="button"
+            className="session-action tooltip-below"
             data-tooltip={pushTitle}
             onClick={taskPublish.push}
             disabled={pushDisabled}
+            aria-label={pushButtonLabel}
           >
-            {pushButtonLabel}
+            <Icon name={taskPublish.pushBusy ? 'spinner' : 'arrow-up'} spin={taskPublish.pushBusy} />
           </button>
           <button
             id="session-pull"
             type="button"
+            className="session-action tooltip-below"
             data-tooltip={pullTitle}
             onClick={onPull}
             disabled={pullDisabled}
+            aria-label={pullButtonLabel}
           >
-            {pullButtonLabel}
+            <Icon name={taskPublish.pullBusy ? 'spinner' : 'arrow-down'} spin={taskPublish.pullBusy} />
           </button>
           <button
             id="session-pull-request"
             type="button"
+            className="session-action tooltip-below"
             data-tooltip={prTitle}
             onClick={taskPublish.createPullRequest}
             disabled={prDisabled}
+            aria-label={prButtonLabel}
           >
-            {prButtonLabel}
+            <Icon name={taskPublish.prBusy ? 'spinner' : 'pull-request'} spin={taskPublish.prBusy} />
           </button>
           <button
             id="session-update-source"
             type="button"
+            className="session-action tooltip-below"
             data-tooltip="Update source — push the task branch, then for each repo under REPOSITORY_ROOT_PATH: fetch, checkout the task branch, and pull. Lets you test the task on your live running system. Refuses if a source repo has uncommitted changes."
             onClick={onUpdateSource}
             disabled={updatingSource}
+            aria-label={updateSourceLabel}
           >
-            {updateSourceLabel}
+            <Icon name={updatingSource ? 'spinner' : 'refresh'} spin={updatingSource} />
           </button>
           <button
             id="session-finish"
             type="button"
+            className="session-action tooltip-below is-primary"
             data-tooltip="Done — push pending changes, open a PR if missing, and move the ticket to In Review. Same flow Claude can trigger by emitting <KATO_TASK_DONE>."
             onClick={onFinish}
             disabled={finishing}
+            aria-label={finishLabel}
           >
-            {finishLabel}
+            <Icon name={finishing ? 'spinner' : 'check'} spin={finishing} />
           </button>
           <button
             id="session-adopt-claude"
             type="button"
+            className="session-action tooltip-below"
             data-tooltip="Adopt an existing Claude Code session for this task — e.g. a chat you already started in the VS Code extension. Kato will --resume that session on the next agent spawn instead of starting fresh."
             onClick={() => setAdoptModalOpen(true)}
+            aria-label="Adopt session"
           >
-            Adopt session
+            <Icon name="link" />
           </button>
           {stopOrResumeButton}
         </div>

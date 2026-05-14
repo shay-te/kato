@@ -11,6 +11,14 @@ from kato_core_lib.data_layers.service.repository_service import RepositoryServi
 from kato_core_lib.data_layers.service.task_failure_handler import TaskFailureHandler
 from kato_core_lib.data_layers.service.task_state_service import TaskStateService
 from kato_core_lib.data_layers.service.task_service import TaskService
+from security_scanner_core_lib.security_scanner_core_lib.security_finding import (
+    ScanReport,
+    SecurityFinding,
+    Severity,
+)
+from security_scanner_core_lib.security_scanner_core_lib.security_scanner_service import (
+    SecurityScanBlocked,
+)
 from tests.utils import build_task
 
 
@@ -158,3 +166,103 @@ class TaskFailureHandlerTests(unittest.TestCase):
             task.id,
             'added task-definition skip comment',
         )
+
+
+def _build_blocked_report() -> ScanReport:
+    findings = (
+        SecurityFinding(
+            tool='detect-secrets',
+            severity=Severity.CRITICAL,
+            rule_id='AWSKeyDetector',
+            message='AWS access key committed in tracked file',
+            path='src/config.py',
+            line=12,
+        ),
+        SecurityFinding(
+            tool='safety',
+            severity=Severity.HIGH,
+            rule_id='CVE-2023-12345',
+            message='requests<2.31.0 has known CVE',
+            path='requirements.txt',
+            line=0,
+        ),
+    )
+    return ScanReport(
+        findings=findings,
+        blocking=True,
+        block_threshold=Severity.HIGH,
+    )
+
+
+class SecurityScanBlockedCommentTests(unittest.TestCase):
+    """The failure comment must carry the detail breakdown, not just
+    the one-line summary. Before this fix the YouTrack comment said
+    "See ticket comment for details" but the only content WAS that
+    short line — the operator had no idea what tripped which scanner."""
+
+    def setUp(self) -> None:
+        self.task_service = Mock(spec=TaskService)
+        self.task_state_service = Mock(spec=TaskStateService)
+        self.repository_service = Mock(spec=RepositoryService)
+        self.notification_service = Mock(spec=NotificationService)
+        self.handler = TaskFailureHandler(
+            self.task_service,
+            self.task_state_service,
+            self.repository_service,
+            self.notification_service,
+        )
+        self.handler.logger = Mock()
+
+    def test_handle_task_failure_with_scan_block_includes_markdown_table(self) -> None:
+        task = build_task(description='do the thing')
+        error = SecurityScanBlocked(_build_blocked_report())
+
+        self.handler.handle_task_failure(task, error)
+
+        self.task_service.add_comment.assert_called_once()
+        comment = self.task_service.add_comment.call_args.args[1]
+        # Short lead line still on top (notification preview relies on it).
+        self.assertTrue(
+            comment.startswith('Kato agent could not safely process this task: '),
+            comment,
+        )
+        # Detail markdown follows — table headers + one row per finding.
+        self.assertIn('| severity | tool | path | rule | message |', comment)
+        self.assertIn('| critical | detect-secrets |', comment)
+        self.assertIn('AWS access key committed', comment)
+        self.assertIn('| high | safety |', comment)
+        self.assertIn('CVE-2023-12345', comment)
+        # And the gate-trip headline.
+        self.assertIn('refused this task', comment)
+
+    def test_handle_started_task_failure_with_scan_block_includes_detail(self) -> None:
+        # Same enrichment must apply to the "stopped working" path
+        # so post-start security blocks (rare but possible if a runner
+        # is wired later) also explain themselves.
+        task = build_task(description='do the thing')
+        error = SecurityScanBlocked(_build_blocked_report())
+
+        self.handler.handle_started_task_failure(task, error)
+
+        self.task_service.add_comment.assert_called_once()
+        comment = self.task_service.add_comment.call_args.args[1]
+        self.assertTrue(
+            comment.startswith('Kato agent stopped working on this task: '),
+            comment,
+        )
+        self.assertIn('| severity | tool | path | rule | message |', comment)
+        self.assertIn('AWS access key committed', comment)
+
+    def test_non_scan_error_unchanged(self) -> None:
+        # Regression guard: a plain RuntimeError still produces the
+        # original short comment with no spurious markdown.
+        task = build_task(description='do the thing')
+
+        self.handler.handle_task_failure(task, RuntimeError('boom'))
+
+        comment = self.task_service.add_comment.call_args.args[1]
+        self.assertEqual(
+            comment,
+            'Kato agent could not safely process this task: boom',
+        )
+        self.assertNotIn('| severity |', comment)

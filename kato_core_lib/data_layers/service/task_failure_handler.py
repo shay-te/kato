@@ -41,6 +41,55 @@ TASK_DEFINITION_TOO_THIN_COMMENT = (
 )
 
 
+def _failure_comment_for(
+    error: Exception,
+    *,
+    lead: str = 'Kato agent could not safely process this task',
+) -> str:
+    """Build the operator-facing comment for a failed task.
+
+    The default body is just ``<lead>: <error>``. For known error
+    shapes that carry structured detail (currently only
+    :class:`SecurityScanBlocked`), append the long-form breakdown
+    so the operator can see WHICH findings tripped the gate without
+    having to dig into logs. The short ``str(error)`` line stays —
+    it's what shows up in the YouTrack notification preview.
+    """
+    body = f'{lead}: {error}'
+    detail = _security_scan_detail(error)
+    if detail:
+        body = f'{body}\n\n{detail}'
+    return body
+
+
+def _security_scan_detail(error: Exception) -> str:
+    """Markdown breakdown for a SecurityScanBlocked, or '' if not one.
+
+    Lazy-imported so the failure handler doesn't pull
+    ``security_scanner_core_lib`` at module load — that lib carries
+    runner subprocess code that's not always on the path during
+    tests / embedded use.
+    """
+    try:
+        from security_scanner_core_lib.security_scanner_core_lib.security_scanner_service import (
+            SecurityScanBlocked,
+            SecurityScannerService,
+        )
+    except ImportError:
+        return ''
+    if not isinstance(error, SecurityScanBlocked):
+        return ''
+    # The service formats the markdown; we instantiate a throwaway
+    # one — its config doesn't matter for ``summarize_for_ticket``
+    # since the report carries its own threshold + findings.
+    try:
+        return SecurityScannerService().summarize_for_ticket(error.report)
+    except Exception:
+        # Never let a formatting bug eat the short-line failure
+        # comment — operator still sees ``str(error)`` on top.
+        return ''
+
+
 def repository_detection_comment(error: Exception) -> str:
     """Operator-facing comment when kato can't pick a repository.
 
@@ -128,7 +177,7 @@ class TaskFailureHandler(Service):
         self._report_task_failure(
             task,
             error,
-            f'Kato agent could not safely process this task: {error}',
+            _failure_comment_for(error),
             prepared_task=prepared_task,
         )
 
@@ -142,7 +191,7 @@ class TaskFailureHandler(Service):
         self._report_task_failure(
             task,
             error,
-            f'Kato agent stopped working on this task: {error}',
+            _failure_comment_for(error, lead='Kato agent stopped working on this task'),
             move_to_open=True,
             prepared_task=prepared_task,
         )

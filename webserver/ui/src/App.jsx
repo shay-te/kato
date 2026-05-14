@@ -5,7 +5,6 @@ import Layout from './components/Layout.jsx';
 import RightPane from './components/RightPane.jsx';
 import SafetyBanner from './components/SafetyBanner.jsx';
 import SessionDetail from './components/SessionDetail.jsx';
-import StatusBar from './components/StatusBar.jsx';
 import TabList from './components/TabList.jsx';
 import ToastContainer from './components/ToastContainer.jsx';
 import { forgetTaskWorkspace, triggerScan } from './api.js';
@@ -213,11 +212,11 @@ export default function App() {
   const layout = (
     <Layout
       rightWidth={resizer.width}
-      left={
-          <TabList
-            sessions={sessions}
-            activeTaskId={activeTaskId}
-            attentionTaskIds={attentionTaskIds}
+      top={
+        <TabList
+          sessions={sessions}
+          activeTaskId={activeTaskId}
+          attentionTaskIds={attentionTaskIds}
           onSelect={setActiveTaskId}
           onForget={handleForgetTask}
           onOpenAddTask={() => setAddTaskModalOpen(true)}
@@ -260,11 +259,9 @@ export default function App() {
         onSetKindEnabled={notifications.setKindEnabled}
         onToggleNotifications={notifications.toggle}
         onRefresh={refresh}
-      />
-      <StatusBar
-        latest={status.latest}
-        stale={status.stale}
-        connected={status.connected}
+        statusLatest={status.latest}
+        statusStale={status.stale}
+        statusConnected={status.connected}
       />
       <ChatComposerContext.Provider value={composerContextValue}>
         {layout}

@@ -168,22 +168,36 @@ describe('DiffFileWithComments — header rendering', () => {
 
 describe('DiffFileWithComments — file-level comment shortcut', () => {
 
-  test('empty state shows the file-level comment form directly (no entry button)', () => {
-    // Operator-UX choice: when no thread exists yet, the form is
-    // open from the start so they don't need an extra click to
-    // leave the first comment.
+  test('empty state shows the entry button, not an unrequested form', () => {
+    // Operator-UX choice: we used to auto-open the form whenever a
+    // file had zero comments, which planted an empty textarea +
+    // Submit button under every clean file in the diff. Now the
+    // form only appears when the operator explicitly clicks
+    // "+ Add file-level comment" — clean files stay clean.
     renderDiff({ file: _file(10), comments: [] });
+    expect(screen.queryByPlaceholderText(/add a file-level comment/i))
+      .not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /add file-level comment/i }))
+      .toBeInTheDocument();
+  });
+
+  test('clicking the entry button opens the file-level comment form', () => {
+    renderDiff({ file: _file(10), comments: [] });
+    fireEvent.click(
+      screen.getByRole('button', { name: /add file-level comment/i }),
+    );
     expect(screen.getByPlaceholderText(/add a file-level comment/i))
       .toBeInTheDocument();
-    // No entry button while the form is open.
+    // Entry button is hidden once the form is open (so the operator
+    // doesn't see two ways to do the same thing).
     expect(screen.queryByRole('button', { name: /add file-level comment/i }))
       .not.toBeInTheDocument();
   });
 
   test('with existing file-level threads, the entry button appears', () => {
-    // The button is only shown when there are existing threads
-    // (so adding more comments requires an explicit click to
-    // avoid an always-open form below the threads).
+    // The button is shown when there are existing threads so
+    // adding more comments requires an explicit click — same rule
+    // as the empty state above.
     renderDiff({
       file: _file(10),
       comments: [{

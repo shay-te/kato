@@ -44,7 +44,10 @@ class BuildSecurityScannerServiceTests(unittest.TestCase):
         self.assertIsNotNone(result)
 
     def test_uses_default_severities_when_block_on_severity_absent(self) -> None:
-        # Line 371: ``block_on_severity is None`` → CRITICAL+HIGH default.
+        # ``block_on_severity is None`` → critical-only default.
+        # Matches the YAML default: HIGH+ findings surface as warnings
+        # but don't refuse the task (transitive-dep CVE noise on
+        # routine codebases shouldn't be a hard gate).
         from security_scanner_core_lib.security_scanner_core_lib.security_finding import (
             Severity,
         )
@@ -53,8 +56,9 @@ class BuildSecurityScannerServiceTests(unittest.TestCase):
         open_cfg = SimpleNamespace(security_scanner=scanner_cfg)
         instance = KatoCoreLib.__new__(KatoCoreLib)
         service = instance._build_security_scanner_service(open_cfg)
-        self.assertIn(Severity.CRITICAL, service._config.block_on_severity)
-        self.assertIn(Severity.HIGH, service._config.block_on_severity)
+        self.assertEqual(
+            service._config.block_on_severity, (Severity.CRITICAL,),
+        )
 
     def test_honors_explicit_block_on_severity_and_runner_toggles(self) -> None:
         # Lines 369-420: full traversal of the scanner-cfg branch.

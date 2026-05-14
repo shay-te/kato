@@ -52,20 +52,27 @@ kato:
   # Pre-execution security scanner. Walks the per-task workspace
   # before the agent runs, looking for committed secrets, vulnerable
   # dependencies, and dangerous code patterns. Blocks the task on
-  # CRITICAL/HIGH findings (configurable).
+  # CRITICAL findings by default; HIGH+ findings surface as warnings
+  # in the ticket comment but don't refuse the task.
   security_scanner:
     enabled: ${oc.decode:${oc.env:KATO_SECURITY_SCANNER_ENABLED,"true"}}
-    # Severities that abort the task. Operators can tighten to also
-    # block on MEDIUM, or loosen to only CRITICAL.
+    # Severities that abort the task. Default is critical-only so
+    # legitimate work doesn't get blocked on routine HIGH-severity
+    # findings (e.g. transitive npm CVEs in dep trees). Tighten to
+    # also block on HIGH (or MEDIUM) when the codebase is clean
+    # enough that those should never appear.
     block_on_severity:
       - critical
-      - high
     runners:
       env_file: ${oc.decode:${oc.env:KATO_SECURITY_RUNNER_ENV_FILE,"true"}}
       detect_secrets: ${oc.decode:${oc.env:KATO_SECURITY_RUNNER_DETECT_SECRETS,"true"}}
       bandit: ${oc.decode:${oc.env:KATO_SECURITY_RUNNER_BANDIT,"true"}}
       safety: ${oc.decode:${oc.env:KATO_SECURITY_RUNNER_SAFETY,"true"}}
-      npm_audit: ${oc.decode:${oc.env:KATO_SECURITY_RUNNER_NPM_AUDIT,"true"}}
+      # npm-audit is OFF by default — for any non-trivial JS project
+      # it produces dozens of transitive-dep CVE findings that almost
+      # never reflect exploitable issues in the operator's own code.
+      # Operators who want it can flip this to ``true`` in their .env.
+      npm_audit: ${oc.decode:${oc.env:KATO_SECURITY_RUNNER_NPM_AUDIT,"false"}}
     timeouts:
       secrets: ${oc.decode:${oc.env:KATO_SECURITY_TIMEOUT_SECRETS,"60"}}
       dependencies: ${oc.decode:${oc.env:KATO_SECURITY_TIMEOUT_DEPENDENCIES,"120"}}

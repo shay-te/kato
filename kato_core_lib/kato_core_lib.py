@@ -398,7 +398,12 @@ class KatoCoreLib(CoreLib):
         enabled = bool(getattr(scanner_cfg, 'enabled', True))
         block_severities_raw = getattr(scanner_cfg, 'block_on_severity', None)
         if block_severities_raw is None:
-            block_on_severity = (Severity.CRITICAL, Severity.HIGH)
+            # Defensive fallback matches the YAML default. Critical-only
+            # so the scanner doesn't refuse a task on routine
+            # transitive-dep CVE noise. Operators tighten via YAML
+            # when their codebase is clean enough that HIGH+ should
+            # never appear.
+            block_on_severity = (Severity.CRITICAL,)
         else:
             block_on_severity = tuple(
                 Severity.from_string(str(s)) for s in block_severities_raw

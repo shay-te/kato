@@ -221,58 +221,61 @@ const MessageForm = forwardRef(function MessageForm({
           ))}
         </div>
       )}
-      <textarea
-        id="message-input"
-        placeholder={placeholder}
-        rows={2}
-        value={value || ''}
-        disabled={disabled}
-        onChange={handleChange}
-        onKeyDown={handleKeyDown}
-        onPaste={handlePaste}
-      />
-      <button
-        type="button"
-        id="message-attach"
-        className="tooltip-above"
-        data-tooltip="Attach images — paste a screenshot, drop a file, or click to pick."
-        disabled={disabled}
-        onClick={() => fileInputRef.current?.click()}
-        aria-label="Attach images"
-      >
-        📎
-      </button>
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/png,image/jpeg,image/gif,image/webp"
-        multiple
-        style={{ display: 'none' }}
-        onChange={handleFilePickerChange}
-      />
-      {availableModels.length > 0 && (
-        <select
-          id="model-selector"
+      <div className="composer-row">
+        <button
+          type="button"
+          id="message-attach"
           className="tooltip-above"
-          data-tooltip="Model used for the next session spawn. Takes effect when Claude is re-spawned."
-          value={selectedModel}
-          onChange={(e) => onModelChange && onModelChange(e.target.value)}
-          aria-label="Select model"
+          data-tooltip="Attach images — paste a screenshot, drop a file, or click to pick."
+          disabled={disabled}
+          onClick={() => fileInputRef.current?.click()}
+          aria-label="Attach images"
         >
-          <option value="">Default</option>
-          {availableModels.map((m) => (
-            <option key={m.id} value={m.id}>{m.label}</option>
-          ))}
-        </select>
-      )}
-      <button
-        type="submit"
-        disabled={disabled || !hasContent}
-        className={`${submitClass} tooltip-above`.trim()}
-        data-tooltip={submitTitle}
-      >
-        {submitLabel}
-      </button>
+          <span aria-hidden="true">+</span>
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/webp"
+          multiple
+          style={{ display: 'none' }}
+          onChange={handleFilePickerChange}
+        />
+        <textarea
+          id="message-input"
+          placeholder={placeholder}
+          rows={1}
+          value={value || ''}
+          disabled={disabled}
+          onChange={handleChange}
+          onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
+        />
+        {availableModels.length > 0 && (
+          <select
+            id="model-selector"
+            className="tooltip-above"
+            data-tooltip="Model used for the next session spawn. Takes effect when Claude is re-spawned."
+            value={selectedModel}
+            onChange={(e) => onModelChange && onModelChange(e.target.value)}
+            aria-label="Select model"
+          >
+            <option value="">Default</option>
+            {availableModels.map((m) => (
+              <option key={m.id} value={m.id}>{m.label}</option>
+            ))}
+          </select>
+        )}
+        <button
+          type="submit"
+          disabled={disabled || !hasContent}
+          className={`message-send ${submitClass} tooltip-above`.trim()}
+          data-tooltip={submitTitle}
+          aria-label={submitLabel}
+        >
+          <span aria-hidden="true">{isSteering ? '◐' : '↑'}</span>
+        </button>
+      </div>
     </form>
   );
 });

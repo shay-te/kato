@@ -107,8 +107,9 @@ vi.mock('./components/Header.jsx', () => ({
   default: () => <header data-testid="app-header" />,
 }));
 vi.mock('./components/Layout.jsx', () => ({
-  default: ({ left, center, right }) => (
+  default: ({ top, left, center, right }) => (
     <div>
+      <div data-testid="layout-top">{top}</div>
       <div data-testid="layout-left">{left}</div>
       <div data-testid="layout-center">{center}</div>
       <div data-testid="layout-right">{right}</div>

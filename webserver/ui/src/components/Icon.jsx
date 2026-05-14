@@ -1,7 +1,9 @@
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faChevronDown,
+  faChevronLeft,
   faChevronRight,
+  faChevronUp,
   faFile,
   faFolder,
   faFolderOpen,
@@ -17,11 +19,22 @@ import {
   faTriangleExclamation,
   faCodeCommit,
   faCircle,
+  faMagnifyingGlass,
+  faArrowUp,
+  faArrowDown,
+  faCodePullRequest,
+  faCheck,
+  faLink,
+  faStop,
+  faPlay,
+  faPaperPlane,
 } from '@fortawesome/free-solid-svg-icons';
 
 const ICONS = {
   'chevron-down': faChevronDown,
+  'chevron-left': faChevronLeft,
   'chevron-right': faChevronRight,
+  'chevron-up': faChevronUp,
   'file': faFile,
   'folder': faFolder,
   'folder-open': faFolderOpen,
@@ -40,6 +53,18 @@ const ICONS = {
   'warning': faTriangleExclamation,
   'commit': faCodeCommit,
   'dot': faCircle,
+  // Action icons used by SessionHeader's round-button row + the
+  // chat search capsule. Names follow FontAwesome's free-solid
+  // catalogue so future contributors can swap glyphs with one line.
+  'search': faMagnifyingGlass,
+  'arrow-up': faArrowUp,
+  'arrow-down': faArrowDown,
+  'pull-request': faCodePullRequest,
+  'check': faCheck,
+  'link': faLink,
+  'stop': faStop,
+  'play': faPlay,
+  'send': faPaperPlane,
 };
 
 export default function Icon({ name, className = '', spin = false }) {
