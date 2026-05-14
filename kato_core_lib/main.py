@@ -166,6 +166,7 @@ def main(cfg: DictConfig) -> int:
     app = KatoInstance.get()
     app.logger = getattr(app, 'logger', None) or logger
     app.logger.info('Starting kato agent')
+    _load_hooks_or_refuse(app, logger)
     _recover_orphan_workspaces(app)
     _reconcile_workspace_branches(app)
     _reset_stuck_workspace_statuses(app)
@@ -488,6 +489,37 @@ def _resume_prompt_for_workspace(record) -> str:
     return agent_prompt_utils.prepend_forbidden_repository_guardrails(_RESUME_WAIT_PROMPT)
 
 
+def _load_hooks_or_refuse(app, logger) -> None:
+    """Ensure ``app.hook_runner`` is installed; load on demand if not.
+
+    In the normal boot path, :class:`KatoCoreLib.__init__` already
+    loaded hooks (so sub-services see a real runner at construction
+    time) and this call is just a presence check. In test setups
+    that bypass ``KatoInstance.init`` (mocking it out and supplying
+    a SimpleNamespace ``app``), the loader runs here for the first
+    time. Either way we end with ``app.hook_runner`` populated.
+
+    Refuses startup on schema errors so config bugs surface at boot.
+    """
+    if getattr(app, 'hook_runner', None) is not None:
+        return
+    from kato_core_lib.hooks.config import HookConfigError, load_hooks_config
+    from kato_core_lib.hooks.runner import HookRunner
+    try:
+        config = load_hooks_config()
+    except HookConfigError as exc:
+        logger.error('hooks config rejected: %s', exc)
+        raise SystemExit(1) from exc
+    app.hooks_config = config
+    app.hook_runner = HookRunner(config, logger=logger)
+    if not config.is_empty():
+        points = sorted(p.value for p, hs in config.hooks_by_point.items() if hs)
+        logger.info(
+            'kato hooks loaded: %d point(s) configured (%s)',
+            len(points), ', '.join(points),
+        )
+
+
 def _recover_orphan_workspaces(app) -> None:
     """Adopt out-of-band task folders dropped under ``KATO_WORKSPACES_ROOT``.
 
@@ -556,6 +588,7 @@ def _start_planning_webserver_if_enabled(app) -> None:
         agent_service=getattr(app, 'service', None),
         force_scan_event=_FORCE_SCAN_EVENT,
         scan_in_progress_event=_SCAN_IN_PROGRESS,
+        hook_runner=getattr(app, 'hook_runner', None),
     )
 
     # Silence Werkzeug's per-request access log — the planning UI polls

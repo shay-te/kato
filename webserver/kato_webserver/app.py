@@ -340,6 +340,7 @@ def create_app(
     agent_service=None,
     force_scan_event=None,
     scan_in_progress_event=None,
+    hook_runner=None,
 ) -> Flask:
     app = Flask(
         __name__,
@@ -355,6 +356,7 @@ def create_app(
     app.config['AGENT_SERVICE'] = agent_service
     app.config['FORCE_SCAN_EVENT'] = force_scan_event
     app.config['SCAN_IN_PROGRESS_EVENT'] = scan_in_progress_event
+    app.config['HOOK_RUNNER'] = hook_runner
     app.config['TASK_MODEL_OVERRIDES'] = {}
 
     _register_http_routes(app)
@@ -1275,7 +1277,32 @@ def _register_stop_session_route(app: Flask) -> None:
             manager.terminate_session(task_id)
         except Exception as exc:
             return jsonify({'error': str(exc)}), 500
+        # Fire the ``stop`` hook AFTER the manager kill succeeds so
+        # observers (audit log, slack mirror) only see stops that
+        # actually went through. The runner isolates its own
+        # failures — a misbehaving hook can't 500 this route.
+        _fire_webserver_hook(app, 'stop', {
+            'task_id': task_id,
+            'source': 'webserver_stop_route',
+        })
         return jsonify({'status': 'stopped'})
+
+
+def _fire_webserver_hook(app: Flask, point: str, event: dict) -> None:
+    """Fire a configured hook from a webserver route.
+
+    Routes don't import :mod:`kato_core_lib.hooks` directly so the
+    webserver can boot without that package installed (test
+    environments, embedded use). Lazy-import + isolate failures.
+    """
+    runner = app.config.get('HOOK_RUNNER')
+    if runner is None:
+        return
+    try:
+        from kato_core_lib.hooks.config import HookPoint
+        runner.fire(HookPoint(point), dict(event))
+    except Exception:
+        app.logger.exception('webserver hook firing failed for %s', point)
 
 
 def _register_post_permission_route(app: Flask) -> None:
@@ -1290,15 +1317,73 @@ def _register_post_permission_route(app: Flask) -> None:
         request_id = str(payload.get('request_id', '') or '').strip()
         if not request_id:
             return jsonify({'error': 'request_id is required'}), 400
+        allow = bool(payload.get('allow', False))
+        rationale = str(payload.get('rationale', '') or '')
+        # ``pre_tool_use`` only matters when the operator is letting
+        # the tool run — a deny short-circuits before any guard the
+        # hook would impose. Hook may force-flip allow → deny.
+        if allow:
+            blocked, hook_rationale = _run_pre_tool_use_hook(app, task_id, payload)
+            if blocked:
+                allow = False
+                rationale = hook_rationale or rationale or 'blocked by pre_tool_use hook'
         try:
             session.send_permission_response(
                 request_id=request_id,
-                allow=bool(payload.get('allow', False)),
-                rationale=str(payload.get('rationale', '') or ''),
+                allow=allow,
+                rationale=rationale,
             )
         except Exception as exc:
             return jsonify({'error': str(exc)}), 500
-        return jsonify({'status': 'delivered'})
+        # ``post_tool_use`` sees the final, post-hook decision so the
+        # audit log reflects what actually got delivered to Claude.
+        _fire_webserver_hook(app, 'post_tool_use', {
+            'task_id': task_id,
+            'request_id': request_id,
+            'allow': bool(allow),
+            'rationale': rationale,
+            'tool': str(payload.get('tool', '') or ''),
+        })
+        return jsonify({'status': 'delivered', 'allow': allow})
+
+
+def _run_pre_tool_use_hook(app: Flask, task_id: str, payload: dict):
+    """Fire ``pre_tool_use`` and translate the result into (blocked, rationale).
+
+    Returns ``(False, '')`` when nothing is configured / no runner
+    available, so the default path through the permission route is
+    unchanged. ``(True, '<reason>')`` when the operator's hook
+    explicitly blocks — the route flips allow→deny and uses the
+    rationale (or the hook's stderr) in the response to Claude.
+    """
+    runner = app.config.get('HOOK_RUNNER')
+    if runner is None:
+        return False, ''
+    try:
+        from kato_core_lib.hooks.config import HookPoint
+        results = runner.fire(HookPoint('pre_tool_use'), {
+            'task_id': task_id,
+            'request_id': str(payload.get('request_id', '') or ''),
+            'tool': str(payload.get('tool', '') or ''),
+            'allow': bool(payload.get('allow', False)),
+        })
+    except Exception:
+        app.logger.exception('pre_tool_use hook fire failed')
+        return False, ''
+    if not results:
+        return False, ''
+    if runner.is_blocked(results):
+        # Surface the first non-empty stderr/error as the rationale
+        # so the operator's reason for blocking shows up in the
+        # permission response Claude sees.
+        rationale = ''
+        for result in results:
+            if result.blocked:
+                rationale = (result.stderr or result.error or '').strip()
+                if rationale:
+                    break
+        return True, rationale
+    return False, ''
 
 
 def _deliver_to_live_session(

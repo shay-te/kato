@@ -102,6 +102,11 @@ class KatoCoreLib(CoreLib):
         self.config = cfg
         self.logger = configure_logger(cfg.core_lib.app.name)
         self._validate_runtime_source_fingerprint(cfg.kato)
+        # Operator hooks must exist before sub-services are built so
+        # the PlanningSessionRunner (and any other lifecycle caller)
+        # can receive a real runner instead of None. The runner is
+        # always installed — empty config produces a silent no-op.
+        self.hooks_config, self.hook_runner = self._load_hooks(self.logger)
         self.service = self._build_agent_service(cfg.kato)
         # Wire the ``<KATO_TASK_DONE>`` sentinel callback after both
         # AgentService and SessionManager exist. Every Claude session
@@ -113,6 +118,30 @@ class KatoCoreLib(CoreLib):
                 self.service.finish_task_planning_session,
             )
         self.service.validate_connections()
+
+    @staticmethod
+    def _load_hooks(logger):
+        """Load ``~/.kato/hooks.json`` and build a HookRunner.
+
+        Refuses startup on schema errors so config bugs surface at
+        boot, not on the first hook fire. No file → empty config →
+        no-op runner that returns ``[]`` for every fire().
+        """
+        from kato_core_lib.hooks.config import HookConfigError, load_hooks_config
+        from kato_core_lib.hooks.runner import HookRunner
+        try:
+            config = load_hooks_config()
+        except HookConfigError as exc:
+            logger.error('hooks config rejected: %s', exc)
+            raise
+        runner = HookRunner(config, logger=logger)
+        if not config.is_empty():
+            points = sorted(p.value for p, hs in config.hooks_by_point.items() if hs)
+            logger.info(
+                'kato hooks loaded: %d point(s) configured (%s)',
+                len(points), ', '.join(points),
+            )
+        return config, runner
 
     def _build_agent_service(self, open_cfg: DictConfig) -> AgentService:
         retry_cfg = open_cfg.retry
@@ -156,6 +185,7 @@ class KatoCoreLib(CoreLib):
         planning_session_runner = PlanningSessionRunner.from_config(
             open_cfg, agent_backend, self.session_manager,
             docker_mode_on=docker_mode_on,
+            hook_runner=self.hook_runner,
         )
         self.planning_session_runner = planning_session_runner
         self.logger.info('using agent backend: %s', agent_backend)

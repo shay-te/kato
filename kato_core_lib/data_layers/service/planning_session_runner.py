@@ -89,6 +89,7 @@ class PlanningSessionRunner(object):
         session_manager: ClaudeSessionManager | None,
         *,
         docker_mode_on: bool = False,
+        hook_runner=None,
     ) -> 'PlanningSessionRunner | None':
         """Build the runner (or return None) from the kato config block.
 
@@ -105,7 +106,11 @@ class PlanningSessionRunner(object):
         if claude_cfg is None:
             return None
         defaults = cls._build_defaults(claude_cfg, docker_mode_on=docker_mode_on)
-        return cls(session_manager=session_manager, defaults=defaults)
+        return cls(
+            session_manager=session_manager,
+            defaults=defaults,
+            hook_runner=hook_runner,
+        )
 
     @staticmethod
     def _build_defaults(
@@ -134,6 +139,7 @@ class PlanningSessionRunner(object):
         *,
         max_wait_seconds: float | None = None,
         clock: Callable[[], float] = time.monotonic,
+        hook_runner=None,
     ) -> None:
         self._session_manager = session_manager
         self._defaults = defaults
@@ -143,6 +149,10 @@ class PlanningSessionRunner(object):
             else self.DEFAULT_MAX_WAIT_SECONDS
         )
         self._clock = clock
+        # Operator-extensibility hooks. ``None`` (no config file at
+        # boot) is treated as a silent no-op so existing behaviour
+        # is unchanged for kato installs that never adopt hooks.
+        self._hook_runner = hook_runner
         self.logger = configure_logger(self.__class__.__name__)
 
     def resume_session_for_chat(
@@ -199,7 +209,17 @@ class PlanningSessionRunner(object):
                 cwd=cwd,
                 additional_dirs=additional_dirs,
             )
-        return self._session_manager.start_session(
+        # Fire user_prompt_submit BEFORE the spawn. Operator hooks
+        # at this point see the raw message + task id and can
+        # audit / mirror to Slack / etc. They cannot block (the
+        # ``blocked`` semantic only applies to ``pre_tool_use``).
+        self._fire_hook('user_prompt_submit', {
+            'task_id': normalized_task_id,
+            'message': normalized_message,
+            'cwd': normalized_text(cwd),
+            'resumed': bool(resume_session_id),
+        })
+        session = self._session_manager.start_session(
             task_id=normalized_task_id,
             task_summary=normalized_text(task_summary),
             initial_prompt=initial_prompt,
@@ -218,6 +238,36 @@ class PlanningSessionRunner(object):
             docker_mode_on=self._defaults.docker_mode_on,
             additional_dirs=additional_dirs,
         )
+        # Fire session_start when a NEW subprocess was spawned (not
+        # when reusing a still-alive session). ``resumed`` lets the
+        # hook tell "fresh kato spawn" apart from "Claude --resume".
+        self._fire_hook('session_start', {
+            'task_id': normalized_task_id,
+            'cwd': normalized_text(cwd),
+            'resumed': bool(resume_session_id),
+            'claude_session_id': str(
+                getattr(session, 'claude_session_id', '') or '',
+            ),
+        })
+        return session
+
+    def _fire_hook(self, point: str, event: dict) -> None:
+        """Fire a configured hook at ``point``. Never crashes the
+        caller — the runner already isolates hook failures.
+        """
+        runner = self._hook_runner
+        if runner is None:
+            return
+        try:
+            # Import lazily so callers that don't use hooks (or
+            # tests that don't construct a runner) don't pay the
+            # import cost.
+            from kato_core_lib.hooks.config import HookPoint
+            runner.fire(HookPoint(point), dict(event))
+        except Exception:
+            # Defensive — should already be handled inside fire(),
+            # but never let a hook bug take down the chat flow.
+            self.logger.exception('hook firing failed for %s', point)
 
     def implement_task(
         self,
@@ -284,6 +334,14 @@ class PlanningSessionRunner(object):
             raise ValueError('task_id is required to fix review comments')
         if self._session_manager.get_session(normalized_task_id) is not None:
             self._session_manager.terminate_session(normalized_task_id)
+            # The previous subprocess just got killed to make room for
+            # the review-fix turn. ``reason='replaced'`` lets hooks
+            # tell this apart from a natural finish.
+            self._fire_hook('session_end', {
+                'task_id': normalized_task_id,
+                'reason': 'replaced',
+                'log_label': 'review-fix session',
+            })
         workspace = normalized_text(repository_local_path)
         prompt = (
             ClaudeCliClient._build_review_prompt(
@@ -331,15 +389,57 @@ class PlanningSessionRunner(object):
             cwd=cwd,
             branch_name=branch_name,
         )
+        # Hook fires here too — autonomous (non-chat) entrypoints
+        # don't go through ``resume_session_for_chat`` so this is
+        # the only spot where ``session_start`` sees them.
+        self._fire_hook('session_start', {
+            'task_id': task_id,
+            'cwd': cwd,
+            'resumed': False,
+            'log_label': log_label,
+            'claude_session_id': str(
+                getattr(session, 'claude_session_id', '') or '',
+            ),
+        })
         terminal = self._wait_for_terminal_event(session, task_id=task_id)
         if terminal is None:
             self._session_manager.update_status(task_id, SESSION_STATUS_TERMINATED)
+            # The agent died without emitting a result. Fire
+            # ``session_end`` with ``reason='no_terminal_event'`` so
+            # observers can distinguish a crash from a normal close.
+            self._fire_hook('session_end', {
+                'task_id': task_id,
+                'reason': 'no_terminal_event',
+                'log_label': log_label,
+            })
             raise RuntimeError(
                 f'{log_label} for task {task_id} ended without a result event'
             )
-        result_text = self._raise_if_terminal_failed(
-            terminal, task_id=task_id, log_label=log_label,
-        )
+        try:
+            result_text = self._raise_if_terminal_failed(
+                terminal, task_id=task_id, log_label=log_label,
+            )
+        except RuntimeError:
+            # ``_raise_if_terminal_failed`` already flipped status to
+            # TERMINATED — fire end here too with ``reason='error'``
+            # before propagating.
+            self._fire_hook('session_end', {
+                'task_id': task_id,
+                'reason': 'error',
+                'log_label': log_label,
+            })
+            raise
+        # Normal terminal — fire session_end before the publish flow
+        # starts so observers see "agent finished" distinct from
+        # "PR pushed".
+        self._fire_hook('session_end', {
+            'task_id': task_id,
+            'reason': 'completed',
+            'log_label': log_label,
+            'claude_session_id': str(
+                getattr(session, 'claude_session_id', '') or '',
+            ),
+        })
 
         # Tab back to blue while the orchestrator publishes / waits for review.
         self._session_manager.update_status(task_id, SESSION_STATUS_REVIEW)
