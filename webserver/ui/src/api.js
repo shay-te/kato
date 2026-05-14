@@ -449,6 +449,18 @@ export function fetchFileTree(taskId) {
   return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/files`);
 }
 
+/**
+ * Load a single tracked file's contents from the task workspace.
+ * Server-side guards: path-traversal, 1MB cap, binary detection.
+ * Returns ``{ ok, body }`` where body has either ``content`` (text),
+ * ``binary: true`` (NUL bytes seen), or ``too_large: true``.
+ */
+export function fetchFileContent(taskId, absolutePath) {
+  const url = `/api/sessions/${encodeURIComponent(taskId)}/file`
+    + `?path=${encodeURIComponent(absolutePath)}`;
+  return fetchJson(url);
+}
+
 export function fetchDiff(taskId, { repoId = '' } = {}) {
   const url = `/api/sessions/${encodeURIComponent(taskId)}/diff`;
   const query = repoId ? `?repo_id=${encodeURIComponent(repoId)}` : '';

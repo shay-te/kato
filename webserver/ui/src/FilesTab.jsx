@@ -24,6 +24,7 @@ export default function FilesTab({
   taskId,
   workspaceVersion = 0,
   focusFilterSignal = 0,
+  onOpenFile,
 }) {
   const { appendToInput } = useChatComposer();
   const [state, setState] = useState({
@@ -276,6 +277,7 @@ export default function FilesTab({
           collapsed={collapsed.has(repoKey)}
           onToggle={() => toggleRepo(repoKey)}
           onPickFile={appendToInput}
+          onOpenFile={onOpenFile}
           searchTerm={deferredQuery}
           conflictedFiles={repoTree.conflictedFiles}
           taskId={taskId}
@@ -389,6 +391,7 @@ export function formatSyncResult(result) {
 
 function RepoTree({
   repoTree, width, collapsed, onToggle, onPickFile,
+  onOpenFile,
   searchTerm = '', conflictedFiles, taskId = '',
 }) {
   const treeData = useMemo(() => {
@@ -469,6 +472,7 @@ function RepoTree({
           <Node
             {...props}
             onPickFile={onPickFile}
+            onOpenFile={onOpenFile}
             conflictedFiles={conflictedFiles}
           />
         )}
@@ -568,9 +572,19 @@ function CommitDropdown({ state, onPick, onClose }) {
   );
 }
 
-function Node({ node, style, onPickFile, conflictedFiles }) {
+function Node({ node, style, onPickFile, onOpenFile, conflictedFiles }) {
   const isFolder = node.isInternal;
   function onActivate() {
+    // Folder click → toggle expand. File click → also notify the
+    // EditorPane (so the file opens in the middle Monaco view)
+    // before the original "paste relative path into chat" behavior.
+    // Both are useful: the editor preview + the chat reference.
+    if (!isFolder && typeof onOpenFile === 'function') {
+      onOpenFile({
+        absolutePath: String(node.data?.path || ''),
+        relativePath: String(node.data?.relativePath || ''),
+      });
+    }
     activateTreeNode(node, onPickFile);
   }
   // Right-click pastes the FULL absolute path of whatever was

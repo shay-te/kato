@@ -3,6 +3,7 @@ import ChatSearch from './ChatSearch.jsx';
 import EventLog from './EventLog.jsx';
 import MessageForm from './MessageForm.jsx';
 import PermissionDecisionContainer from './PermissionDecisionContainer.jsx';
+import RightPaneResizer from './RightPaneResizer.jsx';
 import SessionHeader from './SessionHeader.jsx';
 import WorkingIndicator from './WorkingIndicator.jsx';
 import { BUBBLE_KIND } from '../constants/bubbleKind.js';
@@ -19,6 +20,7 @@ export default function SessionDetail({
   needsAttention = false,
   composerRef = null,
   toolMemory: providedToolMemory = null,
+  onResizePointerDown,
 }) {
   const taskId = session?.task_id;
   const stream = useSessionStream(taskId, onActivity);
@@ -54,9 +56,18 @@ export default function SessionDetail({
     onPendingPermissionChange(taskId, !!stream.pendingPermission);
   }, [taskId, stream.pendingPermission, onPendingPermissionChange]);
 
+  // Drag handle for the chat column's width. Rendered on the
+  // pane's left edge — the resizer is ``position: absolute`` with
+  // ``left: -3px``, which only paints correctly when its parent
+  // (this <main>) is itself ``position: relative`` (set in CSS).
+  const resizer = typeof onResizePointerDown === 'function'
+    ? <RightPaneResizer onPointerDown={onResizePointerDown} />
+    : null;
+
   if (!session) {
     return (
       <main id="session-pane">
+        {resizer}
         <section id="session-placeholder" className="placeholder">
           Select a tab to chat with the bound Claude session.
         </section>
@@ -211,6 +222,7 @@ export default function SessionDetail({
   }, [searchMatchCount]);
   return (
     <main id="session-pane">
+      {resizer}
       <section id="session-detail">
         <SessionHeader
           session={session}

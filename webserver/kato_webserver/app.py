@@ -688,6 +688,121 @@ def _register_http_routes(app: Flask) -> None:
             'diff': single['diff'],
         })
 
+    @app.get('/api/sessions/<task_id>/file')
+    def get_session_file(task_id: str):
+        """Return the contents of a single tracked file in the task workspace.
+
+        Powers the in-browser Monaco read-only editor: the operator
+        clicks a file in the Files tree and the editor loads it here.
+
+        Required query params:
+          ``path``  absolute path to the file (as returned by the
+                    file-tree endpoint's ``node.data.path``).
+
+        Safety:
+          - The path MUST live inside one of the task's workspace
+            clones, otherwise we refuse with 403. This guards
+            against ``..`` traversal that could leak host files.
+          - Files larger than 1MB are refused (Monaco struggles
+            past that point and the operator almost never wants
+            to read them anyway).
+          - Binary content is detected by a NUL-byte scan in the
+            first 8KB and returned as ``{ "binary": true }`` rather
+            than a string — the UI shows a placeholder.
+        """
+        path_arg = (request.args.get('path') or '').strip()
+        if not path_arg:
+            return jsonify({'error': 'path query parameter is required'}), 400
+        workspace_manager = app.config.get('WORKSPACE_MANAGER')
+        # Build the set of legitimate workspace roots for this task
+        # so we can refuse anything that escapes them.
+        roots: list[str] = []
+        for repo_id in _task_repository_ids(workspace_manager, task_id):
+            cwd = _repository_cwd(workspace_manager, task_id, repo_id)
+            if cwd:
+                roots.append(cwd)
+        if not roots:
+            manager = app.config['SESSION_MANAGER']
+            legacy_cwd = _record_cwd_or_none(manager, task_id)
+            if legacy_cwd:
+                roots.append(legacy_cwd)
+        if not roots:
+            return jsonify({'error': 'no workspace for this task'}), 404
+        from pathlib import Path
+        # The file tree returns repo-relative paths (e.g.
+        # ``dev_scripts/export_users.py``) — the UI forwards those
+        # verbatim. An absolute path is also accepted so legacy
+        # callers / direct API users keep working. For a relative
+        # input we try joining with each workspace root and pick the
+        # first one that lands on a real file inside that root.
+        candidates: list[Path] = []
+        raw_path = Path(path_arg)
+        if raw_path.is_absolute():
+            try:
+                candidates.append(raw_path.resolve())
+            except (OSError, ValueError):
+                return jsonify({'error': 'invalid path'}), 400
+        else:
+            for root in roots:
+                try:
+                    candidates.append((Path(root) / raw_path).resolve())
+                except (OSError, ValueError):
+                    continue
+        resolved_roots: list[Path] = []
+        for root in roots:
+            try:
+                resolved_roots.append(Path(root).resolve())
+            except (OSError, ValueError):
+                continue
+        resolved: Path | None = None
+        for candidate in candidates:
+            for root_resolved in resolved_roots:
+                try:
+                    candidate.relative_to(root_resolved)
+                except ValueError:
+                    continue
+                resolved = candidate
+                break
+            if resolved is not None:
+                break
+        if resolved is None:
+            return jsonify({'error': 'path is outside the task workspace'}), 403
+        if not resolved.is_file():
+            return jsonify({'error': 'file not found'}), 404
+        try:
+            size = resolved.stat().st_size
+        except OSError as exc:
+            return jsonify({'error': f'stat failed: {exc}'}), 500
+        # 1 MB cap — Monaco's perf cliff is around 5MB but file
+        # diffs that big are pathological and rarely useful for a
+        # read-only preview.
+        if size > 1_000_000:
+            return jsonify({
+                'error': 'file too large for preview (max 1 MB)',
+                'size': size,
+                'too_large': True,
+            }), 200
+        try:
+            raw = resolved.read_bytes()
+        except OSError as exc:
+            return jsonify({'error': f'read failed: {exc}'}), 500
+        if b'\x00' in raw[:8192]:
+            return jsonify({
+                'path': str(resolved),
+                'size': size,
+                'binary': True,
+            })
+        try:
+            content = raw.decode('utf-8')
+        except UnicodeDecodeError:
+            content = raw.decode('utf-8', errors='replace')
+        return jsonify({
+            'path': str(resolved),
+            'size': size,
+            'binary': False,
+            'content': content,
+        })
+
     @app.get('/api/sessions/<task_id>/commits')
     def list_repo_commits(task_id: str):
         """Recent commits on a repo's task branch (newest first).

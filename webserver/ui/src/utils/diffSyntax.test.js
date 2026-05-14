@@ -19,7 +19,10 @@ test('detectDiffLanguage recognises Python', function () {
 
 test('detectDiffLanguage recognises styling files', function () {
   assert.equal(detectDiffLanguage('src/app.css'), 'css');
-  assert.equal(detectDiffLanguage('src/theme.scss'), 'css');
+  // SCSS gets its own refractor language pack (preserves
+  // ``@include``, nesting, etc.); LESS isn't bundled and falls
+  // back to plain CSS highlighting.
+  assert.equal(detectDiffLanguage('src/theme.scss'), 'scss');
   assert.equal(detectDiffLanguage('src/legacy.less'), 'css');
 });
 

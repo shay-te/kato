@@ -59,8 +59,9 @@ describe('DiffFileWithComments — collapse / expand integration', () => {
     // Expanded toggle: text is the minus glyph; title attr is "Hide diff".
     const toggle = container.querySelector('.diff-file-collapse-toggle');
     expect(toggle).toBeInTheDocument();
-    expect(toggle).toHaveTextContent('−');
-    expect(toggle).toHaveAttribute('title', expect.stringMatching(/hide diff/i));
+    // Icon-only "hide diff" affordance — accessible name carries
+    // the meaning since the button shows a minus glyph.
+    expect(toggle).toHaveAttribute('aria-label', expect.stringMatching(/hide diff/i));
     // The collapsed-placeholder text MUST NOT be present.
     expect(screen.queryByText(/diff hidden/i)).not.toBeInTheDocument();
   });
@@ -68,9 +69,10 @@ describe('DiffFileWithComments — collapse / expand integration', () => {
   test('initiallyExpanded=false: shows the "Show diff (N lines)" placeholder', () => {
     renderDiff({ file: _file(42), initiallyExpanded: false });
 
-    // The collapse toggle button text reflects the line count.
-    const toggle = screen.getByRole('button', { name: /show diff \(42 lines\)/i });
+    // The collapse toggle button label reflects the line count.
+    const toggle = screen.getByRole('button', { name: /show diff/i });
     expect(toggle).toBeInTheDocument();
+    expect(toggle).toHaveTextContent(/42 lines/i);
     // The placeholder paragraph is present.
     expect(screen.getByText(/diff hidden/i)).toBeInTheDocument();
   });

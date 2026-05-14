@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AdoptTaskModal from './components/AdoptTaskModal.jsx';
+import EditorPane from './components/EditorPane.jsx';
 import Header from './components/Header.jsx';
 import Layout from './components/Layout.jsx';
 import RightPane from './components/RightPane.jsx';
@@ -203,6 +204,26 @@ export default function App() {
   const activeNeedsAttention = !!activeTaskId && attentionTaskIds.has(activeTaskId);
   const activeSessionKey = activeTaskId || '__none__';
   const activeWorkspaceVersion = workspaceVersion[activeTaskId] || 0;
+  // Currently-open file for the middle Monaco editor pane. Lifted
+  // to App so FilesTab (rendered on the left) and EditorPane
+  // (rendered in the centre) can talk through a single source of
+  // truth without coupling them directly. Resets when switching
+  // tasks so the editor doesn't render a file from the previous
+  // task's workspace.
+  const [openFile, setOpenFile] = useState(null);
+  useEffect(() => { setOpenFile(null); }, [activeTaskId]);
+  const handleOpenFile = useCallback((info) => {
+    // ``info`` shape from FilesTab: { absolutePath, relativePath }.
+    if (!info || !info.absolutePath) {
+      setOpenFile(null);
+      return;
+    }
+    setOpenFile({
+      taskId: activeTaskId,
+      absolutePath: info.absolutePath,
+      relativePath: info.relativePath || info.absolutePath,
+    });
+  }, [activeTaskId]);
   // Memoize so the context value is reference-stable across App
   // renders. Without this, EVERY ``useChatComposer()`` consumer
   // (FilesTab, ChangesTab via DiffFileWithComments, etc.)
@@ -224,7 +245,28 @@ export default function App() {
           scanPending={scanPending}
         />
       }
-      center={
+      // New 3-column layout, left → right:
+      //   left   Files + Changes tree (fixed-width column)
+      //   center Monaco read-only editor (driven by openFile)
+      //   right  Chat session (resizable via the existing resizer)
+      //
+      // ``width`` + ``onResizePointerDown`` deliberately omitted
+      // on the files pane — that pair used to size the pane via an
+      // inline ``style={{ width }}``, which now lives in the LEFT
+      // grid cell whose track is fixed. Leaving it in would let
+      // the pane bleed past its cell into the editor column.
+      // The resizer keeps driving ``--right-pane-width`` for the
+      // chat column on the right.
+      left={
+        <RightPane
+          activeTaskId={activeTaskId}
+          workspaceVersion={activeWorkspaceVersion}
+          activityHistory={status.history}
+          onOpenFile={handleOpenFile}
+        />
+      }
+      center={<EditorPane openFile={openFile} />}
+      right={
         <SessionDetail
           key={activeSessionKey}
           session={activeSession}
@@ -233,15 +275,7 @@ export default function App() {
           onPendingPermissionChange={handlePendingPermissionChange}
           composerRef={composerRef}
           toolMemory={toolMemory}
-        />
-      }
-      right={
-        <RightPane
-          activeTaskId={activeTaskId}
-          workspaceVersion={activeWorkspaceVersion}
-          width={resizer.width}
           onResizePointerDown={resizer.onPointerDown}
-          activityHistory={status.history}
         />
       }
     />

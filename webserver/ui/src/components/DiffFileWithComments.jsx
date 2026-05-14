@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import Icon from './Icon.jsx';
 import {
   Diff,
   Hunk,
@@ -344,14 +345,26 @@ export default function DiffFileWithComments({
       CONFLICTED
     </span>
   ) : null;
-  const collapseToggle = (
+  const collapseToggle = expanded ? (
     <button
       type="button"
-      className="diff-file-collapse-toggle"
-      onClick={() => setExpanded((current) => !current)}
-      title={expanded ? 'Hide diff' : `Show diff (${lineCount} line${lineCount === 1 ? '' : 's'})`}
+      className="diff-file-collapse-toggle is-icon tooltip-below"
+      onClick={() => setExpanded(false)}
+      data-tooltip="Hide diff"
+      aria-label="Hide diff"
     >
-      {expanded ? '−' : `Show diff (${lineCount} line${lineCount === 1 ? '' : 's'})`}
+      <Icon name="minus" />
+    </button>
+  ) : (
+    <button
+      type="button"
+      className="diff-file-collapse-toggle tooltip-below"
+      onClick={() => setExpanded(true)}
+      data-tooltip="Show diff"
+      aria-label="Show diff"
+    >
+      <Icon name="chevron-down" />
+      <span>{`Show diff (${lineCount} line${lineCount === 1 ? '' : 's'})`}</span>
     </button>
   );
   const diffBody = expanded ? (
@@ -377,10 +390,13 @@ export default function DiffFileWithComments({
   const fileLevelEntryButton = !fileFormOpen ? (
     <button
       type="button"
-      className="diff-file-add-file-comment"
+      className="diff-file-add-file-comment tooltip-below"
       onClick={() => { setActiveLine(-1); setReplyTo(''); }}
+      data-tooltip="Add a file-level comment to this file"
+      aria-label="Add file-level comment"
     >
-      + Add file-level comment
+      <Icon name="plus" />
+      <span>Add file-level comment</span>
     </button>
   ) : null;
   const fileLevelForm = fileFormOpen ? (

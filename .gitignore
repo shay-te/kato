@@ -30,3 +30,5 @@ mount_docker_data
 # work folder keeps both visible.
 /kato.exe
 build/kato/
+
+node_modules/

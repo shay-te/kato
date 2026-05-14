@@ -17,6 +17,11 @@ vi.mock('react-dom/client', () => ({
 vi.mock('./App.jsx', () => ({
   default: () => null,
 }));
+// The Monaco bootstrap module pulls in monaco-editor + worker
+// imports; in jsdom both are very slow and ?worker imports don't
+// resolve under vitest. We don't care about it here — this file
+// pins the React mount glue, not Monaco bootstrap.
+vi.mock('./utils/monacoSetup.js', () => ({}));
 
 
 beforeEach(() => {

@@ -390,13 +390,17 @@ function RepoDiff({
         {repoDiff.repo_id && taskId && (
           <button
             type="button"
-            className="diff-repo-sync-comments"
+            className="diff-repo-sync-comments tooltip-below"
             onClick={onSyncRemoteComments}
             disabled={syncing}
             data-tooltip="Pull review comments from the source git platform AND ``git pull`` the workspace clone so line numbers in remote comments line up with the local diff."
             aria-label={`Sync remote comments for ${heading}`}
           >
-            {syncing ? '⟳ syncing…' : '⇣ sync remote comments'}
+            <Icon
+              name={syncing ? 'spinner' : 'arrow-down'}
+              spin={syncing}
+            />
+            <span>{syncing ? 'Syncing…' : 'Sync comments'}</span>
           </button>
         )}
       </header>

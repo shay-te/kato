@@ -13,6 +13,7 @@ export default function RightPane({
   width,
   onResizePointerDown,
   activityHistory = [],
+  onOpenFile,
 }) {
   const [tab, setTab] = useState(TAB_FILES);
   // Bumped each time Cmd/Ctrl+P fires. ``FilesTab`` watches this and
@@ -48,6 +49,7 @@ export default function RightPane({
       taskId={activeTaskId}
       workspaceVersion={workspaceVersion}
       focusFilterSignal={focusFilterSignal}
+      onOpenFile={onOpenFile}
     />
   );
   const changesBody = tab === TAB_CHANGES && (
@@ -86,9 +88,24 @@ export default function RightPane({
     <OrchestratorActivityFeed history={activityHistory} />
   );
 
+  // ``width`` is forwarded as an inline style ONLY when an
+  // explicit value was passed. In the new top-tabs layout the
+  // pane lives in a fixed-width grid cell and must not set
+  // ``width``: setting it (even to ``undefined``) used to render
+  // ``style="width: undefined"`` which most browsers ignore but
+  // some tools normalise to ``auto``, plus the previous prop
+  // default ``width={resizer.width}`` made the pane overflow its
+  // cell. Letting the grid track decide the width is the right
+  // default; only the legacy resizable-sidebar layout opts in.
+  const inlineStyle = (width !== undefined && width !== null && width !== '')
+    ? { width }
+    : undefined;
+  const resizer = typeof onResizePointerDown === 'function'
+    ? <RightPaneResizer onPointerDown={onResizePointerDown} />
+    : null;
   return (
-    <aside id="right-pane" style={{ width }}>
-      <RightPaneResizer onPointerDown={onResizePointerDown} />
+    <aside id="right-pane" style={inlineStyle}>
+      {resizer}
       <div id="right-pane-root">
         {sessionBody}
       </div>
