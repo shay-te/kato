@@ -1,25 +1,39 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Editor from '@monaco-editor/react';
-import { fetchFileContent } from '../api.js';
+import {
+  createTaskComment,
+  deleteTaskComment,
+  fetchFileContent,
+  fetchTaskComments,
+  markTaskCommentAddressed,
+  reopenTaskComment,
+  resolveTaskComment,
+} from '../api.js';
+import {
+  CommentBubble,
+  CommentForm,
+  buildThreads,
+} from './CommentWidgets.jsx';
+import { useChatComposer } from '../contexts/ChatComposerContext.jsx';
+import { toast } from '../stores/toastStore.js';
 
 /**
  * Read-only Monaco editor that lives in the middle column.
  *
- * Driven by a single ``openFile`` prop — when it changes (from a
- * click in the FilesTab), the pane refetches the file via
- * /api/sessions/<task_id>/file and renders it with VS-Code dark
- * theme and language-appropriate syntax highlighting.
+ * Driven by a single ``openFile`` prop — when it changes, the pane
+ * refetches the file via /api/sessions/<task_id>/file and renders
+ * it with VS-Code dark theme + syntax highlighting.
  *
- * Why read-only: kato writes files on the operator's behalf; the
- * editor is for *seeing* what the agent produced, not for editing.
- * Letting the operator type into it would create two sources of
- * truth — the in-browser buffer + the actual file on disk — that
- * we'd then have to reconcile. Out of scope for now.
+ * Comments: the operator can right-click → "Add comment", or hover
+ * a line and click the ``+`` glyph in the gutter, to attach a
+ * review-style comment to that line. Comments are persisted via the
+ * SAME ``/api/sessions/<task>/comments`` endpoints the Changes tab
+ * uses (no parallel storage). Once submitted, kato auto-runs against
+ * the comment when its turn ends (queued) or immediately if idle —
+ * the ``kato_status`` badge above each bubble reflects that lifecycle.
  *
- * ``openFile`` shape: ``{ taskId, absolutePath, relativePath }``.
- * Both paths arrive together so the title can show the relative
- * one (compact) while the fetch uses the absolute one (less
- * ambiguous server-side).
+ * ``openFile`` shape:
+ *   ``{ taskId, absolutePath, relativePath, repoId }``.
  */
 export default function EditorPane({ openFile }) {
   const [state, setState] = useState({
@@ -29,6 +43,264 @@ export default function EditorPane({ openFile }) {
     binary: false,
     tooLarge: false,
   });
+  const [comments, setComments] = useState([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [commentsError, setCommentsError] = useState('');
+  // ``activeLine`` is the line number where the inline composer is
+  // currently open. ``null`` means no composer.
+  const [activeLine, setActiveLine] = useState(null);
+  // Reply state inside the comment list panel. Map of {threadId: bool}.
+  const [replyTo, setReplyTo] = useState('');
+
+  const { appendToInput } = useChatComposer();
+  const taskId = openFile?.taskId || '';
+  const repoId = openFile?.repoId || '';
+  const filePath = openFile?.relativePath || openFile?.absolutePath || '';
+
+  // Refs so Monaco actions (registered once) always read latest
+  // values without closing over stale state.
+  const openFileRef = useRef(openFile);
+  const appendRef = useRef(appendToInput);
+  const setActiveLineRef = useRef(setActiveLine);
+  useEffect(() => { openFileRef.current = openFile; }, [openFile]);
+  useEffect(() => { appendRef.current = appendToInput; }, [appendToInput]);
+  useEffect(() => { setActiveLineRef.current = setActiveLine; }, []);
+
+  // Monaco editor instance + decoration ids for hover line +
+  // glyph-margin ``+``. Stored as refs because the hover effect is
+  // event-driven (mouse move) and shouldn't trigger React re-renders.
+  const editorRef = useRef(null);
+  const hoverDecorationsRef = useRef([]);
+
+  // Comments scoped to the currently-open file. The /comments
+  // endpoint returns the whole task's set (across repos + files);
+  // filtering client-side keeps the request count low (one fetch
+  // per file open vs. one per line interaction).
+  const fileComments = useMemo(
+    () => comments.filter((c) => String(c.file_path || '') === filePath),
+    [comments, filePath],
+  );
+  const commentsByLine = useMemo(() => {
+    const map = new Map();
+    for (const c of fileComments) {
+      const ln = Number(c.line);
+      if (Number.isFinite(ln) && ln >= 0) {
+        if (!map.has(ln)) { map.set(ln, []); }
+        map.get(ln).push(c);
+      }
+    }
+    return map;
+  }, [fileComments]);
+  // Hooks must be top-of-component (no conditional returns above
+  // them), so build the threads list here even though it's only
+  // rendered in the happy-path body below.
+  const threads = useMemo(() => buildThreads(fileComments), [fileComments]);
+
+  // Re-fetch the task's comment list. Used after every mutation so
+  // the chip strip + bubbles reflect the new state without a poll.
+  const refreshComments = useCallback(async () => {
+    if (!taskId) {
+      setComments([]); setCommentsError(''); return;
+    }
+    setCommentsLoading(true);
+    try {
+      const result = await fetchTaskComments(taskId, repoId);
+      if (result.ok) {
+        setComments(Array.isArray(result.body?.comments) ? result.body.comments : []);
+        setCommentsError('');
+      } else {
+        setCommentsError(String(result.error || 'failed to load comments'));
+      }
+    } finally {
+      setCommentsLoading(false);
+    }
+  }, [taskId, repoId]);
+
+  useEffect(() => { refreshComments(); }, [refreshComments]);
+
+  async function onCommentSubmit(line, body, parentId = '') {
+    if (!body.trim()) { return false; }
+    const result = await createTaskComment(taskId, {
+      repo: repoId,
+      file_path: filePath,
+      line,
+      body: body.trim(),
+      parent_id: parentId,
+    });
+    if (!result.ok) {
+      toast.show({
+        kind: 'error',
+        title: 'Could not add comment',
+        message: (result.body && result.body.error) || result.error || 'add failed',
+        durationMs: 8000,
+      });
+      return false;
+    }
+    const triggered = result.body?.triggered_immediately;
+    toast.show({
+      kind: 'success',
+      title: 'Comment added',
+      message: parentId
+        ? '✓ reply posted (kato runs only on top-of-thread comments)'
+        : (triggered
+          ? '✓ kato is working on this comment now'
+          : '✓ queued — kato will pick it up when the live agent goes idle'),
+      durationMs: 5000,
+    });
+    setActiveLine(null);
+    setReplyTo('');
+    refreshComments();
+    return true;
+  }
+
+  async function onResolve(comment) {
+    const result = await resolveTaskComment(taskId, comment.id);
+    if (!result.ok) {
+      toast.show({
+        kind: 'error', title: 'Resolve failed',
+        message: (result.body && result.body.error) || result.error || 'resolve failed',
+      });
+      return;
+    }
+    refreshComments();
+  }
+  async function onReopen(comment) {
+    const result = await reopenTaskComment(taskId, comment.id);
+    if (!result.ok) {
+      toast.show({
+        kind: 'error', title: 'Reopen failed',
+        message: (result.body && result.body.error) || result.error || 'reopen failed',
+      });
+      return;
+    }
+    refreshComments();
+  }
+  async function onDelete(comment) {
+    const result = await deleteTaskComment(taskId, comment.id);
+    if (!result.ok) {
+      toast.show({
+        kind: 'error', title: 'Delete failed',
+        message: (result.body && result.body.error) || result.error || 'delete failed',
+      });
+      return;
+    }
+    refreshComments();
+  }
+  async function onMarkAddressed(comment) {
+    const result = await markTaskCommentAddressed(taskId, comment.id, '');
+    if (!result.ok) {
+      toast.show({
+        kind: 'error', title: 'Mark addressed failed',
+        message: (result.body && result.body.error) || result.error || 'mark addressed failed',
+      });
+      return;
+    }
+    toast.show({
+      kind: 'success',
+      title: 'Marked addressed',
+      message: '✓ "Kato addressed this review comment" reply posted',
+      durationMs: 5000,
+    });
+    refreshComments();
+  }
+
+  function handleEditorMount(editor, monaco) {
+    editorRef.current = editor;
+
+    // Right-click → "Add to chat" pushes the selected line range
+    // into the chat composer as ``file:N-M``.
+    editor.addAction({
+      id: 'kato.addSelectionToChat',
+      label: 'Add to chat',
+      contextMenuGroupId: 'kato',
+      contextMenuOrder: 0,
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyA],
+      run: (ed) => {
+        const file = openFileRef.current;
+        const append = appendRef.current;
+        if (!file || typeof append !== 'function') { return; }
+        const selection = ed.getSelection();
+        const path = file.relativePath || file.absolutePath || '';
+        if (!path) { return; }
+        let reference;
+        if (!selection || selection.isEmpty()) {
+          const pos = ed.getPosition();
+          reference = pos ? `${path}:${pos.lineNumber}` : path;
+        } else if (selection.startLineNumber === selection.endLineNumber) {
+          reference = `${path}:${selection.startLineNumber}`;
+        } else {
+          reference = `${path}:${selection.startLineNumber}-${selection.endLineNumber}`;
+        }
+        append(`${reference}\n`);
+      },
+    });
+
+    // Right-click → "Add comment" opens the inline composer.
+    editor.addAction({
+      id: 'kato.addCommentOnSelection',
+      label: 'Add comment',
+      contextMenuGroupId: 'kato',
+      contextMenuOrder: 1,
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyC],
+      run: (ed) => {
+        const pos = ed.getPosition();
+        setActiveLineRef.current(pos ? pos.lineNumber : 1);
+      },
+    });
+
+    // Hover: highlight the active line + show a ``+`` glyph in the
+    // gutter so the operator can click to add a comment on that
+    // line. Decorations are managed via deltaDecorations so we
+    // don't leak references across hover transitions.
+    editor.onMouseMove((e) => {
+      const line = e?.target?.position?.lineNumber || 0;
+      if (!line) {
+        hoverDecorationsRef.current = editor.deltaDecorations(
+          hoverDecorationsRef.current, [],
+        );
+        return;
+      }
+      hoverDecorationsRef.current = editor.deltaDecorations(
+        hoverDecorationsRef.current,
+        [
+          {
+            range: new monaco.Range(line, 1, line, 1),
+            options: {
+              isWholeLine: true,
+              className: 'kato-line-hover',
+              glyphMarginClassName: 'kato-add-comment-glyph',
+              glyphMarginHoverMessage: { value: 'Add comment on this line' },
+            },
+          },
+        ],
+      );
+    });
+    editor.onMouseLeave?.(() => {
+      hoverDecorationsRef.current = editor.deltaDecorations(
+        hoverDecorationsRef.current, [],
+      );
+    });
+    // Click on the gutter glyph → open the composer for that line.
+    editor.onMouseDown((e) => {
+      const monacoTypes = monaco.editor.MouseTargetType;
+      const t = e?.target?.type;
+      const isGlyph = t === monacoTypes.GUTTER_GLYPH_MARGIN;
+      if (!isGlyph) { return; }
+      const line = e?.target?.position?.lineNumber || 0;
+      if (line) {
+        setActiveLineRef.current(line);
+      }
+    });
+  }
+
+  // Scroll the editor to a line when the operator clicks a chip.
+  function jumpToLine(line) {
+    const editor = editorRef.current;
+    if (!editor || !line) { return; }
+    editor.revealLineInCenter(line);
+    editor.setPosition({ lineNumber: line, column: 1 });
+    editor.focus();
+  }
 
   useEffect(() => {
     if (!openFile || !openFile.taskId || !openFile.absolutePath) {
@@ -43,11 +315,6 @@ export default function EditorPane({ openFile }) {
     fetchFileContent(openFile.taskId, openFile.absolutePath)
       .then((body) => {
         if (cancelled) { return; }
-        // The server returns 200 with ``too_large: true`` for
-        // files past the cap, and 200 with ``binary: true`` for
-        // detected binary content — those aren't error states,
-        // they're alternate happy paths the editor renders as
-        // placeholder messages.
         setState({
           loading: false,
           error: '',
@@ -58,11 +325,6 @@ export default function EditorPane({ openFile }) {
       })
       .catch((err) => {
         if (cancelled) { return; }
-        // ``fetchJson`` throws on non-ok responses (404 from a
-        // pre-restart kato, 403 from a path that escaped the
-        // workspace root, 500 if the file disappeared mid-read).
-        // Without this catch the rejection was unhandled and the
-        // editor was stuck on its Loading placeholder.
         setState({
           loading: false,
           error: String(err && err.message ? err.message : err) || 'failed to load file',
@@ -116,6 +378,7 @@ export default function EditorPane({ openFile }) {
         language={language}
         value={state.content}
         path={openFile.absolutePath}
+        onMount={handleEditorMount}
         options={{
           readOnly: true,
           domReadOnly: true,
@@ -128,6 +391,7 @@ export default function EditorPane({ openFile }) {
           automaticLayout: true,
           padding: { top: 8, bottom: 8 },
           guides: { indentation: true, bracketPairs: true },
+          glyphMargin: true,
         }}
       />
     );
@@ -141,18 +405,130 @@ export default function EditorPane({ openFile }) {
         </span>
         <span className="editor-pane-readonly-pill">read-only</span>
       </header>
+      {fileComments.length > 0 && (
+        <ChipStrip
+          comments={fileComments}
+          onJump={(line) => jumpToLine(line)}
+          onAddOnLine={(line) => setActiveLine(line)}
+        />
+      )}
       <div className="editor-pane-body">
         {body}
       </div>
+      {activeLine !== null && (
+        <div className="editor-pane-composer-wrap">
+          <header className="editor-pane-composer-head">
+            Add comment on {openFile.relativePath || openFile.absolutePath}:{activeLine}
+          </header>
+          <CommentForm
+            placeholder="What should kato do about this line?"
+            onSubmit={(b) => onCommentSubmit(activeLine, b)}
+            onCancel={() => setActiveLine(null)}
+          />
+        </div>
+      )}
+      {threads.length > 0 && (
+        <div className="editor-pane-comments-panel">
+          <header className="editor-pane-comments-panel-head">
+            Comments on this file ({threads.length})
+          </header>
+          {commentsError && (
+            <p className="editor-pane-message editor-pane-message-error">
+              {commentsError}
+            </p>
+          )}
+          {threads.map(({ root, replies }) => (
+            <div key={root.id} className="editor-pane-comment-thread">
+              <div className="editor-pane-comment-anchor">
+                {root.line >= 0 ? (
+                  <button
+                    type="button"
+                    className="editor-pane-comment-jump"
+                    onClick={() => jumpToLine(root.line)}
+                    title="Jump to this line in the editor"
+                  >
+                    line {root.line}
+                  </button>
+                ) : (
+                  <span className="editor-pane-comment-jump is-file">file-level</span>
+                )}
+              </div>
+              <CommentBubble
+                comment={root}
+                isRoot
+                onResolve={() => onResolve(root)}
+                onReopen={() => onReopen(root)}
+                onDelete={() => onDelete(root)}
+                onReply={() => setReplyTo(root.id)}
+                onMarkAddressed={() => onMarkAddressed(root)}
+              />
+              {replies.map((r) => (
+                <CommentBubble
+                  key={r.id}
+                  comment={r}
+                  isRoot={false}
+                  onDelete={() => onDelete(r)}
+                />
+              ))}
+              {replyTo === root.id && (
+                <CommentForm
+                  placeholder="Reply…"
+                  replyMode
+                  onSubmit={(b) => onCommentSubmit(root.line, b, root.id)}
+                  onCancel={() => setReplyTo('')}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
 
+
+// Compact chip strip above the editor — one chip per comment on
+// the current file. Status colour mirrors the kato_status badge
+// CommentBubble shows ("queued" / "in_progress" / "addressed" /
+// "failed"); clicking a chip scrolls the editor to that line.
+function ChipStrip({ comments, onJump, onAddOnLine }) {
+  const chips = comments
+    .filter((c) => !c.parent_id) // only top-of-thread chips
+    .map((c) => {
+      const kStatus = (c.kato_status || 'idle').toLowerCase();
+      const label = c.line >= 0 ? `L${c.line}` : 'file';
+      const preview = String(c.body || '').slice(0, 80);
+      return (
+        <button
+          key={c.id}
+          type="button"
+          className={`editor-pane-chip kato-${kStatus} status-${c.status || 'open'}`}
+          onClick={() => (c.line >= 0 ? onJump(c.line) : onAddOnLine(-1))}
+          title={preview}
+        >
+          <span className="editor-pane-chip-line">{label}</span>
+          <span className="editor-pane-chip-status">{statusLabel(c)}</span>
+          <span className="editor-pane-chip-body">{preview}</span>
+        </button>
+      );
+    });
+  return <div className="editor-pane-chip-strip">{chips}</div>;
+}
+
+function statusLabel(c) {
+  if (c.status === 'resolved') { return '✓ resolved'; }
+  switch ((c.kato_status || 'idle').toLowerCase()) {
+    case 'queued': return '⏳ queued';
+    case 'in_progress': return '⟳ working';
+    case 'addressed': return '✓ done';
+    case 'failed': return '✗ failed';
+    default: return 'open';
+  }
+}
+
+
 // Map a file path to a Monaco language id. Monaco ships with a
-// long built-in list; we only need to translate uncommon
-// extensions. For most cases the default fallback (``text/plain``
-// dispatched by Monaco itself when ``language`` is unset) works,
-// but providing the language hint gives tighter highlighting.
+// long built-in list; we only translate uncommon extensions.
 function languageForPath(path) {
   if (!path) { return 'plaintext'; }
   const lower = String(path).toLowerCase();

@@ -135,5 +135,62 @@ class FileRouteRelativePathTests(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
 
 
+class FileRouteMultiRepoTests(unittest.TestCase):
+    """Regression: multi-repo task must look up the right clone.
+
+    With two repos on the task, a click on a file that only exists in
+    repo B used to land on repo A's resolved candidate first (because
+    the joined path is *also* lexically inside repo A's root) and
+    return ``file not found`` even though the file existed in B. The
+    route now prefers a candidate whose file actually exists.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.workspace_root = Path(self._tmp.name) / 'TASK-2'
+        self.repo_a = self.workspace_root / 'ob-love-admin-client'
+        self.repo_b = self.workspace_root / 'email-core-lib'
+        # Repo A has docker/, but NOT email_core_lib/email_core_lib.py.
+        (self.repo_a / 'docker').mkdir(parents=True)
+        # Repo B has the file the operator clicked.
+        (self.repo_b / 'email_core_lib').mkdir(parents=True)
+        target = self.repo_b / 'email_core_lib' / 'email_core_lib.py'
+        target.write_text('# email lib\n', encoding='utf-8')
+
+        workspace_manager = _FakeWorkspaceManager(
+            records=[_FakeWorkspaceRecord(
+                'TASK-2', ['ob-love-admin-client', 'email-core-lib'],
+            )],
+            repo_paths={
+                ('TASK-2', 'ob-love-admin-client'): str(self.repo_a),
+                ('TASK-2', 'email-core-lib'): str(self.repo_b),
+            },
+            workspace_path_for={'TASK-2': str(self.workspace_root)},
+        )
+        self.app = create_app(
+            session_manager=_FakeManager(records=[_FakeRecord('TASK-2')]),
+            workspace_manager=workspace_manager,
+        )
+
+    def test_clicking_file_in_second_repo_finds_it(self) -> None:
+        # Path is repo-relative inside repo B. Repo A is first in the
+        # roots list — the route must keep searching past it.
+        response = self.app.test_client().get(
+            '/api/sessions/TASK-2/file?path=email_core_lib/email_core_lib.py',
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('email lib', response.get_json().get('content', ''))
+
+    def test_nonexistent_in_either_repo_is_404_not_403(self) -> None:
+        # When the relative path lands inside SOME root but doesn't
+        # exist in any of them, return 404 — 403 is reserved for
+        # "path escaped every root".
+        response = self.app.test_client().get(
+            '/api/sessions/TASK-2/file?path=email_core_lib/ghost.py',
+        )
+        self.assertEqual(response.status_code, 404)
+
+
 if __name__ == '__main__':
     unittest.main()

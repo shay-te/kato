@@ -31,9 +31,13 @@ import RightPane from './RightPane.jsx';
 
 describe('RightPane', () => {
 
-  test('renders the OrchestratorActivityFeed when there is no active task', () => {
-    render(<RightPane activeTaskId={null} activityHistory={[]} />);
-    expect(screen.getByText('orchestrator activity')).toBeInTheDocument();
+  test('renders the no-task placeholder when there is no active task', () => {
+    render(<RightPane activeTaskId={null} />);
+    // The orchestrator feed moved OUT of the left pane — it now
+    // opens in the centre column via the header status pill. With
+    // no task the left pane shows a placeholder, not the feed.
+    expect(screen.getByText(/No task selected/i)).toBeInTheDocument();
+    expect(screen.queryByText('orchestrator activity')).not.toBeInTheDocument();
     // Tabs not rendered when no task is selected.
     expect(screen.queryByText('Files')).not.toBeInTheDocument();
     expect(screen.queryByText('Changes')).not.toBeInTheDocument();
@@ -68,9 +72,14 @@ describe('RightPane', () => {
     expect(aside.style.width).toBe('420px');
   });
 
-  test('resizer renders inside the right pane', () => {
-    const { container } = render(<RightPane activeTaskId="KATO-1" />);
-    expect(container.querySelector('#right-pane-resizer')).toBeInTheDocument();
+  test('left-pane resizer renders when an onResizePointerDown is passed', () => {
+    // The Files/Changes panel is the LEFT column in the top-tabs
+    // layout; its drag handle is #left-pane-resizer and only mounts
+    // when the resize callback is wired (App passes leftResizer).
+    const { container } = render(
+      <RightPane activeTaskId="KATO-1" onResizePointerDown={() => {}} />,
+    );
+    expect(container.querySelector('#left-pane-resizer')).toBeInTheDocument();
   });
 
   test('Cmd+P with an active task switches to Files and bumps focus signal', () => {

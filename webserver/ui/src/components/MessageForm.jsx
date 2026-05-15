@@ -105,7 +105,7 @@ const MessageForm = forwardRef(function MessageForm({
 
   const placeholder = disabled
     ? disabledReason || 'Session is not live — chat resumes when kato re-spawns it.'
-    : 'Reply to Claude (Shift+Enter for newline, paste / drop / 📎 for images)';
+    : 'Reply to Claude (Shift+Enter for newline, paste or drop images)';
   const isSteering = turnInFlight && !disabled;
   const submitClass = isSteering ? 'is-steering' : '';
   const hasContent = (value || '').trim() || attachments.length > 0;

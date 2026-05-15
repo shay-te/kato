@@ -3,9 +3,11 @@ import AdoptTaskModal from './components/AdoptTaskModal.jsx';
 import EditorPane from './components/EditorPane.jsx';
 import Header from './components/Header.jsx';
 import Layout from './components/Layout.jsx';
+import OrchestratorActivityFeed from './components/OrchestratorActivityFeed.jsx';
 import RightPane from './components/RightPane.jsx';
 import SafetyBanner from './components/SafetyBanner.jsx';
 import SessionDetail from './components/SessionDetail.jsx';
+import SettingsDrawer from './components/SettingsDrawer.jsx';
 import TabList from './components/TabList.jsx';
 import ToastContainer from './components/ToastContainer.jsx';
 import { forgetTaskWorkspace, triggerScan } from './api.js';
@@ -26,6 +28,10 @@ const RIGHT_PANE_DEFAULT_WIDTH = 380;
 const RIGHT_PANE_MIN_WIDTH = 220;
 const RIGHT_PANE_MAX_WIDTH = 900;
 const RIGHT_PANE_STORAGE_KEY = 'kato.rightPaneWidth';
+const LEFT_PANE_DEFAULT_WIDTH = 320;
+const LEFT_PANE_MIN_WIDTH = 220;
+const LEFT_PANE_MAX_WIDTH = 700;
+const LEFT_PANE_STORAGE_KEY = 'kato.leftPaneWidth';
 
 export default function App() {
   const [activeTaskId, setActiveTaskIdState] = useState('');
@@ -194,6 +200,29 @@ export default function App() {
     maxWidth: RIGHT_PANE_MAX_WIDTH,
     anchor: 'right',
   });
+  const leftResizer = useResizable({
+    storageKey: LEFT_PANE_STORAGE_KEY,
+    defaultWidth: LEFT_PANE_DEFAULT_WIDTH,
+    minWidth: LEFT_PANE_MIN_WIDTH,
+    maxWidth: LEFT_PANE_MAX_WIDTH,
+    anchor: 'left',
+  });
+  // Operator clicks the "Scanning for…" pill at the top → the
+  // centre column (normally the read-only Monaco editor) gets
+  // swapped for the live orchestrator activity feed. Clicking
+  // again toggles it back. Lives at App so the pill button and
+  // the centre cell stay in sync without prop-drilling through
+  // every intermediate.
+  const [orchestratorOpen, setOrchestratorOpen] = useState(false);
+  const toggleOrchestrator = useCallback(() => {
+    setOrchestratorOpen((open) => !open);
+  }, []);
+  // Settings drawer state. Lives at App so the gear button in the
+  // Header and the drawer rendered next to the layout share a
+  // single boolean — no prop-drilling, no context.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const openSettings = useCallback(() => setSettingsOpen(true), []);
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
 
   const activeSession = sessions.find((s) => s.task_id === activeTaskId) || null;
   const attentionTaskIds = useMemo(() => {
@@ -213,15 +242,25 @@ export default function App() {
   const [openFile, setOpenFile] = useState(null);
   useEffect(() => { setOpenFile(null); }, [activeTaskId]);
   const handleOpenFile = useCallback((info) => {
-    // ``info`` shape from FilesTab: { absolutePath, relativePath }.
+    // ``info`` shape from FilesTab: { absolutePath, relativePath, repoId }.
+    // ``repoId`` is required for the comments POST (the backend keys
+    // comments by repo + relative path so a comment on
+    // ``src/auth.py`` in repo A doesn't collide with the same path
+    // in repo B).
     if (!info || !info.absolutePath) {
       setOpenFile(null);
       return;
     }
+    // Opening a file must take over the centre column. If the
+    // operator had the orchestrator-activity feed open (via the
+    // status pill), close it so the file actually shows instead of
+    // staying hidden behind the feed.
+    setOrchestratorOpen(false);
     setOpenFile({
       taskId: activeTaskId,
       absolutePath: info.absolutePath,
       relativePath: info.relativePath || info.absolutePath,
+      repoId: info.repoId || '',
     });
   }, [activeTaskId]);
   // Memoize so the context value is reference-stable across App
@@ -233,6 +272,7 @@ export default function App() {
   const layout = (
     <Layout
       rightWidth={resizer.width}
+      leftWidth={leftResizer.width}
       top={
         <TabList
           sessions={sessions}
@@ -261,11 +301,15 @@ export default function App() {
         <RightPane
           activeTaskId={activeTaskId}
           workspaceVersion={activeWorkspaceVersion}
-          activityHistory={status.history}
           onOpenFile={handleOpenFile}
+          onResizePointerDown={leftResizer.onPointerDown}
         />
       }
-      center={<EditorPane openFile={openFile} />}
+      center={
+        orchestratorOpen
+          ? <OrchestratorActivityFeed history={status.history} />
+          : <EditorPane openFile={openFile} />
+      }
       right={
         <SessionDetail
           key={activeSessionKey}
@@ -286,16 +330,25 @@ export default function App() {
       <ToastContainer />
       <SafetyBanner state={safetyState} />
       <Header
-        notificationsEnabled={notifications.enabled}
-        notificationsSupported={notifications.supported}
-        notificationsPermission={notifications.permission}
-        notificationKindPrefs={notifications.kindPrefs}
-        onSetKindEnabled={notifications.setKindEnabled}
-        onToggleNotifications={notifications.toggle}
         onRefresh={refresh}
         statusLatest={status.latest}
         statusStale={status.stale}
         statusConnected={status.connected}
+        onStatusClick={toggleOrchestrator}
+        statusActive={orchestratorOpen}
+        onOpenSettings={openSettings}
+      />
+      <SettingsDrawer
+        open={settingsOpen}
+        onClose={closeSettings}
+        notificationProps={{
+          enabled: notifications.enabled,
+          supported: notifications.supported,
+          permission: notifications.permission,
+          kindPrefs: notifications.kindPrefs || {},
+          onSetKindEnabled: notifications.setKindEnabled,
+          onToggle: notifications.toggle,
+        }}
       />
       <ChatComposerContext.Provider value={composerContextValue}>
         {layout}

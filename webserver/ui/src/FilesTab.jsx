@@ -288,11 +288,14 @@ export default function FilesTab({
 
   const filterRow = (
     <div className="files-tab-filter">
+      <span className="files-tab-filter-icon" aria-hidden="true">
+        <Icon name="search" />
+      </span>
       <input
         ref={filterInputRef}
         type="search"
         className="files-tab-filter-input"
-        placeholder="Search files… (Cmd+P / Ctrl+P)"
+        placeholder="Search files… (Cmd+P)"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Escape') { setQuery(''); } }}
@@ -474,6 +477,7 @@ function RepoTree({
             onPickFile={onPickFile}
             onOpenFile={onOpenFile}
             conflictedFiles={conflictedFiles}
+            repoId={repoId}
           />
         )}
       </Tree>
@@ -493,14 +497,14 @@ function RepoTree({
         {repoId && taskId && (
           <button
             type="button"
-            className="files-tab-repo-commits-btn"
+            className="files-tab-repo-commits-btn tooltip-end"
             onClick={toggleCommitMenu}
             aria-haspopup="listbox"
             aria-expanded={commitMenuOpen ? 'true' : 'false'}
-            data-tooltip="View changes from a commit on this repo's task branch"
+            data-tooltip="Commit history — pick a commit on this repo's task branch to scope the Changes tab to that single commit's diff."
             aria-label={`View commit history for ${heading}`}
           >
-            <Icon name="commit" />
+            <Icon name="history" />
           </button>
         )}
       </header>
@@ -572,17 +576,16 @@ function CommitDropdown({ state, onPick, onClose }) {
   );
 }
 
-function Node({ node, style, onPickFile, onOpenFile, conflictedFiles }) {
+function Node({
+  node, style, onPickFile, onOpenFile, conflictedFiles, repoId = '',
+}) {
   const isFolder = node.isInternal;
   function onActivate() {
-    // Folder click → toggle expand. File click → also notify the
-    // EditorPane (so the file opens in the middle Monaco view)
-    // before the original "paste relative path into chat" behavior.
-    // Both are useful: the editor preview + the chat reference.
     if (!isFolder && typeof onOpenFile === 'function') {
       onOpenFile({
         absolutePath: String(node.data?.path || ''),
         relativePath: String(node.data?.relativePath || ''),
+        repoId,
       });
     }
     activateTreeNode(node, onPickFile);

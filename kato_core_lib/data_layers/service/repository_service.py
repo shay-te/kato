@@ -553,6 +553,184 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
             return {'pulled': False, 'reason': 'pull_failed', 'detail': str(exc)}
         return {'pulled': True, 'updated': True, 'commits_pulled': int(behind)}
 
+    def _merge_preflight(
+        self,
+        repository,
+        local_path: str,
+        normalized_branch: str,
+    ) -> dict[str, object]:
+        """Validate the clone is safe to merge into.
+
+        Returns ``{'error': <status dict>}`` on any refusal, or
+        ``{'default_branch': <name>}`` when the clone is on the task
+        branch with a clean tree and the default branch is known.
+        """
+        def fail(reason: str, detail: str) -> dict[str, object]:
+            return {'error': {
+                'merged': False, 'reason': reason, 'detail': detail,
+            }}
+
+        if not local_path:
+            return fail(
+                'no_local_path',
+                f'repository {repository.id} has no local_path set',
+            )
+        if not (Path(local_path) / '.git').is_dir():
+            return fail(
+                'not_a_git_repo',
+                f'workspace clone for {repository.id} at {local_path} '
+                f'is not a git repository',
+            )
+        if not normalized_branch:
+            return fail('no_branch', f'no task branch for {repository.id}')
+        try:
+            current = self._current_branch(local_path)
+        except Exception as exc:
+            return fail('branch_lookup_failed', str(exc))
+        if current != normalized_branch:
+            return fail(
+                'wrong_branch_checked_out',
+                f'workspace is on {current!r}, expected '
+                f'{normalized_branch!r} — checkout first',
+            )
+        try:
+            dirty = bool(self._working_tree_status(local_path).strip())
+        except Exception as exc:
+            return fail('status_check_failed', str(exc))
+        if dirty:
+            # A merge into a dirty tree is git-unsafe and would also
+            # tangle the agent's in-progress edits with the merge.
+            # Push (which commits) first, then Merge.
+            return fail(
+                'dirty_working_tree',
+                'workspace has uncommitted changes; push or discard '
+                'them before merging the default branch',
+            )
+        try:
+            return {'default_branch': self.destination_branch(repository)}
+        except ValueError as exc:
+            return fail('default_branch_unknown', str(exc))
+
+    def merge_default_branch_into_clone(
+        self,
+        repository,
+        branch_name: str,
+    ) -> dict[str, object]:
+        """Fetch + merge the repo's default branch into the task branch.
+
+        Drives the planning UI's ``Merge master`` button. The agent's
+        per-task clone is intentionally blocked from running git, so
+        when the task branch falls behind ``origin/<default>`` and
+        develops conflicts the agent has no way to pull + merge
+        itself. This does the git plumbing on the operator's behalf
+        and — crucially — when the merge conflicts it does NOT abort:
+        the conflict markers + ``MERGE_HEAD`` are left in the working
+        tree so the agent can resolve them by editing files, and
+        kato's normal commit/push flow finalises the merge.
+
+        Returns one of:
+            {'merged': True,  'updated': bool, 'default_branch': str,
+             'commits_merged': int}
+            {'merged': False, 'conflicts': True, 'default_branch': str,
+             'conflicted_files': [str, ...]}
+            {'merged': False, 'reason': '<short>', 'detail': '<long>'}
+        """
+        local_path = str(getattr(repository, 'local_path', '') or '').strip()
+        normalized_branch = (branch_name or '').strip()
+        preflight = self._merge_preflight(
+            repository, local_path, normalized_branch,
+        )
+        if preflight.get('error'):
+            return preflight['error']
+        default_branch = preflight['default_branch']
+        try:
+            self._run_git(
+                local_path, ['fetch', 'origin', '--prune'],
+                f'failed to fetch origin for {repository.id} workspace',
+                repository,
+            )
+        except RuntimeError as exc:
+            return {'merged': False, 'reason': 'fetch_failed', 'detail': str(exc)}
+        remote_reference = f'origin/{default_branch}'
+        try:
+            remote_exists = self._git_reference_exists(
+                local_path, remote_reference,
+            )
+        except Exception as exc:
+            return {
+                'merged': False, 'reason': 'remote_lookup_failed',
+                'detail': str(exc),
+            }
+        if not remote_exists:
+            return {
+                'merged': False, 'reason': 'remote_default_missing',
+                'detail': f'{remote_reference} does not exist on origin',
+            }
+        try:
+            _ahead, behind = self._left_right_commit_counts(
+                local_path, normalized_branch, remote_reference,
+            )
+        except Exception as exc:
+            return {
+                'merged': False, 'reason': 'commit_count_failed',
+                'detail': str(exc),
+            }
+        if behind == 0:
+            # Task branch already contains every commit from the
+            # default branch — nothing to merge.
+            return {
+                'merged': True, 'updated': False, 'commits_merged': 0,
+                'default_branch': default_branch,
+            }
+        # ``_run_git_subprocess`` (not ``_run_git``) — a merge
+        # conflict is a non-zero exit we EXPECT and want to handle,
+        # not raise on.
+        merge_result = self._run_git_subprocess(
+            local_path,
+            ['merge', '--no-edit', remote_reference],
+            repository,
+        )
+        if merge_result.returncode == 0:
+            return {
+                'merged': True, 'updated': True,
+                'commits_merged': int(behind),
+                'default_branch': default_branch,
+            }
+        conflicted = self._unmerged_paths(local_path)
+        if conflicted:
+            # Leave the conflict markers + MERGE_HEAD in place — the
+            # agent resolves them by editing files; kato's normal
+            # commit/push finalises the merge.
+            return {
+                'merged': False, 'conflicts': True,
+                'default_branch': default_branch,
+                'conflicted_files': conflicted,
+            }
+        # Non-zero exit but no unmerged paths → some other merge
+        # failure (e.g. refusing for an unrelated reason). Abort so
+        # the tree is left clean rather than half-merged.
+        self._run_git_subprocess(local_path, ['merge', '--abort'], repository)
+        detail = (
+            merge_result.stderr.strip()
+            or merge_result.stdout.strip()
+            or 'git merge failed'
+        )
+        return {'merged': False, 'reason': 'merge_failed', 'detail': detail}
+
+    def _unmerged_paths(self, local_path: str) -> list[str]:
+        """Repo-relative paths with conflict (unmerged) index entries."""
+        result = self._run_git_subprocess(
+            local_path,
+            ['diff', '--name-only', '--diff-filter=U'],
+        )
+        if result.returncode != 0:
+            return []
+        return [
+            line.strip()
+            for line in result.stdout.splitlines()
+            if line.strip()
+        ]
+
     def resolve_review_comment(self, repository, comment) -> None:
         self._publication_service.resolve_review_comment(repository, comment)
 

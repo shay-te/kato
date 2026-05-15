@@ -1,7 +1,8 @@
-// Tests for Header. Renders the title bar, the bell (notifications
-// toggle), the gear (NotificationSettings popover trigger), and the
-// refresh button. The bell title flips on enabled state; the bell
-// is disabled when the browser doesn't support notifications.
+// Tests for Header. The standalone notifications bell was removed —
+// enable/disable now lives in the Settings drawer's Notifications
+// tab (covered by NotificationsSettingsPanel). Header now carries:
+// title/subtitle, the clickable status pill, the settings gear, and
+// the refresh button.
 
 import { describe, test, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
@@ -11,13 +12,10 @@ import Header from './Header.jsx';
 
 function _baseProps(overrides = {}) {
   return {
-    notificationsEnabled: false,
-    notificationsSupported: true,
-    notificationsPermission: 'default',
-    notificationKindPrefs: {},
-    onSetKindEnabled: () => {},
-    onToggleNotifications: () => {},
     onRefresh: () => {},
+    onOpenSettings: () => {},
+    statusLatest: null,
+    statusConnected: true,
     ...overrides,
   };
 }
@@ -32,19 +30,16 @@ describe('Header', () => {
     expect(screen.getByAltText('Kato')).toBeInTheDocument();
   });
 
-  test('bell title reflects notificationsEnabled state', () => {
-    const { rerender } = render(<Header {..._baseProps({ notificationsEnabled: false })} />);
-    expect(screen.getByLabelText(/notifications: off/i)).toBeInTheDocument();
-
-    rerender(<Header {..._baseProps({ notificationsEnabled: true })} />);
-    expect(screen.getByLabelText(/notifications: on/i)).toBeInTheDocument();
+  test('no standalone notification bell button is rendered', () => {
+    render(<Header {..._baseProps()} />);
+    expect(screen.queryByLabelText(/notifications:/i)).toBeNull();
   });
 
-  test('clicking the bell fires onToggleNotifications', () => {
-    const onToggle = vi.fn();
-    render(<Header {..._baseProps({ onToggleNotifications: onToggle })} />);
-    fireEvent.click(screen.getByLabelText(/notifications:/i));
-    expect(onToggle).toHaveBeenCalledTimes(1);
+  test('clicking the settings gear fires onOpenSettings', () => {
+    const onOpenSettings = vi.fn();
+    render(<Header {..._baseProps({ onOpenSettings })} />);
+    fireEvent.click(screen.getByLabelText('Open settings'));
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
   });
 
   test('clicking the refresh button fires onRefresh', () => {
@@ -54,14 +49,15 @@ describe('Header', () => {
     expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 
-  test('bell is disabled when notifications are not supported', () => {
-    render(<Header {..._baseProps({ notificationsSupported: false })} />);
-    expect(screen.getByLabelText(/notifications:/i)).toBeDisabled();
+  test('status pill is clickable when onStatusClick is wired', () => {
+    const onStatusClick = vi.fn();
+    render(<Header {..._baseProps({ onStatusClick })} />);
+    fireEvent.click(screen.getByText(/waiting for the next scan tick/i));
+    expect(onStatusClick).toHaveBeenCalledTimes(1);
   });
 
-  test('renders without crashing when notificationKindPrefs is undefined', () => {
-    // Defensive: the prop is optional and Header coerces it to {}.
-    render(<Header {..._baseProps({ notificationKindPrefs: undefined })} />);
+  test('renders without crashing when optional props are omitted', () => {
+    render(<Header onRefresh={() => {}} />);
     expect(screen.getByText('Kato')).toBeInTheDocument();
   });
 });

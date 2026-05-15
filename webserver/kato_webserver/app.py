@@ -193,6 +193,227 @@ def _repository_cwd(
     return str(path) if path.is_dir() else None
 
 
+def _settings_env_path() -> Path:
+    """Legacy ``<repo>/.env`` path — now only a READ fallback.
+
+    The settings UI writes to ``~/.kato/settings.json`` (see
+    ``kato_settings_store``). ``.env`` is still read here so an
+    operator who hasn't saved through the new UI yet still sees
+    their existing values + a correct source label. The
+    ``KATO_SETTINGS_ENV_FILE`` override is preserved for tests that
+    pre-seed a fake ``.env`` fallback.
+    """
+    override = os.environ.get('KATO_SETTINGS_ENV_FILE', '').strip()
+    if override:
+        return Path(override)
+    return KATO_REPO_ROOT / '.env'
+
+
+def _resolve_setting(key: str) -> dict:
+    """Resolve one settings key across all three stores.
+
+    Precedence mirrors boot: live ``os.environ`` (shell or
+    already-loaded) > ``~/.kato/settings.json`` > ``<repo>/.env``.
+    Returns ``{value, source, value_from_file}`` where ``source`` is
+    one of ``env`` / ``kato_settings`` / ``env_file`` / ``unset`` so
+    the UI can label where a value lives.
+    """
+    from kato_core_lib.helpers.kato_settings_store import read_kato_settings
+
+    live = os.environ.get(key, '')
+    settings_value = read_kato_settings().get(key, '')
+    env_file_value = _read_env_file_values(_settings_env_path()).get(key, '')
+    if live:
+        value, source = live, 'env'
+    elif settings_value:
+        value, source = settings_value, 'kato_settings'
+    elif env_file_value:
+        value, source = env_file_value, 'env_file'
+    else:
+        value, source = '', 'unset'
+    return {
+        'value': value,
+        'source': source,
+        'value_from_file': env_file_value,
+    }
+
+
+def _persist_settings(updates: dict) -> None:
+    """Write UI-edited settings to ``~/.kato/settings.json`` (atomic).
+
+    Single chokepoint so every settings route writes the same place.
+    Replaces the old per-key ``.env`` writers.
+    """
+    from kato_core_lib.helpers.kato_settings_store import write_kato_settings
+
+    write_kato_settings(updates)
+
+
+# Only these keys may be written via ``POST /api/settings``. Adding
+# a new operator-editable setting means adding it here AND wiring
+# the GET / POST handlers — the allowlist is the contract.
+_SETTINGS_WRITABLE_KEYS = frozenset({'REPOSITORY_ROOT_PATH'})
+
+# ---------------------------------------------------------------------------
+# Provider settings split into two concepts the operator thinks about
+# separately:
+#
+#   * TASK provider — where tickets live + which one kato polls.
+#     Drives ``KATO_ISSUE_PLATFORM``. Full field set (connection +
+#     issue scoping + state transitions). One is "active".
+#
+#   * GIT host — where code + PRs live. kato infers the host from
+#     each repo's remote URL, so there's NO "active" selector here;
+#     this is purely "set the credentials kato uses to clone / push
+#     / open PRs against <host>". Connection-level keys only.
+#
+# The same underlying ``.env`` keys back both — e.g. editing
+# ``BITBUCKET_API_TOKEN`` in either tab writes the same line. That's
+# intentional: the operator sees the key in whichever context they
+# came looking for it.
+# ---------------------------------------------------------------------------
+
+# Task providers — ``POST /api/task-providers`` writes these +
+# ``KATO_ISSUE_PLATFORM``. Adding a field / platform = edit here.
+_TASK_PROVIDER_FIELDS: dict[str, tuple[str, ...]] = {
+    'youtrack': (
+        'YOUTRACK_API_BASE_URL',
+        'YOUTRACK_API_TOKEN',
+        'YOUTRACK_PROJECT',
+        'YOUTRACK_ASSIGNEE',
+        'YOUTRACK_PROGRESS_STATE_FIELD',
+        'YOUTRACK_PROGRESS_STATE',
+        'YOUTRACK_REVIEW_STATE_FIELD',
+        'YOUTRACK_REVIEW_STATE',
+        'YOUTRACK_ISSUE_STATES',
+    ),
+    'jira': (
+        'JIRA_API_BASE_URL',
+        'JIRA_API_TOKEN',
+        'JIRA_EMAIL',
+        'JIRA_PROJECT',
+        'JIRA_ASSIGNEE',
+        'JIRA_PROGRESS_STATE_FIELD',
+        'JIRA_PROGRESS_STATE',
+        'JIRA_REVIEW_STATE_FIELD',
+        'JIRA_REVIEW_STATE',
+        'JIRA_ISSUE_STATES',
+    ),
+    'github': (
+        'GITHUB_API_BASE_URL',
+        'GITHUB_API_TOKEN',
+        'GITHUB_OWNER',
+        'GITHUB_REPO',
+        'GITHUB_ASSIGNEE',
+        'GITHUB_PROGRESS_STATE_FIELD',
+        'GITHUB_PROGRESS_STATE',
+        'GITHUB_REVIEW_STATE_FIELD',
+        'GITHUB_REVIEW_STATE',
+        'GITHUB_ISSUE_STATES',
+    ),
+    'gitlab': (
+        'GITLAB_API_BASE_URL',
+        'GITLAB_API_TOKEN',
+        'GITLAB_PROJECT',
+        'GITLAB_ASSIGNEE',
+        'GITLAB_PROGRESS_STATE_FIELD',
+        'GITLAB_PROGRESS_STATE',
+        'GITLAB_REVIEW_STATE_FIELD',
+        'GITLAB_REVIEW_STATE',
+        'GITLAB_ISSUE_STATES',
+    ),
+    'bitbucket': (
+        'BITBUCKET_API_BASE_URL',
+        'BITBUCKET_API_TOKEN',
+        'BITBUCKET_USERNAME',
+        'BITBUCKET_API_EMAIL',
+        'BITBUCKET_WORKSPACE',
+        'BITBUCKET_REPO_SLUG',
+        'BITBUCKET_ASSIGNEE',
+        'BITBUCKET_PROGRESS_STATE_FIELD',
+        'BITBUCKET_PROGRESS_STATE',
+        'BITBUCKET_REVIEW_STATE_FIELD',
+        'BITBUCKET_REVIEW_STATE',
+        'BITBUCKET_ISSUE_STATES',
+    ),
+}
+
+# Git hosts — where code + PRs live. Only Bitbucket / GitHub /
+# GitLab (YouTrack + Jira are pure trackers with no git). NO active
+# selector: kato infers the host from each repo's remote URL, so
+# this tab is "set the credentials kato uses to clone / push / open
+# PRs against <host>". Connection-level keys only — issue scoping +
+# state-transition fields belong on the Task provider tab.
+_GIT_HOST_FIELDS: dict[str, tuple[str, ...]] = {
+    'bitbucket': (
+        'BITBUCKET_API_BASE_URL',
+        'BITBUCKET_API_TOKEN',
+        'BITBUCKET_USERNAME',
+        'BITBUCKET_API_EMAIL',
+        'BITBUCKET_WORKSPACE',
+        'BITBUCKET_REPO_SLUG',
+    ),
+    'github': (
+        'GITHUB_API_BASE_URL',
+        'GITHUB_API_TOKEN',
+        'GITHUB_OWNER',
+        'GITHUB_REPO',
+    ),
+    'gitlab': (
+        'GITLAB_API_BASE_URL',
+        'GITLAB_API_TOKEN',
+        'GITLAB_PROJECT',
+    ),
+}
+
+
+def _read_env_file_values(path: Path) -> dict[str, str]:
+    """Parse a ``.env``-style file into a dict.
+
+    Pragmatic parser — handles ``KEY=value`` lines, strips inline
+    surrounding quotes, ignores blank lines and ``#`` comments.
+    Returns ``{}`` when the file is missing. Doesn't try to be a
+    full POSIX shell parser because the operator's .env shouldn't
+    rely on shell substitution for fields the settings UI edits.
+    """
+    if not path.is_file():
+        return {}
+    out: dict[str, str] = {}
+    try:
+        content = path.read_text(encoding='utf-8')
+    except OSError:
+        return {}
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        if '=' not in stripped:
+            continue
+        key, value = stripped.split('=', 1)
+        key = key.strip()
+        value = value.strip()
+        # Strip a single pair of surrounding quotes — the most
+        # common .env quoting style. Anything fancier (escape
+        # sequences, multi-line values) is out of scope for the
+        # settings UI.
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+            value = value[1:-1]
+        if key:
+            out[key] = value
+    return out
+
+
+
+
+def _is_inside(candidate, root) -> bool:
+    """True when ``candidate`` is at or under ``root`` (both pathlib.Path)."""
+    try:
+        candidate.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
 def _workspace_status(workspace_manager, task_id: str) -> str:
     """Return the workspace's current status (provisioning|active|review|done|...).
 
@@ -542,6 +763,401 @@ def _register_http_routes(app: Flask) -> None:
             'running_as_root': is_running_as_root(),
         })
 
+    @app.get('/api/settings')
+    def get_settings():
+        """Operator-editable settings, resolved across all stores.
+
+        Source label tells the operator where the value currently
+        lives: ``env`` (live process / shell), ``kato_settings``
+        (``~/.kato/settings.json`` — what the UI writes), or
+        ``env_file`` (legacy ``<repo>/.env`` fallback).
+        """
+        from kato_core_lib.helpers.kato_settings_store import (
+            kato_settings_path,
+        )
+
+        repo_root = _resolve_setting('REPOSITORY_ROOT_PATH')
+        return jsonify({
+            'repository_root_path': repo_root,
+            'settings_file_path': str(kato_settings_path()),
+            # Kept for back-compat with any client still reading it.
+            'env_file_path': str(_settings_env_path()),
+        })
+
+    @app.post('/api/settings')
+    def update_settings():
+        """Persist the operator-editable settings to ``~/.kato/settings.json``.
+
+        Body: ``{repository_root_path: "/abs/path"}``. The path is
+        validated (must exist + be a directory) before the write so
+        the operator can't accidentally point kato at a missing
+        folder. The write is atomic. The change takes effect on the
+        next kato restart (env is read at boot); we say so via
+        ``restart_required: true``.
+        """
+        payload = request.get_json(silent=True) or {}
+        new_path = str(payload.get('repository_root_path') or '').strip()
+        if not new_path:
+            return jsonify({'error': 'repository_root_path is required'}), 400
+        # Resolve ``~`` and relative segments so the operator can
+        # paste ``~/Projects`` or ``./projects`` and have it land
+        # as the canonical absolute path on disk.
+        try:
+            resolved = Path(new_path).expanduser().resolve()
+        except (OSError, ValueError) as exc:
+            return jsonify({'error': f'invalid path: {exc}'}), 400
+        if not resolved.exists():
+            return jsonify({'error': f'path does not exist: {resolved}'}), 400
+        if not resolved.is_dir():
+            return jsonify({'error': f'path is not a directory: {resolved}'}), 400
+        try:
+            _persist_settings({'REPOSITORY_ROOT_PATH': str(resolved)})
+        except OSError as exc:
+            return jsonify({'error': f'failed to write settings file: {exc}'}), 500
+        return jsonify({
+            'ok': True,
+            'repository_root_path': str(resolved),
+            'restart_required': True,
+            'message': 'Saved. Restart kato for the change to take effect.',
+        })
+
+    def _provider_field_values(fields_map):
+        """Shared GET shaping for the task / git provider routes.
+
+        Each field resolves across all three stores via
+        ``_resolve_setting`` (live env > settings.json > .env).
+        Returns ``(out, env_file_values)`` — the second is only used
+        by the task route to read the legacy ``KATO_ISSUE_PLATFORM``
+        fallback for the "active" label.
+        """
+        env_file_values = _read_env_file_values(_settings_env_path())
+        out = {}
+        for name, fields in fields_map.items():
+            field_values = {key: _resolve_setting(key) for key in fields}
+            out[name] = {'fields': field_values}
+        return out, env_file_values
+
+    @app.get('/api/task-providers')
+    def list_task_providers():
+        """Active task platform + every platform's env-backed fields.
+
+        ``active`` is driven by ``KATO_ISSUE_PLATFORM`` (kato config
+        reads ``${oc.env:KATO_ISSUE_PLATFORM,"youtrack"}`` so the env
+        var is the operator-facing knob). This is the "where do
+        tickets live + which one does kato poll" tab.
+        """
+        from kato_core_lib.helpers.kato_settings_store import (
+            kato_settings_path,
+        )
+
+        out, env_file_values = _provider_field_values(_TASK_PROVIDER_FIELDS)
+        active = _resolve_setting('KATO_ISSUE_PLATFORM')['value']
+        if not active:
+            active = env_file_values.get('KATO_ISSUE_PLATFORM', '') or 'youtrack'
+        active = active.strip().lower()
+        return jsonify({
+            'active': active,
+            'providers': out,
+            'settings_file_path': str(kato_settings_path()),
+            'supported': list(_TASK_PROVIDER_FIELDS.keys()),
+        })
+
+    @app.post('/api/task-providers')
+    def update_task_provider():
+        """Patch ``<repo>/.env`` with one task platform's fields + active.
+
+        Body: ``{active?, provider?, fields?}``. ``active`` switches
+        ``KATO_ISSUE_PLATFORM``. Only keys in the named provider's
+        whitelist are written — a payload can't smuggle unrelated
+        env keys. ``restart_required: true`` because kato reads the
+        env at boot.
+        """
+        payload = request.get_json(silent=True) or {}
+        updates: dict[str, str] = {}
+        active = str(payload.get('active') or '').strip().lower()
+        if active:
+            if active not in _TASK_PROVIDER_FIELDS:
+                return jsonify({
+                    'error': f'unknown task provider: {active}. Pick one of '
+                             f'{list(_TASK_PROVIDER_FIELDS.keys())}.',
+                }), 400
+            updates['KATO_ISSUE_PLATFORM'] = active
+        provider = str(payload.get('provider') or '').strip().lower()
+        fields = payload.get('fields') or {}
+        if provider:
+            if provider not in _TASK_PROVIDER_FIELDS:
+                return jsonify({'error': f'unknown task provider: {provider}'}), 400
+            if not isinstance(fields, dict):
+                return jsonify({'error': 'fields must be an object'}), 400
+            allowed = set(_TASK_PROVIDER_FIELDS[provider])
+            for key, value in fields.items():
+                if key in allowed:
+                    updates[key] = str(value or '')
+        if not updates:
+            return jsonify({'error': 'no recognised updates'}), 400
+        try:
+            _persist_settings(updates)
+        except OSError as exc:
+            return jsonify({'error': f'failed to write settings file: {exc}'}), 500
+        return jsonify({
+            'ok': True,
+            'updated_keys': sorted(updates.keys()),
+            'restart_required': True,
+            'message': 'Saved. Restart kato for the change to take effect.',
+        })
+
+    @app.get('/api/git-providers')
+    def list_git_providers():
+        """Credentials for the git hosts (Bitbucket / GitHub / GitLab).
+
+        NO active selector — kato infers the host from each repo's
+        remote URL. This is purely "set the creds kato uses to
+        clone / push / open PRs against <host>".
+        """
+        from kato_core_lib.helpers.kato_settings_store import (
+            kato_settings_path,
+        )
+
+        out, _ = _provider_field_values(_GIT_HOST_FIELDS)
+        return jsonify({
+            'providers': out,
+            'settings_file_path': str(kato_settings_path()),
+            'supported': list(_GIT_HOST_FIELDS.keys()),
+        })
+
+    @app.post('/api/git-providers')
+    def update_git_provider():
+        """Patch ``<repo>/.env`` with one git host's credentials.
+
+        Body: ``{provider, fields}``. Does NOT touch
+        ``KATO_ISSUE_PLATFORM`` — selecting a git host here only
+        edits its connection creds. Only that host's whitelisted
+        keys are written.
+        """
+        payload = request.get_json(silent=True) or {}
+        provider = str(payload.get('provider') or '').strip().lower()
+        fields = payload.get('fields') or {}
+        if not provider or provider not in _GIT_HOST_FIELDS:
+            return jsonify({
+                'error': f'unknown git host: {provider or "(none)"}. '
+                         f'Pick one of {list(_GIT_HOST_FIELDS.keys())}.',
+            }), 400
+        if not isinstance(fields, dict):
+            return jsonify({'error': 'fields must be an object'}), 400
+        allowed = set(_GIT_HOST_FIELDS[provider])
+        updates = {
+            key: str(value or '')
+            for key, value in fields.items()
+            if key in allowed
+        }
+        if not updates:
+            return jsonify({'error': 'no recognised fields'}), 400
+        try:
+            _persist_settings(updates)
+        except OSError as exc:
+            return jsonify({'error': f'failed to write settings file: {exc}'}), 500
+        return jsonify({
+            'ok': True,
+            'updated_keys': sorted(updates.keys()),
+            'restart_required': True,
+            'message': 'Saved. Restart kato for the change to take effect.',
+        })
+
+    @app.get('/api/all-settings')
+    def list_all_settings():
+        """Schema + resolved values for every env-backed setting.
+
+        Powers the schema-driven Settings tabs (General, Claude
+        agent, Sandbox, Security scanner, Email & Slack, OpenHands,
+        Docker/infra, AWS). Provider/repo-root keys are intentionally
+        absent — they have dedicated tabs with custom logic.
+        """
+        from kato_core_lib.helpers.kato_settings_schema import (
+            schema_for_api,
+        )
+        from kato_core_lib.helpers.kato_settings_store import (
+            kato_settings_path,
+        )
+
+        schema = schema_for_api()
+        for section in schema:
+            for field in section['fields']:
+                resolved = _resolve_setting(field['key'])
+                field['value'] = resolved['value']
+                field['source'] = resolved['source']
+        return jsonify({
+            'sections': schema,
+            'settings_file_path': str(kato_settings_path()),
+        })
+
+    @app.post('/api/all-settings')
+    def update_all_settings():
+        """Persist any schema-declared key to ``~/.kato/settings.json``.
+
+        Body: ``{updates: {KEY: value}}``. The schema is the
+        whitelist — a key not declared in any section is dropped, so
+        a payload can't smuggle one the UI doesn't own. Booleans /
+        numbers are coerced to the string form ``.env`` land
+        expects. ``restart_required`` because kato reads env at boot.
+        """
+        from kato_core_lib.helpers.kato_settings_schema import (
+            all_settings_keys,
+        )
+
+        payload = request.get_json(silent=True) or {}
+        raw = payload.get('updates')
+        if not isinstance(raw, dict):
+            return jsonify({'error': 'updates must be an object'}), 400
+        allowed = all_settings_keys()
+        updates: dict[str, str] = {}
+        for key, value in raw.items():
+            if key not in allowed:
+                continue
+            if isinstance(value, bool):
+                updates[key] = 'true' if value else 'false'
+            else:
+                updates[key] = str(value if value is not None else '')
+        if not updates:
+            return jsonify({'error': 'no recognised settings in payload'}), 400
+        try:
+            _persist_settings(updates)
+        except OSError as exc:
+            return jsonify({'error': f'failed to write settings file: {exc}'}), 500
+        return jsonify({
+            'ok': True,
+            'updated_keys': sorted(updates.keys()),
+            'restart_required': True,
+            'message': 'Saved. Restart kato for the change to take effect.',
+        })
+
+    @app.get('/api/repository-approvals')
+    def list_repository_approvals():
+        """Return every discovered candidate + which are approved.
+
+        Used by the Settings drawer's "Repositories" approval panel.
+        Replaces the ``./kato approve-repo`` CLI picker — discovery
+        is the same (inventory + checkout + workspace clones,
+        merged inventory-wins). The UI joins each candidate with
+        its approval record so the operator sees a single unified
+        list with the current mode.
+        """
+        try:
+            from kato_core_lib.data_layers.service.repository_approval_discovery_service import (
+                discover_all_repositories,
+            )
+            from kato_core_lib.data_layers.service.repository_approval_service import (
+                RepositoryApprovalService,
+            )
+        except ImportError as exc:
+            return jsonify({'error': f'approvals not available: {exc}'}), 503
+        candidates = discover_all_repositories()
+        service = RepositoryApprovalService()
+        approvals = {
+            entry.repository_id.lower(): entry for entry in service.list_approvals()
+        }
+        out = []
+        for repo in candidates:
+            entry = approvals.get(repo.repository_id.lower())
+            out.append({
+                'repository_id': repo.repository_id,
+                'remote_url': repo.remote_url,
+                'source': repo.source,
+                'workspace_path': repo.workspace_path,
+                'approved': entry is not None,
+                'approval_mode': entry.approval_mode.value if entry else '',
+                'approved_remote_url': entry.remote_url if entry else '',
+                'approved_by': entry.approved_by if entry else '',
+                'remote_url_drift': bool(
+                    entry and entry.remote_url and entry.remote_url != repo.remote_url
+                ),
+            })
+        # Also surface "approved but no longer discovered" entries —
+        # the operator can still revoke them from the UI even if
+        # their workspace clone is gone.
+        discovered_ids = {repo.repository_id.lower() for repo in candidates}
+        for entry in service.list_approvals():
+            if entry.repository_id.lower() in discovered_ids:
+                continue
+            out.append({
+                'repository_id': entry.repository_id,
+                'remote_url': entry.remote_url,
+                'source': 'orphan',
+                'workspace_path': '',
+                'approved': True,
+                'approval_mode': entry.approval_mode.value,
+                'approved_remote_url': entry.remote_url,
+                'approved_by': entry.approved_by,
+                'remote_url_drift': False,
+            })
+        out.sort(key=lambda row: row['repository_id'].lower())
+        return jsonify({
+            'repositories': out,
+            'storage_path': str(service.storage_path),
+        })
+
+    @app.post('/api/repository-approvals')
+    def update_repository_approvals():
+        """Apply a batch of approve / revoke / mode-change operations.
+
+        Body shape::
+
+            {
+              "approve": [
+                {"repository_id": "client", "remote_url": "...", "mode": "trusted"}
+              ],
+              "revoke": ["other-repo"]
+            }
+
+        Empty arrays are tolerated. ``mode`` defaults to ``restricted``.
+        Returns the updated list so the UI can re-render without a
+        second GET.
+        """
+        try:
+            from kato_core_lib.data_layers.data.repository_approval import (
+                ApprovalMode,
+            )
+            from kato_core_lib.data_layers.service.repository_approval_service import (
+                RepositoryApprovalService,
+            )
+        except ImportError as exc:
+            return jsonify({'error': f'approvals not available: {exc}'}), 503
+        payload = request.get_json(silent=True) or {}
+        approve_in = payload.get('approve') or []
+        revoke_in = payload.get('revoke') or []
+        if not isinstance(approve_in, list) or not isinstance(revoke_in, list):
+            return jsonify({'error': 'approve / revoke must be arrays'}), 400
+        service = RepositoryApprovalService()
+        applied = {'approved': [], 'revoked': []}
+        # Approve first so a rapid toggle (approve → revoke → approve)
+        # ends in the expected state when sent in one batch.
+        for item in approve_in:
+            if not isinstance(item, dict):
+                continue
+            repo_id = str(item.get('repository_id') or '').strip()
+            remote_url = str(item.get('remote_url') or '').strip()
+            mode = str(item.get('mode') or 'restricted').strip().lower()
+            if not repo_id:
+                continue
+            try:
+                approval_mode = ApprovalMode.from_string(mode)
+            except Exception:
+                approval_mode = ApprovalMode.RESTRICTED
+            entry = service.approve(repo_id, remote_url, mode=approval_mode)
+            applied['approved'].append({
+                'repository_id': entry.repository_id,
+                'mode': entry.approval_mode.value,
+            })
+        for repo_id in revoke_in:
+            repo_id = str(repo_id or '').strip()
+            if not repo_id:
+                continue
+            if service.revoke(repo_id):
+                applied['revoked'].append(repo_id)
+        return jsonify({
+            'ok': True,
+            'applied': applied,
+        })
+
     @app.get('/logo.png')
     def logo():
         candidate = KATO_REPO_ROOT / 'kato.png'
@@ -754,19 +1370,29 @@ def _register_http_routes(app: Flask) -> None:
                 resolved_roots.append(Path(root).resolve())
             except (OSError, ValueError):
                 continue
+        # First preference: a candidate that lives inside a root AND
+        # exists on disk — the file the operator actually clicked.
+        # Fallback: a candidate that lives inside a root but doesn't
+        # exist (so the caller still gets a clear 404 instead of a
+        # 403). 403 is reserved for "path escaped every root".
         resolved: Path | None = None
+        in_workspace: Path | None = None
         for candidate in candidates:
-            for root_resolved in resolved_roots:
-                try:
-                    candidate.relative_to(root_resolved)
-                except ValueError:
-                    continue
+            inside_a_root = any(
+                _is_inside(candidate, root_resolved)
+                for root_resolved in resolved_roots
+            )
+            if not inside_a_root:
+                continue
+            if in_workspace is None:
+                in_workspace = candidate
+            if candidate.is_file():
                 resolved = candidate
                 break
-            if resolved is not None:
-                break
-        if resolved is None:
+        if resolved is None and in_workspace is None:
             return jsonify({'error': 'path is outside the task workspace'}), 403
+        if resolved is None:
+            return jsonify({'error': 'file not found'}), 404
         if not resolved.is_file():
             return jsonify({'error': 'file not found'}), 404
         try:
@@ -927,6 +1553,33 @@ def _register_http_routes(app: Flask) -> None:
         result = pull(task_id) or {}
         if result.get('error') and not result.get('pulled'):
             return jsonify(result), 404 if 'no workspace' in str(result['error']) else 500
+        return jsonify(result)
+
+    @app.post('/api/sessions/<task_id>/merge-default-branch')
+    def merge_default_branch(task_id: str):
+        """Fetch + merge each clone's default branch into the task branch.
+
+        Drives the planning UI's ``Merge master`` button. On
+        conflict the markers are left in the working tree (not
+        aborted) so the chat agent can resolve them — the clone is
+        intentionally blocked from running git itself.
+        """
+        agent_service = app.config.get('AGENT_SERVICE')
+        if agent_service is None:
+            return jsonify({'error': 'agent service not wired'}), 503
+        merge = getattr(agent_service, 'merge_default_branch_for_task', None)
+        if not callable(merge):
+            return jsonify(
+                {'error': 'agent service does not support merge-default'},
+            ), 501
+        result = merge(task_id) or {}
+        # A conflicted merge is a SUCCESSFUL outcome of this button —
+        # the operator wanted the default branch in so the agent can
+        # fix conflicts. Only a hard error (no workspace / git
+        # failure) is non-2xx.
+        err = result.get('error')
+        if err and not result.get('merged') and not result.get('has_conflicts'):
+            return jsonify(result), 404 if 'no workspace' in str(err) else 500
         return jsonify(result)
 
     @app.post('/api/sessions/<task_id>/pull-request')

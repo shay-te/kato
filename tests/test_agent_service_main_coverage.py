@@ -829,5 +829,106 @@ class TaskPullRequestIdTests(unittest.TestCase):
         self.assertEqual(result, '')
 
 
+class CleanupCaseInsensitivityRegressionTests(unittest.TestCase):
+    """Regression: cleanup must compare task ids case-insensitively.
+
+    Two real symptoms this guards:
+      * UNA-232 sitting in the "To Verify" (review) column was being
+        wiped because its on-disk session record was lower-cased
+        (``una-232``) while the platform returned ``UNA-232``.
+      * UNA-1201 moved to "Done" was NOT being cleaned for the
+        mirror-image casing mismatch.
+
+    Actions must still use the ORIGINAL record id (the managers
+    match case-sensitively).
+    """
+
+    def test_norm_task_id_canonicalises_case_and_blanks(self) -> None:
+        n = AgentService._norm_task_id
+        self.assertEqual(n('UNA-232'), n('una-232'))
+        self.assertEqual(n('  UNA-232  '), n('una-232'))
+        self.assertEqual(n(None), '')
+        self.assertEqual(n(''), '')
+
+    def _service(self, *, review_ids, assigned_ids, record_ids):
+        task_service = MagicMock()
+        task_service.get_review_tasks.return_value = [
+            SimpleNamespace(id=i) for i in review_ids
+        ]
+        task_service.get_assigned_tasks.return_value = [
+            SimpleNamespace(id=i) for i in assigned_ids
+        ]
+        session = MagicMock()
+        session.list_records.return_value = [
+            SimpleNamespace(task_id=i) for i in record_ids
+        ]
+        workspace = MagicMock()
+        workspace.list_workspaces.return_value = []
+        registry = MagicMock()
+        registry.tracked_task_ids.return_value = set(record_ids)
+        registry.session_ids_for_task.return_value = []
+        review_svc = MagicMock()
+        review_svc.state_registry = registry
+        svc = AgentService(**_kwargs(
+            task_service=task_service,
+            session_manager=session,
+            workspace_manager=workspace,
+            review_comment_service=review_svc,
+        ))
+        svc.logger = MagicMock()
+        return svc, session, workspace
+
+    def test_in_review_task_is_NOT_cleaned_despite_case_mismatch(self) -> None:
+        # Platform: UNA-232 in review. Record on disk: lower-cased.
+        svc, session, workspace = self._service(
+            review_ids=['UNA-232'],
+            assigned_ids=[],
+            record_ids=['una-232'],
+        )
+        svc._cleanup_done_task_conversations()
+        session.terminate_session.assert_not_called()
+        workspace.delete.assert_not_called()
+
+    def test_done_task_IS_cleaned_despite_case_mismatch(self) -> None:
+        # Platform: nothing assigned, nothing in review (UNA-1201 is
+        # Done). Record on disk: lower-cased ``una-1201``.
+        svc, session, workspace = self._service(
+            review_ids=[],
+            assigned_ids=[],
+            record_ids=['una-1201'],
+        )
+        svc._cleanup_done_task_conversations()
+        # Original (lower-cased) id is used so the manager finds it.
+        session.terminate_session.assert_called_once_with(
+            'una-1201', remove_record=True,
+        )
+        workspace.delete.assert_called_once_with('una-1201')
+
+    def test_action_uses_original_record_id_not_normalised(self) -> None:
+        # Mixed-case record, no live tasks → stale. The terminate /
+        # delete must receive the EXACT stored id, not a lowercased
+        # one (managers match case-sensitively).
+        svc, session, _ws = self._service(
+            review_ids=[],
+            assigned_ids=[],
+            record_ids=['UNA-Mixed-99'],
+        )
+        svc._cleanup_done_task_conversations()
+        session.terminate_session.assert_called_once_with(
+            'UNA-Mixed-99', remove_record=True,
+        )
+
+    def test_assigned_task_in_review_bucket_case_mix_is_protected(self) -> None:
+        # Belt-and-braces: id live via the ASSIGNED set with a case
+        # mismatch must also survive.
+        svc, session, _ws = self._service(
+            review_ids=[],
+            assigned_ids=['UNA-555'],
+            record_ids=['UNA-555'.lower()],
+        )
+        svc._cleanup_done_task_conversations()
+        session.terminate_session.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -27,14 +27,20 @@ describe('OrchestratorActivityFeed', () => {
   });
 
   test('renders each history entry message', () => {
-    render(<OrchestratorActivityFeed history={[
+    const { container } = render(<OrchestratorActivityFeed history={[
       _entry(1, 'INFO', 'scan tick 1'),
       _entry(2, 'INFO', 'scan tick 2'),
       _entry(3, 'WARN', 'rate limit close'),
     ]} />);
-    expect(screen.getByText('scan tick 1')).toBeInTheDocument();
-    expect(screen.getByText('scan tick 2')).toBeInTheDocument();
-    expect(screen.getByText('rate limit close')).toBeInTheDocument();
+    // Messages are token-colorized (numbers/paths/URLs wrapped in
+    // <span>s), so getByText on the whole string won't match — the
+    // text is split across nodes. Assert on each row's combined
+    // textContent instead, which still proves the message rendered.
+    const rows = [...container.querySelectorAll('.orchestrator-feed-row .msg')]
+      .map((el) => el.textContent);
+    expect(rows).toContain('scan tick 1');
+    expect(rows).toContain('scan tick 2');
+    expect(rows).toContain('rate limit close');
     expect(screen.queryByText(/No activity yet/i)).not.toBeInTheDocument();
   });
 

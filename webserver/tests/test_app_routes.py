@@ -514,6 +514,57 @@ class PushPullPRUpdateSourceEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()['pulled'])
 
+    # ---- /merge-default-branch ----
+    def test_merge_default_503_when_no_agent_service(self):
+        response = self._client().post('/api/sessions/T-1/merge-default-branch')
+        self.assertEqual(response.status_code, 503)
+
+    def test_merge_default_501_when_agent_lacks_method(self):
+        response = self._client(agent=_agent()).post(
+            '/api/sessions/T-1/merge-default-branch',
+        )
+        self.assertEqual(response.status_code, 501)
+
+    def test_merge_default_404_when_no_workspace(self):
+        agent = _agent(merge_default_branch_for_task=lambda t: {
+            'merged': False, 'has_conflicts': False,
+            'error': 'no workspace context for this task',
+        })
+        response = self._client(agent=agent).post(
+            '/api/sessions/T-1/merge-default-branch',
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_merge_default_conflicts_are_200_not_error(self):
+        # A conflicted merge is the SUCCESSFUL outcome of the button —
+        # the operator wanted the default branch in so the agent can
+        # fix conflicts. Must be 200, not 4xx/5xx.
+        agent = _agent(merge_default_branch_for_task=lambda t: {
+            'merged': False, 'has_conflicts': True,
+            'conflicted_repositories': [
+                {'repository_id': 'client', 'default_branch': 'main',
+                 'conflicted_files': ['a.py']},
+            ],
+        })
+        response = self._client(agent=agent).post(
+            '/api/sessions/T-1/merge-default-branch',
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()['has_conflicts'])
+
+    def test_merge_default_clean_merge_happy_path(self):
+        agent = _agent(merge_default_branch_for_task=lambda t: {
+            'merged': True, 'has_conflicts': False,
+            'merged_repositories': [
+                {'repository_id': 'client', 'commits_merged': 2},
+            ],
+        })
+        response = self._client(agent=agent).post(
+            '/api/sessions/T-1/merge-default-branch',
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()['merged'])
+
     # ---- /pull-request ----
     def test_pull_request_503_when_no_agent_service(self):
         response = self._client().post('/api/sessions/T-1/pull-request')

@@ -106,6 +106,41 @@ test('matchTreeNode tolerates missing data fields', function () {
   assert.equal(matchTreeNode({ data: {} }, ''), true);
 });
 
+test('matchTreeNode: separator-insensitive ("fileservice" → file_service)', function () {
+  const node = _node({
+    name: 'file_service.py', relativePath: 'src/file_service.py',
+  });
+  assert.equal(matchTreeNode(node, 'fileservice'), true);
+  assert.equal(matchTreeNode(node, 'file-service'), true);
+  assert.equal(matchTreeNode(node, 'file.service'), true);
+  assert.equal(matchTreeNode(node, 'FileService'), true);
+});
+
+test('matchTreeNode: initialism / camel-hump ("TMPD" → TestMePleaseDude)', function () {
+  const node = _node({
+    name: 'TestMePleaseDude.tsx',
+    relativePath: 'src/TestMePleaseDude.tsx',
+  });
+  assert.equal(matchTreeNode(node, 'TMPD'), true);
+  assert.equal(matchTreeNode(node, 'tmpd'), true);
+  // Out-of-order initials must NOT match.
+  assert.equal(matchTreeNode(node, 'dptm'), false);
+});
+
+test('matchTreeNode: contains / ends-with, not only starts-with', function () {
+  const node = _node({ name: 'auth.py', relativePath: 'src/auth.py' });
+  assert.equal(matchTreeNode(node, 'authpy'), true);   // ends-with-ish
+  assert.equal(matchTreeNode(node, 'thpy'), true);     // middle/contains
+  assert.equal(matchTreeNode(node, 'srcauth'), true);  // path, separator-free
+});
+
+test('matchTreeNode: still rejects a genuine non-match', function () {
+  const node = _node({ name: 'App.jsx', relativePath: 'src/App.jsx' });
+  // No subsequence of these chars in order — must be false so the
+  // fuzzy path doesn't turn into "match everything".
+  assert.equal(matchTreeNode(node, 'zzqx'), false);
+});
+
 
 // ----- conflict surfacing through normalizeTrees -----
 

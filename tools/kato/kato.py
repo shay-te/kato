@@ -132,17 +132,11 @@ _TARGETS: dict[str, tuple[str, bool, list[str]]] = {
             'sys.exit(subprocess.call(login_command()))',
         ],
     ),
-    'approve-repo': (
-        'Manage the REP approval list. Drops into a picker that '
-        'shows every repo (from your kato config, your kato '
-        'workspaces, AND your REPOSITORY_ROOT_PATH checkouts). '
-        'Approved repos start pre-checked. Commands: ``1,3,5-7`` to '
-        'toggle add/revoke; ``t26`` to mark trusted; ``r26`` to mark '
-        'restricted; Enter to apply. One command for '
-        'add+edit+remove+mode-change.',
-        True,
-        ['scripts/approve_repository.py'],
-    ),
+    # ``approve-repo`` is gone — repository approvals now live in
+    # the planning UI's Settings drawer (Approvals tab). The
+    # backend uses the same RepositoryApprovalService, so any
+    # ``~/.kato/approved-repositories.json`` written by the old CLI
+    # keeps working unchanged.
     'history': (
         'Show the most recent kato task activity (numbered list). '
         'No flags — for fine-grained filtering, ``jq`` the audit '
@@ -183,6 +177,19 @@ def main(argv: list[str]) -> int:
     # silently scoping to the wrong location. Real env vars still
     # win over ``.env``; see ``kato_core_lib.helpers.dotenv_utils``
     # for the parser semantics.
+    # Precedence: real shell env > ~/.kato/settings.json > <repo>/.env.
+    # Load settings.json FIRST so it wins over .env (both loaders
+    # skip keys already in os.environ, so shell stays on top and a
+    # key set by settings.json won't be clobbered by .env).
+    try:
+        from kato_core_lib.helpers.kato_settings_store import (
+            load_kato_settings_into_environ,
+        )
+        load_kato_settings_into_environ()
+    except Exception:
+        # Never let a settings.json problem block boot — .env is
+        # still loaded below as the legacy fallback.
+        pass
     load_dotenv_into_environ(repo_root / '.env')
     python = _resolve_python(prefer_venv=prefer_venv, repo_root=repo_root)
     cmd = [python, *base_args, *extra]

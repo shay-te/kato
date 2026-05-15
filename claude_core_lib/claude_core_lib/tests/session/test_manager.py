@@ -158,6 +158,58 @@ class ClaudeSessionManagerTests(unittest.TestCase):
         self.assertIsNone(self.manager.get_record('PROJ-1'))
         self.assertFalse((self.state_dir / 'PROJ-1.json').exists())
 
+    def _seed_claude_transcript(self, projects_root, session_id):
+        path = Path(projects_root) / 'enc-cwd' / f'{session_id}.jsonl'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({'type': 'user', 'sessionId': session_id}) + '\n',
+            encoding='utf-8',
+        )
+        return path
+
+    def test_remove_record_also_deletes_the_claude_transcript(self) -> None:
+        # Task done → workspace + kato record gone → the Claude CLI
+        # transcript under ~/.claude/projects/ must go too, not
+        # accumulate forever.
+        self.manager.start_session(task_id='PROJ-1')
+        sid = self.manager.get_record('PROJ-1').claude_session_id
+        with tempfile.TemporaryDirectory() as proj_root:
+            transcript = self._seed_claude_transcript(proj_root, sid)
+            self.assertTrue(transcript.is_file())
+            with patch.dict(
+                os.environ, {'KATO_CLAUDE_SESSIONS_ROOT': proj_root},
+            ):
+                self.manager.terminate_session('PROJ-1', remove_record=True)
+            self.assertFalse(
+                transcript.is_file(),
+                'transcript should be deleted when the task is forgotten',
+            )
+
+    def test_terminate_without_remove_record_keeps_transcript(self) -> None:
+        # Plain terminate (e.g. webserver /stop) only kills the
+        # subprocess + marks the record terminated — the transcript
+        # MUST survive so the operator can resume / replay it.
+        self.manager.start_session(task_id='PROJ-1')
+        sid = self.manager.get_record('PROJ-1').claude_session_id
+        with tempfile.TemporaryDirectory() as proj_root:
+            transcript = self._seed_claude_transcript(proj_root, sid)
+            with patch.dict(
+                os.environ, {'KATO_CLAUDE_SESSIONS_ROOT': proj_root},
+            ):
+                self.manager.terminate_session('PROJ-1')
+            self.assertTrue(transcript.is_file())
+
+    def test_remove_record_with_no_transcript_is_safe(self) -> None:
+        # No transcript on disk (never resumed / already cleaned) —
+        # terminate_session must still succeed without raising.
+        self.manager.start_session(task_id='PROJ-1')
+        with tempfile.TemporaryDirectory() as proj_root:
+            with patch.dict(
+                os.environ, {'KATO_CLAUDE_SESSIONS_ROOT': proj_root},
+            ):
+                self.manager.terminate_session('PROJ-1', remove_record=True)
+        self.assertIsNone(self.manager.get_record('PROJ-1'))
+
     def test_list_records_returns_all_known_tasks(self) -> None:
         self.manager.start_session(task_id='PROJ-1', task_summary='a')
         self.manager.start_session(task_id='PROJ-2', task_summary='b')

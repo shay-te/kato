@@ -1,5 +1,11 @@
 import { useState } from 'react';
-import { finishTask, postSession, updateTaskSource } from '../api.js';
+import {
+  finishTask,
+  mergeDefaultBranch,
+  postChatMessage,
+  postSession,
+  updateTaskSource,
+} from '../api.js';
 import { TAB_STATUS } from '../constants/tabStatus.js';
 import { usePushApproval } from '../hooks/usePushApproval.js';
 import { useTaskPublish } from '../hooks/useTaskPublish.js';
@@ -28,6 +34,7 @@ export default function SessionHeader({
   const [resuming, setResuming] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [updatingSource, setUpdatingSource] = useState(false);
+  const [mergingDefault, setMergingDefault] = useState(false);
   const [adoptModalOpen, setAdoptModalOpen] = useState(false);
   const pushApproval = usePushApproval(session?.task_id || '');
   const taskPublish = useTaskPublish(session?.task_id || '');
@@ -79,6 +86,85 @@ export default function SessionHeader({
       title,
       message,
       durationMs: kind === 'error' ? 12000 : 7000,
+    });
+  }
+
+  // Fetch + merge the repo's default branch into the task branch
+  // (the agent's clone can't run git itself). On conflict the
+  // markers are left in the tree and we tell the chat agent —
+  // listing the exact files — to resolve them.
+  async function onMergeDefault() {
+    if (mergingDefault) { return; }
+    setMergingDefault(true);
+    const result = await mergeDefaultBranch(session.task_id);
+    setMergingDefault(false);
+    if (typeof taskPublish.refresh === 'function') {
+      taskPublish.refresh();
+    }
+    const body = result.body || {};
+    if (!result.ok && !body.has_conflicts && !body.merged) {
+      toast.show({
+        kind: 'error',
+        title: 'Merge failed',
+        message: String(body.error || result.error || 'merge failed'),
+        durationMs: 12000,
+      });
+      return;
+    }
+    const conflicted = Array.isArray(body.conflicted_repositories)
+      ? body.conflicted_repositories : [];
+    if (conflicted.length > 0) {
+      const fileLines = conflicted.flatMap((repo) =>
+        (repo.conflicted_files || []).map(
+          (f) => `- ${repo.repository_id}: ${f}`,
+        ),
+      );
+      const defaultBranch =
+        conflicted[0]?.default_branch || 'the default branch';
+      // Tell the agent to resolve — it can't run git, but it CAN
+      // edit the conflicted files. kato's normal commit/push then
+      // finalises the merge.
+      const instruction =
+        `I merged origin/${defaultBranch} into this task branch and `
+        + `there are merge conflicts. The clone can't run git, so do `
+        + `NOT try git commands — just edit these files to resolve `
+        + `every conflict (remove all <<<<<<< / ======= / >>>>>>> `
+        + `markers, keeping both sides' intent where it makes sense), `
+        + `then continue:\n${fileLines.join('\n')}`;
+      const sent = await postChatMessage(session.task_id, instruction);
+      toast.show({
+        kind: 'warning',
+        title: `Merged ${defaultBranch} — conflicts to resolve`,
+        message: sent && sent.ok
+          ? `${fileLines.length} conflicted file(s). Asked Claude in the `
+            + 'chat to resolve them.'
+          : `${fileLines.length} conflicted file(s). Couldn't reach the `
+            + 'chat — resolve manually or message Claude yourself.',
+        durationMs: 12000,
+      });
+      return;
+    }
+    const mergedRepos = Array.isArray(body.merged_repositories)
+      ? body.merged_repositories : [];
+    if (mergedRepos.length > 0) {
+      const total = mergedRepos.reduce(
+        (n, r) => n + (Number(r.commits_merged) || 0), 0,
+      );
+      toast.show({
+        kind: 'success',
+        title: 'Default branch merged',
+        message: `Clean merge into ${mergedRepos.length} repo(s) `
+          + `(${total} commit(s)). No conflicts.`,
+        durationMs: 7000,
+      });
+      return;
+    }
+    toast.show({
+      kind: 'info',
+      title: 'Nothing to merge',
+      message: 'Task branch already contains the default branch '
+        + '(or no repo was eligible).',
+      durationMs: 6000,
     });
   }
 
@@ -273,6 +359,17 @@ export default function SessionHeader({
             aria-label={pushButtonLabel}
           >
             <Icon name={taskPublish.pushBusy ? 'spinner' : 'arrow-up'} spin={taskPublish.pushBusy} />
+          </button>
+          <button
+            id="session-merge-default"
+            type="button"
+            className="session-action tooltip-below"
+            data-tooltip="Merge the default branch (master/main) into this task branch. The agent's clone can't run git, so use this when the branch fell behind — on conflict the markers are left in place and Claude is told (with the file list) to resolve them."
+            onClick={onMergeDefault}
+            disabled={mergingDefault || !taskPublish.hasWorkspace}
+            aria-label={mergingDefault ? 'Merging…' : 'Merge default branch'}
+          >
+            <Icon name={mergingDefault ? 'spinner' : 'merge'} spin={mergingDefault} />
           </button>
           <button
             id="session-pull"

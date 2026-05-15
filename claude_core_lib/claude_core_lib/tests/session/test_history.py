@@ -17,6 +17,7 @@ import unittest
 from pathlib import Path
 
 from claude_core_lib.claude_core_lib.session.history import (
+    delete_session_file,
     find_session_file,
     find_session_id_for_cwd,
     iter_event_paths,
@@ -609,6 +610,56 @@ class IterEventPathsTests(unittest.TestCase):
         paths = list(iter_event_paths(projects_root=self.projects_root))
         names = sorted(p.name for p in paths)
         self.assertEqual(names, ['s1.jsonl', 's2.jsonl', 's3.jsonl'])
+
+
+class DeleteSessionFileTests(unittest.TestCase):
+    """``delete_session_file`` removes a forgotten task's transcript."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.projects_root = Path(self._tmp.name)
+
+    def _seed(self, encoded_dir: str, session_id: str) -> Path:
+        path = self.projects_root / encoded_dir / f'{session_id}.jsonl'
+        _write_jsonl(path, [{'type': 'user', 'sessionId': session_id}])
+        return path
+
+    def test_deletes_matching_transcript_and_reports_true(self) -> None:
+        path = self._seed('enc-a', 'sess-del')
+        self.assertTrue(path.is_file())
+        removed = delete_session_file(
+            'sess-del', projects_root=self.projects_root,
+        )
+        self.assertTrue(removed)
+        self.assertFalse(path.is_file())
+
+    def test_leaves_other_transcripts_untouched(self) -> None:
+        keep = self._seed('enc-a', 'keep-me')
+        target = self._seed('enc-a', 'drop-me')
+        delete_session_file('drop-me', projects_root=self.projects_root)
+        self.assertFalse(target.is_file())
+        self.assertTrue(keep.is_file())
+
+    def test_false_when_no_match(self) -> None:
+        self._seed('enc-a', 'sess-1')
+        self.assertFalse(
+            delete_session_file('nope', projects_root=self.projects_root),
+        )
+
+    def test_false_on_blank_id(self) -> None:
+        self.assertFalse(
+            delete_session_file('', projects_root=self.projects_root),
+        )
+        self.assertFalse(
+            delete_session_file('   ', projects_root=self.projects_root),
+        )
+
+    def test_false_when_root_missing(self) -> None:
+        missing = self.projects_root / 'never-created'
+        self.assertFalse(
+            delete_session_file('x', projects_root=missing),
+        )
 
 
 if __name__ == '__main__':

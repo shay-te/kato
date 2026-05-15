@@ -599,8 +599,11 @@ class ClaudeSessionManager(object):
                         normalized_task_id,
                     )
             if remove_record:
-                self._records.pop(lookup_key, None)
+                # Capture the record BEFORE dropping it — we need its
+                # Claude session id to delete the CLI transcript.
+                removed = self._records.pop(lookup_key, None)
                 self._delete_persisted_record(normalized_task_id)
+                self._forget_claude_transcript(removed, normalized_task_id)
             else:
                 record = self._records.get(lookup_key)
                 if record is not None:
@@ -736,6 +739,38 @@ class ClaudeSessionManager(object):
             self.logger.exception(
                 'failed to mirror claude session id to workspace metadata for task %s',
                 record.task_id,
+            )
+
+    def _forget_claude_transcript(self, record, task_id: str) -> None:
+        """Delete the Claude CLI transcript for a forgotten task.
+
+        Called only on the ``remove_record=True`` path (task done /
+        closed / operator forget). The workspace clones + kato
+        session record are already gone by here; the Claude
+        transcript under ``~/.claude/projects/`` would otherwise
+        accumulate forever. Best-effort — a unlink failure must not
+        break ``terminate_session``.
+        """
+        claude_session_id = str(
+            getattr(record, 'claude_session_id', '') or '',
+        ).strip()
+        if not claude_session_id:
+            return
+        try:
+            from claude_core_lib.claude_core_lib.session.history import (
+                delete_session_file,
+            )
+            if delete_session_file(claude_session_id):
+                self.logger.info(
+                    'deleted Claude transcript %s for forgotten task %s',
+                    claude_session_id,
+                    task_id,
+                )
+        except Exception:
+            self.logger.exception(
+                'failed deleting Claude transcript %s for task %s',
+                claude_session_id,
+                task_id,
             )
 
     def _delete_persisted_record(self, task_id: str) -> None:

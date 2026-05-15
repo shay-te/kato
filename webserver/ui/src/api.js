@@ -19,6 +19,138 @@ export function fetchSafetyState() {
   return fetchJson('/api/safety');
 }
 
+// Settings drawer — currently exposes ``repository_root_path`` only.
+// The shape ``{ ok, body }`` matches what fetchTaskComments returns
+// so the drawer doesn't need a special-cased fetch wrapper.
+export async function fetchSettings() {
+  try {
+    const response = await fetch('/api/settings');
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+export async function updateSettings(payload) {
+  try {
+    const response = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload || {}),
+    });
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+// Repository approvals (used to live behind ``./kato approve-repo``).
+export async function fetchRepositoryApprovals() {
+  try {
+    const response = await fetch('/api/repository-approvals');
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+export async function updateRepositoryApprovals(payload) {
+  try {
+    const response = await fetch('/api/repository-approvals', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload || {}),
+    });
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+// Task providers — where tickets live + which kato polls
+// (KATO_ISSUE_PLATFORM). Has an active selector.
+export async function fetchTaskProviders() {
+  try {
+    const response = await fetch('/api/task-providers');
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+export async function updateTaskProvider(payload) {
+  try {
+    const response = await fetch('/api/task-providers', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload || {}),
+    });
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+// Git hosts — credentials kato uses to clone / push / open PRs.
+// NO active selector (host inferred from repo remote URLs).
+export async function fetchGitProviders() {
+  try {
+    const response = await fetch('/api/git-providers');
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+export async function updateGitProvider(payload) {
+  try {
+    const response = await fetch('/api/git-providers', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload || {}),
+    });
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+// Schema-driven "all settings" tabs (General, Claude agent, Sandbox,
+// Security scanner, Email & Slack, OpenHands, Docker/infra, AWS).
+// One GET returns the whole schema + resolved values; POST writes a
+// {KEY: value} map (server-side whitelisted to the schema).
+export async function fetchAllSettings() {
+  try {
+    const response = await fetch('/api/all-settings');
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+export async function updateAllSettings(updates) {
+  try {
+    const response = await fetch('/api/all-settings', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ updates: updates || {} }),
+    });
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
 export function fetchAwaitingPushApproval(taskId) {
   if (!taskId) {
     return Promise.resolve({ awaiting_push_approval: false });
@@ -72,6 +204,23 @@ export async function pullTask(taskId) {
   try {
     const response = await fetch(
       `/api/sessions/${encodeURIComponent(taskId)}/pull`,
+      { method: 'POST' },
+    );
+    const body = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+// Fetch + merge each clone's default branch into the task branch.
+// A conflicted merge is a 200 with ``has_conflicts: true`` — the
+// caller surfaces it + tells the chat agent to resolve the markers.
+export async function mergeDefaultBranch(taskId) {
+  if (!taskId) { return { ok: false, error: 'no task id' }; }
+  try {
+    const response = await fetch(
+      `/api/sessions/${encodeURIComponent(taskId)}/merge-default-branch`,
       { method: 'POST' },
     );
     const body = await response.json().catch(() => ({}));

@@ -280,6 +280,23 @@ class AgentService(Service):
         self._cleanup_done_task_conversations()
         return self._review_comment_service.get_new_pull_request_comments()
 
+    @staticmethod
+    def _norm_task_id(value) -> str:
+        """Canonical task-id key for set comparisons.
+
+        Task ids reach the cleanup logic from THREE sources whose
+        casing doesn't agree: the ticket platform (``UNA-232``),
+        on-disk session records, and workspace folders (some
+        ``UNA-…``, some ``una-…`` depending on how the id first
+        arrived). A case-sensitive ``candidates - live`` therefore
+        either spares a done task (it never matches "live") or, far
+        worse, wipes a task that IS still in review (its record case
+        differs from the platform's). All cleanup decisions compare
+        on this normalized key; the ORIGINAL id is kept for the
+        actual delete/forget so the manager finds the right record.
+        """
+        return str(value or '').strip().lower()
+
     def _cleanup_done_task_conversations(self) -> None:
         """Delete conversation containers for tasks no longer in the review state.
 
@@ -288,8 +305,9 @@ class AgentService(Service):
         agent-server container to avoid accumulation.
         """
         try:
-            current_review_task_ids = {
-                str(task.id) for task in self._task_service.get_review_tasks()
+            current_review_norm = {
+                self._norm_task_id(task.id)
+                for task in self._task_service.get_review_tasks()
             }
         except Exception:
             self.logger.warning(
@@ -297,7 +315,10 @@ class AgentService(Service):
             )
             return
 
-        stale_task_ids = self._state_registry.tracked_task_ids() - current_review_task_ids
+        stale_task_ids = {
+            tid for tid in self._state_registry.tracked_task_ids()
+            if self._norm_task_id(tid) not in current_review_norm
+        }
         for task_id in stale_task_ids:
             for session_id in self._state_registry.session_ids_for_task(task_id):
                 self.logger.info(
@@ -315,11 +336,11 @@ class AgentService(Service):
                     )
             self._state_registry.forget_task(task_id)
 
-        self._cleanup_done_planning_sessions(current_review_task_ids)
+        self._cleanup_done_planning_sessions(current_review_norm)
 
     def _cleanup_done_planning_sessions(
         self,
-        current_review_task_ids: set[str],
+        current_review_norm: set[str],
     ) -> None:
         """Drop planning-UI tabs + workspaces whose ticket has moved to done/closed.
 
@@ -334,8 +355,9 @@ class AgentService(Service):
         if self._session_manager is None and self._workspace_manager is None:
             return
         try:
-            current_assigned_task_ids = {
-                str(task.id) for task in self._task_service.get_assigned_tasks()
+            assigned_norm = {
+                self._norm_task_id(task.id)
+                for task in self._task_service.get_assigned_tasks()
             }
         except Exception:
             self.logger.warning(
@@ -344,8 +366,12 @@ class AgentService(Service):
             )
             return
 
-        live_task_ids = current_assigned_task_ids | current_review_task_ids
-        for task_id in self._stale_planning_task_ids(live_task_ids):
+        # All three id sources (platform / session records / workspace
+        # folders) get normalized to a common case before comparison —
+        # see ``_norm_task_id``. ``_stale_planning_task_ids`` returns
+        # the ORIGINAL record ids so the manager deletes the right one.
+        live_norm = assigned_norm | current_review_norm
+        for task_id in self._stale_planning_task_ids(live_norm):
             self.logger.info(
                 'task %s is no longer assigned or in review; '
                 'closing planning session tab + deleting workspace',
@@ -354,7 +380,7 @@ class AgentService(Service):
             self._terminate_session_silent(task_id)
             self._delete_workspace_silent(task_id)
 
-    def _stale_planning_task_ids(self, live_task_ids: set[str]) -> set[str]:
+    def _stale_planning_task_ids(self, live_norm: set[str]) -> set[str]:
         """Union of task ids known to either manager that aren't live anymore.
 
         Workspaces still in ``active`` or ``provisioning`` are protected from
@@ -373,16 +399,24 @@ class AgentService(Service):
         """
         import time as _time
 
-        candidates: set[str] = set()
-        in_flight_workspace_ids: set[str] = set()
-        review_ttl_expired: set[str] = set()
+        # norm-id -> ORIGINAL task id (first writer wins; the session
+        # record id is preferred since that's the key the session
+        # manager stored, so terminate/delete hit the right record).
+        candidate_by_norm: dict[str, str] = {}
+        in_flight_norm: set[str] = set()
+        review_ttl_expired_norm: set[str] = set()
         ttl = self._review_workspace_ttl_seconds
         now_epoch = _time.time()
+
+        def remember(task_id) -> str:
+            norm = self._norm_task_id(task_id)
+            candidate_by_norm.setdefault(norm, task_id)
+            return norm
+
         if self._session_manager is not None:
             try:
-                candidates.update(
-                    record.task_id for record in self._session_manager.list_records()
-                )
+                for record in self._session_manager.list_records():
+                    remember(record.task_id)
             except Exception:
                 self.logger.exception('failed to list planning session records')
         if self._workspace_manager is not None:
@@ -392,17 +426,18 @@ class AgentService(Service):
                 self.logger.exception('failed to list workspaces')
                 workspace_records = []
             for record in workspace_records:
-                candidates.add(record.task_id)
+                norm = remember(record.task_id)
                 status = getattr(record, 'status', '')
                 if status in (WORKSPACE_STATUS_ACTIVE, WORKSPACE_STATUS_PROVISIONING):
-                    in_flight_workspace_ids.add(record.task_id)
+                    in_flight_norm.add(norm)
                 elif status == WORKSPACE_STATUS_REVIEW and ttl > 0:
                     updated = float(getattr(record, 'updated_at_epoch', 0.0) or 0.0)
                     if updated > 0 and (now_epoch - updated) > ttl:
-                        review_ttl_expired.add(record.task_id)
-        return (candidates - live_task_ids - in_flight_workspace_ids) | (
-            review_ttl_expired - in_flight_workspace_ids
-        )
+                        review_ttl_expired_norm.add(norm)
+        stale_norm = (
+            set(candidate_by_norm) - live_norm - in_flight_norm
+        ) | (review_ttl_expired_norm - in_flight_norm)
+        return {candidate_by_norm[n] for n in stale_norm}
 
     def _terminate_session_silent(self, task_id: str) -> None:
         if self._session_manager is None:
@@ -1985,6 +2020,108 @@ class AgentService(Service):
             'task_id': normalized,
             'pulled': bool(pulled_repositories),
             'pulled_repositories': pulled_repositories,
+            'skipped_repositories': skipped_repositories,
+            'failed_repositories': failed_repositories,
+        }
+
+    def merge_default_branch_for_task(self, task_id: str) -> dict[str, object]:
+        """Fetch + merge each clone's default branch into its task branch.
+
+        Drives the planning UI's ``Merge master`` button. The agent's
+        clone can't run git itself (sandbox), so when a task branch
+        drifts behind ``origin/<default>`` and conflicts, the agent
+        is stuck. This does the merge on the operator's behalf; on
+        conflict the markers are LEFT in the tree (not aborted) so
+        the agent can resolve them by editing files.
+
+        Returns:
+            {
+              'task_id': <id>,
+              'merged': bool,                 # any repo cleanly merged
+              'has_conflicts': bool,          # any repo left conflicted
+              'merged_repositories':     [{repository_id, commits_merged}],
+              'conflicted_repositories': [{repository_id, default_branch,
+                                           conflicted_files: [...]}],
+              'skipped_repositories':    [{repository_id, reason, detail}],
+              'failed_repositories':     [{repository_id, error}],
+            }
+        """
+        normalized = str(task_id or '').strip()
+        if not normalized:
+            return {'merged': False, 'task_id': task_id, 'error': 'empty task id'}
+        repos, _branch_name, task = self._resolve_publish_context(normalized)
+        if not repos:
+            return {
+                'merged': False, 'task_id': normalized,
+                'error': 'no workspace context for this task',
+            }
+        merged_repositories: list[dict[str, object]] = []
+        conflicted_repositories: list[dict[str, object]] = []
+        skipped_repositories: list[dict[str, str]] = []
+        failed_repositories: list[dict[str, str]] = []
+        for repository in repos:
+            repo_branch = self._repository_service.build_branch_name(
+                task, repository,
+            )
+            try:
+                outcome = self._repository_service.merge_default_branch_into_clone(
+                    repository, repo_branch,
+                )
+            except Exception as exc:
+                self.logger.exception(
+                    'merge-default for task %s failed in repository %s',
+                    normalized, repository.id,
+                )
+                failed_repositories.append(
+                    {'repository_id': repository.id, 'error': str(exc)},
+                )
+                continue
+            if outcome.get('conflicts'):
+                conflicted_repositories.append({
+                    'repository_id': repository.id,
+                    'default_branch': outcome.get('default_branch') or '',
+                    'conflicted_files': list(
+                        outcome.get('conflicted_files') or [],
+                    ),
+                })
+                self.logger.info(
+                    'merge-default for task %s: %s has %d conflicted file(s) '
+                    'against %s — left in tree for the agent to resolve',
+                    normalized, repository.id,
+                    len(outcome.get('conflicted_files') or []),
+                    outcome.get('default_branch'),
+                )
+            elif outcome.get('merged') and outcome.get('updated'):
+                merged_repositories.append({
+                    'repository_id': repository.id,
+                    'commits_merged': int(outcome.get('commits_merged') or 0),
+                    'default_branch': outcome.get('default_branch') or '',
+                })
+                self.logger.info(
+                    'merge-default for task %s: merged %s into %s (%s commits)',
+                    normalized, outcome.get('default_branch'),
+                    repository.id, outcome.get('commits_merged'),
+                )
+            elif outcome.get('merged'):
+                # merged=True, updated=False — already contained the
+                # default branch, nothing to do.
+                skipped_repositories.append({
+                    'repository_id': repository.id,
+                    'reason': 'already_up_to_date',
+                    'detail': 'task branch already contains the default branch',
+                })
+            else:
+                skipped_repositories.append({
+                    'repository_id': repository.id,
+                    'reason': outcome.get('reason') or 'unknown',
+                    'detail': outcome.get('detail') or '',
+                })
+        return {
+            'task_id': normalized,
+            'merged': bool(merged_repositories),
+            'has_conflicts': bool(conflicted_repositories),
+            'merged_repositories': merged_repositories,
+            'conflicted_repositories': conflicted_repositories,
             'skipped_repositories': skipped_repositories,
             'failed_repositories': failed_repositories,
         }

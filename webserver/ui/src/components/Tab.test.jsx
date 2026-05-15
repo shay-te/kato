@@ -3,8 +3,8 @@
 // onSelect fires on click; onForget fires on X click (after a
 // window.confirm). The active prop drives styling.
 
-import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, test, expect, vi, afterEach } from 'vitest';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 
 import Tab from './Tab.jsx';
 import { TAB_STATUS } from '../constants/tabStatus.js';
@@ -26,10 +26,16 @@ function _session(overrides = {}) {
 
 describe('Tab', () => {
 
-  test('renders the task id and summary', () => {
-    render(<Tab session={_session()} onSelect={() => {}} />);
+  test('pill shows the task id only (summary lives in the hover card)', () => {
+    const { container } = render(
+      <Tab session={_session()} onSelect={() => {}} />,
+    );
     expect(screen.getByText('KATO-123')).toBeInTheDocument();
-    expect(screen.getByText('Fix the bug')).toBeInTheDocument();
+    // The summary is intentionally NOT in the pill — it moved to
+    // the on-hover TabTooltip so wide titles don't shove neighbours
+    // off the strip. No card is mounted until hover.
+    expect(container.querySelector('li')).not.toHaveTextContent('Fix the bug');
+    expect(document.querySelector('.tab-tooltip')).toBeNull();
   });
 
   test('clicking the tab fires onSelect with the task id', () => {
@@ -107,12 +113,57 @@ describe('Tab', () => {
     confirmSpy.mockRestore();
   });
 
-  test('renders empty summary when task_summary missing without crashing', () => {
+  test('missing task_summary renders without crashing', () => {
     const { container } = render(
       <Tab session={_session({ task_summary: null })} onSelect={() => {}} />,
     );
-    const p = container.querySelector('p');
-    expect(p).toBeInTheDocument();
-    expect(p.textContent).toBe('');
+    // No summary <p> in the pill anymore; id still shows.
+    expect(container.querySelector('li')).toBeInTheDocument();
+    expect(screen.getByText('KATO-123')).toBeInTheDocument();
+  });
+
+  test('hover shows the designed tooltip card after the delay', () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render(
+        <Tab
+          session={_session({ branch_name: 'feature/x' })}
+          onSelect={() => {}}
+        />,
+      );
+      const li = container.querySelector('li');
+      fireEvent.mouseEnter(li);
+      // Nothing before the hover delay elapses.
+      expect(document.querySelector('.tab-tooltip')).toBeNull();
+      act(() => { vi.advanceTimersByTime(400); });
+      const card = document.querySelector('.tab-tooltip');
+      expect(card).toBeInTheDocument();
+      // Card carries the structured facts: id, summary, a Branch row.
+      expect(card).toHaveTextContent('KATO-123');
+      expect(card).toHaveTextContent('Fix the bug');
+      expect(card).toHaveTextContent('Branch');
+      expect(card).toHaveTextContent('feature/x');
+      // Mouse leave tears the card down.
+      fireEvent.mouseLeave(li);
+      expect(document.querySelector('.tab-tooltip')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('leaving before the delay never opens the card', () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render(
+        <Tab session={_session()} onSelect={() => {}} />,
+      );
+      const li = container.querySelector('li');
+      fireEvent.mouseEnter(li);
+      fireEvent.mouseLeave(li);
+      act(() => { vi.advanceTimersByTime(400); });
+      expect(document.querySelector('.tab-tooltip')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

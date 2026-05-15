@@ -12,6 +12,25 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 vi.mock('./api.js', () => ({
   forgetTaskWorkspace: vi.fn().mockResolvedValue({ ok: true }),
   triggerScan: vi.fn().mockResolvedValue({ ok: true }),
+  // App now mounts <SettingsDrawer>, whose default-tab panel
+  // (RepositoriesSettingsPanel) calls fetchSettings on mount even
+  // while the drawer is closed. Stub every read the drawer panels
+  // fire so the mock doesn't reject (unhandled-rejection noise that
+  // Vitest flags as a possible false-positive source).
+  fetchSettings: vi.fn().mockResolvedValue({ ok: true, body: {} }),
+  updateSettings: vi.fn().mockResolvedValue({ ok: true, body: {} }),
+  fetchAllSettings: vi.fn().mockResolvedValue(
+    { ok: true, body: { sections: [] } },
+  ),
+  updateAllSettings: vi.fn().mockResolvedValue({ ok: true, body: {} }),
+  fetchTaskProviders: vi.fn().mockResolvedValue({ ok: true, body: {} }),
+  updateTaskProvider: vi.fn().mockResolvedValue({ ok: true, body: {} }),
+  fetchGitProviders: vi.fn().mockResolvedValue({ ok: true, body: {} }),
+  updateGitProvider: vi.fn().mockResolvedValue({ ok: true, body: {} }),
+  fetchRepositoryApprovals: vi.fn().mockResolvedValue(
+    { ok: true, body: { repositories: [] } },
+  ),
+  updateRepositoryApprovals: vi.fn().mockResolvedValue({ ok: true, body: {} }),
 }));
 
 vi.mock('./hooks/useSessions.js', () => ({

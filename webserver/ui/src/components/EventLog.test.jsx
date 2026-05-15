@@ -234,7 +234,7 @@ describe('EventLog — tool_use with long details (Bug fix regression guard)', (
       ] },
     })]} />);
     // The collapse toggle button appears for long output.
-    expect(screen.getByRole('button', { name: /show.*more|hide/i }))
+    expect(screen.getByRole('button', { name: /expand|collapse|show.*more|hide|less|fewer/i }))
       .toBeInTheDocument();
   });
 
@@ -247,7 +247,7 @@ describe('EventLog — tool_use with long details (Bug fix regression guard)', (
       ] },
     })]} />);
     // No "Show N more" button for short output.
-    expect(screen.queryByRole('button', { name: /show.*more|hide/i }))
+    expect(screen.queryByRole('button', { name: /expand|collapse|show.*more|hide|less|fewer/i }))
       .not.toBeInTheDocument();
   });
 
@@ -260,10 +260,10 @@ describe('EventLog — tool_use with long details (Bug fix regression guard)', (
       ] },
     })]} />);
 
-    const toggle = screen.getByRole('button', { name: /show.*more|hide/i });
+    const toggle = screen.getByRole('button', { name: /expand|collapse|show.*more|hide|less|fewer/i });
     fireEvent.click(toggle);
     // After expanding, the label changes (collapse / show fewer).
-    expect(toggle.textContent.toLowerCase()).toMatch(/hide|less|fewer/);
+    expect(toggle.textContent.toLowerCase()).toMatch(/collapse|hide|less|fewer/);
   });
 });
 

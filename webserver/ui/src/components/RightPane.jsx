@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import FilesTab from '../FilesTab.jsx';
 import ChangesTab from '../ChangesTab.jsx';
-import OrchestratorActivityFeed from './OrchestratorActivityFeed.jsx';
-import RightPaneResizer from './RightPaneResizer.jsx';
+import LeftPaneResizer from './LeftPaneResizer.jsx';
 
 const TAB_FILES = 'files';
 const TAB_CHANGES = 'changes';
@@ -12,7 +11,6 @@ export default function RightPane({
   workspaceVersion = 0,
   width,
   onResizePointerDown,
-  activityHistory = [],
   onOpenFile,
 }) {
   const [tab, setTab] = useState(TAB_FILES);
@@ -85,7 +83,16 @@ export default function RightPane({
       </div>
     </div>
   ) : (
-    <OrchestratorActivityFeed history={activityHistory} />
+    <div className="left-pane-empty">
+      <p className="left-pane-empty-title">No task selected</p>
+      <p className="left-pane-empty-hint">
+        Pick a task from the strip at the top to see its files and changes here.
+      </p>
+      <p className="left-pane-empty-hint">
+        Click the status pill (top of the window) to watch the orchestrator's
+        live activity feed.
+      </p>
+    </div>
   );
 
   // ``width`` is forwarded as an inline style ONLY when an
@@ -100,15 +107,21 @@ export default function RightPane({
   const inlineStyle = (width !== undefined && width !== null && width !== '')
     ? { width }
     : undefined;
+  // In the new top-tabs layout the Files/Changes panel is the LEFT
+  // column — its resizer lives on the RIGHT edge so dragging right
+  // grows the panel into the editor's space. The legacy sidebar
+  // layout still uses the right-edge resizer here too (the visual
+  // result is the same: a draggable boundary), so a single
+  // ``LeftPaneResizer`` covers both.
   const resizer = typeof onResizePointerDown === 'function'
-    ? <RightPaneResizer onPointerDown={onResizePointerDown} />
+    ? <LeftPaneResizer onPointerDown={onResizePointerDown} />
     : null;
   return (
     <aside id="right-pane" style={inlineStyle}>
-      {resizer}
       <div id="right-pane-root">
         {sessionBody}
       </div>
+      {resizer}
     </aside>
   );
 }

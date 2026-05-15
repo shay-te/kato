@@ -22,12 +22,14 @@ import {
   faMagnifyingGlass,
   faArrowUp,
   faArrowDown,
+  faCodeMerge,
   faCodePullRequest,
   faCheck,
   faLink,
   faStop,
   faPlay,
   faPaperPlane,
+  faClockRotateLeft,
 } from '@fortawesome/free-solid-svg-icons';
 
 const ICONS = {
@@ -59,12 +61,14 @@ const ICONS = {
   'search': faMagnifyingGlass,
   'arrow-up': faArrowUp,
   'arrow-down': faArrowDown,
+  'merge': faCodeMerge,
   'pull-request': faCodePullRequest,
   'check': faCheck,
   'link': faLink,
   'stop': faStop,
   'play': faPlay,
   'send': faPaperPlane,
+  'history': faClockRotateLeft,
 };
 
 export default function Icon({ name, className = '', spin = false }) {

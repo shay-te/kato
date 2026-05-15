@@ -58,26 +58,59 @@ function basenameOf(path) {
   return idx >= 0 ? trimmed.slice(idx + 1) : trimmed;
 }
 
-// Match a tree node against a free-text search term.
+// Lenient, VS-Code / Cmd+P-style fuzzy match for the file search.
 //
-// react-arborist's default matcher only checks ``node.data.name``
-// (the basename). That misses VS-Code-style "Cmd+P type-the-path"
-// flows where the user wants ``src/auth.py`` to surface when they
-// type "src/auth" or "auth.py". This matcher checks BOTH basename
-// AND relative path, case-insensitive, substring match.
+// Matching is checked against BOTH the basename and the full
+// relative path, and succeeds if EITHER:
 //
-// Empty / whitespace-only term matches everything (renders the
-// whole tree, same as no filter). Folders match when their name
-// matches OR any descendant matches — but react-arborist already
-// shows ancestors of matching descendants, so we only need to
-// match nodes themselves here.
+//   1. a plain case-insensitive substring hit (fast path — also
+//      what makes "src/auth" find ``src/auth.py`` and "" match
+//      everything), OR
+//   2. a separator-insensitive subsequence: lowercase both sides,
+//      strip every non-alphanumeric character, then check the
+//      query's characters appear IN ORDER in the target.
+//
+// (2) is what makes the search forgiving the way the operator
+// expects:
+//   * "fileservice"  → matches ``file_service.py``  (underscore /
+//     dot / dash / slash differences don't matter)
+//   * "tmpd" / "TMPD" → matches ``TestMePleaseDude`` (initialism /
+//     camel-hump pickup falls out of subsequence-over-alnum)
+//   * "authpy"        → matches ``src/auth.py``      (ends-with /
+//     contains, not just starts-with)
+//
+// Empty / whitespace-only term matches everything. Folders only
+// need to match themselves — react-arborist already keeps the
+// ancestors of any matching descendant visible.
 export function matchTreeNode(node, term) {
-  const needle = String(term || '').trim().toLowerCase();
-  if (!needle) { return true; }
+  const raw = String(term || '').trim().toLowerCase();
+  if (!raw) { return true; }
   const data = node?.data || {};
   const name = String(data.name || '').toLowerCase();
   const relativePath = String(data.relativePath || '').toLowerCase();
-  return name.includes(needle) || relativePath.includes(needle);
+
+  // 1) Substring fast path — preserves the exact "type the path"
+  //    behaviour (``src/auth``) and is the cheapest common case.
+  if (name.includes(raw) || relativePath.includes(raw)) { return true; }
+
+  // 2) Separator-insensitive subsequence over alphanumerics.
+  const needle = raw.replace(/[^a-z0-9]/g, '');
+  if (!needle) { return true; }
+  return _isSubsequence(needle, name.replace(/[^a-z0-9]/g, ''))
+    || _isSubsequence(needle, relativePath.replace(/[^a-z0-9]/g, ''));
+}
+
+// True when every character of ``needle`` appears in ``haystack``
+// in order (not necessarily contiguously). O(haystack) and
+// allocation-free — runs per node on every keystroke.
+function _isSubsequence(needle, haystack) {
+  if (!needle) { return true; }
+  if (needle.length > haystack.length) { return false; }
+  let i = 0;
+  for (let j = 0; j < haystack.length && i < needle.length; j += 1) {
+    if (haystack[j] === needle[i]) { i += 1; }
+  }
+  return i === needle.length;
 }
 
 function relativePathForRepo(path, cwd) {

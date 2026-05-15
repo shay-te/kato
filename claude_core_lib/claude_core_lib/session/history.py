@@ -55,6 +55,38 @@ def find_session_file(
     return Path(matches[0])
 
 
+def delete_session_file(
+    claude_session_id: str,
+    *,
+    projects_root: Path | str | None = None,
+) -> bool:
+    """Delete the JSONL transcript for ``claude_session_id``.
+
+    Used when a task is permanently forgotten (reviewer marked it
+    done / closed, or the operator hit "Forget task"): the workspace
+    clones and the kato session record are removed, so the Claude
+    CLI transcript — which would otherwise accumulate forever under
+    ``~/.claude/projects/`` — should go too.
+
+    Returns ``True`` when a file was removed, ``False`` when there
+    was nothing to delete (no id, no matching transcript) or the
+    unlink failed. Best-effort + never raises: a leftover transcript
+    is a disk-space nuisance, not a reason to blow up the
+    done-cleanup loop.
+    """
+    path = find_session_file(claude_session_id, projects_root=projects_root)
+    if path is None:
+        return False
+    try:
+        path.unlink()
+        return True
+    except OSError:
+        # FileNotFoundError is an OSError subclass — a transcript
+        # that vanished between find + unlink is fine, just report
+        # "nothing removed".
+        return False
+
+
 def find_session_id_for_cwd(
     cwd: str | Path,
     *,

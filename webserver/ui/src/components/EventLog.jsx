@@ -3,7 +3,6 @@ import Bubble from './Bubble.jsx';
 import { BUBBLE_KIND } from '../constants/bubbleKind.js';
 import { CLAUDE_EVENT, CLAUDE_SYSTEM_SUBTYPE } from '../constants/claudeEvent.js';
 import { ENTRY_SOURCE } from '../constants/entrySource.js';
-import { stringifyShort } from '../utils/dom.js';
 import { formatToolUse } from '../utils/formatToolUse.js';
 import { MessageFilter } from '../utils/MessageFilter.js';
 import {
@@ -11,7 +10,6 @@ import {
   TOOL_DETAILS_HARD_CAP,
   computeEventLogWindow,
   computeToolDetailsRender,
-  computeToolDetailsToggleLabel,
 } from './eventLogTruncation.js';
 
 export default function EventLog({
@@ -311,7 +309,9 @@ function ToolDetails({ details }) {
     () => computeToolDetailsRender(lines, expanded),
     [lines, expanded],
   );
-  const toggleLabel = computeToolDetailsToggleLabel(lines.length, expanded);
+  // ``computeToolDetailsToggleLabel`` is unused now — the wrapper
+  // handles clip-and-fade visuals and the button label is just
+  // "Click to expand" / "Click to collapse" below.
   const overflowNotice = renderInfo.overflowed ? (
     <p className="bubble-tool-details-overflow">
       {`Output truncated at ${TOOL_DETAILS_HARD_CAP.toLocaleString()} lines `
@@ -319,33 +319,42 @@ function ToolDetails({ details }) {
        + `not shown). Inspect the agent transcript on disk for the full body.`}
     </p>
   ) : null;
-  const toggleButton = lines.length > TOOL_DETAILS_COLLAPSE_THRESHOLD ? (
+  const overflows = lines.length > TOOL_DETAILS_COLLAPSE_THRESHOLD;
+  const isCollapsed = overflows && !expanded;
+  const wrapClass = [
+    'bubble-tool-details-wrap',
+    isCollapsed ? 'is-collapsed' : '',
+  ].filter(Boolean).join(' ');
+  const expandButton = overflows ? (
     <button
       type="button"
-      className="bubble-tool-details-toggle"
+      className="bubble-tool-details-expand"
       onClick={() => setExpanded((current) => !current)}
     >
-      {toggleLabel}
+      {expanded ? 'Click to collapse' : 'Click to expand'}
     </button>
   ) : null;
   return (
     <>
-      <pre className="bubble-tool-details">
-        {renderInfo.visible.map((line, lineIdx) => (
-          <span
-            key={lineIdx}
-            className={`bubble-tool-details-line ${_diffLineKind(line)}`}
-          >
-            {line || ' '}
-            {'\n'}
-          </span>
-        ))}
-      </pre>
+      <div className={wrapClass}>
+        <pre className="bubble-tool-details">
+          {renderInfo.visible.map((line, lineIdx) => (
+            <span
+              key={lineIdx}
+              className={`bubble-tool-details-line ${_diffLineKind(line)}`}
+            >
+              {line || ' '}
+              {'\n'}
+            </span>
+          ))}
+        </pre>
+        {expandButton}
+      </div>
       {overflowNotice}
-      {toggleButton}
     </>
   );
 }
+
 
 // Classify a tool-details line by its prefix so the renderer can
 // tint added vs removed lines red/green. Prefixes match what

@@ -1,0 +1,64 @@
+{
+  "name": "kato-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Electron wrapper that launches kato and opens the planning UI in a native desktop window.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "build": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "dev.kato.desktop",
+    "productName": "Kato",
+    "files": [
+      "main.js",
+      "preload.js",
+      "icons/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "buildResources": "icons",
+      "output": "dist"
+    },
+    "extraResources": [
+      {
+        "from": "../",
+        "to": "kato-repo",
+        "filter": [
+          "kato",
+          "tools/**/*",
+          "scripts/**/*",
+          "conf/**/*",
+          "kato_core_lib/**/*",
+          "*_core_lib/**/*",
+          "webserver/static/**/*",
+          "webserver/templates/**/*",
+          "webserver/kato_webserver/**/*",
+          "pyproject.toml",
+          "Pipfile",
+          "Pipfile.lock"
+        ]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": ["dmg", "zip"],
+      "icon": "icons/icon.png"
+    },
+    "win": {
+      "target": ["nsis"],
+      "icon": "icons/icon.png"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "category": "Development",
+      "icon": "icons/icon.png"
+    }
+  }
+}
