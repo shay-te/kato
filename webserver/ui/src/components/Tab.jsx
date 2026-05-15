@@ -54,12 +54,10 @@ export default function Tab({ session, active, needsAttention, onSelect, onForge
     event.stopPropagation();
     closeTooltip();
     if (typeof onForget !== 'function') { return; }
-    const ok = window.confirm(
-      `Forget task ${session.task_id}?\n\n`
-      + 'This deletes the local workspace folder and removes the tab. '
-      + 'Anything not already pushed will be lost.',
-    );
-    if (ok) { onForget(session.task_id); }
+    // Don't act here — hand off to App, which opens the
+    // ForgetTaskModal hard-confirm. Forgetting is destructive, so
+    // the operator must explicitly approve it in that dialog.
+    onForget(session.task_id);
   }
 
   const hasChangesPending = !!session.has_changes_pending;

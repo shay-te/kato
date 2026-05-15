@@ -68,6 +68,7 @@ from claude_core_lib.claude_core_lib.session.wire_protocol import (
     SSE_EVENT_STATUS_ENTRY,
 )
 from kato_webserver.git_diff_utils import (
+    changed_paths,
     conflicted_paths,
     current_branch,
     detect_default_branch,
@@ -505,6 +506,20 @@ def _resolve_diff_base(repo_id: str, cwd: str, agent_service) -> str:
             if configured:
                 return configured
     return detect_default_branch(cwd)
+
+
+def _changed_files_for_repo(repo_id: str, cwd: str, agent_service) -> list[str]:
+    """Changed-vs-base file list for the Files tree, base-resolved
+    the same way the Changes tab does so the two never disagree.
+
+    Read-only (no ``ensure_branch_checked_out``): the Files tab must
+    not mutate git state. Empty list when the base can't be resolved
+    — the tree just renders without change colouring.
+    """
+    base = _resolve_diff_base(repo_id, cwd, agent_service)
+    if not base:
+        return []
+    return changed_paths(cwd, f'origin/{base}')
 
 
 def _no_base_error_message(repo_id: str) -> str:
@@ -1193,6 +1208,7 @@ def _register_http_routes(app: Flask) -> None:
     def list_session_files(task_id: str):
         manager = app.config['SESSION_MANAGER']
         workspace_manager = app.config.get('WORKSPACE_MANAGER')
+        agent_service = app.config.get('AGENT_SERVICE')
         repository_ids = _task_repository_ids(workspace_manager, task_id)
         # Multi-repo task: enumerate every clone so the UI can render
         # one tree per repo. Single-repo / legacy: fall back to the
@@ -1211,6 +1227,12 @@ def _register_http_routes(app: Flask) -> None:
                     # tab. UI marks each path with a warning icon so
                     # the operator spots merge conflicts at a glance.
                     'conflicted_files': conflicted_paths(cwd),
+                    # Files that differ from the destination branch —
+                    # same base + coverage as the Changes-tab diff so
+                    # the tree can colour what kato has touched.
+                    'changed_files': _changed_files_for_repo(
+                        repo_id, cwd, agent_service,
+                    ),
                 })
             if trees:
                 return jsonify({
@@ -1234,18 +1256,22 @@ def _register_http_routes(app: Flask) -> None:
                 'cwd': '',
                 'tree': [],
                 'conflicted_files': [],
+                'changed_files': [],
             })
         legacy_tree = tracked_file_tree(cwd)
         legacy_conflicts = conflicted_paths(cwd)
+        legacy_changed = _changed_files_for_repo('', cwd, agent_service)
         return jsonify({
             'repository_ids': [],
             'trees': [{
                 'repo_id': '', 'cwd': cwd, 'tree': legacy_tree,
                 'conflicted_files': legacy_conflicts,
+                'changed_files': legacy_changed,
             }],
             'cwd': cwd,
             'tree': legacy_tree,
             'conflicted_files': legacy_conflicts,
+            'changed_files': legacy_changed,
         })
 
     @app.get('/api/sessions/<task_id>/diff')

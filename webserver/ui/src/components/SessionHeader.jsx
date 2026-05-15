@@ -168,6 +168,20 @@ export default function SessionHeader({
     });
   }
 
+  // Open the task's pull request(s) on the provider in new browser
+  // tabs. Multi-repo tasks can have one PR per repo, so open them
+  // all (the click is a direct user gesture, so the browser allows
+  // the batch). ``noopener,noreferrer`` keeps the opened pages from
+  // reaching back into the planning UI.
+  function onOpenPullRequest() {
+    const urls = Array.isArray(taskPublish.pullRequestUrls)
+      ? taskPublish.pullRequestUrls.filter(Boolean) : [];
+    if (urls.length === 0) { return; }
+    urls.forEach((url) => {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    });
+  }
+
   async function onUpdateSource() {
     if (updatingSource) { return; }
     setUpdatingSource(true);
@@ -280,6 +294,20 @@ export default function SessionHeader({
     || taskPublish.hasPullRequest
     || taskPublish.prBusy;
   const prTitle = prTitleFor(taskPublish);
+  const openPrUrls = Array.isArray(taskPublish.pullRequestUrls)
+    ? taskPublish.pullRequestUrls.filter(Boolean) : [];
+  const openPrDisabled = openPrUrls.length === 0;
+  let openPrTitle;
+  if (openPrDisabled) {
+    openPrTitle = 'No pull request yet — open one with the adjacent '
+      + 'Pull request button (or Done) first.';
+  } else if (openPrUrls.length === 1) {
+    openPrTitle = 'Open the pull request on the provider in a new '
+      + 'browser tab.';
+  } else {
+    openPrTitle = `Open all ${openPrUrls.length} pull requests `
+      + '(one per repository) in new browser tabs.';
+  }
   // Per AGENTS.md "no logic inside JSX": every label / element /
   // condition that the return statement consumes is precomputed
   // here so the JSX below is pure rendering.
@@ -392,6 +420,17 @@ export default function SessionHeader({
             aria-label={prButtonLabel}
           >
             <Icon name={taskPublish.prBusy ? 'spinner' : 'pull-request'} spin={taskPublish.prBusy} />
+          </button>
+          <button
+            id="session-open-pull-request"
+            type="button"
+            className="session-action tooltip-below"
+            data-tooltip={openPrTitle}
+            onClick={onOpenPullRequest}
+            disabled={openPrDisabled}
+            aria-label="Open pull request in a new tab"
+          >
+            <Icon name="external-link" />
           </button>
           <button
             id="session-update-source"

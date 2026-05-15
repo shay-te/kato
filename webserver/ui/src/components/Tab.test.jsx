@@ -79,38 +79,29 @@ describe('Tab', () => {
     expect(c2.querySelector('.tab-changes-indicator')).toBeInTheDocument();
   });
 
-  test('clicking forget button asks confirm then fires onForget(task_id)', () => {
+  test('clicking forget button requests forget via onForget(task_id)', () => {
+    // No native confirm anymore — the hard-confirm lives in
+    // ForgetTaskModal at App level. Tab just hands off the id.
     const onSelect = vi.fn();
     const onForget = vi.fn();
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const confirmSpy = vi.spyOn(window, 'confirm');
     render(<Tab session={_session()} onSelect={onSelect} onForget={onForget} />);
 
     fireEvent.click(screen.getByLabelText('Forget this task'));
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(confirmSpy).not.toHaveBeenCalled();
     expect(onForget).toHaveBeenCalledWith('KATO-123');
     // event.stopPropagation in handleForget — onSelect must not fire.
     expect(onSelect).not.toHaveBeenCalled();
     confirmSpy.mockRestore();
   });
 
-  test('forget button does nothing when user cancels the confirm', () => {
-    const onForget = vi.fn();
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
-    render(<Tab session={_session()} onSelect={() => {}} onForget={onForget} />);
-
-    fireEvent.click(screen.getByLabelText('Forget this task'));
-    expect(onForget).not.toHaveBeenCalled();
-    confirmSpy.mockRestore();
-  });
-
   test('forget button is a no-op when onForget is not a function', () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(<Tab session={_session()} onSelect={() => {}} />);
-    // Should not throw, should not even ask confirm — handleForget
-    // bails when typeof onForget !== 'function'.
-    fireEvent.click(screen.getByLabelText('Forget this task'));
-    expect(confirmSpy).not.toHaveBeenCalled();
-    confirmSpy.mockRestore();
+    // Should not throw — handleForget bails when typeof
+    // onForget !== 'function'.
+    expect(() =>
+      fireEvent.click(screen.getByLabelText('Forget this task')),
+    ).not.toThrow();
   });
 
   test('missing task_summary renders without crashing', () => {

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import Icon from './Icon.jsx';
 
 const LEVEL_CLASS = {
   ERROR: 'error',
@@ -6,7 +7,26 @@ const LEVEL_CLASS = {
   WARN: 'warn',
 };
 
-export default function OrchestratorActivityFeed({ history }) {
+function FeedHeader({ onClose }) {
+  return (
+    <header className="orchestrator-feed-header">
+      <span className="orchestrator-feed-title">orchestrator activity</span>
+      {typeof onClose === 'function' && (
+        <button
+          type="button"
+          className="orchestrator-feed-close tooltip-end"
+          onClick={onClose}
+          data-tooltip="Close the activity feed and go back to the file preview."
+          aria-label="Close orchestrator activity"
+        >
+          <Icon name="xmark" />
+        </button>
+      )}
+    </header>
+  );
+}
+
+export default function OrchestratorActivityFeed({ history, onClose }) {
   const containerRef = useRef(null);
 
   useEffect(() => {
@@ -18,7 +38,7 @@ export default function OrchestratorActivityFeed({ history }) {
   if (isEmpty) {
     return (
       <div className="orchestrator-feed">
-        <header className="orchestrator-feed-header">orchestrator activity</header>
+        <FeedHeader onClose={onClose} />
         <div className="orchestrator-feed-empty">
           No activity yet. Scan ticks, task transitions, and warnings will
           appear here as kato runs. Pick a task on the left to inspect its
@@ -33,7 +53,7 @@ export default function OrchestratorActivityFeed({ history }) {
   });
   return (
     <div className="orchestrator-feed">
-      <header className="orchestrator-feed-header">orchestrator activity</header>
+      <FeedHeader onClose={onClose} />
       <div className="orchestrator-feed-body" ref={containerRef}>
         {rows}
       </div>

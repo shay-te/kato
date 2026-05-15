@@ -311,7 +311,10 @@ describe('SessionHeader — Push / Pull / PR buttons', () => {
         streamLifecycle={SESSION_LIFECYCLE.STREAMING}
       />,
     );
-    expect(screen.getByRole('button', { name: /pull request/i })).toBeDisabled();
+    // Exact match: the open-PR button's label also contains
+    // "pull request", so anchor to the create-PR button only.
+    expect(screen.getByRole('button', { name: /^pull request$/i }))
+      .toBeDisabled();
   });
 
   test('Push action calls taskPublish.push and refreshes', async () => {
@@ -328,5 +331,80 @@ describe('SessionHeader — Push / Pull / PR buttons', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: /^push$/i }));
     await waitFor(() => { expect(push).toHaveBeenCalled(); });
+  });
+});
+
+
+describe('SessionHeader — Open pull request button', () => {
+
+  const openBtn = () =>
+    screen.getByRole('button', { name: /open pull request in a new tab/i });
+
+  test('disabled when there is no pull request yet', () => {
+    useTaskPublish.mockReturnValue(_defaultTaskPublish({
+      pullRequestUrls: [],
+    }));
+    render(
+      <SessionHeader
+        session={_session()}
+        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
+      />,
+    );
+    expect(openBtn()).toBeDisabled();
+  });
+
+  test('enabled once a PR url exists', () => {
+    useTaskPublish.mockReturnValue(_defaultTaskPublish({
+      hasPullRequest: true,
+      pullRequestUrls: ['https://bitbucket.org/o/r/pull-requests/1'],
+    }));
+    render(
+      <SessionHeader
+        session={_session()}
+        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
+      />,
+    );
+    expect(openBtn()).not.toBeDisabled();
+  });
+
+  test('clicking opens the PR in a new tab with noopener,noreferrer', () => {
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+    useTaskPublish.mockReturnValue(_defaultTaskPublish({
+      hasPullRequest: true,
+      pullRequestUrls: ['https://bitbucket.org/o/r/pull-requests/1'],
+    }));
+    render(
+      <SessionHeader
+        session={_session()}
+        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
+      />,
+    );
+    fireEvent.click(openBtn());
+    expect(openSpy).toHaveBeenCalledWith(
+      'https://bitbucket.org/o/r/pull-requests/1',
+      '_blank',
+      'noopener,noreferrer',
+    );
+    openSpy.mockRestore();
+  });
+
+  test('multi-repo: opens every PR url', () => {
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+    useTaskPublish.mockReturnValue(_defaultTaskPublish({
+      hasPullRequest: true,
+      pullRequestUrls: [
+        'https://bitbucket.org/o/api/pull-requests/3',
+        'https://bitbucket.org/o/web/pull-requests/4',
+      ],
+    }));
+    render(
+      <SessionHeader
+        session={_session()}
+        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
+      />,
+    );
+    fireEvent.click(openBtn());
+    expect(openSpy).toHaveBeenCalledTimes(2);
+    openSpy.mockRestore();
   });
 });

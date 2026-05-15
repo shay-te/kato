@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Editor from '@monaco-editor/react';
 import {
   createTaskComment,
@@ -71,6 +72,16 @@ export default function EditorPane({ openFile }) {
   // event-driven (mouse move) and shouldn't trigger React re-renders.
   const editorRef = useRef(null);
   const hoverDecorationsRef = useRef([]);
+  // Inline new-comment composer is rendered INTO a Monaco "view
+  // zone" anchored at the clicked line (GitHub / VS Code style) —
+  // not at the bottom of the pane. ``zoneNode`` is the DOM node
+  // Monaco owns; we portal the React composer into it. ``zoneRef``
+  // holds the live IViewZone so its height can be reflowed as the
+  // textarea grows. File-level comments (line === -1) have no
+  // editor line to anchor to, so they fall back to a bottom block.
+  const [zoneNode, setZoneNode] = useState(null);
+  const zoneIdRef = useRef(null);
+  const zoneObjRef = useRef(null);
 
   // Comments scoped to the currently-open file. The /comments
   // endpoint returns the whole task's set (across repos + files);
@@ -293,6 +304,74 @@ export default function EditorPane({ openFile }) {
     });
   }
 
+  // Switching files must not leave a stale inline composer (or its
+  // view zone) anchored on the previous file's line.
+  useEffect(() => {
+    setActiveLine(null);
+    setReplyTo('');
+  }, [filePath]);
+
+  // Add / move / remove the inline-composer view zone whenever the
+  // target line changes. Line < 0 (file-level) gets no zone — it
+  // renders in the bottom panel instead.
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || typeof editor.changeViewZones !== 'function') {
+      return undefined;
+    }
+    function removeZone() {
+      if (zoneIdRef.current === null) { return; }
+      editor.changeViewZones((acc) => acc.removeZone(zoneIdRef.current));
+      zoneIdRef.current = null;
+      zoneObjRef.current = null;
+    }
+    removeZone();
+    if (activeLine === null || activeLine < 1) {
+      setZoneNode(null);
+      return undefined;
+    }
+    const dom = document.createElement('div');
+    dom.className = 'editor-pane-zone-host';
+    const zone = {
+      afterLineNumber: activeLine,
+      // Seed height; the ResizeObserver effect below keeps it in
+      // sync with the actual composer height as the textarea grows.
+      heightInPx: 200,
+      domNode: dom,
+    };
+    editor.changeViewZones((acc) => {
+      zoneIdRef.current = acc.addZone(zone);
+    });
+    zoneObjRef.current = zone;
+    editor.revealLineInCenterIfOutsideViewport(activeLine);
+    setZoneNode(dom);
+    return removeZone;
+  }, [activeLine]);
+
+  // Keep the Monaco view zone exactly as tall as the composer it
+  // hosts — Monaco zones don't auto-size to their DOM child, so we
+  // measure and reflow on every content/size change.
+  useEffect(() => {
+    if (!zoneNode || typeof ResizeObserver === 'undefined') {
+      return undefined;
+    }
+    const editor = editorRef.current;
+    const sync = () => {
+      if (!editor || zoneIdRef.current === null || !zoneObjRef.current) {
+        return;
+      }
+      const next = Math.max(120, zoneNode.scrollHeight + 12);
+      if (next !== zoneObjRef.current.heightInPx) {
+        zoneObjRef.current.heightInPx = next;
+        editor.changeViewZones((acc) => acc.layoutZone(zoneIdRef.current));
+      }
+    };
+    const observer = new ResizeObserver(sync);
+    observer.observe(zoneNode);
+    sync();
+    return () => observer.disconnect();
+  }, [zoneNode]);
+
   // Scroll the editor to a line when the operator clicks a chip.
   function jumpToLine(line) {
     const editor = editorRef.current;
@@ -415,13 +494,31 @@ export default function EditorPane({ openFile }) {
       <div className="editor-pane-body">
         {body}
       </div>
-      {activeLine !== null && (
-        <div className="editor-pane-composer-wrap">
+      {/* Line comment: rendered INLINE at the clicked line via a
+          Monaco view zone (GitHub / VS Code style), portaled into
+          the zone's DOM node. */}
+      {activeLine !== null && activeLine >= 1 && zoneNode && createPortal(
+        <div className="editor-pane-composer-wrap editor-pane-composer-inline">
           <header className="editor-pane-composer-head">
             Add comment on {openFile.relativePath || openFile.absolutePath}:{activeLine}
           </header>
           <CommentForm
             placeholder="What should kato do about this line?"
+            onSubmit={(b) => onCommentSubmit(activeLine, b)}
+            onCancel={() => setActiveLine(null)}
+          />
+        </div>,
+        zoneNode,
+      )}
+      {/* File-level comment (line -1) has no editor line to anchor
+          to, so it stays in a bottom block. */}
+      {activeLine === -1 && (
+        <div className="editor-pane-composer-wrap">
+          <header className="editor-pane-composer-head">
+            Add a file-level comment on {openFile.relativePath || openFile.absolutePath}
+          </header>
+          <CommentForm
+            placeholder="What should kato do about this file?"
             onSubmit={(b) => onCommentSubmit(activeLine, b)}
             onCancel={() => setActiveLine(null)}
           />

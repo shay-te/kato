@@ -211,9 +211,44 @@ describe('App — tab selection', () => {
 });
 
 
-describe('App — handleForgetTask', () => {
+describe('App — forget task (hard-confirm modal gate)', () => {
 
-  test('clicking "forget" on a task calls forgetTaskWorkspace + refreshes', async () => {
+  // The tab "X" no longer deletes immediately — it opens
+  // ForgetTaskModal and the operator must approve.
+  const confirmBtn = () => document.getElementById('forget-task-confirm');
+  const cancelBtn = () => document.getElementById('forget-task-cancel');
+
+  test('clicking "forget" opens the modal but does NOT delete yet', async () => {
+    useSessions.mockReturnValue({
+      sessions: [{ task_id: 'T1' }],
+      refresh: vi.fn(),
+    });
+
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'forget-T1' }));
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(confirmBtn()).toBeInTheDocument();
+    expect(forgetTaskWorkspace).not.toHaveBeenCalled();
+  });
+
+  test('Cancel aborts — nothing is deleted and the modal closes', async () => {
+    useSessions.mockReturnValue({
+      sessions: [{ task_id: 'T1' }],
+      refresh: vi.fn(),
+    });
+
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'forget-T1' }));
+    fireEvent.click(cancelBtn());
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+    expect(forgetTaskWorkspace).not.toHaveBeenCalled();
+  });
+
+  test('approving the modal calls forgetTaskWorkspace + refreshes', async () => {
     const refresh = vi.fn();
     useSessions.mockReturnValue({
       sessions: [{ task_id: 'T1' }],
@@ -222,6 +257,7 @@ describe('App — handleForgetTask', () => {
 
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: 'forget-T1' }));
+    fireEvent.click(confirmBtn());
 
     await waitFor(() => {
       expect(forgetTaskWorkspace).toHaveBeenCalledWith('T1');
@@ -229,24 +265,23 @@ describe('App — handleForgetTask', () => {
     await waitFor(() => { expect(refresh).toHaveBeenCalled(); });
   });
 
-  test('forgetting the ACTIVE task clears activeTaskId', async () => {
+  test('approving forget of the ACTIVE task clears activeTaskId', async () => {
     useSessions.mockReturnValue({
       sessions: [{ task_id: 'T1' }],
       refresh: vi.fn(),
     });
 
     render(<App />);
-    // First select T1 so it's active.
     fireEvent.click(screen.getByRole('button', { name: 'T1' }));
     expect(screen.getByText('active=T1')).toBeInTheDocument();
-    // Forget T1.
     fireEvent.click(screen.getByRole('button', { name: 'forget-T1' }));
+    fireEvent.click(confirmBtn());
     await waitFor(() => {
       expect(screen.getByText('active=none')).toBeInTheDocument();
     });
   });
 
-  test('forgetting a NON-active task leaves activeTaskId intact', async () => {
+  test('approving forget of a NON-active task leaves activeTaskId intact', async () => {
     useSessions.mockReturnValue({
       sessions: [{ task_id: 'T1' }, { task_id: 'T2' }],
       refresh: vi.fn(),
@@ -255,8 +290,8 @@ describe('App — handleForgetTask', () => {
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: 'T1' }));
     expect(screen.getByText('active=T1')).toBeInTheDocument();
-    // Forget T2 (not the active one).
     fireEvent.click(screen.getByRole('button', { name: 'forget-T2' }));
+    fireEvent.click(confirmBtn());
     await waitFor(() => {
       expect(forgetTaskWorkspace).toHaveBeenCalledWith('T2');
     });

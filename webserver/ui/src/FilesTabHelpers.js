@@ -6,11 +6,15 @@ export function normalizeTrees(payload) {
       const conflicts = Array.isArray(entry?.conflicted_files)
         ? entry.conflicted_files.map(String)
         : [];
+      const changed = Array.isArray(entry?.changed_files)
+        ? entry.changed_files.map(String)
+        : [];
       return {
         repo_id: String(entry?.repo_id || '') || basenameOf(cwd),
         cwd,
         tree: entry?.tree || [],
         conflictedFiles: new Set(conflicts),
+        changedFiles: new Set(changed),
       };
     });
   }
@@ -18,11 +22,15 @@ export function normalizeTrees(payload) {
   const legacyConflicts = Array.isArray(payload?.conflicted_files)
     ? payload.conflicted_files.map(String)
     : [];
+  const legacyChanged = Array.isArray(payload?.changed_files)
+    ? payload.changed_files.map(String)
+    : [];
   return [{
     repo_id: basenameOf(legacyCwd),
     cwd: legacyCwd,
     tree: payload?.tree || [],
     conflictedFiles: new Set(legacyConflicts),
+    changedFiles: new Set(legacyChanged),
   }];
 }
 
@@ -41,13 +49,14 @@ export function attachIds(nodes, cwd = '') {
   });
 }
 
-export function activateTreeNode(node, onPickFile) {
+// Left-click activation. Folders expand/collapse. Files are a
+// no-op here on purpose: a left-click on a file only OPENS it in
+// the editor pane (handled by the caller via ``onOpenFile``) — it
+// must NOT also paste the path into the chat composer. Pasting a
+// path is the explicit RIGHT-click affordance instead.
+export function activateTreeNode(node) {
   if (node.isInternal) {
     node.toggle();
-    return;
-  }
-  if (typeof onPickFile === 'function') {
-    onPickFile(node.data.relativePath);
   }
 }
 

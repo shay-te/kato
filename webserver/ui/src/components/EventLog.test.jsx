@@ -41,9 +41,15 @@ describe('EventLog — banner + empty state', () => {
 
 describe('EventLog — local entries', () => {
 
-  test('LOCAL user bubble renders the text', () => {
-    render(<EventLog entries={[_local(BUBBLE_KIND.USER, 'hello there')]} />);
-    expect(screen.getByText('hello there')).toBeInTheDocument();
+  test('LOCAL user prompt renders as a sticky prompt', () => {
+    const { container } = render(
+      <EventLog entries={[_local(BUBBLE_KIND.USER, 'hello there')]} />,
+    );
+    // An operator prompt is its turn's sticky section header — the
+    // sole representation, not a separate chat bubble.
+    expect(
+      container.querySelector('.chat-sticky-prompt-text'),
+    ).toHaveTextContent('hello there');
   });
 
   test('LOCAL bubble with image count appends "(N images attached)"', () => {
@@ -53,9 +59,10 @@ describe('EventLog — local entries', () => {
       text: 'check this',
       imageCount: 2,
     };
-    render(<EventLog entries={[entry]} />);
-    expect(screen.getByText(/check this/)).toBeInTheDocument();
-    expect(screen.getByText(/2 images attached/)).toBeInTheDocument();
+    const { container } = render(<EventLog entries={[entry]} />);
+    const prompt = container.querySelector('.chat-sticky-prompt-text');
+    expect(prompt).toHaveTextContent('check this');
+    expect(prompt).toHaveTextContent('2 images attached');
   });
 
   test('LOCAL bubble with 1 image uses singular "image"', () => {
@@ -128,6 +135,45 @@ describe('EventLog — server event rendering', () => {
       .toMatch(/→.*\$.*ls/);
   });
 
+  test('file tool_use shows a reveal button that opens the file', () => {
+    const onOpenFile = vi.fn();
+    render(<EventLog onOpenFile={onOpenFile} entries={[_server({
+      type: CLAUDE_EVENT.ASSISTANT,
+      message: { content: [
+        { type: 'tool_use', id: 't1', name: 'Write',
+          input: { file_path: '/repo/src/app.py', content: 'x' } },
+      ] },
+    })]} />);
+    const btn = screen.getByRole('button', { name: 'Open /repo/src/app.py' });
+    fireEvent.click(btn);
+    expect(onOpenFile).toHaveBeenCalledWith({ absolutePath: '/repo/src/app.py' });
+  });
+
+  test('no reveal button when onOpenFile is not provided', () => {
+    render(<EventLog entries={[_server({
+      type: CLAUDE_EVENT.ASSISTANT,
+      message: { content: [
+        { type: 'tool_use', id: 't1', name: 'Read',
+          input: { file_path: '/repo/x.py' } },
+      ] },
+    })]} />);
+    expect(
+      screen.queryByRole('button', { name: /^Open / }),
+    ).not.toBeInTheDocument();
+  });
+
+  test('non-file tool (Bash) has no reveal button even with onOpenFile', () => {
+    render(<EventLog onOpenFile={vi.fn()} entries={[_server({
+      type: CLAUDE_EVENT.ASSISTANT,
+      message: { content: [
+        { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } },
+      ] },
+    })]} />);
+    expect(
+      screen.queryByRole('button', { name: /^Open / }),
+    ).not.toBeInTheDocument();
+  });
+
   test('ASSISTANT with mixed text + tool_use renders BOTH bubbles', () => {
     const { container } = render(<EventLog entries={[_server({
       type: CLAUDE_EVENT.ASSISTANT,
@@ -140,16 +186,18 @@ describe('EventLog — server event rendering', () => {
     expect(container.querySelector('.bubble-tool-summary')).toBeInTheDocument();
   });
 
-  test('USER text content renders a user bubble', () => {
-    render(<EventLog entries={[_server({
+  test('USER text content renders as a sticky prompt', () => {
+    const { container } = render(<EventLog entries={[_server({
       type: CLAUDE_EVENT.USER,
       message: { content: [{ type: 'text', text: 'fix this' }] },
     })]} />);
-    expect(screen.getByText('fix this')).toBeInTheDocument();
+    expect(
+      container.querySelector('.chat-sticky-prompt-text'),
+    ).toHaveTextContent('fix this');
   });
 
   test('USER with images appends image count', () => {
-    render(<EventLog entries={[_server({
+    const { container } = render(<EventLog entries={[_server({
       type: CLAUDE_EVENT.USER,
       message: { content: [
         { type: 'text', text: 'screenshot' },
@@ -157,8 +205,9 @@ describe('EventLog — server event rendering', () => {
         { type: 'image' },
       ] },
     })]} />);
-    expect(screen.getByText(/screenshot/)).toBeInTheDocument();
-    expect(screen.getByText(/2 images attached/)).toBeInTheDocument();
+    const prompt = container.querySelector('.chat-sticky-prompt-text');
+    expect(prompt).toHaveTextContent('screenshot');
+    expect(prompt).toHaveTextContent('2 images attached');
   });
 
   test('STREAM_EVENT renders nothing (suppressed)', () => {
@@ -272,9 +321,10 @@ describe('EventLog — dedupe + show-older', () => {
 
   test('dedupes a LOCAL user echo followed by a SERVER user envelope', () => {
     // ``MessageFilter.dedupeUserEchoes`` collapses the local
-    // optimistic bubble + the server's echo into ONE rendered
-    // bubble. Both have the same text.
-    render(<EventLog entries={[
+    // optimistic prompt + the server's echo into ONE rendered
+    // prompt. Both have the same text — without dedupe there would
+    // be two sticky prompts (two turns).
+    const { container } = render(<EventLog entries={[
       _local(BUBBLE_KIND.USER, 'identical text'),
       _server({
         type: CLAUDE_EVENT.USER,
@@ -282,8 +332,9 @@ describe('EventLog — dedupe + show-older', () => {
       }),
     ]} />);
 
-    const matches = screen.getAllByText('identical text');
-    expect(matches.length).toBe(1);
+    const prompts = container.querySelectorAll('.chat-sticky-prompt-text');
+    expect(prompts.length).toBe(1);
+    expect(prompts[0]).toHaveTextContent('identical text');
   });
 
   test('"Show N earlier events" button appears when window truncates', () => {
@@ -296,5 +347,62 @@ describe('EventLog — dedupe + show-older', () => {
     render(<EventLog entries={many} />);
     const showOlder = screen.queryByRole('button', { name: /show.*earlier event/i });
     expect(showOlder).toBeInTheDocument();
+  });
+});
+
+
+describe('EventLog — per-turn sticky grouping', () => {
+
+  test('each operator prompt opens its own .chat-turn section', () => {
+    const { container } = render(<EventLog entries={[
+      _local(BUBBLE_KIND.USER, 'first ask'),
+      _server({
+        type: CLAUDE_EVENT.ASSISTANT,
+        uuid: 'a1',
+        message: { content: [{ type: 'text', text: 'reply one' }] },
+      }),
+      _local(BUBBLE_KIND.USER, 'second ask'),
+      _server({
+        type: CLAUDE_EVENT.ASSISTANT,
+        uuid: 'a2',
+        message: { content: [{ type: 'text', text: 'reply two' }] },
+      }),
+    ]} />);
+    const turns = container.querySelectorAll(
+      '.chat-turn:not(.chat-turn--preamble)',
+    );
+    expect(turns.length).toBe(2);
+    // The prompt must be the FIRST child of its turn — that's what
+    // bounds ``position: sticky`` to the turn so it pins while the
+    // turn is on screen and is pushed off as the next turn scrolls in.
+    expect(turns[0].firstElementChild)
+      .toHaveClass('chat-sticky-prompt');
+    expect(turns[0]).toHaveTextContent('first ask');
+    expect(turns[0]).toHaveTextContent('reply one');
+    // A turn owns every bubble until the NEXT prompt, no further.
+    expect(turns[0]).not.toHaveTextContent('second ask');
+    expect(turns[1]).toHaveTextContent('second ask');
+    expect(turns[1]).toHaveTextContent('reply two');
+  });
+
+  test('bubbles before the first prompt go in a preamble (no sticky header)', () => {
+    const { container } = render(<EventLog entries={[
+      _server({
+        type: CLAUDE_EVENT.SYSTEM,
+        subtype: CLAUDE_SYSTEM_SUBTYPE.INIT,
+        session_id: 'sess-1',
+      }),
+      _local(BUBBLE_KIND.USER, 'the ask'),
+    ]} />);
+    const preamble = container.querySelector('.chat-turn--preamble');
+    expect(preamble).toBeInTheDocument();
+    expect(preamble).toHaveTextContent('session_id: sess-1');
+    expect(preamble.querySelector('.chat-sticky-prompt')).toBeNull();
+    // The operator prompt still gets its own sticky turn.
+    expect(
+      container.querySelector(
+        '.chat-turn:not(.chat-turn--preamble) .chat-sticky-prompt-text',
+      ),
+    ).toHaveTextContent('the ask');
   });
 });

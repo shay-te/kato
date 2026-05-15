@@ -2,8 +2,8 @@
 // rows in the right pane when no task is selected. Empty state when
 // history is empty or missing.
 
-import { describe, test, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, test, expect, vi } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 
 import OrchestratorActivityFeed from './OrchestratorActivityFeed.jsx';
 
@@ -24,6 +24,31 @@ describe('OrchestratorActivityFeed', () => {
   test('renders the empty-state when history is undefined', () => {
     render(<OrchestratorActivityFeed />);
     expect(screen.getByText(/No activity yet/i)).toBeInTheDocument();
+  });
+
+  test('no close button when onClose is not provided', () => {
+    render(<OrchestratorActivityFeed history={[]} />);
+    expect(
+      screen.queryByLabelText('Close orchestrator activity'),
+    ).not.toBeInTheDocument();
+  });
+
+  test('close button fires onClose (empty + populated states)', () => {
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <OrchestratorActivityFeed history={[]} onClose={onClose} />,
+    );
+    fireEvent.click(screen.getByLabelText('Close orchestrator activity'));
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <OrchestratorActivityFeed
+        history={[_entry(1, 'INFO', 'hello')]}
+        onClose={onClose}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText('Close orchestrator activity'));
+    expect(onClose).toHaveBeenCalledTimes(2);
   });
 
   test('renders each history entry message', () => {

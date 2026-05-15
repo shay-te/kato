@@ -896,10 +896,92 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 #event-log {
   flex: 1;
   overflow-y: auto;
-  padding: 18px 24px;
+  /* No top padding: a sticky prompt sticks to the scrollport's
+   * CONTENT box, so any top padding becomes a dead strip between
+   * the header and the pinned prompt (content scrolls visibly
+   * through it). The first-child rule below restores the top
+   * breathing room in normal flow only — it scrolls away with the
+   * content, so a pinned prompt sits flush against the header. */
+  padding: 0 24px;
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+#event-log > :first-child { margin-top: 18px; }
+
+/* One operator prompt + every bubble it produced, as a section.
+ * This wrapper is the sticky prompt's containing block: CSS sticky
+ * bounds the pinned header to its own turn, so a prompt only pins
+ * while its turn is on screen and is pushed off the top by the
+ * adjacent turn's prompt as you cross the boundary (iOS / Claude VS
+ * Code plugin section-header behaviour). Must NOT set overflow — that
+ * would clip the sticky child and kill the pin. */
+.chat-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ───── sticky "you asked" prompt (Claude VS Code plugin style) ──
+ * Pinned at the top of its turn so the operator never loses the
+ * request the agent is working on. Collapsed = one line; click to
+ * expand to the full prompt (capped + scrollable). */
+.chat-sticky-prompt {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  /* Bleed over #event-log's 24px side padding so the bar spans the
+   * full width and reads as a pinned header, not an inset card. No
+   * negative top margin: prompts are now nested one per turn, so a
+   * negative top would yank the bar up over the previous turn's last
+   * bubble. The flex gap on .chat-turn handles spacing instead. */
+  margin: 0 -24px;
+  background: #0d0d0f;
+  border-bottom: 1px solid #1f1f22;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+}
+.chat-sticky-prompt-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 24px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: #d4d4d4;
+}
+.chat-sticky-prompt-toggle:hover { background: rgba(255, 255, 255, 0.03); }
+.chat-sticky-prompt-label {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6b7280;
+}
+.chat-sticky-prompt-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #e5e5e7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-sticky-prompt.is-expanded .chat-sticky-prompt-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-y: auto;
+  max-height: 38vh;
+}
+.chat-sticky-prompt-chevron {
+  flex-shrink: 0;
+  color: #6b7280;
+  font-size: 11px;
 }
 
 /* Chat stream — vertical, dot-prefixed, Claude Code CLI style. Each
@@ -968,6 +1050,30 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   display: block;
   word-break: break-all;
   white-space: pre-wrap;
+}
+/* One-click "open this file" affordance next to a tool's path.
+ * Inline so it sits right after the path text; subtle until hover
+ * so it doesn't compete with the log content. */
+.bubble-tool-reveal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  width: 18px;
+  height: 18px;
+  margin-left: 6px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #93c5fd;
+  font-size: 10px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.bubble-tool-reveal:hover {
+  background: rgba(147, 197, 253, 0.22);
+  color: #bfdbfe;
 }
 /* ----- tool-details code box -----
  *
@@ -1145,6 +1251,23 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 .working-indicator.is-stalled .working-indicator-glyph {
   color: #fbbf24;
   animation: none;
+}
+.working-indicator-continue {
+  margin-left: 10px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(251, 191, 36, 0.55);
+  background: rgba(251, 191, 36, 0.12);
+  color: #fbbf24;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.working-indicator-continue:hover {
+  background: rgba(251, 191, 36, 0.22);
+  color: #fde68a;
 }
 .working-indicator.is-waiting-approval {
   color: #fb923c;
@@ -1373,6 +1496,44 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 .chat-search-nav:disabled {
   color: rgba(245, 245, 247, 0.22);
   cursor: not-allowed;
+}
+
+/* ───── bottom dock: working indicator stacked over the composer ──
+ *
+ * The animated "✻ thinking…" line and the composer share ONE
+ * bottom-anchored dock so the indicator always sits directly on top
+ * of the input box. Left in normal flow the indicator landed after
+ * the flex:1 #event-log — i.e. visually BELOW the floating composer.
+ * The dock spans the full width but only its children take pointer
+ * events, so the empty band beside the composer still lets the chat
+ * scroll/click through. */
+.composer-dock {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  z-index: 10;
+  pointer-events: none;
+}
+.composer-dock > * { pointer-events: auto; }
+/* Inside the dock the composer flows as a normal column child
+ * instead of anchoring itself — the dock owns the bottom offset and
+ * the centering now. (#message-form is only ever rendered here.) */
+.composer-dock #message-form {
+  position: static;
+  left: auto;
+  bottom: auto;
+  transform: none;
+}
+/* Match the composer's width + inset so the indicator's glyph lines
+ * up with the composer's left edge, sitting just above it. */
+.composer-dock .working-indicator {
+  width: min(720px, calc(100% - 32px));
+  padding: 2px 14px;
 }
 
 #message-form {
@@ -1712,6 +1873,51 @@ code {
 .modal-actions .secondary:hover { background: #404040; }
 .modal-actions .danger:hover    { background: #dc2626; }
 
+/* ───── forget-task hard-confirm dialog ───── */
+#forget-task-name {
+  font: 600 16px ui-monospace, monospace;
+  color: #e5e5e5;
+}
+.forget-task-lead {
+  margin: 0;
+  font-size: 13px;
+  color: #d4d4d4;
+  line-height: 1.5;
+}
+.forget-task-lead strong { color: #fff; }
+.forget-task-effects {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+  color: #a3a3a3;
+  line-height: 1.5;
+  overflow-y: auto;
+}
+.forget-task-effects li::marker { color: #525252; }
+.forget-task-effects strong { color: #e5e5e5; }
+.forget-task-effects code {
+  background: #0a0a0a;
+  border: 1px solid #262626;
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 11.5px;
+  color: #d4d4d4;
+}
+.forget-task-warning {
+  margin: 0;
+  border: 1px solid #7f1d1d;
+  background: rgba(127, 29, 29, 0.18);
+  border-radius: 6px;
+  padding: 9px 11px;
+  font-size: 12.5px;
+  color: #fca5a5;
+  line-height: 1.5;
+}
+.forget-task-warning strong { color: #fecaca; }
+
 /* ───── middle pane — Monaco editor (read-only file preview) ───── */
 #editor-pane {
   display: flex;
@@ -1892,6 +2098,22 @@ code {
   font: 11px/1.4 ui-monospace, monospace;
   color: #93c5fd;
   border-bottom: 1px solid #2a2a2a;
+}
+/* Host node Monaco owns for the inline-comment view zone. The
+ * composer is portaled in here; it must sit visually inside the
+ * editor at the clicked line, so give it the editor's dark inset
+ * look and keep it from inheriting Monaco's monospace metrics. */
+.editor-pane-zone-host {
+  width: 100%;
+  box-sizing: border-box;
+  background: #0d0d10;
+  border-top: 1px solid #2a2a2a;
+  border-bottom: 1px solid #2a2a2a;
+  border-left: 3px solid #3b82f6;
+}
+.editor-pane-composer-inline {
+  border-top: none;
+  background: transparent;
 }
 
 .editor-pane-comments-panel {
@@ -2087,6 +2309,15 @@ body.kato-resizing #left-pane-resizer::before {
   padding: 10px 12px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   flex-shrink: 0;
+  /* ``backdrop-filter`` below makes this nav its own stacking
+   * context, which trapped the tab buttons' hover tooltip
+   * (``::after``, z-index:1000) *behind* the later-painted
+   * ``.right-pane-body`` — the search box/tree rendered over it
+   * so the tooltip looked washed-out and clipped. Lifting the
+   * whole nav above the body fixes it without changing layout
+   * (``position: relative`` with no offsets is layout-neutral). */
+  position: relative;
+  z-index: 2;
   background:
     linear-gradient(180deg,
       rgba(28, 28, 30, 0.55) 0%,
@@ -2786,6 +3017,20 @@ body.kato-resizing #left-pane-resizer::before {
   font-size: 12px;
   flex-shrink: 0;
 }
+/* Files kato has modified on the task branch (same set as the
+ * Changes tab). Green to read as "work done here", clearly distinct
+ * from the amber merge-conflict warning. */
+.tree-row.changed .tree-row-name {
+  color: #4ade80;
+}
+.tree-row-changed {
+  margin-left: auto;
+  margin-right: 6px;
+  color: #4ade80;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
 
 .diff-file-type {
   text-transform: uppercase;
@@ -2891,12 +3136,45 @@ body.kato-resizing #left-pane-resizer::before {
   background: #050505;
 }
 .orchestrator-feed-header {
-  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 16px;
   border-bottom: 1px solid #171717;
-  font-size: 12px;
-  color: #a3a3a3;
-  font-family: ui-monospace, monospace;
   flex-shrink: 0;
+}
+/* Match the chat's task-name (#session-task-id <strong>): same
+ * bold white, same sans-serif body size — so the two panes' titles
+ * read as siblings, not "title vs muted monospace label". */
+.orchestrator-feed-title {
+  color: #f5f5f7;
+  font-weight: 700;
+  font-size: 15px;
+  font-family: inherit;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.orchestrator-feed-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.04);
+  color: #a3a3a3;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.orchestrator-feed-close:hover {
+  background: rgba(255, 255, 255, 0.10);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #f5f5f7;
 }
 .orchestrator-feed-empty {
   padding: 16px;
@@ -3180,10 +3458,29 @@ body.kato-resizing #left-pane-resizer::before {
   border-top-color: #1f2937;
 }
 [data-tooltip][disabled]:hover::after,
-[data-tooltip][disabled]:hover::before {
+[data-tooltip][disabled]:hover::before,
+[data-tooltip]:disabled:hover::after,
+[data-tooltip]:disabled:hover::before {
   /* Disabled buttons should still surface their tooltip — that's
    * usually how the operator learns *why* the button is disabled. */
   animation: kato-tooltip-fade 0.12s ease-out 0.03s forwards;
+}
+/* …but a disabled control dims itself with element ``opacity``, and
+ * CSS opacity on the host also fades its ::after/::before — so the
+ * tooltip rendered see-through (the reported bug). Keep any
+ * tooltip-bearing control fully opaque and push the "disabled" dim
+ * onto its inner content (the icon/label) instead, so the tooltip
+ * itself is always 100% opaque in every state. */
+[data-tooltip]:disabled,
+[data-tooltip][disabled] {
+  /* !important: this must beat every per-control ``:disabled``
+   * rule (they're more specific) so the tooltip host is never
+   * faded — that's the whole point of this fix. */
+  opacity: 1 !important;
+}
+[data-tooltip]:disabled > *,
+[data-tooltip][disabled] > * {
+  opacity: 0.4;
 }
 
 /* Tooltips on buttons near the right edge of their container would

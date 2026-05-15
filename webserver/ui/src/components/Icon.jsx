@@ -30,6 +30,7 @@ import {
   faPlay,
   faPaperPlane,
   faClockRotateLeft,
+  faArrowUpRightFromSquare,
 } from '@fortawesome/free-solid-svg-icons';
 
 const ICONS = {
@@ -69,6 +70,8 @@ const ICONS = {
   'play': faPlay,
   'send': faPaperPlane,
   'history': faClockRotateLeft,
+  // "Open in a new tab" — used by the chat header's open-PR button.
+  'external-link': faArrowUpRightFromSquare,
 };
 
 export default function Icon({ name, className = '', spin = false }) {

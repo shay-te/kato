@@ -196,6 +196,9 @@ class FilesEndpointTests(unittest.TestCase):
             ), patch(
                 'kato_webserver.app.conflicted_paths',
                 return_value=[],
+            ), patch(
+                'kato_webserver.app._changed_files_for_repo',
+                return_value=['README.md'],
             ):
                 response = app.test_client().get('/api/sessions/PROJ-1/files')
         self.assertEqual(response.status_code, 200)
@@ -204,6 +207,9 @@ class FilesEndpointTests(unittest.TestCase):
         self.assertEqual(payload['cwd'], tmp)
         self.assertEqual(payload['tree'], [{'name': 'README.md', 'kind': 'file'}])
         self.assertEqual(payload['trees'][0]['repo_id'], '')
+        # New: change-colouring input flows through the legacy path too.
+        self.assertEqual(payload['changed_files'], ['README.md'])
+        self.assertEqual(payload['trees'][0]['changed_files'], ['README.md'])
 
 
 # ---------------------------------------------------------------------------

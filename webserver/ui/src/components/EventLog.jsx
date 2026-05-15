@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Bubble from './Bubble.jsx';
+import Icon from './Icon.jsx';
 import { BUBBLE_KIND } from '../constants/bubbleKind.js';
 import { CLAUDE_EVENT, CLAUDE_SYSTEM_SUBTYPE } from '../constants/claudeEvent.js';
 import { ENTRY_SOURCE } from '../constants/entrySource.js';
-import { formatToolUse } from '../utils/formatToolUse.js';
+import { formatToolUse, toolUseFilePath } from '../utils/formatToolUse.js';
 import { MessageFilter } from '../utils/MessageFilter.js';
+import { isPinnedToBottom, scrollToBottom } from '../utils/scrollUtils.js';
 import {
   TOOL_DETAILS_COLLAPSE_THRESHOLD,
   TOOL_DETAILS_HARD_CAP,
@@ -18,8 +20,14 @@ export default function EventLog({
   searchQuery = '',
   searchCurrentIndex = 0,
   onSearchMatchCount,
+  onOpenFile,
 }) {
   const containerRef = useRef(null);
+  // Sticky-scroll intent. Starts true so the log opens at the
+  // newest message; flipped by the operator's own scrolling (see
+  // the scroll listener below). New content only yanks to the
+  // bottom while this is true.
+  const pinnedRef = useRef(true);
   const [showAll, setShowAll] = useState(false);
   // Dedupe is O(N) over the entire event list; without memoization
   // it re-runs every time the parent re-renders (tab switches,
@@ -34,9 +42,37 @@ export default function EventLog({
     () => computeEventLogWindow(visibleEntries, showAll),
     [visibleEntries, showAll],
   );
+  // Each operator prompt renders as a sticky section header (see
+  // ``StickyPrompt`` / ``bubblesFor``). Native ``position: sticky``
+  // stacking means: while you read a turn's replies its prompt is
+  // pinned at the top; scroll up into the previous turn and that
+  // turn's prompt pushes the current one off and takes the top —
+  // the Claude VS Code plugin behaviour, no JS scroll math needed.
+  // Track the operator's scroll intent: any time they scroll, note
+  // whether they're (still) at the bottom. This survives content
+  // growth because it's only updated by real scroll events, not by
+  // the append itself — so "was the user at the bottom?" stays
+  // accurate when the next message arrives.
   useEffect(() => {
     const node = containerRef.current;
-    if (node) { node.scrollTop = node.scrollHeight; }
+    if (!node) { return undefined; }
+    const onScroll = () => { pinnedRef.current = isPinnedToBottom(node); };
+    node.addEventListener('scroll', onScroll, { passive: true });
+    return () => node.removeEventListener('scroll', onScroll);
+  }, []);
+
+  // New content / banner / tab switch: follow the bottom while the
+  // tracked intent says "pinned". We deliberately use the intent
+  // FLAG, not a live DOM read: on mount / tab switch the container
+  // is at scrollTop 0, so a DOM-derived "are we at the bottom?"
+  // check would say no and never scroll down (the reported
+  // tab-switch bug). ``pinnedRef`` starts true and only flips when
+  // the operator actually scrolls up (listener above), so a fresh
+  // log opens pinned and a tab switch lands at the newest message.
+  useEffect(() => {
+    if (pinnedRef.current) {
+      scrollToBottom(containerRef.current);
+    }
   }, [window.visible.length, banner]);
 
   // ----- chat search highlighting + navigation ------------------
@@ -104,9 +140,22 @@ export default function EventLog({
 
   const bannerBubble = banner && <Bubble kind={BUBBLE_KIND.SYSTEM}>{banner}</Bubble>;
   const eventBubbles = useMemo(
-    () => window.visible.flatMap((entry, index) => bubblesFor(entry, index)),
-    [window.visible],
+    () => window.visible.flatMap(
+      (entry, index) => bubblesFor(entry, index, onOpenFile),
+    ),
+    [window.visible, onOpenFile],
   );
+  // Group the flat bubble stream into per-prompt turns. Each turn is a
+  // ``StickyPrompt`` followed by every bubble until the next prompt.
+  // Wrapping a turn in its own block is what makes the sticky prompt
+  // behave like a section header: ``position: sticky`` is bounded by
+  // its containing block, so a prompt only pins while ITS turn is on
+  // screen and is pushed off the top by the adjacent turn's prompt as
+  // you scroll past the turn boundary. Without the per-turn wrapper
+  // every prompt shares one containing block (the whole log) and they
+  // all stack at ``top: 0`` — the latest one always wins and previous
+  // prompts never take the top when you scroll up.
+  const turns = useMemo(() => groupIntoTurns(eventBubbles), [eventBubbles]);
   const hiddenCount = window.hidden;
   const showOlderButton = hiddenCount > 0 ? (
     <button
@@ -121,18 +170,48 @@ export default function EventLog({
     <div id="event-log" ref={containerRef}>
       {bannerBubble}
       {showOlderButton}
-      {eventBubbles}
+      {turns.preamble.length > 0 && (
+        <div className="chat-turn chat-turn--preamble">{turns.preamble}</div>
+      )}
+      {turns.turns.map((turn) => (
+        <div className="chat-turn" key={turn[0].key}>{turn}</div>
+      ))}
     </div>
   );
 }
 
-function bubblesFor(entry, index) {
+// Split the flat bubble list at every ``StickyPrompt`` boundary.
+// Bubbles emitted before the first prompt (session init, preflight
+// clone progress, replayed history before the operator's first
+// message) have no owning turn — they go in ``preamble`` and render
+// without a sticky header.
+function groupIntoTurns(bubbles) {
+  const preamble = [];
+  const turns = [];
+  let current = null;
+  for (const el of bubbles) {
+    if (el && el.type === StickyPrompt) {
+      current = [el];
+      turns.push(current);
+    } else if (current) {
+      current.push(el);
+    } else {
+      preamble.push(el);
+    }
+  }
+  return { preamble, turns };
+}
+
+function bubblesFor(entry, index, onOpenFile) {
   if (entry?.source === ENTRY_SOURCE.LOCAL) {
     const text = entry.text || '';
     const count = Number(entry.imageCount || 0);
     const display = count > 0
       ? `${text}${text ? '\n' : ''}(${count} image${count === 1 ? '' : 's'} attached)`
       : text;
+    if ((entry.kind || BUBBLE_KIND.SYSTEM) === BUBBLE_KIND.USER) {
+      return [<StickyPrompt key={`local-${index}`} text={display} />];
+    }
     return [
       <Bubble key={`local-${index}`} kind={entry.kind || BUBBLE_KIND.SYSTEM}>
         {display}
@@ -143,10 +222,11 @@ function bubblesFor(entry, index) {
     entry?.raw,
     index,
     entry?.source === ENTRY_SOURCE.HISTORY,
+    onOpenFile,
   );
 }
 
-function serverBubblesFor(raw, index, isHistory = false) {
+function serverBubblesFor(raw, index, isHistory = false, onOpenFile) {
   if (!raw || !raw.type) { return []; }
   switch (raw.type) {
     case CLAUDE_EVENT.SYSTEM:
@@ -172,7 +252,7 @@ function serverBubblesFor(raw, index, isHistory = false) {
       }
       return [];
     case CLAUDE_EVENT.ASSISTANT:
-      return assistantBubbles(raw, index);
+      return assistantBubbles(raw, index, onOpenFile);
     case CLAUDE_EVENT.USER:
       // Render every ``user`` envelope kato sent to Claude — typed
       // messages, kato-injected initial prompts (implementation /
@@ -211,7 +291,7 @@ function serverBubblesFor(raw, index, isHistory = false) {
   }
 }
 
-function assistantBubbles(raw, index) {
+function assistantBubbles(raw, index, onOpenFile) {
   const message = raw.message || {};
   const content = Array.isArray(message.content) ? message.content : [];
   const textPieces = [];
@@ -234,12 +314,32 @@ function assistantBubbles(raw, index) {
       const details = typeof formatted === 'object' && formatted
         ? formatted.details
         : '';
+      // File-touching tools (Read/Write/Edit/MultiEdit/Notebook)
+      // get a one-click "open this file" affordance next to the
+      // path — opens it in the editor pane, same as a left-tree
+      // click, so the operator can jump straight to what the agent
+      // just touched without hunting for it in the tree.
+      const filePath = toolUseFilePath(toolName, block.input);
+      const revealBtn = filePath && typeof onOpenFile === 'function' ? (
+        <button
+          type="button"
+          className="bubble-tool-reveal tooltip-end"
+          data-tooltip="Open this file in the editor pane."
+          aria-label={`Open ${filePath}`}
+          onClick={() => onOpenFile({ absolutePath: filePath })}
+        >
+          <Icon name="file" />
+        </button>
+      ) : null;
       toolBubbles.push(
         <Bubble
           key={keyOf(raw, index, `tool-${block.id || toolBubbles.length}`)}
           kind={BUBBLE_KIND.TOOL}
         >
-          <span className="bubble-tool-summary">{`→ ${summary}`}</span>
+          <span className="bubble-tool-summary">
+            {`→ ${summary}`}
+            {revealBtn}
+          </span>
           {details && <ToolDetails details={details} />}
         </Bubble>,
       );
@@ -269,10 +369,36 @@ function userBubbles(raw, index) {
     ? `${text}${text ? '\n' : ''}(${imageCount} image${imageCount === 1 ? '' : 's'} attached)`
     : text;
   return [
-    <Bubble key={keyOf(raw, index, 'user')} kind={BUBBLE_KIND.USER}>
-      {display}
-    </Bubble>,
+    <StickyPrompt key={keyOf(raw, index, 'user')} text={display} />,
   ];
+}
+
+
+// One operator prompt, rendered as a sticky section header. Collapsed
+// to a single line by default (chevron expands the full text). Every
+// prompt in the stream gets one; ``position: sticky; top: 0`` (see
+// ``.chat-sticky-prompt`` CSS) makes the active turn's prompt pin at
+// the top while you read its replies, and the previous turn's prompt
+// push it off as you scroll up — the Claude VS Code plugin feel.
+function StickyPrompt({ text }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className={`chat-sticky-prompt ${expanded ? 'is-expanded' : ''}`.trim()}>
+      <button
+        type="button"
+        className="chat-sticky-prompt-toggle"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        title={expanded ? 'Collapse this prompt' : 'Expand this prompt'}
+      >
+        <span className="chat-sticky-prompt-label">You asked</span>
+        <span className="chat-sticky-prompt-text">{text}</span>
+        <span className="chat-sticky-prompt-chevron" aria-hidden="true">
+          {expanded ? '▴' : '▾'}
+        </span>
+      </button>
+    </div>
+  );
 }
 
 function resultBubbles(raw, index) {

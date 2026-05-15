@@ -21,6 +21,7 @@ export default function SessionDetail({
   composerRef = null,
   toolMemory: providedToolMemory = null,
   onResizePointerDown,
+  onOpenFile,
 }) {
   const taskId = session?.task_id;
   const stream = useSessionStream(taskId, onActivity);
@@ -249,23 +250,32 @@ export default function SessionDetail({
           searchQuery={searchQuery}
           searchCurrentIndex={searchCurrentIndex}
           onSearchMatchCount={handleSearchMatchCount}
+          onOpenFile={onOpenFile}
         />
+        {/* WorkingIndicator + composer share one bottom-anchored
+            dock so the animated "✻ thinking…" line always sits
+            directly ON TOP of the input box. Left in normal flow it
+            landed after the flex:1 EventLog — i.e. below the
+            absolutely-floating composer. */}
+        <div className="composer-dock">
           <WorkingIndicator
             active={stream.turnInFlight || !!stream.pendingPermission}
             waitingForApproval={!!stream.pendingPermission}
             lastEventAt={stream.lastEventAt}
+            onContinue={() => onSendMessage('continue')}
           />
-        <MessageForm
-          ref={composerRef}
-          taskId={taskId}
-          turnInFlight={stream.turnInFlight}
-          onSubmit={onSendMessage}
-          disabled={composerDisabled}
-          disabledReason={composerHint}
-          availableModels={availableModels}
-          selectedModel={selectedModel}
-          onModelChange={handleModelChange}
-        />
+          <MessageForm
+            ref={composerRef}
+            taskId={taskId}
+            turnInFlight={stream.turnInFlight}
+            onSubmit={onSendMessage}
+            disabled={composerDisabled}
+            disabledReason={composerHint}
+            availableModels={availableModels}
+            selectedModel={selectedModel}
+            onModelChange={handleModelChange}
+          />
+        </div>
       </section>
       <PermissionDecisionContainer
         pending={stream.pendingPermission}

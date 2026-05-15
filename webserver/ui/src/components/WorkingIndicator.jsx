@@ -23,9 +23,13 @@ const TICK_MS = 1000;
 
 // Above this many seconds of total silence (no server events at all),
 // switch the indicator from cheerful "thinking" mode into a "may be
-// stalled" warning so the operator knows when to consider Stop +
-// retry instead of waiting longer.
-const STALL_THRESHOLD_SECONDS = 45;
+// stalled" warning. 45s was far too eager — a legitimate long tool
+// run (big test suite, slow install, deep Read sweep, a long model
+// "thinking" stretch) routinely goes minutes between streamed
+// events, so the old threshold flagged Claude as "stalled" while it
+// was plainly still working. 3 minutes is past any normal quiet
+// gap, so the warning now means something.
+const STALL_THRESHOLD_SECONDS = 180;
 
 function pickDifferent(previous) {
   const choices = PHRASES.filter((p) => p !== previous);
@@ -36,6 +40,7 @@ export default function WorkingIndicator({
   active,
   waitingForApproval = false,
   lastEventAt = 0,
+  onContinue,
 }) {
   const [phrase, setPhrase] = useState(() => pickDifferent(''));
   const [now, setNow] = useState(() => Date.now());
@@ -91,6 +96,19 @@ export default function WorkingIndicator({
         <span className="working-indicator-phrase">
           may be stalled — no activity for {formatSeconds(idleSeconds)}
         </span>
+        {typeof onContinue === 'function' && (
+          // The Claude VS Code plugin case: the agent sometimes
+          // surfaces an error and just waits for the human to type
+          // "continue". One click sends exactly that so the
+          // operator doesn't have to retype it every time.
+          <button
+            type="button"
+            className="working-indicator-continue"
+            onClick={onContinue}
+          >
+            Nudge: send “continue”
+          </button>
+        )}
       </div>
     );
   }

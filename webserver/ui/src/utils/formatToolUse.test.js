@@ -1,7 +1,38 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { formatToolUse } from './formatToolUse.js';
+import { formatToolUse, toolUseFilePath } from './formatToolUse.js';
+
+
+// ----- toolUseFilePath: the "open this file" affordance source -----
+
+test('toolUseFilePath returns file_path for Read/Write/Edit/MultiEdit', function () {
+  for (const tool of ['Read', 'Write', 'Edit', 'MultiEdit']) {
+    assert.equal(
+      toolUseFilePath(tool, { file_path: '/repo/src/app.py' }),
+      '/repo/src/app.py',
+      `${tool} should expose file_path`,
+    );
+  }
+});
+
+test('toolUseFilePath uses notebook_path for NotebookEdit', function () {
+  assert.equal(
+    toolUseFilePath('NotebookEdit', { notebook_path: '/repo/nb.ipynb' }),
+    '/repo/nb.ipynb',
+  );
+});
+
+test('toolUseFilePath is empty for non-file tools (Bash, etc.)', function () {
+  assert.equal(toolUseFilePath('Bash', { command: 'ls' }), '');
+  assert.equal(toolUseFilePath('TodoWrite', { todos: [] }), '');
+});
+
+test('toolUseFilePath tolerates missing / bad input', function () {
+  assert.equal(toolUseFilePath('Read', null), '');
+  assert.equal(toolUseFilePath('Read', {}), '');
+  assert.equal(toolUseFilePath('Edit', { file_path: '   ' }), '');
+});
 
 
 // ----- full path / command transparency (no truncation) -----

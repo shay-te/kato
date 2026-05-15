@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AdoptTaskModal from './components/AdoptTaskModal.jsx';
 import EditorPane from './components/EditorPane.jsx';
+import ForgetTaskModal from './components/ForgetTaskModal.jsx';
 import Header from './components/Header.jsx';
 import Layout from './components/Layout.jsx';
 import OrchestratorActivityFeed from './components/OrchestratorActivityFeed.jsx';
@@ -20,6 +21,7 @@ import { useSessions } from './hooks/useSessions.js';
 import { clearTaskStreamCache } from './hooks/useSessionStream.js';
 import { useStatusFeed } from './hooks/useStatusFeed.js';
 import { useTaskAttention } from './hooks/useTaskAttention.js';
+import { useTaskTabShortcuts } from './hooks/useTaskTabShortcuts.js';
 import { useToolMemory } from './hooks/useToolMemory.js';
 import { CLAUDE_EVENT } from './constants/claudeEvent.js';
 import { mergePendingPermissionTaskIds } from './utils/sessionAttention.js';
@@ -30,7 +32,11 @@ const RIGHT_PANE_MAX_WIDTH = 900;
 const RIGHT_PANE_STORAGE_KEY = 'kato.rightPaneWidth';
 const LEFT_PANE_DEFAULT_WIDTH = 320;
 const LEFT_PANE_MIN_WIDTH = 220;
-const LEFT_PANE_MAX_WIDTH = 700;
+// Generous upper bound — operators routinely widen the Files /
+// Changes pane to read long diffs side-by-side with the chat, and
+// 700px capped that too early. The grid uses minmax(0, …) so the
+// centre/right columns still collapse gracefully at large values.
+const LEFT_PANE_MAX_WIDTH = 1200;
 const LEFT_PANE_STORAGE_KEY = 'kato.leftPaneWidth';
 
 export default function App() {
@@ -102,7 +108,27 @@ export default function App() {
     attention.clear(taskId);
   }, [attention]);
 
-  const handleForgetTask = useCallback(async (taskId) => {
+  // Tab / Shift+Tab step through the task strip at the top (guards
+  // against text fields + open dialogs so normal focus tabbing still
+  // works there).
+  useTaskTabShortcuts({ sessions, activeTaskId, onSelect: setActiveTaskId });
+
+  // The tab "X" no longer forgets immediately — it stages the task
+  // for a hard-confirm modal. Forgetting wipes the local clone and
+  // is irreversible, so the operator must approve it in
+  // ForgetTaskModal before anything is deleted.
+  const [forgetCandidate, setForgetCandidate] = useState(null);
+  const requestForgetTask = useCallback((taskId) => {
+    if (!taskId) { return; }
+    const session = sessions.find((s) => s.task_id === taskId)
+      || { task_id: taskId };
+    setForgetCandidate(session);
+  }, [sessions]);
+  const cancelForgetTask = useCallback(() => {
+    setForgetCandidate(null);
+  }, []);
+
+  const doForgetTask = useCallback(async (taskId) => {
     if (!taskId) { return; }
     await forgetTaskWorkspace(taskId);
     clearTaskStreamCache(taskId);
@@ -112,6 +138,12 @@ export default function App() {
     }
     refresh();
   }, [activeTaskId, refresh]);
+
+  const confirmForgetTask = useCallback(() => {
+    const taskId = forgetCandidate?.task_id;
+    setForgetCandidate(null);
+    if (taskId) { doForgetTask(taskId); }
+  }, [forgetCandidate, doForgetTask]);
 
   const [scanPending, setScanPending] = useState(false);
   const handleScanNow = useCallback(async () => {
@@ -279,7 +311,7 @@ export default function App() {
           activeTaskId={activeTaskId}
           attentionTaskIds={attentionTaskIds}
           onSelect={setActiveTaskId}
-          onForget={handleForgetTask}
+          onForget={requestForgetTask}
           onOpenAddTask={() => setAddTaskModalOpen(true)}
           onScanNow={handleScanNow}
           scanPending={scanPending}
@@ -307,7 +339,7 @@ export default function App() {
       }
       center={
         orchestratorOpen
-          ? <OrchestratorActivityFeed history={status.history} />
+          ? <OrchestratorActivityFeed history={status.history} onClose={toggleOrchestrator} />
           : <EditorPane openFile={openFile} />
       }
       right={
@@ -320,6 +352,7 @@ export default function App() {
           composerRef={composerRef}
           toolMemory={toolMemory}
           onResizePointerDown={resizer.onPointerDown}
+          onOpenFile={handleOpenFile}
         />
       }
     />
@@ -353,6 +386,13 @@ export default function App() {
       <ChatComposerContext.Provider value={composerContextValue}>
         {layout}
       </ChatComposerContext.Provider>
+      {forgetCandidate && (
+        <ForgetTaskModal
+          session={forgetCandidate}
+          onConfirm={confirmForgetTask}
+          onCancel={cancelForgetTask}
+        />
+      )}
       {addTaskModalOpen && (
         <AdoptTaskModal
           alreadyAdoptedIds={new Set(sessions.map((s) => s.task_id))}

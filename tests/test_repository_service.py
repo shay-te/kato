@@ -1410,6 +1410,10 @@ class RepositoryServiceTests(unittest.TestCase):
             Mock(returncode=0, stdout='', stderr=''),
             Mock(returncode=0, stdout='main\n', stderr=''),
             Mock(returncode=0, stdout='0\n', stderr=''),
+            # rev-list --count feature/proj-1/backend..main (behind):
+            # 0 ⇒ branch is level with main ⇒ genuine no-op, keep the
+            # "no task changes" message (not the already-merged one).
+            Mock(returncode=0, stdout='0\n', stderr=''),
             Mock(returncode=0, stdout='feature/proj-1/backend\n', stderr=''),
             Mock(returncode=0, stdout='', stderr=''),
             Mock(returncode=0, stdout='', stderr=''),
@@ -1460,6 +1464,9 @@ class RepositoryServiceTests(unittest.TestCase):
             return_value='main',
         ), patch.object(
             RepositoryService,
+            # ahead == 0 (first call) AND behind == 0 (second call,
+            # refs swapped): branch is level with main — genuine
+            # no-op, keep the "no task changes" message.
             '_ahead_count',
             return_value=0,
         ):
@@ -1467,6 +1474,43 @@ class RepositoryServiceTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 RuntimeError,
                 'branch feature/proj-1/backend has no task changes ahead of main',
+            ):
+                service.validate_task_branches_are_publishable(
+                    [repository],
+                    {'backend': 'feature/proj-1/backend'},
+                )
+
+    def test_validate_task_branches_are_publishable_names_the_already_merged_case(self) -> None:
+        # ahead == 0 but main has advanced PAST the branch (behind
+        # >= 1): the branch's commits are already contained in main —
+        # its PR was already merged upstream. This must NOT read as a
+        # "no task changes" failure — operators mistake that for a
+        # broken agent run (see the UNA-2618 report).
+        repository = self.backend_repo
+
+        with patch(
+            'git_core_lib.git_core_lib.client.git_client.shutil.which',
+            return_value='/usr/bin/git',
+        ), patch.object(
+            RepositoryService,
+            '_working_tree_status',
+            return_value='',
+        ), patch.object(
+            RepositoryService,
+            '_comparison_reference',
+            return_value='main',
+        ), patch.object(
+            RepositoryService,
+            # 1st call = ahead (main..branch) → 0; 2nd call = behind
+            # (branch..main, refs swapped) → 7 ⇒ already merged.
+            '_ahead_count',
+            side_effect=[0, 7],
+        ):
+            service = RepositoryService(self.cfg.kato.repositories, 3)
+            with self.assertRaisesRegex(
+                RuntimeError,
+                'branch feature/proj-1/backend is already merged into main '
+                '— nothing new to open a pull request for',
             ):
                 service.validate_task_branches_are_publishable(
                     [repository],

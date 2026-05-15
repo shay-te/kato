@@ -605,6 +605,11 @@ class MultiRepoEndpointShapeTests(unittest.TestCase):
         self.assertEqual(payload['repository_ids'], ['client', 'backend'])
         repo_ids_in_trees = [entry['repo_id'] for entry in payload['trees']]
         self.assertEqual(repo_ids_in_trees, ['client', 'backend'])
+        # Every tree carries the change-colouring inputs the Files
+        # tab needs (same shape the conflict markers use).
+        for entry in payload['trees']:
+            self.assertIsInstance(entry['conflicted_files'], list)
+            self.assertIsInstance(entry['changed_files'], list)
         # Legacy fields are still populated for old clients.
         self.assertEqual(payload['cwd'], str(self.repo_a))
 

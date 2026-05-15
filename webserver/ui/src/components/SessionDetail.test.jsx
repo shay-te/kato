@@ -8,13 +8,40 @@
 //   - hasVisibleBubbles: decides whether at least one event should
 //     render in EventLog (used to suppress the "waiting" banner).
 
-import { describe, test, expect } from 'vitest';
+import { describe, test, expect, vi } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
-import {
+// Stub the heavy children so the dock-layout test renders fast and
+// deterministically. WorkingIndicator is kept REAL — it's the element
+// whose position (above the composer) we're asserting. MessageForm is
+// reduced to a bare ``#message-form`` so the ordering check has the
+// same selector the real composer uses.
+vi.mock('./SessionHeader.jsx', () => ({ default: () => <div data-testid="session-header" /> }));
+vi.mock('./EventLog.jsx', () => ({ default: () => <div data-testid="event-log" /> }));
+vi.mock('./MessageForm.jsx', () => ({ default: () => <form id="message-form" /> }));
+vi.mock('./PermissionDecisionContainer.jsx', () => ({ default: () => null }));
+vi.mock('./ChatSearch.jsx', () => ({ default: () => null }));
+vi.mock('../hooks/useToolMemory.js', () => ({
+  useToolMemory: () => ({ recall: vi.fn(), remember: vi.fn() }),
+}));
+vi.mock('../api.js', () => ({
+  fetchModels: vi.fn().mockResolvedValue({ models: [] }),
+  fetchSessionModel: vi.fn().mockResolvedValue({ model: '' }),
+  postChatMessage: vi.fn().mockResolvedValue({ ok: true, body: {} }),
+  postSession: vi.fn().mockResolvedValue({ ok: true }),
+  setSessionModel: vi.fn().mockResolvedValue({}),
+}));
+vi.mock('../hooks/useSessionStream.js', async (importActual) => {
+  const actual = await importActual();
+  return { ...actual, useSessionStream: vi.fn() };
+});
+
+import SessionDetail, {
   hasVisibleBubbles,
   lifecycleBanner,
 } from './SessionDetail.jsx';
-import { SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
+import { SESSION_LIFECYCLE, useSessionStream } from '../hooks/useSessionStream.js';
+import { postChatMessage } from '../api.js';
 import { ENTRY_SOURCE } from '../constants/entrySource.js';
 import { CLAUDE_EVENT, CLAUDE_SYSTEM_SUBTYPE } from '../constants/claudeEvent.js';
 import { BUBBLE_KIND } from '../constants/bubbleKind.js';
@@ -196,5 +223,100 @@ describe('hasVisibleBubbles', () => {
         },
       },
     ])).toBe(true);
+  });
+});
+
+
+describe('SessionDetail — composer dock layout', () => {
+
+  function _stream(overrides = {}) {
+    return {
+      events: [],
+      lifecycle: SESSION_LIFECYCLE.STREAMING,
+      turnInFlight: true,
+      pendingPermission: null,
+      lastEventAt: 0,
+      appendLocalEvent: vi.fn(),
+      markTurnBusy: vi.fn(),
+      reconnect: vi.fn(),
+      dismissPermission: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  test('working indicator sits ABOVE the composer inside .composer-dock', async () => {
+    // The reported bug: the animated "✻ thinking…" line rendered
+    // BELOW the floating input box. Both now live in one bottom-
+    // anchored .composer-dock with the indicator as the first child,
+    // so it always sits on top of the composer. ``turnInFlight: true``
+    // makes WorkingIndicator active so it actually renders.
+    useSessionStream.mockReturnValue(_stream({ turnInFlight: true }));
+
+    const { container } = render(
+      <SessionDetail session={{ task_id: 'T1' }} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('.composer-dock')).toBeInTheDocument();
+    });
+    const dock = container.querySelector('.composer-dock');
+    const children = Array.from(dock.children);
+    const indicator = dock.querySelector('.working-indicator');
+    const composer = dock.querySelector('#message-form');
+
+    expect(indicator).toBeInTheDocument();
+    expect(composer).toBeInTheDocument();
+    // Order in the DOM = stacking order in the column: the indicator
+    // must come before (i.e. visually above) the composer.
+    expect(children.indexOf(indicator)).toBeGreaterThanOrEqual(0);
+    expect(children.indexOf(indicator))
+      .toBeLessThan(children.indexOf(composer));
+  });
+
+  test('dock still wraps the composer when no turn is in flight', async () => {
+    // WorkingIndicator returns null when inactive — the dock then
+    // holds just the composer, with no empty indicator slot. This
+    // exercises the dock render path with the indicator absent.
+    useSessionStream.mockReturnValue(_stream({ turnInFlight: false }));
+
+    const { container } = render(
+      <SessionDetail session={{ task_id: 'T2' }} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('.composer-dock')).toBeInTheDocument();
+    });
+    const dock = container.querySelector('.composer-dock');
+    expect(dock.querySelector('#message-form')).toBeInTheDocument();
+    expect(dock.querySelector('.working-indicator')).toBeNull();
+  });
+
+  test('stalled indicator "continue" nudge sends a continue message', async () => {
+    // Covers the dock's onContinue closure: WorkingIndicator goes
+    // stalled after >180s of silence and shows a "send continue"
+    // button; clicking it must drive SessionDetail.onSendMessage
+    // ('continue') — optimistic local echo, turn marked busy, POST.
+    const stream = _stream({
+      turnInFlight: true,
+      lastEventAt: Date.now() - 200_000,
+    });
+    useSessionStream.mockReturnValue(stream);
+
+    render(<SessionDetail session={{ task_id: 'T1' }} />);
+
+    const nudge = await screen.findByRole('button', { name: /continue/i });
+    fireEvent.click(nudge);
+
+    expect(stream.markTurnBusy).toHaveBeenCalledWith(true);
+    await waitFor(() => {
+      expect(postChatMessage).toHaveBeenCalledWith('T1', 'continue', []);
+    });
+  });
+
+  test('renders the placeholder (no dock) when no session is bound', () => {
+    useSessionStream.mockReturnValue(_stream());
+    const { container } = render(<SessionDetail session={null} />);
+    expect(container.querySelector('#session-placeholder')).toBeInTheDocument();
+    expect(container.querySelector('.composer-dock')).toBeNull();
   });
 });

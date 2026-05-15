@@ -125,6 +125,23 @@ const FORMATTERS = {
 };
 
 
+// Tools whose ``input`` names a single workspace file. Used by the
+// chat bubble to offer a one-click "open this file" affordance next
+// to the path the agent touched.
+const FILE_PATH_TOOLS = new Set(['Read', 'Edit', 'MultiEdit', 'Write']);
+
+export function toolUseFilePath(toolName, input) {
+  if (!input || typeof input !== 'object') { return ''; }
+  if (toolName === 'NotebookEdit') {
+    return String(input.notebook_path || '').trim();
+  }
+  if (FILE_PATH_TOOLS.has(toolName)) {
+    return String(input.file_path || '').trim();
+  }
+  return '';
+}
+
+
 export function formatToolUse(toolName, input) {
   const formatter = FORMATTERS[toolName];
   if (formatter) {

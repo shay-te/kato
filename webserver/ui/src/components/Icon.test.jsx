@@ -30,6 +30,12 @@ describe('Icon', () => {
     expect(container.querySelector('svg').getAttribute('data-icon')).toBe('xmark');
   });
 
+  test('external-link maps to the open-in-new-tab glyph', () => {
+    const { container } = render(<Icon name="external-link" />);
+    expect(container.querySelector('svg').getAttribute('data-icon'))
+      .toBe('arrow-up-right-from-square');
+  });
+
   test('unknown name renders null (no garbage glyph)', () => {
     const { container } = render(<Icon name="does-not-exist" />);
     expect(container.querySelector('svg')).toBeNull();

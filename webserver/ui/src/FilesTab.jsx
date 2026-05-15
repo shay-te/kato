@@ -280,6 +280,7 @@ export default function FilesTab({
           onOpenFile={onOpenFile}
           searchTerm={deferredQuery}
           conflictedFiles={repoTree.conflictedFiles}
+          changedFiles={repoTree.changedFiles}
           taskId={taskId}
         />
       );
@@ -395,7 +396,7 @@ export function formatSyncResult(result) {
 function RepoTree({
   repoTree, width, collapsed, onToggle, onPickFile,
   onOpenFile,
-  searchTerm = '', conflictedFiles, taskId = '',
+  searchTerm = '', conflictedFiles, changedFiles, taskId = '',
 }) {
   const treeData = useMemo(() => {
     return attachIds(repoTree.tree, repoTree.cwd);
@@ -477,6 +478,7 @@ function RepoTree({
             onPickFile={onPickFile}
             onOpenFile={onOpenFile}
             conflictedFiles={conflictedFiles}
+            changedFiles={changedFiles}
             repoId={repoId}
           />
         )}
@@ -577,18 +579,26 @@ function CommitDropdown({ state, onPick, onClose }) {
 }
 
 function Node({
-  node, style, onPickFile, onOpenFile, conflictedFiles, repoId = '',
+  node, style, onPickFile, onOpenFile, conflictedFiles,
+  changedFiles, repoId = '',
 }) {
   const isFolder = node.isInternal;
   function onActivate() {
-    if (!isFolder && typeof onOpenFile === 'function') {
-      onOpenFile({
-        absolutePath: String(node.data?.path || ''),
-        relativePath: String(node.data?.relativePath || ''),
-        repoId,
-      });
+    // Left-click a FILE: only open it in the editor pane. It must
+    // NOT also paste the path into the chat composer — pasting is
+    // the explicit RIGHT-click affordance (see onContextMenu).
+    if (!isFolder) {
+      if (typeof onOpenFile === 'function') {
+        onOpenFile({
+          absolutePath: String(node.data?.path || ''),
+          relativePath: String(node.data?.relativePath || ''),
+          repoId,
+        });
+      }
+      return;
     }
-    activateTreeNode(node, onPickFile);
+    // Folder: expand / collapse.
+    activateTreeNode(node);
   }
   // Right-click pastes the FULL absolute path of whatever was
   // clicked — file OR folder — into the chat composer. Folders
@@ -609,10 +619,20 @@ function Node({
     && conflictedFiles
     && conflictedFiles.size > 0
     && conflictedFiles.has(node.data.relativePath);
+  // A file kato has touched on this branch (committed or not) —
+  // same set the Changes tab shows. Conflict wins visually since
+  // it's the more urgent signal, so only flag ``changed`` when the
+  // file isn't already flagged conflicted.
+  const isChanged = !isFolder
+    && !isConflicted
+    && changedFiles
+    && changedFiles.size > 0
+    && changedFiles.has(node.data.relativePath);
   const rowClass = [
     'tree-row',
     node.isSelected ? 'selected' : '',
     isConflicted ? 'conflicted' : '',
+    isChanged ? 'changed' : '',
   ].filter(Boolean).join(' ');
   let iconName;
   if (!isFolder) {
@@ -628,6 +648,8 @@ function Node({
   let tooltip;
   if (isConflicted) {
     tooltip = 'Merge conflict — needs resolution';
+  } else if (isChanged) {
+    tooltip = 'Modified on this task branch — see the Changes tab for the diff';
   } else if (isFolder) {
     tooltip = 'Click to expand · right-click to paste this folder’s path into the chat';
   } else {
@@ -645,6 +667,9 @@ function Node({
       <span className="tree-row-name">{node.data.name}</span>
       {isConflicted && (
         <span className="tree-row-conflict" aria-label="merge conflict">⚠</span>
+      )}
+      {isChanged && (
+        <span className="tree-row-changed" aria-label="modified on this branch">M</span>
       )}
     </div>
   );

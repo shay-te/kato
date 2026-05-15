@@ -9,32 +9,31 @@ import {
 } from './FilesTabHelpers.js';
 
 
-test('file activation appends the repository-relative path to chat input', function () {
+test('file activation is a no-op — left-click only opens, never pastes to chat', function () {
   const tree = attachIds([
     {
       name: 'Source.js',
       path: '/workspace/client/src/Table/OrganizationPhoneNumbers/Source.js',
     },
   ], '/workspace/client');
-  const pickedPaths = [];
+  let toggled = false;
   const fileNode = {
     isInternal: false,
     data: tree[0],
     toggle: function () {
-      throw new Error('file nodes must not toggle');
+      toggled = true;
     },
   };
 
-  activateTreeNode(fileNode, function (path) {
-    pickedPaths.push(path);
-  });
+  // No throw, no toggle — files do nothing on activate; opening is
+  // the caller's job (onOpenFile), pasting is right-click only.
+  activateTreeNode(fileNode);
 
-  assert.deepEqual(pickedPaths, ['src/Table/OrganizationPhoneNumbers/Source.js']);
+  assert.equal(toggled, false);
 });
 
-test('folder activation toggles without appending text to chat input', function () {
+test('folder activation toggles', function () {
   let toggled = false;
-  const pickedPaths = [];
   const folderNode = {
     isInternal: true,
     data: { relativePath: 'src' },
@@ -43,12 +42,9 @@ test('folder activation toggles without appending text to chat input', function 
     },
   };
 
-  activateTreeNode(folderNode, function (path) {
-    pickedPaths.push(path);
-  });
+  activateTreeNode(folderNode);
 
   assert.equal(toggled, true);
-  assert.deepEqual(pickedPaths, []);
 });
 
 test('multi-repository payload normalization keeps repo cwd for relative paths', function () {
@@ -179,4 +175,44 @@ test('normalizeTrees handles legacy single-repo payload with conflicted_files', 
   });
   assert.equal(normalized.length, 1);
   assert.equal(normalized[0].conflictedFiles.has('src/legacy.py'), true);
+});
+
+// ----- changed-file surfacing through normalizeTrees -----
+
+test('normalizeTrees carries changed_files into a Set on each tree', function () {
+  const normalized = normalizeTrees({
+    trees: [
+      {
+        repo_id: 'client',
+        cwd: '/workspace/client',
+        tree: [],
+        changed_files: ['src/app.py', 'README.md'],
+      },
+    ],
+  });
+  assert.equal(normalized[0].changedFiles instanceof Set, true);
+  assert.equal(normalized[0].changedFiles.has('src/app.py'), true);
+  assert.equal(normalized[0].changedFiles.has('README.md'), true);
+  assert.equal(normalized[0].changedFiles.has('src/untouched.py'), false);
+});
+
+test('normalizeTrees defaults changedFiles to an empty Set when missing', function () {
+  const normalized = normalizeTrees({
+    trees: [
+      { repo_id: 'client', cwd: '/workspace/client', tree: [] },
+    ],
+  });
+  assert.equal(normalized[0].changedFiles instanceof Set, true);
+  assert.equal(normalized[0].changedFiles.size, 0);
+});
+
+test('normalizeTrees handles legacy single-repo payload with changed_files', function () {
+  const normalized = normalizeTrees({
+    cwd: '/workspace/client',
+    tree: [],
+    changed_files: ['src/legacy_changed.py'],
+  });
+  assert.equal(normalized.length, 1);
+  assert.equal(normalized[0].changedFiles instanceof Set, true);
+  assert.equal(normalized[0].changedFiles.has('src/legacy_changed.py'), true);
 });

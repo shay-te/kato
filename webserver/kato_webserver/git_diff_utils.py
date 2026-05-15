@@ -220,6 +220,42 @@ def conflicted_paths(cwd: str) -> list[str]:
     return sorted(paths)
 
 
+def changed_paths(cwd: str, base_ref: str) -> list[str]:
+    """Repo-relative paths that differ from ``base_ref``.
+
+    Same coverage as the Changes-tab diff (``diff_against_base``) so
+    the Files tree and the Changes tab agree on "what changed":
+
+      * ``git diff --name-only <base_ref>`` — tracked files with
+        committed OR uncommitted edits vs the destination tip;
+      * ``git ls-files --others --exclude-standard`` — untracked,
+        non-ignored files Claude just wrote (not yet in the index,
+        so the diff above misses them).
+
+    Best-effort: an empty list on any git failure (no upstream,
+    bad base ref, git not on PATH) — the tree just renders without
+    change colouring rather than erroring.
+    """
+    if not cwd or not base_ref:
+        return []
+    paths: set[str] = set()
+    tracked = run_git(cwd, ['diff', '--name-only', base_ref], timeout=20)
+    if tracked:
+        for line in tracked.splitlines():
+            path = line.strip()
+            if path:
+                paths.add(path)
+    untracked = run_git(
+        cwd, ['ls-files', '--others', '--exclude-standard'], timeout=15,
+    )
+    if untracked:
+        for line in untracked.splitlines():
+            path = line.strip()
+            if path:
+                paths.add(path)
+    return sorted(paths)
+
+
 def list_branch_commits(
     cwd: str,
     base_ref: str,

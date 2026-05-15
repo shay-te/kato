@@ -980,6 +980,32 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         ahead_count = self._ahead_count(local_path, comparison_ref, branch_name)
         if ahead_count >= 1:
             return
+        # Zero commits ahead has two very different causes, and the
+        # operator must be able to tell them apart from the one-line
+        # skip message — otherwise an already-shipped task reads like
+        # "create pull request failed".
+        #
+        # The discriminator is the BEHIND count (commits in the
+        # comparison ref the branch lacks). ``_ahead_count`` with the
+        # refs swapped is exactly that, so the black-box git lib needs
+        # no new method:
+        #   - behind >= 1: the comparison ref advanced PAST the
+        #     branch while the branch holds nothing new — the branch's
+        #     commits are already contained in it, i.e. this task's
+        #     pull request was already merged upstream. A completed
+        #     task, not a failure or an empty-handed agent run.
+        #   - behind == 0: the branch is level with the comparison
+        #     ref — the agent genuinely produced no commits here.
+        #
+        # (An ancestor check can't discriminate: ahead == 0 already
+        # implies the branch tip is contained in the comparison ref,
+        # so ``--is-ancestor`` is unconditionally true here.)
+        behind_count = self._ahead_count(local_path, branch_name, comparison_ref)
+        if behind_count >= 1:
+            raise RepositoryHasNoChangesError(
+                f'branch {branch_name} is already merged into {comparison_ref} '
+                f'— nothing new to open a pull request for'
+            )
         raise RepositoryHasNoChangesError(
             f'branch {branch_name} has no task changes ahead of {comparison_ref}'
         )
