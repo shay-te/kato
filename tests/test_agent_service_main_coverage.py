@@ -428,6 +428,16 @@ class ColdActiveWorkspaceCleanupTests(unittest.TestCase):
         result = svc._stale_planning_task_ids(set())
         self.assertNotIn('UNA-1201', result)
 
+    def test_get_session_raising_is_treated_as_no_live_session(self) -> None:
+        # session_manager.get_session blowing up must NOT crash the
+        # sweep or falsely protect the workspace: _has_live_session
+        # swallows it and reports "no live session", so a cold active
+        # leftover whose ticket isn't live is still cleaned.
+        svc = self._service([self._ws()])  # cold active, ticket not live
+        svc._session_manager.get_session.side_effect = RuntimeError('boom')
+        result = svc._stale_planning_task_ids(set())
+        self.assertIn('UNA-1201', result)
+
 
 class TerminateSessionSilentTests(unittest.TestCase):
     def test_noop_when_session_manager_none(self) -> None:

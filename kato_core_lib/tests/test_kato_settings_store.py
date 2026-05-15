@@ -46,6 +46,29 @@ class KatoSettingsStoreTests(unittest.TestCase):
         with patch.dict(os.environ, self._env()):
             self.assertEqual(kato_settings_path(), self.path)
 
+    def test_path_defaults_to_home_kato_when_unset(self) -> None:
+        # No KATO_SETTINGS_FILE → ~/.kato/settings.json. Home is
+        # redirected so the test never reads a real home dir.
+        fake_home = Path(self._tmp.name) / 'home'
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('KATO_SETTINGS_FILE', None)
+            with patch(
+                'kato_core_lib.helpers.kato_settings_store_utils.Path.home',
+                return_value=fake_home,
+            ):
+                self.assertEqual(
+                    kato_settings_path(),
+                    fake_home / '.kato' / 'settings.json',
+                )
+
+    def test_write_empty_updates_is_a_noop(self) -> None:
+        # write_kato_settings({}) must not create/touch the file —
+        # it just returns the current settings.
+        with patch.dict(os.environ, self._env()):
+            write_kato_settings({'A': '1'})
+            result = write_kato_settings({})
+        self.assertEqual(result, {'A': '1'})
+
     def test_read_missing_file_returns_empty(self) -> None:
         with patch.dict(os.environ, self._env()):
             self.assertEqual(read_kato_settings(), {})

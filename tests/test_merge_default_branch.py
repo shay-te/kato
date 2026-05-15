@@ -212,6 +212,73 @@ class AgentAggregationTests(unittest.TestCase):
             out['merged_repositories'][0]['commits_merged'], 3,
         )
 
+    def test_no_workspace_context_returns_error(self) -> None:
+        # _resolve_publish_context yields no repos (clone gone /
+        # task never provisioned) → explicit error, no merge attempt.
+        svc = self._service()
+        with patch.object(
+            svc, '_resolve_publish_context',
+            return_value=([], None, None),
+        ):
+            out = svc.merge_default_branch_for_task('T-1')
+        self.assertFalse(out['merged'])
+        self.assertEqual(out['task_id'], 'T-1')
+        self.assertEqual(out['error'], 'no workspace context for this task')
+        svc._repository_service.merge_default_branch_into_clone.assert_not_called()
+
+    def test_repo_merge_exception_is_isolated_as_failed(self) -> None:
+        # One repo raising must not abort the run — it lands in
+        # failed_repositories with the error string.
+        svc = self._service()
+        repo = SimpleNamespace(id='client')
+        svc._repository_service.merge_default_branch_into_clone.side_effect = (
+            RuntimeError('git exploded')
+        )
+        with patch.object(
+            svc, '_resolve_publish_context',
+            return_value=([repo], 'feat/x', SimpleNamespace(id='T-1')),
+        ):
+            out = svc.merge_default_branch_for_task('T-1')
+        self.assertFalse(out['merged'])
+        self.assertEqual(out['failed_repositories'][0]['repository_id'], 'client')
+        self.assertIn('git exploded', out['failed_repositories'][0]['error'])
+        svc.logger.exception.assert_called()
+
+    def test_already_contains_default_branch_is_skipped(self) -> None:
+        # merged=True but updated=False → branch already had the
+        # default branch; reported as an already_up_to_date skip.
+        svc = self._service()
+        repo = SimpleNamespace(id='client')
+        svc._repository_service.merge_default_branch_into_clone.return_value = {
+            'merged': True, 'updated': False,
+        }
+        with patch.object(
+            svc, '_resolve_publish_context',
+            return_value=([repo], 'feat/x', SimpleNamespace(id='T-1')),
+        ):
+            out = svc.merge_default_branch_for_task('T-1')
+        skipped = out['skipped_repositories'][0]
+        self.assertEqual(skipped['repository_id'], 'client')
+        self.assertEqual(skipped['reason'], 'already_up_to_date')
+
+    def test_unmergeable_outcome_is_skipped_with_reason(self) -> None:
+        # Neither merged nor conflicts (e.g. preflight refused) →
+        # skipped with the outcome's own reason/detail surfaced.
+        svc = self._service()
+        repo = SimpleNamespace(id='client')
+        svc._repository_service.merge_default_branch_into_clone.return_value = {
+            'merged': False, 'conflicts': False,
+            'reason': 'dirty_tree', 'detail': 'uncommitted changes',
+        }
+        with patch.object(
+            svc, '_resolve_publish_context',
+            return_value=([repo], 'feat/x', SimpleNamespace(id='T-1')),
+        ):
+            out = svc.merge_default_branch_for_task('T-1')
+        skipped = out['skipped_repositories'][0]
+        self.assertEqual(skipped['reason'], 'dirty_tree')
+        self.assertEqual(skipped['detail'], 'uncommitted changes')
+
 
 if __name__ == '__main__':
     unittest.main()
