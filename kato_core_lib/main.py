@@ -170,6 +170,7 @@ def main(cfg: DictConfig) -> int:
     _recover_orphan_workspaces(app)
     _reconcile_workspace_branches(app)
     _reset_stuck_workspace_statuses(app)
+    _cleanup_done_tasks_at_boot(app)
     # Sessions are lazy after restart: opening a tab replays the disk
     # JSONL via SSE so the conversation history is visible immediately.
     # Claude is re-spawned (with ``--resume <id>``) only when the operator
@@ -254,6 +255,33 @@ def _reconcile_workspace_branches(app) -> None:
             'could not realign %d workspace clone(s) to task branch '
             '(dirty tree or missing branch): %s',
             len(skipped), ', '.join(skipped[:10]),
+        )
+
+
+def _cleanup_done_tasks_at_boot(app) -> None:
+    """Prune tabs for tickets already done/closed — once, at startup.
+
+    Cleanup otherwise only runs on a scan tick (inside
+    ``get_new_pull_request_comments``), so a restart would render a
+    tab for any task whose ``~/.kato/sessions/<id>.json`` is still on
+    disk even though the ticket moved to done — it'd only vanish
+    ~30s later on the first scan. Running the prune here, BEFORE the
+    planning webserver starts serving the tab list, means a restart
+    never resurrects a done task even briefly. Connections were
+    already validated at boot, so the ticket-platform call this
+    needs is safe. Best-effort: any failure is logged and boot
+    continues (the scan-loop cleanup is still the backstop).
+    """
+    service = getattr(app, 'service', None)
+    cleanup = getattr(service, 'cleanup_done_tasks', None)
+    if not callable(cleanup):
+        return
+    try:
+        cleanup()
+    except Exception:
+        app.logger.exception(
+            'boot-time done-task cleanup failed; the scan loop will '
+            'retry it on the next tick',
         )
 
 

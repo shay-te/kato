@@ -9,6 +9,7 @@ from unittest.mock import ANY, Mock, call, patch
 from kato_core_lib.main import (
     _RESUME_CONTINUE_PROMPT,
     _RESUME_WAIT_PROMPT,
+    _cleanup_done_tasks_at_boot,
     _reset_stuck_workspace_statuses,
     _resume_prompt_for_workspace,
     _resume_streaming_sessions,
@@ -670,6 +671,54 @@ class MainReadOnlyToolsIntegrationTests(unittest.TestCase):
         ) as mock_validator:
             self._run_main_with_other_validators_mocked()
         mock_validator.assert_called_once()
+
+
+class CleanupDoneTasksAtBootTests(unittest.TestCase):
+    """Boot-time prune so a restart never resurrects a done task's tab.
+
+    The "task is back after restart" bug: cleanup only ran on a scan
+    tick, so a stale ``~/.kato/sessions/<id>.json`` left a tab on
+    screen until the first tick ~30s later. This runs the prune at
+    boot, before the webserver serves the tab list.
+    """
+
+    def test_delegates_to_agent_service_cleanup(self) -> None:
+        cleanup = Mock()
+        app = types.SimpleNamespace(
+            logger=Mock(),
+            service=types.SimpleNamespace(cleanup_done_tasks=cleanup),
+        )
+        _cleanup_done_tasks_at_boot(app)
+        cleanup.assert_called_once_with()
+
+    def test_noop_when_service_missing(self) -> None:
+        app = types.SimpleNamespace(logger=Mock())
+        _cleanup_done_tasks_at_boot(app)  # no raise
+
+    def test_noop_when_service_lacks_method(self) -> None:
+        app = types.SimpleNamespace(
+            logger=Mock(), service=types.SimpleNamespace(),
+        )
+        _cleanup_done_tasks_at_boot(app)  # no raise
+
+    def test_swallows_cleanup_exception(self) -> None:
+        cleanup = Mock(side_effect=RuntimeError('platform down'))
+        app = types.SimpleNamespace(
+            logger=Mock(),
+            service=types.SimpleNamespace(cleanup_done_tasks=cleanup),
+        )
+        _cleanup_done_tasks_at_boot(app)  # must NOT raise — boot continues
+        app.logger.exception.assert_called()
+
+    def test_runs_before_the_planning_webserver_starts(self) -> None:
+        # Ordering guard: a restart must prune BEFORE the webserver
+        # serves the tab list, otherwise the done tab flashes back.
+        import inspect
+        from kato_core_lib import main as kato_main
+        src = inspect.getsource(kato_main.main)
+        boot_idx = src.index('_cleanup_done_tasks_at_boot(app)')
+        web_idx = src.index('_start_planning_webserver_if_enabled(app)')
+        self.assertLess(boot_idx, web_idx)
 
 
 class ResetStuckWorkspaceStatusesTests(unittest.TestCase):

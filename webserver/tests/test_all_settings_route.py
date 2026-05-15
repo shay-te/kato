@@ -19,7 +19,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from kato_webserver.app import create_app
-from kato_core_lib.helpers.kato_settings_schema import all_settings_keys
+from kato_core_lib.helpers.kato_settings_schema_utils import all_settings_keys
 
 
 class _FakeManager:

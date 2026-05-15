@@ -1,4 +1,4 @@
-"""Unit tests for ``kato_settings_store``.
+"""Unit tests for ``kato_settings_store_utils``.
 
 Pins the contract the whole settings-UI migration rests on:
 
@@ -21,7 +21,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from kato_core_lib.helpers.kato_settings_store import (
+from kato_core_lib.helpers.kato_settings_store_utils import (
     kato_settings_path,
     load_kato_settings_into_environ,
     read_kato_settings,

@@ -158,6 +158,52 @@ class ClaudeSessionManagerTests(unittest.TestCase):
         self.assertIsNone(self.manager.get_record('PROJ-1'))
         self.assertFalse((self.state_dir / 'PROJ-1.json').exists())
 
+    def test_remove_record_deletes_legacy_uppercase_filename(self) -> None:
+        # Regression: records written before _record_path lowercased
+        # live under the original-case filename (``UNA-1201.json``).
+        # The canonical path is ``una-1201.json``; deleting only that
+        # left the legacy file on disk and the blanket glob in
+        # _load_persisted_records resurrected the tab on every
+        # restart ("task is back after restart"). The delete must
+        # remove ANY case-variant filename for the task.
+        legacy = self.state_dir / 'UNA-1201.json'
+        legacy.write_text(json.dumps({
+            'task_id': 'UNA-1201', 'status': 'active',
+            'claude_session_id': '', 'cwd': '',
+        }), encoding='utf-8')
+        self.manager.terminate_session('UNA-1201', remove_record=True)
+        self.assertFalse(
+            legacy.exists(),
+            'legacy uppercase record must be deleted, not just the '
+            'canonical lowercase path',
+        )
+
+    def test_remove_record_deletes_both_case_variants(self) -> None:
+        # Belt-and-braces: if BOTH casings somehow exist, both go.
+        upper = self.state_dir / 'UNA-99.json'
+        lower = self.state_dir / 'una-99.json'
+        for p in (upper, lower):
+            p.write_text(json.dumps({'task_id': 'UNA-99'}), encoding='utf-8')
+        self.manager.terminate_session('UNA-99', remove_record=True)
+        self.assertFalse(upper.exists())
+        self.assertFalse(lower.exists())
+
+    def test_legacy_record_does_not_resurrect_after_delete(self) -> None:
+        # The end-to-end guarantee: delete the legacy file, rebuild a
+        # manager against the same state dir (≈ a kato restart), and
+        # the task must NOT come back.
+        legacy = self.state_dir / 'UNA-1201.json'
+        legacy.write_text(json.dumps({
+            'task_id': 'UNA-1201', 'status': 'active',
+        }), encoding='utf-8')
+        self.manager.terminate_session('UNA-1201', remove_record=True)
+        rebooted = ClaudeSessionManager(
+            state_dir=self.state_dir,
+            session_factory=lambda **kw: _FakeStreamingSession(**kw),
+        )
+        self.assertIsNone(rebooted.get_record('UNA-1201'))
+        self.assertEqual(rebooted.list_records(), [])
+
     def _seed_claude_transcript(self, projects_root, session_id):
         path = Path(projects_root) / 'enc-cwd' / f'{session_id}.jsonl'
         path.parent.mkdir(parents=True, exist_ok=True)

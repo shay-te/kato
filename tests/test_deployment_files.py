@@ -364,6 +364,8 @@ class DeploymentFilesTests(unittest.TestCase):
                 'KATO_CLAUDE_EFFORT',
                 'KATO_CLAUDE_ALLOWED_TOOLS',
                 'KATO_CLAUDE_DISALLOWED_TOOLS',
+                'KATO_CLAUDE_DOCKER',
+                'KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS',
                 'KATO_CLAUDE_BYPASS_PERMISSIONS',
                 'KATO_SECURITY_SCANNER_ENABLED',
                 'KATO_SECURITY_RUNNER_ENV_FILE',

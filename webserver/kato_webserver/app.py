@@ -197,7 +197,7 @@ def _settings_env_path() -> Path:
     """Legacy ``<repo>/.env`` path — now only a READ fallback.
 
     The settings UI writes to ``~/.kato/settings.json`` (see
-    ``kato_settings_store``). ``.env`` is still read here so an
+    ``kato_settings_store_utils``). ``.env`` is still read here so an
     operator who hasn't saved through the new UI yet still sees
     their existing values + a correct source label. The
     ``KATO_SETTINGS_ENV_FILE`` override is preserved for tests that
@@ -218,7 +218,7 @@ def _resolve_setting(key: str) -> dict:
     one of ``env`` / ``kato_settings`` / ``env_file`` / ``unset`` so
     the UI can label where a value lives.
     """
-    from kato_core_lib.helpers.kato_settings_store import read_kato_settings
+    from kato_core_lib.helpers.kato_settings_store_utils import read_kato_settings
 
     live = os.environ.get(key, '')
     settings_value = read_kato_settings().get(key, '')
@@ -244,7 +244,7 @@ def _persist_settings(updates: dict) -> None:
     Single chokepoint so every settings route writes the same place.
     Replaces the old per-key ``.env`` writers.
     """
-    from kato_core_lib.helpers.kato_settings_store import write_kato_settings
+    from kato_core_lib.helpers.kato_settings_store_utils import write_kato_settings
 
     write_kato_settings(updates)
 
@@ -772,7 +772,7 @@ def _register_http_routes(app: Flask) -> None:
         (``~/.kato/settings.json`` — what the UI writes), or
         ``env_file`` (legacy ``<repo>/.env`` fallback).
         """
-        from kato_core_lib.helpers.kato_settings_store import (
+        from kato_core_lib.helpers.kato_settings_store_utils import (
             kato_settings_path,
         )
 
@@ -846,7 +846,7 @@ def _register_http_routes(app: Flask) -> None:
         var is the operator-facing knob). This is the "where do
         tickets live + which one does kato poll" tab.
         """
-        from kato_core_lib.helpers.kato_settings_store import (
+        from kato_core_lib.helpers.kato_settings_store_utils import (
             kato_settings_path,
         )
 
@@ -914,7 +914,7 @@ def _register_http_routes(app: Flask) -> None:
         remote URL. This is purely "set the creds kato uses to
         clone / push / open PRs against <host>".
         """
-        from kato_core_lib.helpers.kato_settings_store import (
+        from kato_core_lib.helpers.kato_settings_store_utils import (
             kato_settings_path,
         )
 
@@ -972,10 +972,10 @@ def _register_http_routes(app: Flask) -> None:
         Docker/infra, AWS). Provider/repo-root keys are intentionally
         absent — they have dedicated tabs with custom logic.
         """
-        from kato_core_lib.helpers.kato_settings_schema import (
+        from kato_core_lib.helpers.kato_settings_schema_utils import (
             schema_for_api,
         )
-        from kato_core_lib.helpers.kato_settings_store import (
+        from kato_core_lib.helpers.kato_settings_store_utils import (
             kato_settings_path,
         )
 
@@ -1000,7 +1000,7 @@ def _register_http_routes(app: Flask) -> None:
         numbers are coerced to the string form ``.env`` land
         expects. ``restart_required`` because kato reads env at boot.
         """
-        from kato_core_lib.helpers.kato_settings_schema import (
+        from kato_core_lib.helpers.kato_settings_schema_utils import (
             all_settings_keys,
         )
 

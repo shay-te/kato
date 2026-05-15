@@ -182,7 +182,7 @@ def main(argv: list[str]) -> int:
     # skip keys already in os.environ, so shell stays on top and a
     # key set by settings.json won't be clobbered by .env).
     try:
-        from kato_core_lib.helpers.kato_settings_store import (
+        from kato_core_lib.helpers.kato_settings_store_utils import (
             load_kato_settings_into_environ,
         )
         load_kato_settings_into_environ()

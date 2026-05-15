@@ -12,6 +12,7 @@ Focuses on:
 
 from __future__ import annotations
 
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -157,6 +158,44 @@ class GetNewPullRequestCommentsTests(unittest.TestCase):
         self.assertEqual(result, ['c1'])
 
 
+class CleanupDoneTasksBootEntrypointTests(unittest.TestCase):
+    def test_public_cleanup_delegates_to_internal(self) -> None:
+        service = AgentService(**_kwargs())
+        with patch.object(service, '_cleanup_done_task_conversations') as c:
+            service.cleanup_done_tasks()
+        c.assert_called_once_with()
+
+    def test_done_task_with_stale_session_record_is_pruned(self) -> None:
+        # Mirrors UNA-1201's exact on-disk shape: a session record
+        # left behind (status 'active', no workspace folder) for a
+        # ticket that's NO LONGER assigned or in review. The boot
+        # prune must delete it so the tab doesn't come back.
+        task_service = MagicMock()
+        task_service.get_review_tasks.return_value = []
+        task_service.get_assigned_tasks.return_value = []
+        session = MagicMock()
+        session.list_records.return_value = [
+            SimpleNamespace(task_id='UNA-1201', status='active'),
+        ]
+        workspace = MagicMock()
+        workspace.list_workspaces.return_value = []  # workspace already gone
+        registry = MagicMock()
+        registry.tracked_task_ids.return_value = set()
+        review_svc = MagicMock()
+        review_svc.state_registry = registry
+        service = AgentService(**_kwargs(
+            task_service=task_service,
+            session_manager=session,
+            workspace_manager=workspace,
+            review_comment_service=review_svc,
+        ))
+        service.logger = MagicMock()
+        service.cleanup_done_tasks()
+        session.terminate_session.assert_called_once_with(
+            'UNA-1201', remove_record=True,
+        )
+
+
 class CleanupDoneTaskConversationsTests(unittest.TestCase):
     def test_swallows_review_tasks_exception(self) -> None:
         task_service = MagicMock()
@@ -265,13 +304,20 @@ class StalePlanningTaskIdsTests(unittest.TestCase):
         self.assertIn('STALE-1', result)
         self.assertNotIn('ACTIVE-1', result)
 
-    def test_review_ttl_expired_workspaces_become_stale(self) -> None:
+    def test_aged_review_workspace_is_protected_not_stale(self) -> None:
+        """Regression for the UNA-232 "disappeared while on verify" bug.
+
+        A review-state clone, however old, must NEVER be swept — the
+        operator may still be verifying it. (Previously a review clone
+        older than the TTL was force-cleaned, which deleted the clone
+        and made the task vanish from the UI mid-review.)
+        """
         from kato_core_lib.data_layers.service.workspace_manager import (
             WORKSPACE_STATUS_REVIEW,
         )
         import time
         workspace = MagicMock()
-        old_epoch = time.time() - 7200  # 2 hours ago
+        old_epoch = time.time() - 7200  # 2 hours ago, well past TTL
         workspace.list_workspaces.return_value = [
             SimpleNamespace(
                 task_id='OLD-REVIEW', status=WORKSPACE_STATUS_REVIEW,
@@ -282,9 +328,105 @@ class StalePlanningTaskIdsTests(unittest.TestCase):
             workspace_manager=workspace,
             review_workspace_ttl_seconds=3600.0,  # 1 hour
         ))
-        # Live task ids includes OLD-REVIEW — should still be stale via TTL.
-        result = service._stale_planning_task_ids({'OLD-REVIEW'})
-        self.assertIn('OLD-REVIEW', result)
+        # Even when the ticket is absent from this scan's fetch, the
+        # review clone on disk must stay protected by status.
+        result = service._stale_planning_task_ids(set())
+        self.assertNotIn('OLD-REVIEW', result)
+
+
+class ColdActiveWorkspaceCleanupTests(unittest.TestCase):
+    """Regression: a finished task's workspace stays ``active`` forever
+    (nothing reliably resets it). The old unconditional "active ⇒
+    never clean" guard shielded done tasks permanently — the tab
+    never disappeared even after restart. Now active/provisioning is
+    protected only when plausibly still being driven (live session
+    OR updated within the grace window).
+    """
+
+    TTL = 3600.0  # 1h grace
+
+    def _ws(self, **overrides):
+        from kato_core_lib.data_layers.service.workspace_manager import (
+            WORKSPACE_STATUS_ACTIVE,
+        )
+        base = dict(
+            task_id='UNA-1201', status=WORKSPACE_STATUS_ACTIVE,
+            updated_at_epoch=time.time() - (self.TTL + 600),  # cold
+        )
+        base.update(overrides)
+        return SimpleNamespace(**base)
+
+    def _service(self, ws_records, *, live_session_for=None):
+        workspace = MagicMock()
+        workspace.list_workspaces.return_value = ws_records
+        session = MagicMock()
+        session.list_records.return_value = []
+
+        def get_session(task_id):
+            if live_session_for and task_id == live_session_for:
+                return SimpleNamespace(is_alive=True)
+            return None
+        session.get_session.side_effect = get_session
+        return AgentService(**_kwargs(
+            workspace_manager=workspace,
+            session_manager=session,
+            review_workspace_ttl_seconds=self.TTL,
+        ))
+
+    def test_cold_active_done_task_is_cleaned(self) -> None:
+        # The UNA-1201 bug: active, ticket not live, no live session,
+        # last touched > grace ago → MUST be stale now.
+        svc = self._service([self._ws()])
+        result = svc._stale_planning_task_ids(set())  # ticket not live
+        self.assertIn('UNA-1201', result)
+
+    def test_fresh_active_task_is_protected(self) -> None:
+        # kato just flipped the ticket to In Progress and is driving
+        # it — workspace updated seconds ago. Must NOT be cleaned
+        # even though it's momentarily not in assigned/review.
+        svc = self._service([self._ws(updated_at_epoch=time.time() - 5)])
+        result = svc._stale_planning_task_ids(set())
+        self.assertNotIn('UNA-1201', result)
+
+    def test_active_with_live_session_is_protected_even_when_cold(self) -> None:
+        # A long autonomous run: workspace timestamp is old but a
+        # live subprocess proves kato is on it. Keep it.
+        svc = self._service(
+            [self._ws()], live_session_for='UNA-1201',
+        )
+        result = svc._stale_planning_task_ids(set())
+        self.assertNotIn('UNA-1201', result)
+
+    def test_ttl_zero_keeps_legacy_protect_all_active(self) -> None:
+        # Operator disabled age-based cleanup (TTL=0): every
+        # active/provisioning workspace stays protected regardless
+        # of age, as before.
+        workspace = MagicMock()
+        workspace.list_workspaces.return_value = [self._ws()]
+        session = MagicMock()
+        session.list_records.return_value = []
+        session.get_session.return_value = None
+        svc = AgentService(**_kwargs(
+            workspace_manager=workspace,
+            session_manager=session,
+            review_workspace_ttl_seconds=0.0,
+        ))
+        result = svc._stale_planning_task_ids(set())
+        self.assertNotIn('UNA-1201', result)
+
+    def test_cold_active_but_ticket_still_live_is_kept(self) -> None:
+        # Even cold + no session: if the ticket IS still in the
+        # assigned/review bucket, the live-norm subtraction keeps it.
+        svc = self._service([self._ws()])
+        result = svc._stale_planning_task_ids({svc._norm_task_id('UNA-1201')})
+        self.assertNotIn('UNA-1201', result)
+
+    def test_missing_timestamp_active_is_protected(self) -> None:
+        # No recorded updated_at (legacy record) → treated as fresh
+        # so we never nuke a timestamp-less active workspace.
+        svc = self._service([self._ws(updated_at_epoch=0.0)])
+        result = svc._stale_planning_task_ids(set())
+        self.assertNotIn('UNA-1201', result)
 
 
 class TerminateSessionSilentTests(unittest.TestCase):

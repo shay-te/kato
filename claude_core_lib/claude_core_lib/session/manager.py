@@ -774,17 +774,38 @@ class ClaudeSessionManager(object):
             )
 
     def _delete_persisted_record(self, task_id: str) -> None:
-        path = self._record_path(task_id)
+        # Delete EVERY state file that maps to this task's canonical
+        # key, not just the canonical lowercased path. Records written
+        # before ``_record_path`` started lowercasing live under the
+        # original-case filename (e.g. ``UNA-1201.json``); the
+        # canonical path is ``una-1201.json``. Unlinking only the
+        # canonical path left the legacy-cased file on disk, and
+        # ``_load_persisted_records`` (a blanket ``glob('*.json')``)
+        # then resurrected the task's tab on every restart — the
+        # "task is back after restart" bug. Case-insensitive filename
+        # match cleans both the canonical and any legacy variant.
+        key = self._lookup_key(task_id).replace('/', '_').replace(os.sep, '_')
+        targets = {self._record_path(task_id)}
         try:
-            path.unlink()
-        except FileNotFoundError:
-            return
-        except OSError as exc:
-            self.logger.warning(
-                'failed to remove planning session record for task %s: %s',
-                task_id,
-                exc,
-            )
+            for candidate in self._state_dir.glob('*.json'):
+                if candidate.stem.lower() == key:
+                    targets.add(candidate)
+        except OSError:
+            # Directory listing failed — fall back to just the
+            # canonical path below.
+            pass
+        for path in targets:
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                self.logger.warning(
+                    'failed to remove planning session record %s for task %s: %s',
+                    path,
+                    task_id,
+                    exc,
+                )
 
     def _load_persisted_records(self) -> None:
         if not self._state_dir.exists():

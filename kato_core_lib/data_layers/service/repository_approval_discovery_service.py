@@ -30,15 +30,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-__all__ = [
-    'DiscoveredRepository',
-    'discover_all_repositories',
-    'discover_inventory_repositories',
-    'discover_checkout_repositories',
-    'discover_workspace_repositories',
-]
-
-
 @dataclass(frozen=True)
 class DiscoveredRepository(object):
     """One repo candidate offered by the approvals UI.

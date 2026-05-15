@@ -280,6 +280,20 @@ class AgentService(Service):
         self._cleanup_done_task_conversations()
         return self._review_comment_service.get_new_pull_request_comments()
 
+    def cleanup_done_tasks(self) -> None:
+        """Public boot entrypoint for the done-task prune.
+
+        Called once at startup (before the planning webserver starts
+        serving tabs) so a restart never resurrects a tab for a task
+        whose ticket already moved to done/closed. Without this, a
+        stale ``~/.kato/sessions/<id>.json`` left on disk renders as
+        a tab on boot and only disappears on the first scan-tick
+        cleanup ~30s later — the "task is back after restart" bug.
+        Best-effort: the underlying cleanup already swallows its own
+        per-source failures.
+        """
+        self._cleanup_done_task_conversations()
+
     @staticmethod
     def _norm_task_id(value) -> str:
         """Canonical task-id key for set comparisons.
@@ -381,21 +395,38 @@ class AgentService(Service):
             self._delete_workspace_silent(task_id)
 
     def _stale_planning_task_ids(self, live_norm: set[str]) -> set[str]:
-        """Union of task ids known to either manager that aren't live anymore.
+        """Task ids known to either manager that aren't live anymore.
 
-        Workspaces still in ``active`` or ``provisioning`` are protected from
-        cleanup even when the ticket has rotated out of the assigned state
-        bucket — kato moves the ticket to *In Progress* itself, which makes
-        it momentarily disappear from both ``get_assigned_tasks()`` and
-        ``get_review_tasks()``. Without this guard, the next scan tick
-        would wipe a workspace kato is actively driving.
+        The ``active``/``provisioning`` in-flight guard exists for a
+        narrow case: kato itself flips a ticket to *In Progress*
+        while driving it, so it momentarily vanishes from both
+        ``get_assigned_tasks()`` and ``get_review_tasks()``. Without
+        a guard the next scan would wipe a workspace kato is mid-run
+        on.
 
-        Also: review-status workspaces older than
-        ``review_workspace_ttl_seconds`` are eligible for cleanup even
-        if the ticket is still in the review bucket. This keeps the local
-        workspace cache from accumulating stale clones for tickets sitting
-        in review for hours/days. Review-comment fix flow re-clones on
-        demand if a workspace was already cleaned.
+        BUT the workspace status is never reliably reset back from
+        ``active`` once a task finishes, so an unconditional "active
+        ⇒ never clean" rule shields a *done* task's leftover
+        workspace forever — the tab never disappears (the
+        "task-still-there-after-it's-done" bug). So an
+        active/provisioning workspace is protected only when it's
+        plausibly still being driven:
+
+          * a live session subprocess exists for it, OR
+          * it was updated within the grace window
+            (``review_workspace_ttl_seconds``, 1h default — far
+            longer than any single task run, operator-tunable).
+
+        An active/provisioning workspace that is BOTH not live AND
+        cold (no update within the grace) is a leftover: if its
+        ticket isn't live either, it's stale and gets cleaned. When
+        the TTL is 0 (operator disabled age-based cleanup) the
+        legacy "protect all active/provisioning" behaviour is kept.
+
+        Review-status workspaces are always protected: a ticket in
+        the review / "To Verify" bucket with a local clone is work
+        the operator may still be verifying, so its clone is kept
+        until the ticket actually leaves the review bucket.
         """
         import time as _time
 
@@ -403,10 +434,6 @@ class AgentService(Service):
         # record id is preferred since that's the key the session
         # manager stored, so terminate/delete hit the right record).
         candidate_by_norm: dict[str, str] = {}
-        in_flight_norm: set[str] = set()
-        review_ttl_expired_norm: set[str] = set()
-        ttl = self._review_workspace_ttl_seconds
-        now_epoch = _time.time()
 
         def remember(task_id) -> str:
             norm = self._norm_task_id(task_id)
@@ -419,25 +446,77 @@ class AgentService(Service):
                     remember(record.task_id)
             except Exception:
                 self.logger.exception('failed to list planning session records')
-        if self._workspace_manager is not None:
-            try:
-                workspace_records = self._workspace_manager.list_workspaces()
-            except Exception:
-                self.logger.exception('failed to list workspaces')
-                workspace_records = []
-            for record in workspace_records:
-                norm = remember(record.task_id)
-                status = getattr(record, 'status', '')
-                if status in (WORKSPACE_STATUS_ACTIVE, WORKSPACE_STATUS_PROVISIONING):
-                    in_flight_norm.add(norm)
-                elif status == WORKSPACE_STATUS_REVIEW and ttl > 0:
-                    updated = float(getattr(record, 'updated_at_epoch', 0.0) or 0.0)
-                    if updated > 0 and (now_epoch - updated) > ttl:
-                        review_ttl_expired_norm.add(norm)
-        stale_norm = (
-            set(candidate_by_norm) - live_norm - in_flight_norm
-        ) | (review_ttl_expired_norm - in_flight_norm)
+
+        workspace_records = self._safe_list_workspaces()
+        protected_norm: set[str] = set()
+        now_epoch = _time.time()
+        for record in workspace_records:
+            norm = remember(record.task_id)
+            bucket = self._classify_workspace_for_cleanup(record, now_epoch)
+            if bucket == 'protected':
+                protected_norm.add(norm)
+            # 'stale' → no protection; falls through to the
+            # live-norm subtraction below.
+        stale_norm = set(candidate_by_norm) - live_norm - protected_norm
         return {candidate_by_norm[n] for n in stale_norm}
+
+    def _safe_list_workspaces(self) -> list:
+        if self._workspace_manager is None:
+            return []
+        try:
+            return list(self._workspace_manager.list_workspaces())
+        except Exception:
+            self.logger.exception('failed to list workspaces')
+            return []
+
+    def _has_live_session(self, task_id) -> bool:
+        if self._session_manager is None:
+            return False
+        try:
+            session = self._session_manager.get_session(task_id)
+        except Exception:
+            return False
+        return session is not None and getattr(session, 'is_alive', True)
+
+    def _classify_workspace_for_cleanup(self, record, now_epoch: float) -> str:
+        """Bucket one workspace record for the stale sweep.
+
+        Returns one of:
+          * ``'protected'`` — keep the clone. Two cases:
+              - an active/provisioning workspace that is plausibly
+                still being driven (live session OR updated within
+                the grace window OR TTL disabled); and
+              - ANY review-state workspace. A ticket sitting in the
+                review / "To Verify" bucket with a local clone is
+                work the operator may still be reviewing — its clone
+                is never deleted, regardless of age. (Previously a
+                review clone older than the TTL was force-cleaned;
+                that wiped clones for tickets the operator was still
+                verifying — the "task disappeared while on verify"
+                bug. Review clones are now kept until the ticket
+                actually leaves the review bucket.)
+          * ``'stale'`` — no special protection; the
+            ``candidates - live_norm`` subtraction decides. The
+            default for done/errored/terminated leftovers and for
+            cold active/provisioning leftovers. Matching the
+            pre-refactor fall-through: anything not explicitly
+            protected here is cleaned iff its ticket isn't live.
+        """
+        status = getattr(record, 'status', '')
+        ttl = self._review_workspace_ttl_seconds
+        updated = float(getattr(record, 'updated_at_epoch', 0.0) or 0.0)
+        if status in (WORKSPACE_STATUS_ACTIVE, WORKSPACE_STATUS_PROVISIONING):
+            fresh = (
+                ttl <= 0
+                or updated <= 0
+                or (now_epoch - updated) <= ttl
+            )
+            if self._has_live_session(record.task_id) or fresh:
+                return 'protected'
+            return 'stale'
+        if status == WORKSPACE_STATUS_REVIEW:
+            return 'protected'
+        return 'stale'
 
     def _terminate_session_silent(self, task_id: str) -> None:
         if self._session_manager is None:
