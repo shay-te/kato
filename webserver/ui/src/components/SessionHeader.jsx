@@ -472,6 +472,57 @@ export default function SessionHeader({
   );
 }
 
+// Persistent header shown when NO task is selected. The bar must
+// never disappear (a header that hides/shows as you click around is
+// jarring) — so we keep the exact same shell, show a "Select a task"
+// title on the left, and render the full action row on the right but
+// inert (disabled + not focusable). No layout jump when a task is
+// then selected and the real SessionHeader takes over.
+export function SessionHeaderPlaceholder() {
+  const buttons = [
+    { icon: 'search', label: 'Search' },
+    { icon: 'arrow-up', label: 'Push' },
+    { icon: 'merge', label: 'Merge default branch' },
+    { icon: 'arrow-down', label: 'Pull' },
+    { icon: 'pull-request', label: 'Open pull request' },
+    { icon: 'external-link', label: 'Open pull request in a new tab' },
+    { icon: 'refresh', label: 'Update source' },
+    { icon: 'check', label: 'Finish', primary: true },
+    { icon: 'link', label: 'Adopt session' },
+    { icon: 'stop', label: 'Stop' },
+  ];
+  return (
+    <header id="session-header" className="is-empty">
+      <div className="session-header-info">
+        <span id="session-status-dot" className="status-dot status-dot-idle" />
+        <span id="session-task-summary" className="is-placeholder">
+          Select a task
+        </span>
+      </div>
+      <div className="session-header-actions" aria-hidden="true">
+        <span
+          id="session-claude-status"
+          className="claude-status claude-status-idle"
+        >
+          Claude: no task
+        </span>
+        {buttons.map((b) => (
+          <button
+            key={b.icon}
+            type="button"
+            className={`session-action${b.primary ? ' is-primary' : ''}`}
+            disabled
+            tabIndex={-1}
+            aria-label={b.label}
+          >
+            <Icon name={b.icon} />
+          </button>
+        ))}
+      </div>
+    </header>
+  );
+}
+
 function pullTitleFor(state) {
   if (state.pullBusy) { return 'Pull in progress…'; }
   if (!state.hasWorkspace) {

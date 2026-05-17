@@ -29,7 +29,7 @@ import { postSession } from '../api.js';
 import { usePushApproval } from '../hooks/usePushApproval.js';
 import { useTaskPublish } from '../hooks/useTaskPublish.js';
 import { toast } from '../stores/toastStore.js';
-import SessionHeader from './SessionHeader.jsx';
+import SessionHeader, { SessionHeaderPlaceholder } from './SessionHeader.jsx';
 import { SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
 import { TAB_STATUS } from '../constants/tabStatus.js';
 
@@ -406,5 +406,26 @@ describe('SessionHeader — Open pull request button', () => {
     fireEvent.click(openBtn());
     expect(openSpy).toHaveBeenCalledTimes(2);
     openSpy.mockRestore();
+  });
+});
+
+
+describe('SessionHeaderPlaceholder — persistent no-task bar', () => {
+
+  test('shows a "Select a task" title and the same header shell', () => {
+    const { container } = render(<SessionHeaderPlaceholder />);
+    expect(container.querySelector('#session-header.is-empty'))
+      .toBeInTheDocument();
+    expect(screen.getByText(/select a task/i)).toBeInTheDocument();
+  });
+
+  test('renders the action buttons but every one is disabled', () => {
+    const { container } = render(<SessionHeaderPlaceholder />);
+    const buttons = container.querySelectorAll('.session-action');
+    expect(buttons.length).toBeGreaterThan(0);
+    buttons.forEach((b) => {
+      expect(b).toBeDisabled();
+      expect(b).toHaveAttribute('tabindex', '-1');
+    });
   });
 });

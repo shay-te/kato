@@ -20,6 +20,12 @@ export default function Layout({
       style={style}
     >
       {top}
+      {/* Full-width task-header bar: sits UNDER the tab strip and
+          ABOVE all three panels. SessionDetail portals its
+          SessionHeader (title + actions + Claude status + search)
+          into this slot. Always rendered (even empty) so the portal
+          target is stable; only meaningful in the top-tabs shell. */}
+      {top ? <div id="task-header-slot" /> : null}
       {left}
       {center}
       {right}

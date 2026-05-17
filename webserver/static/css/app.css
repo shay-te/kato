@@ -295,11 +295,23 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
     minmax(0, var(--left-pane-width, 320px))
     minmax(0, 1fr)
     minmax(0, var(--right-pane-width, 420px));
-  grid-template-rows: auto minmax(0, 1fr);
+  /* row 1: task tab strip · row 2: full-width task header bar ·
+   * row 3: the three panels */
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 #layout.has-top-tabs > #tabs-pane {
   grid-column: 1 / -1;
   grid-row: 1;
+}
+/* The hoisted task header — spans every column, between the tab
+ * strip and the panels. Kept as a grid item (NOT display:none when
+ * empty) so the panels stay auto-placed in row 3; an empty div in
+ * an ``auto`` row collapses to 0 height, so there's no dead band on
+ * the no-task screen. */
+#layout.has-top-tabs > #task-header-slot {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  min-width: 0;
 }
 
 /* ───── task segmented controller (top of app) ───────────────────
@@ -798,26 +810,27 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   position: relative;
 }
 
+/* Single-line header bar: title group on the LEFT, action buttons
+   on the RIGHT. The title group flexes + ellipsizes so the row
+   height stays fixed no matter how verbose the task summary is;
+   the actions never wrap or shrink. */
 #session-header {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  flex-direction: row;
+  align-items: center;
+  gap: 16px;
   min-width: 0;
   overflow: hidden;
-  padding: 12px 24px;
+  padding: 10px 24px;
   border-bottom: 1px solid #171717;
 }
 
-/* Row 1: status dot + task id + summary. The summary stretches to
-   fill the row but stays on a single line — long summaries
-   ellipsize so the header height is predictable instead of
-   growing into a vertical word column when the operator picks a
-   verbose task title. */
+/* Left: status dot + task id + summary, one line, ellipsized. */
 .session-header-info {
   display: flex;
   align-items: center;
   gap: 10px;
-  width: 100%;
+  flex: 1;
   min-width: 0;
 }
 
@@ -825,14 +838,16 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   flex-shrink: 0;
 }
 
-/* Row 2: Claude status chip + every action button. Wraps on
-   narrow widths so a small window doesn't horizontally scroll
-   the whole header. */
+/* Right: Claude status chip + every action button. Pinned to the
+   right edge; single line (no wrap), never shrinks — the title
+   ellipsizes instead on a narrow window. */
 .session-header-actions {
   display: flex;
   align-items: center;
   gap: 10px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 #session-task-summary {
@@ -846,6 +861,14 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* No-task placeholder: same bar, muted "Select a task" hint + the
+   action row rendered inert (the .session-action:disabled rule
+   already greys the buttons). The bar never disappears. */
+#session-header.is-empty #session-task-summary.is-placeholder {
+  color: #8a8a8f;
+  font-weight: 600;
 }
 
 /* ───── round icon buttons in the session header ─────────────────────
@@ -3172,6 +3195,28 @@ body.kato-resizing #left-pane-resizer::before {
   color: #ff9a95;
   background: rgba(127, 29, 29, 0.46);
 }
+
+/* Bitbucket-style comment-thread count on a tree row. Pill chip in
+ * the system language (999px + 1px border, like .claude-status).
+ * ``margin-left: auto`` right-clusters it; when line-stats follow,
+ * the adjacency override keeps them together (💬1  +23) instead of
+ * the stats grabbing the free space and flying to the far edge. */
+.tree-row-comments {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: #c8c8cd;
+  font: 600 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.tree-row-comments svg { width: 11px; height: 11px; }
+.tree-row-comments + .diff-line-stats,
+.tree-row-comments + .tree-row-line-stats { margin-left: 8px; }
 
 .diff-file-tree {
   display: flex;

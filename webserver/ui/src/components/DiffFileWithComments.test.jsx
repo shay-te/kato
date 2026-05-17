@@ -330,6 +330,84 @@ describe('DiffFileWithComments — collapsed context expansion', () => {
 });
 
 
+describe('DiffFileWithComments — buried comment auto-reveal', () => {
+
+  const gappedDiff = [
+    'diff --git a/src/promises.scss b/src/promises.scss',
+    '--- a/src/promises.scss',
+    '+++ b/src/promises.scss',
+    '@@ -1,3 +1,3 @@',
+    ' line 1',
+    '-line 2',
+    '+line 2 changed',
+    ' line 3',
+    '@@ -30,3 +30,3 @@',
+    ' line 30',
+    '-line 31',
+    '+line 31 changed',
+    ' line 32',
+    '',
+  ].join('\n');
+
+  function gapSource() {
+    return new Array(40).fill(0).map((_, i) => `line ${i + 1}`).join('\n');
+  }
+
+  test('an open comment hidden in a gap is revealed with no manual click', async () => {
+    const file = parseDiff(gappedDiff)[0];
+    apiMocks.fetchBaseFileContent.mockResolvedValue({
+      content: gapSource(), binary: false,
+    });
+
+    renderDiff({
+      file,
+      initiallyExpanded: true,
+      comments: [{
+        id: 'c1', body: 'open comment in a gap', line: 15,
+        parent_id: '', status: 'open',
+        author: 'reviewer', created_at: '2024-01-01T00:00:00Z',
+      }],
+    });
+
+    // No expander was clicked — the thread shows up on its own,
+    // and the line it is anchored to is now in the diff.
+    await waitFor(() => {
+      expect(screen.getByText('open comment in a gap')).toBeInTheDocument();
+    });
+    expect(screen.getByText('line 15')).toBeInTheDocument();
+    expect(apiMocks.fetchBaseFileContent).toHaveBeenCalledWith('T1', {
+      repoId: 'repo-1',
+      repoCwd: '/workspace/repo-1',
+      path: 'src/promises.scss',
+    });
+  });
+
+  test('a resolved-only thread does NOT force the gap open', async () => {
+    const file = parseDiff(gappedDiff)[0];
+    apiMocks.fetchBaseFileContent.mockResolvedValue({
+      content: gapSource(), binary: false,
+    });
+
+    renderDiff({
+      file,
+      initiallyExpanded: true,
+      comments: [{
+        id: 'c1', body: 'resolved long ago', line: 15,
+        parent_id: '', status: 'resolved',
+        author: 'reviewer', created_at: '2024-01-01T00:00:00Z',
+      }],
+    });
+
+    // Resolved threads must not auto-expand: the gap stays collapsed
+    // and we never even fetch the base file for it.
+    expect(screen.getByText(/26 hidden lines/i)).toBeInTheDocument();
+    await Promise.resolve();
+    expect(apiMocks.fetchBaseFileContent).not.toHaveBeenCalled();
+    expect(screen.queryByText('resolved long ago')).not.toBeInTheDocument();
+  });
+});
+
+
 describe('DiffFileWithComments — file-level comment shortcut', () => {
 
   test('clean file shows no entry button and no hint paragraph', () => {

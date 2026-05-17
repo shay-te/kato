@@ -33,6 +33,7 @@ import {
   faPaperPlane,
   faClockRotateLeft,
   faArrowUpRightFromSquare,
+  faComment,
 } from '@fortawesome/free-solid-svg-icons';
 
 const ICONS = {
@@ -58,6 +59,7 @@ const ICONS = {
   'spinner': faCircleNotch,
   'warning': faTriangleExclamation,
   'commit': faCodeCommit,
+  'comment': faComment,
   'dot': faCircle,
   // Action icons used by SessionHeader's round-button row + the
   // chat search capsule. Names follow FontAwesome's free-solid

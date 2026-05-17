@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import ChatSearch from './ChatSearch.jsx';
 import EventLog from './EventLog.jsx';
 import MessageForm from './MessageForm.jsx';
 import PermissionDecisionContainer from './PermissionDecisionContainer.jsx';
 import RightPaneResizer from './RightPaneResizer.jsx';
-import SessionHeader from './SessionHeader.jsx';
+import SessionHeader, { SessionHeaderPlaceholder } from './SessionHeader.jsx';
 import WorkingIndicator from './WorkingIndicator.jsx';
 import { BUBBLE_KIND } from '../constants/bubbleKind.js';
 import { CLAUDE_EVENT, CLAUDE_SYSTEM_SUBTYPE } from '../constants/claudeEvent.js';
@@ -25,6 +26,24 @@ export default function SessionDetail({
 }) {
   const taskId = session?.task_id;
   const stream = useSessionStream(taskId, onActivity);
+
+  // The task header (title + action buttons + Claude status + chat
+  // search) is hoisted into a full-width bar UNDER the tab strip and
+  // ABOVE all three panels. ``#task-header-slot`` is rendered by
+  // Layout; we keep ALL wiring (stream, message handlers, search
+  // state) here and only PORTAL the rendered header into that slot —
+  // nothing is lifted, so the permission-dialog auto-reconnect, the
+  // composer queue and the search highlighting stay owned by
+  // SessionDetail. Falls back to rendering the header inline (its old
+  // in-pane position) when the slot isn't in the DOM (unit tests /
+  // the legacy sidebar shell).
+  const [headerSlot, setHeaderSlot] = useState(null);
+  useEffect(() => {
+    setHeaderSlot(
+      (typeof document !== 'undefined'
+        && document.getElementById('task-header-slot')) || null,
+    );
+  }, []);
 
   // Outgoing message queue. While Claude is mid-turn the operator's
   // messages are HELD (not steered into the live turn) and flushed
@@ -120,6 +139,13 @@ export default function SessionDetail({
     return (
       <main id="session-pane">
         {resizer}
+        {/* Keep the global header bar present (with a "Select a
+            task" title + inert buttons) instead of letting it vanish
+            — a header that appears/disappears as you click around is
+            jarring and shifts the layout. */}
+        {headerSlot
+          ? createPortal(<SessionHeaderPlaceholder />, headerSlot)
+          : <SessionHeaderPlaceholder />}
         <section id="session-placeholder" className="placeholder">
           Select a tab to chat with the bound Claude session.
         </section>
@@ -306,29 +332,34 @@ export default function SessionDetail({
       return (idx + 1) % searchMatchCount;
     });
   }, [searchMatchCount]);
+  const sessionHeader = (
+    <SessionHeader
+      session={session}
+      needsAttention={needsAttention}
+      onStopped={onStopped}
+      onResume={onResume}
+      onSessionAdopted={onSessionAdopted}
+      streamLifecycle={stream.lifecycle}
+      turnInFlight={stream.turnInFlight}
+      searchSlot={
+        <ChatSearch
+          query={searchQuery}
+          onQueryChange={handleSearchQueryChange}
+          matchCount={searchMatchCount}
+          currentMatchIndex={searchCurrentIndex}
+          onPrevMatch={handlePrevMatch}
+          onNextMatch={handleNextMatch}
+        />
+      }
+    />
+  );
   return (
     <main id="session-pane">
       {resizer}
       <section id="session-detail">
-        <SessionHeader
-          session={session}
-          needsAttention={needsAttention}
-          onStopped={onStopped}
-          onResume={onResume}
-          onSessionAdopted={onSessionAdopted}
-          streamLifecycle={stream.lifecycle}
-          turnInFlight={stream.turnInFlight}
-          searchSlot={
-            <ChatSearch
-              query={searchQuery}
-              onQueryChange={handleSearchQueryChange}
-              matchCount={searchMatchCount}
-              currentMatchIndex={searchCurrentIndex}
-              onPrevMatch={handlePrevMatch}
-              onNextMatch={handleNextMatch}
-            />
-          }
-        />
+        {headerSlot
+          ? createPortal(sessionHeader, headerSlot)
+          : sessionHeader}
         {/* The working indicator is the LAST entry inside the
             scrollable log, not a floating overlay. It scrolls with
             the messages and sits just after the newest one — so it

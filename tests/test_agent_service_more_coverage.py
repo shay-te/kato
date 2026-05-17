@@ -24,6 +24,77 @@ def _kwargs(**overrides):
     return defaults
 
 
+class DrainAllQueuedTaskCommentsTests(unittest.TestCase):
+    """Server-side, browser-independent queue drain (scan-loop driven)."""
+
+    def test_drains_every_workspace_and_collects_started(self) -> None:
+        service = AgentService(**_kwargs())
+        workspaces = [
+            SimpleNamespace(task_id='UNA-1'),
+            SimpleNamespace(task_id='UNA-2'),
+            SimpleNamespace(task_id='UNA-3'),
+        ]
+        outcomes = {
+            'UNA-1': {'ok': True, 'started': True, 'comment_id': 'c1'},
+            'UNA-2': {'ok': True, 'started': False, 'comment_id': ''},
+            'UNA-3': {'ok': True, 'started': True, 'comment_id': 'c3'},
+        }
+        with patch.object(service, '_safe_list_workspaces',
+                          return_value=workspaces), \
+             patch.object(service, 'drain_next_queued_task_comment',
+                          side_effect=lambda tid: outcomes[tid]) as drain:
+            results = service.drain_all_queued_task_comments()
+
+        self.assertEqual(
+            [c.args[0] for c in drain.call_args_list],
+            ['UNA-1', 'UNA-2', 'UNA-3'],
+        )
+        # Only the ones that actually STARTED a run are reported.
+        self.assertEqual(
+            results,
+            [
+                {'task_id': 'UNA-1', 'ok': True, 'started': True,
+                 'comment_id': 'c1'},
+                {'task_id': 'UNA-3', 'ok': True, 'started': True,
+                 'comment_id': 'c3'},
+            ],
+        )
+
+    def test_one_task_failing_does_not_abort_the_rest(self) -> None:
+        service = AgentService(**_kwargs())
+        workspaces = [
+            SimpleNamespace(task_id='UNA-1'),
+            SimpleNamespace(task_id='UNA-2'),
+        ]
+
+        def _drain(tid):
+            if tid == 'UNA-1':
+                raise RuntimeError('store exploded')
+            return {'ok': True, 'started': True, 'comment_id': 'c2'}
+
+        with patch.object(service, '_safe_list_workspaces',
+                          return_value=workspaces), \
+             patch.object(service, 'drain_next_queued_task_comment',
+                          side_effect=_drain):
+            results = service.drain_all_queued_task_comments()
+
+        self.assertEqual(
+            results,
+            [{'task_id': 'UNA-2', 'ok': True, 'started': True,
+              'comment_id': 'c2'}],
+        )
+
+    def test_blank_task_ids_and_no_workspaces_are_safe(self) -> None:
+        service = AgentService(**_kwargs())
+        with patch.object(service, '_safe_list_workspaces', return_value=[]):
+            self.assertEqual(service.drain_all_queued_task_comments(), [])
+        with patch.object(service, '_safe_list_workspaces',
+                          return_value=[SimpleNamespace(task_id='')]), \
+             patch.object(service, 'drain_next_queued_task_comment') as drain:
+            self.assertEqual(service.drain_all_queued_task_comments(), [])
+            drain.assert_not_called()
+
+
 class ResolveTaskCommentRemoteSyncTests(unittest.TestCase):
     def test_includes_remote_sync_when_kato_addressed(self) -> None:
         # Lines 749-754: include_reply=True when kato_status is ADDRESSED.

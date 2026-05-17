@@ -12,6 +12,7 @@ vi.mock('./api.js', () => ({
   fetchFileTree: vi.fn(),
   fetchFileContent: vi.fn(),
   fetchRepoCommits: vi.fn().mockResolvedValue({ ok: true, body: [] }),
+  fetchTaskComments: vi.fn().mockResolvedValue({ ok: true, body: { comments: [] } }),
   syncTaskComments: vi.fn(),
   syncTaskRepositories: vi.fn(),
 }));
@@ -20,11 +21,12 @@ vi.mock('./stores/toastStore.js', () => ({
 }));
 
 import FilesTab, {
+  buildFilesCommentMeta,
   buildFilesDiffMeta,
   filterChangedFileTree,
   formatSyncResult,
 } from './FilesTab.jsx';
-import { fetchDiff, fetchFileTree } from './api.js';
+import { fetchDiff, fetchFileTree, fetchTaskComments } from './api.js';
 
 const FILE_TREE_PAYLOAD = {
   trees: [{
@@ -203,6 +205,39 @@ describe('buildFilesDiffMeta', () => {
 });
 
 
+describe('buildFilesCommentMeta', () => {
+
+  test('counts root threads per repo+file, ignores replies', () => {
+    const meta = buildFilesCommentMeta([
+      { id: 'c1', repo_id: 'client', file_path: 'src/a.js', parent_id: '' },
+      { id: 'c2', repo_id: 'client', file_path: 'src/a.js', parent_id: '' },
+      // reply to c1 — must NOT add to the count
+      { id: 'r1', repo_id: 'client', file_path: 'src/a.js', parent_id: 'c1' },
+      { id: 'c3', repo_id: 'client', file_path: 'src/b.js', parent_id: '' },
+      // blank file_path (file-level on no file) — skipped
+      { id: 'c4', repo_id: 'client', file_path: '', parent_id: '' },
+    ]);
+    const client = meta.get('client');
+    expect(client.get('src/a.js')).toBe(2);
+    expect(client.get('src/b.js')).toBe(1);
+    expect(client.has('')).toBe(false);
+  });
+
+  test('missing repo_id buckets under "" (single-repo task)', () => {
+    const meta = buildFilesCommentMeta([
+      { id: 'c1', file_path: 'app.py', parent_id: '' },
+    ]);
+    expect(meta.get('').get('app.py')).toBe(1);
+  });
+
+  test('empty / nullish input → empty map', () => {
+    expect(buildFilesCommentMeta([]).size).toBe(0);
+    expect(buildFilesCommentMeta(null).size).toBe(0);
+    expect(buildFilesCommentMeta(undefined).size).toBe(0);
+  });
+});
+
+
 describe('filterChangedFileTree', () => {
 
   test('keeps ancestors for changed files that match the search', () => {
@@ -275,5 +310,38 @@ describe('FilesTab — render shell', () => {
     await waitFor(() => {
       expect(screen.getAllByLabelText(/merge conflict/i).length).toBeGreaterThan(0);
     });
+  });
+
+  test('shows a comment-count badge on a file with open threads', async () => {
+    fetchFileTree.mockResolvedValue(FILE_TREE_PAYLOAD);
+    fetchDiff.mockResolvedValue(DIFF_PAYLOAD);
+    fetchTaskComments.mockResolvedValue({
+      ok: true,
+      body: {
+        comments: [
+          { id: 'c1', repo_id: 'client', file_path: 'src/Changed.js',
+            parent_id: '' },
+          { id: 'c2', repo_id: 'client', file_path: 'src/Changed.js',
+            parent_id: '' },
+          { id: 'r1', repo_id: 'client', file_path: 'src/Changed.js',
+            parent_id: 'c1' }, // reply — not counted
+        ],
+      },
+    });
+    render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+    expect(await screen.findByText('Lines updated')).toBeInTheDocument();
+    // 2 root threads on src/Changed.js (reply excluded).
+    await waitFor(() => {
+      expect(screen.getByLabelText('2 comments')).toBeInTheDocument();
+    });
+  });
+
+  test('no comment badge on files without threads', async () => {
+    fetchFileTree.mockResolvedValue(FILE_TREE_PAYLOAD);
+    fetchDiff.mockResolvedValue(DIFF_PAYLOAD);
+    fetchTaskComments.mockResolvedValue({ ok: true, body: { comments: [] } });
+    render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+    expect(await screen.findByText('Lines updated')).toBeInTheDocument();
+    expect(screen.queryByLabelText(/comment/i)).not.toBeInTheDocument();
   });
 });

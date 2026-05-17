@@ -26,6 +26,9 @@ vi.mock('./SessionHeader.jsx', () => ({
       <button type="button" onClick={onResume}>mock-resume</button>
     </div>
   ),
+  SessionHeaderPlaceholder: () => (
+    <div data-testid="session-header-placeholder">Select a task</div>
+  ),
 }));
 vi.mock('./EventLog.jsx', () => ({
   default: ({ footer }) => <div id="event-log" data-testid="event-log">{footer}</div>,
@@ -561,5 +564,73 @@ describe('SessionDetail — permission dialog auto-reconnect', () => {
     rerender(withAttention);          // still true: no new edge
     rerender(withAttention);
     expect(stream.reconnect).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe('SessionDetail — task header is hoisted to the global slot', () => {
+
+  function _stream(overrides = {}) {
+    return {
+      events: [], lifecycle: SESSION_LIFECYCLE.STREAMING, turnInFlight: false,
+      pendingPermission: null, lastEventAt: 0,
+      appendLocalEvent: vi.fn(), markTurnBusy: vi.fn(),
+      reconnect: vi.fn(), dismissPermission: vi.fn(), ...overrides,
+    };
+  }
+
+  test('portals SessionHeader into #task-header-slot when present', async () => {
+    useSessionStream.mockReturnValue(_stream());
+    const slot = document.createElement('div');
+    slot.id = 'task-header-slot';
+    document.body.appendChild(slot);
+    try {
+      const { container } = render(
+        <SessionDetail session={{ task_id: 'T1' }} />,
+      );
+      const header = await screen.findByTestId('session-header');
+      // Rendered into the global slot, NOT inside the chat pane.
+      expect(slot.contains(header)).toBe(true);
+      expect(container.querySelector('#session-detail').contains(header))
+        .toBe(false);
+    } finally {
+      document.body.removeChild(slot);
+    }
+  });
+
+  test('falls back to inline header when the slot is absent', async () => {
+    useSessionStream.mockReturnValue(_stream());
+    const { container } = render(
+      <SessionDetail session={{ task_id: 'T1' }} />,
+    );
+    const header = await screen.findByTestId('session-header');
+    // No slot → header stays inside the chat pane (legacy position).
+    expect(container.querySelector('#session-detail').contains(header))
+      .toBe(true);
+  });
+
+  test('no task → placeholder header is portaled into the slot, not hidden', async () => {
+    useSessionStream.mockReturnValue(_stream());
+    const slot = document.createElement('div');
+    slot.id = 'task-header-slot';
+    document.body.appendChild(slot);
+    try {
+      render(<SessionDetail session={null} />);
+      // The bar must NOT disappear: a "Select a task" placeholder
+      // header lives in the global slot even with no task bound.
+      const ph = await screen.findByTestId('session-header-placeholder');
+      expect(slot.contains(ph)).toBe(true);
+      // The real session header is NOT rendered with no session.
+      expect(screen.queryByTestId('session-header')).not.toBeInTheDocument();
+    } finally {
+      document.body.removeChild(slot);
+    }
+  });
+
+  test('no task + no slot → placeholder still renders (inline fallback)', () => {
+    useSessionStream.mockReturnValue(_stream());
+    render(<SessionDetail session={null} />);
+    expect(screen.getByTestId('session-header-placeholder'))
+      .toBeInTheDocument();
   });
 });

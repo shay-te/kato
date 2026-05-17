@@ -28,6 +28,7 @@ import {
   basePathForDiffFile,
   buildDiffRenderItems,
   expansionRangeForGap,
+  pendingCommentExpansions,
   splitSourceLines,
 } from './DiffExpansionHelpers.js';
 import { isLargeFile } from './diffFileSize.js';
@@ -163,6 +164,22 @@ export default function DiffFileWithComments({
     }
     return { commentsByLine: byLine, fileLevelComments: fileLevel };
   }, [comments]);
+
+  // New-side line numbers that carry at least one OPEN (un-resolved)
+  // comment. These are the threads that must never be buried inside a
+  // collapsed gap. Resolved-only lines are intentionally excluded —
+  // they don't need to force the diff open. Stable across renders
+  // when the comment set is unchanged so the reveal effect below
+  // doesn't thrash.
+  const openCommentLines = useMemo(() => {
+    const out = [];
+    for (const [line, lineComments] of commentsByLine) {
+      if (lineComments.some((c) => c.status !== 'resolved')) {
+        out.push(line);
+      }
+    }
+    return out.sort((a, b) => a - b);
+  }, [commentsByLine]);
 
   async function onSubmit(line, body, parentId = '') {
     const trimmed = String(body || '').trim();
@@ -456,6 +473,47 @@ export default function DiffFileWithComments({
       return null;
     }
   }
+
+  // Auto-reveal buried threads. A comment anchored to a line that
+  // sits inside a collapsed "N hidden lines" gap gets no
+  // react-diff-view widget, so the thread is invisible until the
+  // operator manually clicks the ↑/↓ expanders enough times to drag
+  // that line into a hunk — the "I have to load more just to see the
+  // comment" trap. Here: whenever an open comment's line isn't
+  // already rendered, pull the base file and expand a tight window
+  // around it so open threads are ALWAYS on screen. Re-runs after
+  // each expand (renderedHunks dep) until nothing is missing, and
+  // again whenever the base source becomes available.
+  useEffect(() => {
+    if (!expanded || openCommentLines.length === 0) { return undefined; }
+    const present = new Set();
+    for (const hunk of renderedHunks) {
+      for (const change of hunk.changes || []) {
+        const ln = computeNewLineNumber(change);
+        if (ln != null && ln >= 0) { present.add(ln); }
+      }
+    }
+    const missing = openCommentLines.filter((ln) => !present.has(ln));
+    if (missing.length === 0) { return undefined; }
+    let cancelled = false;
+    (async () => {
+      const sourceLines = await loadBaseSourceLines();
+      if (cancelled || !sourceLines) { return; }
+      const ranges = pendingCommentExpansions(
+        renderedHunks, missing, sourceLines.length,
+      );
+      if (ranges.length === 0) { return; }
+      setRenderedHunks((current) => {
+        let next = current;
+        for (const range of ranges) {
+          next = expandFromRawCode(next, sourceLines, range.start, range.end);
+        }
+        return next;
+      });
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded, openCommentLines, renderedHunks, baseSource]);
 
   async function onExpandGap(event, gap, direction) {
     event.preventDefault();

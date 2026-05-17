@@ -829,6 +829,37 @@ class AgentService(Service):
         started = self._maybe_trigger_comment_run(str(task_id), record.id)
         return {'ok': True, 'started': started, 'comment_id': record.id}
 
+    def drain_all_queued_task_comments(self) -> list[dict[str, object]]:
+        """Drain one queued local diff comment for every task workspace.
+
+        Server-side, browser-independent. Previously a queued comment
+        was ONLY drained when a ``RESULT`` event flowed through an
+        open browser SSE (or a browser reconnected to a dead session)
+        — so a comment queued while Claude was busy stayed ``QUEUED``
+        forever if nobody happened to be watching that task's tab when
+        the turn finished (the "3-hour-old queued comment" report).
+        The scan loop now calls this every cycle so a queued comment
+        is picked up on the next idle transition no matter what the
+        UI is doing. ``drain_next_queued_task_comment`` is a cheap
+        no-op when nothing is queued or the turn is still busy, so
+        running it across every workspace each tick is safe.
+        """
+        results: list[dict[str, object]] = []
+        for record in self._safe_list_workspaces():
+            task_id = str(getattr(record, 'task_id', '') or '').strip()
+            if not task_id:
+                continue
+            try:
+                outcome = self.drain_next_queued_task_comment(task_id)
+            except Exception:
+                self.logger.exception(
+                    'queued-comment drain failed for task %s', task_id,
+                )
+                continue
+            if outcome.get('started'):
+                results.append({'task_id': task_id, **outcome})
+        return results
+
     def resolve_task_comment(
         self,
         task_id: str,

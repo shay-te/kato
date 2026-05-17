@@ -25,7 +25,34 @@ def collect_processing_results(service) -> list[dict]:
     """
     results = _dispatch_assigned_tasks(service)
     results.extend(_dispatch_review_comments(service))
+    results.extend(_drain_queued_local_comments(service))
     return results
+
+
+def _drain_queued_local_comments(service) -> list[dict]:
+    """Server-side drain of operator-queued local diff comments.
+
+    Browser-independent: without this, a comment queued while Claude
+    was busy only got dispatched if a browser SSE happened to be
+    watching that task when the turn ended — otherwise it sat
+    ``QUEUED`` indefinitely. Running it on every scan tick guarantees
+    pickup on the next idle transition. Best-effort: a failure here
+    must never abort the scan cycle.
+    """
+    drain = getattr(service, 'drain_all_queued_task_comments', None)
+    if not callable(drain):
+        return []
+    try:
+        drained = drain()
+    except Exception:
+        configure_logger(__name__).exception(
+            'queued local-comment drain pass failed; retrying next scan tick',
+        )
+        return []
+    # Only a real list/tuple counts — a Mock service (tests) returns a
+    # Mock here; treat anything non-list as "nothing drained" rather
+    # than blowing up the scan cycle on ``list(Mock())``.
+    return list(drained) if isinstance(drained, (list, tuple)) else []
 
 
 def _dispatch_assigned_tasks(service) -> list[dict]:

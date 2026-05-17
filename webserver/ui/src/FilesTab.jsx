@@ -4,6 +4,7 @@ import {
   fetchDiff,
   fetchFileTree,
   fetchRepoCommits,
+  fetchTaskComments,
   syncTaskRepositories,
 } from './api.js';
 import AddRepositoryModal from './components/AddRepositoryModal.jsx';
@@ -33,7 +34,26 @@ import {
 // kato tab doesn't keep hammering the server.
 const AUTO_POLL_INTERVAL_MS = 5000;
 const EMPTY_DIFF_META = new Map();
+const EMPTY_COMMENT_META = new Map();
 const EMPTY_STATS = { added: 0, deleted: 0 };
+
+// repoKey -> Map(repo-relative file path -> open thread count). A
+// "thread" is a top-of-thread comment (``parent_id`` empty); replies
+// don't add to the count, matching the Bitbucket 💬 N convention.
+export function buildFilesCommentMeta(comments) {
+  const byRepo = new Map();
+  for (const comment of comments || []) {
+    if (String(comment?.parent_id || '')) { continue; }
+    const filePath = String(comment?.file_path || '').trim();
+    if (!filePath) { continue; }
+    const repoId = String(comment?.repo_id || '').trim();
+    const key = repoId || '';
+    let fileMap = byRepo.get(key);
+    if (!fileMap) { fileMap = new Map(); byRepo.set(key, fileMap); }
+    fileMap.set(filePath, (fileMap.get(filePath) || 0) + 1);
+  }
+  return byRepo;
+}
 const DIFF_KIND_ICON = {
   add: 'plus',
   delete: 'minus',
@@ -53,6 +73,7 @@ export default function FilesTab({
     status: 'loading',
     trees: [],
     diffMetaByRepo: new Map(),
+    commentMetaByRepo: new Map(),
     error: '',
   });
   const [collapsed, setCollapsed] = useState(() => new Set());
@@ -110,7 +131,10 @@ export default function FilesTab({
     setState((prev) => (
       prev.status === 'ready' || prev.status === 'error'
         ? prev
-        : { status: 'loading', trees: [], diffMetaByRepo: new Map(), error: '' }
+        : {
+            status: 'loading', trees: [], diffMetaByRepo: new Map(),
+            commentMetaByRepo: new Map(), error: '',
+          }
     ));
     const diffMetaPromise = fetchDiff(taskId)
       .then((payload) => {
@@ -121,13 +145,17 @@ export default function FilesTab({
         console.warn('Failed to load file-tree diff metadata', err);
         return new Map();
       });
-    Promise.all([fetchFileTree(taskId), diffMetaPromise])
-      .then(([payload, diffMetaByRepo]) => {
+    const commentMetaPromise = fetchTaskComments(taskId)
+      .then((result) => buildFilesCommentMeta(result?.body?.comments || []))
+      .catch(() => new Map());
+    Promise.all([fetchFileTree(taskId), diffMetaPromise, commentMetaPromise])
+      .then(([payload, diffMetaByRepo, commentMetaByRepo]) => {
         if (cancelled) { return; }
         setState({
           status: 'ready',
           trees: normalizeTrees(payload),
           diffMetaByRepo,
+          commentMetaByRepo,
           error: '',
         });
       })
@@ -137,6 +165,7 @@ export default function FilesTab({
           status: 'error',
           trees: prev.trees,
           diffMetaByRepo: prev.diffMetaByRepo,
+          commentMetaByRepo: prev.commentMetaByRepo,
           error: String(err),
         }));
       })
@@ -174,6 +203,7 @@ export default function FilesTab({
       status: 'loading',
       trees: [],
       diffMetaByRepo: new Map(),
+      commentMetaByRepo: new Map(),
       error: '',
     });
   }, [taskId]);
@@ -333,6 +363,10 @@ export default function FilesTab({
     body = state.trees.map((repoTree) => {
       const repoKey = repoTree.repo_id || repoTree.cwd;
       const diffMeta = state.diffMetaByRepo.get(repoKey) || EMPTY_DIFF_META;
+      const commentMeta = state.commentMetaByRepo.get(repoTree.repo_id)
+        || state.commentMetaByRepo.get(repoKey)
+        || state.commentMetaByRepo.get('')
+        || EMPTY_COMMENT_META;
       return (
         <RepoTree
           key={repoKey}
@@ -346,6 +380,7 @@ export default function FilesTab({
           conflictedFiles={repoTree.conflictedFiles}
           changedFiles={repoTree.changedFiles}
           diffMeta={diffMeta}
+          commentMeta={commentMeta}
           showAllFiles={showAllFiles}
           taskId={taskId}
         />
@@ -483,6 +518,7 @@ function RepoTree({
   repoTree, width, collapsed, onToggle, onPickFile,
   onOpenFile,
   searchTerm = '', conflictedFiles, changedFiles, diffMeta = EMPTY_DIFF_META,
+  commentMeta = EMPTY_COMMENT_META,
   showAllFiles = false, taskId = '',
 }) {
   const treeData = useMemo(() => {
@@ -574,6 +610,7 @@ function RepoTree({
       nodes={filteredChangedNodes}
       stats={changedTree.stats}
       conflictedFiles={conflictedFiles}
+      commentMeta={commentMeta}
       closedFolders={closedChangedFolders}
       selectedKey={selectedChangedKey}
       onToggleFolder={toggleChangedFolder}
@@ -615,6 +652,7 @@ function RepoTree({
             conflictedFiles={conflictedFiles}
             changedFiles={changedFiles}
             diffMeta={diffMeta}
+            commentMeta={commentMeta}
             repoId={repoId}
           />
         )}
@@ -715,8 +753,8 @@ function CommitDropdown({ state, onPick, onClose }) {
 }
 
 function ChangedFilesTree({
-  nodes, stats, conflictedFiles, closedFolders, selectedKey,
-  onToggleFolder, onSelectFile,
+  nodes, stats, conflictedFiles, commentMeta = EMPTY_COMMENT_META,
+  closedFolders, selectedKey, onToggleFolder, onSelectFile,
 }) {
   const rows = nodes.map((node) => (
     <ChangedFilesTreeNode
@@ -724,6 +762,7 @@ function ChangedFilesTree({
       node={node}
       depth={0}
       conflictedFiles={conflictedFiles}
+      commentMeta={commentMeta}
       closedFolders={closedFolders}
       selectedKey={selectedKey}
       onToggleFolder={onToggleFolder}
@@ -744,8 +783,8 @@ function ChangedFilesTree({
 }
 
 function ChangedFilesTreeNode({
-  node, depth, conflictedFiles, closedFolders, selectedKey,
-  onToggleFolder, onSelectFile,
+  node, depth, conflictedFiles, commentMeta = EMPTY_COMMENT_META,
+  closedFolders, selectedKey, onToggleFolder, onSelectFile,
 }) {
   if (node.kind === 'folder') {
     const isClosed = closedFolders.has(node.key);
@@ -755,6 +794,7 @@ function ChangedFilesTreeNode({
         node={child}
         depth={depth + 1}
         conflictedFiles={conflictedFiles}
+        commentMeta={commentMeta}
         closedFolders={closedFolders}
         selectedKey={selectedKey}
         onToggleFolder={onToggleFolder}
@@ -812,6 +852,7 @@ function ChangedFilesTreeNode({
       <span className="diff-file-tree-label files-changed-tree-label">
         {node.name}
       </span>
+      <CommentCountBadge count={commentMeta.get(path) || 0} />
       <FilesLineStats stats={node.stats} />
     </button>
   );
@@ -819,11 +860,13 @@ function ChangedFilesTreeNode({
 
 function Node({
   node, style, onPickFile, onOpenFile, conflictedFiles,
-  changedFiles, diffMeta = EMPTY_DIFF_META, repoId = '',
+  changedFiles, diffMeta = EMPTY_DIFF_META,
+  commentMeta = EMPTY_COMMENT_META, repoId = '',
 }) {
   const isFolder = node.isInternal;
   const relativePath = String(node.data?.relativePath || '');
   const changeMeta = !isFolder ? diffMeta.get(relativePath) : null;
+  const commentCount = !isFolder ? (commentMeta.get(relativePath) || 0) : 0;
   function onActivate() {
     // Left-click a FILE: only open it in the editor pane. It must
     // NOT also paste the path into the chat composer — pasting is
@@ -951,6 +994,7 @@ function Node({
       {fileIcon}
       {conflictBadge}
       <span className="tree-row-name">{node.data.name}</span>
+      <CommentCountBadge count={commentCount} />
       {lineStats}
     </div>
   );
@@ -999,6 +1043,22 @@ function FilesDiffKindIcon({ kind }) {
   return (
     <span className={`diff-file-row-kind tree-row-kind kind-${kind || 'modify'}`}>
       <Icon name={iconName} />
+    </span>
+  );
+}
+
+// Bitbucket-style 💬 N on a tree row when the file has open comment
+// threads. Renders nothing at 0 so clean files stay clean.
+function CommentCountBadge({ count }) {
+  if (!count || count < 1) { return null; }
+  return (
+    <span
+      className="tree-row-comments"
+      title={`${count} comment thread${count === 1 ? '' : 's'} on this file`}
+      aria-label={`${count} comment${count === 1 ? '' : 's'}`}
+    >
+      <Icon name="comment" />
+      {count}
     </span>
   );
 }
