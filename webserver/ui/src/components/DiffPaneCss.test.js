@@ -97,6 +97,7 @@ test('Diff syntax colors JSX and stylesheet tokens like Bitbucket', () => {
   const attrNameBody = ruleBody('.diff-file .token.attr-name');
   const selectorBody = ruleBody('.diff-file .token.selector');
   const propertyBody = ruleBody('.diff-file .token.property');
+  const propertyAccessBody = ruleBody('.diff-file .token.property-access');
   const variableBody = ruleBody('.diff-file .token.variable');
   const stringBody = ruleBodyContaining('.diff-file .token.string', '#f5cd47');
   const keywordBody = ruleBodyContaining('.diff-file .token.keyword', '#ff9b91');
@@ -105,6 +106,7 @@ test('Diff syntax colors JSX and stylesheet tokens like Bitbucket', () => {
   assertDeclaration(attrNameBody, 'color', '#79f2c0');
   assertDeclaration(selectorBody, 'color', '#579dff');
   assertDeclaration(propertyBody, 'color', '#79f2c0');
+  assertDeclaration(propertyAccessBody, 'color', '#79f2c0');
   assertDeclaration(variableBody, 'color', '#cce0ff');
   assertDeclaration(stringBody, 'color', '#f5cd47');
   assertDeclaration(keywordBody, 'color', '#ff9b91');

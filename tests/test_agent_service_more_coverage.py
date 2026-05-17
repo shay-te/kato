@@ -95,6 +95,110 @@ class DrainAllQueuedTaskCommentsTests(unittest.TestCase):
             drain.assert_not_called()
 
 
+class _FakeCommentStore(object):
+    """Minimal stand-in for LocalCommentStore (its own lib has full tests)."""
+
+    def __init__(self, comments, raise_on_list=False):
+        self._comments = comments
+        self._raise_on_list = raise_on_list
+        self.updated: list[tuple[str, str]] = []
+
+    def list(self):
+        if self._raise_on_list:
+            raise RuntimeError('store unreadable')
+        return self._comments
+
+    def update_kato_status(self, comment_id, *, kato_status):
+        self.updated.append((comment_id, kato_status))
+
+
+class RequeueStuckInProgressCommentsTests(unittest.TestCase):
+    """Boot-time recovery: a comment orphaned IN_PROGRESS by a kato
+    restart must go back to QUEUED so the scan-loop drain re-dispatches
+    it and respawns the (lazily-resumed) chat session."""
+
+    def _comment(self, comment_id, status):
+        from kato_core_lib.comment_core_lib import KatoCommentStatus
+        return SimpleNamespace(
+            id=comment_id, kato_status=KatoCommentStatus(status).value,
+        )
+
+    def test_only_in_progress_is_requeued_other_states_untouched(self) -> None:
+        service = AgentService(**_kwargs())
+        store1 = _FakeCommentStore([
+            self._comment('c1', 'in_progress'),
+            self._comment('c2', 'queued'),
+            self._comment('c3', 'addressed'),
+        ])
+        store2 = _FakeCommentStore([
+            self._comment('c4', 'in_progress'),
+            self._comment('c5', 'failed'),
+            self._comment('c6', 'idle'),
+        ])
+        stores = {'UNA-1': store1, 'UNA-2': store2}
+        with patch.object(service, '_safe_list_workspaces', return_value=[
+            SimpleNamespace(task_id='UNA-1'),
+            SimpleNamespace(task_id='UNA-2'),
+        ]), patch.object(service, '_comment_store_for',
+                         side_effect=lambda tid: stores[tid]):
+            requeued = service.requeue_stuck_in_progress_comments()
+
+        self.assertEqual(store1.updated, [('c1', 'queued')])
+        self.assertEqual(store2.updated, [('c4', 'queued')])
+        self.assertEqual(requeued, [
+            {'task_id': 'UNA-1', 'comment_id': 'c1'},
+            {'task_id': 'UNA-2', 'comment_id': 'c4'},
+        ])
+
+    def test_unreadable_store_does_not_abort_other_tasks(self) -> None:
+        service = AgentService(**_kwargs())
+        good = _FakeCommentStore([self._comment('c9', 'in_progress')])
+        stores = {
+            'UNA-1': _FakeCommentStore([], raise_on_list=True),
+            'UNA-2': good,
+        }
+        with patch.object(service, '_safe_list_workspaces', return_value=[
+            SimpleNamespace(task_id='UNA-1'),
+            SimpleNamespace(task_id='UNA-2'),
+        ]), patch.object(service, '_comment_store_for',
+                         side_effect=lambda tid: stores[tid]):
+            requeued = service.requeue_stuck_in_progress_comments()
+
+        self.assertEqual(requeued, [{'task_id': 'UNA-2', 'comment_id': 'c9'}])
+
+    def test_failed_status_update_is_skipped_not_fatal(self) -> None:
+        service = AgentService(**_kwargs())
+        store = _FakeCommentStore([
+            self._comment('bad', 'in_progress'),
+            self._comment('ok', 'in_progress'),
+        ])
+
+        def _update(comment_id, *, kato_status):
+            if comment_id == 'bad':
+                raise RuntimeError('disk full')
+            store.updated.append((comment_id, kato_status))
+
+        with patch.object(service, '_safe_list_workspaces', return_value=[
+            SimpleNamespace(task_id='UNA-1'),
+        ]), patch.object(service, '_comment_store_for', return_value=store), \
+             patch.object(store, 'update_kato_status', side_effect=_update):
+            requeued = service.requeue_stuck_in_progress_comments()
+
+        self.assertEqual(requeued, [{'task_id': 'UNA-1', 'comment_id': 'ok'}])
+
+    def test_blank_task_ids_missing_store_and_no_workspaces_are_safe(self) -> None:
+        service = AgentService(**_kwargs())
+        with patch.object(service, '_safe_list_workspaces', return_value=[]):
+            self.assertEqual(service.requeue_stuck_in_progress_comments(), [])
+        with patch.object(service, '_safe_list_workspaces', return_value=[
+            SimpleNamespace(task_id=''),
+            SimpleNamespace(task_id='UNA-9'),
+        ]), patch.object(service, '_comment_store_for',
+                         return_value=None) as store_for:
+            self.assertEqual(service.requeue_stuck_in_progress_comments(), [])
+            store_for.assert_called_once_with('UNA-9')
+
+
 class ResolveTaskCommentRemoteSyncTests(unittest.TestCase):
     def test_includes_remote_sync_when_kato_addressed(self) -> None:
         # Lines 749-754: include_reply=True when kato_status is ADDRESSED.

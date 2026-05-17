@@ -10,6 +10,7 @@ from kato_core_lib.main import (
     _RESUME_CONTINUE_PROMPT,
     _RESUME_WAIT_PROMPT,
     _cleanup_done_tasks_at_boot,
+    _requeue_stuck_comments,
     _reset_stuck_workspace_statuses,
     _resume_prompt_for_workspace,
     _resume_streaming_sessions,
@@ -849,3 +850,69 @@ class ResetStuckWorkspaceStatusesTests(unittest.TestCase):
             'promoted %d workspace(s) from provisioning to active at boot',
             2,
         )
+
+
+class RequeueStuckCommentsBootTests(unittest.TestCase):
+    """_requeue_stuck_comments delegates to the service and logs a count."""
+
+    def test_delegates_and_logs_when_comments_requeued(self) -> None:
+        service = types.SimpleNamespace(
+            requeue_stuck_in_progress_comments=Mock(return_value=[
+                {'task_id': 'UNA-1', 'comment_id': 'c1'},
+                {'task_id': 'UNA-2', 'comment_id': 'c2'},
+            ]),
+        )
+        app = types.SimpleNamespace(logger=Mock(), service=service)
+
+        _requeue_stuck_comments(app)
+
+        service.requeue_stuck_in_progress_comments.assert_called_once_with()
+        app.logger.info.assert_called_once_with(
+            'requeued %d comment(s) stuck in-progress from the previous '
+            'run; the next scan tick will pick them up and wake the session',
+            2,
+        )
+
+    def test_silent_when_nothing_requeued(self) -> None:
+        service = types.SimpleNamespace(
+            requeue_stuck_in_progress_comments=Mock(return_value=[]),
+        )
+        app = types.SimpleNamespace(logger=Mock(), service=service)
+
+        _requeue_stuck_comments(app)
+
+        app.logger.info.assert_not_called()
+
+    def test_service_error_does_not_abort_boot(self) -> None:
+        service = types.SimpleNamespace(
+            requeue_stuck_in_progress_comments=Mock(
+                side_effect=RuntimeError('boom'),
+            ),
+        )
+        app = types.SimpleNamespace(logger=Mock(), service=service)
+
+        _requeue_stuck_comments(app)  # must not raise
+
+        app.logger.exception.assert_called_once()
+
+    def test_noop_when_service_missing_or_method_absent(self) -> None:
+        _requeue_stuck_comments(types.SimpleNamespace(logger=Mock()))
+        app = types.SimpleNamespace(logger=Mock(), service=object())
+        _requeue_stuck_comments(app)
+        app.logger.info.assert_not_called()
+
+    def test_boot_order_requeue_runs_before_scan_loop(self) -> None:
+        import inspect
+        from kato_core_lib import main as main_module
+        src = inspect.getsource(main_module.main)
+        requeue_idx = src.index('_requeue_stuck_comments(app)')
+        reset_idx = src.index('_reset_stuck_workspace_statuses(app)')
+        scan_idx = src.index('_run_task_scan_loop(')
+        # Requeue after the workspace status reset (so workspaces are
+        # ACTIVE) and before the scan loop that drains the queue.
+        self.assertLess(reset_idx, requeue_idx)
+        self.assertLess(requeue_idx, scan_idx)
+
+
+if __name__ == '__main__':
+    unittest.main()

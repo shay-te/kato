@@ -47,6 +47,25 @@ if (!refractor.__katoLanguagesRegistered) {
   refractor.register(tsx);
   refractor.register(typescript);
   refractor.register(yaml);
+  // Prism's JS-family grammars never tag a member-expression
+  // property — ``foo.bar`` leaves ``bar`` as plain text, so JSX
+  // props like ``planEntry.packageIncludes`` render uncoloured
+  // while Bitbucket paints them. Add a ``property-access`` token:
+  // an identifier that follows a ``.`` (lookbehind keeps the dot
+  // as its own punctuation token). Inserted before ``punctuation``
+  // — i.e. AFTER ``function`` — so ``arr.map(`` still wins as a
+  // function call and only true property reads are caught.
+  const propertyAccess = {
+    'property-access': {
+      pattern: /(\.\s*)#?[$A-Za-z_\xA0-￿][$\w\xA0-￿]*/,
+      lookbehind: true,
+    },
+  };
+  for (const lang of ['javascript', 'jsx', 'typescript', 'tsx']) {
+    if (refractor.languages[lang]) {
+      refractor.languages.insertBefore(lang, 'punctuation', propertyAccess);
+    }
+  }
   refractor.__katoLanguagesRegistered = true;
 }
 
@@ -67,7 +86,13 @@ export function detectDiffLanguage(path) {
   if (lower.endsWith('.tsx')) { return 'tsx'; }
   if (lower.endsWith('.ts')) { return 'typescript'; }
   if (lower.endsWith('.js') || lower.endsWith('.mjs') || lower.endsWith('.cjs')) {
-    return 'javascript';
+    // React projects routinely put JSX in plain ``.js`` files (the
+    // diffed repo here does). The ``jsx`` grammar is a strict
+    // superset of ``javascript`` — non-JSX ``.js`` still tokenizes
+    // identically — so always use it; otherwise ``<Package …/>``,
+    // attr-names and the whole tag render as plain text the way
+    // ``javascript`` leaves them. Matches what Bitbucket does.
+    return 'jsx';
   }
   if (lower.endsWith('.py')) { return 'python'; }
   if (lower.endsWith('.scss') || lower.endsWith('.sass')) { return 'scss'; }

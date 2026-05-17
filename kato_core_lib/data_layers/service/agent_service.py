@@ -860,6 +860,62 @@ class AgentService(Service):
                 results.append({'task_id': task_id, **outcome})
         return results
 
+    def requeue_stuck_in_progress_comments(self) -> list[dict[str, object]]:
+        """Reset comments orphaned in IN_PROGRESS by a kato restart.
+
+        ``_maybe_trigger_comment_run`` flips a comment to
+        ``IN_PROGRESS`` *before* it spawns the agent. If kato is
+        killed / restarted mid-run the agent subprocess dies but the
+        on-disk comment stays ``IN_PROGRESS`` forever — and
+        ``next_queued()`` only ever returns ``QUEUED`` comments, so
+        the scan-loop drain never re-dispatches it and (with lazy
+        resume) the chat session never wakes. That's the "I restarted
+        kato and the conversation with my comment is still sleeping"
+        report.
+
+        Mirrors the boot-time ``_reset_stuck_workspace_statuses``
+        recovery: at boot no streaming session is alive yet, so any
+        ``IN_PROGRESS`` comment is by definition stale — flip it back
+        to ``QUEUED`` so the very next scan tick drains it and
+        respawns the session. Safe to run only at boot for that
+        reason; do NOT call it while sessions may be live.
+        """
+        from kato_core_lib.comment_core_lib import KatoCommentStatus
+
+        requeued: list[dict[str, object]] = []
+        for record in self._safe_list_workspaces():
+            task_id = str(getattr(record, 'task_id', '') or '').strip()
+            if not task_id:
+                continue
+            store = self._comment_store_for(task_id)
+            if store is None:
+                continue
+            try:
+                comments = store.list()
+            except Exception:
+                self.logger.exception(
+                    'failed to list comments while requeueing task %s', task_id,
+                )
+                continue
+            for comment in comments:
+                if comment.kato_status != KatoCommentStatus.IN_PROGRESS.value:
+                    continue
+                try:
+                    store.update_kato_status(
+                        comment.id,
+                        kato_status=KatoCommentStatus.QUEUED.value,
+                    )
+                except Exception:
+                    self.logger.exception(
+                        'failed to requeue stuck comment %s on task %s',
+                        comment.id, task_id,
+                    )
+                    continue
+                requeued.append(
+                    {'task_id': task_id, 'comment_id': comment.id},
+                )
+        return requeued
+
     def resolve_task_comment(
         self,
         task_id: str,

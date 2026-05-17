@@ -170,6 +170,7 @@ def main(cfg: DictConfig) -> int:
     _recover_orphan_workspaces(app)
     _reconcile_workspace_branches(app)
     _reset_stuck_workspace_statuses(app)
+    _requeue_stuck_comments(app)
     _cleanup_done_tasks_at_boot(app)
     # Sessions are lazy after restart: opening a tab replays the disk
     # JSONL via SSE so the conversation history is visible immediately.
@@ -702,6 +703,37 @@ def _register_shutdown_hook(app) -> None:
         app.logger.debug(
             'SIGTERM handler not installable on this platform; '
             'relying on SIGINT for graceful shutdown',
+        )
+
+
+def _requeue_stuck_comments(app) -> None:
+    """Re-queue local comments orphaned IN_PROGRESS by the last restart.
+
+    Without this a comment whose agent was mid-run when kato stopped
+    stays IN_PROGRESS forever: the scan-loop drain only re-dispatches
+    QUEUED comments, and lazy resume (see the boot comment above
+    ``_start_planning_webserver_if_enabled``) means the chat session
+    is not respawned at boot — so the thread sits unaddressed and its
+    tab stays "Claude: sleeping". Flipping it back to QUEUED lets the
+    next scan tick pick it up and respawn the session. Best-effort:
+    a failure here must never abort boot.
+    """
+    service = getattr(app, 'service', None)
+    requeue = getattr(service, 'requeue_stuck_in_progress_comments', None)
+    if not callable(requeue):
+        return
+    try:
+        requeued = requeue()
+    except Exception:
+        app.logger.exception(
+            'failed to requeue stuck in-progress comments at boot',
+        )
+        return
+    if requeued:
+        app.logger.info(
+            'requeued %d comment(s) stuck in-progress from the previous '
+            'run; the next scan tick will pick them up and wake the session',
+            len(requeued),
         )
 
 

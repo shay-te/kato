@@ -8,9 +8,35 @@ test('detectDiffLanguage recognises common JS/TS variants', function () {
   assert.equal(detectDiffLanguage('src/App.jsx'), 'jsx');
   assert.equal(detectDiffLanguage('src/App.tsx'), 'tsx');
   assert.equal(detectDiffLanguage('src/types.ts'), 'typescript');
-  assert.equal(detectDiffLanguage('src/utils/helpers.js'), 'javascript');
-  assert.equal(detectDiffLanguage('build/output.cjs'), 'javascript');
-  assert.equal(detectDiffLanguage('build/output.mjs'), 'javascript');
+  // .js/.cjs/.mjs map to the JSX grammar (a strict superset of
+  // javascript) so React-in-.js files get tag/attr-name colouring
+  // instead of rendering the whole element as plain text.
+  assert.equal(detectDiffLanguage('src/utils/helpers.js'), 'jsx');
+  assert.equal(detectDiffLanguage('build/output.cjs'), 'jsx');
+  assert.equal(detectDiffLanguage('build/output.mjs'), 'jsx');
+});
+
+test('tokenizeHunks tags JSX-in-.js: tag, attr-name, and member props', async function () {
+  const { parseDiff } = await import('react-diff-view');
+  const rawDiff = [
+    'diff --git a/Billing.js b/Billing.js',
+    'new file mode 100644',
+    '--- /dev/null',
+    '+++ b/Billing.js',
+    '@@ -0,0 +1,1 @@',
+    '+const c = (<Package packageIncludes={planEntry.packageIncludes} />);',
+    '',
+  ].join('\n');
+  const files = parseDiff(rawDiff);
+  const tokens = tokenizeHunks(files[0].hunks, 'Billing.js');
+  const flattened = JSON.stringify(tokens.new);
+
+  // JSX is understood (under the old ``javascript`` grammar the
+  // whole element rendered as plain text)…
+  assert.match(flattened, /"token","tag"/);
+  assert.match(flattened, /"token","attr-name"/);
+  // …and the member-expression property is now its own token.
+  assert.match(flattened, /"token","property-access"/);
 });
 
 test('detectDiffLanguage recognises Python', function () {

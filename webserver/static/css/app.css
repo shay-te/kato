@@ -3713,6 +3713,7 @@ body.kato-resizing #left-pane-resizer::before {
 .diff-file .token.class-name { color: #79f2c0; }
 .diff-file .token.attr-name { color: #79f2c0; }
 .diff-file .token.property { color: #79f2c0; }
+.diff-file .token.property-access { color: #79f2c0; }
 .diff-file .token.selector { color: #579dff; }
 .diff-file .token.variable { color: #cce0ff; }
 .diff-file .token.operator,
