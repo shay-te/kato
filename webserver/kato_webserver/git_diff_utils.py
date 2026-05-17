@@ -25,6 +25,22 @@ from typing import Any
 UNTRACKED_FILE_LINE_LIMIT = 1500
 UNTRACKED_FILE_BYTE_LIMIT = 256 * 1024
 
+# Per-file cap for the main ``git diff`` output. A single changed file
+# whose diff section exceeds this many lines has its body replaced
+# with a one-line notice. Without this, a changeset that touches large
+# minified build artifacts (bundled ``*.chunk.js`` / ``main.<hash>.js``)
+# returns a multi-megabyte payload that the browser parses + renders
+# all at once — the diff pane freezes on "Computing diff…". The file
+# still appears in the tree with its real path; the operator opens it
+# in the editor pane to see the full content.
+#
+# Both a line cap AND a byte cap are needed: minified bundles are
+# often a HANDFUL of lines that are each hundreds of KB, so a
+# line-count check alone would wave a multi-megabyte single-line diff
+# straight through.
+TRACKED_FILE_DIFF_LINE_LIMIT = 2000
+TRACKED_FILE_DIFF_BYTE_LIMIT = 128 * 1024
+
 
 def run_git(cwd: str, args: list[str], *, timeout: float) -> str | None:
     """Run ``git -C <cwd> <args>`` and return stdout, or None on any failure.
@@ -331,6 +347,30 @@ def diff_for_commit(cwd: str, sha: str) -> str:
     ) or ''
 
 
+def blob_size_at_ref(cwd: str, ref: str, path: str) -> int | None:
+    """Size of ``path`` at ``ref``, or None when git cannot read it."""
+    safe_path = str(path or '').strip().lstrip('/')
+    safe_ref = str(ref or '').strip()
+    if not cwd or not safe_ref or not safe_path:
+        return None
+    out = run_git(cwd, ['cat-file', '-s', f'{safe_ref}:{safe_path}'], timeout=10)
+    if out is None:
+        return None
+    try:
+        return int(out.strip())
+    except ValueError:
+        return None
+
+
+def file_text_at_ref(cwd: str, ref: str, path: str) -> str | None:
+    """Text content of ``path`` at ``ref``, or None when git cannot read it."""
+    safe_path = str(path or '').strip().lstrip('/')
+    safe_ref = str(ref or '').strip()
+    if not cwd or not safe_ref or not safe_path:
+        return None
+    return run_git(cwd, ['show', f'{safe_ref}:{safe_path}'], timeout=15)
+
+
 def diff_against_base(cwd: str, base_ref: str) -> str:
     """Unified diff that surfaces committed AND uncommitted work vs ``base_ref``.
 
@@ -348,7 +388,64 @@ def diff_against_base(cwd: str, base_ref: str) -> str:
         megabytes into the response.
     """
     main_diff = run_git(cwd, ['diff', base_ref], timeout=30) or ''
-    return main_diff + _untracked_files_as_diff(cwd)
+    return _elide_oversized_file_diffs(main_diff) + _untracked_files_as_diff(cwd)
+
+
+def _elide_oversized_file_diffs(diff_text: str) -> str:
+    """Replace any single file's huge diff body with a short notice.
+
+    ``git diff`` is a concatenation of per-file sections, each starting
+    with ``diff --git a/… b/…``. A changeset that rewrites large
+    minified bundles produces sections tens of thousands of lines long;
+    shipping them all freezes the browser diff pane. We keep every
+    section's HEADER (the ``diff --git`` / ``index`` / mode / ``---`` /
+    ``+++`` lines — so react-diff-view still resolves the path and the
+    add/delete/modify kind) and, when the section is over the line cap,
+    swap its hunks for one context-line hunk. A context line (leading
+    space) parses safely for add, delete and modify alike and renders
+    as a single neutral informational row — no false +/- counts.
+    """
+    if not diff_text:
+        return diff_text
+    lines = diff_text.split('\n')
+    sections: list[list[str]] = []
+    for line in lines:
+        if line.startswith('diff --git ') or not sections:
+            sections.append([])
+        sections[-1].append(line)
+    rebuilt: list[str] = []
+    for section in sections:
+        oversized = (
+            len(section) > TRACKED_FILE_DIFF_LINE_LIMIT
+            # +1 per line for the '\n' the join re-adds.
+            or sum(len(ln) + 1 for ln in section) > TRACKED_FILE_DIFF_BYTE_LIMIT
+        )
+        if (
+            not oversized
+            or not section
+            or not section[0].startswith('diff --git ')
+        ):
+            rebuilt.extend(section)
+            continue
+        hunk_start = next(
+            (i for i, ln in enumerate(section) if ln.startswith('@@ ')),
+            None,
+        )
+        if hunk_start is None:
+            # No hunk (rename-only / binary stub) — leave it untouched.
+            rebuilt.extend(section)
+            continue
+        header = section[:hunk_start]
+        body_bytes = sum(len(ln) + 1 for ln in section[hunk_start:])
+        notice = (
+            f'(diff too large to display: ~{body_bytes // 1024 or 1} KB '
+            f'across {len(section) - hunk_start} hunk lines elided — '
+            f'open the file in the editor pane to view the full change)'
+        )
+        rebuilt.extend(header)
+        rebuilt.append('@@ -1 +1 @@')
+        rebuilt.append(f' {notice}')
+    return '\n'.join(rebuilt)
 
 
 # ----- internals -----

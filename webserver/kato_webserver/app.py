@@ -39,6 +39,7 @@ Endpoints:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from pathlib import Path
@@ -52,6 +53,7 @@ from flask import (
     request,
     send_file,
     stream_with_context,
+    url_for,
 )
 
 from claude_core_lib.claude_core_lib.session.wire_protocol import (
@@ -68,6 +70,7 @@ from claude_core_lib.claude_core_lib.session.wire_protocol import (
     SSE_EVENT_STATUS_ENTRY,
 )
 from kato_webserver.git_diff_utils import (
+    blob_size_at_ref,
     changed_paths,
     conflicted_paths,
     current_branch,
@@ -75,6 +78,7 @@ from kato_webserver.git_diff_utils import (
     diff_against_base,
     diff_for_commit,
     ensure_branch_checked_out,
+    file_text_at_ref,
     list_branch_commits,
     tracked_file_tree,
 )
@@ -192,6 +196,22 @@ def _repository_cwd(
     except Exception:
         return None
     return str(path) if path.is_dir() else None
+
+
+def _repo_relative_path(path_arg: str, cwd: str) -> str | None:
+    """Normalize an API path into a repo-relative git path."""
+    if not path_arg or path_arg == '/dev/null' or not cwd:
+        return None
+    raw = Path(path_arg)
+    root = Path(cwd).resolve()
+    try:
+        candidate = raw.resolve() if raw.is_absolute() else (root / raw).resolve()
+    except (OSError, ValueError):
+        return None
+    if not _is_inside(candidate, root):
+        return None
+    rel = candidate.relative_to(root).as_posix()
+    return rel or None
 
 
 def _settings_env_path() -> Path:
@@ -594,6 +614,29 @@ def create_app(
     app.config['SCAN_IN_PROGRESS_EVENT'] = scan_in_progress_event
     app.config['HOOK_RUNNER'] = hook_runner
     app.config['TASK_MODEL_OVERRIDES'] = {}
+
+    # Cache-bust the unhashed static bundles. ``static/build/app.js``
+    # and ``static/css/app.css`` keep fixed names across rebuilds, so
+    # ``url_for('static', …)`` yields a stable URL the browser caches
+    # forever — every UI change silently 304s to the old asset until a
+    # manual hard-reload. Appending the file's mtime as ``?v=`` makes
+    # the URL change whenever the file does, so a normal reload always
+    # picks up a rebuilt bundle / edited CSS. Falls back to the plain
+    # URL if the file is missing (e.g. before the first build).
+    static_root = REPO_ROOT / 'static'
+
+    @app.context_processor
+    def _inject_asset_url():  # noqa: WPS430 (Flask requires a closure here)
+        def asset_url(filename: str) -> str:
+            url = url_for('static', filename=filename)
+            try:
+                version = int((static_root / filename).stat().st_mtime)
+            except OSError:
+                return url
+            separator = '&' if '?' in url else '?'
+            return f'{url}{separator}v={version}'
+
+        return {'asset_url': asset_url}
 
     _register_http_routes(app)
     _register_streaming_routes(app)
@@ -1455,6 +1498,61 @@ def _register_http_routes(app: Flask) -> None:
             'content': content,
         })
 
+    @app.get('/api/sessions/<task_id>/base-file')
+    def get_session_base_file(task_id: str):
+        """Return a file as it exists at the configured diff base."""
+        path_arg = (request.args.get('path') or '').strip()
+        repo_id = (request.args.get('repo') or '').strip()
+        if not path_arg:
+            return jsonify({'error': 'path query parameter is required'}), 400
+        if path_arg == '/dev/null':
+            return jsonify({'error': 'file not found at base'}), 404
+        workspace_manager = app.config.get('WORKSPACE_MANAGER')
+        manager = app.config['SESSION_MANAGER']
+        agent_service = app.config.get('AGENT_SERVICE')
+        cwd = (
+            _repository_cwd(workspace_manager, task_id, repo_id)
+            if repo_id
+            else _record_cwd_or_none(manager, task_id)
+        )
+        if cwd is None:
+            return jsonify({'error': 'no workspace for this task'}), 404
+        rel_path = _repo_relative_path(path_arg, cwd)
+        if rel_path is None:
+            return jsonify({'error': 'path is outside the task repository'}), 403
+        base = _resolve_diff_base(repo_id, cwd, agent_service)
+        if not base:
+            return jsonify({'error': _no_base_error_message(repo_id)}), 404
+        ref = f'origin/{base}'
+        size = blob_size_at_ref(cwd, ref, rel_path)
+        if size is None:
+            return jsonify({'error': 'file not found at base'}), 404
+        if size > 1_000_000:
+            return jsonify({
+                'error': 'file too large for context expansion (max 1 MB)',
+                'size': size,
+                'too_large': True,
+            }), 200
+        content = file_text_at_ref(cwd, ref, rel_path)
+        if content is None:
+            return jsonify({'error': 'file not found at base'}), 404
+        if '\x00' in content[:8192]:
+            return jsonify({
+                'repo_id': repo_id,
+                'path': rel_path,
+                'base': base,
+                'size': size,
+                'binary': True,
+            })
+        return jsonify({
+            'repo_id': repo_id,
+            'path': rel_path,
+            'base': base,
+            'size': size,
+            'binary': False,
+            'content': content,
+        })
+
     @app.get('/api/sessions/<task_id>/commits')
     def list_repo_commits(task_id: str):
         """Recent commits on a repo's task branch (newest first).
@@ -2026,9 +2124,12 @@ def _register_session_events_route(app: Flask) -> None:
     def session_events_stream(task_id: str):
         manager = app.config['SESSION_MANAGER']
         workspace_manager = app.config.get('WORKSPACE_MANAGER')
+        agent_service = app.config.get('AGENT_SERVICE')
         return Response(
             stream_with_context(
-                _event_stream_generator(manager, workspace_manager, task_id),
+                _event_stream_generator(
+                    manager, workspace_manager, task_id, agent_service,
+                ),
             ),
             mimetype='text/event-stream',
             headers={
@@ -2377,7 +2478,9 @@ def _resolve_writable_session(manager, task_id: str):
     return session, None
 
 
-def _event_stream_generator(manager, workspace_manager, task_id: str):
+def _event_stream_generator(
+    manager, workspace_manager, task_id: str, agent_service=None,
+):
     """Yield SSE frames for one tab's session.
 
     Lifecycle outcomes:
@@ -2403,13 +2506,25 @@ def _event_stream_generator(manager, workspace_manager, task_id: str):
     if session is None:
         yield from _replay_preflight_log(workspace_manager, task_id)
         yield from _replay_history_from_disk(claude_session_id)
+        if _drain_queued_task_comment(agent_service, task_id):
+            session = manager.get_session(task_id) if manager is not None else None
+            if session is not None:
+                replayed_count = yield from _replay_session_backlog(session)
+                yield from _follow_live_session(
+                    session, start_index=replayed_count,
+                    agent_service=agent_service, task_id=task_id,
+                )
+                return
         idle_payload = _record_to_dict(record) if record is not None else {}
         yield _sse_message(SSE_EVENT_SESSION_IDLE, idle_payload)
         return
     yield from _replay_preflight_log(workspace_manager, task_id)
     yield from _replay_history_from_disk(claude_session_id)
     replayed_count = yield from _replay_session_backlog(session)
-    yield from _follow_live_session(session, start_index=replayed_count)
+    yield from _follow_live_session(
+        session, start_index=replayed_count,
+        agent_service=agent_service, task_id=task_id,
+    )
 
 
 def _replay_preflight_log(workspace_manager, task_id: str):
@@ -2510,7 +2625,9 @@ def _replay_session_backlog(session):
     return len(backlog)
 
 
-def _follow_live_session(session, start_index: int = 0):
+def _follow_live_session(
+    session, start_index: int = 0, agent_service=None, task_id: str = '',
+):
     """Tail new events as they arrive, plus a periodic SSE heartbeat.
 
     Polls the session every ``_SSE_POLL_INTERVAL_SECONDS`` and yields
@@ -2526,6 +2643,7 @@ def _follow_live_session(session, start_index: int = 0):
         new_events, last_index = session.events_after(last_index)
         for event in new_events:
             yield _sse_message(SSE_EVENT_SESSION_EVENT, {'event': event.to_dict()})
+            _drain_queued_comment_after_result(event, agent_service, task_id)
 
         if not session.is_alive:
             # Drain any final events that landed between the slice
@@ -2533,6 +2651,7 @@ def _follow_live_session(session, start_index: int = 0):
             tail, last_index = session.events_after(last_index)
             for event in tail:
                 yield _sse_message(SSE_EVENT_SESSION_EVENT, {'event': event.to_dict()})
+                _drain_queued_comment_after_result(event, agent_service, task_id)
             yield _sse_message(SSE_EVENT_SESSION_CLOSED, {})
             return
 
@@ -2541,6 +2660,30 @@ def _follow_live_session(session, start_index: int = 0):
             last_heartbeat = time.monotonic()
 
         time.sleep(_SSE_POLL_INTERVAL_SECONDS)
+
+
+def _drain_queued_comment_after_result(event, agent_service, task_id: str) -> None:
+    event_type = getattr(event, 'event_type', '')
+    raw = getattr(event, 'raw', {}) or {}
+    if event_type != CLAUDE_EVENT_RESULT and raw.get('type') != CLAUDE_EVENT_RESULT:
+        return
+    _drain_queued_task_comment(agent_service, task_id)
+
+
+def _drain_queued_task_comment(agent_service, task_id: str) -> bool:
+    drain = getattr(agent_service, 'drain_next_queued_task_comment', None)
+    if not callable(drain):
+        return False
+    try:
+        result = drain(task_id)
+    except Exception:
+        logging.getLogger(__name__).exception(
+            'queued comment drain failed for task %s', task_id,
+        )
+        return False
+    if not isinstance(result, dict):
+        return False
+    return bool(result.get('started'))
 
 
 def _sse_message(event_type: str, data: dict[str, Any]) -> str:

@@ -1,0 +1,121 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+
+const css = readFileSync(
+  new URL('../../../static/css/app.css', import.meta.url),
+  'utf8',
+);
+
+function ruleBody(selector) {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`));
+  assert.ok(match, `expected ${selector} rule to exist`);
+  return match[1];
+}
+
+function ruleBodyContaining(selector, text) {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const matches = [...css.matchAll(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`, 'g'))];
+  const match = matches.find((entry) => {
+    return entry[1].includes(text);
+  });
+  assert.ok(match, `expected ${selector} rule containing ${text} to exist`);
+  return match[1];
+}
+
+function assertDeclaration(body, property, value) {
+  const declaration = new RegExp(`${property}\\s*:\\s*${value}\\s*;`);
+  assert.match(body, declaration);
+}
+
+test('DiffPane file cards clip diff rows inside rounded corners', () => {
+  const body = ruleBody('.diff-pane .diff-file');
+  assertDeclaration(body, 'overflow', 'clip');
+});
+
+test('DiffPane file headers stick to the top of the scroll container', () => {
+  const body = ruleBody('.diff-pane .diff-file-header');
+  assertDeclaration(body, 'position', 'sticky');
+  assertDeclaration(body, 'top', '0');
+  assertDeclaration(body, 'background', '#1e1e1e');
+});
+
+test('DiffPane file headers draw a rounded face above scrolling diff rows', () => {
+  const body = ruleBody('.diff-pane .diff-file-header::before');
+  assertDeclaration(body, 'background', '#161616');
+  assertDeclaration(body, 'border', '1px solid #2a2a2a');
+  assertDeclaration(body, 'border-radius', '10px 10px 0 0');
+});
+
+test('Collapsed diff file header rounds all corners', () => {
+  const body = ruleBody('.diff-pane .diff-file.is-collapsed .diff-file-header::before');
+  assertDeclaration(body, 'border-radius', '10px');
+});
+
+test('DiffPane uses muted Bitbucket-style hunk colors', () => {
+  const body = ruleBodyContaining('.diff-file', '--diff-code-insert-background-color');
+  assertDeclaration(body, '--diff-code-insert-background-color', '#1d2b27');
+  assertDeclaration(body, '--diff-gutter-insert-background-color', '#1d2b27');
+  assertDeclaration(body, '--diff-code-delete-background-color', '#2d1f22');
+  assertDeclaration(body, '--diff-gutter-delete-background-color', '#2d1f22');
+});
+
+test('Diff file comments panel rounds the bottom of the file card', () => {
+  const body = ruleBody('.diff-file-comments');
+  assertDeclaration(body, 'border-radius', '0 0 10px 10px');
+});
+
+test('Diff file header keeps the expand/collapse chevron on the left', () => {
+  const body = ruleBody('.diff-file-header .diff-file-collapse-toggle');
+  assertDeclaration(body, 'margin-left', '0');
+  assertDeclaration(body, 'flex-shrink', '0');
+});
+
+test('Files tab body scrolls changed-file trees vertically', () => {
+  const body = ruleBody('.files-tab-body');
+  assertDeclaration(body, 'overflow-y', 'auto');
+  assertDeclaration(body, 'overflow-x', 'hidden');
+});
+
+test('Changed-file tree guide line stays out of the chevron lane', () => {
+  const body = ruleBody('.diff-file-tree-guide');
+  assertDeclaration(body, 'left', '22px');
+  assert.match(body, /width\s*:\s*calc\(var\(--depth\) \* 22px\)\s*;/);
+  assert.match(body, /background-image\s*:\s*repeating-linear-gradient\(/);
+});
+
+test('Changed-file tree gives folders lighter weight than files', () => {
+  const folderBody = ruleBody('.files-changed-tree-folder');
+  const fileBody = ruleBody('.files-changed-tree-label');
+  assertDeclaration(folderBody, 'font-weight', '600');
+  assertDeclaration(fileBody, 'font-weight', '750');
+});
+
+test('Diff syntax colors JSX and stylesheet tokens like Bitbucket', () => {
+  const tagBody = ruleBody('.diff-file .token.tag');
+  const attrNameBody = ruleBody('.diff-file .token.attr-name');
+  const selectorBody = ruleBody('.diff-file .token.selector');
+  const propertyBody = ruleBody('.diff-file .token.property');
+  const variableBody = ruleBody('.diff-file .token.variable');
+  const stringBody = ruleBodyContaining('.diff-file .token.string', '#f5cd47');
+  const keywordBody = ruleBodyContaining('.diff-file .token.keyword', '#ff9b91');
+
+  assertDeclaration(tagBody, 'color', '#579dff');
+  assertDeclaration(attrNameBody, 'color', '#79f2c0');
+  assertDeclaration(selectorBody, 'color', '#579dff');
+  assertDeclaration(propertyBody, 'color', '#79f2c0');
+  assertDeclaration(variableBody, 'color', '#cce0ff');
+  assertDeclaration(stringBody, 'color', '#f5cd47');
+  assertDeclaration(keywordBody, 'color', '#ff9b91');
+});
+
+test('Diff context expander has Bitbucket-style controls', () => {
+  const rowBody = ruleBody('.diff-context-expander-inner');
+  const buttonBody = ruleBody('.diff-context-expander-btn');
+
+  assertDeclaration(rowBody, 'background', '#2f3033');
+  assertDeclaration(rowBody, 'font-family', 'ui-monospace, monospace');
+  assertDeclaration(buttonBody, 'width', '22px');
+  assertDeclaration(buttonBody, 'border-radius', '4px');
+});

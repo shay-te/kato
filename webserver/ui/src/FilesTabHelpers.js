@@ -49,6 +49,30 @@ export function attachIds(nodes, cwd = '') {
   });
 }
 
+// True when ``changedFiles`` holds a path that lives inside the
+// folder at ``folderRelativePath`` (the folder itself or any
+// descendant). Used to tint the whole ancestor chain of a changed
+// file in the tree.
+//
+// An empty / falsy ``folderRelativePath`` is the synthetic repo
+// root — it returns ``false`` so the root of all is never tinted
+// ("colour up to the root, but not the root of all"). No relative
+// file path starts with "/", so prefixing with the folder + "/"
+// also naturally can't match against an empty root path.
+export function folderContainsChange(folderRelativePath, changedFiles) {
+  const folder = String(folderRelativePath || '');
+  if (!folder) { return false; }
+  if (!changedFiles || typeof changedFiles.forEach !== 'function') {
+    return false;
+  }
+  const prefix = folder + '/';
+  for (const changed of changedFiles) {
+    const path = String(changed || '');
+    if (path === folder || path.startsWith(prefix)) { return true; }
+  }
+  return false;
+}
+
 // Left-click activation. Folders expand/collapse. Files are a
 // no-op here on purpose: a left-click on a file only OPENS it in
 // the editor pane (handled by the caller via ``onOpenFile``) — it

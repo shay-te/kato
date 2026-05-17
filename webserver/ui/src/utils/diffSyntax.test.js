@@ -79,3 +79,23 @@ test('tokenizeHunks produces an old/new token pair for an intra-line edit', asyn
   assert.equal(Array.isArray(tokens.old), true);
   assert.equal(Array.isArray(tokens.new), true);
 });
+
+test('tokenizeHunks produces syntax token classes for recognised languages', async function () {
+  const { parseDiff } = await import('react-diff-view');
+  const rawDiff = [
+    'diff --git a/App.jsx b/App.jsx',
+    'new file mode 100644',
+    '--- /dev/null',
+    '+++ b/App.jsx',
+    '@@ -0,0 +1,2 @@',
+    '+const App = () => {',
+    "+  return 'ready';",
+    '',
+  ].join('\n');
+  const files = parseDiff(rawDiff);
+  const tokens = tokenizeHunks(files[0].hunks, 'App.jsx');
+  const flattened = JSON.stringify(tokens.new);
+
+  assert.match(flattened, /"token","keyword"/);
+  assert.match(flattened, /"token","string"/);
+});

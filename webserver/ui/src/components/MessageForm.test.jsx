@@ -213,14 +213,16 @@ describe('MessageForm — disabled + working states', () => {
     );
   });
 
-  test('Submit button label flips to "Steer" while turnInFlight is true', () => {
+  test('Submit button label flips to "Queue" while turnInFlight is true', () => {
     renderForm({ taskId: 'T1', turnInFlight: true });
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'follow-up' },
     });
-    // The submit button is the visible button with type=submit.
-    const submitButton = screen.getByRole('button', { name: /steer/i });
+    // Mid-turn the composer queues instead of steering — the button
+    // says "Queue" and carries the is-queued accent.
+    const submitButton = screen.getByRole('button', { name: /queue/i });
     expect(submitButton).toBeInTheDocument();
+    expect(submitButton).toHaveClass('is-queued');
   });
 
   test('Submit button is "Send" when not in flight', () => {

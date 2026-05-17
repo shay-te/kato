@@ -50,6 +50,13 @@ if (!refractor.__katoLanguagesRegistered) {
   refractor.__katoLanguagesRegistered = true;
 }
 
+const refractorAdapter = {
+  highlight(text, language) {
+    const tree = refractor.highlight(text, language);
+    return Array.isArray(tree) ? tree : (tree.children || []);
+  },
+};
+
 // Detect language by file extension. Returns a refractor-registered
 // name when we have a tokenizer for it, '' otherwise (which makes
 // :func:`tokenizeHunks` skip the syntax-highlight pass).
@@ -83,7 +90,8 @@ export function tokenizeHunks(hunks, path) {
   const language = detectDiffLanguage(path);
   const options = { enhancers: [markEdits(hunks)] };
   if (language) {
-    options.refractor = refractor;
+    options.highlight = true;
+    options.refractor = refractorAdapter;
     options.language = language;
   }
   try {

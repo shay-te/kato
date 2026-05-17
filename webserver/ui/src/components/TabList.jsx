@@ -97,8 +97,24 @@ export default function TabList({
     const node = scrollRef.current;
     if (!node || !activeTaskId) { return; }
     const active = node.querySelector(`[data-task-id="${activeTaskId}"]`);
-    if (active && typeof active.scrollIntoView === 'function') {
-      active.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+    if (!active) { return; }
+    // Scroll ONLY this strip — never ``active.scrollIntoView()``.
+    // scrollIntoView walks and scrolls every scrollable ancestor; on
+    // the rightmost tab it would also scroll the layout/page
+    // horizontally, dragging the whole UI left and clipping the file
+    // pane (the reported bug). Compute the centred scrollLeft from
+    // rects and clamp it to the strip's own range so the scroll is
+    // contained.
+    const nodeRect = node.getBoundingClientRect();
+    const activeRect = active.getBoundingClientRect();
+    const delta = (activeRect.left - nodeRect.left)
+      - (node.clientWidth - activeRect.width) / 2;
+    const maxLeft = node.scrollWidth - node.clientWidth;
+    const left = Math.max(0, Math.min(node.scrollLeft + delta, maxLeft));
+    if (typeof node.scrollTo === 'function') {
+      node.scrollTo({ left, behavior: 'smooth' });
+    } else {
+      node.scrollLeft = left;
     }
   }, [activeTaskId, sessions]);
 

@@ -282,5 +282,87 @@ class DiffForCommitTests(unittest.TestCase):
             self.assertEqual(git_diff_utils.diff_for_commit('/repo', 'abc'), '')
 
 
+class ElideOversizedFileDiffsTests(unittest.TestCase):
+    def _section(self, path: str, n: int) -> str:
+        body = '\n'.join(f'+line {i}' for i in range(n))
+        return (
+            f'diff --git a/{path} b/{path}\n'
+            f'index 1111111..2222222 100644\n'
+            f'--- a/{path}\n'
+            f'+++ b/{path}\n'
+            f'@@ -0,0 +1,{n} @@\n'
+            f'{body}\n'
+        )
+
+    def test_empty_input_passes_through(self) -> None:
+        self.assertEqual(git_diff_utils._elide_oversized_file_diffs(''), '')
+
+    def test_small_diff_is_unchanged(self) -> None:
+        small = self._section('src/app.py', 5)
+        self.assertEqual(
+            git_diff_utils._elide_oversized_file_diffs(small), small,
+        )
+
+    def test_oversized_section_body_replaced_with_notice(self) -> None:
+        huge = self._section(
+            'build/static/js/main.adc4c4f0.js',
+            git_diff_utils.TRACKED_FILE_DIFF_LINE_LIMIT + 50,
+        )
+        out = git_diff_utils._elide_oversized_file_diffs(huge)
+        # Header (path + kind) preserved so react-diff-view still
+        # resolves the file; body collapsed to one context line.
+        self.assertIn('diff --git a/build/static/js/main.adc4c4f0.js', out)
+        self.assertIn('--- a/build/static/js/main.adc4c4f0.js', out)
+        self.assertIn('+++ b/build/static/js/main.adc4c4f0.js', out)
+        self.assertIn('diff too large to display', out)
+        self.assertIn('@@ -1 +1 @@', out)
+        self.assertLess(len(out), len(huge) // 10)
+        self.assertNotIn('+line 100', out)
+
+    def test_minified_few_lines_but_huge_bytes_is_elided(self) -> None:
+        # A minified bundle is a HANDFUL of lines, each enormous — the
+        # byte cap (not the line cap) must catch this.
+        giant_line = '+' + ('x' * (git_diff_utils.TRACKED_FILE_DIFF_BYTE_LIMIT + 10))
+        section = (
+            'diff --git a/build/main.abc123.js b/build/main.abc123.js\n'
+            'index 1..2 100644\n'
+            '--- a/build/main.abc123.js\n'
+            '+++ b/build/main.abc123.js\n'
+            '@@ -1 +1 @@\n'
+            f'{giant_line}\n'
+        )
+        out = git_diff_utils._elide_oversized_file_diffs(section)
+        self.assertIn('diff too large to display', out)
+        self.assertNotIn('xxxx', out)               # giant body gone
+        self.assertLess(len(out), 1024)
+        self.assertIn('diff --git a/build/main.abc123.js', out)
+
+    def test_only_the_oversized_section_is_elided(self) -> None:
+        small = self._section('src/keep.py', 3)
+        huge = self._section(
+            'build/bundle.js',
+            git_diff_utils.TRACKED_FILE_DIFF_LINE_LIMIT + 10,
+        )
+        out = git_diff_utils._elide_oversized_file_diffs(small + huge)
+        self.assertIn('+line 2', out)            # src/keep.py survives
+        self.assertIn('diff too large to display', out)
+        self.assertIn('diff --git a/src/keep.py', out)
+        self.assertIn('diff --git a/build/bundle.js', out)
+
+    def test_diff_against_base_elides_then_appends_untracked(self) -> None:
+        huge = self._section(
+            'build/x.js', git_diff_utils.TRACKED_FILE_DIFF_LINE_LIMIT + 5,
+        )
+        with patch.object(git_diff_utils, 'run_git', return_value=huge), \
+             patch.object(
+                 git_diff_utils, '_untracked_files_as_diff',
+                 return_value='diff --git a/u b/u\n',
+             ):
+            out = git_diff_utils.diff_against_base('/repo', 'origin/main')
+        self.assertIn('diff too large to display', out)
+        self.assertNotIn('+line 50', out)
+        self.assertTrue(out.endswith('diff --git a/u b/u\n'))
+
+
 if __name__ == '__main__':
     unittest.main()

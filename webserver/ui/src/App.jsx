@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AdoptTaskModal from './components/AdoptTaskModal.jsx';
+import DiffPane from './components/DiffPane.jsx';
 import EditorPane from './components/EditorPane.jsx';
 import ForgetTaskModal from './components/ForgetTaskModal.jsx';
 import Header from './components/Header.jsx';
@@ -272,6 +273,7 @@ export default function App() {
   // tasks so the editor doesn't render a file from the previous
   // task's workspace.
   const [openFile, setOpenFile] = useState(null);
+  const openFileRequestRef = useRef(0);
   useEffect(() => { setOpenFile(null); }, [activeTaskId]);
   const handleOpenFile = useCallback((info) => {
     // ``info`` shape from FilesTab: { absolutePath, relativePath, repoId }.
@@ -288,11 +290,16 @@ export default function App() {
     // status pill), close it so the file actually shows instead of
     // staying hidden behind the feed.
     setOrchestratorOpen(false);
+    openFileRequestRef.current += 1;
     setOpenFile({
       taskId: activeTaskId,
       absolutePath: info.absolutePath,
       relativePath: info.relativePath || info.absolutePath,
       repoId: info.repoId || '',
+      openRequestId: openFileRequestRef.current,
+      // 'diff' = the round diff button on a changed tree row; the
+      // centre column then renders DiffPane instead of EditorPane.
+      view: info.view === 'diff' ? 'diff' : 'file',
     });
   }, [activeTaskId]);
   // Memoize so the context value is reference-stable across App
@@ -340,7 +347,9 @@ export default function App() {
       center={
         orchestratorOpen
           ? <OrchestratorActivityFeed history={status.history} onClose={toggleOrchestrator} />
-          : <EditorPane openFile={openFile} />
+          : openFile?.view === 'diff'
+            ? <DiffPane openFile={openFile} />
+            : <EditorPane openFile={openFile} />
       }
       right={
         <SessionDetail

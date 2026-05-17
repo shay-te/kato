@@ -1,13 +1,28 @@
 import assert from 'node:assert/strict';
 import test, { afterEach } from 'node:test';
 
-import { adoptClaudeSession, fetchClaudeSessions, postChatMessage } from './api.js';
+import {
+  adoptClaudeSession,
+  fetchBaseFileContent,
+  fetchClaudeSessions,
+  postChatMessage,
+} from './api.js';
 
 
 function _stubFetch(response) {
   const calls = [];
   globalThis.fetch = function (url, init) {
     calls.push({ url, init });
+    return Promise.resolve(response);
+  };
+  return calls;
+}
+
+function _stubFetchResponses(responses) {
+  const calls = [];
+  globalThis.fetch = function (url, init) {
+    calls.push({ url, init });
+    const response = responses.shift();
     return Promise.resolve(response);
   };
   return calls;
@@ -47,6 +62,49 @@ test('fetchClaudeSessions throws when the response is not ok', async function ()
   await assert.rejects(
     () => fetchClaudeSessions(''),
     /storage corrupt/,
+  );
+});
+
+test('fetchBaseFileContent falls back to the current file when base route 404s', async function () {
+  const calls = _stubFetchResponses([
+    {
+      ok: false,
+      status: 404,
+      statusText: 'NOT FOUND',
+      json: () => Promise.resolve({ error: 'file not found at base' }),
+    },
+    {
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ content: 'current text', binary: false }),
+    },
+  ]);
+  const result = await fetchBaseFileContent('TASK-1', {
+    repoId: 'client',
+    repoCwd: '/workspace/client',
+    path: 'src/app.js',
+  });
+  assert.equal(result.content, 'current text');
+  assert.equal(
+    calls[0].url,
+    '/api/sessions/TASK-1/base-file?path=src%2Fapp.js&repo=client',
+  );
+  assert.equal(
+    calls[1].url,
+    '/api/sessions/TASK-1/file?path=%2Fworkspace%2Fclient%2Fsrc%2Fapp.js',
+  );
+});
+
+test('fetchBaseFileContent keeps the base-file error when fallback is unavailable', async function () {
+  _stubFetch({
+    ok: false,
+    status: 404,
+    statusText: 'NOT FOUND',
+    json: () => Promise.resolve({ error: 'file not found at base' }),
+  });
+  await assert.rejects(
+    () => fetchBaseFileContent('TASK-1', { repoId: 'client', path: 'src/app.js' }),
+    /file not found at base/,
   );
 });
 

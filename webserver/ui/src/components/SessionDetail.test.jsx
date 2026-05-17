@@ -11,14 +11,38 @@
 import { describe, test, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
-// Stub the heavy children so the dock-layout test renders fast and
-// deterministically. WorkingIndicator is kept REAL — it's the element
-// whose position (above the composer) we're asserting. MessageForm is
-// reduced to a bare ``#message-form`` so the ordering check has the
-// same selector the real composer uses.
-vi.mock('./SessionHeader.jsx', () => ({ default: () => <div data-testid="session-header" /> }));
-vi.mock('./EventLog.jsx', () => ({ default: () => <div data-testid="event-log" /> }));
-vi.mock('./MessageForm.jsx', () => ({ default: () => <form id="message-form" /> }));
+// Stub the heavy children so the layout test renders fast and
+// deterministically. WorkingIndicator is kept REAL — it's the
+// element under test. The EventLog stub renders its ``footer`` prop
+// inside a ``#event-log`` so we can assert the indicator is the
+// trailing entry INSIDE the scrollable log (not a floating overlay).
+// MessageForm is a bare ``#message-form`` so the ordering check uses
+// the same selector as the real composer.
+// Expose onResume via a button so the resume path (deliverMessage,
+// bypassing the queue) can be exercised. Layout tests ignore it.
+vi.mock('./SessionHeader.jsx', () => ({
+  default: ({ onResume }) => (
+    <div data-testid="session-header">
+      <button type="button" onClick={onResume}>mock-resume</button>
+    </div>
+  ),
+}));
+vi.mock('./EventLog.jsx', () => ({
+  default: ({ footer }) => <div id="event-log" data-testid="event-log">{footer}</div>,
+}));
+// The mock exposes a button that invokes the real ``onSubmit`` prop
+// (SessionDetail.onSendMessage) so the queue tests can drive a send
+// without the real composer. Layout tests only look for #message-form
+// / its absence, so the extra button is harmless.
+vi.mock('./MessageForm.jsx', () => ({
+  default: ({ onSubmit }) => (
+    <form id="message-form">
+      <button type="button" onClick={() => onSubmit('hello', [])}>
+        mock-send
+      </button>
+    </form>
+  ),
+}));
 vi.mock('./PermissionDecisionContainer.jsx', () => ({ default: () => null }));
 vi.mock('./ChatSearch.jsx', () => ({ default: () => null }));
 vi.mock('../hooks/useToolMemory.js', () => ({
@@ -227,7 +251,7 @@ describe('hasVisibleBubbles', () => {
 });
 
 
-describe('SessionDetail — composer dock layout', () => {
+describe('SessionDetail — working indicator placement', () => {
 
   function _stream(overrides = {}) {
     return {
@@ -244,39 +268,37 @@ describe('SessionDetail — composer dock layout', () => {
     };
   }
 
-  test('working indicator sits ABOVE the composer inside .composer-dock', async () => {
-    // The reported bug: the animated "✻ thinking…" line rendered
-    // BELOW the floating input box. Both now live in one bottom-
-    // anchored .composer-dock with the indicator as the first child,
-    // so it always sits on top of the composer. ``turnInFlight: true``
-    // makes WorkingIndicator active so it actually renders.
+  test('indicator is the trailing entry INSIDE the scrollable log', async () => {
+    // The reported bug: the indicator floated as an overlay and the
+    // chat scrolled through it, colliding with the transcript. It is
+    // now passed as EventLog's ``footer`` so it renders as the last
+    // entry inside #event-log — part of the messages, scrollable —
+    // never a floating overlay (no .composer-dock anymore).
     useSessionStream.mockReturnValue(_stream({ turnInFlight: true }));
 
     const { container } = render(
       <SessionDetail session={{ task_id: 'T1' }} />,
     );
 
-    await waitFor(() => {
-      expect(container.querySelector('.composer-dock')).toBeInTheDocument();
+    const log = await waitFor(() => {
+      const el = container.querySelector('#event-log');
+      expect(el).toBeInTheDocument();
+      return el;
     });
-    const dock = container.querySelector('.composer-dock');
-    const children = Array.from(dock.children);
-    const indicator = dock.querySelector('.working-indicator');
-    const composer = dock.querySelector('#message-form');
-
+    const indicator = container.querySelector('.working-indicator');
     expect(indicator).toBeInTheDocument();
+    // Lives inside the scroll container, NOT in a floating dock.
+    expect(log.contains(indicator)).toBe(true);
+    expect(container.querySelector('.composer-dock')).toBeNull();
+    // Composer is a separate sibling AFTER the log, not its child.
+    const composer = container.querySelector('#message-form');
     expect(composer).toBeInTheDocument();
-    // Order in the DOM = stacking order in the column: the indicator
-    // must come before (i.e. visually above) the composer.
-    expect(children.indexOf(indicator)).toBeGreaterThanOrEqual(0);
-    expect(children.indexOf(indicator))
-      .toBeLessThan(children.indexOf(composer));
+    expect(log.contains(composer)).toBe(false);
   });
 
-  test('dock still wraps the composer when no turn is in flight', async () => {
-    // WorkingIndicator returns null when inactive — the dock then
-    // holds just the composer, with no empty indicator slot. This
-    // exercises the dock render path with the indicator absent.
+  test('no indicator in the log when no turn is in flight', async () => {
+    // WorkingIndicator returns null when inactive — the log then has
+    // no trailing indicator entry. Exercises the footer=null path.
     useSessionStream.mockReturnValue(_stream({ turnInFlight: false }));
 
     const { container } = render(
@@ -284,15 +306,14 @@ describe('SessionDetail — composer dock layout', () => {
     );
 
     await waitFor(() => {
-      expect(container.querySelector('.composer-dock')).toBeInTheDocument();
+      expect(container.querySelector('#event-log')).toBeInTheDocument();
     });
-    const dock = container.querySelector('.composer-dock');
-    expect(dock.querySelector('#message-form')).toBeInTheDocument();
-    expect(dock.querySelector('.working-indicator')).toBeNull();
+    expect(container.querySelector('.working-indicator')).toBeNull();
+    expect(container.querySelector('#message-form')).toBeInTheDocument();
   });
 
   test('stalled indicator "continue" nudge sends a continue message', async () => {
-    // Covers the dock's onContinue closure: WorkingIndicator goes
+    // Covers the footer indicator's onContinue closure: it goes
     // stalled after >180s of silence and shows a "send continue"
     // button; clicking it must drive SessionDetail.onSendMessage
     // ('continue') — optimistic local echo, turn marked busy, POST.
@@ -313,10 +334,232 @@ describe('SessionDetail — composer dock layout', () => {
     });
   });
 
-  test('renders the placeholder (no dock) when no session is bound', () => {
+  test('renders the placeholder (no log) when no session is bound', () => {
     useSessionStream.mockReturnValue(_stream());
     const { container } = render(<SessionDetail session={null} />);
     expect(container.querySelector('#session-placeholder')).toBeInTheDocument();
-    expect(container.querySelector('.composer-dock')).toBeNull();
+    expect(container.querySelector('#event-log')).toBeNull();
+    expect(container.querySelector('.working-indicator')).toBeNull();
+  });
+});
+
+
+describe('SessionDetail — outgoing message queue', () => {
+
+  function _stream(overrides = {}) {
+    return {
+      events: [],
+      lifecycle: SESSION_LIFECYCLE.STREAMING,
+      turnInFlight: false,
+      pendingPermission: null,
+      lastEventAt: 0,
+      appendLocalEvent: vi.fn(),
+      markTurnBusy: vi.fn(),
+      reconnect: vi.fn(),
+      dismissPermission: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  test('idle: a sent message is delivered immediately', async () => {
+    postChatMessage.mockClear();
+    useSessionStream.mockReturnValue(_stream({ turnInFlight: false }));
+    render(<SessionDetail session={{ task_id: 'T1' }} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));
+
+    await waitFor(() => {
+      expect(postChatMessage).toHaveBeenCalledWith('T1', 'hello', []);
+    });
+  });
+
+  test('mid-turn: a sent message is QUEUED, not delivered', async () => {
+    postChatMessage.mockClear();
+    const stream = _stream({ turnInFlight: true });
+    useSessionStream.mockReturnValue(stream);
+    render(<SessionDetail session={{ task_id: 'T1' }} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));
+
+    // Held — no POST while Claude is working …
+    expect(postChatMessage).not.toHaveBeenCalled();
+    // … and the operator gets a "queued" confirmation bubble.
+    expect(stream.appendLocalEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining('queued') }),
+    );
+  });
+
+  test('the queued message flushes when the turn finishes', async () => {
+    postChatMessage.mockClear();
+    const busy = _stream({ turnInFlight: true });
+    const idle = _stream({ turnInFlight: false });
+
+    useSessionStream.mockReturnValue(busy);
+    const { rerender } = render(<SessionDetail session={{ task_id: 'T1' }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));
+    expect(postChatMessage).not.toHaveBeenCalled();
+
+    // Turn ends → flush effect delivers the held message exactly once.
+    useSessionStream.mockReturnValue(idle);
+    rerender(<SessionDetail session={{ task_id: 'T1' }} />);
+
+    await waitFor(() => {
+      expect(postChatMessage).toHaveBeenCalledWith('T1', 'hello', []);
+    });
+    expect(postChatMessage).toHaveBeenCalledTimes(1);
+    expect(idle.markTurnBusy).toHaveBeenCalledWith(true);
+  });
+
+  test('switching tasks drops the pending queue (no cross-task send)', async () => {
+    postChatMessage.mockClear();
+    const busy = _stream({ turnInFlight: true });
+    useSessionStream.mockReturnValue(busy);
+    const { rerender } = render(<SessionDetail session={{ task_id: 'T1' }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));
+
+    // Switch to a different task, then that task's turn goes idle.
+    const idleOther = _stream({ turnInFlight: false });
+    useSessionStream.mockReturnValue(idleOther);
+    rerender(<SessionDetail session={{ task_id: 'T2' }} />);
+
+    // T1's queued message must NOT be delivered into T2.
+    await Promise.resolve();
+    expect(postChatMessage).not.toHaveBeenCalled();
+  });
+
+  test('spawned response: posts a "resumed" note and reconnects', async () => {
+    postChatMessage.mockClear();
+    postChatMessage.mockResolvedValueOnce({ ok: true, body: { status: 'spawned' } });
+    const stream = _stream({ turnInFlight: false });
+    useSessionStream.mockReturnValue(stream);
+    render(<SessionDetail session={{ task_id: 'T1' }} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));
+
+    await waitFor(() => {
+      expect(stream.reconnect).toHaveBeenCalled();
+    });
+    expect(stream.appendLocalEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining('resumed') }),
+    );
+  });
+
+  test('failed send: error bubble + turn un-marked busy', async () => {
+    postChatMessage.mockClear();
+    postChatMessage.mockResolvedValueOnce({ ok: false, error: 'boom' });
+    const stream = _stream({ turnInFlight: false });
+    useSessionStream.mockReturnValue(stream);
+    render(<SessionDetail session={{ task_id: 'T1' }} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));
+
+    await waitFor(() => {
+      expect(stream.appendLocalEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ text: expect.stringContaining('send failed: boom') }),
+      );
+    });
+    // Failure releases the busy flag so the operator can retry.
+    expect(stream.markTurnBusy).toHaveBeenCalledWith(false);
+  });
+
+  test('resume delivers directly (bypasses the queue, even mid-turn)', async () => {
+    postChatMessage.mockClear();
+    // Mid-turn: a normal composer send would QUEUE — resume must not.
+    const stream = _stream({ turnInFlight: true });
+    useSessionStream.mockReturnValue(stream);
+    render(<SessionDetail session={{ task_id: 'T1' }} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'mock-resume' }));
+
+    await waitFor(() => {
+      expect(postChatMessage).toHaveBeenCalledWith(
+        'T1', 'Please continue from where you left off.', [],
+      );
+    });
+  });
+});
+
+
+describe('SessionDetail — permission dialog auto-reconnect', () => {
+
+  function _stream(overrides = {}) {
+    return {
+      events: [],
+      lifecycle: SESSION_LIFECYCLE.IDLE,
+      turnInFlight: false,
+      pendingPermission: null,
+      lastEventAt: 0,
+      appendLocalEvent: vi.fn(),
+      markTurnBusy: vi.fn(),
+      reconnect: vi.fn(),
+      dismissPermission: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  function _render(stream, props = {}) {
+    useSessionStream.mockReturnValue(stream);
+    return render(
+      <SessionDetail
+        session={{ task_id: 'T1' }}
+        needsAttention={false}
+        onPendingPermissionChange={vi.fn()}
+        {...props}
+      />,
+    );
+  }
+
+  test('reconnects when attention rises while the SSE is closed (idle)', () => {
+    // The bug: a permission request lands while the operator is
+    // already on this tab; the per-task SSE was closed on idle so
+    // pendingPermission never updates and the dialog never shows
+    // until a manual tab re-click. Attention rising must auto-reopen.
+    const stream = _stream({ lifecycle: SESSION_LIFECYCLE.IDLE });
+    const { rerender } = _render(stream, { needsAttention: false });
+    expect(stream.reconnect).not.toHaveBeenCalled();
+
+    rerender(
+      <SessionDetail
+        session={{ task_id: 'T1' }}
+        needsAttention
+        onPendingPermissionChange={vi.fn()}
+      />,
+    );
+    expect(stream.reconnect).toHaveBeenCalledTimes(1);
+  });
+
+  test('does NOT reconnect when the stream is live (STREAMING)', () => {
+    // A live SSE already delivers the request; reconnecting would be
+    // a needless reset.
+    const stream = _stream({ lifecycle: SESSION_LIFECYCLE.STREAMING });
+    const { rerender } = _render(stream, { needsAttention: false });
+    rerender(
+      <SessionDetail session={{ task_id: 'T1' }} needsAttention />,
+    );
+    expect(stream.reconnect).not.toHaveBeenCalled();
+  });
+
+  test('does NOT reconnect when a permission is already pending', () => {
+    const stream = _stream({
+      lifecycle: SESSION_LIFECYCLE.IDLE,
+      pendingPermission: { type: 'permission_request', request_id: 'r1' },
+    });
+    const { rerender } = _render(stream, { needsAttention: false });
+    rerender(
+      <SessionDetail session={{ task_id: 'T1' }} needsAttention />,
+    );
+    expect(stream.reconnect).not.toHaveBeenCalled();
+  });
+
+  test('reconnects once per rising edge, not on every re-render', () => {
+    const stream = _stream({ lifecycle: SESSION_LIFECYCLE.IDLE });
+    const { rerender } = _render(stream, { needsAttention: false });
+    const withAttention = (
+      <SessionDetail session={{ task_id: 'T1' }} needsAttention />
+    );
+    rerender(withAttention);          // false → true: rising edge
+    rerender(withAttention);          // still true: no new edge
+    rerender(withAttention);
+    expect(stream.reconnect).toHaveBeenCalledTimes(1);
   });
 });

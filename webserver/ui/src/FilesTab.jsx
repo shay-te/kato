@@ -1,14 +1,27 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Tree } from 'react-arborist';
-import { fetchFileTree, fetchRepoCommits, syncTaskRepositories } from './api.js';
+import {
+  fetchDiff,
+  fetchFileTree,
+  fetchRepoCommits,
+  syncTaskRepositories,
+} from './api.js';
 import AddRepositoryModal from './components/AddRepositoryModal.jsx';
 import CommitDiffModal from './components/CommitDiffModal.jsx';
 import Icon from './components/Icon.jsx';
 import { useChatComposer } from './contexts/ChatComposerContext.jsx';
+import {
+  buildDiffFileTree,
+  changedFileOpenTarget,
+  countFileChangeStats,
+  diffDisplayPath,
+  parseRepoDiffs,
+} from './diffModel.js';
 import { toast } from './stores/toastStore.js';
 import {
   activateTreeNode,
   attachIds,
+  folderContainsChange,
   matchTreeNode,
   normalizeTrees,
 } from './FilesTabHelpers.js';
@@ -19,6 +32,15 @@ import {
 // edits, pulls, syncs). Honors document visibility so a background
 // kato tab doesn't keep hammering the server.
 const AUTO_POLL_INTERVAL_MS = 5000;
+const EMPTY_DIFF_META = new Map();
+const EMPTY_STATS = { added: 0, deleted: 0 };
+const DIFF_KIND_ICON = {
+  add: 'plus',
+  delete: 'minus',
+  modify: 'edit',
+  rename: 'edit',
+  copy: 'edit',
+};
 
 export default function FilesTab({
   taskId,
@@ -30,6 +52,7 @@ export default function FilesTab({
   const [state, setState] = useState({
     status: 'loading',
     trees: [],
+    diffMetaByRepo: new Map(),
     error: '',
   });
   const [collapsed, setCollapsed] = useState(() => new Set());
@@ -47,6 +70,7 @@ export default function FilesTab({
   const [syncTick, setSyncTick] = useState(0);
   const [syncing, setSyncing] = useState(false);
   const [addModalOpen, setAddModalOpen] = useState(false);
+  const [showAllFiles, setShowAllFiles] = useState(false);
   const inFlightRef = useRef(false);
   const containerRef = useRef(null);
   const filterInputRef = useRef(null);
@@ -86,14 +110,24 @@ export default function FilesTab({
     setState((prev) => (
       prev.status === 'ready' || prev.status === 'error'
         ? prev
-        : { status: 'loading', trees: [], error: '' }
+        : { status: 'loading', trees: [], diffMetaByRepo: new Map(), error: '' }
     ));
-    fetchFileTree(taskId)
+    const diffMetaPromise = fetchDiff(taskId)
       .then((payload) => {
+        return buildFilesDiffMeta(parseRepoDiffs(payload));
+      })
+      .catch((err) => {
+        // Decoration only: keep the file browser usable if diff parsing fails.
+        console.warn('Failed to load file-tree diff metadata', err);
+        return new Map();
+      });
+    Promise.all([fetchFileTree(taskId), diffMetaPromise])
+      .then(([payload, diffMetaByRepo]) => {
         if (cancelled) { return; }
         setState({
           status: 'ready',
           trees: normalizeTrees(payload),
+          diffMetaByRepo,
           error: '',
         });
       })
@@ -102,6 +136,7 @@ export default function FilesTab({
         setState((prev) => ({
           status: 'error',
           trees: prev.trees,
+          diffMetaByRepo: prev.diffMetaByRepo,
           error: String(err),
         }));
       })
@@ -135,7 +170,12 @@ export default function FilesTab({
   // Blank state on task switch so we don't show stale data while
   // the new fetch is in flight.
   useEffect(() => {
-    setState({ status: 'loading', trees: [], error: '' });
+    setState({
+      status: 'loading',
+      trees: [],
+      diffMetaByRepo: new Map(),
+      error: '',
+    });
   }, [taskId]);
 
   useEffect(() => {
@@ -202,9 +242,32 @@ export default function FilesTab({
     }
     return set;
   }, [state.trees]);
+  const hasChangedFiles = useMemo(() => {
+    for (const fileMeta of state.diffMetaByRepo.values()) {
+      if (fileMeta.size > 0) { return true; }
+    }
+    return false;
+  }, [state.diffMetaByRepo]);
+  const allFilesButtonClass = [
+    'files-tab-text-btn',
+    showAllFiles ? 'active' : '',
+  ].filter(Boolean).join(' ');
+  const allFilesToggle = hasChangedFiles ? (
+    <button
+      type="button"
+      className={allFilesButtonClass}
+      data-tooltip={showAllFiles ? 'Showing all files' : 'Show all files'}
+      aria-label={showAllFiles ? 'Showing all files' : 'Show all files'}
+      aria-pressed={showAllFiles ? 'true' : 'false'}
+      onClick={() => setShowAllFiles((prev) => !prev)}
+    >
+      All
+    </button>
+  ) : null;
 
   const toolbar = (
     <span className="files-tab-toolbar">
+      {allFilesToggle}
       <button
         type="button"
         className="files-tab-icon-btn"
@@ -269,6 +332,7 @@ export default function FilesTab({
   } else {
     body = state.trees.map((repoTree) => {
       const repoKey = repoTree.repo_id || repoTree.cwd;
+      const diffMeta = state.diffMetaByRepo.get(repoKey) || EMPTY_DIFF_META;
       return (
         <RepoTree
           key={repoKey}
@@ -281,6 +345,8 @@ export default function FilesTab({
           searchTerm={deferredQuery}
           conflictedFiles={repoTree.conflictedFiles}
           changedFiles={repoTree.changedFiles}
+          diffMeta={diffMeta}
+          showAllFiles={showAllFiles}
           taskId={taskId}
         />
       );
@@ -392,22 +458,57 @@ export function formatSyncResult(result) {
   };
 }
 
+export function buildFilesDiffMeta(repoDiffs) {
+  const byRepo = new Map();
+  for (const repoDiff of repoDiffs || []) {
+    const fileMeta = new Map();
+    for (const file of repoDiff.files || []) {
+      const path = diffDisplayPath(file);
+      fileMeta.set(path, {
+        file,
+        kind: file.type || 'modify',
+        stats: countFileChangeStats(file),
+      });
+    }
+    const repoId = String(repoDiff.repo_id || '').trim();
+    const cwd = String(repoDiff.cwd || '').trim();
+    if (repoId) { byRepo.set(repoId, fileMeta); }
+    if (cwd) { byRepo.set(cwd, fileMeta); }
+  }
+  return byRepo;
+}
+
 
 function RepoTree({
   repoTree, width, collapsed, onToggle, onPickFile,
   onOpenFile,
-  searchTerm = '', conflictedFiles, changedFiles, taskId = '',
+  searchTerm = '', conflictedFiles, changedFiles, diffMeta = EMPTY_DIFF_META,
+  showAllFiles = false, taskId = '',
 }) {
   const treeData = useMemo(() => {
     return attachIds(repoTree.tree, repoTree.cwd);
   }, [repoTree.tree, repoTree.cwd]);
   const heading = repoTree.repo_id || repoTree.cwd || 'repo';
   const repoId = String(repoTree.repo_id || '').trim();
+  const changedFilesList = useMemo(() => {
+    return Array.from(diffMeta.values())
+      .map((meta) => meta.file)
+      .filter(Boolean);
+  }, [diffMeta]);
+  const changedTree = useMemo(() => {
+    return buildDiffFileTree(changedFilesList);
+  }, [changedFilesList]);
+  const filteredChangedNodes = useMemo(() => {
+    return filterChangedFileTree(changedTree.nodes, searchTerm);
+  }, [changedTree.nodes, searchTerm]);
+  const hasChangedFiles = changedTree.nodes.length > 0;
   // While filtering, expand by default so the operator sees every
   // matching descendant without clicking through ancestor folders.
   const isFiltering = !!searchTerm.trim();
-  const treeHeight = Math.max(120, Math.min(treeData.length * 22 + 8, 800));
+  const treeHeight = Math.max(120, Math.min(treeData.length * 28 + 8, 800));
   const chevronName = collapsed ? 'chevron-right' : 'chevron-down';
+  const [closedChangedFolders, setClosedChangedFolders] = useState(() => new Set());
+  const [selectedChangedKey, setSelectedChangedKey] = useState('');
   // Per-repo commit dropdown state. Populated lazily on first
   // open so we don't fetch ``/commits`` for every repo on every
   // file-tree refetch (would be 5+ extra HTTP calls per
@@ -452,9 +553,43 @@ function RepoTree({
     setCommitMenuOpen(false);
     setActiveCommit(commit);
   }
+  function toggleChangedFolder(key) {
+    setClosedChangedFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) { next.delete(key); } else { next.add(key); }
+      return next;
+    });
+  }
+  function selectChangedFile(file) {
+    setSelectedChangedKey(changedFileSelectionKey(file));
+    if (typeof onOpenFile === 'function') {
+      onOpenFile(changedFileOpenTarget({
+        cwd: repoTree.cwd,
+        repo_id: repoId,
+      }, file));
+    }
+  }
+  const changedTreeContent = hasChangedFiles && filteredChangedNodes.length > 0 ? (
+    <ChangedFilesTree
+      nodes={filteredChangedNodes}
+      stats={changedTree.stats}
+      conflictedFiles={conflictedFiles}
+      closedFolders={closedChangedFolders}
+      selectedKey={selectedChangedKey}
+      onToggleFolder={toggleChangedFolder}
+      onSelectFile={selectChangedFile}
+    />
+  ) : null;
+  const emptyChangedSearch = hasChangedFiles && filteredChangedNodes.length === 0 ? (
+    <p className="files-tab-message">No changed files match this search.</p>
+  ) : null;
   let body;
   if (collapsed) {
     body = null;
+  } else if (!showAllFiles && changedTreeContent) {
+    body = changedTreeContent;
+  } else if (!showAllFiles && emptyChangedSearch) {
+    body = emptyChangedSearch;
   } else if (treeData.length === 0) {
     body = <p className="files-tab-message">No tracked files in this repo.</p>;
   } else {
@@ -463,7 +598,7 @@ function RepoTree({
         data={treeData}
         width={width}
         height={treeHeight}
-        rowHeight={22}
+        rowHeight={28}
         indent={14}
         openByDefault={isFiltering}
         searchTerm={searchTerm}
@@ -479,6 +614,7 @@ function RepoTree({
             onOpenFile={onOpenFile}
             conflictedFiles={conflictedFiles}
             changedFiles={changedFiles}
+            diffMeta={diffMeta}
             repoId={repoId}
           />
         )}
@@ -578,11 +714,116 @@ function CommitDropdown({ state, onPick, onClose }) {
   );
 }
 
+function ChangedFilesTree({
+  nodes, stats, conflictedFiles, closedFolders, selectedKey,
+  onToggleFolder, onSelectFile,
+}) {
+  const rows = nodes.map((node) => (
+    <ChangedFilesTreeNode
+      key={node.key}
+      node={node}
+      depth={0}
+      conflictedFiles={conflictedFiles}
+      closedFolders={closedFolders}
+      selectedKey={selectedKey}
+      onToggleFolder={onToggleFolder}
+      onSelectFile={onSelectFile}
+    />
+  ));
+  return (
+    <div className="files-changed-tree-wrap">
+      <div className="diff-tree-summary files-tree-summary">
+        <span className="diff-tree-title">Lines updated</span>
+        <FilesLineStats stats={stats} />
+      </div>
+      <div className="diff-file-tree files-changed-tree">
+        {rows}
+      </div>
+    </div>
+  );
+}
+
+function ChangedFilesTreeNode({
+  node, depth, conflictedFiles, closedFolders, selectedKey,
+  onToggleFolder, onSelectFile,
+}) {
+  if (node.kind === 'folder') {
+    const isClosed = closedFolders.has(node.key);
+    const childRows = isClosed ? null : node.children.map((child) => (
+      <ChangedFilesTreeNode
+        key={child.key}
+        node={child}
+        depth={depth + 1}
+        conflictedFiles={conflictedFiles}
+        closedFolders={closedFolders}
+        selectedKey={selectedKey}
+        onToggleFolder={onToggleFolder}
+        onSelectFile={onSelectFile}
+      />
+    ));
+    const chevron = isClosed ? 'chevron-right' : 'chevron-down';
+    return (
+      <div className="diff-file-tree-group">
+        <button
+          type="button"
+          className="diff-file-tree-row files-changed-tree-row is-folder"
+          style={{ '--depth': depth }}
+          onClick={() => onToggleFolder(node.key)}
+        >
+          <span className="diff-file-tree-guide" />
+          <span className="diff-file-tree-chevron"><Icon name={chevron} /></span>
+          <span className="diff-file-tree-label files-changed-tree-folder">
+            {node.name}
+          </span>
+        </button>
+        {childRows}
+      </div>
+    );
+  }
+  const file = node.file;
+  const path = diffDisplayPath(file);
+  const kind = file.type || 'modify';
+  const selected = selectedKey === changedFileSelectionKey(file);
+  const conflicted = fileIsConflictedForFilesTree(file, conflictedFiles);
+  const className = [
+    'diff-file-tree-row',
+    'files-changed-tree-row',
+    'is-file',
+    `kind-${kind}`,
+    selected ? 'selected' : '',
+    conflicted ? 'conflicted' : '',
+  ].filter(Boolean).join(' ');
+  const conflictBadge = conflicted ? (
+    <span className="diff-file-row-conflict" aria-label="merge conflict">
+      <Icon name="warning" />
+    </span>
+  ) : null;
+  return (
+    <button
+      type="button"
+      className={className}
+      style={{ '--depth': depth }}
+      title={`Open ${path} in the centre diff`}
+      onClick={() => onSelectFile(file)}
+    >
+      <span className="diff-file-tree-guide" />
+      <FilesDiffKindIcon kind={kind} />
+      {conflictBadge}
+      <span className="diff-file-tree-label files-changed-tree-label">
+        {node.name}
+      </span>
+      <FilesLineStats stats={node.stats} />
+    </button>
+  );
+}
+
 function Node({
   node, style, onPickFile, onOpenFile, conflictedFiles,
-  changedFiles, repoId = '',
+  changedFiles, diffMeta = EMPTY_DIFF_META, repoId = '',
 }) {
   const isFolder = node.isInternal;
+  const relativePath = String(node.data?.relativePath || '');
+  const changeMeta = !isFolder ? diffMeta.get(relativePath) : null;
   function onActivate() {
     // Left-click a FILE: only open it in the editor pane. It must
     // NOT also paste the path into the chat composer — pasting is
@@ -618,30 +859,69 @@ function Node({
   const isConflicted = !isFolder
     && conflictedFiles
     && conflictedFiles.size > 0
-    && conflictedFiles.has(node.data.relativePath);
+    && conflictedFiles.has(relativePath);
   // A file kato has touched on this branch (committed or not) —
   // same set the Changes tab shows. Conflict wins visually since
   // it's the more urgent signal, so only flag ``changed`` when the
   // file isn't already flagged conflicted.
   const isChanged = !isFolder
     && !isConflicted
+    && (
+      !!changeMeta
+      || (
+        changedFiles
+        && changedFiles.size > 0
+        && changedFiles.has(relativePath)
+      )
+    );
+  const displayChangeMeta = changeMeta || (isChanged
+    ? { kind: 'modify', stats: EMPTY_STATS }
+    : null);
+  // A folder inherits the "changed" tint when it (transitively)
+  // holds a file kato touched on this branch — so the ancestor
+  // chain lights up all the way up and the operator sees where the
+  // edits live without expanding. ``relativePath`` is empty for a
+  // synthetic repo root; ``folderContainsChange`` returns false for
+  // it (no relative path can start with "/"), which is exactly the
+  // "colour up to the root, but NOT the root of all" rule — the
+  // repo container (the .files-tab-repo header, not a tree row)
+  // never gets the tint.
+  const folderChanged = isFolder
     && changedFiles
     && changedFiles.size > 0
-    && changedFiles.has(node.data.relativePath);
+    && folderContainsChange(relativePath, changedFiles);
   const rowClass = [
     'tree-row',
     node.isSelected ? 'selected' : '',
     isConflicted ? 'conflicted' : '',
     isChanged ? 'changed' : '',
+    folderChanged ? 'changed-ancestor' : '',
   ].filter(Boolean).join(' ');
-  let iconName;
-  if (!isFolder) {
-    iconName = 'file';
-  } else if (node.isOpen) {
-    iconName = 'folder-open';
-  } else {
-    iconName = 'folder';
-  }
+  const level = Number.isFinite(node.level) ? node.level : 0;
+  const rowStyle = { ...style, '--level': level };
+  const folderChevron = isFolder ? (
+    <span className="tree-row-chevron">
+      <Icon name={node.isOpen ? 'chevron-down' : 'chevron-right'} />
+    </span>
+  ) : null;
+  // No generic folder / file icons — the all-files tree must look
+  // exactly like the changed-files tree (chevron + name only). Only
+  // the change-KIND marker (pencil/＋/－) stays, on changed files,
+  // so both trees read identically.
+  const fileSpacer = !isFolder ? (
+    <span className="tree-row-chevron tree-row-chevron-placeholder" />
+  ) : null;
+  const fileIcon = !isFolder && displayChangeMeta ? (
+    <FilesDiffKindIcon kind={displayChangeMeta.kind} />
+  ) : null;
+  const conflictBadge = isConflicted ? (
+    <span className="tree-row-conflict" aria-label="merge conflict">
+      <Icon name="warning" />
+    </span>
+  ) : null;
+  const lineStats = displayChangeMeta ? (
+    <FilesLineStats stats={displayChangeMeta.stats} />
+  ) : null;
   // Tooltip: spell out left- vs right-click semantics so the
   // right-click affordance is discoverable. Conflict tooltip wins
   // when set since it's the more urgent signal.
@@ -650,6 +930,8 @@ function Node({
     tooltip = 'Merge conflict — needs resolution';
   } else if (isChanged) {
     tooltip = 'Modified on this task branch — see the Changes tab for the diff';
+  } else if (folderChanged) {
+    tooltip = 'Contains files modified on this task branch';
   } else if (isFolder) {
     tooltip = 'Click to expand · right-click to paste this folder’s path into the chat';
   } else {
@@ -658,19 +940,81 @@ function Node({
   return (
     <div
       className={rowClass}
-      style={style}
+      style={rowStyle}
       onClick={onActivate}
       onContextMenu={onContextMenu}
       title={tooltip}
     >
-      <span className="tree-row-icon"><Icon name={iconName} /></span>
+      <span className="tree-row-level-guides" aria-hidden="true" />
+      {folderChevron}
+      {fileSpacer}
+      {fileIcon}
+      {conflictBadge}
       <span className="tree-row-name">{node.data.name}</span>
-      {isConflicted && (
-        <span className="tree-row-conflict" aria-label="merge conflict">⚠</span>
-      )}
-      {isChanged && (
-        <span className="tree-row-changed" aria-label="modified on this branch">M</span>
-      )}
+      {lineStats}
     </div>
+  );
+}
+
+export function filterChangedFileTree(nodes, term) {
+  const raw = String(term || '').trim().toLowerCase();
+  if (!raw) { return nodes || []; }
+  const matches = [];
+  for (const node of nodes || []) {
+    if (node.kind === 'folder') {
+      const childMatches = filterChangedFileTree(node.children, raw);
+      const folderMatches = String(node.name || '').toLowerCase().includes(raw);
+      if (folderMatches || childMatches.length > 0) {
+        matches.push({
+          ...node,
+          children: folderMatches ? node.children : childMatches,
+        });
+      }
+    } else if (changedFileNodeMatches(node, raw)) {
+      matches.push(node);
+    }
+  }
+  return matches;
+}
+
+function changedFileNodeMatches(node, raw) {
+  const name = String(node.name || '').toLowerCase();
+  const path = diffDisplayPath(node.file).toLowerCase();
+  return name.includes(raw) || path.includes(raw);
+}
+
+function changedFileSelectionKey(file) {
+  return `${file.type || 'modify'}:${diffDisplayPath(file)}`;
+}
+
+function fileIsConflictedForFilesTree(file, conflictedSet) {
+  if (!conflictedSet || conflictedSet.size === 0) { return false; }
+  const oldPath = file.oldPath || '';
+  const newPath = file.newPath || '';
+  return conflictedSet.has(oldPath) || conflictedSet.has(newPath);
+}
+
+function FilesDiffKindIcon({ kind }) {
+  const iconName = DIFF_KIND_ICON[kind] || 'edit';
+  return (
+    <span className={`diff-file-row-kind tree-row-kind kind-${kind || 'modify'}`}>
+      <Icon name={iconName} />
+    </span>
+  );
+}
+
+function FilesLineStats({ stats }) {
+  const added = stats?.added > 0 ? (
+    <span className="diff-line-stat is-add">{`+${stats.added}`}</span>
+  ) : null;
+  const deleted = stats?.deleted > 0 ? (
+    <span className="diff-line-stat is-delete">{`-${stats.deleted}`}</span>
+  ) : null;
+  if (!added && !deleted) { return null; }
+  return (
+    <span className="diff-line-stats tree-row-line-stats">
+      {added}
+      {deleted}
+    </span>
   );
 }

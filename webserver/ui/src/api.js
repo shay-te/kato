@@ -610,6 +610,26 @@ export function fetchFileContent(taskId, absolutePath) {
   return fetchJson(url);
 }
 
+export async function fetchBaseFileContent(
+  taskId,
+  { repoId = '', repoCwd = '', path = '' } = {},
+) {
+  const query = new URLSearchParams();
+  query.set('path', path);
+  if (repoId) { query.set('repo', repoId); }
+  const url = `/api/sessions/${encodeURIComponent(taskId)}/base-file`;
+  const response = await fetch(`${url}?${query.toString()}`, { cache: 'no-store' });
+  if (response.ok) { return response.json(); }
+  const body = await response.json().catch(() => ({}));
+  if (response.status === 404 && repoCwd && path && path !== '/dev/null') {
+    const absolutePath = path.startsWith('/')
+      ? path
+      : `${repoCwd.replace(/\/+$/, '')}/${path}`;
+    return fetchFileContent(taskId, absolutePath);
+  }
+  throw new Error(body.error || `${response.status} ${response.statusText}`);
+}
+
 export function fetchDiff(taskId, { repoId = '' } = {}) {
   const url = `/api/sessions/${encodeURIComponent(taskId)}/diff`;
   const query = repoId ? `?repo_id=${encodeURIComponent(repoId)}` : '';

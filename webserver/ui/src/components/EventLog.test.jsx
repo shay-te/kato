@@ -5,9 +5,18 @@
 // "long tool-details rendering" test below pins the regression.
 
 import { describe, test, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+
+// Keep the real pin math (other tests don't touch scrolling) but spy
+// scrollToBottom so the task-switch test can assert the log is
+// yanked to the newest message on tab change.
+vi.mock('../utils/scrollUtils.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, scrollToBottom: vi.fn() };
+});
 
 import EventLog from './EventLog.jsx';
+import { scrollToBottom } from '../utils/scrollUtils.js';
 import { BUBBLE_KIND } from '../constants/bubbleKind.js';
 import { CLAUDE_EVENT, CLAUDE_SYSTEM_SUBTYPE } from '../constants/claudeEvent.js';
 import { ENTRY_SOURCE } from '../constants/entrySource.js';
@@ -404,5 +413,145 @@ describe('EventLog — per-turn sticky grouping', () => {
         '.chat-turn:not(.chat-turn--preamble) .chat-sticky-prompt-text',
       ),
     ).toHaveTextContent('the ask');
+  });
+});
+
+
+describe('EventLog — footer (trailing working indicator)', () => {
+
+  test('renders footer as the LAST child inside #event-log', () => {
+    // The working indicator is passed as ``footer`` so it scrolls
+    // with the messages and trails the newest one — it must be the
+    // final child of the scroll container, after every turn.
+    const { container } = render(
+      <EventLog
+        entries={[
+          _local(BUBBLE_KIND.USER, 'do the thing'),
+          _server({
+            type: CLAUDE_EVENT.ASSISTANT,
+            uuid: 'a1',
+            message: { content: [{ type: 'text', text: 'on it' }] },
+          }),
+        ]}
+        footer={<div data-testid="work-indicator">thinking…</div>}
+      />,
+    );
+    const log = container.querySelector('#event-log');
+    const indicator = container.querySelector('[data-testid="work-indicator"]');
+    expect(log.contains(indicator)).toBe(true);
+    // Last child of the scroll container, i.e. after the last turn.
+    expect(log.lastElementChild).toBe(indicator);
+  });
+
+  test('omitting footer renders nothing extra (default null)', () => {
+    const { container } = render(
+      <EventLog entries={[_local(BUBBLE_KIND.USER, 'hi')]} />,
+    );
+    expect(
+      container.querySelector('[data-testid="work-indicator"]'),
+    ).toBeNull();
+  });
+});
+
+
+describe('EventLog — task-switch scroll', () => {
+
+  test('changing taskId scrolls the log to the bottom', () => {
+    const entries = [
+      _local(BUBBLE_KIND.USER, 'q'),
+      _server({
+        type: CLAUDE_EVENT.ASSISTANT,
+        uuid: 'a1',
+        message: { content: [{ type: 'text', text: 'a' }] },
+      }),
+    ];
+    const { container, rerender } = render(
+      <EventLog taskId="T1" entries={entries} />,
+    );
+
+    // Operator scrolls up on task T1 → pin intent goes false, so the
+    // content effect alone would NOT re-pin on switch.
+    const log = container.querySelector('#event-log');
+    Object.defineProperty(log, 'scrollHeight', { value: 1000, configurable: true });
+    Object.defineProperty(log, 'clientHeight', { value: 200, configurable: true });
+    log.scrollTop = 0;
+    fireEvent.scroll(log);
+
+    scrollToBottom.mockClear();
+    rerender(<EventLog taskId="T2" entries={entries} />);
+
+    // Switching tasks must always land at the newest message.
+    expect(scrollToBottom).toHaveBeenCalled();
+  });
+
+  test('same taskId on re-render does NOT force a scroll', () => {
+    const entries = [_local(BUBBLE_KIND.USER, 'q')];
+    const { rerender } = render(<EventLog taskId="T1" entries={entries} />);
+    scrollToBottom.mockClear();
+    // Re-render with the SAME task + SAME entries: the task-switch
+    // effect must not fire (its dep, taskId, is unchanged).
+    rerender(<EventLog taskId="T1" entries={entries} />);
+    expect(scrollToBottom).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('EventLog — stay pinned to bottom on late content', () => {
+
+  test('async/late content (DOM growth) re-snaps to bottom while pinned', async () => {
+    const { rerender } = render(
+      <EventLog taskId="T1" entries={[_local(BUBBLE_KIND.USER, 'first')]} />,
+    );
+    scrollToBottom.mockClear();
+    // Simulate the task's history streaming in AFTER mount — the
+    // visible-event count grows, mutating the log's DOM. The
+    // MutationObserver must yank back to the bottom (pinned is still
+    // true — the operator never scrolled).
+    rerender(
+      <EventLog
+        taskId="T1"
+        entries={[
+          _local(BUBBLE_KIND.USER, 'first'),
+          _server({
+            type: CLAUDE_EVENT.ASSISTANT,
+            uuid: 'a1',
+            message: { content: [{ type: 'text', text: 'late reply' }] },
+          }),
+        ]}
+      />,
+    );
+    await waitFor(() => {
+      expect(scrollToBottom).toHaveBeenCalled();
+    });
+  });
+
+  test('does NOT re-snap once the operator has scrolled up', async () => {
+    const { container, rerender } = render(
+      <EventLog taskId="T1" entries={[_local(BUBBLE_KIND.USER, 'first')]} />,
+    );
+    // Operator scrolls up → pin intent goes false.
+    const log = container.querySelector('#event-log');
+    Object.defineProperty(log, 'scrollHeight', { value: 1000, configurable: true });
+    Object.defineProperty(log, 'clientHeight', { value: 200, configurable: true });
+    log.scrollTop = 0;
+    fireEvent.scroll(log);
+
+    scrollToBottom.mockClear();
+    rerender(
+      <EventLog
+        taskId="T1"
+        entries={[
+          _local(BUBBLE_KIND.USER, 'first'),
+          _server({
+            type: CLAUDE_EVENT.ASSISTANT,
+            uuid: 'a1',
+            message: { content: [{ type: 'text', text: 'more' }] },
+          }),
+        ]}
+      />,
+    );
+    // Give the MutationObserver a chance to (not) fire.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(scrollToBottom).not.toHaveBeenCalled();
   });
 });

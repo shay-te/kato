@@ -21,6 +21,8 @@ export default function EventLog({
   searchCurrentIndex = 0,
   onSearchMatchCount,
   onOpenFile,
+  footer = null,
+  taskId = null,
 }) {
   const containerRef = useRef(null);
   // Sticky-scroll intent. Starts true so the log opens at the
@@ -74,6 +76,38 @@ export default function EventLog({
       scrollToBottom(containerRef.current);
     }
   }, [window.visible.length, banner]);
+
+  // Switching tasks must ALWAYS land at the newest message. App
+  // remounts SessionDetail (and thus EventLog) per task, so a fresh
+  // ``pinnedRef`` starts true here — re-arm + jump on the taskId
+  // change too, for the rare reuse-without-remount path.
+  useEffect(() => {
+    pinnedRef.current = true;
+    scrollToBottom(containerRef.current);
+  }, [taskId]);
+
+  // Stay glued to the newest message while the operator's intent is
+  // "pinned" — even when content/layout grows AFTER the count-based
+  // effect already ran. On a tab switch the log is empty, then the
+  // task's history streams in async and late layout shifts (sticky
+  // prompt headers, tool-detail blocks, the trailing working
+  // indicator, image loads) push scrollHeight down with no change to
+  // the visible-event count, so the length-keyed effect never
+  // re-fires and the log was left mid-scroll. A MutationObserver
+  // catches every one of those DOM growths; ``pinnedRef`` (flipped
+  // false only by a real user scroll-up) gates it, so this follows
+  // the stream without fighting the operator.
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node || typeof MutationObserver === 'undefined') { return undefined; }
+    const observer = new MutationObserver(() => {
+      if (pinnedRef.current) { scrollToBottom(node); }
+    });
+    observer.observe(node, {
+      childList: true, subtree: true, characterData: true,
+    });
+    return () => observer.disconnect();
+  }, []);
 
   // ----- chat search highlighting + navigation ------------------
   // We do this as a post-render DOM walk rather than threading the
@@ -176,6 +210,10 @@ export default function EventLog({
       {turns.turns.map((turn) => (
         <div className="chat-turn" key={turn[0].key}>{turn}</div>
       ))}
+      {/* The working indicator lives INSIDE the scroll container as
+          the last entry, so it scrolls with the messages and trails
+          the newest one instead of floating over the chat. */}
+      {footer}
     </div>
   );
 }

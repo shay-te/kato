@@ -1,7 +1,10 @@
+import re
 import unittest
 from unittest.mock import MagicMock
 
 from kato_webserver.app import (
+    _drain_queued_task_comment,
+    _event_stream_generator,
     _follow_live_session,
     _replay_session_backlog,
     _session_has_pending_permission,
@@ -95,6 +98,20 @@ class WebserverAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'<div id="root"></div>', response.data)
         self.assertIn(b'/static/build/app.js', response.data)
+
+    def test_static_bundles_are_cache_busted_with_mtime(self):
+        # The unhashed app.js / app.css must carry a ``?v=<mtime>``
+        # query so a rebuilt bundle isn't masked by the browser cache
+        # (the recurring "my change isn't showing" trap).
+        body = self.client.get('/').data.decode('utf-8')
+        for asset in ('build/app.js', 'build/app.css', 'css/app.css'):
+            match = re.search(
+                rf'/static/{re.escape(asset)}\?v=(\d+)', body,
+            )
+            self.assertIsNotNone(
+                match, f'{asset} is not cache-busted in index.html',
+            )
+            self.assertGreater(int(match.group(1)), 0)
 
     def test_index_renders_empty_state_when_no_sessions(self):
         empty_app = create_app(session_manager=_FakeManager(records=[]))
@@ -415,6 +432,33 @@ class WebserverAppTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 409)
 
+    def test_backlog_replays_pending_permission_for_a_reconnecting_client(self):
+        # Guards the backend half of the "permission dialog doesn't
+        # show until I re-click the tab" fix: the per-task SSE is
+        # closed on idle, so when a permission request arrives the
+        # client must REOPEN the stream — and on reopen the backlog
+        # replay MUST re-emit the still-pending permission_request,
+        # otherwise the reconnect would show nothing.
+        class _SessionWithPendingPermission:
+            def recent_events(self):
+                return [
+                    _FakeSessionEvent('system'),
+                    _FakeSessionEvent('assistant'),
+                    _FakeSessionEvent('permission_request'),
+                ]
+
+        frames = []
+        gen = _replay_session_backlog(_SessionWithPendingPermission())
+        try:
+            while True:
+                frames.append(next(gen))
+        except StopIteration as exc:
+            replayed_count = exc.value
+
+        joined = ''.join(frames)
+        self.assertIn('"type": "permission_request"', joined)
+        self.assertEqual(replayed_count, 3)
+
     def test_live_stream_does_not_skip_event_created_between_backlog_and_follow(self):
         session = _RaceyLiveSession()
         backlog = _replay_session_backlog(session)
@@ -513,6 +557,52 @@ class WebserverAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertTrue(payload[0]['has_pending_permission'])
+
+    def test_drain_queued_task_comment_uses_agent_service(self):
+        service = MagicMock()
+        service.drain_next_queued_task_comment.return_value = {
+            'ok': True, 'started': True, 'comment_id': 'c1',
+        }
+
+        started = _drain_queued_task_comment(service, 'PROJ-1')
+
+        self.assertTrue(started)
+        service.drain_next_queued_task_comment.assert_called_once_with('PROJ-1')
+
+    def test_drain_queued_task_comment_handles_missing_service(self):
+        self.assertFalse(_drain_queued_task_comment(None, 'PROJ-1'))
+
+    def test_idle_event_stream_drains_queued_comment_before_idle(self):
+        service = MagicMock()
+        service.drain_next_queued_task_comment.return_value = {
+            'ok': True, 'started': False, 'comment_id': 'c1',
+        }
+
+        frames = list(_event_stream_generator(
+            self.manager, None, 'PROJ-1', service,
+        ))
+
+        self.assertTrue(any('session_idle' in frame for frame in frames))
+        service.drain_next_queued_task_comment.assert_called_once_with('PROJ-1')
+
+    def test_live_follow_drains_queue_after_result_event(self):
+        session = MagicMock()
+        session.is_alive = False
+        session.events_after.side_effect = [
+            ([_FakeSessionEvent('result')], 1),
+            ([], 1),
+        ]
+        service = MagicMock()
+        service.drain_next_queued_task_comment.return_value = {
+            'ok': True, 'started': True, 'comment_id': 'c1',
+        }
+
+        frames = list(_follow_live_session(
+            session, agent_service=service, task_id='PROJ-1',
+        ))
+
+        self.assertTrue(any('session_closed' in frame for frame in frames))
+        service.drain_next_queued_task_comment.assert_called_once_with('PROJ-1')
 
 
 class _FakeWorkspaceRecord:

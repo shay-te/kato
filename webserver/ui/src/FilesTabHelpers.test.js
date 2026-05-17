@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   activateTreeNode,
   attachIds,
+  folderContainsChange,
   matchTreeNode,
   normalizeTrees,
 } from './FilesTabHelpers.js';
@@ -215,4 +216,54 @@ test('normalizeTrees handles legacy single-repo payload with changed_files', fun
   assert.equal(normalized.length, 1);
   assert.equal(normalized[0].changedFiles instanceof Set, true);
   assert.equal(normalized[0].changedFiles.has('src/legacy_changed.py'), true);
+});
+
+
+// ----- folderContainsChange: ancestor-folder tint -----------------
+// Files changed on the branch already render in a distinct colour;
+// this lights up every ancestor folder up to (but NOT including) the
+// repo root so the path to an edit is visible without expanding.
+
+const _changed = new Set([
+  'src/components/EventLog.jsx',
+  'webserver/static/css/app.css',
+]);
+
+test('folderContainsChange: direct parent of a changed file → true', function () {
+  assert.equal(folderContainsChange('src/components', _changed), true);
+});
+
+test('folderContainsChange: grandparent (up the whole chain) → true', function () {
+  assert.equal(folderContainsChange('src', _changed), true);
+  assert.equal(folderContainsChange('webserver/static', _changed), true);
+});
+
+test('folderContainsChange: unrelated folder → false', function () {
+  assert.equal(folderContainsChange('src/utils', _changed), false);
+  assert.equal(folderContainsChange('docs', _changed), false);
+});
+
+test('folderContainsChange: empty path (synthetic repo root) → false — "not the root of all"', function () {
+  assert.equal(folderContainsChange('', _changed), false);
+  assert.equal(folderContainsChange(null, _changed), false);
+});
+
+test('folderContainsChange: segment-boundary safe (src/app vs src/application)', function () {
+  const c = new Set(['src/application.js']);
+  // ``src/app`` must NOT match ``src/application.js`` — the prefix
+  // check appends "/" so only true path segments match.
+  assert.equal(folderContainsChange('src/app', c), false);
+  assert.equal(folderContainsChange('src', c), true);
+});
+
+test('folderContainsChange: path recorded exactly against a dir entry → true', function () {
+  assert.equal(
+    folderContainsChange('src/components', new Set(['src/components'])),
+    true,
+  );
+});
+
+test('folderContainsChange: empty / missing changed set → false', function () {
+  assert.equal(folderContainsChange('src', new Set()), false);
+  assert.equal(folderContainsChange('src', null), false);
 });

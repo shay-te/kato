@@ -36,6 +36,12 @@ describe('Icon', () => {
       .toBe('arrow-up-right-from-square');
   });
 
+  test('diff maps to the code-compare glyph', () => {
+    const { container } = render(<Icon name="diff" />);
+    expect(container.querySelector('svg').getAttribute('data-icon'))
+      .toBe('code-compare');
+  });
+
   test('unknown name renders null (no garbage glyph)', () => {
     const { container } = render(<Icon name="does-not-exist" />);
     expect(container.querySelector('svg')).toBeNull();

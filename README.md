@@ -153,7 +153,7 @@ Everything that works with OpenHands also works with `claude -p`:
 - Review-comment fix conversations on existing pull requests, including session resume so the agent keeps context across review rounds (mapped to `claude --resume <session_id>`).
 - Repository scope, security guardrails, and the `validation_report.md` PR-description handoff are identical in both backends.
 
-Switching is one env value: change `KATO_AGENT_BACKEND`, run `make doctor`, restart Kato.
+Switching is one env value: change `KATO_AGENT_BACKEND`, run `kato doctor`, restart Kato.
 
 ### Setting Up the Claude CLI Backend
 
@@ -348,7 +348,7 @@ That separation matters because the service flow should read like the real agent
 
 ### Startup Flow
 
-1. `python -m kato_core_lib.main`, `make run`, or the Docker entrypoint loads Hydra config and values from `.env`.
+1. `python -m kato_core_lib.main`, `kato up`, or the Docker entrypoint loads Hydra config and values from `.env`.
 2. Environment validation runs before the application is built. Missing required values fail fast.
 3. `KatoCoreLib` builds the active issue-platform client, repository service, OpenHands implementation service, OpenHands testing service, notification service, task publisher, preflight service, and review-comment service.
 4. Startup dependency validation checks repository connections, the active issue-platform connection, the main OpenHands connection, and the testing OpenHands connection unless `OPENHANDS_SKIP_TESTING=true`.
@@ -410,20 +410,20 @@ Testing uses:
 - the main `OPENHANDS_BASE_URL` when `OPENHANDS_TESTING_CONTAINER_ENABLED=false`
 - no testing conversation at all when `OPENHANDS_SKIP_TESTING=true`
 
-When the testing container is enabled and `OPENHANDS_SKIP_TESTING=false`, `make compose-up` starts Docker Compose with the `testing` profile so the extra `openhands-testing` service is available. When it is disabled, no dedicated testing server is started and the agent keeps testing on the main OpenHands instance. When `OPENHANDS_SKIP_TESTING=true`, the agent skips the validation step entirely and `make compose-up` stays on the normal profile even if the dedicated testing container is enabled.
+When the testing container is enabled and `OPENHANDS_SKIP_TESTING=false`, `kato compose-docker` starts Docker Compose with the `testing` profile so the extra `openhands-testing` service is available. When it is disabled, no dedicated testing server is started and the agent keeps testing on the main OpenHands instance. When `OPENHANDS_SKIP_TESTING=true`, the agent skips the validation step entirely and `kato compose-docker` stays on the normal profile even if the dedicated testing container is enabled.
 
 ## Required Environment
 
 For the shortest local setup path, use the interactive configurator:
 
 ```bash
-make bootstrap
-make configure
-make doctor
-make run
+kato bootstrap
+kato configure
+kato doctor
+kato up
 ```
 
-`make configure` runs `python scripts/generate_env.py --output .env` and writes a first-pass `.env` for you. It asks:
+`kato configure` runs `python scripts/generate_env.py --output .env` and writes a first-pass `.env` for you. It asks:
 
 - where your tasks live
 - where your source code lives
@@ -471,7 +471,7 @@ Pick one issue platform with `KATO_ISSUE_PLATFORM`, then fill in the matching bl
 After editing `.env`, run:
 
 ```bash
-make doctor
+kato doctor
 ```
 
 ### Setting Up YouTrack
@@ -784,7 +784,7 @@ python -m kato_core_lib.main kato.retry.max_retries=7
 
 This project is meant to be usable by other teams, so a few things are worth calling out up front:
 
-- `make configure` is the easiest way to create a first `.env`, and `.env.example` is the canonical template.
+- `kato configure` is the easiest way to create a first `.env`, and `.env.example` is the canonical template.
 - Never commit real secrets. Keep `.env` local, and only use `.env.example` for documentation and defaults.
 - The workflow is split on purpose:
   - OpenHands edits files in the task branch.
@@ -836,8 +836,8 @@ If a developer is starting from zero, these are the steps:
 
 1. Clone the repository.
 2. Change into the repository directory.
-3. Run `make bootstrap`.
-4. Run `make configure` to create `.env`, or copy `.env.example` to `.env` and edit it manually.
+3. Run `kato bootstrap`.
+4. Run `kato configure` to create `.env`, or copy `.env.example` to `.env` and edit it manually.
 5. Fill in or confirm the credentials for the selected issue platform.
 6. Fill in or confirm the first repository entry credentials and local path.
 7. Add more repository entries in the config file if tasks can span multiple repos.
@@ -856,16 +856,16 @@ What is automated now:
   - creates `.venv` if needed
   - installs the project
   - runs the tests
-- `make configure`
+- `kato configure`
   - asks which issue platform holds your tasks
   - asks which platform hosts your code
   - can scan a projects folder for git repositories
   - asks which issue states and review state should be used
   - writes `.env` for the root repository path and OpenHands setup
-- `make doctor`
+- `kato doctor`
   - validates agent and OpenHands env vars
   - exits non-zero if required values are missing, so it can be used in CI or pre-flight scripts
-- `make run`
+- `kato up`
   - loads `.env`
   - starts the app
 - Docker entrypoint
@@ -884,36 +884,36 @@ Still manual:
 1. Bootstrap the repo:
 
 ```bash
-make bootstrap
+kato bootstrap
 ```
 
 2. Create `.env` interactively:
 
 ```bash
-make configure
+kato configure
 ```
 
 3. Validate config:
 
 ```bash
-make doctor
+kato doctor
 ```
 
-`make doctor` returns a non-zero exit code on validation failure.
+`kato doctor` returns a non-zero exit code on validation failure.
 
 4. Run locally:
 
 ```bash
-make run
+kato up
 ```
 
 5. Or run with Docker:
 
 ```bash
-make compose-up
+kato compose-docker
 ```
 
-`make compose-up` brings the Compose stack up in the background and then attaches
+`kato compose-docker` brings the Compose stack up in the background and then attaches
 directly to the `kato` container TTY, so inline countdowns and rotating status
 spinners render in place instead of being flattened into prefixed Compose log lines.
 
@@ -1000,7 +1000,7 @@ docker compose up --build
 ```
 
 If you want the Kato inline spinner and countdown UI to render correctly, prefer
-`make compose-up` over raw `docker compose up --build`, because the Make target
+`kato compose-docker` over raw `docker compose up --build`, because the Make target
 attaches directly to the `kato` container terminal.
 
 What the compose stack does:
@@ -1063,7 +1063,7 @@ After a rebuild, **hard-refresh the browser** (Cmd+Shift+R on macOS, Ctrl+Shift+
 
 ### Cleaning between runs
 
-For a normal Ctrl+C → `make compose-up` cycle there is nothing to clean. The table below covers the cases where something does need a wipe.
+For a normal Ctrl+C → `kato compose-docker` cycle there is nothing to clean. The table below covers the cases where something does need a wipe.
 
 | What | When to clean | How |
 | --- | --- | --- |

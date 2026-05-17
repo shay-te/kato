@@ -103,18 +103,23 @@ const MessageForm = forwardRef(function MessageForm({
     writeDraft(taskId, '');
   }
 
+  // While Claude is working the composer is in QUEUE mode: the
+  // message is held and auto-sent by SessionDetail when the current
+  // turn finishes (no mid-turn steering).
+  const isQueueing = turnInFlight && !disabled;
   const placeholder = disabled
     ? disabledReason || 'Session is not live — chat resumes when kato re-spawns it.'
-    : 'Reply to Claude (Shift+Enter for newline, paste or drop images)';
-  const isSteering = turnInFlight && !disabled;
-  const submitClass = isSteering ? 'is-steering' : '';
+    : isQueueing
+      ? 'Queue another message… (sends when Claude is free)'
+      : 'Reply to Claude (Shift+Enter for newline, paste or drop images)';
+  const submitClass = isQueueing ? 'is-queued' : '';
   const hasContent = (value || '').trim() || attachments.length > 0;
-  const submitLabel = isSteering ? 'Steer' : 'Send';
+  const submitLabel = isQueueing ? 'Queue' : 'Send';
   let submitTitle;
   if (disabled) {
     submitTitle = disabledReason || 'Session is not live — chat resumes when kato re-spawns it.';
   } else if (turnInFlight) {
-    submitTitle = 'Claude is working — your message will steer the in-flight turn.';
+    submitTitle = 'Claude is working — your message will be queued and sent when the turn finishes.';
   } else {
     submitTitle = 'Send your message to Claude (or press Enter).';
   }
@@ -273,7 +278,7 @@ const MessageForm = forwardRef(function MessageForm({
           data-tooltip={submitTitle}
           aria-label={submitLabel}
         >
-          <span aria-hidden="true">{isSteering ? '◐' : '↑'}</span>
+          <span aria-hidden="true">{isQueueing ? '◴' : '↑'}</span>
         </button>
       </div>
     </form>

@@ -10,6 +10,7 @@ import {
   faFolderPlus,
   faPlus,
   faMinus,
+  faPen,
   faXmark,
   faArrowsRotate,
   faBell,
@@ -24,6 +25,7 @@ import {
   faArrowDown,
   faCodeMerge,
   faCodePullRequest,
+  faCodeCompare,
   faCheck,
   faLink,
   faStop,
@@ -47,6 +49,7 @@ const ICONS = {
   'folder-plus': faFolderPlus,
   'plus': faPlus,
   'minus': faMinus,
+  'edit': faPen,
   'xmark': faXmark,
   'refresh': faArrowsRotate,
   'bell': faBell,
@@ -64,6 +67,9 @@ const ICONS = {
   'arrow-down': faArrowDown,
   'merge': faCodeMerge,
   'pull-request': faCodePullRequest,
+  // Round "view this file's diff in the centre pane" button on
+  // changed file-tree rows.
+  'diff': faCodeCompare,
   'check': faCheck,
   'link': faLink,
   'stop': faStop,

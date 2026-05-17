@@ -117,10 +117,9 @@ def main() -> int:
         '\n'
         'Next manual steps:\n'
         '  1. Fill the required secrets in .env\n'
-        '  2. Run `make doctor` (POSIX) or '
-        '`python -m kato_core_lib.validate_env --env-file .env --mode all` (any OS)\n'
-        '  3. Run `make run` / `make compose-up` for local execution,\n'
-        '     or `python scripts/run_local.py` directly on Windows.\n'
+        '  2. Run `kato doctor` to validate the environment\n'
+        '  3. Run `kato up` to start kato locally\n'
+        '     (`kato` is on PATH after `pip install -e .`)\n'
     )
     return 0
 

@@ -26,6 +26,24 @@ export default function SessionDetail({
   const taskId = session?.task_id;
   const stream = useSessionStream(taskId, onActivity);
 
+  // Outgoing message queue. While Claude is mid-turn the operator's
+  // messages are HELD (not steered into the live turn) and flushed
+  // one-at-a-time as the turn finishes — see ``onSendMessage`` and
+  // the flush effect below. A ref, not state: nothing renders the
+  // queue (the operator gets a "queued" system bubble instead), and
+  // the flush effect must read the latest queue without re-subscribing.
+  const queuedMessagesRef = useRef([]);
+  const prevTurnInFlightRef = useRef(false);
+  // The queue belongs to the task it was typed for. SessionDetail is
+  // reused across tabs (not remounted per task), so drop anything
+  // pending when the bound task changes — never deliver task A's
+  // queued text into task B.
+  useEffect(() => {
+    queuedMessagesRef.current = [];
+    prevTurnInFlightRef.current = stream.turnInFlight;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskId]);
+
   const [availableModels, setAvailableModels] = useState([]);
   const [selectedModel, setSelectedModel] = useState('');
   const modelsLoadedRef = useRef(false);
@@ -57,6 +75,39 @@ export default function SessionDetail({
     onPendingPermissionChange(taskId, !!stream.pendingPermission);
   }, [taskId, stream.pendingPermission, onPendingPermissionChange]);
 
+  // Auto-reconnect when a permission request lands while we're
+  // already sitting on this tab but the per-task SSE was closed.
+  //
+  // ``useSessionStream`` closes the EventSource on ``session_idle``
+  // (resource optimisation while Claude sleeps). If a permission
+  // request then arrives, the app-wide status feed still flags the
+  // tab (``needsAttention`` → gold), but THIS stream is dead so
+  // ``stream.pendingPermission`` never updates and the decision
+  // dialog never appears — the operator had to click the tab again
+  // to force a remount/reconnect even though they were already here.
+  //
+  // Re-open the stream on the rising edge of ``needsAttention`` when
+  // the session is sleeping and nothing is pending yet. The server
+  // replays the outstanding request on reconnect, so the dialog pops
+  // immediately. Rising-edge + the sleeping guard keep this from
+  // looping (a live STREAMING stream already delivers the request;
+  // once pendingPermission is set we bail).
+  const prevNeedsAttentionRef = useRef(false);
+  useEffect(() => {
+    const rose = needsAttention && !prevNeedsAttentionRef.current;
+    prevNeedsAttentionRef.current = needsAttention;
+    if (!rose || stream.pendingPermission) { return; }
+    const sleeping = (
+      stream.lifecycle === SESSION_LIFECYCLE.IDLE
+      || stream.lifecycle === SESSION_LIFECYCLE.CLOSED
+      || stream.lifecycle === SESSION_LIFECYCLE.MISSING
+    );
+    if (sleeping) { stream.reconnect(); }
+    // stream.reconnect is a fresh closure each render; intentionally
+    // excluded so this fires on the attention/lifecycle change only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsAttention, stream.pendingPermission, stream.lifecycle]);
+
   // Drag handle for the chat column's width. Rendered on the
   // pane's left edge — the resizer is ``position: absolute`` with
   // ``left: -3px``, which only paints correctly when its parent
@@ -76,14 +127,13 @@ export default function SessionDetail({
     );
   }
 
-  async function onSendMessage(text, images = []) {
-    // Append a clean local USER bubble for instant feedback. The
-    // server echoes this back as a ``user`` event shortly after; the
-    // dedupe filter (MessageFilter.dedupeUserEchoes) compares clean
-    // text so the local + server pair collapses to one bubble. Image
-    // attachments are surfaced via the ``imageCount`` field, which
-    // the renderer appends as a "(N attached)" suffix at display
-    // time without polluting the dedupe key.
+  // Actually deliver a message to Claude now. Optimistic local USER
+  // bubble + POST + result handling. The server echoes the user
+  // event back shortly after; dedupe (MessageFilter.dedupeUserEchoes)
+  // collapses the local + server pair. Image attachments surface via
+  // ``imageCount`` so the renderer can suffix "(N attached)" without
+  // polluting the dedupe key.
+  async function deliverMessage(text, images = []) {
     stream.appendLocalEvent({
       source: ENTRY_SOURCE.LOCAL,
       kind: BUBBLE_KIND.USER,
@@ -117,6 +167,39 @@ export default function SessionDetail({
     return false;
   }
 
+  // Composer entry point. While Claude is mid-turn, HOLD the message
+  // in the queue and let it fly when the turn finishes (the flush
+  // effect below) — the operator's input no longer steers/interrupts
+  // the live turn. When Claude is idle, deliver immediately.
+  async function onSendMessage(text, images = []) {
+    if (stream.turnInFlight) {
+      queuedMessagesRef.current.push({ text, images });
+      stream.appendLocalEvent({
+        source: ENTRY_SOURCE.LOCAL,
+        kind: BUBBLE_KIND.SYSTEM,
+        text: '⏳ queued — will send when Claude is free',
+      });
+      // Truthy → MessageForm accepts it and clears the draft.
+      return true;
+    }
+    return deliverMessage(text, images);
+  }
+
+  // Flush the queue one message at a time as each turn ends.
+  // Delivering a queued message re-enters the busy state, so the
+  // next one waits for the turn after — messages stay strictly
+  // ordered without ever interrupting Claude.
+  useEffect(() => {
+    const wasInFlight = prevTurnInFlightRef.current;
+    prevTurnInFlightRef.current = stream.turnInFlight;
+    if (wasInFlight && !stream.turnInFlight
+        && queuedMessagesRef.current.length > 0) {
+      const next = queuedMessagesRef.current.shift();
+      deliverMessage(next.text, next.images);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stream.turnInFlight]);
+
   async function submitPermissionResponse({ requestId, allow, rationale }) {
     const result = await postSession(taskId, 'permission', {
       request_id: requestId,
@@ -144,9 +227,11 @@ export default function SessionDetail({
   // Resume: respawn the Claude subprocess and tell it to keep going.
   // We send a real message ("Please continue…") rather than a no-op so
   // Claude has something to react to — the spawn path requires a user
-  // turn to anchor the resumed conversation.
+  // turn to anchor the resumed conversation. Delivered directly, NOT
+  // via the queue: resume must always actually send (a session being
+  // resumed is idle, and a queued resume would never flush).
   async function onResume() {
-    await onSendMessage('Please continue from where you left off.');
+    await deliverMessage('Please continue from where you left off.');
   }
 
   // Drop a system bubble into the chat so the operator has a visual
@@ -244,38 +329,40 @@ export default function SessionDetail({
             />
           }
         />
+        {/* The working indicator is the LAST entry inside the
+            scrollable log, not a floating overlay. It scrolls with
+            the messages and sits just after the newest one — so it
+            reads as part of the chat and the transcript never bleeds
+            through it (the earlier "floating dock" overlapped chat
+            text that scrolled behind it). */}
         <EventLog
+          taskId={taskId}
           entries={stream.events}
           banner={banner}
           searchQuery={searchQuery}
           searchCurrentIndex={searchCurrentIndex}
           onSearchMatchCount={handleSearchMatchCount}
           onOpenFile={onOpenFile}
+          footer={
+            <WorkingIndicator
+              active={stream.turnInFlight || !!stream.pendingPermission}
+              waitingForApproval={!!stream.pendingPermission}
+              lastEventAt={stream.lastEventAt}
+              onContinue={() => deliverMessage('continue')}
+            />
+          }
         />
-        {/* WorkingIndicator + composer share one bottom-anchored
-            dock so the animated "✻ thinking…" line always sits
-            directly ON TOP of the input box. Left in normal flow it
-            landed after the flex:1 EventLog — i.e. below the
-            absolutely-floating composer. */}
-        <div className="composer-dock">
-          <WorkingIndicator
-            active={stream.turnInFlight || !!stream.pendingPermission}
-            waitingForApproval={!!stream.pendingPermission}
-            lastEventAt={stream.lastEventAt}
-            onContinue={() => onSendMessage('continue')}
-          />
-          <MessageForm
-            ref={composerRef}
-            taskId={taskId}
-            turnInFlight={stream.turnInFlight}
-            onSubmit={onSendMessage}
-            disabled={composerDisabled}
-            disabledReason={composerHint}
-            availableModels={availableModels}
-            selectedModel={selectedModel}
-            onModelChange={handleModelChange}
-          />
-        </div>
+        <MessageForm
+          ref={composerRef}
+          taskId={taskId}
+          turnInFlight={stream.turnInFlight}
+          onSubmit={onSendMessage}
+          disabled={composerDisabled}
+          disabledReason={composerHint}
+          availableModels={availableModels}
+          selectedModel={selectedModel}
+          onModelChange={handleModelChange}
+        />
       </section>
       <PermissionDecisionContainer
         pending={stream.pendingPermission}

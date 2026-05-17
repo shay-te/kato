@@ -50,6 +50,33 @@ describe('TabList', () => {
     expect(tabs[1]).toHaveClass('active');
   });
 
+  test('active-tab auto-scroll moves the STRIP, never scrollIntoView', () => {
+    // Regression: ``active.scrollIntoView()`` walks + scrolls every
+    // scrollable ancestor, so selecting the rightmost tab dragged
+    // the whole page left and clipped the file pane. The effect must
+    // scroll only its own container.
+    const scrollToSpy = vi.fn();
+    const scrollIntoViewSpy = vi.fn();
+    const origScrollTo = window.HTMLElement.prototype.scrollTo;
+    const origSIV = window.HTMLElement.prototype.scrollIntoView;
+    window.HTMLElement.prototype.scrollTo = scrollToSpy;
+    window.HTMLElement.prototype.scrollIntoView = scrollIntoViewSpy;
+    try {
+      render(
+        <TabList
+          sessions={[_session('A-1'), _session('A-2'), _session('A-3')]}
+          activeTaskId="A-3"
+          onSelect={() => {}}
+        />,
+      );
+      expect(scrollToSpy).toHaveBeenCalled();
+      expect(scrollIntoViewSpy).not.toHaveBeenCalled();
+    } finally {
+      window.HTMLElement.prototype.scrollTo = origScrollTo;
+      window.HTMLElement.prototype.scrollIntoView = origSIV;
+    }
+  });
+
   test('marks tabs in attentionTaskIds as needs-attention', () => {
     const { container } = render(
       <TabList

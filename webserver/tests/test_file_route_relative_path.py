@@ -18,9 +18,9 @@ These tests pin:
 from __future__ import annotations
 
 import tempfile
+import subprocess
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 from kato_webserver.app import create_app
 
@@ -70,6 +70,23 @@ class _FakeWorkspaceManager:
 
     def workspace_path(self, task_id):
         return Path(self._workspace_path_for.get(task_id, '/missing'))
+
+
+class _FakeAgentService:
+    def __init__(self, base_branch: str) -> None:
+        self._base_branch = base_branch
+
+    def configured_destination_branch(self, repo_id):  # noqa: ARG002
+        return self._base_branch
+
+
+def _run_git(cwd: Path, *args: str) -> None:
+    subprocess.run(
+        ['git', '-C', str(cwd), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 class FileRouteRelativePathTests(unittest.TestCase):
@@ -190,6 +207,56 @@ class FileRouteMultiRepoTests(unittest.TestCase):
             '/api/sessions/TASK-2/file?path=email_core_lib/ghost.py',
         )
         self.assertEqual(response.status_code, 404)
+
+
+class BaseFileRouteTests(unittest.TestCase):
+    """The diff context expander needs file content at the diff base."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.workspace_root = Path(self._tmp.name) / 'TASK-3'
+        self.repo = self.workspace_root / 'client'
+        self.repo.mkdir(parents=True)
+        _run_git(self.repo, 'init', '-b', 'main')
+        _run_git(self.repo, 'config', 'user.email', 'kato@example.com')
+        _run_git(self.repo, 'config', 'user.name', 'Kato Test')
+        (self.repo / 'src').mkdir()
+        target = self.repo / 'src' / 'promises.scss'
+        target.write_text("@import 'base.scss';\n.base { color: red; }\n", encoding='utf-8')
+        _run_git(self.repo, 'add', 'src/promises.scss')
+        _run_git(self.repo, 'commit', '-m', 'base')
+        _run_git(self.repo, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
+        target.write_text("@import 'base.scss';\n.base { color: blue; }\n", encoding='utf-8')
+
+        workspace_manager = _FakeWorkspaceManager(
+            records=[_FakeWorkspaceRecord('TASK-3', ['client'])],
+            repo_paths={('TASK-3', 'client'): str(self.repo)},
+            workspace_path_for={'TASK-3': str(self.workspace_root)},
+        )
+        self.app = create_app(
+            session_manager=_FakeManager(records=[_FakeRecord('TASK-3')]),
+            workspace_manager=workspace_manager,
+            agent_service=_FakeAgentService('main'),
+        )
+
+    def test_base_file_route_reads_origin_base_not_worktree(self) -> None:
+        response = self.app.test_client().get(
+            '/api/sessions/TASK-3/base-file'
+            '?repo=client&path=src/promises.scss',
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.get_json()
+        self.assertIn('color: red', body.get('content', ''))
+        self.assertNotIn('color: blue', body.get('content', ''))
+        self.assertEqual(body.get('base'), 'main')
+
+    def test_base_file_route_refuses_paths_outside_repo(self) -> None:
+        response = self.app.test_client().get(
+            '/api/sessions/TASK-3/base-file'
+            '?repo=client&path=../../etc/passwd',
+        )
+        self.assertEqual(response.status_code, 403)
 
 
 if __name__ == '__main__':

@@ -20,6 +20,12 @@ dependencies = [
   "safety>=3.0",
 ]
 
+# The single operator entry point. ``pip install -e .`` puts ``kato``
+# on PATH (Windows included), replacing the Makefile + the
+# ``python scripts\\...`` invocations. See kato_core_lib/cli.py.
+[project.scripts]
+kato = "kato_core_lib.cli:main"
+
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"

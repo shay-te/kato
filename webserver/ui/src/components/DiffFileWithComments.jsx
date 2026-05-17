@@ -1,26 +1,44 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Icon from './Icon.jsx';
 import {
+  Decoration,
   Diff,
   Hunk,
   computeNewLineNumber,
+  expandFromRawCode,
   getChangeKey,
 } from 'react-diff-view';
 import {
   createTaskComment,
   deleteTaskComment,
+  fetchBaseFileContent,
   markTaskCommentAddressed,
   reopenTaskComment,
   resolveTaskComment,
 } from '../api.js';
 import { toast } from '../stores/toastStore.js';
+import { diffDisplayPath } from '../diffModel.js';
 import { tokenizeHunks } from '../utils/diffSyntax.js';
 import {
   CommentBubble,
   CommentForm,
   buildThreads,
 } from './CommentWidgets.jsx';
-import { countDiffLines, isLargeFile } from './diffFileSize.js';
+import {
+  basePathForDiffFile,
+  buildDiffRenderItems,
+  expansionRangeForGap,
+  splitSourceLines,
+} from './DiffExpansionHelpers.js';
+import { isLargeFile } from './diffFileSize.js';
+
+const DIFF_KIND_ICON = {
+  add: 'plus',
+  delete: 'minus',
+  modify: 'edit',
+  rename: 'edit',
+  copy: 'edit',
+};
 
 // Default ``initiallyExpanded`` resolver: per-file rule only (no
 // awareness of sibling files). The parent ``ChangesTab`` overrides
@@ -29,6 +47,33 @@ import { countDiffLines, isLargeFile } from './diffFileSize.js';
 // budget can kick in.
 function _defaultInitiallyExpanded(file) {
   return !isLargeFile(file);
+}
+
+function renderPathSegments(path) {
+  const rawPath = String(path || '');
+  const parts = rawPath.includes('/') && !rawPath.startsWith('/')
+    ? rawPath.split('/').filter(Boolean)
+    : [rawPath];
+  return parts.map((part, index) => {
+    const separator = index > 0 ? (
+      <span className="diff-file-path-separator">/</span>
+    ) : null;
+    return (
+      <span className="diff-file-path-part" key={`${part}-${index}`}>
+        {separator}
+        <span className="diff-file-path-segment">{part}</span>
+      </span>
+    );
+  });
+}
+
+function DiffHeaderKindIcon({ kind }) {
+  const iconName = DIFF_KIND_ICON[kind] || 'edit';
+  return (
+    <span className={`diff-file-row-kind kind-${kind || 'modify'}`}>
+      <Icon name={iconName} />
+    </span>
+  );
 }
 
 // One <Diff> + per-line comment threads + file-level thread, all
@@ -40,15 +85,20 @@ function _defaultInitiallyExpanded(file) {
 // that line. File-level comments (``line < 0``) live in the
 // bottom panel below the diff.
 export default function DiffFileWithComments({
-  file, conflicted = false, repoId = '', taskId = '',
+  file, conflicted = false, repoId = '', repoCwd = '', taskId = '',
   initiallyExpanded,
+  forceExpandToken = 0,
   onAddToChat,
   comments = [],
   commentsLoading = false,
   commentsError = '',
   onMutated,
 }) {
-  const path = file.newPath || file.oldPath || '(unknown)';
+  // Use the shared resolver, NOT ``file.newPath || file.oldPath``:
+  // react-diff-view sets the missing side to ``/dev/null`` for pure
+  // add/delete, so the naive form renders a deleted file's header as
+  // "/dev/null" instead of its real (old) path.
+  const path = diffDisplayPath(file);
 
   // ``activeLine`` is the line number where the inline new-comment
   // form is currently open. ``-1`` is the file-level panel below
@@ -59,9 +109,7 @@ export default function DiffFileWithComments({
   // DOM freezes the browser's paint loop and makes EVERY input on
   // the page lag (typing in the chat composer, opening the adopt
   // modal, etc.). Below the threshold the file expands by default
-  // — the operator's normal flow is unchanged. The collapsed
-  // placeholder is one ``<button>``, costing nothing.
-  const lineCount = useMemo(() => countDiffLines(file), [file]);
+  // — the operator's normal flow is unchanged.
   // ``initiallyExpanded`` (when passed by ChangesTab) reflects the
   // cumulative-budget decision over the full file list. Fall back
   // to the per-file rule when called from a context that doesn't
@@ -71,13 +119,28 @@ export default function DiffFileWithComments({
       ? initiallyExpanded
       : _defaultInitiallyExpanded(file)
   ));
+  const [renderedHunks, setRenderedHunks] = useState(() => file.hunks || []);
+  const [baseSource, setBaseSource] = useState({
+    status: 'idle',
+    lines: null,
+    error: '',
+  });
+
+  useEffect(() => {
+    setRenderedHunks(file.hunks || []);
+    setBaseSource({ status: 'idle', lines: null, error: '' });
+  }, [file.hunks, path, repoId, repoCwd, taskId]);
+
+  useEffect(() => {
+    if (forceExpandToken) { setExpanded(true); }
+  }, [forceExpandToken]);
 
   // Tokenisation walks every hunk synchronously and is by far the
   // hottest first-paint cost on big diffs. Skip it entirely when
   // the file is collapsed; recompute lazily on expand.
   const tokens = useMemo(
-    () => (expanded ? tokenizeHunks(file.hunks || [], path) : null),
-    [file.hunks, path, expanded],
+    () => (expanded ? tokenizeHunks(renderedHunks, path) : null),
+    [renderedHunks, path, expanded],
   );
 
   function notifyMutated() {
@@ -239,7 +302,7 @@ export default function DiffFileWithComments({
   const widgets = useMemo(() => {
     if (!expanded) { return {}; }
     const out = {};
-    for (const hunk of file.hunks || []) {
+    for (const hunk of renderedHunks) {
       for (const change of hunk.changes || []) {
         const lineNumber = computeNewLineNumber(change);
         if (lineNumber == null || lineNumber < 0) { continue; }
@@ -301,7 +364,7 @@ export default function DiffFileWithComments({
       }
     }
     return out;
-  }, [file.hunks, commentsByLine, activeLine, replyTo, expanded]);
+  }, [renderedHunks, commentsByLine, activeLine, replyTo, expanded]);
 
   // Gutter click → open the inline form at that line.
   const gutterEvents = useMemo(() => ({
@@ -340,9 +403,10 @@ export default function DiffFileWithComments({
   const conflictedBadge = conflicted ? (
     <span
       className="diff-file-conflicted"
+      aria-label="merge conflict"
       title="This file has merge conflicts that must be resolved before it can be merged."
     >
-      CONFLICTED
+      <Icon name="warning" />
     </span>
   ) : null;
   const collapseToggle = expanded ? (
@@ -350,55 +414,131 @@ export default function DiffFileWithComments({
       type="button"
       className="diff-file-collapse-toggle is-icon tooltip-below"
       onClick={() => setExpanded(false)}
-      data-tooltip="Hide diff"
-      aria-label="Hide diff"
+      data-tooltip="Collapse diff"
+      aria-label="Collapse diff"
     >
-      <Icon name="minus" />
+      <Icon name="chevron-down" />
     </button>
   ) : (
     <button
       type="button"
-      className="diff-file-collapse-toggle tooltip-below"
+      className="diff-file-collapse-toggle is-icon tooltip-below"
       onClick={() => setExpanded(true)}
-      data-tooltip="Show diff"
-      aria-label="Show diff"
+      data-tooltip="Expand diff"
+      aria-label="Expand diff"
     >
-      <Icon name="chevron-down" />
-      <span>{`Show diff (${lineCount} line${lineCount === 1 ? '' : 's'})`}</span>
+      <Icon name="chevron-right" />
     </button>
   );
+
+  async function loadBaseSourceLines() {
+    if (baseSource.status === 'ready') { return baseSource.lines; }
+    if (baseSource.status === 'loading') { return null; }
+    const basePath = basePathForDiffFile(file, path);
+    if (!basePath || basePath === '/dev/null') { return null; }
+    setBaseSource({ status: 'loading', lines: null, error: '' });
+    try {
+      const body = await fetchBaseFileContent(taskId, {
+        repoId,
+        repoCwd,
+        path: basePath,
+      });
+      if (body.binary || body.too_large) {
+        const error = body.too_large ? 'file too large' : 'binary file';
+        setBaseSource({ status: 'error', lines: null, error });
+        return null;
+      }
+      const lines = splitSourceLines(body.content || '');
+      setBaseSource({ status: 'ready', lines, error: '' });
+      return lines;
+    } catch (err) {
+      setBaseSource({ status: 'error', lines: null, error: String(err) });
+      return null;
+    }
+  }
+
+  async function onExpandGap(event, gap, direction) {
+    event.preventDefault();
+    const range = expansionRangeForGap(gap, direction, event.shiftKey);
+    if (!range) { return; }
+    const sourceLines = await loadBaseSourceLines();
+    if (!sourceLines) {
+      toast.show({
+        kind: 'warning',
+        title: 'Could not expand context',
+        message: baseSource.error || 'base file is not available yet',
+        durationMs: 5000,
+      });
+      return;
+    }
+    setRenderedHunks((current) => (
+      expandFromRawCode(current, sourceLines, range.start, range.end)
+    ));
+  }
+
+  function renderGapDecoration(gap) {
+    const loading = baseSource.status === 'loading';
+    const label = `${gap.count} hidden line${gap.count === 1 ? '' : 's'}`;
+    return (
+      <Decoration
+        key={gap.key}
+        className="diff-context-expander"
+        contentClassName="diff-context-expander-cell"
+      >
+        <div className="diff-context-expander-inner">
+          <button
+            type="button"
+            className="diff-context-expander-btn"
+            onClick={(event) => onExpandGap(event, gap, 'above')}
+            disabled={loading}
+            aria-label={`Show hidden lines above (${label})`}
+            title="Show lines from the top of this hidden block. Shift-click shows all."
+          >
+            ↑
+          </button>
+          <span className="diff-context-expander-label">{label}</span>
+          <button
+            type="button"
+            className="diff-context-expander-btn"
+            onClick={(event) => onExpandGap(event, gap, 'below')}
+            disabled={loading}
+            aria-label={`Show hidden lines below (${label})`}
+            title="Show lines from the bottom of this hidden block. Shift-click shows all."
+          >
+            ↓
+          </button>
+        </div>
+      </Decoration>
+    );
+  }
+
+  function renderDiffChildren(hunks) {
+    const sourceLineCount = baseSource.lines ? baseSource.lines.length : 0;
+    const items = buildDiffRenderItems(hunks, sourceLineCount);
+    return items.map((item) => {
+      if (item.type === 'gap') { return renderGapDecoration(item); }
+      return <Hunk key={item.key} hunk={item.hunk} />;
+    });
+  }
+
   const diffBody = expanded ? (
     <Diff
       viewType="unified"
       diffType={file.type}
-      hunks={file.hunks || []}
+      hunks={renderedHunks}
       tokens={tokens}
       widgets={widgets}
       gutterEvents={gutterEvents}
     >
-      {(hunks) => hunks.map((hunk) => (
-        <Hunk key={hunk.content} hunk={hunk} />
-      ))}
+      {(hunks) => renderDiffChildren(hunks)}
     </Diff>
-  ) : (
-    <p className="diff-file-collapsed-note">
-      {`Diff hidden (${lineCount} change line${lineCount === 1 ? '' : 's'}). `
-       + `Click "Show diff" above to render — large diffs are auto-collapsed `
-       + `because rendering them in full makes the rest of the page lag.`}
-    </p>
-  );
-  const fileLevelEntryButton = !fileFormOpen ? (
-    <button
-      type="button"
-      className="diff-file-add-file-comment tooltip-below"
-      onClick={() => { setActiveLine(-1); setReplyTo(''); }}
-      data-tooltip="Add a file-level comment to this file"
-      aria-label="Add file-level comment"
-    >
-      <Icon name="plus" />
-      <span>Add file-level comment</span>
-    </button>
   ) : null;
+  // The standalone "+ Add file-level comment" entry button and its
+  // empty-state hint paragraph were removed on request — the diff
+  // view no longer offers a file-level-comment entry point. Inline
+  // gutter comments and replies to existing review threads (which
+  // still set ``activeLine === -1`` via a thread's Reply) keep
+  // working through ``fileLevelForm`` below.
   const fileLevelForm = fileFormOpen ? (
     <CommentForm
       placeholder={fileFormReplyMode ? 'Add a reply…' : 'Add a file-level comment…'}
@@ -411,70 +551,81 @@ export default function DiffFileWithComments({
       replyMode={fileFormReplyMode}
     />
   ) : null;
+  const commentsLoadingMessage = commentsLoading && comments.length === 0 ? (
+    <p className="diff-file-comments-empty">Loading comments…</p>
+  ) : null;
+  const commentsErrorMessage = !commentsLoading && commentsError ? (
+    <p className="diff-file-comments-empty error">{commentsError}</p>
+  ) : null;
+  const commentThreads = !commentsError && fileThreads.length > 0 ? fileThreads.map((thread) => (
+    <article
+      key={thread.root.id}
+      className={[
+        'diff-file-comment-thread',
+        thread.root.status === 'resolved' ? 'is-resolved' : '',
+      ].filter(Boolean).join(' ')}
+    >
+      <CommentBubble
+        comment={thread.root}
+        isRoot
+        onResolve={() => onResolve(thread.root.id)}
+        onReopen={() => onReopen(thread.root.id)}
+        onDelete={() => onDelete(thread.root.id)}
+        onReply={() => {
+          setActiveLine(-1);
+          setReplyTo(thread.root.id);
+        }}
+        onMarkAddressed={() => onMarkAddressed(thread.root.id)}
+      />
+      {thread.replies.map((reply) => (
+        <CommentBubble
+          key={reply.id}
+          comment={reply}
+          isRoot={false}
+          onDelete={() => onDelete(reply.id)}
+          onReply={() => {
+            setActiveLine(-1);
+            setReplyTo(thread.root.id);
+          }}
+        />
+      ))}
+    </article>
+  )) : null;
+  const commentsPanel = (
+    commentsLoadingMessage
+    || commentsErrorMessage
+    || commentThreads
+    || fileLevelForm
+  ) ? (
+    <div className="diff-file-comments">
+      {commentsLoadingMessage}
+      {commentsErrorMessage}
+      {commentThreads}
+      {fileLevelForm}
+    </div>
+  ) : null;
+  const pathSegments = renderPathSegments(path);
 
   return (
     <section
-      className="diff-file"
+      className={`diff-file ${expanded ? 'is-expanded' : 'is-collapsed'}`}
       onContextMenu={onContextMenu}
       title="Click a line gutter to add an inline comment · right-click to paste path + selection into chat"
     >
       <header className="diff-file-header">
-        <span className="diff-file-type">{file.type}</span>
-        <span className="diff-file-path">{path}</span>
-        {conflictedBadge}
         {collapseToggle}
+        <DiffHeaderKindIcon kind={file.type} />
+        {conflictedBadge}
+        <span className="diff-file-path">{pathSegments}</span>
       </header>
-      {diffBody}
-      <div className="diff-file-comments">
-        {commentsLoading && comments.length === 0 && (
-          <p className="diff-file-comments-empty">Loading comments…</p>
-        )}
-        {!commentsLoading && commentsError && (
-          <p className="diff-file-comments-empty error">{commentsError}</p>
-        )}
-        {!commentsLoading && !commentsError && fileThreads.length === 0 && commentsByLine.size === 0 && !fileFormOpen && (
-          <p className="diff-file-comments-empty">
-            Click a diff line's gutter to add an inline comment, or use
-            <strong> + Add file-level comment</strong> below. Kato runs on it
-            immediately if idle, or queues it.
-          </p>
-        )}
-        {!commentsError && fileThreads.map((thread) => (
-          <article
-            key={thread.root.id}
-            className={[
-              'diff-file-comment-thread',
-              thread.root.status === 'resolved' ? 'is-resolved' : '',
-            ].filter(Boolean).join(' ')}
-          >
-            <CommentBubble
-              comment={thread.root}
-              isRoot
-              onResolve={() => onResolve(thread.root.id)}
-              onReopen={() => onReopen(thread.root.id)}
-              onDelete={() => onDelete(thread.root.id)}
-              onReply={() => {
-                setActiveLine(-1);
-                setReplyTo(thread.root.id);
-              }}
-              onMarkAddressed={() => onMarkAddressed(thread.root.id)}
-            />
-            {thread.replies.map((reply) => (
-              <CommentBubble
-                key={reply.id}
-                comment={reply}
-                isRoot={false}
-                onDelete={() => onDelete(reply.id)}
-                onReply={() => {
-                  setActiveLine(-1);
-                  setReplyTo(thread.root.id);
-                }}
-              />
-            ))}
-          </article>
-        ))}
-        {fileLevelEntryButton}
-        {fileLevelForm}
+      {/* Stable wrapper for everything below the sticky header. The
+          ``.diff-file`` card uses ``overflow: visible`` so its sticky
+          header keeps working, which means the card's rounded bottom
+          can't clip its children. Clipping THIS wrapper (a non-sticky
+          sibling) rounds the bottom to match the card. */}
+      <div className="diff-file-body">
+        {diffBody}
+        {commentsPanel}
       </div>
     </section>
   );

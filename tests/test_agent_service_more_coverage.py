@@ -301,6 +301,36 @@ class SyncAddressedReplyToRemoteTests(unittest.TestCase):
 
 
 class MaybeTriggerCommentRunTests(unittest.TestCase):
+    def test_drain_next_queued_returns_error_when_no_store(self) -> None:
+        service = AgentService(**_kwargs())
+        result = service.drain_next_queued_task_comment('T1')
+        self.assertFalse(result['ok'])
+        self.assertFalse(result['started'])
+
+    def test_drain_next_queued_returns_idle_when_queue_empty(self) -> None:
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        store.next_queued.return_value = None
+        with patch.object(service, '_comment_store_for', return_value=store):
+            result = service.drain_next_queued_task_comment('T1')
+        self.assertTrue(result['ok'])
+        self.assertFalse(result['started'])
+        self.assertEqual(result['comment_id'], '')
+
+    def test_drain_next_queued_triggers_oldest_comment(self) -> None:
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        store.next_queued.return_value = SimpleNamespace(id='c1')
+        with patch.object(service, '_comment_store_for', return_value=store), \
+             patch.object(
+                 service, '_maybe_trigger_comment_run', return_value=True,
+             ) as trigger:
+            result = service.drain_next_queued_task_comment('T1')
+        self.assertTrue(result['ok'])
+        self.assertTrue(result['started'])
+        self.assertEqual(result['comment_id'], 'c1')
+        trigger.assert_called_once_with('T1', 'c1')
+
     def test_returns_false_when_no_store(self) -> None:
         service = AgentService(**_kwargs())
         self.assertFalse(service._maybe_trigger_comment_run('T1', 'c1'))
@@ -345,23 +375,64 @@ class MaybeTriggerCommentRunTests(unittest.TestCase):
             result = service._maybe_trigger_comment_run('T1', 'c1')
         self.assertTrue(result)
 
+    def test_requeues_when_comment_run_cannot_start(self) -> None:
+        from kato_core_lib.comment_core_lib import KatoCommentStatus
+
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        record = MagicMock(id='c1')
+        store.get.return_value = record
+        with patch.object(service, '_comment_store_for', return_value=store), \
+             patch.object(service, '_task_has_busy_turn', return_value=False), \
+             patch.object(service, '_run_comment_agent', return_value=False):
+            result = service._maybe_trigger_comment_run('T1', 'c1')
+        self.assertFalse(result)
+        self.assertEqual(
+            store.update_kato_status.call_args_list[-1].kwargs['kato_status'],
+            KatoCommentStatus.QUEUED.value,
+        )
+
 
 class RunCommentAgentTests(unittest.TestCase):
     def test_returns_silently_when_no_session_manager(self) -> None:
         service = AgentService(**_kwargs())
-        # No raise.
-        service._run_comment_agent('T1', SimpleNamespace(id='c1'))
+        result = service._run_comment_agent('T1', SimpleNamespace(id='c1'))
+        self.assertFalse(result)
 
-    def test_queues_when_session_dead(self) -> None:
+    def test_returns_false_when_session_dead_and_no_runner(self) -> None:
         session = MagicMock()
         session.get_session.return_value = SimpleNamespace(is_alive=False)
         service = AgentService(**_kwargs(session_manager=session))
-        store = MagicMock()
-        with patch.object(service, '_comment_store_for', return_value=store):
-            service._run_comment_agent(
-                'T1', SimpleNamespace(id='c1', file_path='', line=-1, body=''),
-            )
-        store.update_kato_status.assert_called()
+        result = service._run_comment_agent(
+            'T1', SimpleNamespace(id='c1', file_path='', line=-1, body=''),
+        )
+        self.assertFalse(result)
+
+    def test_respawns_session_for_comment_when_session_dead(self) -> None:
+        session = MagicMock()
+        session.get_session.return_value = SimpleNamespace(is_alive=False)
+        runner = MagicMock()
+        workspace_manager = MagicMock()
+        workspace_manager.repository_path.return_value = Path('/tmp/repo')
+        workspace_manager.get.return_value = SimpleNamespace(task_summary='Do it')
+        service = AgentService(**_kwargs(
+            session_manager=session,
+            planning_session_runner=runner,
+            workspace_manager=workspace_manager,
+        ))
+        result = service._run_comment_agent(
+            'T1',
+            SimpleNamespace(
+                id='c1', repo_id='r1', file_path='a.py',
+                line=5, body='fix this',
+            ),
+        )
+        self.assertTrue(result)
+        runner.resume_session_for_chat.assert_called_once()
+        kwargs = runner.resume_session_for_chat.call_args.kwargs
+        self.assertEqual(kwargs['task_id'], 'T1')
+        self.assertEqual(kwargs['cwd'], '/tmp/repo')
+        self.assertIn('fix this', kwargs['message'])
 
     def test_sends_prompt_to_live_session(self) -> None:
         session_obj = SimpleNamespace(
@@ -384,11 +455,11 @@ class RunCommentAgentTests(unittest.TestCase):
         session = MagicMock()
         session.get_session.return_value = session_obj
         service = AgentService(**_kwargs(session_manager=session))
-        # No raise.
-        service._run_comment_agent(
+        result = service._run_comment_agent(
             'T1',
             SimpleNamespace(id='c1', file_path='a.py', line=5, body='b'),
         )
+        self.assertFalse(result)
 
 
 class TaskPullRequestIdLiveLookupTests(unittest.TestCase):

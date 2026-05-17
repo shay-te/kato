@@ -818,6 +818,17 @@ class AgentService(Service):
             'triggered_immediately': triggered,
         }
 
+    def drain_next_queued_task_comment(self, task_id: str) -> dict[str, object]:
+        """Start the oldest queued local diff comment for this task if possible."""
+        store = self._comment_store_for(task_id)
+        if store is None:
+            return {'ok': False, 'started': False, 'error': 'no workspace for task'}
+        record = store.next_queued()
+        if record is None:
+            return {'ok': True, 'started': False, 'comment_id': ''}
+        started = self._maybe_trigger_comment_run(str(task_id), record.id)
+        return {'ok': True, 'started': started, 'comment_id': record.id}
+
     def resolve_task_comment(
         self,
         task_id: str,
@@ -1223,7 +1234,7 @@ class AgentService(Service):
             comment_id, kato_status=KatoCommentStatus.IN_PROGRESS.value,
         )
         try:
-            self._run_comment_agent(task_id, record)
+            started = self._run_comment_agent(task_id, record)
         except Exception as exc:
             self.logger.exception(
                 'comment agent run failed for task %s comment %s',
@@ -1233,6 +1244,11 @@ class AgentService(Service):
                 comment_id,
                 kato_status=KatoCommentStatus.FAILED.value,
                 failure_reason=str(exc),
+            )
+            return False
+        if not started:
+            store.update_kato_status(
+                comment_id, kato_status=KatoCommentStatus.QUEUED.value,
             )
             return False
         return True
@@ -1249,7 +1265,7 @@ class AgentService(Service):
             return False
         return bool(getattr(session, 'is_working', False))
 
-    def _run_comment_agent(self, task_id: str, record) -> None:
+    def _run_comment_agent(self, task_id: str, record) -> bool:
         """Hand the comment off to the streaming session as a user message.
 
         Minimal first cut: append a short prompt to the live chat
@@ -1261,39 +1277,69 @@ class AgentService(Service):
         the chat → agent works on it" which is a recognisable
         kato pattern.
         """
-        from kato_core_lib.comment_core_lib import KatoCommentStatus
-
+        prompt = self._comment_agent_prompt(record)
         if self._session_manager is None:
-            return
+            return self._spawn_comment_agent(task_id, record, prompt)
         session = self._session_manager.get_session(task_id)
         if session is None or not getattr(session, 'is_alive', False):
-            # No live agent — keep queued. Will be drained when
-            # the operator opens the chat (which spawns the
-            # streaming session) and the queue-drain hook runs.
-            store = self._comment_store_for(task_id)
-            if store is not None:
-                store.update_kato_status(
-                    record.id, kato_status=KatoCommentStatus.QUEUED.value,
-                )
-            return
-        location_hint = (
-            f'`{record.file_path}` (line {record.line})'
-            if record.file_path and record.line > 0
-            else (record.file_path or '(no file specified)')
+            return self._spawn_comment_agent(task_id, record, prompt)
+        send = getattr(session, 'send_user_message', None)
+        if not callable(send):
+            return False
+        send(prompt)
+        return True
+
+    def _spawn_comment_agent(self, task_id: str, record, prompt: str) -> bool:
+        """Respawn Claude for a queued local diff comment when no subprocess is alive."""
+        runner = self._planning_session_runner
+        if runner is None:
+            return False
+        cwd = self._comment_agent_cwd(task_id, record)
+        summary = ''
+        if self._workspace_manager is not None:
+            workspace = self._workspace_manager.get(task_id)
+            summary = str(getattr(workspace, 'task_summary', '') or '')
+        runner.resume_session_for_chat(
+            task_id=task_id,
+            message=prompt,
+            cwd=cwd,
+            task_summary=summary,
         )
-        prompt = (
+        return True
+
+    def _comment_agent_cwd(self, task_id: str, record) -> str:
+        """Prefer the commented repo clone, fallback to the task workspace."""
+        if self._workspace_manager is None:
+            return ''
+        repo_id = str(getattr(record, 'repo_id', '') or '').strip()
+        if repo_id:
+            try:
+                return str(self._workspace_manager.repository_path(task_id, repo_id))
+            except Exception:
+                pass
+        try:
+            return str(self._workspace_manager.workspace_path(task_id))
+        except Exception:
+            return ''
+
+    def _comment_agent_prompt(self, record) -> str:
+        file_path = str(getattr(record, 'file_path', '') or '')
+        line = int(getattr(record, 'line', -1) or -1)
+        body = str(getattr(record, 'body', '') or '')
+        location_hint = (
+            f'`{file_path}` (line {line})'
+            if file_path and line > 0
+            else (file_path or '(no file specified)')
+        )
+        return (
             'Operator-added review comment from the kato diff tab.\n\n'
             f'File: {location_hint}\n'
-            f'Comment: {record.body}\n\n'
+            f'Comment: {body}\n\n'
             'Address this comment, commit the fix on the current task '
             'branch, and reply with a one-line summary of what '
             'changed. If the comment is a question rather than a fix '
             'request, answer it in prose without committing.'
         )
-        send = getattr(session, 'send_user_message', None)
-        if not callable(send):
-            return
-        send(prompt)
 
     def _task_pull_request_id(self, task_id: str, repo_id: str) -> str:
         """Find the source-platform PR id for a (task, repo).

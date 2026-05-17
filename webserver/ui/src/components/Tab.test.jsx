@@ -67,6 +67,28 @@ describe('Tab', () => {
     expect(container.querySelector('.status-dot')).toHaveClass(`status-${TAB_STATUS.ATTENTION}`);
   });
 
+  test('working session adds is-working (gold heartbeat) to the dot', () => {
+    const { container } = render(
+      <Tab session={_session({ working: true })} onSelect={() => {}} />,
+    );
+    const dot = container.querySelector('.status-dot');
+    expect(dot).toHaveClass('is-working');
+    // Still the live green dot — the heartbeat rings AROUND it, it
+    // doesn't replace the active status.
+    expect(dot).toHaveClass(`status-${TAB_STATUS.ACTIVE}`);
+    expect(dot).not.toHaveClass('is-idle-alive');
+  });
+
+  test('non-working session has no is-working class', () => {
+    const { container } = render(
+      <Tab session={_session({ working: false })} onSelect={() => {}} />,
+    );
+    const dot = container.querySelector('.status-dot');
+    expect(dot).not.toHaveClass('is-working');
+    // working:false on an ACTIVE tab is the "idle but alive" state.
+    expect(dot).toHaveClass('is-idle-alive');
+  });
+
   test('changes-pending indicator appears only when has_changes_pending is true', () => {
     const { container: c1 } = render(
       <Tab session={_session({ has_changes_pending: false })} onSelect={() => {}} />,

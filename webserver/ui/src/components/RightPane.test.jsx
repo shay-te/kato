@@ -1,27 +1,22 @@
-// Tests for RightPane. Hosts the Files / Changes tabs when a task
-// is selected, or the OrchestratorActivityFeed when nothing is.
-// Cmd+P (or Ctrl+P) flips to Files and bumps a focus signal.
+// Tests for RightPane. Hosts the workspace file tree when a task is
+// selected, or a no-task placeholder when nothing is. The
+// Files/Changes tab toggle (and the Changes tab) were removed — the
+// file tree is now the only view. Cmd+P (or Ctrl+P) bumps a focus
+// signal FilesTab listens to.
 //
-// FilesTab and ChangesTab pull in api.js + a context provider and
-// fire real fetches; we replace them with trivial stubs so this
-// test focuses on RightPane's own behavior (tab switching, layout,
-// keyboard shortcut, no-task branch).
+// FilesTab pulls in api.js + a context provider and fires real
+// fetches; we replace it with a trivial stub so this test focuses
+// on RightPane's own behavior (layout, keyboard shortcut, no-task
+// branch).
 
 import { describe, test, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 
-// Stub heavy children BEFORE importing RightPane.
+// Stub the heavy child BEFORE importing RightPane.
 vi.mock('../FilesTab.jsx', () => ({
   default: ({ taskId, focusFilterSignal }) => (
     <div data-testid="files-tab" data-task-id={taskId} data-focus-signal={focusFilterSignal}>
       FilesTabStub
-    </div>
-  ),
-}));
-vi.mock('../ChangesTab.jsx', () => ({
-  default: ({ taskId }) => (
-    <div data-testid="changes-tab" data-task-id={taskId}>
-      ChangesTabStub
     </div>
   ),
 }));
@@ -33,36 +28,23 @@ describe('RightPane', () => {
 
   test('renders the no-task placeholder when there is no active task', () => {
     render(<RightPane activeTaskId={null} />);
-    // The orchestrator feed moved OUT of the left pane — it now
-    // opens in the centre column via the header status pill. With
-    // no task the left pane shows a placeholder, not the feed.
     expect(screen.getByText(/No task selected/i)).toBeInTheDocument();
-    expect(screen.queryByText('orchestrator activity')).not.toBeInTheDocument();
-    // Tabs not rendered when no task is selected.
-    expect(screen.queryByText('Files')).not.toBeInTheDocument();
+    // No file tree, and (since the toggle was removed) no tab chrome.
+    expect(screen.queryByTestId('files-tab')).not.toBeInTheDocument();
     expect(screen.queryByText('Changes')).not.toBeInTheDocument();
   });
 
-  test('renders the Files/Changes tabs when there is an active task', () => {
+  test('renders the file tree directly when there is an active task', () => {
     render(<RightPane activeTaskId="KATO-1" />);
-    expect(screen.getByText('Files')).toBeInTheDocument();
-    expect(screen.getByText('Changes')).toBeInTheDocument();
-    // Files tab is the default → its body is mounted.
     expect(screen.getByTestId('files-tab')).toBeInTheDocument();
-    expect(screen.queryByTestId('changes-tab')).not.toBeInTheDocument();
+    // The Files/Changes toggle was removed entirely — no "Changes".
+    expect(screen.queryByText('Changes')).not.toBeInTheDocument();
   });
 
-  test('clicking Changes switches the body to ChangesTab', () => {
+  test('forwards the active task id to FilesTab', () => {
     render(<RightPane activeTaskId="KATO-1" />);
-    fireEvent.click(screen.getByText('Changes'));
-    expect(screen.getByTestId('changes-tab')).toBeInTheDocument();
-    expect(screen.queryByTestId('files-tab')).not.toBeInTheDocument();
-  });
-
-  test('clicking the active Files tab while already on Files keeps it active', () => {
-    render(<RightPane activeTaskId="KATO-1" />);
-    fireEvent.click(screen.getByText('Files'));
-    expect(screen.getByTestId('files-tab')).toBeInTheDocument();
+    expect(screen.getByTestId('files-tab').getAttribute('data-task-id'))
+      .toBe('KATO-1');
   });
 
   test('width prop is applied as inline style on the aside', () => {
@@ -73,36 +55,43 @@ describe('RightPane', () => {
   });
 
   test('left-pane resizer renders when an onResizePointerDown is passed', () => {
-    // The Files/Changes panel is the LEFT column in the top-tabs
-    // layout; its drag handle is #left-pane-resizer and only mounts
-    // when the resize callback is wired (App passes leftResizer).
+    // The file-tree panel is the LEFT column in the top-tabs layout;
+    // its drag handle is #left-pane-resizer and only mounts when the
+    // resize callback is wired (App passes leftResizer).
     const { container } = render(
       <RightPane activeTaskId="KATO-1" onResizePointerDown={() => {}} />,
     );
     expect(container.querySelector('#left-pane-resizer')).toBeInTheDocument();
   });
 
-  test('Cmd+P with an active task switches to Files and bumps focus signal', () => {
+  test('Cmd+P with an active task bumps the focus signal', () => {
     render(<RightPane activeTaskId="KATO-1" />);
-    // Start on Changes so we can verify the keyboard shortcut flips
-    // back to Files.
-    fireEvent.click(screen.getByText('Changes'));
-    expect(screen.getByTestId('changes-tab')).toBeInTheDocument();
+    const before = screen.getByTestId('files-tab');
+    expect(before.getAttribute('data-focus-signal')).toBe('0');
 
     fireEvent.keyDown(window, { key: 'p', metaKey: true });
-    const filesTab = screen.getByTestId('files-tab');
-    expect(filesTab).toBeInTheDocument();
     // focusFilterSignal starts at 0; one Cmd+P bumps it to 1.
-    expect(filesTab.getAttribute('data-focus-signal')).toBe('1');
+    expect(screen.getByTestId('files-tab').getAttribute('data-focus-signal'))
+      .toBe('1');
+  });
+
+  test('non-Cmd+P keystrokes do not bump the focus signal', () => {
+    // Exercises the keydown guard early-returns: a plain key, a
+    // non-P meta combo, and a Cmd+Shift+P modifier combo must all
+    // leave the focus signal untouched.
+    render(<RightPane activeTaskId="KATO-1" />);
+    fireEvent.keyDown(window, { key: 'a' });
+    fireEvent.keyDown(window, { key: 's', metaKey: true });
+    fireEvent.keyDown(window, { key: 'p', metaKey: true, shiftKey: true });
+    expect(screen.getByTestId('files-tab').getAttribute('data-focus-signal'))
+      .toBe('0');
   });
 
   test('Cmd+P with no active task does NOT intercept the shortcut', () => {
     // When there's no active task, the effect is short-circuited
-    // (it returns before attaching a listener). The shortcut should
-    // pass through. We can't observe browser default print here,
-    // but we can at least verify the right pane still shows the
-    // activity feed (no tab body materializes).
-    render(<RightPane activeTaskId={null} activityHistory={[]} />);
+    // (it returns before attaching a listener). The shortcut passes
+    // through and no file tree materializes.
+    render(<RightPane activeTaskId={null} />);
     fireEvent.keyDown(window, { key: 'p', metaKey: true });
     expect(screen.queryByTestId('files-tab')).not.toBeInTheDocument();
   });

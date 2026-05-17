@@ -59,5 +59,5 @@ Bootstrap complete.
 Next manual steps:
 1. Fill the required secrets in .env
 2. Run `python -m kato_core_lib.configure_project` to validate the configuration
-3. Run `python -m kato_core_lib.main` (or `make run` if you have GNU Make)
+3. Run `kato up` (on PATH after `pip install -e .`)
 '@

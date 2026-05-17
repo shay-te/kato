@@ -4,20 +4,71 @@
 // behavior is a render-only composition of well-tested deps
 // (react-arborist for the tree).
 
-import { describe, test, expect, vi } from 'vitest';
-import { render } from '@testing-library/react';
+import { beforeEach, describe, test, expect, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 vi.mock('./api.js', () => ({
-  fetchTaskFiles: vi.fn().mockResolvedValue({ ok: true, body: { repos: [] } }),
+  fetchDiff: vi.fn(),
+  fetchFileTree: vi.fn(),
   fetchFileContent: vi.fn(),
-  syncRepositoriesNow: vi.fn(),
-  fetchTaskCommits: vi.fn().mockResolvedValue({ ok: true, body: [] }),
+  fetchRepoCommits: vi.fn().mockResolvedValue({ ok: true, body: [] }),
+  syncTaskComments: vi.fn(),
+  syncTaskRepositories: vi.fn(),
 }));
 vi.mock('./stores/toastStore.js', () => ({
   toast: { show: vi.fn() },
 }));
 
-import FilesTab, { formatSyncResult } from './FilesTab.jsx';
+import FilesTab, {
+  buildFilesDiffMeta,
+  filterChangedFileTree,
+  formatSyncResult,
+} from './FilesTab.jsx';
+import { fetchDiff, fetchFileTree } from './api.js';
+
+const FILE_TREE_PAYLOAD = {
+  trees: [{
+    repo_id: 'client',
+    cwd: '/tmp/client',
+    tree: [{
+      name: 'src',
+      path: '/tmp/client/src',
+      children: [{
+        name: 'Changed.js',
+        path: '/tmp/client/src/Changed.js',
+      }, {
+        name: 'Unchanged.js',
+        path: '/tmp/client/src/Unchanged.js',
+      }],
+    }],
+    changed_files: ['src/Changed.js'],
+    conflicted_files: [],
+  }],
+};
+
+const DIFF_PAYLOAD = {
+  diffs: [{
+    repo_id: 'client',
+    cwd: '/tmp/client',
+    diff: [
+      'diff --git a/src/Changed.js b/src/Changed.js',
+      'index 1111111..2222222 100644',
+      '--- a/src/Changed.js',
+      '+++ b/src/Changed.js',
+      '@@ -1 +1,2 @@',
+      '-old',
+      '+new',
+      '+newer',
+      '',
+    ].join('\n'),
+    conflicted_files: [],
+  }],
+};
+
+beforeEach(() => {
+  fetchDiff.mockResolvedValue({ diffs: [] });
+  fetchFileTree.mockResolvedValue({ trees: [] });
+});
 
 
 describe('formatSyncResult — toast shape for /api/sync-repositories', () => {
@@ -121,6 +172,61 @@ describe('formatSyncResult — toast shape for /api/sync-repositories', () => {
 });
 
 
+describe('buildFilesDiffMeta', () => {
+
+  test('indexes changed files by repo and cwd with kind + line stats', () => {
+    const meta = buildFilesDiffMeta([{
+      repo_id: 'client',
+      cwd: '/tmp/client',
+      files: [{
+        type: 'add',
+        oldPath: '/dev/null',
+        newPath: 'src/NewFile.js',
+        hunks: [{
+          changes: [
+            { type: 'insert' },
+            { type: 'insert' },
+            { type: 'delete' },
+          ],
+        }],
+      }],
+    }]);
+    const byRepo = meta.get('client');
+    const byCwd = meta.get('/tmp/client');
+    expect(byRepo).toBe(byCwd);
+    expect(byRepo.get('src/NewFile.js')).toMatchObject({
+      kind: 'add',
+      stats: { added: 2, deleted: 1 },
+    });
+    expect(byRepo.get('src/NewFile.js').file.newPath).toBe('src/NewFile.js');
+  });
+});
+
+
+describe('filterChangedFileTree', () => {
+
+  test('keeps ancestors for changed files that match the search', () => {
+    const tree = [{
+      kind: 'folder',
+      key: 'folder:src',
+      name: 'src',
+      children: [{
+        kind: 'file',
+        key: 'file:src/App.js',
+        name: 'App.js',
+        file: { type: 'modify', oldPath: 'src/App.js', newPath: 'src/App.js' },
+        stats: { added: 1, deleted: 0 },
+      }],
+      stats: { added: 1, deleted: 0 },
+    }];
+    const filtered = filterChangedFileTree(tree, 'app');
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].name).toBe('src');
+    expect(filtered[0].children[0].name).toBe('App.js');
+  });
+});
+
+
 describe('FilesTab — render shell', () => {
 
   test('renders without crashing when activeTaskId is null', () => {
@@ -128,5 +234,46 @@ describe('FilesTab — render shell', () => {
       <FilesTab activeTaskId={null} onAddToChat={vi.fn()} />,
     );
     expect(container).toBeInTheDocument();
+  });
+
+  test('defaults to changed files and All toggles the full tree', async () => {
+    fetchFileTree.mockResolvedValue(FILE_TREE_PAYLOAD);
+    fetchDiff.mockResolvedValue(DIFF_PAYLOAD);
+    render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+    expect(await screen.findByText('Lines updated')).toBeInTheDocument();
+    expect(screen.getByText('Changed.js')).toBeInTheDocument();
+    expect(screen.queryByText('Unchanged.js')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show all files' }));
+    fireEvent.click(await screen.findByText('src'));
+    await waitFor(() => {
+      expect(screen.getByText('Unchanged.js')).toBeInTheDocument();
+    });
+  });
+
+  test('marks conflicted files in the changed tree and full tree', async () => {
+    const fileTreePayload = {
+      trees: [{
+        ...FILE_TREE_PAYLOAD.trees[0],
+        conflicted_files: ['src/Changed.js'],
+      }],
+    };
+    const diffPayload = {
+      diffs: [{
+        ...DIFF_PAYLOAD.diffs[0],
+        conflicted_files: ['src/Changed.js'],
+      }],
+    };
+    fetchFileTree.mockResolvedValue(fileTreePayload);
+    fetchDiff.mockResolvedValue(diffPayload);
+    render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+    expect(await screen.findByText('Lines updated')).toBeInTheDocument();
+    expect(screen.getByLabelText(/merge conflict/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show all files' }));
+    fireEvent.click(await screen.findByText('src'));
+    await waitFor(() => {
+      expect(screen.getAllByLabelText(/merge conflict/i).length).toBeGreaterThan(0);
+    });
   });
 });
