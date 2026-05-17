@@ -39,6 +39,29 @@ test('tokenizeHunks tags JSX-in-.js: tag, attr-name, and member props', async fu
   assert.match(flattened, /"token","property-access"/);
 });
 
+test('property-access does not cannibalise method calls', async function () {
+  // Regression guard for the grammar precedence: ``property-access``
+  // is inserted AFTER ``function`` so ``items.map(`` stays a
+  // function call while only the bare read ``i.label`` becomes a
+  // property. If the order regressed, ``map`` would lose its
+  // ``function`` token.
+  const { parseDiff } = await import('react-diff-view');
+  const rawDiff = [
+    'diff --git a/m.js b/m.js',
+    'new file mode 100644',
+    '--- /dev/null',
+    '+++ b/m.js',
+    '@@ -0,0 +1,1 @@',
+    '+const labels = items.map((i) => i.label);',
+    '',
+  ].join('\n');
+  const files = parseDiff(rawDiff);
+  const flattened = JSON.stringify(tokenizeHunks(files[0].hunks, 'm.js').new);
+
+  assert.match(flattened, /"token","function"/);        // items.map(
+  assert.match(flattened, /"token","property-access"/);  // i.label
+});
+
 test('detectDiffLanguage recognises Python', function () {
   assert.equal(detectDiffLanguage('kato_core_lib/foo.py'), 'python');
 });

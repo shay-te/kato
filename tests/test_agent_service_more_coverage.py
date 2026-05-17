@@ -609,6 +609,41 @@ class RunCommentAgentTests(unittest.TestCase):
         self.assertEqual(kwargs['cwd'], '/tmp/repo')
         self.assertIn('fix this', kwargs['message'])
 
+    def test_warns_when_no_planning_runner_so_claude_stays_idle(self) -> None:
+        # The "Claude is idle, not working on my comment" case must be
+        # loud, not a silent False.
+        session = MagicMock()
+        session.get_session.return_value = SimpleNamespace(is_alive=False)
+        service = AgentService(**_kwargs(session_manager=session))
+        service.logger = MagicMock()
+        result = service._run_comment_agent(
+            'T1', SimpleNamespace(id='c9', file_path='', line=-1, body=''),
+        )
+        self.assertFalse(result)
+        service.logger.warning.assert_called_once()
+        self.assertIn('no planning session', service.logger.warning.call_args.args[0])
+
+    def test_logs_when_respawning_claude_for_comment(self) -> None:
+        session = MagicMock()
+        session.get_session.return_value = SimpleNamespace(is_alive=False)
+        runner = MagicMock()
+        workspace_manager = MagicMock()
+        workspace_manager.repository_path.return_value = Path('/tmp/repo')
+        workspace_manager.get.return_value = SimpleNamespace(task_summary='Do it')
+        service = AgentService(**_kwargs(
+            session_manager=session,
+            planning_session_runner=runner,
+            workspace_manager=workspace_manager,
+        ))
+        service.logger = MagicMock()
+        service._run_comment_agent(
+            'T1',
+            SimpleNamespace(id='c1', repo_id='r1', file_path='a.py',
+                            line=5, body='fix this'),
+        )
+        service.logger.info.assert_called_once()
+        self.assertIn('respawning Claude', service.logger.info.call_args.args[0])
+
     def test_sends_prompt_to_live_session(self) -> None:
         session_obj = SimpleNamespace(
             is_alive=True, send_user_message=MagicMock(),

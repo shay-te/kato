@@ -192,6 +192,14 @@ class StreamingClaudeSession(object):
         self._max_turns = max_turns
         self._effort = normalized_text(effort).lower()
         self._resume_session_id = normalized_text(resume_session_id)
+        # One-shot guards so the session-id verification lines (see
+        # ``_maybe_capture_session_id``) print exactly once per spawn:
+        # one INFO confirming the id Claude actually ran with, or one
+        # WARNING if it differs from the id kato pinned / asked to
+        # resume (which is what "the conversation restarted fresh"
+        # looks like from the operator's side).
+        self._session_id_confirmed = False
+        self._session_id_mismatch_logged = False
         self._architecture_doc_path = normalized_text(architecture_doc_path)
         self._lessons_path = normalized_text(lessons_path)
         # Extra directories Claude is allowed to read/edit beyond
@@ -414,10 +422,19 @@ class StreamingClaudeSession(object):
                 raise RuntimeError(
                     f'failed to launch claude CLI binary "{self._binary}": {exc}'
                 ) from exc
+            # Always print the session id + whether this is a fresh
+            # spawn or a ``--resume``. This single line fires on every
+            # spawn, so the operator can grep one task across a kato
+            # restart and confirm the id is the SAME before and after
+            # (resume worked) vs. a new id (history was lost). Pinned
+            # synchronously in ``_build_command`` so it's already set.
             self.logger.info(
-                'started streaming claude session for task %s (pid %s)',
+                'started streaming claude session for task %s (pid %s) — '
+                '%s session id %s',
                 self._task_id,
                 self._proc.pid,
+                'resuming' if self._resume_session_id else 'fresh',
+                self._claude_session_id or '(pending)',
             )
             self._spawn_reader_threads()
 
@@ -1053,11 +1070,45 @@ class StreamingClaudeSession(object):
         return SessionEvent(raw=payload)
 
     def _maybe_capture_session_id(self, event: SessionEvent) -> None:
-        if self._claude_session_id:
-            return
         candidate = str(event.raw.get('session_id', '') or '').strip()
-        if candidate:
+        if not candidate:
+            return
+        if not self._claude_session_id:
             self._claude_session_id = candidate
+            return
+        # Assignment behaviour is unchanged above (only set when
+        # empty — the stale-resume self-heal path depends on that).
+        # Below is verification-only and scoped to Claude's own
+        # ``system{subtype:init}`` announcement — the one authoritative
+        # place the CLI declares which session it actually ran. Other
+        # events (result/assistant/...) also echo ``session_id`` but
+        # comparing those would false-positive on fixtures/edge cases.
+        is_init = (
+            event.raw.get('type') == CLAUDE_EVENT_SYSTEM
+            and event.raw.get('subtype') == 'init'
+        )
+        if not is_init:
+            return
+        if candidate == self._claude_session_id:
+            if not self._session_id_confirmed:
+                self.logger.info(
+                    'task %s: claude confirmed %s session id %s',
+                    self._task_id,
+                    'resumed' if self._resume_session_id else 'fresh',
+                    candidate,
+                )
+                self._session_id_confirmed = True
+        elif not self._session_id_mismatch_logged:
+            self.logger.warning(
+                'task %s: claude reported session id %s but kato '
+                'expected %s (%s) — the prior conversation was NOT '
+                'resumed; history/continuity is lost for this turn',
+                self._task_id,
+                candidate,
+                self._claude_session_id,
+                'resume' if self._resume_session_id else 'fresh',
+            )
+            self._session_id_mismatch_logged = True
 
     def _write_stdin_line(self, envelope: dict[str, Any]) -> None:
         line = (json.dumps(envelope) + '\n').encode('utf-8')

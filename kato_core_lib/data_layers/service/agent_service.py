@@ -1334,10 +1334,18 @@ class AgentService(Service):
             )
             return False
         if not started:
+            self.logger.warning(
+                'comment %s on task %s could not be started; left QUEUED '
+                'for the next scan tick to retry',
+                comment_id, task_id,
+            )
             store.update_kato_status(
                 comment_id, kato_status=KatoCommentStatus.QUEUED.value,
             )
             return False
+        self.logger.info(
+            'comment %s on task %s dispatched to the agent', comment_id, task_id,
+        )
         return True
 
     def _task_has_busy_turn(self, task_id: str) -> bool:
@@ -1380,12 +1388,27 @@ class AgentService(Service):
         """Respawn Claude for a queued local diff comment when no subprocess is alive."""
         runner = self._planning_session_runner
         if runner is None:
+            # The prime "Claude is idle, not working on my comment"
+            # cause: nothing can respawn the session, so the comment
+            # ping-pongs QUEUED↔IN_PROGRESS every scan tick forever.
+            # Make it loud instead of a silent False.
+            self.logger.warning(
+                'comment %s on task %s cannot start: no planning session '
+                'runner wired — Claude will stay idle until a session is '
+                'spawned another way',
+                getattr(record, 'id', '<unknown>'), task_id,
+            )
             return False
         cwd = self._comment_agent_cwd(task_id, record)
         summary = ''
         if self._workspace_manager is not None:
             workspace = self._workspace_manager.get(task_id)
             summary = str(getattr(workspace, 'task_summary', '') or '')
+        self.logger.info(
+            'comment %s on task %s: respawning Claude to work on it '
+            '(cwd=%s)',
+            getattr(record, 'id', '<unknown>'), task_id, cwd or '<none>',
+        )
         runner.resume_session_for_chat(
             task_id=task_id,
             message=prompt,

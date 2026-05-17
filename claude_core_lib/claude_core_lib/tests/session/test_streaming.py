@@ -154,6 +154,47 @@ class StreamingClaudeSessionTests(unittest.TestCase):
         # Claude keeps the resumed id without it.
         self.assertNotIn('--session-id', cmd)
 
+    def test_spawn_log_prints_fresh_session_id(self) -> None:
+        # The "sustain the print" line: every spawn must log the id +
+        # whether it is fresh, so an operator can diff one task across
+        # a kato restart.
+        fake_proc = _FakeProc()
+        with patch(
+            'claude_core_lib.claude_core_lib.session.streaming.subprocess.Popen',
+            return_value=fake_proc,
+        ), patch(
+            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ):
+            session = StreamingClaudeSession(task_id='PROJ-1')
+            with self.assertLogs(
+                'kato.workflow.StreamingClaudeSession', level='INFO',
+            ) as cm:
+                session.start()
+        joined = ' '.join(cm.output)
+        self.assertIn('fresh session id', joined)
+        self.assertIn(session.claude_session_id, joined)
+        self.assertNotIn('resuming session id', joined)
+
+    def test_spawn_log_prints_resuming_session_id(self) -> None:
+        fake_proc = _FakeProc()
+        with patch(
+            'claude_core_lib.claude_core_lib.session.streaming.subprocess.Popen',
+            return_value=fake_proc,
+        ), patch(
+            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
+            return_value='/usr/local/bin/claude',
+        ):
+            session = StreamingClaudeSession(
+                task_id='PROJ-1', resume_session_id='keep-me-123',
+            )
+            with self.assertLogs(
+                'kato.workflow.StreamingClaudeSession', level='INFO',
+            ) as cm:
+                session.start()
+        joined = ' '.join(cm.output)
+        self.assertIn('resuming session id keep-me-123', joined)
+
     def test_send_user_message_writes_ndjson_envelope(self) -> None:
         fake_proc = _FakeProc()
         fake_proc._exit_after_close = False
@@ -513,6 +554,39 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
             'type': 'system', 'session_id': '',
         }))
         self.assertEqual(session.claude_session_id, '')
+
+    def test_capture_confirms_matching_resumed_id_once(self) -> None:
+        session = self._build_session(resume_session_id='sess-abc')
+        # Production: id is pinned in _build_command before any event.
+        session._claude_session_id = 'sess-abc'
+        session.logger = MagicMock()
+        ev = SessionEvent(raw={
+            'type': 'system', 'subtype': 'init', 'session_id': 'sess-abc',
+        })
+        session._maybe_capture_session_id(ev)
+        session._maybe_capture_session_id(ev)  # second init: no dup log
+        self.assertEqual(session.claude_session_id, 'sess-abc')
+        session.logger.info.assert_called_once()
+        self.assertIn('confirmed', session.logger.info.call_args.args[0])
+        session.logger.warning.assert_not_called()
+
+    def test_capture_warns_once_on_session_id_mismatch(self) -> None:
+        session = self._build_session(resume_session_id='sess-abc')
+        session._claude_session_id = 'sess-abc'
+        session.logger = MagicMock()
+        ev = SessionEvent(raw={
+            'type': 'system', 'subtype': 'init', 'session_id': 'sess-zzz',
+        })
+        session._maybe_capture_session_id(ev)
+        session._maybe_capture_session_id(ev)  # only one warning
+        # Assignment behaviour is unchanged: the pinned id is kept so
+        # the stale-resume self-heal path still sees the original.
+        self.assertEqual(session.claude_session_id, 'sess-abc')
+        session.logger.warning.assert_called_once()
+        self.assertIn(
+            'was NOT', session.logger.warning.call_args.args[0],
+        )
+        session.logger.info.assert_not_called()
 
     def test_maybe_fire_done_sentinel_fires_callback_once(self) -> None:
         callback_calls: list = []
