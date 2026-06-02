@@ -1471,18 +1471,18 @@ class SessionModelTests(unittest.TestCase):
     def test_post_sets_override(self):
         app = create_app(session_manager=_FakeManager())
         response = app.test_client().post(
-            '/api/sessions/T-1/model', json={'model': 'claude-opus-4-7'},
+            '/api/sessions/T-1/model', json={'model': 'opus'},
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
-            response.get_json(), {'model': 'claude-opus-4-7'},
+            response.get_json(), {'model': 'opus'},
         )
 
     def test_post_clears_override_with_empty(self):
         app = create_app(session_manager=_FakeManager())
         # Set then clear.
         app.test_client().post(
-            '/api/sessions/T-1/model', json={'model': 'claude-opus-4-7'},
+            '/api/sessions/T-1/model', json={'model': 'opus'},
         )
         response = app.test_client().post(
             '/api/sessions/T-1/model', json={'model': ''},

@@ -123,7 +123,8 @@ SETTINGS_SCHEMA: list[dict] = [
              'Path to the `claude` CLI. Plain `claude` works on PATH.',
              {}),
             ('KATO_CLAUDE_MODEL', 'text', 'Model override',
-             'e.g. claude-opus-4-7. Empty = Claude Code default.', {}),
+             'Alias (opus/sonnet/haiku → latest) or full name '
+             '(e.g. claude-sonnet-4-6). Empty = Claude Code default.', {}),
             ('KATO_CLAUDE_MAX_TURNS', 'number', 'Max turns',
              'Cap on agent turns per task. Empty = no cap.', {}),
             ('KATO_CLAUDE_EFFORT', 'select', 'Reasoning effort',

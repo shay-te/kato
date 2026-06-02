@@ -94,12 +94,6 @@ from kato_webserver.git_diff_utils import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 KATO_REPO_ROOT = REPO_ROOT.parent
 
-_CLAUDE_MODELS = [
-    {'id': 'claude-opus-4-7',          'label': 'Opus 4.7'},
-    {'id': 'claude-sonnet-4-6',        'label': 'Sonnet 4.6', 'default': True},
-    {'id': 'claude-haiku-4-5-20251001','label': 'Haiku 4.5'},
-]
-
 # Browser-driven SSE stream cadence. The follow loop polls the
 # session for new events and yields them as they arrive. We tried a
 # Condition-based blocking wait once — it tested clean locally but
@@ -814,7 +808,11 @@ def _register_http_routes(app: Flask) -> None:
 
     @app.get('/api/models')
     def list_models():
-        return jsonify({'models': _CLAUDE_MODELS})
+        # Discovered, not hardcoded: Claude serves the stable CLI aliases
+        # (opus/sonnet/haiku) with live version labels when a credential is
+        # available; Codex reads its own model cache. The picker can no longer
+        # show a stale version (it used to hardcode "Opus 4.7").
+        return jsonify({'models': _discover_chat_models(app)})
 
     @app.get('/api/sessions/<task_id>/model')
     def get_session_model(task_id: str):
@@ -2299,6 +2297,35 @@ def _discover_chat_effort_levels(app: Flask) -> list:
             FALLBACK_EFFORT_LEVELS,
         )
         return list(FALLBACK_EFFORT_LEVELS)
+
+
+def _discover_chat_models(app: Flask) -> list:
+    """Models the chat backend offers (discovered, with fallback).
+
+    Never hardcodes a version. Claude serves the stable CLI aliases
+    (opus/sonnet/haiku) — which always resolve to the latest — with labels
+    enriched by the live Anthropic models API when a credential is configured;
+    Codex reads the codex CLI's own model cache. Any failure falls back to a
+    sane static set so the picker always renders.
+    """
+    defaults = _chat_runner_defaults(app)
+    binary = str(getattr(defaults, 'binary', '') or 'claude') if defaults else 'claude'
+    try:
+        if 'codex' in binary.lower():
+            from codex_core_lib.codex_core_lib.helpers.model_discovery import (
+                discover_codex_models,
+            )
+            return discover_codex_models()
+        from claude_core_lib.claude_core_lib.helpers.model_catalog import (
+            discover_models,
+        )
+        return discover_models()
+    except Exception:
+        app.logger.exception('model discovery failed; using fallback')
+        from claude_core_lib.claude_core_lib.helpers.model_catalog import (
+            FALLBACK_MODELS,
+        )
+        return [dict(model) for model in FALLBACK_MODELS]
 
 
 def _register_post_message_route(app: Flask) -> None:

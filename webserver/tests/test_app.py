@@ -953,16 +953,21 @@ class ModelEndpointTests(unittest.TestCase):
         body = response.get_json()
         self.assertIn('models', body)
         ids = [m['id'] for m in body['models']]
-        self.assertIn('claude-sonnet-4-6', ids)
+        # Stable CLI aliases (always resolve to the latest version), NOT a
+        # hardcoded pinned id like 'claude-opus-4-7' that goes stale.
+        self.assertIn('sonnet', ids)
+        self.assertIn('opus', ids)
+        defaults = [m['id'] for m in body['models'] if m.get('default')]
+        self.assertEqual(defaults, ['sonnet'])
 
     def test_set_and_get_session_model(self):
-        self.client.post('/api/sessions/PROJ-1/model', json={'model': 'claude-opus-4-7'})
+        self.client.post('/api/sessions/PROJ-1/model', json={'model': 'opus'})
         response = self.client.get('/api/sessions/PROJ-1/model')
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()['model'], 'claude-opus-4-7')
+        self.assertEqual(response.get_json()['model'], 'opus')
 
     def test_clear_session_model_by_posting_empty(self):
-        self.client.post('/api/sessions/PROJ-1/model', json={'model': 'claude-opus-4-7'})
+        self.client.post('/api/sessions/PROJ-1/model', json={'model': 'opus'})
         self.client.post('/api/sessions/PROJ-1/model', json={'model': ''})
         response = self.client.get('/api/sessions/PROJ-1/model')
         self.assertEqual(response.get_json()['model'], '')
