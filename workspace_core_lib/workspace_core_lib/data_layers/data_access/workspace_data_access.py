@@ -274,24 +274,25 @@ class WorkspaceDataAccess(DataAccess):
                 except OSError:
                     pass
 
+        last_exc: OSError | None = None
         for attempt in range(3):
             try:
                 shutil.rmtree(workspace_dir, onerror=_on_rm_error)
                 return
             except OSError as exc:
-                if attempt == 2:
-                    self._logger.warning(
-                        'failed to delete workspace for task %s at %s '
-                        'after 3 attempts: %s '
-                        '(likely a file lock — close any process with '
-                        'open handles in this clone)',
-                        task_id, workspace_dir, exc,
-                    )
-                    return
-                # Brief pause lets the OS release handles from a
-                # subprocess we just terminated (Windows is slow to
-                # propagate the close).
-                time.sleep(0.5)
+                last_exc = exc
+                if attempt < 2:
+                    # Brief pause lets the OS release handles from a
+                    # subprocess we just terminated (Windows is slow to
+                    # propagate the close).
+                    time.sleep(0.5)
+        self._logger.warning(
+            'failed to delete workspace for task %s at %s '
+            'after 3 attempts: %s '
+            '(likely a file lock — close any process with '
+            'open handles in this clone)',
+            task_id, workspace_dir, last_exc,
+        )
 
     # ----- internals -----
 

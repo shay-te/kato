@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import io
 import json
-import logging
 import os
 import subprocess
 import sys
@@ -31,7 +30,6 @@ from sandbox_core_lib.sandbox_core_lib import manager
 from sandbox_core_lib.sandbox_core_lib.manager import (
     ALLOW_WORKSPACE_SECRETS_ENV_KEY,
     AUDIT_REQUIRED_ENV_KEY,
-    SANDBOX_IMAGE_TAG,
     SandboxError,
     _AUDIT_GENESIS_HASH,
     _DigestLookupError,

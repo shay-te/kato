@@ -285,6 +285,109 @@ class WorkspaceDataAccessTests(unittest.TestCase):
         # delete() also pre-walk-chmods the tree.
         mock_chmod.assert_called()
 
+    def test_get_falls_through_to_errored_when_is_dir_raises_oserror(self) -> None:
+        # Lines 118-121: ``get()`` calls ``workspace_dir.is_dir()`` which can
+        # raise OSError (e.g. permission denied stat-ing the dir itself, not
+        # just files inside it). The except must swallow it and fall through to
+        # the metadata read, which then also fails → synthetic ERRORED record.
+        # We patch ``Path.is_dir`` to raise so the branch is exercised on every
+        # platform (root can't be relied on to hit it). The folder has NO valid
+        # metadata, so after the swallowed is_dir failure the metadata read also
+        # returns None and ``get`` builds the synthetic ERRORED record.
+        from unittest.mock import patch
+        self.data_access.ensure_workspace_dir('STATFAIL-1')  # folder, no meta
+
+        with patch(
+            'pathlib.Path.is_dir', side_effect=PermissionError('cannot stat'),
+        ):
+            record = self.data_access.get('STATFAIL-1')
+
+        # Folder is assumed present (we couldn't prove otherwise) and the
+        # metadata read fails too → ERRORED, not None, not a crash.
+        self.assertIsNotNone(record)
+        assert record is not None
+        self.assertEqual(record.status, WORKSPACE_STATUS_ERRORED)
+        self.assertEqual(record.task_id, 'STATFAIL-1')
+
+    def test_list_all_skips_entry_whose_is_dir_raises_oserror(self) -> None:
+        # Lines 149-152: inside ``_iter_workspace_dirs`` a single directory
+        # entry can fail ``entry.is_dir()`` with OSError (broken/unstat-able
+        # clone). That entry must be SKIPPED, not crash the whole listing —
+        # healthy siblings still come back.
+        from unittest.mock import patch
+        self.data_access.save(WorkspaceRecord(task_id='GOOD-1'))
+        self.data_access.ensure_workspace_dir('BAD-ENTRY')
+
+        real_is_dir = Path.is_dir
+
+        def _is_dir(self_path):
+            if self_path.name == 'BAD-ENTRY':
+                raise PermissionError('cannot stat entry')
+            return real_is_dir(self_path)
+
+        with patch('pathlib.Path.is_dir', autospec=True, side_effect=_is_dir):
+            records = self.data_access.list_all()
+
+        ids = {r.task_id for r in records}
+        self.assertIn('GOOD-1', ids)
+        self.assertNotIn('BAD-ENTRY', ids)  # unstat-able entry dropped
+
+    def test_delete_on_rm_error_reraises_when_func_retry_raises_oserror(self) -> None:
+        # Lines 252-255: ``_on_rm_error`` successfully chmods, ``func`` is NOT
+        # ``os.open`` (so the retry leg is taken), and ``func(path)`` itself
+        # raises OSError. The handler must re-raise the ORIGINAL rmtree error
+        # (``exc_info[1]``) — not the retry's error — so the outer loop sees a
+        # meaningful trace. The outer loop then exhausts and swallows.
+        from unittest.mock import patch
+        self.data_access.ensure_workspace_dir('RETRYFAIL-1')
+
+        original_exc = PermissionError('original lock')
+        retry_exc = PermissionError('retry also failed')
+
+        def _func_that_raises_on_retry(_path):
+            # chmod already succeeded; this is the func(path) retry leg.
+            raise retry_exc
+
+        def _failing_rmtree(path, onerror=None):
+            onerror(
+                _func_that_raises_on_retry,
+                str(path),
+                (PermissionError, original_exc, None),
+            )
+
+        with patch('shutil.rmtree', side_effect=_failing_rmtree), \
+                patch('os.chmod') as mock_chmod, \
+                patch('time.sleep'):
+            # chmod succeeds (mock), retry raises OSError → re-raise original →
+            # outer loop catches, retries, finally logs after 3. Must NOT raise.
+            self.data_access.delete('RETRYFAIL-1')
+
+        mock_chmod.assert_called()  # the read-only-bit flip fired
+
+    def test_delete_swallows_oserror_chmoding_tree_entries(self) -> None:
+        # Lines 274-275: the best-effort pre-rmtree walk chmods every entry in
+        # the tree. If a single ``os.chmod`` on a child entry raises OSError it
+        # must be swallowed (``pass``) so the walk continues and rmtree still
+        # runs. We populate a nested tree, make chmod raise for one child, and
+        # confirm the delete still removes everything.
+        from unittest.mock import patch
+        ws = self.data_access.ensure_workspace_dir('CHMODFAIL-1')
+        (ws / 'sub').mkdir()
+        (ws / 'sub' / 'file.txt').write_text('content')
+
+        real_chmod = __import__('os').chmod
+
+        def _chmod(path, mode):
+            if str(path).endswith('file.txt'):
+                raise PermissionError('cannot chmod this child')
+            return real_chmod(path, mode)
+
+        with patch('os.chmod', side_effect=_chmod):
+            self.data_access.delete('CHMODFAIL-1')
+
+        # The chmod failure on one child was swallowed; rmtree still wiped it.
+        self.assertFalse(self.data_access.exists('CHMODFAIL-1'))
+
     def test_permission_denied_workspace_does_not_crash_list_or_get(self) -> None:
         # Regression (operator-reported): a clone left in a broken permission
         # state — a metadata file the parent dir can no longer stat — made
