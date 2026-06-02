@@ -1,33 +1,35 @@
 #!/usr/bin/env python3
 """Run the kato unit-test suite across every owning package.
 
-``./kato test`` shells into this script. It discovers tests from
-each registered location and reports the combined outcome with a
-single non-zero exit on any failure.
+``./kato test`` shells into this script. It AUTO-DISCOVERS every in-repo
+``tests`` directory (the main suite plus each core-lib's own tests) and runs
+each one in its own subprocess, reporting a single non-zero exit on any
+failure.
 
-Why a script and not ``unittest discover`` directly: each core-lib
-sits in its own top-level directory (``kato_core_lib/``,
-``sandbox_core_lib/``, …), and ``unittest discover`` rejects start
-paths that are not inside the working directory it was invoked
-from. Calling ``discover`` once per root from inside this script
-respects that constraint without forcing every consumer to know
-where each package keeps its tests.
+Two design points, both learned the hard way:
+
+* Roots are auto-discovered, not hand-listed. A curated list silently went
+  stale and dropped whole core-libs (codex / git / task / the provider libs /
+  webserver) from every run — green but incomplete, the worst kind of
+  test-suite bug. Discovery picks up a newly-extracted lib automatically.
+
+* Each root runs in a SEPARATE process. Every core-lib ships a ``test_flow.py``
+  (and similarly-named modules); discovering many roots in one process makes
+  those collide in ``sys.modules`` ("module incorrectly imported … is this
+  globally installed?"), which aborts discovery for the later roots. A
+  subprocess per root isolates ``sys.modules`` completely — exactly like
+  running that lib's tests by hand — while ``cwd=repo_root`` keeps the absolute
+  ``<package>.<module>`` imports resolving.
 """
 
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
-import unittest
 from pathlib import Path
 
-# Test roots are AUTO-DISCOVERED rather than hand-listed. A curated list
-# silently went stale and dropped whole core-libs (codex/git/task/provider/…)
-# from every ``kato test`` run — the worst kind of test-suite bug because it
-# looks green. Discovery finds every in-repo directory named ``tests`` that
-# holds at least one ``test_*.py``, so a newly-extracted core-lib is picked up
-# automatically and the suite can never go partial again. Virtualenvs, VCS,
-# caches and build output are pruned so we only ever run THIS repo's tests.
+# Pruned so discovery only ever walks THIS repo's tests, never a virtualenv's.
 _SKIP_DIRS = frozenset({
     '.venv', 'venv', 'env', '.git', 'node_modules', '__pycache__',
     '.tox', '.pytest_cache', '.mypy_cache', 'build', 'dist', '.eggs',
@@ -50,41 +52,37 @@ def discover_test_roots(repo_root: Path) -> list[str]:
 
 def main() -> int:
     repo_root = Path(__file__).resolve().parent.parent
-    # Tests import from the kato + sibling packages by absolute
-    # name (``kato_core_lib.X``, ``sandbox_core_lib.Y``…). When this
-    # script is launched directly (``python scripts/run_all_tests.py``)
-    # ``sys.path`` carries ``scripts/`` rather than the repo root,
-    # which would break those imports. Prepend the repo root so the
-    # in-repo packages resolve the same way ``python -m unittest
-    # discover`` does from CWD=repo_root.
-    if str(repo_root) not in sys.path:
-        sys.path.insert(0, str(repo_root))
-    runner = unittest.TextTestRunner(verbosity=1)
-    failures = 0
     test_roots = discover_test_roots(repo_root)
     print(f'Discovered {len(test_roots)} test roots:', flush=True)
     for relative in test_roots:
         print(f'  - {relative}', flush=True)
+
+    failed: list[str] = []
     for relative in test_roots:
         start = repo_root / relative
         if not start.is_dir():
             continue
-        loader = unittest.TestLoader()
-        # Don't pin ``top_level_dir`` — unittest's auto-detection
-        # gives the same module names ``unittest discover -s tests``
-        # used to produce, so existing tests resolve their helper
-        # imports unchanged. Pinning it to the repo root surprisingly
-        # changed how modules were loaded and dropped large parts of
-        # the suite from the run.
-        suite = loader.discover(
-            start_dir=str(start),
-            pattern='test_*.py',
-        )
         print(f'\n=== {relative} ===', flush=True)
-        result = runner.run(suite)
-        if not result.wasSuccessful():
-            failures += 1
-    return 0 if failures == 0 else 1
+        proc = subprocess.run(
+            [
+                sys.executable, '-m', 'unittest', 'discover',
+                '-s', str(start), '-p', 'test_*.py',
+            ],
+            cwd=str(repo_root),
+        )
+        if proc.returncode != 0:
+            failed.append(relative)
+
+    print('\n' + '=' * 64, flush=True)
+    if failed:
+        print(
+            f'FAILED — {len(failed)}/{len(test_roots)} roots had failures: '
+            + ', '.join(failed),
+            flush=True,
+        )
+        return 1
+    print(f'OK — all {len(test_roots)} test roots passed.', flush=True)
+    return 0
 
 
 if __name__ == '__main__':
