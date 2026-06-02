@@ -10,7 +10,6 @@ actually contains the agent.
 Public surface:
     manager              -- spawn-path API: wrap_command, ensure_image, etc.
     bypass_permissions_validator -- safety gate for BYPASS / DOCKER flags
-    credential_patterns  -- high-confidence secret pattern detection
     workspace_delimiter  -- UNTRUSTED_WORKSPACE_FILE framing
     system_prompt        -- sandbox-aware system-prompt addendum
     tls_pin              -- TOFU certificate pinning for api.anthropic.com
@@ -60,12 +59,6 @@ from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (  # 
     validate_bypass_permissions,
     validate_read_only_tools_requires_docker,
     print_security_posture,
-)
-from sandbox_core_lib.sandbox_core_lib.credential_patterns import (  # noqa: F401
-    CredentialFinding,
-    find_credential_patterns,
-    find_phishing_patterns,
-    summarize_findings,
 )
 from sandbox_core_lib.sandbox_core_lib.workspace_delimiter import (  # noqa: F401
     wrap_untrusted_workspace_content,

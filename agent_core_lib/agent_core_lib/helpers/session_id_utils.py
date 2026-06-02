@@ -6,9 +6,8 @@ id and needs identical handling: strip whitespace, accept ``None``,
 treat blanks as the empty-string sentinel, compare by canonical form.
 
 This module has no upstream imports from any other core-lib — it lives
-at the bottom so
-``claude_core_lib``, ``codex_core_lib``, ``workspace_core_lib``, the
-webserver, and anywhere else can import it without creating a cycle.
+at the bottom so backend libraries, host applications, and webservers
+can import it without creating a cycle.
 
 The bug class this module exists to prevent: each call site used to
 spell out ``str(record.agent_session_id or '').strip()`` by hand,

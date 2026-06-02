@@ -26,6 +26,7 @@ TEST_ROOTS = [
     'tests',
     'sandbox_core_lib/sandbox_core_lib/tests',
     'agent_provider_contracts/agent_provider_contracts/tests',
+    'agent_backend_core_lib/agent_backend_core_lib/tests',
     'claude_core_lib/claude_core_lib/tests',
     'openhands_core_lib/openhands_core_lib/tests',
     'agent_core_lib/agent_core_lib/tests',

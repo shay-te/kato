@@ -46,6 +46,7 @@ include = [
   "hydra_plugins*",
   "vcs_provider_contracts*",
   "agent_provider_contracts*",
+  "agent_backend_core_lib*",
   "claude_core_lib*",
   "openhands_core_lib*",
   "agent_core_lib*",

@@ -921,13 +921,13 @@ class CredentialScanTests(unittest.TestCase):
         client = CodexCliClient(binary='codex')
         with patch.object(client.logger, 'warning') as warn:
             with patch(
-                'sandbox_core_lib.sandbox_core_lib.credential_patterns.find_credential_patterns',
+                'agent_core_lib.agent_core_lib.helpers.credential_patterns.find_credential_patterns',
                 return_value=[('aws_access_key', 'AKIA…')],
             ), patch(
-                'sandbox_core_lib.sandbox_core_lib.credential_patterns.find_phishing_patterns',
+                'agent_core_lib.agent_core_lib.helpers.credential_patterns.find_phishing_patterns',
                 return_value=[],
             ), patch(
-                'sandbox_core_lib.sandbox_core_lib.credential_patterns.summarize_findings',
+                'agent_core_lib.agent_core_lib.helpers.credential_patterns.summarize_findings',
                 return_value='aws_access_key (1)',
             ):
                 client._scan_response_for_credentials(
@@ -940,13 +940,13 @@ class CredentialScanTests(unittest.TestCase):
         client = CodexCliClient(binary='codex')
         with patch.object(client.logger, 'warning') as warn:
             with patch(
-                'sandbox_core_lib.sandbox_core_lib.credential_patterns.find_credential_patterns',
+                'agent_core_lib.agent_core_lib.helpers.credential_patterns.find_credential_patterns',
                 return_value=[],
             ), patch(
-                'sandbox_core_lib.sandbox_core_lib.credential_patterns.find_phishing_patterns',
+                'agent_core_lib.agent_core_lib.helpers.credential_patterns.find_phishing_patterns',
                 return_value=[('curl_bash', 'curl …| bash')],
             ), patch(
-                'sandbox_core_lib.sandbox_core_lib.credential_patterns.summarize_findings',
+                'agent_core_lib.agent_core_lib.helpers.credential_patterns.summarize_findings',
                 return_value='curl_bash (1)',
             ):
                 client._scan_response_for_credentials(
@@ -959,7 +959,7 @@ class CredentialScanTests(unittest.TestCase):
         # No response text → no scan calls at all.
         client = CodexCliClient(binary='codex')
         with patch(
-            'sandbox_core_lib.sandbox_core_lib.credential_patterns.find_credential_patterns',
+            'agent_core_lib.agent_core_lib.helpers.credential_patterns.find_credential_patterns',
         ) as mock_cred:
             client._scan_response_for_credentials('', log_label='x')
         mock_cred.assert_not_called()

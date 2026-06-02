@@ -11,9 +11,8 @@ Pattern names + redacted previews are logged; full credential values are
 never logged. See ``BYPASS_PROTECTIONS.md`` residuals #16 (phishing) and
 #18 (credential exfil).
 
-This helper lives in ``agent_core_lib`` so any agent client can reuse it;
-the ``sandbox_core_lib`` detectors are imported lazily inside the function
-so callers keep delegating without an import-time dependency.
+This helper lives in ``agent_core_lib`` so any agent client can reuse the
+same detector family and warning contract.
 """
 
 from __future__ import annotations
@@ -45,7 +44,7 @@ def scan_text_for_credentials_and_phishing(
     ``'streaming Claude session for task PROJ-1'``). Blank ``text`` is a
     no-op.
     """
-    from sandbox_core_lib.sandbox_core_lib.credential_patterns import (
+    from agent_core_lib.agent_core_lib.helpers.credential_patterns import (
         find_credential_patterns,
         find_phishing_patterns,
         summarize_findings,

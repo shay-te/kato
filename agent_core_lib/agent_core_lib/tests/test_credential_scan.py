@@ -1,10 +1,7 @@
 """Tests for ``scan_text_for_credentials_and_phishing``.
 
-The scan lazily imports the ``sandbox_core_lib`` credential/phishing
-detectors *inside* the function so ``agent_core_lib`` keeps no import-time
-dependency on that lib. To stay isolated + product-agnostic, these tests
-inject a FAKE ``sandbox_core_lib`` module tree into ``sys.modules`` and
-assert purely on the WARNING-logging contract:
+These tests patch the shared detector functions and assert purely on the
+WARNING-logging contract:
 
   * blank text is a no-op (no detectors invoked, no logging),
   * credential findings emit exactly one WARNING starting
@@ -20,8 +17,6 @@ the log call as positional args.
 """
 from __future__ import annotations
 
-import sys
-import types
 import unittest
 from unittest import mock
 
@@ -29,33 +24,7 @@ from agent_core_lib.agent_core_lib.helpers.credential_scan import (
     scan_text_for_credentials_and_phishing,
 )
 
-
-def _make_fake_sandbox_modules(
-    *,
-    find_credential_patterns,
-    find_phishing_patterns,
-    summarize_findings,
-):
-    """Build the stub ``sandbox_core_lib`` package tree the scan imports.
-
-    Returns the mapping handed to ``patch.dict(sys.modules, ...)``. We
-    register stub parent packages plus the leaf
-    ``sandbox_core_lib.sandbox_core_lib.credential_patterns`` module that
-    actually exposes the three detector callables.
-    """
-    top = types.ModuleType('sandbox_core_lib')
-    inner = types.ModuleType('sandbox_core_lib.sandbox_core_lib')
-    leaf = types.ModuleType(
-        'sandbox_core_lib.sandbox_core_lib.credential_patterns'
-    )
-    leaf.find_credential_patterns = find_credential_patterns
-    leaf.find_phishing_patterns = find_phishing_patterns
-    leaf.summarize_findings = summarize_findings
-    return {
-        'sandbox_core_lib': top,
-        'sandbox_core_lib.sandbox_core_lib': inner,
-        'sandbox_core_lib.sandbox_core_lib.credential_patterns': leaf,
-    }
+_PATTERN_MODULE = 'agent_core_lib.agent_core_lib.helpers.credential_patterns'
 
 
 class ScanTextForCredentialsAndPhishingTests(unittest.TestCase):
@@ -70,12 +39,9 @@ class ScanTextForCredentialsAndPhishingTests(unittest.TestCase):
         summarize = mock.Mock(name='summarize_findings')
         logger = mock.Mock(name='logger')
 
-        modules = _make_fake_sandbox_modules(
-            find_credential_patterns=find_cred,
-            find_phishing_patterns=find_phish,
-            summarize_findings=summarize,
-        )
-        with mock.patch.dict(sys.modules, modules):
+        with mock.patch(f'{_PATTERN_MODULE}.find_credential_patterns', find_cred), \
+             mock.patch(f'{_PATTERN_MODULE}.find_phishing_patterns', find_phish), \
+             mock.patch(f'{_PATTERN_MODULE}.summarize_findings', summarize):
             scan_text_for_credentials_and_phishing(
                 '', logger=logger, context_label='ctx-empty'
             )
@@ -94,12 +60,9 @@ class ScanTextForCredentialsAndPhishingTests(unittest.TestCase):
         summarize = mock.Mock()
         logger = mock.Mock()
 
-        modules = _make_fake_sandbox_modules(
-            find_credential_patterns=find_cred,
-            find_phishing_patterns=find_phish,
-            summarize_findings=summarize,
-        )
-        with mock.patch.dict(sys.modules, modules):
+        with mock.patch(f'{_PATTERN_MODULE}.find_credential_patterns', find_cred), \
+             mock.patch(f'{_PATTERN_MODULE}.find_phishing_patterns', find_phish), \
+             mock.patch(f'{_PATTERN_MODULE}.summarize_findings', summarize):
             scan_text_for_credentials_and_phishing(
                 None, logger=logger, context_label='ctx-none'  # type: ignore[arg-type]
             )
@@ -120,12 +83,9 @@ class ScanTextForCredentialsAndPhishingTests(unittest.TestCase):
         summarize = mock.Mock(return_value='cred-summary')
         logger = mock.Mock()
 
-        modules = _make_fake_sandbox_modules(
-            find_credential_patterns=find_cred,
-            find_phishing_patterns=find_phish,
-            summarize_findings=summarize,
-        )
-        with mock.patch.dict(sys.modules, modules):
+        with mock.patch(f'{_PATTERN_MODULE}.find_credential_patterns', find_cred), \
+             mock.patch(f'{_PATTERN_MODULE}.find_phishing_patterns', find_phish), \
+             mock.patch(f'{_PATTERN_MODULE}.summarize_findings', summarize):
             scan_text_for_credentials_and_phishing(
                 text, logger=logger, context_label='cred-ctx'
             )
@@ -156,12 +116,9 @@ class ScanTextForCredentialsAndPhishingTests(unittest.TestCase):
         summarize = mock.Mock(return_value='phish-summary')
         logger = mock.Mock()
 
-        modules = _make_fake_sandbox_modules(
-            find_credential_patterns=find_cred,
-            find_phishing_patterns=find_phish,
-            summarize_findings=summarize,
-        )
-        with mock.patch.dict(sys.modules, modules):
+        with mock.patch(f'{_PATTERN_MODULE}.find_credential_patterns', find_cred), \
+             mock.patch(f'{_PATTERN_MODULE}.find_phishing_patterns', find_phish), \
+             mock.patch(f'{_PATTERN_MODULE}.summarize_findings', summarize):
             scan_text_for_credentials_and_phishing(
                 text, logger=logger, context_label='phish-ctx'
             )
@@ -195,12 +152,9 @@ class ScanTextForCredentialsAndPhishingTests(unittest.TestCase):
         )
         logger = mock.Mock()
 
-        modules = _make_fake_sandbox_modules(
-            find_credential_patterns=find_cred,
-            find_phishing_patterns=find_phish,
-            summarize_findings=summarize,
-        )
-        with mock.patch.dict(sys.modules, modules):
+        with mock.patch(f'{_PATTERN_MODULE}.find_credential_patterns', find_cred), \
+             mock.patch(f'{_PATTERN_MODULE}.find_phishing_patterns', find_phish), \
+             mock.patch(f'{_PATTERN_MODULE}.summarize_findings', summarize):
             scan_text_for_credentials_and_phishing(
                 text, logger=logger, context_label='both-ctx'
             )
@@ -237,12 +191,9 @@ class ScanTextForCredentialsAndPhishingTests(unittest.TestCase):
         summarize = mock.Mock()
         logger = mock.Mock()
 
-        modules = _make_fake_sandbox_modules(
-            find_credential_patterns=find_cred,
-            find_phishing_patterns=find_phish,
-            summarize_findings=summarize,
-        )
-        with mock.patch.dict(sys.modules, modules):
+        with mock.patch(f'{_PATTERN_MODULE}.find_credential_patterns', find_cred), \
+             mock.patch(f'{_PATTERN_MODULE}.find_phishing_patterns', find_phish), \
+             mock.patch(f'{_PATTERN_MODULE}.summarize_findings', summarize):
             scan_text_for_credentials_and_phishing(
                 text, logger=logger, context_label='clean-ctx'
             )

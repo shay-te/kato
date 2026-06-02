@@ -1247,7 +1247,7 @@ def scan_workspace_for_secrets(
          exists for the false-positive cases.
       2. **File content match** — the file contains a high-confidence
          credential pattern (AWS key id, GitHub token, OpenAI key, …)
-         per ``kato.sandbox.credential_patterns``. Closes the case
+         per ``agent_core_lib`` credential patterns. Closes the case
          where a secret is committed to a file with an innocuous
          name (`config.yaml`, a migration, a README). Skipped for
          binary files, files larger than 1 MiB, and directories
@@ -1259,7 +1259,7 @@ def scan_workspace_for_secrets(
     are bare paths; content matches carry a ``(content: <pattern>)``
     suffix so the operator and the audit log can distinguish them.
     """
-    from sandbox_core_lib.sandbox_core_lib.credential_patterns import find_credential_patterns
+    from agent_core_lib.agent_core_lib.helpers.credential_patterns import find_credential_patterns
 
     try:
         root = Path(workspace_path).resolve()

@@ -2,8 +2,8 @@ from omegaconf import DictConfig
 
 from core_lib.core_lib import CoreLib
 
-from agent_core_lib.agent_core_lib import AgentCoreLib
-from agent_core_lib.agent_core_lib.client.agent_client_factory import resolve_platform
+from agent_backend_core_lib.agent_backend_core_lib import AgentBackendCoreLib
+from agent_backend_core_lib.agent_backend_core_lib.client.agent_client_factory import resolve_platform
 from agent_core_lib.agent_core_lib.helpers.text_utils import text_from_mapping
 # ClaudeSessionManager is the only Claude-specific surface kato
 # still touches directly — it owns the planning UI's chat-time
@@ -633,7 +633,7 @@ class KatoCoreLib(CoreLib):
             KATO_REVIEW_COMMENT_REPLY_PREFIX,
         )
         platform = resolve_platform(getattr(open_cfg, 'agent_backend', '') or '')
-        return AgentCoreLib(
+        return AgentBackendCoreLib(
             platform,
             open_cfg,
             max_retries,

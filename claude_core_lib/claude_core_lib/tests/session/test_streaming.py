@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import threading
 import time
 import unittest
@@ -1650,10 +1651,22 @@ class StreamingClaudeSessionCredentialOutputScanTests(unittest.TestCase):
             return_value='/usr/local/bin/claude',
         ):
             session = StreamingClaudeSession(task_id='PROJ-CLEAN')
-            with self.assertNoLogs('agent.workflow.StreamingClaudeSession', level='WARNING'):
+            logger = logging.getLogger('agent.workflow.StreamingClaudeSession')
+            records = []
+
+            class _Capture(logging.Handler):
+                def emit(self, record):
+                    records.append(record)
+
+            handler = _Capture(level=logging.WARNING)
+            logger.addHandler(handler)
+            try:
                 session.start()
                 for _ in session.events_iter():
                     pass
+            finally:
+                logger.removeHandler(handler)
+            self.assertEqual(records, [])
 
     def test_warning_logged_when_terminal_event_contains_phishing_pattern(self) -> None:
         """Streaming-side detective scan also fires for phishing (#16).

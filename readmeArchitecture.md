@@ -42,7 +42,7 @@ Kato is a thin orchestrator on top of a stack of focused libraries. Each one has
       ▼              ▼                   ▼                  ▼
 
   ┌─────────┐  ┌──────────────┐  ┌──────────────┐  ┌────────────────┐
-  │ task_   │  │ repository_  │  │ agent_       │  │ sandbox_       │
+  │ task_   │  │ repository_  │  │ agent_backend│  │ sandbox_       │
   │ core_lib│  │ core_lib     │  │ core_lib     │  │ core_lib       │
   │         │  │              │  │              │  │                │
   │ factory │  │ factory +    │  │ factory +    │  │ INDEPENDENT    │
@@ -83,12 +83,12 @@ _core_   core   core_lib core_lib core_lib  core_lib       core_lib
 Five layers, top to bottom:
 
 1. **`kato_core_lib`** — the product. Orchestration loop + planning UI. Calls the four wrapping libs through their typed contracts; never reaches into a provider directly.
-2. **Wrapping factory libs** — `task_core_lib`, `repository_core_lib`, `agent_core_lib`, plus `sandbox_core_lib` (the odd one out — see below). Each is a thin factory + Platform enum. No business logic.
+2. **Wrapping factory libs** — `task_core_lib`, `repository_core_lib`, `agent_backend_core_lib`, plus `sandbox_core_lib` (the odd one out — see below). Each is a thin factory + Platform enum. No business logic.
 3. **Contracts packages** — `vcs_provider_contracts` and `agent_provider_contracts`. Pure `Protocol` + frozen DTOs. Zero implementation, zero dependencies on anything else in the repo. Implementations import from contracts; contracts import from nothing.
 4. **Provider implementations** — one per concrete backend. `youtrack_core_lib`, `jira_core_lib`, `github_core_lib`, `gitlab_core_lib`, `bitbucket_core_lib` for VCS/issues; `claude_core_lib`, `openhands_core_lib` (and future `codex_core_lib`) for agents. Each implements one or more contracts.
-5. **Independent units** — `sandbox_core_lib` is the only one today. It's a flat self-contained library, not a contracts/factory/provider triangle, because the domain doesn't have alternatives — there's only one sandbox model (hardened-Docker-for-CLI-agents).
+5. **Independent units** — `sandbox_core_lib` is a flat self-contained library, not a contracts/factory/provider triangle, because the domain doesn't have alternatives — there's only one sandbox model (hardened-Docker-for-CLI-agents). `agent_core_lib` is also independent: it owns generic prompt/context/guardrail helpers, not backend composition.
 
-Adding a new provider (e.g. a `gerrit_core_lib` for code review, or a `codex_core_lib` for the OpenAI Codex agent) follows the same playbook every time: implement the contract, wire it into the factory, add a Platform enum value. Kato itself doesn't change.
+Adding a new provider (e.g. a `gerrit_core_lib` for code review, or another agent backend) follows the same playbook every time: implement the contract, wire it into the owning factory, add a Platform enum value. Kato itself doesn't change.
 
 ## Structure
 

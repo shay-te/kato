@@ -17,10 +17,10 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from agent_core_lib.agent_core_lib.agent_core_lib import AgentCoreLib
-from agent_core_lib.agent_core_lib.client.agent_client_factory import resolve_platform
+from agent_backend_core_lib.agent_backend_core_lib.agent_backend_core_lib import AgentBackendCoreLib
+from agent_backend_core_lib.agent_backend_core_lib.client.agent_client_factory import resolve_platform
 from agent_core_lib.agent_core_lib.data.fields import ImplementationFields
-from agent_core_lib.agent_core_lib.platform import AgentPlatform
+from agent_backend_core_lib.agent_backend_core_lib.platform import AgentPlatform
 from codex_core_lib.codex_core_lib.cli_client import CodexCliClient
 
 
@@ -84,7 +84,7 @@ class CodexFlowTests(unittest.TestCase):
             self.assertEqual(resolve_platform(alias), AgentPlatform.CODEX, alias)
 
     def test_agent_core_lib_builds_a_codex_backend(self) -> None:
-        lib = AgentCoreLib(
+        lib = AgentBackendCoreLib(
             platform=AgentPlatform.CODEX,
             cfg=_codex_open_cfg(),
             max_retries=1,
@@ -93,7 +93,7 @@ class CodexFlowTests(unittest.TestCase):
         self.assertIsInstance(lib.agent, CodexCliClient)
 
     def test_full_implement_task_round_trip(self) -> None:
-        lib = AgentCoreLib(
+        lib = AgentBackendCoreLib(
             platform=AgentPlatform.CODEX,
             cfg=_codex_open_cfg(),
             max_retries=1,
@@ -119,7 +119,7 @@ class CodexFlowTests(unittest.TestCase):
         self.assertEqual(result[ImplementationFields.AGENT_SESSION_ID], 'sess-99')
 
     def test_resume_uses_subcommand_form_in_the_argv(self) -> None:
-        lib = AgentCoreLib(
+        lib = AgentBackendCoreLib(
             platform=AgentPlatform.CODEX,
             cfg=_codex_open_cfg(),
             max_retries=1,
@@ -150,7 +150,7 @@ class CodexFlowTests(unittest.TestCase):
         self.assertIn('resume-me', cmd)
 
     def test_round_trip_propagates_subprocess_failure(self) -> None:
-        lib = AgentCoreLib(
+        lib = AgentBackendCoreLib(
             platform=AgentPlatform.CODEX,
             cfg=_codex_open_cfg(),
             max_retries=1,
@@ -165,7 +165,7 @@ class CodexFlowTests(unittest.TestCase):
         self.assertIn('auth required', str(ctx.exception))
 
     def test_jsonl_error_event_raises_clear_runtime_error(self) -> None:
-        lib = AgentCoreLib(
+        lib = AgentBackendCoreLib(
             platform=AgentPlatform.CODEX,
             cfg=_codex_open_cfg(),
             max_retries=1,
@@ -187,7 +187,7 @@ class CodexFlowTests(unittest.TestCase):
     def test_missing_codex_block_raises_clear_error(self) -> None:
         cfg = types.SimpleNamespace()  # no .codex
         with self.assertRaises(RuntimeError) as ctx:
-            AgentCoreLib(
+            AgentBackendCoreLib(
                 platform=AgentPlatform.CODEX,
                 cfg=cfg,
                 max_retries=1,

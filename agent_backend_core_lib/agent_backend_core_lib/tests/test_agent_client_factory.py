@@ -10,7 +10,7 @@ OpenHands needs a live HTTP service). We exercise:
 * build() dispatch to correct builder
 * _build_claude happy path (lazy-import mocked) and error path
 * _build_openhands happy path (lazy-import mocked)
-* AgentCoreLib composition root
+* AgentBackendCoreLib composition root
 * A-Z flow: resolve_platform → factory → build → provider protocol
 """
 
@@ -22,13 +22,13 @@ from unittest.mock import MagicMock, patch
 
 from agent_provider_contracts.agent_provider_contracts.agent_provider import AgentProvider
 
-from agent_core_lib.agent_core_lib.agent_core_lib import AgentCoreLib
-from agent_core_lib.agent_core_lib.client.agent_client_factory import (
+from agent_backend_core_lib.agent_backend_core_lib.agent_backend_core_lib import AgentBackendCoreLib
+from agent_backend_core_lib.agent_backend_core_lib.client.agent_client_factory import (
     AgentClientFactory,
     _PLATFORM_ALIASES,
     resolve_platform,
 )
-from agent_core_lib.agent_core_lib.platform import AgentPlatform
+from agent_backend_core_lib.agent_backend_core_lib.platform import AgentPlatform
 
 
 # ---------------------------------------------------------------------------
@@ -659,14 +659,14 @@ class BuildOpenHandsTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# AgentCoreLib composition root
+# AgentBackendCoreLib composition root
 # ---------------------------------------------------------------------------
 
-class AgentCoreLibTests(unittest.TestCase):
-    def _build_core_lib(self, platform=AgentPlatform.CLAUDE, **factory_flags) -> AgentCoreLib:
+class AgentBackendCoreLibTests(unittest.TestCase):
+    def _build_core_lib(self, platform=AgentPlatform.CLAUDE, **factory_flags) -> AgentBackendCoreLib:
         backend = _make_compliant_backend()
         with patch.object(AgentClientFactory, 'build', return_value=backend):
-            lib = AgentCoreLib(
+            lib = AgentBackendCoreLib(
                 platform=platform,
                 cfg=object(),
                 max_retries=1,
@@ -708,7 +708,7 @@ class AgentCoreLibTests(unittest.TestCase):
 
         with patch.object(AgentClientFactory, '__init__', spy_init), \
              patch.object(AgentClientFactory, 'build', return_value=_make_compliant_backend()):
-            AgentCoreLib(
+            AgentBackendCoreLib(
                 platform=AgentPlatform.OPENHANDS,
                 cfg=object(),
                 max_retries=9,
@@ -856,11 +856,11 @@ class FlowTests(unittest.TestCase):
                 factory._build_openhands(cfg)
 
     def test_core_lib_composition_end_to_end(self) -> None:
-        # resolve_platform → AgentCoreLib → .agent is usable
+        # resolve_platform → AgentBackendCoreLib → .agent is usable
         platform = resolve_platform('claude')
         backend = _make_compliant_backend()
         with patch.object(AgentClientFactory, 'build', return_value=backend):
-            lib = AgentCoreLib(
+            lib = AgentBackendCoreLib(
                 platform=platform,
                 cfg=object(),
                 max_retries=1,

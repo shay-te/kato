@@ -1,4 +1,4 @@
-"""Enum of agent backends ``agent_core_lib`` knows how to construct.
+"""Enum of agent backends ``agent_backend_core_lib`` knows how to construct.
 
 Mirrors the shape of ``task_core_lib.platform.Platform`` and
 ``repository_core_lib.platform.Platform`` so a reader who has
@@ -14,7 +14,7 @@ from enum import Enum
 
 
 class AgentPlatform(Enum):
-    """Agent backends supported by ``agent_core_lib``."""
+    """Agent backends supported by ``agent_backend_core_lib``."""
 
     CLAUDE = 'claude'
     CODEX = 'codex'

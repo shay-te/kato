@@ -18,7 +18,7 @@ from agent_provider_contracts.agent_provider_contracts.agent_provider import (
     AgentProvider,
 )
 
-from agent_core_lib.agent_core_lib.platform import AgentPlatform
+from agent_backend_core_lib.agent_backend_core_lib.platform import AgentPlatform
 
 
 # Aliases the operator can write in the agent_backend config field that

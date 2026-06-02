@@ -2,7 +2,7 @@
 
 Each test exercises a realistic multi-step scenario using only objects
 internal to this lib plus injected mocks — no Docker daemon required,
-no cross-lib imports, no kato application layer.
+no kato application layer.
 
 Scenarios covered:
 
@@ -34,7 +34,7 @@ from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (
     is_docker_mode_enabled,
     validate_bypass_permissions,
 )
-from sandbox_core_lib.sandbox_core_lib.credential_patterns import (
+from agent_core_lib.agent_core_lib.helpers.credential_patterns import (
     find_credential_patterns,
     summarize_findings,
 )

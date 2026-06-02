@@ -33,6 +33,9 @@ from agent_core_lib.agent_core_lib.data.fields import ImplementationFields
 from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
 from agent_core_lib.agent_core_lib.helpers.architecture_doc_utils import read_architecture_doc
 from agent_core_lib.agent_core_lib.helpers.lessons_doc_utils import read_lessons_file
+from agent_core_lib.agent_core_lib.helpers.credential_scan import (
+    scan_text_for_credentials_and_phishing,
+)
 from agent_core_lib.agent_core_lib.helpers.logging_utils import configure_logger
 from agent_core_lib.agent_core_lib.helpers.result_utils import build_openhands_result
 from agent_core_lib.agent_core_lib.helpers.text_utils import (
@@ -1047,32 +1050,11 @@ class CodexCliClient(object):
         *,
         log_label: str,
     ) -> None:
-        from sandbox_core_lib.sandbox_core_lib.credential_patterns import (
-            find_credential_patterns,
-            find_phishing_patterns,
-            summarize_findings,
+        scan_text_for_credentials_and_phishing(
+            response_text,
+            logger=self.logger,
+            context_label=f'Codex response for {log_label}',
         )
-
-        if not response_text:
-            return
-        cred_findings = find_credential_patterns(response_text)
-        if cred_findings:
-            self.logger.warning(
-                'CREDENTIAL PATTERN DETECTED in Codex response for %s: %s. '
-                'The agent response has already been transmitted to OpenAI; '
-                'rotate the named credential(s) immediately.',
-                log_label,
-                summarize_findings(cred_findings),
-            )
-        phishing_findings = find_phishing_patterns(response_text)
-        if phishing_findings:
-            self.logger.warning(
-                'PHISHING PATTERN DETECTED in Codex response for %s: %s. '
-                'The agent appears to be instructing the operator to run '
-                'shell commands on their host. Treat as untrusted.',
-                log_label,
-                summarize_findings(phishing_findings),
-            )
 
     def _parse_jsonl_payload(self, stdout: str) -> dict[str, object]:
         """Parse the ``--json`` JSONL event stream into a kato-shaped dict.

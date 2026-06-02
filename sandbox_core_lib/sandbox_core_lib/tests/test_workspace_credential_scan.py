@@ -9,7 +9,7 @@ Two-layer contract being tested:
 
 1. **File-name signal** still fires (existing behavior preserved).
 2. **File-content signal** is the new behavior. Any file matched
-   by ``kato.sandbox.credential_patterns`` blocks the spawn unless
+   by ``agent_core_lib`` credential patterns blocks the spawn unless
    the existing ``KATO_SANDBOX_ALLOW_WORKSPACE_SECRETS=true``
    override is set.
 
@@ -33,7 +33,7 @@ from sandbox_core_lib.sandbox_core_lib.manager import (
 )
 
 
-# Fake credential strings — same shape as kato/sandbox/credential_patterns.py
+# Fake credential strings - same shape as agent_core_lib credential fixtures.
 # fixtures, never resembling a real value.
 _FAKE_AWS_KEY = 'AKIAEXAMPLEFAKE12345'
 _FAKE_GITHUB_PAT = 'ghp_' + 'A' * 36
@@ -151,9 +151,19 @@ class WorkspaceContentScanTests(unittest.TestCase):
     def test_logger_silent_when_workspace_clean(self) -> None:
         self._write('main.py', 'print("hello")\n')
         logger = logging.getLogger('test_workspace_credential_scan')
-        # No log records emitted at all on a clean workspace.
-        with self.assertNoLogs(logger=logger, level='WARNING'):
+        records = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record):
+                records.append(record)
+
+        handler = _Capture(level=logging.WARNING)
+        logger.addHandler(handler)
+        try:
             scan_workspace_for_secrets(str(self.root), logger=logger)
+        finally:
+            logger.removeHandler(handler)
+        self.assertEqual(records, [])
 
 
 if __name__ == '__main__':

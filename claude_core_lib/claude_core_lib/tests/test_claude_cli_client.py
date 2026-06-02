@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 import unittest
 from dataclasses import dataclass, field
@@ -762,11 +763,20 @@ class ClaudeCliClientCredentialOutputScanTests(unittest.TestCase):
             'claude_core_lib.claude_core_lib.cli_client.subprocess.run',
             return_value=completed,
         ):
-            # No warnings expected; assertNoLogs makes the absence
-            # explicit so a future regression that always-warns is
-            # caught.
-            with self.assertNoLogs('agent.workflow.ClaudeCliClient', level='WARNING'):
+            logger = logging.getLogger('agent.workflow.ClaudeCliClient')
+            records = []
+
+            class _Capture(logging.Handler):
+                def emit(self, record):
+                    records.append(record)
+
+            handler = _Capture(level=logging.WARNING)
+            logger.addHandler(handler)
+            try:
                 client.implement_task(build_task())
+            finally:
+                logger.removeHandler(handler)
+            self.assertEqual(records, [])
 
     def test_warning_lists_each_distinct_pattern(self) -> None:
         client = ClaudeCliClient(binary='claude', repository_root_path='/tmp/x')
@@ -1216,13 +1226,13 @@ class ScanResponseForCredentialsTests(unittest.TestCase):
         # them where they actually live.
         client = ClaudeCliClient(binary='claude')
         with patch(
-            'sandbox_core_lib.sandbox_core_lib.credential_patterns.find_credential_patterns',
+            'agent_core_lib.agent_core_lib.helpers.credential_patterns.find_credential_patterns',
             return_value=[],
         ), patch(
-            'sandbox_core_lib.sandbox_core_lib.credential_patterns.find_phishing_patterns',
+            'agent_core_lib.agent_core_lib.helpers.credential_patterns.find_phishing_patterns',
             return_value=[{'matched': 'curl | bash'}],
         ), patch(
-            'sandbox_core_lib.sandbox_core_lib.credential_patterns.summarize_findings',
+            'agent_core_lib.agent_core_lib.helpers.credential_patterns.summarize_findings',
             return_value='phishing summary',
         ), patch.object(client, 'logger') as logger:
             client._scan_response_for_credentials(

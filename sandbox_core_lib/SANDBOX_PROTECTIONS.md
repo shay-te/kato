@@ -181,8 +181,8 @@ layers fire as before.
   no protection but gives a false sense of security. Closes the
   base-image substitution channel that was previously
   operator-discretionary.
-- **Credential pattern detector (#18).** New module
-  `kato.sandbox.credential_patterns` carries vendor-issued credential
+- **Credential pattern detector (#18).** Shared module
+  `agent_core_lib.helpers.credential_patterns` carries vendor-issued credential
   shapes (AWS, GitHub, OpenAI, Anthropic, Google, Slack, Stripe,
   PEM private-key blocks). Two surfaces consume it: the pre-spawn
   workspace scanner (`enforce_no_workspace_secrets`) now refuses
@@ -362,9 +362,9 @@ legitimate channel that wasn't designed to bound it.
 
 | # | Attack class | Defense | Kato status |
 |---|---|---|---|
-| 16 | **Operator phishing** — agent generates plausible-looking instructions that trick the operator into running something on the host. The agent never escapes; the operator opens the door. | System-prompt instructions about not generating host-execution prompts; operator awareness; output-side detection of suspicious shell-snippet patterns; out-of-band review of what the agent suggests. | **Bounded** — three defenses combined: (1) the sandbox-awareness system-prompt addendum (`kato.sandbox.system_prompt`) carries an explicit Section 4 "Operator-host commands" forbidding `curl ... \| bash`, `sudo`, and `eval "$(...)"` patterns, with the framing that those have no defensible non-phishing use; (2) `kato.sandbox.credential_patterns.find_phishing_patterns` scans every agent response for those shapes and logs a WARNING-level audit line when matched; (3) the addendum directs the agent to state requirements in prose rather than producing copy-paste shell snippets. Doesn't cover every social-engineering shape (the agent could produce phishing in pure prose), but bounds the highest-impact patterns. |
+| 16 | **Operator phishing** — agent generates plausible-looking instructions that trick the operator into running something on the host. The agent never escapes; the operator opens the door. | System-prompt instructions about not generating host-execution prompts; operator awareness; output-side detection of suspicious shell-snippet patterns; out-of-band review of what the agent suggests. | **Bounded** — three defenses combined: (1) the sandbox-awareness system-prompt addendum (`kato.sandbox.system_prompt`) carries an explicit Section 4 "Operator-host commands" forbidding `curl ... \| bash`, `sudo`, and `eval "$(...)"` patterns, with the framing that those have no defensible non-phishing use; (2) `agent_core_lib.helpers.credential_patterns.find_phishing_patterns` scans every agent response for those shapes and logs a WARNING-level audit line when matched; (3) the addendum directs the agent to state requirements in prose rather than producing copy-paste shell snippets. Doesn't cover every social-engineering shape (the agent could produce phishing in pure prose), but bounds the highest-impact patterns. |
 | 17 | **Build-time supply chain** — image build pulls a compromised npm/Debian package. The "container" already has hostile code; no escape needed. | Mandatory base-image digest pin; mandatory Claude CLI version pin; build from a trusted network; ideally build inside a sandbox itself so the build is bounded too. | **Mitigated** for base-image substitution AND npm-side substitution — kato now refuses to build unless **both** `KATO_SANDBOX_BASE_IMAGE` is digest-pinned (`node:22-bookworm-slim@sha256:<digest>`) AND `KATO_SANDBOX_CLAUDE_CLI_VERSION` is pinned to a specific version (e.g. `2.1.5`). Each has an explicit opt-out env var (`KATO_SANDBOX_ALLOW_FLOATING_BASE_IMAGE=true` and `KATO_SANDBOX_ALLOW_FLOATING_CLAUDE_CLI=true`) so operators who accept the residual can do so in writing. Half-pinned base-image values (tag without `@sha256:`) are also refused. **Open gap** for full build-time sandbox: the build itself still runs on the host's network; a fully-sandboxed build is named below as OG1. |
-| 18 | **Credential exfiltration via the legitimate egress channel** — agent exfils host data through Anthropic's API as part of "normal" conversation. No boundary is broken. | Two-layer defense: **preventive** workspace content scan refuses spawn when committed credentials are detected; **detective** output-side scan logs an audit line when agent response text contains a credential pattern. The egress firewall cannot bound this channel because the channel IS the legitimate egress. | **Mitigated (preventive) + Bounded (detective)** — `enforce_no_workspace_secrets` now scans file CONTENT (not just file names) for AWS / GitHub / OpenAI / Anthropic / Google / Slack / Stripe keys + PEM blocks (`kato.sandbox.credential_patterns`), refusing the spawn if a pattern is found in any non-test file (override: `KATO_SANDBOX_ALLOW_WORKSPACE_SECRETS=true`). The post-spawn scan in `cli_client._scan_response_for_credentials` and `streaming_session._scan_terminal_for_credentials` logs a WARNING with the pattern name + redacted preview when the agent's response contains a credential — cannot undo the leak (data has already crossed to Anthropic) but produces an auditable record so the operator knows to rotate. |
+| 18 | **Credential exfiltration via the legitimate egress channel** — agent exfils host data through Anthropic's API as part of "normal" conversation. No boundary is broken. | Two-layer defense: **preventive** workspace content scan refuses spawn when committed credentials are detected; **detective** output-side scan logs an audit line when agent response text contains a credential pattern. The egress firewall cannot bound this channel because the channel IS the legitimate egress. | **Mitigated (preventive) + Bounded (detective)** — `enforce_no_workspace_secrets` now scans file CONTENT (not just file names) for AWS / GitHub / OpenAI / Anthropic / Google / Slack / Stripe keys + PEM blocks (`agent_core_lib.helpers.credential_patterns`), refusing the spawn if a pattern is found in any non-test file (override: `KATO_SANDBOX_ALLOW_WORKSPACE_SECRETS=true`). The post-spawn scan in `cli_client._scan_response_for_credentials` and `streaming_session._scan_terminal_for_credentials` logs a WARNING with the pattern name + redacted preview when the agent's response contains a credential — cannot undo the leak (data has already crossed to Anthropic) but produces an auditable record so the operator knows to rotate. |
 
 ### Honest summary by category
 
@@ -1079,7 +1079,7 @@ Mapping to the protections below:
     ignores `.env.example` / `.env.sample` / `.env.template`.
   - **File-content signal:** any file's contents match a
     high-confidence credential pattern from
-    `kato.sandbox.credential_patterns` (AWS access key id,
+    `agent_core_lib.helpers.credential_patterns` (AWS access key id,
     GitHub PAT/OAuth, OpenAI / Anthropic / Google API keys,
     Slack tokens, Stripe live keys, PEM private-key blocks).
     Scoped to ≤1 MiB per file; skips known-noisy directories
@@ -1504,4 +1504,3 @@ both code and doc — the drift guard enforces this.
 - Accepted-with-mitigation
 - Not-applicable
 <!-- SECURITY-INVARIANTS:classification-terms:END -->
-

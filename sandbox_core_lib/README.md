@@ -17,15 +17,13 @@ Concretely the library provides:
 
 - **`manager.py`** — image build/verify, command wrapping, workspace
   mount validation, container spawn, audit logging with hash
-  chaining, spawn rate limiting, credential leak detection on
-  container output.
+  chaining, spawn rate limiting, workspace credential checks using the
+  shared `agent_core_lib` detector.
 - **`tls_pin.py`** — TOFU certificate pinning for `api.anthropic.com`
   so a rogue CA cannot impersonate the model endpoint.
 - **`audit_log_shipping.py`** — externalises the local audit log to
   S3-with-Object-Lock or a syslog forwarder so tail-truncation is
   detectable.
-- **`credential_patterns.py`** — pattern bank for detecting leaked
-  secrets and phishing strings in container output.
 - **`workspace_delimiter.py`** — `<UNTRUSTED_WORKSPACE_FILE>…</…>`
   framing for prompt-injection hardening on workspace content.
 - **`system_prompt.py`** — sandbox-aware system-prompt addendum
