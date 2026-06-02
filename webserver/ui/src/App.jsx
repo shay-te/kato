@@ -21,6 +21,8 @@ import { useResizable } from './hooks/useResizable.js';
 import { useSafetyState } from './hooks/useSafetyState.js';
 import { useSessions } from './hooks/useSessions.js';
 import { clearTaskStreamCache } from './hooks/useSessionStream.js';
+import { forgetQueuedMessages } from './utils/queuedMessagesStore.js';
+import { clearImageDraft } from './utils/composerImageDraft.js';
 import { useStatusFeed } from './hooks/useStatusFeed.js';
 import { useTaskAttention } from './hooks/useTaskAttention.js';
 import { useTaskTabShortcuts } from './hooks/useTaskTabShortcuts.js';
@@ -175,6 +177,11 @@ export default function App() {
       return;
     }
     clearTaskStreamCache(taskId);
+    // Forget is the complete operator wipe — also drop this task's durable
+    // composer drafts so a forgotten task leaves no orphaned base64 image data
+    // behind in IndexedDB. Best-effort; never throws.
+    forgetQueuedMessages(taskId);
+    clearImageDraft(taskId);
     if (activeTaskId === taskId) {
       setActiveTaskIdState('');
       userPickedTabRef.current = false;

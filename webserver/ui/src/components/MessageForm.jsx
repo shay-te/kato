@@ -15,6 +15,11 @@ import { useAutoSizeTextarea } from '../hooks/useAutoSizeTextarea.js';
 import { usePublishedHeight } from '../hooks/usePublishedHeight.js';
 import { appendComposerFragment } from '../utils/chatComposerHelpers.js';
 import { readDraft, writeDraft } from '../utils/composerDraft.js';
+import {
+  readImageDraft,
+  writeImageDraft,
+  clearImageDraft,
+} from '../utils/composerImageDraft.js';
 
 // Composer state (the textarea contents + attached images) lives
 // INSIDE this component on purpose — typing should not re-render
@@ -57,13 +62,22 @@ const MessageForm = forwardRef(function MessageForm({
   // SessionDetail keys this component on the active task, so this
   // hydrates correctly when the operator tabs back to the task.
   const [value, setValue] = useState(() => readDraft(taskId));
-  // Attached images live in component state (not lifted) because the
-  // composer is the only thing that reads / writes them — no other
-  // pane needs to know what the operator pasted before they hit Send.
-  // Attachments are NOT persisted to localStorage (image blobs/data
-  // URLs blow up the storage quota); operators redo image attaches
-  // on tab return. Text draft is the load-bearing case.
+  // Attached images live in component state because the composer is the only
+  // thing that reads / writes them. They're ALSO mirrored to IndexedDB
+  // (composerImageDraft) per task — base64 image data is too big for
+  // localStorage but fits IndexedDB — so a pasted/dropped image survives both
+  // a tab switch and a full page reload, just like the text draft. Hydration
+  // is async (IDB), so the initial state is empty and an effect fills it.
   const [attachments, setAttachments] = useState([]);
+  // ``imagesSettledRef`` means "the live attachments now own the draft" — set
+  // true once the async hydrate has run OR the operator has touched
+  // attachments (paste / remove / send / clear), whichever comes first. It does
+  // double duty: (1) it gates the persist effect so the empty pre-hydrate state
+  // can't wipe the stored draft, and (2) it makes a slow IndexedDB read that
+  // resolves AFTER a send/clear refuse to re-apply (otherwise an in-flight read
+  // would resurrect a just-sent image — the `length === 0` check alone can't
+  // tell "cold" from "just emptied").
+  const imagesSettledRef = useRef(false);
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef(null);
   const textareaRef = useRef(null);
@@ -105,6 +119,32 @@ const MessageForm = forwardRef(function MessageForm({
     writeDraft(taskId, value);
   }, [taskId, value]);
 
+  // Restore persisted image attachments (IndexedDB) on mount — survives tab
+  // switch AND full reload. Rebuild each preview URL from its stored part so we
+  // never persisted a throwaway object URL. If the operator already touched
+  // attachments (incl. a send/clear) while this async read was in flight,
+  // ``imagesSettledRef`` is already true and we DON'T clobber the live state.
+  useEffect(() => {
+    let cancelled = false;
+    readImageDraft(taskId).then((parts) => {
+      if (cancelled || imagesSettledRef.current) { return; }
+      if (parts.length > 0) {
+        setAttachments(parts.map((part) => ({ part, previewUrl: _previewUrl(part) })));
+      }
+      imagesSettledRef.current = true;
+    });
+    return () => { cancelled = true; };
+  }, [taskId]);
+
+  // Mirror attachment changes into IndexedDB, but only once the live state owns
+  // the draft (see imagesSettledRef) so the pre-hydrate empty state can't wipe
+  // a stored draft on a fresh mount.
+  useEffect(() => {
+    if (imagesSettledRef.current) {
+      writeImageDraft(taskId, attachments.map((a) => a.part));
+    }
+  }, [taskId, attachments]);
+
   // Expose the imperative API App uses for "paste this fragment"
   // (file-tree clicks, Cmd+P picker results, diff right-click,
   // commit-id paste). Stable per-mount: the parent's
@@ -118,9 +158,11 @@ const MessageForm = forwardRef(function MessageForm({
       });
     },
     clear() {
+      imagesSettledRef.current = true; // live state owns the draft; block a late hydrate
       setValue('');
       setAttachments([]);
       writeDraft(taskId, '');
+      clearImageDraft(taskId);
     },
     getValue() { return value; },
   }), [taskId, value]);
@@ -147,9 +189,16 @@ const MessageForm = forwardRef(function MessageForm({
     // keep the draft. Anything else (including undefined / true) is
     // treated as success.
     if (result === false) { return; }
+    // The live state now owns the draft: this blocks an in-flight hydrate read
+    // (issued at mount, slow to resolve) from re-applying the just-sent images.
+    imagesSettledRef.current = true;
     setValue('');
     setAttachments([]);
     writeDraft(taskId, '');
+    // Clear the persisted image draft immediately (not via the effect) so an
+    // unmount right after sending can't leave already-sent images to be
+    // re-hydrated on return.
+    clearImageDraft(taskId);
   }
 
   // While Claude is working the composer is in QUEUE mode: the
@@ -230,6 +279,9 @@ const MessageForm = forwardRef(function MessageForm({
       existingCount: attachments.length,
     });
     if (parts.length > 0) {
+      // The operator is actively attaching — the live state owns the draft, so
+      // a still-in-flight hydrate read must not clobber it.
+      imagesSettledRef.current = true;
       const next = parts.map((part) => ({ part, previewUrl: _previewUrl(part) }));
       setAttachments((prev) => [...prev, ...next]);
     }
@@ -244,6 +296,7 @@ const MessageForm = forwardRef(function MessageForm({
   }
 
   function removeAttachment(index) {
+    imagesSettledRef.current = true; // live state owns the draft
     setAttachments((prev) => prev.filter((_, i) => i !== index));
   }
 

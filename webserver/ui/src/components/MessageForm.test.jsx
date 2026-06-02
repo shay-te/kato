@@ -12,12 +12,36 @@
 // operator-reported bug ("I type then switch tabs then come back
 // and my input is gone") is wiring, not helpers, so it lives here.
 
-import { describe, test, expect, vi } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { createRef } from 'react';
+
+// In-memory stand-in for IndexedDB (jsdom has none). composerImageDraft.js
+// reads/writes through idbStore, so mocking idbStore lets us drive the durable
+// image-attachment path without a real IndexedDB. idbGet captures the value at
+// CALL time (matching a real readonly transaction, which reads the value as it
+// was when the tx was created — before a later delete commits); when
+// _idbGate.promise is set, resolution is delayed so a test can interleave a
+// send between the read being issued and it resolving.
+const { _idbMem, _idbGate } = vi.hoisted(() => ({
+  _idbMem: new Map(),
+  _idbGate: { promise: null },
+}));
+vi.mock('../utils/idbStore.js', () => ({
+  idbGet: (key) => {
+    const snapshot = _idbMem.get(key);
+    return _idbGate.promise
+      ? _idbGate.promise.then(() => snapshot)
+      : Promise.resolve(snapshot);
+  },
+  idbSet: async (key, value) => { _idbMem.set(key, value); },
+  idbDelete: async (key) => { _idbMem.delete(key); },
+  _resetIdbConnection: () => {},
+}));
 
 import MessageForm from './MessageForm.jsx';
 import { DRAFT_STORAGE_PREFIX } from '../utils/composerDraft.js';
+import { IMAGE_DRAFT_PREFIX, clearImageDraft } from '../utils/composerImageDraft.js';
 
 
 function renderForm({ taskId = 'T1', onSubmit = vi.fn(), ...rest } = {}) {
@@ -212,6 +236,80 @@ describe('MessageForm — draft persistence (operator scenario)', () => {
     const textarea = screen.getByRole('textbox');
     expect(textarea).toHaveAttribute('rows', '1');
     expect(textarea).toHaveAttribute('placeholder', 'Reply to Claude');
+  });
+});
+
+
+describe('MessageForm — image attachment persistence (IndexedDB)', () => {
+  beforeEach(() => { _idbMem.clear(); _idbGate.promise = null; });
+
+  test('restores a persisted image attachment on mount (survives a reload)', async () => {
+    // A prior session stored an image for T1 (as the composer does on paste).
+    _idbMem.set(`${IMAGE_DRAFT_PREFIX}T1`, [{ media_type: 'image/png', data: 'AAAA' }]);
+
+    const { container } = renderForm({ taskId: 'T1' });
+
+    // Hydration is async (IndexedDB) — wait for the preview to render, rebuilt
+    // as a data: URL from the stored part.
+    await waitFor(() => {
+      expect(container.querySelector('.message-attachment img')).toBeTruthy();
+    });
+    expect(container.querySelector('.message-attachment img'))
+      .toHaveAttribute('src', 'data:image/png;base64,AAAA');
+  });
+
+  test('a different task does not see another task\'s stored images', async () => {
+    _idbMem.set(`${IMAGE_DRAFT_PREFIX}T1`, [{ media_type: 'image/png', data: 'AAAA' }]);
+
+    const { container } = renderForm({ taskId: 'T2' });
+
+    // Let the async hydrate settle, then assert T2 has no image.
+    await act(async () => { await Promise.resolve(); });
+    expect(container.querySelector('.message-attachment img')).toBeNull();
+  });
+
+  test('a corrupt persisted entry is ignored, not crashed on', async () => {
+    _idbMem.set(`${IMAGE_DRAFT_PREFIX}T1`, [{ media_type: '', data: '' }, null, 'bad']);
+
+    const { container } = renderForm({ taskId: 'T1' });
+
+    await act(async () => { await Promise.resolve(); });
+    expect(container.querySelector('.message-attachment img')).toBeNull();
+    // Composer still usable.
+    expect(screen.getByRole('textbox')).toBeInTheDocument();
+  });
+
+  test('a send during the in-flight image read does NOT resurrect the sent image', async () => {
+    // Race regression: the IDB read is issued at mount (capturing the stored
+    // image) but is slow to resolve. If the operator sends in that window, the
+    // stale read must NOT re-apply the just-sent image (it would risk a
+    // duplicate re-send). The `length === 0` guard alone can't catch this —
+    // hence imagesSettledRef is flipped synchronously on send.
+    window.localStorage.setItem(`${DRAFT_STORAGE_PREFIX}T1`, 'fix the bug'); // text so the send proceeds
+    _idbMem.set(`${IMAGE_DRAFT_PREFIX}T1`, [{ media_type: 'image/png', data: 'AAAA' }]);
+    let releaseRead;
+    _idbGate.promise = new Promise((r) => { releaseRead = r; }); // hold the read open
+
+    const onSubmit = vi.fn().mockResolvedValue(true);
+    const { container } = renderForm({ taskId: 'T1', onSubmit });
+
+    // Operator sends (text is present, hydrated synchronously) before the image
+    // read resolves.
+    await act(async () => {
+      fireEvent.submit(container.querySelector('form'));
+    });
+    expect(onSubmit).toHaveBeenCalledWith('fix the bug', []);
+
+    // Now let the stale read resolve — it must be ignored.
+    await act(async () => { releaseRead(); await Promise.resolve(); });
+
+    expect(container.querySelector('.message-attachment img')).toBeNull();
+  });
+
+  test('clearing a task\'s image draft purges its durable entry (forget cleanup)', async () => {
+    _idbMem.set(`${IMAGE_DRAFT_PREFIX}T1`, [{ media_type: 'image/png', data: 'AAAA' }]);
+    await clearImageDraft('T1');
+    expect(_idbMem.has(`${IMAGE_DRAFT_PREFIX}T1`)).toBe(false);
   });
 });
 

@@ -14,7 +14,12 @@ import { ENTRY_SOURCE } from '../constants/entrySource.js';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import { useSessionStream, SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
 import { agentStatusStore } from '../stores/agentStatusStore.js';
-import { readQueuedMessages, writeQueuedMessages } from '../utils/queuedMessagesStore.js';
+import {
+  readQueuedMessages,
+  writeQueuedMessages,
+  persistQueuedMessages,
+  hydrateQueuedMessages,
+} from '../utils/queuedMessagesStore.js';
 import { useSessionOption } from '../hooks/useSessionOption.js';
 import { useToolMemory } from '../hooks/useToolMemory.js';
 import { fetchEffortLevels, fetchModels, fetchSessionEffort, fetchSessionModel, postChatMessage, postSession, setSessionEffort, setSessionModel } from '../api.js';
@@ -96,10 +101,42 @@ export default function SessionDetail({
   // so task A's queue never leaks into task B.
   const [queuedMessages, setQueuedMessages] = useState(() => readQueuedMessages(taskId));
   const queuedMessagesRef = useRef(queuedMessages);
+  // "The live queue owns the durable backup": set true once the async reload-
+  // hydrate has run OR the operator has changed the queue (enqueue / steer /
+  // remove / edit / turn-end drain), whichever comes first. Gates the IDB write
+  // so the empty pre-hydrate state can't wipe a stored queue; and makes a slow
+  // IDB read that resolves AFTER an operator drain refuse to re-apply (else an
+  // in-flight read would resurrect a just-sent/removed message).
+  const queueSettledRef = useRef(false);
+  // Wrap every operator queue mutation so it both updates state AND marks the
+  // queue settled (the durable backup is now authoritative for this mount).
+  const commitQueue = useCallback((updater) => {
+    queueSettledRef.current = true;
+    setQueuedMessages(updater);
+  }, []);
   useEffect(() => {
     queuedMessagesRef.current = queuedMessages;
-    writeQueuedMessages(taskId, queuedMessages);
+    writeQueuedMessages(taskId, queuedMessages); // sync Map (instant tab switch)
+    if (queueSettledRef.current) {
+      persistQueuedMessages(taskId, queuedMessages); // durable IDB (survives reload, incl. images)
+    }
   }, [taskId, queuedMessages]);
+  // Restore the queue (incl. any pasted images) from IndexedDB after a full
+  // page reload, when the in-memory store is cold. A warm store (ordinary tab
+  // switch) already supplied the items via the useState initializer above and
+  // wins; and if the operator already touched the queue while this read was in
+  // flight (queueSettledRef), we don't clobber the live state.
+  useEffect(() => {
+    let cancelled = false;
+    hydrateQueuedMessages(taskId).then((items) => {
+      if (cancelled || queueSettledRef.current) { return; }
+      if (items.length > 0 && queuedMessagesRef.current.length === 0) {
+        setQueuedMessages(items);
+      }
+      queueSettledRef.current = true;
+    });
+    return () => { cancelled = true; };
+  }, [taskId]);
   const prevTurnInFlightRef = useRef(false);
   // Seed the turn-flight tracker for this mount (the queue itself is restored
   // by the lazy initializer above, not cleared).
@@ -257,7 +294,7 @@ export default function SessionDetail({
   // the default hold-until-idle behavior).
   async function onSendMessage(text, images = []) {
     if (stream.turnInFlight) {
-      setQueuedMessages((prev) => [
+      commitQueue((prev) => [
         ...prev,
         { id: _newQueuedId(), text, images, queuedAt: Date.now() },
       ]);
@@ -272,7 +309,7 @@ export default function SessionDetail({
   // Operator clicked the trash icon on a queued row → forget it
   // entirely. Safe whether the turn is in-flight or not.
   function removeQueuedMessage(id) {
-    setQueuedMessages((prev) => prev.filter((item) => item.id !== id));
+    commitQueue((prev) => prev.filter((item) => item.id !== id));
   }
 
   // Operator edited a queued row's text in place (Edit affordance) →
@@ -280,7 +317,7 @@ export default function SessionDetail({
   // position so a revised steer message keeps its place in line
   // instead of forcing a delete-and-retype.
   function editQueuedMessage(id, text) {
-    setQueuedMessages((prev) => prev.map(
+    commitQueue((prev) => prev.map(
       (item) => (item.id === id ? { ...item, text } : item),
     ));
   }
@@ -301,7 +338,7 @@ export default function SessionDetail({
       (item) => item.id === id,
     );
     if (!target) { return; }
-    setQueuedMessages((prev) => prev.filter((item) => item.id !== id));
+    commitQueue((prev) => prev.filter((item) => item.id !== id));
     await deliverMessage(target.text, target.images);
   }
 
@@ -316,7 +353,7 @@ export default function SessionDetail({
     if (wasInFlight && !stream.turnInFlight
         && queuedMessagesRef.current.length > 0) {
       const next = queuedMessagesRef.current[0];
-      setQueuedMessages((prev) => prev.filter((item) => item.id !== next.id));
+      commitQueue((prev) => prev.filter((item) => item.id !== next.id));
       deliverMessage(next.text, next.images);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

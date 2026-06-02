@@ -65,6 +65,15 @@ vi.mock('../hooks/useSessionStream.js', async (importActual) => {
   const actual = await importActual();
   return { ...actual, useSessionStream: vi.fn() };
 });
+// In-memory stand-in for IndexedDB (jsdom has none) so the durable
+// queued-message path (queuedMessagesStore → idbStore) can be exercised.
+const { _idbMem } = vi.hoisted(() => ({ _idbMem: new Map() }));
+vi.mock('../utils/idbStore.js', () => ({
+  idbGet: async (key) => _idbMem.get(key),
+  idbSet: async (key, value) => { _idbMem.set(key, value); },
+  idbDelete: async (key) => { _idbMem.delete(key); },
+  _resetIdbConnection: () => {},
+}));
 
 import SessionDetail, {
   hasVisibleBubbles,
@@ -75,7 +84,7 @@ import { postChatMessage } from '../api.js';
 import { ENTRY_SOURCE } from '../constants/entrySource.js';
 import { CLAUDE_EVENT, CLAUDE_SYSTEM_SUBTYPE } from '../constants/claudeEvent.js';
 import { BUBBLE_KIND } from '../constants/bubbleKind.js';
-import { _resetQueuedMessagesStore } from '../utils/queuedMessagesStore.js';
+import { _resetQueuedMessagesStore, forgetQueuedMessages } from '../utils/queuedMessagesStore.js';
 
 
 describe('lifecycleBanner', () => {
@@ -354,8 +363,11 @@ describe('SessionDetail — working indicator placement', () => {
 describe('SessionDetail — outgoing message queue', () => {
 
   // The per-task queue store is module-level (survives remounts by design), so
-  // reset it between cases to keep them isolated.
-  beforeEach(() => _resetQueuedMessagesStore());
+  // reset it (and the durable IDB stand-in) between cases to keep them isolated.
+  beforeEach(() => {
+    _resetQueuedMessagesStore();
+    _idbMem.clear();
+  });
 
   function _stream(overrides = {}) {
     return {
@@ -503,6 +515,38 @@ describe('SessionDetail — outgoing message queue', () => {
       .toBeInTheDocument();
     // And it was never sent during the round trip.
     expect(postChatMessage).not.toHaveBeenCalled();
+  });
+
+  test('queue (incl. images) is restored from IndexedDB after a full page reload', async () => {
+    // A page reload wipes the in-memory Map (cold store), so the queue — and
+    // any pasted images its items carry — must come back from the durable IDB
+    // backup. Simulate: IDB holds T1's queue, the Map is cold.
+    _resetQueuedMessagesStore();
+    _idbMem.set('kato.queued-messages.T1', [
+      {
+        id: 'q1',
+        text: 'steer with a screenshot',
+        images: [{ media_type: 'image/png', data: 'AAAA' }],
+        queuedAt: 1,
+      },
+    ]);
+    useSessionStream.mockReturnValue(_stream({ turnInFlight: true }));
+
+    render(<SessionDetail session={{ task_id: 'T1' }} />);
+
+    // Hydration is async (IndexedDB) — the queued item appears once it lands.
+    expect(await screen.findByText(/steer with a screenshot/)).toBeInTheDocument();
+    expect(screen.getByRole('list', { name: /queued messages/i }))
+      .toBeInTheDocument();
+  });
+
+  test('forgetting a task purges its durable queue entry (no orphaned IDB image blob)', async () => {
+    _resetQueuedMessagesStore();
+    _idbMem.set('kato.queued-messages.T1', [
+      { id: 'q1', text: 'x', images: [{ media_type: 'image/png', data: 'AAAA' }], queuedAt: 1 },
+    ]);
+    await forgetQueuedMessages('T1');
+    expect(_idbMem.has('kato.queued-messages.T1')).toBe(false);
   });
 
   test('spawned response: posts a "resumed" note and reconnects', async () => {
