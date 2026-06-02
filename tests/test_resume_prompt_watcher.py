@@ -245,9 +245,52 @@ class ResumePromptWatcherTickTests(unittest.TestCase):
         )
         self.assertEqual(watcher.tick(), 0)
 
+    def test_tick_does_not_count_a_failed_write(self) -> None:
+        # A fresh turn-end reaches the write, but write_resume_prompt fails —
+        # ``written`` must not be incremented (the seen-state still advances so
+        # we don't busy-retry).
+        session = _FakeSession([
+            _Event('user', {'message': {'role': 'user', 'content': 'fix it'}}),
+            _Event('result', {'is_error': False, 'result': 'done'}),
+        ])
+        self.sessions.add('T1', session)
+        self.workspaces.add('T1', ['client'])
+        with unittest.mock.patch(
+            'kato_core_lib.data_layers.service.resume_prompt_watcher.write_resume_prompt',
+            return_value=False,
+        ):
+            self.assertEqual(self.watcher.tick(), 0)
+
+    def test_records_by_task_indexes_multiple_records(self) -> None:
+        # Two records with task ids → the indexing loop iterates (blank ids skip).
+        # ``_records_by_task`` reads ``list_records`` off the SESSION manager.
+        manager = SimpleNamespace(list_records=lambda: [
+            SimpleNamespace(task_id='T1'),
+            SimpleNamespace(task_id=''),  # blank → skipped
+            SimpleNamespace(task_id='T2'),
+        ])
+        watcher = ResumePromptWatcher(
+            session_manager=manager, workspace_manager=self.workspaces, tick_seconds=1.0,
+        )
+        out = watcher._records_by_task()
+        self.assertEqual(
+            set(out.keys()),
+            {watcher._lookup_key('T1'), watcher._lookup_key('T2')},
+        )
+
 
 class ResumePromptWatcherLifecycleTests(unittest.TestCase):
     """``start()`` / ``stop()`` thread management."""
+
+    def test_build_without_autostart_returns_unstarted_watcher(self) -> None:
+        from kato_core_lib.data_layers.service.resume_prompt_watcher import (
+            build_and_start_resume_prompt_watcher,
+        )
+        watcher = build_and_start_resume_prompt_watcher(
+            session_manager=_FakeSessionManager(), autostart=False,
+        )
+        self.assertIsInstance(watcher, ResumePromptWatcher)
+        self.assertIsNone(watcher._thread)  # autostart=False → never started
 
     def test_start_and_stop_cycle_does_not_raise(self) -> None:
         sessions = _FakeSessionManager()
