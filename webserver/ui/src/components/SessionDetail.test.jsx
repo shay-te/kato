@@ -478,6 +478,33 @@ describe('SessionDetail — outgoing message queue', () => {
     expect(postChatMessage).not.toHaveBeenCalled();
   });
 
+  test('queued/steer messages SURVIVE leaving and returning to a task (reported bug)', async () => {
+    // Regression for "steer messages disappear when moving between tasks".
+    // SessionDetail is keyed per task in the real app, so switching tabs fully
+    // UNMOUNTS it and drops all local React state — the queue must be restored
+    // from the module-level store on return, not start empty.
+    postChatMessage.mockClear();
+    useSessionStream.mockReturnValue(_stream({ turnInFlight: true }));
+
+    // Queue a steer message on T1 mid-turn.
+    const { unmount } = render(<SessionDetail session={{ task_id: 'T1' }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));
+    expect(screen.getByText('hello')).toBeInTheDocument();
+
+    // Leave T1 entirely (true unmount, as a real tab switch does).
+    unmount();
+    expect(screen.queryByText('hello')).not.toBeInTheDocument();
+
+    // Return to T1: a brand-new SessionDetail instance must restore the queue.
+    useSessionStream.mockReturnValue(_stream({ turnInFlight: true }));
+    render(<SessionDetail session={{ task_id: 'T1' }} />);
+    expect(screen.getByText('hello')).toBeInTheDocument();
+    expect(screen.getByRole('list', { name: /queued messages/i }))
+      .toBeInTheDocument();
+    // And it was never sent during the round trip.
+    expect(postChatMessage).not.toHaveBeenCalled();
+  });
+
   test('spawned response: posts a "resumed" note and reconnects', async () => {
     postChatMessage.mockClear();
     postChatMessage.mockResolvedValueOnce({ ok: true, body: { status: 'spawned' } });
