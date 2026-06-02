@@ -3262,5 +3262,5 @@ def main() -> None:
     app.run(host=host, port=port, debug=False, threaded=True)
 
 
-if __name__ == '__main__':
+if __name__ == '__main__':  # pragma: no cover - module-as-script guard, never hit under import-based tests
     main()

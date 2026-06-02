@@ -7,6 +7,7 @@ source =
     workspace_core_lib
     task_core_lib
     agent_core_lib
+    agent_backend_core_lib
     provider_client_base
     repository_core_lib
     claude_core_lib
