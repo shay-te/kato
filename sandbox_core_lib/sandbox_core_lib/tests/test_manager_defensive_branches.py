@@ -731,6 +731,31 @@ class RecordSpawnFailModesTests(unittest.TestCase):
     ``KATO_SANDBOX_AUDIT_REQUIRED=true`` set we fail closed so a
     safety-conscious operator can pin the audit guarantee."""
 
+    def test_dir_chmod_oserror_is_swallowed(self) -> None:
+        # Lines 1571-1573: hardening the audit dir to ``0o700`` is
+        # best-effort. Some filesystems (network mounts, FAT, Windows)
+        # don't honour ``chmod`` and raise OSError. That must NOT abort
+        # the spawn — the audit entry still has to be written. Without
+        # the swallow, a non-POSIX audit dir would brick every spawn.
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td) / 'audit.log'
+            with patch('os.chmod',
+                       side_effect=OSError('chmod unsupported on this FS')), \
+                 patch.object(manager, '_image_digest', return_value=''):
+                # Must not raise — chmod failure is swallowed.
+                record_spawn(
+                    task_id='T',
+                    container_name='kato-sandbox-T-0001',
+                    workspace_path='/tmp/x',
+                    audit_log_path=target,
+                )
+            # The audit entry was written despite the chmod failure.
+            lines = target.read_bytes().splitlines()
+            self.assertEqual(len(lines), 1)
+            entry = json.loads(lines[0])
+            self.assertEqual(entry['event'], 'spawn')
+            self.assertEqual(entry['container_name'], 'kato-sandbox-T-0001')
+
     def test_dir_fsync_oserror_is_swallowed(self) -> None:
         # Lines 1584-1585: best-effort parent-dir fsync. If the dir fd
         # can't be opened (some FS don't support O_RDONLY on dirs), the

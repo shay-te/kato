@@ -1770,6 +1770,78 @@ class StreamingPartialBranchTests(unittest.TestCase):
         )
         self.assertIn('PHISHING PATTERN DETECTED', calls)
 
+    def test_build_command_omits_append_system_prompt_when_composer_empty(self) -> None:
+        # Branch 821->823: when the composed --append-system-prompt value
+        # is empty the flag is skipped entirely (no empty-string flag is
+        # emitted to the CLI). Patch the shared composer to return '' so
+        # the falsy branch of ``if appended_system_prompt:`` is taken.
+        session = self._session()
+        with patch(
+            'claude_core_lib.claude_core_lib.session.streaming.'
+            'build_appended_system_prompt',
+            return_value='',
+        ):
+            cmd = session._build_command()
+        self.assertNotIn('--append-system-prompt', cmd)
+
+    def test_maybe_fire_done_sentinel_iterates_blocks_without_match(self) -> None:
+        # Branches 962->exit and 966->962: the content list has blocks but
+        # none carry the sentinel. The non-text block is skipped (966's
+        # ``continue`` pair on the type guard) and the text block that
+        # lacks the marker falls through (966->962), so the loop drains
+        # to completion (962->exit) without firing the callback.
+        callback = MagicMock()
+        session = self._session()
+        session._done_callback = callback
+        session._maybe_fire_done_sentinel(SessionEvent(raw={
+            'type': 'assistant',
+            'message': {
+                'content': [
+                    {'type': 'tool_use', 'name': 'Bash'},  # skipped: not text
+                    {'type': 'text', 'text': 'still working, no marker yet'},
+                ],
+            },
+        }))
+        callback.assert_not_called()
+        self.assertFalse(session._done_sentinel_fired)
+
+
+class StreamingClaudeSessionCounterPropertyTests(unittest.TestCase):
+    """The lock-guarded progress counters read by the chat-send route to
+    distinguish 'mid-turn' from 'idle' sessions."""
+
+    def _session(self) -> StreamingClaudeSession:
+        return StreamingClaudeSession(task_id='PROJ-C', cwd='/tmp')
+
+    def test_user_messages_sent_reflects_internal_counter(self) -> None:
+        session = self._session()
+        self.assertEqual(session.user_messages_sent, 0)
+        session._user_messages_sent = 3
+        self.assertEqual(session.user_messages_sent, 3)
+
+    def test_last_user_message_sent_epoch_reflects_internal_value(self) -> None:
+        session = self._session()
+        self.assertEqual(session.last_user_message_sent_epoch, 0.0)
+        session._last_user_message_sent_epoch = 1234.5
+        self.assertEqual(session.last_user_message_sent_epoch, 1234.5)
+
+    def test_effort_property_returns_coerced_spawn_value(self) -> None:
+        session = StreamingClaudeSession(task_id='PROJ-C', cwd='/tmp', effort='high')
+        self.assertEqual(session.effort, 'high')
+        # Default (no effort passed) coerces to empty.
+        self.assertEqual(self._session().effort, '')
+
+    def test_result_events_received_counts_result_events_in_log(self) -> None:
+        session = self._session()
+        self.assertEqual(session.result_events_received, 0)
+        session._recent_events = [
+            SessionEvent(raw={'type': 'assistant'}),
+            SessionEvent(raw={'type': 'result', 'subtype': 'success'}),
+            SessionEvent(raw={'type': 'user'}),
+            SessionEvent(raw={'type': 'result', 'subtype': 'error'}),
+        ]
+        self.assertEqual(session.result_events_received, 2)
+
 
 if __name__ == '__main__':
     unittest.main()

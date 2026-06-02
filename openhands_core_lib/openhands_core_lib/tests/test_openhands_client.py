@@ -2578,14 +2578,20 @@ class OpenHandsClientDefensiveBranchTests(unittest.TestCase):
         self.assertEqual(result.count('|'), 3)
 
     def test_parse_result_json_skips_non_dict_candidates(self) -> None:
-        # Line 1180->1175: ``json.loads`` succeeds but yields a non-dict
-        # (e.g. a JSON list); ``isinstance(payload, dict)`` falsy so the
-        # for-loop continues to the next candidate. The valid trailing
-        # JSON object then parses cleanly.
-        text = 'pre [1, 2, 3] mid {"success": true, "summary": "ok"} end'
+        # Branch 1199->1194: ``json.loads`` succeeds on a candidate but
+        # yields a non-dict (a JSON list); ``isinstance(payload, dict)`` is
+        # falsy so the for-loop continues to the next candidate. A fenced
+        # JSON list is isolated as its own candidate (it contains ``{``/``}``
+        # so it passes the fence filter) and parses cleanly to a list; the
+        # trailing JSON object then parses to a dict and is returned.
+        text = (
+            '```\n[{"a": 1}]\n```\n'
+            '{"success": true, "summary": "ok"}'
+        )
         result = OpenHandsClient._parse_result_json(text)
         self.assertIsNotNone(result)
         self.assertTrue(result.get('success'))
+        self.assertEqual(result.get('summary'), 'ok')
 
 
 if __name__ == '__main__':

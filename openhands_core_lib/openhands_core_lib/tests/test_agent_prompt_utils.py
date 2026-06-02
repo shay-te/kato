@@ -20,6 +20,7 @@ from types import SimpleNamespace
 
 from openhands_core_lib.openhands_core_lib.helpers.agent_prompt_utils import (
     ignored_repository_folder_names,
+    repository_scope_text,
     review_comment_code_snippet,
     review_comment_context_text,
     review_comment_location_text,
@@ -46,6 +47,55 @@ class WorkspaceScopeBlockTests(unittest.TestCase):
         # Hits the ``if not raw: continue`` branch on line 71.
         out = workspace_scope_block(['', None, '/repo', '.'])
         self.assertIn('/repo', out)
+
+    def test_appends_extra_refusal_guidance(self) -> None:
+        # Hits line 108: caller-provided guidance is appended after the
+        # generic boundary block (product text injected by the spawner).
+        out = workspace_scope_block(
+            ['/repo'], extra_refusal_guidance='  Do not touch /etc.  ',
+        )
+        # Generic block is still present, with the (stripped) extra text
+        # appended on its own line at the end.
+        self.assertIn('STRICT BOUNDARY', out)
+        self.assertTrue(out.endswith('Do not touch /etc.\n'))
+
+    def test_blank_extra_refusal_guidance_is_ignored(self) -> None:
+        # ``extra`` strips to empty → falls through to ``return block``
+        # (line 109) unchanged, identical to the no-arg default.
+        baseline = workspace_scope_block(['/repo'])
+        self.assertEqual(
+            workspace_scope_block(['/repo'], extra_refusal_guidance='   '),
+            baseline,
+        )
+
+
+class RepositoryScopeTextTests(unittest.TestCase):
+    def test_prepared_task_without_branch_or_repositories(self) -> None:
+        # Branch 123->128: ``prepared_task`` is provided but its
+        # ``branch_name`` is falsy (so the task's own branch_name is kept)
+        # AND it lists no repositories → falls through to the
+        # "no repositories" guidance text.
+        task = SimpleNamespace(branch_name='feature/from-task')
+        prepared = SimpleNamespace(
+            branch_name='', repositories=[], repository_branches={},
+        )
+        out = repository_scope_text(task, prepared)
+        self.assertIn('pull the latest changes', out)
+        # branch_name came from the task, not the (empty) prepared_task.
+        self.assertIn('feature/from-task', out)
+
+    def test_prepared_task_branch_name_overrides_task(self) -> None:
+        # The truthy-branch counterpart (123->124): a non-empty
+        # prepared_task.branch_name takes precedence over the task's.
+        task = SimpleNamespace(branch_name='feature/from-task')
+        prepared = SimpleNamespace(
+            branch_name='feature/from-prepared',
+            repositories=[],
+            repository_branches={},
+        )
+        out = repository_scope_text(task, prepared)
+        self.assertIn('feature/from-prepared', out)
+        self.assertNotIn('feature/from-task', out)
 
 
 class ReviewCommentCodeSnippetTests(unittest.TestCase):
@@ -176,6 +226,23 @@ class ReviewCommentsBatchTextTests(unittest.TestCase):
         out = review_comments_batch_text([comment])
         self.assertIn('PR-level comment', out)
 
+    def test_workspace_set_but_snippet_empty(self) -> None:
+        # Branch 262->267: ``workspace_path`` is provided so the snippet
+        # lookup runs, but the referenced file does not exist on disk → the
+        # snippet is empty, so the snippet block is skipped and we fall
+        # straight through to the "Comment by" line.
+        comment = SimpleNamespace(
+            author='reviewer', body='please fix',
+            file_path='src/does_not_exist.py', line_number=3,
+            line_type='ADDED', commit_sha='abc123',
+        )
+        out = review_comments_batch_text([comment], str(self.workspace))
+        # Location is still rendered, the comment body is present, but no
+        # code snippet (no '|' line marker) was emitted.
+        self.assertIn('src/does_not_exist.py:3', out)
+        self.assertIn('Comment by reviewer: please fix', out)
+        self.assertNotIn(' | ', out)
+
 
 class ReviewCommentContextTextTests(unittest.TestCase):
     def test_skips_non_dict_entries(self) -> None:
@@ -239,6 +306,19 @@ class ReviewCommentLocationTextTests(unittest.TestCase):
         self.assertIn('src/a.py', out)
         # No "src/a.py:<n>" — line number was dropped silently.
         self.assertNotIn('src/a.py:', out)
+
+    def test_non_positive_line_number_is_not_appended(self) -> None:
+        # Branch 307->311: ``int(raw_line)`` succeeds but is not > 0, so
+        # the ``:line`` suffix is skipped while line_type is still appended.
+        comment = SimpleNamespace(
+            file_path='src/a.py', line_number=0,
+            line_type='CONTEXT', commit_sha='',
+        )
+        out = review_comment_location_text(comment)
+        # File path rendered, but no ":0" suffix; line_type still appended.
+        self.assertIn('File: src/a.py', out)
+        self.assertNotIn('src/a.py:', out)
+        self.assertIn('(CONTEXT)', out)
 
 
 class ReviewCommentCodeSnippetBudgetTests(unittest.TestCase):

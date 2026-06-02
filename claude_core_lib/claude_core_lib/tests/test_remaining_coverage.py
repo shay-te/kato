@@ -269,5 +269,45 @@ class SessionManagerLoadPersistedRecordsTests(unittest.TestCase):
         self.assertEqual(manager._records, {})
 
 
+class BuildClaudeSubprocessEnvTests(unittest.TestCase):
+    """``helpers/spawn_utils.build_claude_subprocess_env`` — the shared
+    headless-Claude env invariant used by both spawn paths."""
+
+    def test_overrides_are_applied_on_top_of_os_environ(self) -> None:
+        # Line 36: ``env.update(overrides)`` — the truthy-overrides path.
+        from claude_core_lib.claude_core_lib.helpers.spawn_utils import (
+            build_claude_subprocess_env,
+        )
+        with patch.dict('os.environ', {'EXISTING_VAR': 'base'}, clear=False):
+            env = build_claude_subprocess_env(
+                overrides={'SESSION_VAR': 'down', 'EXISTING_VAR': 'overridden'},
+            )
+        # Override layered over the copied os.environ.
+        self.assertEqual(env['SESSION_VAR'], 'down')
+        self.assertEqual(env['EXISTING_VAR'], 'overridden')
+        # The noninteractive invariant is still set-default'd.
+        self.assertEqual(env['CLAUDE_CODE_NONINTERACTIVE'], '1')
+
+    def test_no_overrides_still_sets_noninteractive_default(self) -> None:
+        from claude_core_lib.claude_core_lib.helpers.spawn_utils import (
+            build_claude_subprocess_env,
+        )
+        with patch.dict('os.environ', {}, clear=True):
+            env = build_claude_subprocess_env()
+        self.assertEqual(env['CLAUDE_CODE_NONINTERACTIVE'], '1')
+
+    def test_explicit_override_of_noninteractive_is_honoured(self) -> None:
+        # ``setdefault`` runs last, but an override of that exact key wins
+        # because it's already present when setdefault runs.
+        from claude_core_lib.claude_core_lib.helpers.spawn_utils import (
+            build_claude_subprocess_env,
+        )
+        with patch.dict('os.environ', {}, clear=True):
+            env = build_claude_subprocess_env(
+                overrides={'CLAUDE_CODE_NONINTERACTIVE': '0'},
+            )
+        self.assertEqual(env['CLAUDE_CODE_NONINTERACTIVE'], '0')
+
+
 if __name__ == '__main__':
     unittest.main()

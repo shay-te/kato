@@ -177,6 +177,28 @@ class ClaudeSessionManagerTests(unittest.TestCase):
             'terminated',
         )
 
+    def test_terminate_unknown_task_keep_record_is_a_safe_no_op(self) -> None:
+        # Branch 835->exit: terminate_session(remove_record=False) for a
+        # task that has neither a live session nor a persisted record.
+        # ``session`` is None (no terminate), and the else-branch finds
+        # ``record is None`` so nothing is mutated or persisted.
+        self.manager.terminate_session('NEVER-EXISTED')  # must not raise.
+        self.assertIsNone(self.manager.get_record('NEVER-EXISTED'))
+        self.assertEqual(self.manager.list_records(), [])
+
+    def test_remove_record_leaves_unrelated_json_files_untouched(self) -> None:
+        # Branch 1011->1010: the case-insensitive glob in
+        # _delete_persisted_record visits every *.json in the state dir;
+        # a file whose stem doesn't match the task key must NOT be
+        # deleted (the ``if candidate.stem.lower() == key`` guard is
+        # False and the loop continues).
+        unrelated = self.state_dir / 'other-task.json'
+        unrelated.write_text(json.dumps({'task_id': 'OTHER'}), encoding='utf-8')
+        self.manager.start_session(task_id='PROJ-1')
+        self.manager.terminate_session('PROJ-1', remove_record=True)
+        self.assertIsNone(self.manager.get_record('PROJ-1'))
+        self.assertTrue(unrelated.exists())
+
     def test_terminate_session_with_remove_record_clears_disk(self) -> None:
         self.manager.start_session(task_id='PROJ-1')
         self.manager.terminate_session('PROJ-1', remove_record=True)
@@ -483,6 +505,40 @@ class StaleResumeIdStrictPreservationTests(unittest.TestCase):
             )
         )
 
+    def test_died_with_stale_resume_id_iterates_stderr_without_marker(self) -> None:
+        # Branch 900->899: a dead session whose stderr lines do NOT
+        # contain the "No conversation found" marker. The loop drains
+        # without an early ``return True``, then the terminal-event path
+        # confirms the stale-id death via the result text instead. This
+        # locks the two detection sources as independent.
+        session = SimpleNamespace(
+            is_alive=False,
+            stderr_snapshot=lambda: ['some unrelated warning', 'another line'],
+            terminal_event=SimpleNamespace(raw={
+                'is_error': True,
+                'result': 'No conversation found with session ID: dead-id',
+            }),
+        )
+        self.assertTrue(
+            ClaudeSessionManager._died_with_stale_resume_id(session, 'dead-id')
+        )
+
+    def test_died_with_stale_resume_id_stderr_no_marker_and_clean_terminal(self) -> None:
+        # Companion to above (still drains the loop via 900->899): stderr
+        # has no marker AND the terminal event is a clean (non-error)
+        # result, so the detector returns False — not a stale-id death.
+        session = SimpleNamespace(
+            is_alive=False,
+            stderr_snapshot=lambda: ['routine log line'],
+            terminal_event=SimpleNamespace(raw={
+                'is_error': False,
+                'result': 'completed normally',
+            }),
+        )
+        self.assertFalse(
+            ClaudeSessionManager._died_with_stale_resume_id(session, 'dead-id')
+        )
+
     def test_died_with_stale_resume_id_handles_stderr_exception(self) -> None:
         # If stderr_snapshot() blows up, the check must still return
         # False rather than propagating (the manager treats that as
@@ -719,6 +775,34 @@ class WorkspaceSeedingTests(unittest.TestCase):
         record = self.manager.get_record('PROJ-W')
         self.assertEqual(record.agent_session_id, 'workspace-good-id')
         self.assertEqual(record.cwd, '/wks/W')
+
+    def test_workspace_seed_keeps_existing_cwd(self) -> None:
+        # Branch 210->212: an existing record that lacks a session id (so
+        # the seed doesn't ``continue``) but already has a cwd. The
+        # workspace's cwd must NOT overwrite the record's own cwd —
+        # ``if cwd and not record.cwd`` is False because record.cwd is set.
+        self.manager._records[self.manager._lookup_key('PROJ-CWD')] = (
+            PlanningSessionRecord(
+                task_id='PROJ-CWD',
+                agent_session_id='',
+                cwd='/original/cwd',
+            )
+        )
+        ws = SimpleNamespace(
+            task_id='PROJ-CWD',
+            agent_session_id='ws-id',
+            cwd='/workspace/cwd',
+        )
+        workspace_manager = SimpleNamespace(
+            list_workspaces=lambda: [ws],
+            update_agent_session=lambda *a, **kw: None,
+        )
+
+        self.manager.attach_workspace_manager(workspace_manager)
+
+        record = self.manager.get_record('PROJ-CWD')
+        self.assertEqual(record.agent_session_id, 'ws-id')
+        self.assertEqual(record.cwd, '/original/cwd')
 
     def test_handles_list_workspaces_exception(self) -> None:
         def broken_list():
@@ -1091,6 +1175,27 @@ class LiveSessionIdDriftTests(unittest.TestCase):
             self.manager.get_record('PROJ-1').agent_session_id,
             'pinned-id',
         )
+
+    def test_get_session_returns_live_non_drifted_session(self) -> None:
+        # Line 701: a live session whose id matches the pinned record is
+        # not drifted, so get_session hands it straight back. (The two
+        # existing get_session tests both assert None — this is the
+        # happy path.)
+        session = self.manager.start_session(task_id='PROJ-LIVE')
+        returned = self.manager.get_session('PROJ-LIVE')
+        self.assertIs(returned, session)
+        self.assertEqual(session.terminate_calls, 0)
+
+    def test_get_session_returns_dead_session_without_drift_check(self) -> None:
+        # Branch 695->701: a session that is still tracked but no longer
+        # alive skips the drift check entirely and is returned as-is —
+        # an exited subprocess can't have "drifted" its id mid-run.
+        session = self.manager.start_session(task_id='PROJ-DEAD')
+        session._alive = False  # simulate the subprocess having exited.
+        returned = self.manager.get_session('PROJ-DEAD')
+        self.assertIs(returned, session)
+        # Drift check (which would terminate) was skipped.
+        self.assertEqual(session.terminate_calls, 0)
 
     def test_start_session_respawns_with_pinned_id_after_live_drift(self) -> None:
         _, wrong = self._pin_record_with_wrong_live()
@@ -1875,6 +1980,37 @@ class LogResumeJsonlStateTests(unittest.TestCase):
             )
             mock_dir.assert_not_called()
             logger.info.assert_called()
+
+    def test_swallows_when_sibling_module_import_fails(self) -> None:
+        # Lines 568-569: the lazy imports of the sibling history/index
+        # modules are wrapped in ``except ImportError: return`` so a
+        # broken/partial install can't crash the diagnostic helper. Force
+        # the import to fail and assert the helper returns silently
+        # without reaching find_session_file or any log call.
+        import builtins
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name.endswith('session.history') or name.endswith('session.index'):
+                raise ImportError('simulated partial install')
+            return real_import(name, *args, **kwargs)
+
+        with patch(
+            'claude_core_lib.claude_core_lib.session.history.find_session_file',
+        ) as find_file, patch.object(
+            self.manager, 'logger', MagicMock(),
+        ) as logger, patch('builtins.__import__', side_effect=fake_import):
+            self.manager._log_resume_jsonl_state(
+                normalized_task_id='PROJ-1',
+                resume_session_id='abc',
+                target_cwd='/some/cwd',
+            )
+        # Returned at the ImportError guard — never touched find_session_file
+        # nor logged anything.
+        find_file.assert_not_called()
+        logger.info.assert_not_called()
+        logger.exception.assert_not_called()
 
 
 class DiscardIfSessionIdDriftedTerminateTests(unittest.TestCase):
