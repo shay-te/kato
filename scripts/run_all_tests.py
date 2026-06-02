@@ -16,25 +16,36 @@ where each package keeps its tests.
 
 from __future__ import annotations
 
+import os
 import sys
 import unittest
 from pathlib import Path
 
-# Where each owning package keeps its tests. Add a new entry when
-# extracting another core-lib that owns its own test set.
-TEST_ROOTS = [
-    'tests',
-    'sandbox_core_lib/sandbox_core_lib/tests',
-    'agent_provider_contracts/agent_provider_contracts/tests',
-    'agent_backend_core_lib/agent_backend_core_lib/tests',
-    'claude_core_lib/claude_core_lib/tests',
-    'openhands_core_lib/openhands_core_lib/tests',
-    'agent_core_lib/agent_core_lib/tests',
-    'security_scanner_core_lib/security_scanner_core_lib/tests',
-    'openrouter_core_lib/openrouter_core_lib/tests',
-    'provider_client_base/provider_client_base/tests',
-    'workspace_core_lib/workspace_core_lib/tests',
-]
+# Test roots are AUTO-DISCOVERED rather than hand-listed. A curated list
+# silently went stale and dropped whole core-libs (codex/git/task/provider/…)
+# from every ``kato test`` run — the worst kind of test-suite bug because it
+# looks green. Discovery finds every in-repo directory named ``tests`` that
+# holds at least one ``test_*.py``, so a newly-extracted core-lib is picked up
+# automatically and the suite can never go partial again. Virtualenvs, VCS,
+# caches and build output are pruned so we only ever run THIS repo's tests.
+_SKIP_DIRS = frozenset({
+    '.venv', 'venv', 'env', '.git', 'node_modules', '__pycache__',
+    '.tox', '.pytest_cache', '.mypy_cache', 'build', 'dist', '.eggs',
+})
+
+
+def discover_test_roots(repo_root: Path) -> list[str]:
+    """Every in-repo ``tests`` directory that owns ``test_*.py`` files."""
+    roots: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(repo_root):
+        # Prune unwanted subtrees in place so os.walk never descends them.
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+        path = Path(dirpath)
+        if path.name != 'tests':
+            continue
+        if any(f.startswith('test_') and f.endswith('.py') for f in filenames):
+            roots.append(str(path.relative_to(repo_root)))
+    return sorted(roots)
 
 
 def main() -> int:
@@ -50,7 +61,11 @@ def main() -> int:
         sys.path.insert(0, str(repo_root))
     runner = unittest.TextTestRunner(verbosity=1)
     failures = 0
-    for relative in TEST_ROOTS:
+    test_roots = discover_test_roots(repo_root)
+    print(f'Discovered {len(test_roots)} test roots:', flush=True)
+    for relative in test_roots:
+        print(f'  - {relative}', flush=True)
+    for relative in test_roots:
         start = repo_root / relative
         if not start.is_dir():
             continue
