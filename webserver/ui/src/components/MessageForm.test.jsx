@@ -39,6 +39,17 @@ vi.mock('../utils/idbStore.js', () => ({
   _resetIdbConnection: () => {},
 }));
 
+// In-memory stand-in for the server-side draft store (/api/sessions/<id>/draft).
+const { _serverDrafts } = vi.hoisted(() => ({ _serverDrafts: new Map() }));
+vi.mock('../api.js', () => ({
+  fetchDraft: async (taskId) => _serverDrafts.get(taskId) || { text: '', images: [] },
+  saveDraft: async (taskId, draft) => {
+    const hasImages = Array.isArray(draft.images) && draft.images.length > 0;
+    if (!draft.text && !hasImages) { _serverDrafts.delete(taskId); }
+    else { _serverDrafts.set(taskId, draft); }
+  },
+}));
+
 import MessageForm from './MessageForm.jsx';
 import { DRAFT_STORAGE_PREFIX } from '../utils/composerDraft.js';
 import { IMAGE_DRAFT_PREFIX, clearImageDraft } from '../utils/composerImageDraft.js';
@@ -577,6 +588,67 @@ describe('MessageForm — composer-height CSS variable (--composer-h)', () => {
       }
     } finally {
       if (original !== undefined) { globalThis.ResizeObserver = original; }
+    }
+  });
+});
+
+
+describe('MessageForm — server draft persistence (.kato-prompts.json)', () => {
+  beforeEach(() => {
+    _serverDrafts.clear();
+    _idbMem.clear();
+    window.localStorage.clear();
+  });
+
+  test('restores text from the server when the browser cache is empty', async () => {
+    _serverDrafts.set('T1', { text: 'recovered from server', images: [] });
+    renderForm({ taskId: 'T1' });
+    // Async server read fills the empty composer.
+    expect(await screen.findByDisplayValue('recovered from server')).toBeInTheDocument();
+  });
+
+  test('restores images from the server when the browser cache is empty', async () => {
+    _serverDrafts.set('T1', { text: '', images: [{ media_type: 'image/png', data: 'AAAA' }] });
+    const { container } = renderForm({ taskId: 'T1' });
+    await waitFor(() => {
+      expect(container.querySelector('.message-attachment img')).toBeTruthy();
+    });
+    expect(container.querySelector('.message-attachment img'))
+      .toHaveAttribute('src', 'data:image/png;base64,AAAA');
+  });
+
+  test('a browser-cache draft wins — server only fills what is empty', async () => {
+    window.localStorage.setItem(`${DRAFT_STORAGE_PREFIX}T1`, 'local draft');
+    _serverDrafts.set('T1', { text: 'server draft', images: [] });
+    renderForm({ taskId: 'T1' });
+    // localStorage seeds instantly; the later server read must NOT overwrite it.
+    expect(screen.getByRole('textbox')).toHaveValue('local draft');
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.getByRole('textbox')).toHaveValue('local draft');
+  });
+
+  test('sending clears the server draft', async () => {
+    _serverDrafts.set('T1', { text: 'queued thought', images: [] });
+    const onSubmit = vi.fn().mockResolvedValue(true);
+    const { container } = renderForm({ taskId: 'T1', onSubmit });
+    expect(await screen.findByDisplayValue('queued thought')).toBeInTheDocument();
+    await act(async () => { fireEvent.submit(container.querySelector('form')); });
+    expect(onSubmit).toHaveBeenCalled();
+    expect(_serverDrafts.has('T1')).toBe(false);  // server draft cleared on send
+  });
+
+  test('typing is mirrored to the server (debounced)', async () => {
+    vi.useFakeTimers();
+    try {
+      renderForm({ taskId: 'T1' });
+      // let the mount server-read resolve (arms the save), then type.
+      await vi.runOnlyPendingTimersAsync();
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: 'persist me' } });
+      expect(_serverDrafts.has('T1')).toBe(false);  // not yet — debounced
+      await vi.advanceTimersByTimeAsync(600);
+      expect(_serverDrafts.get('T1')).toEqual({ text: 'persist me', images: [] });
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

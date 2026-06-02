@@ -1,5 +1,7 @@
 import re
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -971,6 +973,67 @@ class ModelEndpointTests(unittest.TestCase):
         self.client.post('/api/sessions/PROJ-1/model', json={'model': ''})
         response = self.client.get('/api/sessions/PROJ-1/model')
         self.assertEqual(response.get_json()['model'], '')
+
+
+class PromptDraftEndpointTests(unittest.TestCase):
+    """Server-side composer draft (text + images) at .kato-prompts.json."""
+
+    _IMG = {'media_type': 'image/png', 'data': 'AAAA'}
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.ws = Path(self._tmp.name)
+        self.app = create_app(
+            session_manager=_FakeManager(),
+            workspace_manager=_RepoIdsWorkspaceManager(workspace_path=self.ws),
+        )
+        self.client = self.app.test_client()
+
+    def test_get_empty_when_no_draft(self):
+        response = self.client.get('/api/sessions/T1/draft')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {'text': '', 'images': []})
+
+    def test_post_then_get_round_trips_text_and_images(self):
+        self.client.post(
+            '/api/sessions/T1/draft', json={'text': 'fix it', 'images': [self._IMG]},
+        )
+        self.assertEqual(
+            self.client.get('/api/sessions/T1/draft').get_json(),
+            {'text': 'fix it', 'images': [self._IMG]},
+        )
+
+    def test_post_blank_clears_the_draft(self):
+        self.client.post('/api/sessions/T1/draft', json={'text': 'hi', 'images': []})
+        self.client.post('/api/sessions/T1/draft', json={'text': '', 'images': []})
+        self.assertEqual(
+            self.client.get('/api/sessions/T1/draft').get_json(),
+            {'text': '', 'images': []},
+        )
+
+    def test_no_workspace_manager_get_empty_and_post_503(self):
+        app = create_app(session_manager=_FakeManager())  # no workspace_manager
+        client = app.test_client()
+        self.assertEqual(
+            client.get('/api/sessions/T1/draft').get_json(), {'text': '', 'images': []},
+        )
+        self.assertEqual(
+            client.post('/api/sessions/T1/draft', json={'text': 'x'}).status_code, 503,
+        )
+
+    def test_unresolvable_workspace_is_a_safe_noop(self):
+        app = create_app(
+            session_manager=_FakeManager(),
+            workspace_manager=_RepoIdsWorkspaceManager(workspace_path=None),
+        )
+        client = app.test_client()
+        self.assertEqual(
+            client.get('/api/sessions/T1/draft').get_json(), {'text': '', 'images': []},
+        )
+        self.assertEqual(
+            client.post('/api/sessions/T1/draft', json={'text': 'x'}).status_code, 200,
+        )
 
 
 class ScanTriggerEndpointTests(unittest.TestCase):

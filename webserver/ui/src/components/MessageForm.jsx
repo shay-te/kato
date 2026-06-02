@@ -20,6 +20,7 @@ import {
   writeImageDraft,
   clearImageDraft,
 } from '../utils/composerImageDraft.js';
+import { fetchDraft, saveDraft } from '../api.js';
 
 // Composer state (the textarea contents + attached images) lives
 // INSIDE this component on purpose — typing should not re-render
@@ -78,6 +79,17 @@ const MessageForm = forwardRef(function MessageForm({
   // would resurrect a just-sent image — the `length === 0` check alone can't
   // tell "cold" from "just emptied").
   const imagesSettledRef = useRef(false);
+  // Server-side draft (text + images) at <workspace>/.kato-prompts.json is the
+  // DURABLE backstop: localStorage/IndexedDB are per-browser and get wiped by
+  // private mode / cleared data, so a refresh can still lose the prompt. The
+  // server file survives a refresh, a different browser, and task switches.
+  // ``draftEditedRef`` = the operator has edited this draft since mount (so a
+  // slow server read must NOT clobber live text / a just-sent empty). ``draft
+  // SyncReadyRef`` = safe to write to the server (the read resolved OR the
+  // operator edited) — gates the save so the empty pre-hydrate state can't wipe
+  // the stored draft.
+  const draftEditedRef = useRef(false);
+  const draftSyncReadyRef = useRef(false);
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef(null);
   const textareaRef = useRef(null);
@@ -119,6 +131,41 @@ const MessageForm = forwardRef(function MessageForm({
     writeDraft(taskId, value);
   }, [taskId, value]);
 
+  // Restore the draft from the SERVER on mount — the durable backstop for when
+  // the browser caches were wiped (private mode, cleared data, a different
+  // browser). Fill text/images ONLY where the composer is still empty (so a
+  // browser-cache value wins), and never when the operator has already edited
+  // this draft (so a slow read can't clobber live typing or a just-sent empty).
+  useEffect(() => {
+    let cancelled = false;
+    fetchDraft(taskId).then((draft) => {
+      if (cancelled) { return; }
+      if (!draftEditedRef.current) {
+        if (draft && draft.text) {
+          setValue((current) => (current ? current : draft.text));
+        }
+        if (draft && Array.isArray(draft.images) && draft.images.length > 0) {
+          setAttachments((current) => (current.length
+            ? current
+            : draft.images.map((part) => ({ part, previewUrl: _previewUrl(part) }))));
+        }
+      }
+      draftSyncReadyRef.current = true;
+    });
+    return () => { cancelled = true; };
+  }, [taskId]);
+
+  // Mirror the draft to the server (debounced — text changes per keystroke),
+  // once it's safe (the read resolved or the operator edited). On send/clear we
+  // also write through immediately (below) so the server clears without waiting.
+  useEffect(() => {
+    if (!draftSyncReadyRef.current) { return undefined; }
+    const timer = setTimeout(() => {
+      saveDraft(taskId, { text: value, images: attachments.map((a) => a.part) });
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [taskId, value, attachments]);
+
   // Restore persisted image attachments (IndexedDB) on mount — survives tab
   // switch AND full reload. Rebuild each preview URL from its stored part so we
   // never persisted a throwaway object URL. If the operator already touched
@@ -159,10 +206,13 @@ const MessageForm = forwardRef(function MessageForm({
     },
     clear() {
       imagesSettledRef.current = true; // live state owns the draft; block a late hydrate
+      draftEditedRef.current = true;
+      draftSyncReadyRef.current = true;
       setValue('');
       setAttachments([]);
       writeDraft(taskId, '');
       clearImageDraft(taskId);
+      saveDraft(taskId, { text: '', images: [] }); // clear the server draft now
     },
     getValue() { return value; },
   }), [taskId, value]);
@@ -192,13 +242,16 @@ const MessageForm = forwardRef(function MessageForm({
     // The live state now owns the draft: this blocks an in-flight hydrate read
     // (issued at mount, slow to resolve) from re-applying the just-sent images.
     imagesSettledRef.current = true;
+    draftEditedRef.current = true;
+    draftSyncReadyRef.current = true;
     setValue('');
     setAttachments([]);
     writeDraft(taskId, '');
-    // Clear the persisted image draft immediately (not via the effect) so an
-    // unmount right after sending can't leave already-sent images to be
-    // re-hydrated on return.
+    // Clear the persisted draft immediately (not via the debounced effect) so an
+    // unmount right after sending can't leave already-sent text/images to be
+    // re-hydrated on return — browser caches AND the server file.
     clearImageDraft(taskId);
+    saveDraft(taskId, { text: '', images: [] });
   }
 
   // While Claude is working the composer is in QUEUE mode: the
@@ -223,6 +276,10 @@ const MessageForm = forwardRef(function MessageForm({
   }
 
   function handleChange(event) {
+    // The operator is editing — a still-in-flight server read must not clobber
+    // this, and the draft is now safe to write back to the server.
+    draftEditedRef.current = true;
+    draftSyncReadyRef.current = true;
     setValue(event.target.value);
   }
   function handleKeyDown(event) {
@@ -282,6 +339,8 @@ const MessageForm = forwardRef(function MessageForm({
       // The operator is actively attaching — the live state owns the draft, so
       // a still-in-flight hydrate read must not clobber it.
       imagesSettledRef.current = true;
+      draftEditedRef.current = true;
+      draftSyncReadyRef.current = true;
       const next = parts.map((part) => ({ part, previewUrl: _previewUrl(part) }));
       setAttachments((prev) => [...prev, ...next]);
     }
@@ -297,6 +356,8 @@ const MessageForm = forwardRef(function MessageForm({
 
   function removeAttachment(index) {
     imagesSettledRef.current = true; // live state owns the draft
+    draftEditedRef.current = true;
+    draftSyncReadyRef.current = true;
     setAttachments((prev) => prev.filter((_, i) => i !== index));
   }
 

@@ -89,6 +89,7 @@ from kato_webserver.git_diff_utils import (
     list_branch_commits,
     tracked_file_tree,
 )
+from kato_webserver.prompt_draft_store import read_draft, write_draft
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -825,6 +826,33 @@ def _register_http_routes(app: Flask) -> None:
         if not _set_task_override(app, 'TASK_MODEL_OVERRIDES', task_id, model):
             return jsonify({'error': 'not available'}), 503
         return jsonify({'model': model})
+
+    # Composer draft (the in-progress prompt: text + pasted images), persisted
+    # server-side in <workspace>/.kato-prompts.json so it survives a refresh, a
+    # different browser, and switching tasks — not just per-browser localStorage.
+    @app.get('/api/sessions/<task_id>/draft')
+    def get_session_draft(task_id: str):
+        workspace_manager = app.config.get('WORKSPACE_MANAGER')
+        if workspace_manager is None:
+            return jsonify({'text': '', 'images': []})
+        try:
+            workspace_dir = workspace_manager.workspace_path(task_id)
+        except Exception:  # noqa: BLE001 - best-effort; unknown task → empty draft
+            return jsonify({'text': '', 'images': []})
+        return jsonify(read_draft(workspace_dir))
+
+    @app.post('/api/sessions/<task_id>/draft')
+    def set_session_draft(task_id: str):
+        workspace_manager = app.config.get('WORKSPACE_MANAGER')
+        if workspace_manager is None:
+            return jsonify({'error': 'not available'}), 503
+        body = request.get_json(silent=True) or {}
+        try:
+            workspace_dir = workspace_manager.workspace_path(task_id)
+        except Exception:  # noqa: BLE001 - best-effort; unknown task is a no-op
+            return jsonify({'ok': True})
+        write_draft(workspace_dir, body.get('text', ''), body.get('images', []))
+        return jsonify({'ok': True})
 
     @app.get('/api/effort-levels')
     def list_effort_levels():

@@ -358,6 +358,23 @@ export function fetchModels() {
   return fetchJson('/api/models');
 }
 
+// Composer draft (in-progress prompt: text + pasted images) persisted
+// server-side at <workspace>/.kato-prompts.json — survives refresh, a different
+// browser, and task switches. Best-effort: a failed read yields an empty draft.
+export function fetchDraft(taskId) {
+  if (!taskId) { return Promise.resolve({ text: '', images: [] }); }
+  return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/draft`)
+    .catch(() => ({ text: '', images: [] }));
+}
+
+export function saveDraft(taskId, draft) {
+  if (!taskId) { return Promise.resolve({ ok: false }); }
+  return postEnvelope(
+    `/api/sessions/${encodeURIComponent(taskId)}/draft`,
+    draft,
+  );
+}
+
 export function fetchSessionModel(taskId) {
   if (!taskId) { return Promise.resolve({ model: '' }); }
   return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/model`);
