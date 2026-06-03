@@ -103,6 +103,12 @@ class CommentRecord(object):
     # link the thread to the commit that addressed it.
     kato_addressed_sha: str = ''
     kato_failure_reason: str = ''
+    # Ownership marker for the agent turn currently working this comment.
+    # A result emitted before this timestamp / result-count must never
+    # complete this comment, even if the task later looks idle.
+    kato_run_started_at_epoch: float = 0.0
+    kato_run_result_count_before: int = -1
+    kato_run_marker: str = ''
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -133,4 +139,13 @@ class CommentRecord(object):
             ),
             kato_addressed_sha=str(payload.get('kato_addressed_sha', '') or ''),
             kato_failure_reason=str(payload.get('kato_failure_reason', '') or ''),
+            kato_run_started_at_epoch=float(
+                payload.get('kato_run_started_at_epoch', 0.0) or 0.0,
+            ),
+            kato_run_result_count_before=int(
+                payload.get('kato_run_result_count_before', -1)
+                if payload.get('kato_run_result_count_before', None) is not None
+                else -1,
+            ),
+            kato_run_marker=str(payload.get('kato_run_marker', '') or ''),
         )

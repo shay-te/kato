@@ -259,6 +259,10 @@ class LocalCommentStore(object):
 
         def _apply(current: CommentRecord) -> None:
             current.kato_status = kato_status
+            if kato_status != KatoCommentStatus.IN_PROGRESS.value:
+                current.kato_run_started_at_epoch = 0.0
+                current.kato_run_result_count_before = -1
+                current.kato_run_marker = ''
             if addressed_sha:
                 current.kato_addressed_sha = addressed_sha
             if failure_reason:
@@ -266,6 +270,25 @@ class LocalCommentStore(object):
             else:
                 if kato_status == KatoCommentStatus.IDLE.value:
                     current.kato_failure_reason = ''
+
+        return self._mutate_by_id(comment_id, _apply)
+
+    def start_kato_run(
+        self,
+        comment_id: str,
+        *,
+        started_at_epoch: float = 0.0,
+        result_count_before: int = -1,
+        run_marker: str = '',
+    ) -> CommentRecord | None:
+        """Atomically mark a comment running and record its result boundary."""
+
+        def _apply(current: CommentRecord) -> None:
+            current.kato_status = KatoCommentStatus.IN_PROGRESS.value
+            current.kato_run_started_at_epoch = float(started_at_epoch or 0.0)
+            current.kato_run_result_count_before = int(result_count_before)
+            current.kato_run_marker = str(run_marker or '')
+            current.kato_failure_reason = ''
 
         return self._mutate_by_id(comment_id, _apply)
 

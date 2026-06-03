@@ -342,6 +342,50 @@ class CompleteInProgressTaskCommentsTests(unittest.TestCase):
         self.assertEqual([o['comment_id'] for o in out], [ids[0]])
         drain.assert_called_once_with('T1')
 
+    def test_resumed_history_result_does_not_complete_new_comment(self) -> None:
+        # Regression: a fresh --resume spawn can load old result history
+        # before the diff-comment prompt is accepted. That old result must
+        # not become the comment reply before the agent actually works.
+        ids, store = self._seed('T1', ['queued'])
+        comment_id = ids[0]
+        session = SimpleNamespace(
+            is_alive=True,
+            is_working=False,
+            user_messages_sent=0,
+            result_events_received=0,
+            last_user_message_sent_epoch=0.0,
+        )
+        mgr = MagicMock()
+        mgr.get_session.return_value = session
+        self.service._session_manager = mgr
+        stale_result_received_at = []
+
+        def load_resumed_history(*_args, **_kwargs):
+            session.result_events_received = 4
+            stale_result_received_at.append(time.time())
+            return True
+
+        with patch.object(self.service, '_run_comment_agent',
+                          side_effect=load_resumed_history):
+            started = self.service.drain_next_queued_task_comment('T1')
+
+        self.assertTrue(started['started'])
+        running = store.get(comment_id)
+        self.assertEqual(running.kato_status, KatoCommentStatus.IN_PROGRESS.value)
+        self.assertEqual(running.kato_run_result_count_before, 4)
+
+        out = self.service.complete_in_progress_task_comments(
+            'T1',
+            success=True,
+            result_text='stale answer from before the comment',
+            result_received_at_epoch=stale_result_received_at[0],
+        )
+
+        self.assertEqual(out, [])
+        live = store.list()
+        self.assertEqual(live[0].kato_status, KatoCommentStatus.IN_PROGRESS.value)
+        self.assertEqual([c for c in live if c.parent_id == comment_id], [])
+
     def test_no_chain_when_nothing_completed(self) -> None:
         # No completion (nothing in progress) → no spurious drain.
         self._seed('T1', ['queued'])
@@ -406,6 +450,59 @@ class CompleteInProgressTaskCommentsTests(unittest.TestCase):
             'T1', success=True, result_text='done',
         )
         self.assertEqual(out[0]['kato_status'], KatoCommentStatus.ADDRESSED.value)
+
+    def test_run_marker_rejects_stale_resume_result(self) -> None:
+        ids, store = self._seed('T1', ['in_progress'])
+        marker = 'KATO_LOCAL_COMMENT_RUN:abc123'
+        started_at = time.time() - 1.0
+        store.start_kato_run(
+            ids[0],
+            started_at_epoch=started_at,
+            result_count_before=0,
+            run_marker=marker,
+        )
+        self._attach_session(
+            is_alive=True, is_working=False,
+            user_messages_sent=1, result_events_received=1,
+        )
+
+        out = self.service.complete_in_progress_task_comments(
+            'T1',
+            success=True,
+            result_text='stale prior turn result',
+            result_received_at_epoch=time.time(),
+        )
+
+        self.assertEqual(out, [])
+        live = store.list()
+        self.assertEqual(live[0].kato_status, KatoCommentStatus.IN_PROGRESS.value)
+        self.assertEqual([c for c in live if c.parent_id], [])
+
+    def test_run_marker_is_stripped_from_visible_reply(self) -> None:
+        ids, store = self._seed('T1', ['in_progress'])
+        marker = 'KATO_LOCAL_COMMENT_RUN:def456'
+        store.start_kato_run(
+            ids[0],
+            started_at_epoch=time.time() - 1.0,
+            result_count_before=0,
+            run_marker=marker,
+        )
+        self._attach_session(
+            is_alive=True, is_working=False,
+            user_messages_sent=1, result_events_received=1,
+        )
+
+        out = self.service.complete_in_progress_task_comments(
+            'T1',
+            success=True,
+            result_text=f'done for real\n{marker}',
+            result_received_at_epoch=time.time(),
+        )
+
+        self.assertEqual(out[0]['kato_status'], KatoCommentStatus.ADDRESSED.value)
+        replies = [c for c in store.list() if c.parent_id == ids[0]]
+        self.assertEqual(len(replies), 1)
+        self.assertEqual(replies[0].body, 'done for real')
 
     def test_errored_turn_marks_in_progress_failed(self) -> None:
         ids, store = self._seed('T1', ['in_progress'])
@@ -900,7 +997,7 @@ class MaybeTriggerCommentRunTests(unittest.TestCase):
         # reads. The second concurrent run must see "busy" and bail.
         busy_after_first = {'flag': False}
 
-        def fake_run(task_id, record, force_respawn=False):
+        def fake_run(task_id, record, force_respawn=False, run_marker=''):
             with dispatch_lock:
                 dispatch_order.append(record.id)
                 busy_after_first['flag'] = True
@@ -1934,6 +2031,7 @@ class AdvanceFinishedCommentRunsTests(unittest.TestCase):
 
         complete.assert_called_once_with(
             'T1', success=True, result_text='Done.',
+            result_received_at_epoch=0.0,
         )
         self.assertEqual(len(results), 1)
 
@@ -1983,6 +2081,7 @@ class AdvanceFinishedCommentRunsTests(unittest.TestCase):
 
         complete.assert_called_once_with(
             'T1', success=False, result_text='',
+            result_received_at_epoch=0.0,
         )
 
     def test_skips_mid_turn_sessions(self) -> None:
@@ -2133,6 +2232,7 @@ class AdvanceFinishedCommentRunsDefensiveBranches(unittest.TestCase):
             results = service.advance_finished_comment_runs()
         complete.assert_called_once_with(
             'T1', success=True, result_text='finished',
+            result_received_at_epoch=0.0,
         )
         self.assertEqual(len(results), 1)
 

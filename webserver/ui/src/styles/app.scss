@@ -532,13 +532,13 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
    * scroll-wheel case. */
   scrollbar-width: thin;
   scrollbar-color: $C-NEUTRAL-96-A42 $C-NEUTRAL-100-A06;
-  /* Vertical padding gives the active tab's drop-shadow + the
+  /* Vertical padding gives the active tab's cyan glow ring + the
    * pinned-tab background ring room to render before
-   * overflow-y:hidden clips them. Without ``padding-top`` the active
-   * tab's ``0 1px 8px`` shadow was chopped off at the top of the
-   * pill — the pill looked decapitated. */
-  padding-top: $SPACE-4;
-  padding-bottom: $SPACE-4;
+   * overflow-y:hidden clips them. Without it the glow is chopped off
+   * at the top/bottom of the pill — the pill looks decapitated. Sized
+   * for the active tab's ``0 0 12px`` glow (SHADOW-20). */
+  padding-top: $SPACE-6;
+  padding-bottom: $SPACE-6;
 
   /* WebKit: slim horizontal (height-sized) bar with a bordered thumb. */
   @include custom-scrollbar(
@@ -593,14 +593,16 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 }
 
 .tabs-pane-top .tab.active {
-  /* Selected tab — the accent (cyan) tint + border make it unmistakable
-   * against the neutral inactive/hover pills (previously it shared the
-   * inactive pill's neutral background, so the selection was nearly
-   * invisible). Orange ``needs-attention`` below still overrides this. */
-  background: $C-CYAN-52-A18;
-  border-color: $C-CYAN-52-A55;
+  /* Selected tab — a near-solid cyan fill (a hair of translucency is kept
+   * by the gradient's darker stop, so it still reads as glass rather than
+   * paint) plus a bright cyan rim and an all-around cyan glow ring. The
+   * old 18%-cyan tint was barely louder than the white hover state, so it
+   * was easy to lose which tab was selected; the solid fill + glow makes
+   * it unmistakable. Orange ``needs-attention`` below still overrides it. */
+  background: linear-gradient(180deg, $C-CYAN-52 0%, $C-CYAN-47 100%);
+  border-color: $C-CYAN-58;
   color: $C-NEUTRAL-96;
-  box-shadow: $SHADOW-1;
+  box-shadow: $SHADOW-20;
 }
 
 .tabs-pane-top .tab:active {
@@ -765,11 +767,13 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 }
 
 .tabs-pane-top .tab.is-pinned.active {
-  /* Active + pinned keeps the opaque pinned panel (so scrolling tabs stay
-   * obscured behind it) but carries the same cyan accent border as a normal
-   * active tab, so the selection cue is consistent whether pinned or not. */
-  background: linear-gradient(180deg, $C-NEUTRAL-23-A98 0%, $C-NEUTRAL-05-A86 100%);
-  border-color: $C-CYAN-52-A55;
+  /* Active + pinned uses the SAME solid cyan fill + glow as a normal
+   * selected tab, so the selection cue is identical whether pinned or not.
+   * The cyan gradient is fully opaque, so scrolling tabs are still obscured
+   * behind the pinned cluster (the reason pinned tabs need a solid panel). */
+  background: linear-gradient(180deg, $C-CYAN-52 0%, $C-CYAN-47 100%);
+  border-color: $C-CYAN-58;
+  box-shadow: $SHADOW-20;
 }
 
 .tabs-pane-top .tab.needs-attention {

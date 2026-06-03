@@ -4,6 +4,7 @@ from agent_core_lib.agent_core_lib.helpers.text_utils import text_from_mapping
 import copy
 import logging
 import time
+import uuid
 from dataclasses import dataclass
 from types import SimpleNamespace
 
@@ -83,6 +84,7 @@ _ON_DEMAND_PUSH_EXPECTED_ERRORS = (RepositoryHasNoChangesError,)
 # ``_task_session_is_stalled``; the classic trigger is a post-restart
 # ``--resume`` respawn that never picks up the piped message.
 _COMMENT_SEND_ACK_GRACE_SECONDS = 60.0
+_COMMENT_RUN_MARKER_PREFIX = 'KATO_LOCAL_COMMENT_RUN:'
 
 
 @dataclass(frozen=True)
@@ -981,9 +983,9 @@ class AgentService(MissionStepLoggerMixin, Service):
     def requeue_stuck_in_progress_comments(self) -> list[dict[str, object]]:
         """Reset comments orphaned in IN_PROGRESS by a kato restart.
 
-        ``_maybe_trigger_comment_run`` flips a comment to
-        ``IN_PROGRESS`` *before* it spawns the agent. If kato is
-        killed / restarted mid-run the agent subprocess dies but the
+        ``_maybe_trigger_comment_run`` marks a comment ``IN_PROGRESS``
+        once the agent accepts the prompt. If kato is killed / restarted
+        mid-run the agent subprocess dies but the
         on-disk comment stays ``IN_PROGRESS`` forever — and
         ``next_queued()`` only ever returns ``QUEUED`` comments, so
         the scan-loop drain never re-dispatches it and (with lazy
@@ -1035,13 +1037,18 @@ class AgentService(MissionStepLoggerMixin, Service):
         return requeued
 
     def complete_in_progress_task_comments(
-        self, task_id: str, *, success: bool, result_text: str = '',
+        self,
+        task_id: str,
+        *,
+        success: bool,
+        result_text: str = '',
+        result_received_at_epoch: float = 0.0,
     ) -> list[dict[str, object]]:
         """Move a task's IN_PROGRESS comments out when its turn ends.
 
-        ``_maybe_trigger_comment_run`` flips a comment to
-        ``IN_PROGRESS`` before handing it to the streaming session,
-        but nothing moved it OUT when the turn finished — so a comment
+        ``_maybe_trigger_comment_run`` marks a comment ``IN_PROGRESS``
+        once the streaming session accepts it, but nothing moved it OUT
+        when the turn finished — so a comment
         kato actually completed sat on the "kato working" badge
         forever (and a restart's ``requeue_stuck_in_progress_comments``
         would redo the already-done work). Called from the
@@ -1087,9 +1094,20 @@ class AgentService(MissionStepLoggerMixin, Service):
         for comment in comments:
             if comment.kato_status != KatoCommentStatus.IN_PROGRESS.value:
                 continue
+            if not self._comment_result_belongs_to_run(
+                task_id, comment,
+                result_text=result_text,
+                require_marker=success,
+                result_received_at_epoch=result_received_at_epoch,
+            ):
+                continue
             try:
                 if success:
-                    self._add_comment_agent_reply(store, comment, result_text)
+                    reply_text = self._strip_comment_run_marker(
+                        result_text,
+                        getattr(comment, 'kato_run_marker', ''),
+                    )
+                    self._add_comment_agent_reply(store, comment, reply_text)
                     self.mark_comment_addressed(
                         task_id, comment.id, post_remote_reply=False,
                     )
@@ -1235,7 +1253,12 @@ class AgentService(MissionStepLoggerMixin, Service):
                 is_error = bool((getattr(last_result, 'raw', None) or {}).get('is_error', False))
                 result_text = str((getattr(last_result, 'raw', None) or {}).get('result') or '')
                 results = self.complete_in_progress_task_comments(
-                    task_id, success=not is_error, result_text=result_text,
+                    task_id,
+                    success=not is_error,
+                    result_text=result_text,
+                    result_received_at_epoch=float(
+                        getattr(last_result, 'received_at_epoch', 0.0) or 0.0,
+                    ),
                 )
                 advanced.extend(results)
                 continue
@@ -1246,6 +1269,9 @@ class AgentService(MissionStepLoggerMixin, Service):
                 results = self.complete_in_progress_task_comments(
                     task_id, success=not is_error,
                     result_text=str(raw.get('result') or ''),
+                    result_received_at_epoch=float(
+                        getattr(terminal, 'received_at_epoch', 0.0) or 0.0,
+                    ),
                 )
                 advanced.extend(results)
             else:
@@ -1743,9 +1769,7 @@ class AgentService(MissionStepLoggerMixin, Service):
                 # ``RESULT`` event handler) picks it up on the next
                 # idle transition.
                 return False
-            store.update_kato_status(
-                comment_id, kato_status=KatoCommentStatus.IN_PROGRESS.value,
-            )
+            run_marker = self._comment_run_marker()
             try:
                 # A stalled session is alive but not consuming stdin, so
                 # ``send_user_message`` would vanish into the void and the
@@ -1753,6 +1777,7 @@ class AgentService(MissionStepLoggerMixin, Service):
                 # respawn instead so the comment actually runs.
                 started = self._run_comment_agent(
                     task_id, record, force_respawn=stalled,
+                    run_marker=run_marker,
                 )
             except Exception as exc:
                 self.logger.exception(
@@ -1775,6 +1800,18 @@ class AgentService(MissionStepLoggerMixin, Service):
                     comment_id, kato_status=KatoCommentStatus.QUEUED.value,
                 )
                 return False
+            start_run = getattr(store, 'start_kato_run', None)
+            if callable(start_run):
+                start_run(
+                    comment_id,
+                    started_at_epoch=time.time(),
+                    result_count_before=self._task_result_count(task_id),
+                    run_marker=run_marker,
+                )
+            else:
+                store.update_kato_status(
+                    comment_id, kato_status=KatoCommentStatus.IN_PROGRESS.value,
+                )
         self.logger.info(
             'comment %s on task %s dispatched to the agent', comment_id, task_id,
         )
@@ -1804,6 +1841,72 @@ class AgentService(MissionStepLoggerMixin, Service):
             if getattr(comment, 'kato_status', '') == KatoCommentStatus.IN_PROGRESS.value:
                 return True
         return False
+
+    def _task_result_count(self, task_id: str) -> int:
+        """Number of result events currently known for a task session."""
+        if self._session_manager is None:
+            return 0
+        try:
+            session = self._session_manager.get_session(task_id)
+        except Exception:
+            return 0
+        if session is None:
+            return 0
+        try:
+            return int(getattr(session, 'result_events_received', 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _comment_run_marker() -> str:
+        return f'{_COMMENT_RUN_MARKER_PREFIX}{uuid.uuid4().hex}'
+
+    @staticmethod
+    def _strip_comment_run_marker(result_text: str, marker: str) -> str:
+        text = str(result_text or '')
+        normalized_marker = str(marker or '')
+        if not normalized_marker:
+            return text
+        return text.replace(normalized_marker, '').strip()
+
+    def _comment_result_belongs_to_run(
+        self,
+        task_id: str,
+        comment,
+        *,
+        result_text: str = '',
+        require_marker: bool = True,
+        result_received_at_epoch: float = 0.0,
+    ) -> bool:
+        """Reject stale results that predate the comment run dispatch."""
+        run_marker = str(getattr(comment, 'kato_run_marker', '') or '')
+        if run_marker and require_marker:
+            return run_marker in str(result_text or '')
+
+        started_at = float(
+            getattr(comment, 'kato_run_started_at_epoch', 0.0) or 0.0,
+        )
+        raw_count = getattr(comment, 'kato_run_result_count_before', -1)
+        try:
+            result_count_before = int(raw_count)
+        except (TypeError, ValueError):
+            result_count_before = -1
+
+        # Backwards compatibility for comments that were already
+        # IN_PROGRESS before this marker existed: let the old idle guard
+        # decide rather than wedging them forever after deploy.
+        if started_at <= 0.0 and result_count_before < 0:
+            return True
+
+        if (
+            started_at > 0.0
+            and result_received_at_epoch > 0.0
+        ):
+            return result_received_at_epoch > started_at
+
+        if result_count_before >= 0:
+            return self._task_result_count(task_id) > result_count_before
+        return True
 
     def _task_has_busy_turn(self, task_id: str) -> bool:
         """True when the live streaming session has any work in flight.
@@ -1878,7 +1981,11 @@ class AgentService(MissionStepLoggerMixin, Service):
         return (time.time() - last_sent) >= _COMMENT_SEND_ACK_GRACE_SECONDS
 
     def _run_comment_agent(
-        self, task_id: str, record, force_respawn: bool = False,
+        self,
+        task_id: str,
+        record,
+        force_respawn: bool = False,
+        run_marker: str = '',
     ) -> bool:
         """Hand the comment off to the streaming session as a user message.
 
@@ -1895,7 +2002,9 @@ class AgentService(MissionStepLoggerMixin, Service):
         it is still ``is_alive``), preserving the ``--resume`` id on the
         record so conversation history carries over.
         """
-        prompt = self._comment_agent_prompt(task_id, record)
+        prompt = self._comment_agent_prompt(
+            task_id, record, run_marker=run_marker,
+        )
         if self._session_manager is None:
             return self._spawn_comment_agent(task_id, record, prompt)
         session = self._session_manager.get_session(task_id)
@@ -1982,7 +2091,7 @@ class AgentService(MissionStepLoggerMixin, Service):
         except Exception:
             return ''
 
-    def _comment_agent_prompt(self, task_id, record) -> str:
+    def _comment_agent_prompt(self, task_id, record, run_marker: str = '') -> str:
         file_path = str(getattr(record, 'file_path', '') or '')
         line = int(getattr(record, 'line', -1) or -1)
         body = str(getattr(record, 'body', '') or '')
@@ -2007,6 +2116,13 @@ class AgentService(MissionStepLoggerMixin, Service):
                 'LATEST operator reply, which supersedes earlier turns:\n'
                 + '\n'.join(lines)
             )
+        marker_instruction = ''
+        marker = str(run_marker or '').strip()
+        if marker:
+            marker_instruction = (
+                '\nEnd your final response with this exact marker on its '
+                f'own final line: {marker}'
+            )
         return (
             'Operator-added review comment from the kato diff tab.\n\n'
             f'File: {location_hint}\n'
@@ -2017,7 +2133,7 @@ class AgentService(MissionStepLoggerMixin, Service):
             'is copied into this comment thread as Claude\'s reply, so '
             'write it directly to the reviewer. If the comment is a '
             'question rather than a fix request, answer the question '
-            'without committing.'
+            f'without committing.{marker_instruction}'
         )
 
     def _comment_thread_replies(self, task_id, root_id: str) -> list:

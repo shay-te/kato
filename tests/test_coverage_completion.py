@@ -1535,8 +1535,14 @@ class AdvanceCommentsAfterResultUnitTests(unittest.TestCase):
         calls: list = []
 
         class _AgentService:
-            def complete_in_progress_task_comments(self, task_id, *, success, result_text=''):
-                calls.append(('complete', task_id, success, result_text))
+            def complete_in_progress_task_comments(
+                self, task_id, *, success, result_text='',
+                result_received_at_epoch=0.0,
+            ):
+                calls.append((
+                    'complete', task_id, success, result_text,
+                    result_received_at_epoch,
+                ))
             def drain_next_queued_task_comment(self, task_id):
                 calls.append(('drain', task_id))
 
@@ -1551,8 +1557,14 @@ class AdvanceCommentsAfterResultUnitTests(unittest.TestCase):
         calls: list = []
 
         class _AgentService:
-            def complete_in_progress_task_comments(self, task_id, *, success, result_text=''):
-                calls.append(('complete', task_id, success, result_text))
+            def complete_in_progress_task_comments(
+                self, task_id, *, success, result_text='',
+                result_received_at_epoch=0.0,
+            ):
+                calls.append((
+                    'complete', task_id, success, result_text,
+                    result_received_at_epoch,
+                ))
             def drain_next_queued_task_comment(self, task_id):
                 calls.append(('drain', task_id))
                 return {'started': False}
@@ -1561,7 +1573,7 @@ class AdvanceCommentsAfterResultUnitTests(unittest.TestCase):
             self._event(event_type='result', raw={'result': 'ok'}),
             _AgentService(), 'T1',
         )
-        self.assertIn(('complete', 'T1', True, 'ok'), calls)
+        self.assertIn(('complete', 'T1', True, 'ok', 0.0), calls)
         self.assertIn(('drain', 'T1'), calls)
 
     def test_recognises_result_via_raw_type_field(self) -> None:
@@ -1569,8 +1581,14 @@ class AdvanceCommentsAfterResultUnitTests(unittest.TestCase):
         calls: list = []
 
         class _AgentService:
-            def complete_in_progress_task_comments(self, task_id, *, success, result_text=''):
-                calls.append(('complete', task_id, success, result_text))
+            def complete_in_progress_task_comments(
+                self, task_id, *, success, result_text='',
+                result_received_at_epoch=0.0,
+            ):
+                calls.append((
+                    'complete', task_id, success, result_text,
+                    result_received_at_epoch,
+                ))
             def drain_next_queued_task_comment(self, task_id):
                 calls.append(('drain', task_id))
                 return {'started': True}
@@ -1588,7 +1606,10 @@ class AdvanceCommentsAfterResultUnitTests(unittest.TestCase):
         outcomes: list[bool] = []
 
         class _AgentService:
-            def complete_in_progress_task_comments(self, task_id, *, success, result_text=''):
+            def complete_in_progress_task_comments(
+                self, task_id, *, success, result_text='',
+                result_received_at_epoch=0.0,
+            ):
                 outcomes.append(success)
             def drain_next_queued_task_comment(self, task_id):
                 return {'started': False}
@@ -1612,7 +1633,10 @@ class DrainAndCompleteCommentHelpersUnitTests(unittest.TestCase):
         from kato_webserver.app import _complete_in_progress_task_comments
 
         class _AgentService:
-            def complete_in_progress_task_comments(self, task_id, *, success, result_text=''):
+            def complete_in_progress_task_comments(
+                self, task_id, *, success, result_text='',
+                result_received_at_epoch=0.0,
+            ):
                 raise RuntimeError('boom')
 
         # Must not raise; the function logs and continues.
@@ -1623,13 +1647,18 @@ class DrainAndCompleteCommentHelpersUnitTests(unittest.TestCase):
         seen: list = []
 
         class _AgentService:
-            def complete_in_progress_task_comments(self, task_id, *, success, result_text=''):
-                seen.append((task_id, success, result_text))
+            def complete_in_progress_task_comments(
+                self, task_id, *, success, result_text='',
+                result_received_at_epoch=0.0,
+            ):
+                seen.append((
+                    task_id, success, result_text, result_received_at_epoch,
+                ))
 
         _complete_in_progress_task_comments(
             _AgentService(), 'T1', True, result_text='ok',
         )
-        self.assertEqual(seen, [('T1', True, 'ok')])
+        self.assertEqual(seen, [('T1', True, 'ok', 0.0)])
 
     def test_drain_returns_false_when_agent_service_lacks_method(self) -> None:
         from kato_webserver.app import _drain_queued_task_comment
