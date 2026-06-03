@@ -962,6 +962,28 @@ class ModelEndpointTests(unittest.TestCase):
         defaults = [m['id'] for m in body['models'] if m.get('default')]
         self.assertEqual(defaults, ['sonnet'])
 
+    def test_get_openrouter_models_returns_catalog(self):
+        from unittest.mock import patch
+        from kato_core_lib.helpers import openrouter_model_discovery as disc
+        disc.reset_openrouter_models_cache()
+        self.addCleanup(disc.reset_openrouter_models_cache)
+        with patch.object(
+            disc, 'discover_openrouter_models',
+            return_value=[{'id': 'openrouter/openai/gpt-4o', 'label': 'OpenAI: GPT-4o'}],
+        ):
+            response = self.client.get('/api/openrouter/models')
+        self.assertEqual(response.status_code, 200)
+        models = response.get_json()['models']
+        self.assertEqual(models[0]['id'], 'openrouter/openai/gpt-4o')
+
+    def test_get_openrouter_models_survives_discovery_failure(self):
+        from unittest.mock import patch
+        from kato_core_lib.helpers import openrouter_model_discovery as disc
+        with patch.object(disc, 'discover_openrouter_models', side_effect=RuntimeError('boom')):
+            response = self.client.get('/api/openrouter/models')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()['models'], [])
+
     def test_set_and_get_session_model(self):
         self.client.post('/api/sessions/PROJ-1/model', json={'model': 'opus'})
         response = self.client.get('/api/sessions/PROJ-1/model')

@@ -358,6 +358,15 @@ export function fetchModels() {
   return fetchJson('/api/models');
 }
 
+// Live OpenRouter catalogue for the settings model-field autocomplete. Parallels
+// fetchModels() (same ``{models}`` shape, ``/api/<x>/models`` route). Best-effort:
+// a failed fetch yields an empty list so the field stays usable as free text.
+export function fetchOpenRouterModels() {
+  return fetchJson('/api/openrouter/models')
+    .then((data) => (data && Array.isArray(data.models) ? data.models : []))
+    .catch(() => []);
+}
+
 // Composer draft (in-progress prompt: text + pasted images) persisted
 // server-side at <workspace>/.kato-prompts.json — survives refresh, a different
 // browser, and task switches. Best-effort: a failed read yields an empty draft.

@@ -459,8 +459,9 @@ SETTINGS_SCHEMA: list[dict] = [
             ('OPENHANDS_LLM_MODEL', 'text', 'Model',
              'Model identifier with openrouter/ prefix, e.g. '
              'openrouter/openai/gpt-4o or '
-             'openrouter/anthropic/claude-3.5-haiku.',
-             {'placeholder': 'openrouter/openai/gpt-4o'}),
+             'openrouter/anthropic/claude-3.5-haiku. '
+             'Start typing to autocomplete from OpenRouter\'s live catalogue.',
+             {'placeholder': 'openrouter/openai/gpt-4o', 'datalist': 'openrouter'}),
             ('OPENHANDS_LLM_NUM_RETRIES', 'number', 'Retries',
              'Number of times to retry a failed LLM call before giving up.',
              {}),

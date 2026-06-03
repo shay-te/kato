@@ -815,6 +815,14 @@ def _register_http_routes(app: Flask) -> None:
         # show a stale version (it used to hardcode "Opus 4.7").
         return jsonify({'models': _discover_chat_models(app)})
 
+    @app.get('/api/openrouter/models')
+    def list_openrouter_models():
+        # Live OpenRouter catalogue for the settings ``OPENHANDS_LLM_MODEL``
+        # autocomplete (the field declares ``datalist: 'openrouter'``). Same shape
+        # as ``/api/models`` — ``{'models': [{id, label}]}`` — so the FE fetches it
+        # the same way; cached + fallback, so the request never fails the page.
+        return jsonify({'models': _discover_openrouter_models(app)})
+
     @app.get('/api/sessions/<task_id>/model')
     def get_session_model(task_id: str):
         return jsonify({'model': _get_task_override(app, 'TASK_MODEL_OVERRIDES', task_id)})
@@ -2354,6 +2362,23 @@ def _discover_chat_models(app: Flask) -> list:
             FALLBACK_MODELS,
         )
         return [dict(model) for model in FALLBACK_MODELS]
+
+
+def _discover_openrouter_models(app: Flask) -> list:
+    """OpenRouter models for the settings autocomplete (discovered, with fallback).
+
+    Mirrors ``_discover_chat_models``: returns ``[{id, label}]`` from the live
+    public catalogue (cached), and an empty list on any failure so the settings
+    page always renders.
+    """
+    try:
+        from kato_core_lib.helpers.openrouter_model_discovery import (
+            discover_openrouter_models,
+        )
+        return discover_openrouter_models()
+    except Exception:
+        app.logger.exception('openrouter model discovery failed')
+        return []
 
 
 def _register_post_message_route(app: Flask) -> None:

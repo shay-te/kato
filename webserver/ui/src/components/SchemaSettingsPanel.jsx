@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { fetchAllSettings, updateAllSettings } from '../api.js';
+import { fetchAllSettings, updateAllSettings, fetchOpenRouterModels } from '../api.js';
 import { useRestartingSave } from '../hooks/useRestartingSave.js';
 import { useSettingsResource } from '../hooks/useSettingsResource.js';
 import { sourceLabel } from '../utils/settingsSource.js';
@@ -141,13 +141,66 @@ export default function SchemaSettingsPanel({ sectionId }) {
 }
 
 
-function SchemaField({ field, value, onChange }) {
+// Lazy, process-wide loaders for a field's ``datalist`` autocomplete source, so a
+// large live catalogue (OpenRouter ships 300+ models) is fetched at most once and
+// shared across every field/render that asks for it.
+// Wrapped in arrows so the api.js export is only touched when a datalist field is
+// actually rendered — tests that mock api.js without this export (and never open
+// the OpenRouter field) don't trip vitest's missing-export guard at module load.
+const DATALIST_LOADERS = { openrouter: () => fetchOpenRouterModels() };
+const _datalistCache = {};
+const _datalistPromises = {};
+
+// Test-only: drop the memoised datalist results so a test can re-stub the loader.
+export function resetDatalistCacheForTests() {
+  for (const key of Object.keys(_datalistCache)) delete _datalistCache[key];
+  for (const key of Object.keys(_datalistPromises)) delete _datalistPromises[key];
+}
+
+function loadDatalist(name) {
+  if (_datalistCache[name]) {
+    return Promise.resolve(_datalistCache[name]);
+  }
+  if (!_datalistPromises[name]) {
+    const loader = DATALIST_LOADERS[name];
+    _datalistPromises[name] = (loader ? loader() : Promise.resolve([]))
+      .then((opts) => {
+        _datalistCache[name] = Array.isArray(opts) ? opts : [];
+        return _datalistCache[name];
+      })
+      .catch(() => (_datalistCache[name] = []));
+  }
+  return _datalistPromises[name];
+}
+
+// Exported for unit tests (datalist autocomplete + widget selection). Not a
+// public component — render the panel, not this, in app code.
+export function SchemaField({ field, value, onChange }) {
   const isBool = field.type === 'bool';
   const isSelect = field.type === 'select';
   const isSecret = field.type === 'secret';
   const isNumber = field.type === 'number';
   const boolChecked = String(value).toLowerCase() === 'true';
   const [tipPos, setTipPos] = useState(null);
+
+  // Live autocomplete source (e.g. OpenRouter's catalogue) for free-text fields
+  // that opt in via ``field.datalist`` — keeps the input free text, just suggested.
+  const [datalistOptions, setDatalistOptions] = useState(
+    () => (field.datalist ? _datalistCache[field.datalist] || [] : []),
+  );
+  useEffect(() => {
+    if (!field.datalist) {
+      return undefined;
+    }
+    let alive = true;
+    loadDatalist(field.datalist).then((opts) => {
+      if (alive) {
+        setDatalistOptions(opts);
+      }
+    });
+    return () => { alive = false; };
+  }, [field.datalist]);
+  const datalistId = field.datalist ? `datalist-${field.key}` : undefined;
 
   const tipText = [field.help, field.warning && `⚠ ${field.warning}`, field.danger && `⛔ ${field.danger}`].filter(Boolean).join('\n\n');
 
@@ -215,12 +268,20 @@ function SchemaField({ field, value, onChange }) {
           className="settings-drawer-input"
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          placeholder={isSecret && value ? '(set — paste to replace)' : ''}
+          placeholder={(isSecret && value) ? '(set — paste to replace)' : (field.placeholder || '')}
+          list={datalistId}
           spellCheck={false}
           autoComplete="off"
           autoCapitalize="off"
           autoCorrect="off"
         />
+      )}
+      {datalistId && (
+        <datalist id={datalistId}>
+          {datalistOptions.map((opt) => (
+            <option key={opt.id} value={opt.id}>{opt.label}</option>
+          ))}
+        </datalist>
       )}
 
       {field.help && (

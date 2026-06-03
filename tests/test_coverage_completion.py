@@ -48,6 +48,17 @@ class SettingsSchemaValidationErrorTests(unittest.TestCase):
         )
         return matching[0]
 
+    def test_openrouter_model_field_exposes_datalist_for_autocomplete(self) -> None:
+        # The UI turns ``datalist: 'openrouter'`` into a live autocomplete on the
+        # free-text model field, so the slug is never hardcoded/typo'd.
+        field = next(
+            f
+            for section in schema_utils.schema_for_api() if section['id'] == 'openrouter'
+            for f in section['fields'] if f['key'] == 'OPENHANDS_LLM_MODEL'
+        )
+        self.assertEqual(field['datalist'], 'openrouter')
+        self.assertEqual(field['placeholder'], 'openrouter/openai/gpt-4o')
+
     # ---- _check_type → 'select' branch (line 489) ----
 
     def test_select_key_rejects_value_outside_options(self) -> None:

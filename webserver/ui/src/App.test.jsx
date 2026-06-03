@@ -23,6 +23,8 @@ vi.mock('./api.js', () => ({
     { ok: true, body: { sections: [] } },
   ),
   updateAllSettings: vi.fn().mockResolvedValue({ ok: true, body: {} }),
+  // The OpenRouter settings field's live model autocomplete (SchemaField).
+  fetchOpenRouterModels: vi.fn().mockResolvedValue([]),
   fetchTaskProviders: vi.fn().mockResolvedValue({ ok: true, body: {} }),
   updateTaskProvider: vi.fn().mockResolvedValue({ ok: true, body: {} }),
   fetchGitProviders: vi.fn().mockResolvedValue({ ok: true, body: {} }),
