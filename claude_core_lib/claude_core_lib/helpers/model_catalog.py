@@ -5,20 +5,35 @@ The selectable model IDs are the stable ``claude`` CLI ALIASES — ``opus`` /
 (``--model`` help: "Provide an alias for the latest model"), so the model the host
 actually runs can never go stale. Only the human-facing LABEL can drift.
 
-We enrich the labels with the live version (e.g. "Opus 4.8") from the Anthropic
-models API when a credential is available, and fall back to version-less labels
-("Opus" / "Sonnet" / "Haiku") otherwise — so the host never ships a hardcoded stale
-version like "Opus 4.7". Best-effort and cached; never raises.
+We enrich the labels with the live version (e.g. "Opus 4.8") from two sources, in
+order of authority:
+
+1. the Anthropic models API, when a credential is available;
+2. the resolved model id the CLI already wrote into its own session logs (e.g.
+   ``claude-opus-4-8``) — a credential-free, on-disk source that reflects exactly
+   what the CLI resolves each alias to right now.
+
+When neither yields a version we fall back to version-less labels ("Opus" /
+"Sonnet" / "Haiku") — so the host never ships a hardcoded stale version like
+"Opus 4.7". Best-effort and cached; never raises.
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import urllib.request
+from pathlib import Path
 
 ANTHROPIC_MODELS_URL = 'https://api.anthropic.com/v1/models?limit=100'
 _ANTHROPIC_VERSION = '2023-06-01'
+
+# How many of the most-recently-touched session logs to scan for a resolved
+# model id. One match per family is enough (a session runs a single model), so a
+# small window covers all three families on any active install while bounding I/O.
+_SESSION_LOG_SCAN_LIMIT = 80
+_MODEL_ID_RE = re.compile(r'^claude-(opus|sonnet|haiku)-(\d+)-(\d+)')
 
 # Alias families, in display order. ``id`` is what we pass to ``claude --model``
 # (always resolves to the latest); the version-less ``label`` is the guaranteed
@@ -74,9 +89,19 @@ def _aliases_with_live_labels() -> list[dict]:
 def _latest_labels_by_family() -> dict[str, str]:
     """Map alias family → its newest display label (e.g. ``opus`` → "Opus 4.8").
 
-    Best-effort: returns ``{}`` on any failure (no credential, offline, parse
-    error) so callers fall back to the version-less labels.
+    The authoritative Anthropic models API wins per family; any family it doesn't
+    cover (e.g. no credential) is filled from the CLI's own session logs. Returns
+    ``{}`` only when both sources are empty, so callers fall back to version-less
+    labels. Best-effort — never raises.
     """
+    labels = _labels_from_models_api()
+    for family, label in _labels_from_session_logs().items():
+        labels.setdefault(family, label)
+    return labels
+
+
+def _labels_from_models_api() -> dict[str, str]:
+    """Family → display label from the Anthropic models API (``{}`` if no credential)."""
     data = _fetch_models_api()
     if not data:
         return {}
@@ -93,6 +118,97 @@ def _latest_labels_by_family() -> dict[str, str]:
             if model_id.startswith(f'claude-{family}-') and display:
                 labels[family] = _strip_claude_prefix(display)
     return labels
+
+
+def _labels_from_session_logs() -> dict[str, str]:
+    """Family → label derived from resolved model ids in the CLI's session logs.
+
+    Credential-free: the ``claude`` CLI records the concrete model it resolved an
+    alias to (e.g. ``claude-opus-4-8``) on every assistant turn it writes to
+    ``<config>/projects/**/*.jsonl``. We read the most recently touched logs and
+    keep the first id seen per family — newest file first, so that's the latest.
+    Returns ``{}`` on any failure (no logs, unreadable, parse error).
+    """
+    labels: dict[str, str] = {}
+    try:
+        logs = _recent_session_logs()
+    except Exception:
+        return {}
+    for log in logs:
+        if len(labels) == 3:
+            break
+        try:
+            found = _model_labels_in_log(log)
+        except Exception:
+            continue
+        # Newest file first, so keep the first label seen per family.
+        for family, label in found.items():
+            labels.setdefault(family, label)
+    return labels
+
+
+def _recent_session_logs() -> list[Path]:
+    """The most-recently-modified Claude session JSONLs, newest first (capped).
+
+    Honours ``CLAUDE_CONFIG_DIR`` (the CLI's own override) and defaults to
+    ``~/.claude`` — the same place the CLI writes its logs.
+    """
+    config_dir = (os.environ.get('CLAUDE_CONFIG_DIR') or '').strip()
+    base = Path(config_dir) if config_dir else Path.home() / '.claude'
+    projects = base / 'projects'
+    if not projects.is_dir():
+        return []
+    logs = [p for p in projects.glob('*/*.jsonl') if p.is_file()]
+    logs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return logs[:_SESSION_LOG_SCAN_LIMIT]
+
+
+def _model_labels_in_log(log: Path) -> dict[str, str]:
+    """Map each alias family resolved in ``log`` to its label (``{}`` if none).
+
+    The cheap ``'claude-'`` substring pre-check skips the JSON parse on lines that
+    can't hold a model id; the scan stops once all three families are seen so a
+    long transcript rarely costs more than its opening turns.
+    """
+    labels: dict[str, str] = {}
+    with log.open('r', encoding='utf-8') as handle:
+        for line in handle:
+            if 'claude-' not in line:
+                continue
+            try:
+                event = json.loads(line)
+            except Exception:
+                continue
+            parsed = _family_label_from_model_id(_model_id_of_event(event))
+            if parsed and parsed[0] not in labels:
+                labels[parsed[0]] = parsed[1]
+                if len(labels) == 3:
+                    break
+    return labels
+
+
+def _model_id_of_event(event: dict) -> str:
+    """Pull the model id off an event, whether top-level or under ``message``."""
+    if not isinstance(event, dict):
+        return ''
+    model = event.get('model')
+    if not model:
+        message = event.get('message')
+        model = message.get('model') if isinstance(message, dict) else ''
+    return str(model or '')
+
+
+def _family_label_from_model_id(model_id: str) -> tuple[str, str] | None:
+    """``"claude-opus-4-8"`` → ``("opus", "Opus 4.8")``; ``None`` if not a real id.
+
+    Trailing date segments (``claude-haiku-4-5-20251001``) are ignored — we keep
+    only the ``major.minor`` to match the API's "Family X.Y" display style.
+    """
+    match = _MODEL_ID_RE.match(model_id or '')
+    if not match:
+        return None
+    family, major, minor = match.group(1), match.group(2), match.group(3)
+    return family, f'{family.capitalize()} {major}.{minor}'
 
 
 def _strip_claude_prefix(display: str) -> str:
