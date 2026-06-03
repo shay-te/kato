@@ -106,6 +106,24 @@ class ModelCatalogTests(unittest.TestCase):
         models[0]['label'] = 'mutated'
         self.assertEqual(model_catalog.discover_models()[0]['label'], 'Opus')
 
+    def test_cache_refreshes_after_ttl(self) -> None:
+        # A new version released mid-process must surface without a restart: once
+        # the TTL lapses, discovery recomputes instead of serving the stale label.
+        calls = {'n': 0}
+
+        def builder():
+            calls['n'] += 1
+            return [{'id': 'opus', 'label': f'Opus 4.{calls["n"]}'}]
+
+        with patch.object(model_catalog, '_aliases_with_live_labels', side_effect=builder):
+            first = model_catalog.discover_models()
+            # Age the cache past its TTL.
+            with model_catalog._cache_lock:
+                model_catalog._cache_stamp -= model_catalog._CACHE_TTL_SECONDS + 1
+            second = model_catalog.discover_models()
+        self.assertEqual(calls['n'], 2)  # recomputed, not served from the stale cache
+        self.assertNotEqual(first[0]['label'], second[0]['label'])
+
     def test_auth_headers_prefers_api_key(self) -> None:
         with patch.dict(os.environ, {'ANTHROPIC_API_KEY': 'sk', 'CLAUDE_CODE_OAUTH_TOKEN': 'tok'}):
             self.assertEqual(model_catalog._auth_headers(), {'x-api-key': 'sk'})
@@ -200,6 +218,21 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertIsNone(model_catalog._family_label_from_model_id('<synthetic>'))
         self.assertIsNone(model_catalog._family_label_from_model_id(''))
         self.assertIsNone(model_catalog._family_label_from_model_id('gpt-4o'))
+
+    def test_family_label_handles_future_version_shapes(self) -> None:
+        # A future release (new minor, double-digit minor, new major, or no minor)
+        # must still parse — the label tracks whatever the CLI resolves to.
+        cases = {
+            'claude-opus-4-9': ('opus', 'Opus 4.9'),
+            'claude-opus-4-10': ('opus', 'Opus 4.10'),
+            'claude-sonnet-5-0': ('sonnet', 'Sonnet 5.0'),
+            'claude-opus-5': ('opus', 'Opus 5'),  # no minor yet
+        }
+        for model_id, expected in cases.items():
+            self.assertEqual(model_catalog._family_label_from_model_id(model_id), expected)
+        # A brand-new FAMILY (new model name) isn't one of the three CLI aliases,
+        # so it is deliberately not labelled here — it can't be selected anyway.
+        self.assertIsNone(model_catalog._family_label_from_model_id('claude-neptune-1-0'))
 
     def test_model_id_of_event_handles_both_shapes_and_junk(self) -> None:
         self.assertEqual(model_catalog._model_id_of_event({'model': 'x'}), 'x')

@@ -73,6 +73,19 @@ class OpenRouterModelDiscoveryTests(unittest.TestCase):
             disc.discover_openrouter_models()
             urlopen.assert_called_once()  # second call served from cache
 
+    def test_cache_refreshes_after_ttl(self) -> None:
+        first_rows = {'data': [{'id': 'a/b', 'name': 'AB'}]}
+        second_rows = {'data': [{'id': 'c/d', 'name': 'CD'}]}
+        with patch('urllib.request.urlopen', return_value=_urlopen_returning(first_rows)):
+            first = disc.discover_openrouter_models()
+        # Age the cache past its TTL, then a refreshed catalogue is picked up.
+        with disc._cache_lock:
+            disc._cache_stamp -= disc._CACHE_TTL_SECONDS + 1
+        with patch('urllib.request.urlopen', return_value=_urlopen_returning(second_rows)):
+            second = disc.discover_openrouter_models()
+        self.assertEqual(first[0]['id'], 'openrouter/a/b')
+        self.assertEqual(second[0]['id'], 'openrouter/c/d')
+
     def test_returned_list_is_a_copy(self) -> None:
         with patch('urllib.request.urlopen', side_effect=OSError('offline')):
             models = disc.discover_openrouter_models()

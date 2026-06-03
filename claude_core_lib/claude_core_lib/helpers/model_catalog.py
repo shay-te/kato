@@ -23,6 +23,7 @@ import json
 import os
 import re
 import threading
+import time
 import urllib.request
 from pathlib import Path
 
@@ -33,7 +34,15 @@ _ANTHROPIC_VERSION = '2023-06-01'
 # model id. One match per family is enough (a session runs a single model), so a
 # small window covers all three families on any active install while bounding I/O.
 _SESSION_LOG_SCAN_LIMIT = 80
-_MODEL_ID_RE = re.compile(r'^claude-(opus|sonnet|haiku)-(\d+)-(\d+)')
+# Minor is optional so a future ``claude-opus-5`` still labels as "Opus 5"; an
+# extra ``-<date>`` suffix (``claude-haiku-4-5-20251001``) is ignored.
+_MODEL_ID_RE = re.compile(r'^claude-(opus|sonnet|haiku)-(\d+)(?:-(\d+))?')
+
+# The catalog changes only when Anthropic ships a model, so we cache — but with a
+# TTL, not forever. A permanent process cache meant a freshly released version
+# (or a newly-run one picked up from the session logs) wouldn't show until kato
+# was restarted; the TTL lets the label self-heal within minutes instead.
+_CACHE_TTL_SECONDS = 600.0
 
 # Alias families, in display order. ``id`` is what we pass to ``claude --model``
 # (always resolves to the latest); the version-less ``label`` is the guaranteed
@@ -46,6 +55,7 @@ _ALIASES = (
 FALLBACK_MODELS = tuple(dict(a) for a in _ALIASES)
 
 _cache: list[dict] | None = None
+_cache_stamp: float = 0.0
 _cache_lock = threading.Lock()
 
 
@@ -53,25 +63,28 @@ def discover_models() -> list[dict]:
     """Return ``[{id, label[, default]}]`` for the composer's model picker.
 
     IDs are the stable aliases; labels carry the live version when the Anthropic
-    models API is reachable with the host's configured credential, else version-less.
-    Cached process-wide (the catalog changes rarely; a restart re-discovers).
-    Always non-empty, never raises.
+    models API is reachable with the host's configured credential, else from the
+    most recent CLI session log, else version-less. Cached with a short TTL so a
+    newly-released version surfaces without a restart. Always non-empty, never raises.
     """
-    global _cache
+    global _cache, _cache_stamp
+    now = time.monotonic()
     with _cache_lock:
-        if _cache is not None:
+        if _cache is not None and (now - _cache_stamp) < _CACHE_TTL_SECONDS:
             return [dict(m) for m in _cache]
     models = _aliases_with_live_labels()
     with _cache_lock:
         _cache = models
+        _cache_stamp = time.monotonic()
     return [dict(m) for m in models]
 
 
 def reset_models_cache() -> None:
     """Clear the discovery cache (tests / a model-list change mid-process)."""
-    global _cache
+    global _cache, _cache_stamp
     with _cache_lock:
         _cache = None
+        _cache_stamp = 0.0
 
 
 def _aliases_with_live_labels() -> list[dict]:
@@ -208,7 +221,8 @@ def _family_label_from_model_id(model_id: str) -> tuple[str, str] | None:
     if not match:
         return None
     family, major, minor = match.group(1), match.group(2), match.group(3)
-    return family, f'{family.capitalize()} {major}.{minor}'
+    version = f'{major}.{minor}' if minor is not None else major
+    return family, f'{family.capitalize()} {version}'
 
 
 def _strip_claude_prefix(display: str) -> str:

@@ -15,10 +15,16 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import urllib.request
 
 OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models'
 _PREFIX = 'openrouter/'
+
+# Cache the catalogue, but with a TTL rather than forever — OpenRouter adds models
+# frequently, so a newly-listed model surfaces within minutes instead of needing a
+# kato restart.
+_CACHE_TTL_SECONDS = 600.0
 
 # Fallback only — used when the OpenRouter API can't be reached (offline, tests).
 # Matches the slugs the settings field documents as examples; live discovery
@@ -30,6 +36,7 @@ FALLBACK_OPENROUTER_MODELS = (
 )
 
 _cache: list[dict] | None = None
+_cache_stamp: float = 0.0
 _cache_lock = threading.Lock()
 
 
@@ -37,24 +44,28 @@ def discover_openrouter_models() -> list[dict]:
     """Return ``[{id, label}]`` for the OpenRouter model autocomplete.
 
     ``id`` is the full ``openrouter/<slug>`` string the operator stores; ``label``
-    is OpenRouter's display name. Live from the public catalog, cached process-wide
-    (it changes rarely; a restart re-discovers). Always non-empty, never raises.
+    is OpenRouter's display name. Live from the public catalog, cached with a short
+    TTL so newly-listed models surface without a restart. Always non-empty, never
+    raises.
     """
-    global _cache
+    global _cache, _cache_stamp
+    now = time.monotonic()
     with _cache_lock:
-        if _cache is not None:
+        if _cache is not None and (now - _cache_stamp) < _CACHE_TTL_SECONDS:
             return [dict(m) for m in _cache]
     models = _fetch_catalog() or [dict(m) for m in FALLBACK_OPENROUTER_MODELS]
     with _cache_lock:
         _cache = models
+        _cache_stamp = time.monotonic()
     return [dict(m) for m in models]
 
 
 def reset_openrouter_models_cache() -> None:
     """Clear the discovery cache (tests / a catalog refresh mid-process)."""
-    global _cache
+    global _cache, _cache_stamp
     with _cache_lock:
         _cache = None
+        _cache_stamp = 0.0
 
 
 def _fetch_catalog(timeout: float = 6.0) -> list[dict] | None:
