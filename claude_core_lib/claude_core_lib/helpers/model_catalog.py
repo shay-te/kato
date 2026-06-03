@@ -138,26 +138,29 @@ def _labels_from_session_logs() -> dict[str, str]:
 
     Credential-free: the ``claude`` CLI records the concrete model it resolved an
     alias to (e.g. ``claude-opus-4-8``) on every assistant turn it writes to
-    ``<config>/projects/**/*.jsonl``. We read the most recently touched logs and
-    keep the first id seen per family — newest file first, so that's the latest.
+    ``<config>/projects/**/*.jsonl``. We scan the most recently touched logs and,
+    per family, keep the **highest version** seen — NOT whichever log was touched
+    most recently. The alias always resolves to the latest, so the right label is
+    the newest version the host has actually run; selecting by mtime would wrongly
+    downgrade opus back to 4.7 the moment an old 4.7 session is resumed/re-touched.
     Returns ``{}`` on any failure (no logs, unreadable, parse error).
     """
-    labels: dict[str, str] = {}
+    best: dict[str, tuple[int, int, str]] = {}
     try:
         logs = _recent_session_logs()
     except Exception:
         return {}
     for log in logs:
-        if len(labels) == 3:
-            break
         try:
-            found = _model_labels_in_log(log)
+            found = _model_versions_in_log(log)
         except Exception:
             continue
-        # Newest file first, so keep the first label seen per family.
-        for family, label in found.items():
-            labels.setdefault(family, label)
-    return labels
+        for family, candidate in found.items():
+            current = best.get(family)
+            # Compare on (major, minor); keep the higher version's label.
+            if current is None or candidate[:2] > current[:2]:
+                best[family] = candidate
+    return {family: candidate[2] for family, candidate in best.items()}
 
 
 def _recent_session_logs() -> list[Path]:
@@ -176,14 +179,15 @@ def _recent_session_logs() -> list[Path]:
     return logs[:_SESSION_LOG_SCAN_LIMIT]
 
 
-def _model_labels_in_log(log: Path) -> dict[str, str]:
-    """Map each alias family resolved in ``log`` to its label (``{}`` if none).
+def _model_versions_in_log(log: Path) -> dict[str, tuple[int, int, str]]:
+    """Map each family resolved in ``log`` to ``(major, minor, label)`` (``{}`` if none).
 
-    The cheap ``'claude-'`` substring pre-check skips the JSON parse on lines that
-    can't hold a model id; the scan stops once all three families are seen so a
-    long transcript rarely costs more than its opening turns.
+    First occurrence per family wins within a file (a session runs one model); the
+    cheap ``'claude-'`` substring pre-check skips the JSON parse on lines that can't
+    hold a model id, and the scan stops once all three families are seen so a long
+    transcript rarely costs more than its opening turns.
     """
-    labels: dict[str, str] = {}
+    found: dict[str, tuple[int, int, str]] = {}
     with log.open('r', encoding='utf-8') as handle:
         for line in handle:
             if 'claude-' not in line:
@@ -192,12 +196,13 @@ def _model_labels_in_log(log: Path) -> dict[str, str]:
                 event = json.loads(line)
             except Exception:
                 continue
-            parsed = _family_label_from_model_id(_model_id_of_event(event))
-            if parsed and parsed[0] not in labels:
-                labels[parsed[0]] = parsed[1]
-                if len(labels) == 3:
+            parsed = _family_version_from_model_id(_model_id_of_event(event))
+            if parsed and parsed[0] not in found:
+                family, major, minor, label = parsed
+                found[family] = (major, minor, label)
+                if len(found) == 3:
                     break
-    return labels
+    return found
 
 
 def _model_id_of_event(event: dict) -> str:
@@ -211,18 +216,29 @@ def _model_id_of_event(event: dict) -> str:
     return str(model or '')
 
 
-def _family_label_from_model_id(model_id: str) -> tuple[str, str] | None:
-    """``"claude-opus-4-8"`` → ``("opus", "Opus 4.8")``; ``None`` if not a real id.
+def _family_version_from_model_id(model_id: str) -> tuple[str, int, int, str] | None:
+    """``"claude-opus-4-8"`` → ``("opus", 4, 8, "Opus 4.8")``; ``None`` if not a real id.
 
-    Trailing date segments (``claude-haiku-4-5-20251001``) are ignored — we keep
-    only the ``major.minor`` to match the API's "Family X.Y" display style.
+    The numeric ``(major, minor)`` lets callers pick the highest version; the label
+    matches the API's "Family X.Y" style. A missing minor sorts as 0 ("Opus 5");
+    trailing date segments (``claude-haiku-4-5-20251001``) are ignored.
     """
     match = _MODEL_ID_RE.match(model_id or '')
     if not match:
         return None
     family, major, minor = match.group(1), match.group(2), match.group(3)
     version = f'{major}.{minor}' if minor is not None else major
-    return family, f'{family.capitalize()} {version}'
+    return family, int(major), int(minor) if minor is not None else 0, \
+        f'{family.capitalize()} {version}'
+
+
+def _family_label_from_model_id(model_id: str) -> tuple[str, str] | None:
+    """``"claude-opus-4-8"`` → ``("opus", "Opus 4.8")``; ``None`` if not a real id."""
+    parsed = _family_version_from_model_id(model_id)
+    if parsed is None:
+        return None
+    family, _major, _minor, label = parsed
+    return family, label
 
 
 def _strip_claude_prefix(display: str) -> str:

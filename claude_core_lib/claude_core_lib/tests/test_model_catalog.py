@@ -168,7 +168,7 @@ class ModelCatalogTests(unittest.TestCase):
         labels = {m['id']: m['label'] for m in models}
         self.assertEqual(labels['opus'], 'Opus 4.8')  # API authoritative, not the disk 4.7
 
-    def test_newest_log_wins_for_a_family(self) -> None:
+    def test_highest_version_wins_for_a_family(self) -> None:
         old = self._write_session_log('old.jsonl', [
             {'type': 'assistant', 'message': {'model': 'claude-opus-4-7'}},
         ])
@@ -179,6 +179,34 @@ class ModelCatalogTests(unittest.TestCase):
         os.utime(new, (2_000, 2_000))
         labels = model_catalog._labels_from_session_logs()
         self.assertEqual(labels['opus'], 'Opus 4.8')
+
+    def test_resuming_an_old_version_does_not_downgrade_the_label(self) -> None:
+        # Regression for the "still shows Opus 4.7" incident: an OLD 4.7 session
+        # that gets resumed/re-touched becomes the newest-mtime log, but 4.8 has
+        # already been run — the label must stay 4.8 (highest version), not follow
+        # mtime back down to 4.7.
+        ran_48 = self._write_session_log('ran48.jsonl', [
+            {'type': 'assistant', 'message': {'model': 'claude-opus-4-8'}},
+        ])
+        resumed_47 = self._write_session_log('resumed47.jsonl', [
+            {'type': 'assistant', 'message': {'model': 'claude-opus-4-7'}},
+        ])
+        os.utime(ran_48, (1_000, 1_000))       # older
+        os.utime(resumed_47, (9_000, 9_000))   # newest mtime, but lower version
+        labels = model_catalog._labels_from_session_logs()
+        self.assertEqual(labels['opus'], 'Opus 4.8')
+
+    def test_double_digit_minor_beats_single_digit(self) -> None:
+        a = self._write_session_log('a.jsonl', [
+            {'type': 'assistant', 'message': {'model': 'claude-opus-4-9'}},
+        ])
+        b = self._write_session_log('b.jsonl', [
+            {'type': 'assistant', 'message': {'model': 'claude-opus-4-10'}},
+        ])
+        os.utime(a, (9_000, 9_000))   # 4.9 is newer by mtime
+        os.utime(b, (1_000, 1_000))   # 4.10 is older by mtime but higher version
+        labels = model_catalog._labels_from_session_logs()
+        self.assertEqual(labels['opus'], 'Opus 4.10')
 
     def test_session_logs_skip_synthetic_and_corrupt_lines(self) -> None:
         self._write_session_log('s.jsonl', [
@@ -218,6 +246,18 @@ class ModelCatalogTests(unittest.TestCase):
         self.assertIsNone(model_catalog._family_label_from_model_id('<synthetic>'))
         self.assertIsNone(model_catalog._family_label_from_model_id(''))
         self.assertIsNone(model_catalog._family_label_from_model_id('gpt-4o'))
+
+    def test_family_version_returns_numeric_major_minor(self) -> None:
+        self.assertEqual(
+            model_catalog._family_version_from_model_id('claude-opus-4-8'),
+            ('opus', 4, 8, 'Opus 4.8'),
+        )
+        # No minor → sorts as 0 but the label stays "Opus 5".
+        self.assertEqual(
+            model_catalog._family_version_from_model_id('claude-opus-5'),
+            ('opus', 5, 0, 'Opus 5'),
+        )
+        self.assertIsNone(model_catalog._family_version_from_model_id('gpt-4o'))
 
     def test_family_label_handles_future_version_shapes(self) -> None:
         # A future release (new minor, double-digit minor, new major, or no minor)
