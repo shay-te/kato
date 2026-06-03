@@ -36,6 +36,7 @@ import {
   faComment,
   faCopy,
   faThumbtack,
+  faTrash,
 } from '@fortawesome/free-solid-svg-icons';
 
 const ICONS = {
@@ -88,6 +89,8 @@ const ICONS = {
   // renders this rotated 45° via CSS (.tab-pin-btn — see app.css)
   // so a single icon does both states without a second asset.
   'pin': faThumbtack,
+  // Delete glyph for the inline-comment trash button (collapsed header).
+  'trash': faTrash,
 };
 
 export default function Icon({ name, className = '', spin = false }) {

@@ -4134,6 +4134,21 @@ body.kato-resizing #left-pane-resizer::before {
   outline: none;
 }
 
+/* Trash button in the COLLAPSED comment header — delete without expanding
+   first. Reuses .diff-file-comment-collapse's size/shape; danger-tinted on
+   hover to match the body's Delete action. It carries the margin-left:auto
+   that pushes the action group to the right edge, so the chevron right after
+   it must drop ITS auto or a gap opens between the two. */
+.diff-file-comment-trash:hover {
+  background: rgba(127, 29, 29, 0.18);
+  border-color: rgba(220, 38, 38, 0.55);
+  color: #fca5a5;
+}
+
+.diff-file-comment-trash + .diff-file-comment-collapse {
+  margin-left: 0;
+}
+
 .diff-file-comment-body {
   color: #f5f5f7;
   font-size: 13px;

@@ -7,6 +7,7 @@ import { readDraftByKey, writeDraftByKey } from '../utils/composerDraft.js';
 import { toast } from '../stores/toastStore.js';
 import { useAutoSizeTextarea } from '../hooks/useAutoSizeTextarea.js';
 import { useCommentCollapse } from '../hooks/useCommentCollapse.js';
+import Icon from './Icon.jsx';
 
 // Bubble + thread builder + form, shared between the file-level
 // comments panel and the per-line widget rendered through
@@ -162,6 +163,20 @@ export function CommentBubble({
           >
             {replyCount === 1 ? '1 reply' : `${replyCount} replies`}
           </span>
+        )}
+        {/* Delete a comment WITHOUT expanding it first — same confirm + handler
+            as the body's Delete button. Local comments only (remote ones live
+            on the git host). */}
+        {collapsed && comment.source === 'local' && typeof onDelete === 'function' && (
+          <button
+            type="button"
+            className="diff-file-comment-collapse diff-file-comment-trash"
+            onClick={onDelete}
+            aria-label="Delete comment"
+            title="Delete comment"
+          >
+            <Icon name="trash" />
+          </button>
         )}
         <button
           type="button"

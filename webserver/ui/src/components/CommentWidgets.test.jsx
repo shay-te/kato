@@ -185,6 +185,51 @@ describe('CommentBubble — rendering', () => {
     // parent <article>, so we just confirm no-crash + author shows.
     expect(container).toBeInTheDocument();
   });
+
+  test('collapsed local comment shows a trash button that deletes without expanding', () => {
+    const onDelete = vi.fn();
+    render(
+      <CommentBubble
+        comment={_comment({ source: 'local' })}
+        isRoot={true}
+        collapsed={true}
+        onToggleCollapsed={() => {}}
+        onDelete={onDelete}
+      />,
+    );
+    const trash = screen.getByRole('button', { name: /delete comment/i });
+    fireEvent.click(trash);
+    expect(onDelete).toHaveBeenCalled();
+    // Collapsed: the body (and its "Delete" text action) is not rendered.
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+  });
+
+  test('collapsed REMOTE comment shows no trash (delete lives on the git host)', () => {
+    render(
+      <CommentBubble
+        comment={_comment({ source: 'remote', author: 'reviewer-bot' })}
+        isRoot={true}
+        collapsed={true}
+        onToggleCollapsed={() => {}}
+        onDelete={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: /delete comment/i })).toBeNull();
+  });
+
+  test('expanded comment has no collapsed-header trash — it uses the body Delete', () => {
+    render(
+      <CommentBubble
+        comment={_comment({ source: 'local' })}
+        isRoot={true}
+        collapsed={false}
+        onToggleCollapsed={() => {}}
+        onDelete={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: 'Delete comment' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+  });
 });
 
 
