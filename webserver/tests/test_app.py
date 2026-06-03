@@ -962,6 +962,39 @@ class ModelEndpointTests(unittest.TestCase):
         defaults = [m['id'] for m in body['models'] if m.get('default')]
         self.assertEqual(defaults, ['sonnet'])
 
+    def test_models_default_flag_follows_configured_runner_model(self):
+        # When the chat runner is configured with a model (KATO_CLAUDE_MODEL),
+        # /api/models must flag THAT model as default — that's the one spawn falls
+        # back to when a task has no override, and the composer selects it.
+        from claude_core_lib.claude_core_lib.helpers.model_catalog import reset_models_cache
+        reset_models_cache()
+        self.addCleanup(reset_models_cache)
+        runner = SimpleNamespace(_defaults=SimpleNamespace(binary='claude', model='opus'))
+        self.app.config['PLANNING_SESSION_RUNNER'] = runner
+        body = self.client.get('/api/models').get_json()
+        defaults = [m['id'] for m in body['models'] if m.get('default')]
+        self.assertEqual(defaults, ['opus'])  # moved off sonnet onto the configured opus
+
+    def test_models_default_unchanged_when_no_runner_model_configured(self):
+        from claude_core_lib.claude_core_lib.helpers.model_catalog import reset_models_cache
+        reset_models_cache()
+        self.addCleanup(reset_models_cache)
+        # No runner / empty model => CLI default kept (sonnet).
+        self.app.config['PLANNING_SESSION_RUNNER'] = SimpleNamespace(
+            _defaults=SimpleNamespace(binary='claude', model=''),
+        )
+        body = self.client.get('/api/models').get_json()
+        self.assertEqual([m['id'] for m in body['models'] if m.get('default')], ['sonnet'])
+
+    def test_match_model_alias_handles_alias_full_id_and_miss(self):
+        from kato_webserver.app import _match_model_alias
+        ids = ['opus', 'sonnet', 'haiku']
+        self.assertEqual(_match_model_alias('opus', ids), 'opus')
+        self.assertEqual(_match_model_alias('OPUS', ids), 'opus')
+        self.assertEqual(_match_model_alias('claude-opus-4-8', ids), 'opus')  # full id → family
+        self.assertEqual(_match_model_alias('gpt-5.5', ['gpt-5.5']), 'gpt-5.5')  # codex direct
+        self.assertEqual(_match_model_alias('mystery-model', ids), '')  # no match
+
     def test_get_openrouter_models_returns_catalog(self):
         from unittest.mock import patch
         from kato_core_lib.helpers import openrouter_model_discovery as disc

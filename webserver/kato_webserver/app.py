@@ -2351,17 +2351,72 @@ def _discover_chat_models(app: Flask) -> list:
             from codex_core_lib.codex_core_lib.helpers.model_discovery import (
                 discover_codex_models,
             )
-            return discover_codex_models()
-        from claude_core_lib.claude_core_lib.helpers.model_catalog import (
-            discover_models,
-        )
-        return discover_models()
+            models = discover_codex_models()
+        else:
+            from claude_core_lib.claude_core_lib.helpers.model_catalog import (
+                discover_models,
+            )
+            models = discover_models()
     except Exception:
         app.logger.exception('model discovery failed; using fallback')
         from claude_core_lib.claude_core_lib.helpers.model_catalog import (
             FALLBACK_MODELS,
         )
-        return [dict(model) for model in FALLBACK_MODELS]
+        models = [dict(model) for model in FALLBACK_MODELS]
+    return _apply_configured_default(app, models)
+
+
+def _configured_chat_model(app: Flask) -> str:
+    """The model the chat runner falls back to when a task has no override.
+
+    This is ``runner._defaults.model`` — i.e. what spawn uses as ``model or
+    self._defaults.model``. Empty string means "no configured model", in which
+    case the CLI picks its own default (which ``discover`` already flags).
+    """
+    defaults = _chat_runner_defaults(app)
+    return str(getattr(defaults, 'model', '') or '').strip() if defaults else ''
+
+
+def _apply_configured_default(app: Flask, models: list) -> list:
+    """Re-point the ``default`` flag onto the model the runner actually falls back to.
+
+    The composer now shows the default-flagged model (instead of an ambiguous
+    "Default" entry) when a task has no per-task override, so that flag must name
+    the model spawn would really use: ``runner._defaults.model`` if configured,
+    otherwise the CLI's own default (whatever discovery already flagged). If the
+    configured value doesn't match one of the offered ids, the existing flag is
+    left untouched.
+    """
+    configured = _configured_chat_model(app)
+    if not configured:
+        return models
+    target = _match_model_alias(configured, [m.get('id') for m in models])
+    if not target:
+        return models
+    adjusted = []
+    for model in models:
+        model = dict(model)
+        model.pop('default', None)
+        if model.get('id') == target:
+            model['default'] = True
+        adjusted.append(model)
+    return adjusted
+
+
+def _match_model_alias(configured: str, ids: list) -> str:
+    """Map a configured model value to one of the offered option ids, or ''.
+
+    Matches exactly first (``opus`` → ``opus``; a codex slug → itself), then by
+    Claude family so a full id like ``claude-opus-4-8`` still resolves to the
+    ``opus`` alias the picker offers.
+    """
+    candidate = (configured or '').strip().lower()
+    if candidate in ids:
+        return candidate
+    for family in ('opus', 'sonnet', 'haiku'):
+        if family in ids and (candidate == family or candidate.startswith(f'claude-{family}')):
+            return family
+    return ''
 
 
 def _discover_openrouter_models(app: Flask) -> list:
@@ -2957,13 +3012,23 @@ def _advance_task_comments_after_result(event, agent_service, task_id: str) -> N
     success = not bool(raw.get('is_error', False))
     result_text = str(raw.get('result') or '')
     _complete_in_progress_task_comments(
-        agent_service, task_id, success, result_text=result_text,
+        agent_service,
+        task_id,
+        success,
+        result_text=result_text,
+        result_received_at_epoch=float(
+            getattr(event, 'received_at_epoch', 0.0) or 0.0,
+        ),
     )
     _drain_queued_task_comment(agent_service, task_id)
 
 
 def _complete_in_progress_task_comments(
-    agent_service, task_id: str, success: bool, result_text: str = '',
+    agent_service,
+    task_id: str,
+    success: bool,
+    result_text: str = '',
+    result_received_at_epoch: float = 0.0,
 ) -> None:
     complete = getattr(
         agent_service, 'complete_in_progress_task_comments', None,
@@ -2971,7 +3036,12 @@ def _complete_in_progress_task_comments(
     if not callable(complete):
         return
     try:
-        complete(task_id, success=success, result_text=result_text)
+        complete(
+            task_id,
+            success=success,
+            result_text=result_text,
+            result_received_at_epoch=result_received_at_epoch,
+        )
     except Exception:
         logging.getLogger(__name__).exception(
             'completing in-progress comments failed for task %s', task_id,

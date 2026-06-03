@@ -430,10 +430,9 @@ const MessageForm = forwardRef(function MessageForm({
               id="model-selector"
               tooltip="Model used for the next session spawn. Takes effect when Claude is re-spawned."
               ariaLabel="Select model"
-              value={selectedModel}
+              value={effectiveModelId(availableModels, selectedModel)}
               onChange={onModelChange}
             >
-              <option value="">Default</option>
               {availableModels.map((m) => (
                 <option key={m.id} value={m.id}>{m.label}</option>
               ))}
@@ -477,6 +476,19 @@ export default MessageForm;
 // one component — identical markup, identical ``.composer-select``
 // styling (see app.scss). Keep the per-instance ``id`` for tests and
 // value targeting; everything visual lives on the shared class.
+// The model dropdown shows a concrete model, never an ambiguous "Default":
+// with no per-task override we select the model the backend flags as the
+// default (``default: true`` — the one spawn actually falls back to), so the
+// operator always sees the model that will run rather than the word "Default".
+function effectiveModelId(models, selected) {
+  if (selected) {
+    return selected;
+  }
+  const flagged = models.find((m) => m.default);
+  return (flagged || models[0] || {}).id || '';
+}
+
+
 function ComposerSelect({ id, value, onChange, tooltip, ariaLabel, children }) {
   return (
     <select

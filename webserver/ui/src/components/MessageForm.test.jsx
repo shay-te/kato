@@ -417,6 +417,36 @@ describe('MessageForm — model selector', () => {
       .not.toBeInTheDocument();
   });
 
+  test('with no override, selects the default-flagged model and shows no "Default" option', () => {
+    renderForm({
+      taskId: 'T1',
+      availableModels: [
+        { id: 'opus', label: 'Opus 4.8' },
+        { id: 'sonnet', label: 'Sonnet 4.6', default: true },
+        { id: 'haiku', label: 'Haiku' },
+      ],
+      selectedModel: '',
+    });
+    const select = screen.getByRole('combobox', { name: /select model/i });
+    // The actual default model is shown selected — not an ambiguous "Default".
+    expect(select).toHaveValue('sonnet');
+    expect(screen.queryByRole('option', { name: 'Default' })).not.toBeInTheDocument();
+    const labels = [...select.querySelectorAll('option')].map((o) => o.textContent);
+    expect(labels).toEqual(['Opus 4.8', 'Sonnet 4.6', 'Haiku']);
+  });
+
+  test('an explicit per-task override wins over the default flag', () => {
+    renderForm({
+      taskId: 'T1',
+      availableModels: [
+        { id: 'opus', label: 'Opus 4.8' },
+        { id: 'sonnet', label: 'Sonnet 4.6', default: true },
+      ],
+      selectedModel: 'opus',
+    });
+    expect(screen.getByRole('combobox', { name: /select model/i })).toHaveValue('opus');
+  });
+
   test('changing the selected model fires onModelChange', () => {
     const onModelChange = vi.fn();
     renderForm({
