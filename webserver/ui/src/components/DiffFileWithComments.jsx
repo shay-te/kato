@@ -56,6 +56,7 @@ export function splitCommentsForDisplay(comments) {
   const fileLevel = [];
   const allComments = Array.isArray(comments) ? comments : [];
   const byId = new Map();
+  const rootById = new Map();
   const outdatedRoots = new Set();
   for (const comment of allComments) {
     byId.set(String(comment.id || ''), comment);
@@ -75,9 +76,12 @@ export function splitCommentsForDisplay(comments) {
     return String(current?.id || '');
   }
   for (const comment of allComments) {
+    rootById.set(String(comment.id || ''), rootIdOf(comment));
+  }
+  for (const comment of allComments) {
     const ln = Number(comment.line);
     const isLineTarget = Number.isFinite(ln) && (ln >= 0 || isOldSideEncoded(ln));
-    const isOutdatedThread = outdatedRoots.has(rootIdOf(comment));
+    const isOutdatedThread = outdatedRoots.has(rootById.get(String(comment.id || '')));
     if (!comment.outdated && !isOutdatedThread && isLineTarget) {
       if (!byLine.has(ln)) { byLine.set(ln, []); }
       byLine.get(ln).push(comment);

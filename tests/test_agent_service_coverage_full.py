@@ -82,9 +82,10 @@ class CommentAnchorOutdatedTests(unittest.TestCase):
             anchor_line_hash=original,
         )
         cache: dict = {}
-        with unittest.mock.patch.object(service, '_file_line_count', return_value=3), \
-             unittest.mock.patch.object(service, '_file_line_text',
-                                        return_value='changed line'):
+        with unittest.mock.patch.object(
+            service, '_file_lines',
+            return_value=['line one', 'changed line', 'line three'],
+        ):
             self.assertTrue(
                 service._comment_anchor_is_outdated('PROJ-1', record, cache)
             )
@@ -97,9 +98,10 @@ class CommentAnchorOutdatedTests(unittest.TestCase):
             anchor_line_hash=original,
         )
         cache: dict = {}
-        with unittest.mock.patch.object(service, '_file_line_count', return_value=3), \
-             unittest.mock.patch.object(service, '_file_line_text',
-                                        return_value='same line'):
+        with unittest.mock.patch.object(
+            service, '_file_lines',
+            return_value=['line one', 'same line', 'line three'],
+        ):
             self.assertFalse(
                 service._comment_anchor_is_outdated('PROJ-1', record, cache)
             )

@@ -829,23 +829,18 @@ class AgentService(MissionStepLoggerMixin, Service):
         file_path = str(getattr(record, 'file_path', '') or '').strip()
         if not repo_id or not file_path:
             return False
-        count_key = ('count', repo_id, file_path)
-        if count_key not in cache:
-            cache[count_key] = self._file_line_count(task_id, repo_id, file_path)
-        count = cache[count_key]
-        if count is not None and line > count:
+        lines_key = ('lines', repo_id, file_path)
+        if lines_key not in cache:
+            cache[lines_key] = self._file_lines(task_id, repo_id, file_path)
+        lines = cache[lines_key]
+        if lines is None:
+            return False
+        if line > len(lines):
             return True
         original_hash = str(getattr(record, 'anchor_line_hash', '') or '')
         if not original_hash:
             return False
-        text_key = ('text', repo_id, file_path, line)
-        if text_key not in cache:
-            cache[text_key] = self._file_line_text(
-                task_id, repo_id, file_path, line,
-            )
-        current_text = cache[text_key]
-        if current_text is None:
-            return False
+        current_text = lines[line - 1]
         return original_hash != self._comment_anchor_line_hash(current_text)
 
     def _comment_anchor_line_hash(self, text: str) -> str:
@@ -856,25 +851,25 @@ class AgentService(MissionStepLoggerMixin, Service):
 
     def _file_line_count(self, task_id: str, repo_id: str, file_path: str) -> int | None:
         """Line count of a workspace file, or None when it can't be read."""
-        if self._workspace_manager is None:
-            return None
-        try:
-            repo_path = self._workspace_manager.repository_path(task_id, repo_id)
-        except Exception:
-            return None
-        target = repo_path / file_path
-        try:
-            if not target.is_file():
-                return None
-            with target.open('r', encoding='utf-8', errors='replace') as handle:
-                return sum(1 for _ in handle)
-        except Exception:
-            return None
+        lines = self._file_lines(task_id, repo_id, file_path)
+        return None if lines is None else len(lines)
 
     def _file_line_text(
         self, task_id: str, repo_id: str, file_path: str, line: int,
     ) -> str | None:
         """Text of a 1-based workspace file line, without the newline."""
+        lines = self._file_lines(task_id, repo_id, file_path)
+        if lines is None:
+            return None
+        index = int(line) - 1
+        if index < 0 or index >= len(lines):
+            return None
+        return lines[index]
+
+    def _file_lines(
+        self, task_id: str, repo_id: str, file_path: str,
+    ) -> list[str] | None:
+        """Workspace file lines without newlines, or None when unreadable."""
         if self._workspace_manager is None:
             return None
         try:
@@ -886,12 +881,9 @@ class AgentService(MissionStepLoggerMixin, Service):
             if not target.is_file():
                 return None
             with target.open('r', encoding='utf-8', errors='replace') as handle:
-                for index, text in enumerate(handle, start=1):
-                    if index == int(line):
-                        return text.rstrip('\r\n')
+                return [text.rstrip('\r\n') for text in handle]
         except Exception:
             return None
-        return None
 
     def add_task_comment(
         self,

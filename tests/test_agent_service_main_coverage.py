@@ -1011,7 +1011,8 @@ class ListTaskCommentsTests(unittest.TestCase):
         )
         store.list.return_value = [gone, here]
         with patch.object(service, '_comment_store_for', return_value=store), \
-             patch.object(service, '_file_line_count', return_value=10):
+             patch.object(service, '_file_lines',
+                          return_value=['line'] * 10):
             result = service.list_task_comments('T1')
         by_id = {c['id']: c for c in result}
         self.assertTrue(by_id['c1']['outdated'])
@@ -1032,11 +1033,37 @@ class ListTaskCommentsTests(unittest.TestCase):
         )
         store.list.return_value = [file_level, unreadable]
         with patch.object(service, '_comment_store_for', return_value=store), \
-             patch.object(service, '_file_line_count', return_value=None):
+             patch.object(service, '_file_lines', return_value=None):
             result = service.list_task_comments('T1')
         # File-level never outdated; unreadable file => conservative False.
         self.assertFalse(result[0]['outdated'])
         self.assertFalse(result[1]['outdated'])
+
+    def test_comment_anchor_detection_reads_each_file_once(self) -> None:
+        from kato_core_lib.comment_core_lib import CommentRecord
+
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        store.list.return_value = [
+            CommentRecord(
+                id='c1', body='x', repo_id='r1', author='a', source='local',
+                file_path='f.py', line=2,
+                anchor_line_hash=service._comment_anchor_line_hash('two'),
+            ),
+            CommentRecord(
+                id='c2', body='y', repo_id='r1', author='a', source='local',
+                file_path='f.py', line=3,
+                anchor_line_hash=service._comment_anchor_line_hash('three'),
+            ),
+        ]
+        with patch.object(service, '_comment_store_for', return_value=store), \
+             patch.object(
+                 service, '_file_lines', return_value=['one', 'two', 'three'],
+             ) as file_lines:
+            result = service.list_task_comments('T1')
+        self.assertFalse(result[0]['outdated'])
+        self.assertFalse(result[1]['outdated'])
+        file_lines.assert_called_once_with('T1', 'r1', 'f.py')
 
 
 class AddTaskCommentTests(unittest.TestCase):

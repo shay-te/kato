@@ -170,6 +170,23 @@ describe('DiffPane — renders ALL files, scrolls to the target', () => {
     });
   });
 
+  test('does not reparse unchanged diff payloads on workspace refresh', async () => {
+    const payload = { diffs: [] };
+    fetchDiff.mockResolvedValue(payload);
+    parseRepoDiffs.mockReturnValue(_repoDiffs());
+    const { rerender } = render(
+      <DiffPane openFile={_open()} workspaceVersion={1} />,
+    );
+    await screen.findAllByTestId('diff-file');
+    expect(parseRepoDiffs).toHaveBeenCalledTimes(1);
+
+    rerender(<DiffPane openFile={_open()} workspaceVersion={2} />);
+    await waitFor(() => {
+      expect(fetchDiff).toHaveBeenCalledTimes(2);
+    });
+    expect(parseRepoDiffs).toHaveBeenCalledTimes(1);
+  });
+
   test('opens every (small) diff file by default', async () => {
     fetchDiff.mockResolvedValue({ diffs: [] });
     parseRepoDiffs.mockReturnValue(_repoDiffs());

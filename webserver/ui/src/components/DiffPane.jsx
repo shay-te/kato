@@ -60,6 +60,7 @@ export default function DiffPane({
   // stacked diff. Skip the setState when the payload is unchanged so the
   // memoized file boxes can bail.
   const commentsSigRef = useRef('');
+  const diffSigRef = useRef('');
 
   const { appendToInput } = useChatComposer();
   const bodyRef = useRef(null);
@@ -98,6 +99,9 @@ export default function DiffPane({
     fetchDiff(taskId)
       .then((payload) => {
         if (cancelled) { return; }
+        const sig = JSON.stringify([taskId, payload]);
+        if (sig === diffSigRef.current) { return; }
+        diffSigRef.current = sig;
         setState({
           status: 'ready', repoDiffs: parseRepoDiffs(payload), error: '',
         });
@@ -150,7 +154,7 @@ export default function DiffPane({
       setCommentsByRepo(next);
     });
     return () => { cancelled = true; };
-  }, [taskId, state.status, state.repoDiffs, commentsTick]);
+  }, [taskId, state.status, state.repoDiffs, commentsTick, workspaceVersion]);
 
   const bumpComments = useCallback(() => {
     setCommentsTick((n) => n + 1);
