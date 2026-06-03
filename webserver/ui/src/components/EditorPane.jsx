@@ -20,6 +20,7 @@ import { useChatComposer } from '../contexts/ChatComposerContext.jsx';
 import { toast } from '../stores/toastStore.js';
 import { apiErrorMessage } from '../utils/apiError.js';
 import { commentDraftKey } from '../utils/composerDraft.js';
+import { copyRepoRelativePath } from '../utils/clipboard.js';
 
 /**
  * Read-only Monaco editor that lives in the middle column.
@@ -268,6 +269,25 @@ export default function EditorPane({ openFile, onCommentSpawned }) {
       run: (ed) => {
         const pos = ed.getPosition();
         setActiveLineRef.current(pos ? pos.lineNumber : 1);
+      },
+    });
+
+    // Right-click → "Copy relative path" copies the repo-relative
+    // path (``repo:path``) to the clipboard — the SAME helper + format
+    // the Files tree and the diff-file header already use, so a path
+    // copied from any of the three surfaces is identical. No keybinding:
+    // Cmd/Ctrl+Shift+P is Monaco's own command palette.
+    editor.addAction({
+      id: 'kato.copyRelativePath',
+      label: 'Copy relative path',
+      contextMenuGroupId: 'kato',
+      contextMenuOrder: 2,
+      run: () => {
+        const file = openFileRef.current;
+        if (!file) { return; }
+        const path = file.relativePath || file.absolutePath || '';
+        if (!path) { return; }
+        copyRepoRelativePath(file.repoId || '', path);
       },
     });
 
