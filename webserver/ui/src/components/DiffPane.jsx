@@ -37,12 +37,14 @@ export default function DiffPane({
   onCommentSpawned,
   onFocusFileInTree,
   onCommentsChanged,
+  onViewStateChange,
 }) {
   const taskId = openFile?.taskId || '';
   const repoId = openFile?.repoId || '';
   const relativePath = openFile?.relativePath || openFile?.absolutePath || '';
   const openRequestId = openFile?.openRequestId || 0;
   const focusComment = !!openFile?.focusComment;
+  const restoreViewState = !!openFile?.restoreViewState;
 
   const [state, setState] = useState({
     status: 'loading', repoDiffs: [], error: '',
@@ -61,6 +63,7 @@ export default function DiffPane({
 
   const { appendToInput } = useChatComposer();
   const bodyRef = useRef(null);
+  const onViewStateChangeRef = useRef(onViewStateChange);
   const fileRefs = useRef(new Map());
   // Last open-request id we auto-scrolled for. Guards the scroll-to-file
   // effect so it fires only on a fresh open request — never on a
@@ -76,6 +79,9 @@ export default function DiffPane({
   // thread, so the file→thread upgrade still works but poll re-fires
   // don't. Starts at -1 so the first open (openRequestId 0) still scrolls.
   const lastCommentScrolledRequestRef = useRef(-1);
+  useEffect(() => {
+    onViewStateChangeRef.current = onViewStateChange;
+  }, [onViewStateChange]);
 
   useEffect(() => {
     if (!taskId) {
@@ -216,7 +222,7 @@ export default function DiffPane({
   // list hands us a new (repoId, path) — that's the "click just
   // scrolls to it" behaviour. Runs after the diff is rendered.
   useEffect(() => {
-    if (state.status !== 'ready' || !relativePath) { return; }
+    if (restoreViewState || state.status !== 'ready' || !relativePath) { return; }
     // Only scroll for a NEW open request (the operator clicked a file in
     // the list). A background diff refresh re-runs this effect with the
     // SAME openRequestId — scrolling then would move the page out from
@@ -229,7 +235,10 @@ export default function DiffPane({
       lastScrolledRequestRef.current = openRequestId;
       node.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-  }, [state.status, repoId, relativePath, openRequestId, totalFiles, resolveFileNode]);
+  }, [
+    restoreViewState, state.status, repoId, relativePath, openRequestId,
+    totalFiles, resolveFileNode,
+  ]);
 
   // When the operator clicked a file's comment badge (not the name),
   // go one step further than the file-scroll above: scroll to the
@@ -238,7 +247,7 @@ export default function DiffPane({
   // render and centres the first one. Until then it falls back to the
   // file section so the view at least lands on the right file.
   useEffect(() => {
-    if (!focusComment || state.status !== 'ready' || !relativePath) { return; }
+    if (restoreViewState || !focusComment || state.status !== 'ready' || !relativePath) { return; }
     // Already centred this open request on its thread → don't re-scroll
     // when a later comments poll changes commentsByRepo's identity.
     if (openRequestId === lastCommentScrolledRequestRef.current) { return; }
@@ -254,9 +263,23 @@ export default function DiffPane({
       target.scrollIntoView({ behavior: 'smooth', block: thread ? 'center' : 'start' });
     }
   }, [
-    focusComment, state.status, repoId, relativePath, openRequestId,
-    totalFiles, commentsByRepo, resolveFileNode,
+    restoreViewState, focusComment, state.status, repoId, relativePath,
+    openRequestId, totalFiles, commentsByRepo, resolveFileNode,
   ]);
+
+  useEffect(() => {
+    if (state.status !== 'ready') { return; }
+    const node = bodyRef.current;
+    const scrollTop = Number(openFile?.diffScrollTop);
+    if (!node || !Number.isFinite(scrollTop) || scrollTop <= 0) { return; }
+    node.scrollTop = scrollTop;
+  }, [state.status, openRequestId, openFile?.diffScrollTop]);
+
+  function handleBodyScroll(event) {
+    const notify = onViewStateChangeRef.current;
+    if (typeof notify !== 'function') { return; }
+    notify({ diffScrollTop: event.currentTarget.scrollTop || 0 });
+  }
 
   if (state.status === 'loading') {
     return (
@@ -282,7 +305,7 @@ export default function DiffPane({
 
   return (
     <div className="diff-pane">
-      <div className="diff-pane-body" ref={bodyRef}>
+      <div className="diff-pane-body" ref={bodyRef} onScroll={handleBodyScroll}>
         {/* No floating bar. Each file box's own ``.diff-file-header``
             is ``position: sticky`` (CSS), so the title is ATTACHED to
             its diff box, pins while you read that file, and is pushed

@@ -4,10 +4,12 @@
 // chat's comment-run sticky-prompt jump icon (``EventLog``). Keeping the
 // precedence + the location key here is what stops the two from drifting.
 
-// Most-urgent first: a file/location with any failed thread tints red,
-// else queued, etc. Unknown/empty statuses rank last. Module-private —
-// callers use moreUrgentCommentStatus, not the raw ordering.
-const COMMENT_STATUS_PRECEDENCE = ['failed', 'queued', 'in_progress', 'addressed'];
+// Most-interaction-needed first. Unknown/empty statuses rank last.
+// Module-private — callers use moreUrgentCommentStatus, not the raw
+// ordering.
+const COMMENT_STATUS_PRECEDENCE = [
+  'failed', 'waiting', 'open', 'queued', 'in_progress', 'addressed',
+];
 
 export function moreUrgentCommentStatus(a, b) {
   const rank = (status) => {
@@ -15,6 +17,17 @@ export function moreUrgentCommentStatus(a, b) {
     return index === -1 ? COMMENT_STATUS_PRECEDENCE.length : index;
   };
   return rank(b) < rank(a) ? b : a;
+}
+
+export function fileTreeCommentStatus(comment) {
+  const katoStatus = String(comment?.kato_status || '').trim();
+  if (COMMENT_STATUS_PRECEDENCE.includes(katoStatus)) {
+    return katoStatus;
+  }
+  if (comment?.status !== 'resolved') {
+    return 'open';
+  }
+  return '';
 }
 
 // Key tying a comment-run prompt (which only names file + anchor line)

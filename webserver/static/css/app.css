@@ -1339,6 +1339,11 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   color: #c4b5fd;
 }
 
+.chat-sticky-prompt-comment-jump.is-waiting,
+.chat-sticky-prompt-comment-jump.is-open {
+  color: #93c5fd;
+}
+
 .chat-sticky-prompt-comment-jump.is-in_progress {
   color: #f59e0b;
 }
@@ -3298,6 +3303,12 @@ code {
   color: #f59e0b;
 }
 
+.editor-pane-chip.kato-waiting .editor-pane-chip-status,
+.editor-pane-chip.kato-open .editor-pane-chip-status {
+  background: rgba(10, 132, 255, 0.18);
+  color: #93c5fd;
+}
+
 .editor-pane-chip.kato-in_progress .editor-pane-chip-status {
   background: rgba(10, 132, 255, 0.18);
   color: #93c5fd;
@@ -4072,6 +4083,11 @@ body.kato-resizing #left-pane-resizer::before {
   color: #c4b5fd;
 }
 
+.diff-file-comment-pill.is-waiting,
+.diff-file-comment-pill.is-open {
+  color: #93c5fd;
+}
+
 .diff-file-comment-pill.is-in_progress {
   color: #f59e0b;
 }
@@ -4725,6 +4741,12 @@ body.kato-resizing #left-pane-resizer::before {
 .tree-row-comments.is-queued {
   color: #c4b5fd;
   border-color: rgba(196, 181, 253, 0.4);
+}
+
+.tree-row-comments.is-waiting,
+.tree-row-comments.is-open {
+  color: #93c5fd;
+  border-color: rgba(10, 132, 255, 0.18);
 }
 
 .tree-row-comments.is-in_progress {

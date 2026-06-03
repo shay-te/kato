@@ -1384,6 +1384,11 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   color: $C-BLUE-85;
 }
 
+.chat-sticky-prompt-comment-jump.is-waiting,
+.chat-sticky-prompt-comment-jump.is-open {
+  color: $C-CYAN-78;
+}
+
 .chat-sticky-prompt-comment-jump.is-in_progress {
   color: $C-ORANGE-50;
 }
@@ -3344,6 +3349,12 @@ code {
   color: $C-ORANGE-50;
 }
 
+.editor-pane-chip.kato-waiting .editor-pane-chip-status,
+.editor-pane-chip.kato-open .editor-pane-chip-status {
+  background: $C-CYAN-52-A18;
+  color: $C-CYAN-78;
+}
+
 .editor-pane-chip.kato-in_progress .editor-pane-chip-status {
   background: $C-CYAN-52-A18;
   color: $C-CYAN-78;
@@ -4120,6 +4131,11 @@ body.kato-resizing #left-pane-resizer::before {
   color: $C-BLUE-85;
 }
 
+.diff-file-comment-pill.is-waiting,
+.diff-file-comment-pill.is-open {
+  color: $C-CYAN-78;
+}
+
 .diff-file-comment-pill.is-in_progress {
   color: $C-ORANGE-50;
 }
@@ -4773,6 +4789,12 @@ body.kato-resizing #left-pane-resizer::before {
 .tree-row-comments.is-queued {
   color: $C-BLUE-85;
   border-color: $C-BLUE-85-A40;
+}
+
+.tree-row-comments.is-waiting,
+.tree-row-comments.is-open {
+  color: $C-CYAN-78;
+  border-color: $C-CYAN-52-A18;
 }
 
 .tree-row-comments.is-in_progress {

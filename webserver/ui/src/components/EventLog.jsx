@@ -521,8 +521,8 @@ function StickyPrompt({ text, onOpenFile }) {
   // A comment-run prompt (kato addressing an operator diff comment) gets
   // a jump-to-comment icon top-right: clicking opens that file's diff and
   // scrolls to the comment thread, and the icon is tinted by that
-  // comment's live kato_status (queued / in_progress / addressed /
-  // failed) so the chat and the diff badge agree at a glance.
+  // comment's live kato_status (waiting / queued / in_progress /
+  // addressed / failed) so the chat and the diff badge agree at a glance.
   const commentRef = parseCommentRunPrompt(promptText);
   const commentStatus = commentRef && commentStatusMap
     ? String(commentStatusMap.get(commentStatusKey(commentRef.file, commentRef.line)) || '')

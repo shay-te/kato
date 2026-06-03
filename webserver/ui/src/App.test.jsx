@@ -138,7 +138,53 @@ vi.mock('./components/Layout.jsx', () => ({
   ),
 }));
 vi.mock('./components/RightPane.jsx', () => ({
-  default: () => <div data-testid="right-pane" />,
+  default: ({ activeTaskId, onOpenFile }) => (
+    <div data-testid="right-pane">
+      {activeTaskId ? (
+        <button
+          type="button"
+          onClick={() => onOpenFile({
+            absolutePath: `/ws/${activeTaskId}/repo/src/${activeTaskId}.js`,
+            relativePath: `src/${activeTaskId}.js`,
+            repoId: 'repo',
+          })}
+        >
+          open-file-{activeTaskId}
+        </button>
+      ) : null}
+    </div>
+  ),
+}));
+vi.mock('./components/EditorPane.jsx', () => ({
+  default: ({ openFile, onViewStateChange }) => (
+    <div data-testid="editor-pane">
+      file={openFile?.relativePath || 'none'}
+      position={openFile?.editorViewState?.line || 'none'}
+      <button
+        type="button"
+        onClick={() => onViewStateChange({ editorViewState: { line: 44 } })}
+      >
+        save-editor-position
+      </button>
+    </div>
+  ),
+}));
+vi.mock('./components/DiffPane.jsx', () => ({
+  default: ({ openFile, onViewStateChange }) => (
+    <div data-testid="diff-pane">
+      diff={openFile?.relativePath || 'none'}
+      scroll={openFile?.diffScrollTop || 'none'}
+      <button
+        type="button"
+        onClick={() => onViewStateChange({ diffScrollTop: 777 })}
+      >
+        save-diff-scroll
+      </button>
+    </div>
+  ),
+}));
+vi.mock('./components/OrchestratorActivityFeed.jsx', () => ({
+  default: () => <div data-testid="orchestrator-feed" />,
 }));
 vi.mock('./components/SafetyBanner.jsx', () => ({
   default: () => null,
@@ -148,12 +194,14 @@ vi.mock('./components/ToastContainer.jsx', () => ({
 }));
 
 import { useSessions } from './hooks/useSessions.js';
+import { useResizable } from './hooks/useResizable.js';
 import { forgetTaskWorkspace } from './api.js';
 import App from './App.jsx';
 
 
 beforeEach(() => {
   forgetTaskWorkspace.mockClear();
+  useResizable.mockClear();
   useSessions.mockReturnValue({
     sessions: [],
     refresh: vi.fn(),
@@ -179,6 +227,16 @@ describe('App — render shell', () => {
     render(<App />);
     expect(screen.getByTestId('session-detail').textContent)
       .toContain('session=none');
+  });
+
+  test('chat pane resizer allows a wide right column', () => {
+    render(<App />);
+    expect(useResizable).toHaveBeenCalledWith(
+      expect.objectContaining({
+        storageKey: 'kato.rightPaneWidth',
+        maxWidth: 1400,
+      }),
+    );
   });
 });
 
@@ -206,6 +264,45 @@ describe('App — tab selection', () => {
     fireEvent.click(screen.getByRole('button', { name: 'T2' }));
     expect(screen.getByTestId('session-detail').textContent)
       .toContain('session=T2');
+  });
+
+  test('switching tasks restores each task last opened file view', () => {
+    useSessions.mockReturnValue({
+      sessions: [{ task_id: 'T1' }, { task_id: 'T2' }],
+      refresh: vi.fn(),
+    });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
+    expect(screen.getByTestId('editor-pane').textContent)
+      .toContain('file=src/T1.js');
+
+    fireEvent.click(screen.getByRole('button', { name: 'T2' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T2' }));
+    expect(screen.getByTestId('editor-pane').textContent)
+      .toContain('file=src/T2.js');
+
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+    expect(screen.getByTestId('editor-pane').textContent)
+      .toContain('file=src/T1.js');
+  });
+
+  test('switching tasks restores the saved editor view state', () => {
+    useSessions.mockReturnValue({
+      sessions: [{ task_id: 'T1' }, { task_id: 'T2' }],
+      refresh: vi.fn(),
+    });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'save-editor-position' }));
+    fireEvent.click(screen.getByRole('button', { name: 'T2' }));
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+
+    expect(screen.getByTestId('editor-pane').textContent)
+      .toContain('position=44');
   });
 });
 

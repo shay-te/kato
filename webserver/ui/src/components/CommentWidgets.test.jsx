@@ -464,4 +464,22 @@ describe('CommentThread / CommentBubble — Bitbucket collapse', () => {
     expect(avatar).toHaveTextContent('ST');
     expect(screen.getByText('PENDING')).toBeInTheDocument();
   });
+
+  test('renders waiting and open status pills', () => {
+    const { rerender } = render(
+      <CommentThread
+        thread={_thread({ status: 'open', kato_status: 'waiting' })}
+        {...handlers}
+      />,
+    );
+    expect(screen.getByText('WAITING')).toBeInTheDocument();
+
+    rerender(
+      <CommentThread
+        thread={_thread({ status: 'open', kato_status: 'idle' })}
+        {...handlers}
+      />,
+    );
+    expect(screen.getByText('OPEN')).toBeInTheDocument();
+  });
 });

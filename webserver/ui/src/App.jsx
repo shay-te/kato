@@ -33,7 +33,7 @@ import { mergePendingPermissionTaskIds } from './utils/sessionAttention.js';
 
 const RIGHT_PANE_DEFAULT_WIDTH = 380;
 const RIGHT_PANE_MIN_WIDTH = 220;
-const RIGHT_PANE_MAX_WIDTH = 900;
+const RIGHT_PANE_MAX_WIDTH = 1400;
 const RIGHT_PANE_STORAGE_KEY = 'kato.rightPaneWidth';
 const LEFT_PANE_DEFAULT_WIDTH = 320;
 const LEFT_PANE_MIN_WIDTH = 220;
@@ -153,6 +153,19 @@ export default function App() {
     setForgetCandidate(null);
   }, []);
 
+  // Currently-open file for the middle Monaco editor pane. Lifted
+  // to App so FilesTab (rendered on the left) and EditorPane
+  // (rendered in the centre) can talk through a single source of
+  // truth without coupling them directly. One view is remembered
+  // per task so tab switches restore the operator's last file/diff
+  // position instead of dropping the centre pane back to empty.
+  const [openFile, setOpenFile] = useState(null);
+  const [fileTreeFocusTarget, setFileTreeFocusTarget] = useState(null);
+  const openFileRef = useRef(null);
+  const fileViewByTaskRef = useRef({});
+  const openFileRequestRef = useRef(0);
+  const fileTreeFocusRequestRef = useRef(0);
+
   const doForgetTask = useCallback(async (taskId) => {
     if (!taskId) { return; }
     // Show the operator what's happening — silently failing was the
@@ -185,6 +198,11 @@ export default function App() {
     if (activeTaskId === taskId) {
       setActiveTaskIdState('');
       userPickedTabRef.current = false;
+    }
+    delete fileViewByTaskRef.current[taskId];
+    if (openFileRef.current?.taskId === taskId) {
+      openFileRef.current = null;
+      setOpenFile(null);
     }
     refresh();
     toast.show({
@@ -321,20 +339,19 @@ export default function App() {
   const activeNeedsAttention = !!activeTaskId && attentionTaskIds.has(activeTaskId);
   const activeSessionKey = activeTaskId || '__none__';
   const activeWorkspaceVersion = workspaceVersion[activeTaskId] || 0;
-  // Currently-open file for the middle Monaco editor pane. Lifted
-  // to App so FilesTab (rendered on the left) and EditorPane
-  // (rendered in the centre) can talk through a single source of
-  // truth without coupling them directly. Resets when switching
-  // tasks so the editor doesn't render a file from the previous
-  // task's workspace.
-  const [openFile, setOpenFile] = useState(null);
-  const [fileTreeFocusTarget, setFileTreeFocusTarget] = useState(null);
-  const openFileRequestRef = useRef(0);
-  const fileTreeFocusRequestRef = useRef(0);
   useEffect(() => {
-    setOpenFile(null);
+    const remembered = activeTaskId
+      ? fileViewByTaskRef.current[activeTaskId] || null
+      : null;
+    const restored = remembered ? { ...remembered, restoreViewState: true } : null;
+    openFileRef.current = restored;
+    setOpenFile(restored);
     setFileTreeFocusTarget(null);
   }, [activeTaskId]);
+  function rememberFileView(file) {
+    if (!file || !file.taskId) { return; }
+    fileViewByTaskRef.current[file.taskId] = file;
+  }
   const handleOpenFile = useCallback((info) => {
     // ``info`` shape from FilesTab: { absolutePath, relativePath, repoId }.
     // ``repoId`` is required for the comments POST (the backend keys
@@ -342,6 +359,10 @@ export default function App() {
     // ``src/auth.py`` in repo A doesn't collide with the same path
     // in repo B).
     if (!info || !info.absolutePath) {
+      if (activeTaskId) {
+        delete fileViewByTaskRef.current[activeTaskId];
+      }
+      openFileRef.current = null;
       setOpenFile(null);
       return;
     }
@@ -351,7 +372,7 @@ export default function App() {
     // staying hidden behind the feed.
     setOrchestratorOpen(false);
     openFileRequestRef.current += 1;
-    setOpenFile({
+    const nextOpenFile = {
       taskId: activeTaskId,
       absolutePath: info.absolutePath,
       relativePath: info.relativePath || info.absolutePath,
@@ -364,8 +385,18 @@ export default function App() {
       // name): DiffPane scrolls to the file's first comment thread,
       // not just the top of the file section.
       focusComment: !!info.focusComment,
-    });
+    };
+    openFileRef.current = nextOpenFile;
+    rememberFileView(nextOpenFile);
+    setOpenFile(nextOpenFile);
   }, [activeTaskId]);
+  const handleFileViewStateChange = useCallback((viewState) => {
+    const current = openFileRef.current;
+    if (!current || !current.taskId || !viewState) { return; }
+    const nextOpenFile = { ...current, ...viewState };
+    openFileRef.current = nextOpenFile;
+    rememberFileView(nextOpenFile);
+  }, []);
   const handleFocusFileInTree = useCallback((target) => {
     const relativePath = String(target?.relativePath || target?.absolutePath || '').trim();
     if (!relativePath) { return; }
@@ -382,6 +413,35 @@ export default function App() {
   // re-renders on every App render — including the wasteful ones
   // that fire on tab focus changes / poll ticks.
   const composerContextValue = useMemo(() => ({ appendToInput }), [appendToInput]);
+  const activeOpenFile = openFile?.taskId === activeTaskId ? openFile : null;
+  let centerPane;
+  if (orchestratorOpen) {
+    centerPane = (
+      <OrchestratorActivityFeed
+        history={status.history}
+        onClose={toggleOrchestrator}
+      />
+    );
+  } else if (activeOpenFile?.view === 'diff') {
+    centerPane = (
+      <DiffPane
+        openFile={activeOpenFile}
+        workspaceVersion={activeWorkspaceVersion}
+        onCommentSpawned={handleCommentSpawned}
+        onFocusFileInTree={handleFocusFileInTree}
+        onCommentsChanged={handleDiffCommentsChanged}
+        onViewStateChange={handleFileViewStateChange}
+      />
+    );
+  } else {
+    centerPane = (
+      <EditorPane
+        openFile={activeOpenFile}
+        onCommentSpawned={handleCommentSpawned}
+        onViewStateChange={handleFileViewStateChange}
+      />
+    );
+  }
   const layout = (
     <Layout
       rightWidth={resizer.width}
@@ -420,21 +480,7 @@ export default function App() {
           onResizePointerDown={leftResizer.onPointerDown}
         />
       }
-      center={
-        orchestratorOpen
-          ? <OrchestratorActivityFeed history={status.history} onClose={toggleOrchestrator} />
-          : openFile?.view === 'diff'
-            ? (
-                <DiffPane
-                  openFile={openFile}
-                  workspaceVersion={activeWorkspaceVersion}
-                  onCommentSpawned={handleCommentSpawned}
-                  onFocusFileInTree={handleFocusFileInTree}
-                  onCommentsChanged={handleDiffCommentsChanged}
-                />
-              )
-            : <EditorPane openFile={openFile} onCommentSpawned={handleCommentSpawned} />
-      }
+      center={centerPane}
       right={
         <SessionDetail
           key={activeSessionKey}

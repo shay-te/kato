@@ -69,11 +69,15 @@ function statusPill(comment) {
     return { label: 'RESOLVED', cls: 'is-resolved' };
   }
   switch (comment.kato_status) {
+    case 'waiting': return { label: 'WAITING', cls: 'is-waiting' };
     case 'queued': return { label: 'PENDING', cls: 'is-queued' };
     case 'in_progress': return { label: 'WORKING', cls: 'is-in_progress' };
     case 'addressed': return { label: 'ADDRESSED', cls: 'is-addressed' };
     case 'failed': return { label: 'FAILED', cls: 'is-failed' };
-    default: return null;
+    default:
+      return comment.status === 'open'
+        ? { label: 'OPEN', cls: 'is-open' }
+        : null;
   }
 }
 
@@ -514,6 +518,8 @@ function describeKatoStatus(comment) {
       return 'Kato is behind on another turn — will pick this up when the current turn finishes.';
     case 'in_progress':
       return 'Kato is working on this comment now — will reply when its turn finishes.';
+    case 'waiting':
+      return 'Kato answered this comment and left the thread open for operator input.';
     case 'addressed':
       return comment.kato_addressed_sha
         ? `Kato pushed a fix in commit ${comment.kato_addressed_sha.slice(0, 8)}.`

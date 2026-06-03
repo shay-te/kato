@@ -275,7 +275,9 @@ class CompleteInProgressTaskCommentsTests(unittest.TestCase):
             Path(self._tmp.name),
         )
 
-    def _seed(self, task_id: str, statuses: list[str]) -> tuple[
+    def _seed(
+        self, task_id: str, statuses: list[str], body: str | None = None,
+    ) -> tuple[
         list[str], LocalCommentStore,
     ]:
         materialize_workspace(self.workspace_service, task_id)
@@ -286,7 +288,7 @@ class CompleteInProgressTaskCommentsTests(unittest.TestCase):
                 repo_id='repo-1',
                 file_path='src/file.py',
                 line=12,
-                body=impatient_comment(),
+                body=body or impatient_comment(),
                 author='op',
                 source=CommentSource.LOCAL.value,
                 kato_status=KatoCommentStatus(status).value,
@@ -325,6 +327,63 @@ class CompleteInProgressTaskCommentsTests(unittest.TestCase):
             [{'task_id': 'T1', 'comment_id': in_progress_id,
               'kato_status': KatoCommentStatus.ADDRESSED.value}],
         )
+
+    def test_question_only_success_replies_and_waits_for_operator(self) -> None:
+        ids, store = self._seed(
+            'T1', ['in_progress'], body='How does this avoid null values?',
+        )
+
+        out = self.service.complete_in_progress_task_comments(
+            'T1',
+            success=True,
+            result_text='It checks the payload before dereferencing it.',
+        )
+
+        live = {c.id: c for c in store.list()}
+        self.assertEqual(out[0]['kato_status'], KatoCommentStatus.WAITING.value)
+        self.assertEqual(live[ids[0]].kato_status, KatoCommentStatus.WAITING.value)
+        self.assertEqual(live[ids[0]].status, 'open')
+        reply_records = [c for c in store.list() if c.parent_id == ids[0]]
+        self.assertEqual(len(reply_records), 1)
+        self.assertEqual(
+            reply_records[0].body,
+            'It checks the payload before dereferencing it.',
+        )
+
+    def test_fix_shaped_question_still_marks_addressed(self) -> None:
+        ids, store = self._seed(
+            'T1', ['in_progress'], body='Can you fix this null handling?',
+        )
+
+        out = self.service.complete_in_progress_task_comments(
+            'T1', success=True, result_text='Fixed.',
+        )
+
+        live = {c.id: c for c in store.list()}
+        self.assertEqual(out[0]['kato_status'], KatoCommentStatus.ADDRESSED.value)
+        self.assertEqual(live[ids[0]].kato_status, KatoCommentStatus.ADDRESSED.value)
+
+    def test_latest_operator_followup_controls_answer_only_detection(self) -> None:
+        ids, store = self._seed(
+            'T1', ['in_progress'], body='How does this avoid null values?',
+        )
+        store.add(CommentRecord(
+            repo_id='repo-1',
+            file_path='src/file.py',
+            line=12,
+            parent_id=ids[0],
+            body='Fix this to handle missing payloads.',
+            author='op',
+            source=CommentSource.LOCAL.value,
+        ))
+
+        out = self.service.complete_in_progress_task_comments(
+            'T1', success=True, result_text='Fixed.',
+        )
+
+        live = {c.id: c for c in store.list()}
+        self.assertEqual(out[0]['kato_status'], KatoCommentStatus.ADDRESSED.value)
+        self.assertEqual(live[ids[0]].kato_status, KatoCommentStatus.ADDRESSED.value)
 
     def test_completing_a_comment_chains_to_the_next_queued(self) -> None:
         # Regression (operator bug): finishing one comment must dispatch

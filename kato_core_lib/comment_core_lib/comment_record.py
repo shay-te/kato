@@ -58,6 +58,8 @@ class KatoCommentStatus(str, enum.Enum):
                         comment.
       ``ADDRESSED``   — agent finished; commit pushed; thread
                         ready to resolve.
+      ``WAITING``     — agent answered a question/comment without a
+                        code fix; thread stays open for operator input.
       ``FAILED``      — agent ran but produced no commits or
                         errored. The reply on the source platform
                         (when synced) carries the explanation.
@@ -67,6 +69,7 @@ class KatoCommentStatus(str, enum.Enum):
     QUEUED = 'queued'
     IN_PROGRESS = 'in_progress'
     ADDRESSED = 'addressed'
+    WAITING = 'waiting'
     FAILED = 'failed'
 
 

@@ -1053,10 +1053,11 @@ class AgentService(MissionStepLoggerMixin, Service):
         forever (and a restart's ``requeue_stuck_in_progress_comments``
         would redo the already-done work). Called from the
         RESULT-event handler: the turn that just ended is the one the
-        in-progress comment was dispatched into, so ``success`` →
-        ``ADDRESSED``, an errored turn → ``FAILED``.
+        in-progress comment was dispatched into, so ``success`` moves a
+        fix request to ``ADDRESSED`` and a question-only answer to
+        ``WAITING``; an errored turn moves to ``FAILED``.
 
-        Reuses :meth:`mark_comment_addressed` with
+        Fix requests reuse :meth:`mark_comment_addressed` with
         ``post_remote_reply=False`` — the auto-flip must not spam the
         source platform on every turn; the operator's explicit
         "Mark addressed" / Resolve still drives any remote reply.
@@ -1108,14 +1109,25 @@ class AgentService(MissionStepLoggerMixin, Service):
                         getattr(comment, 'kato_run_marker', ''),
                     )
                     self._add_comment_agent_reply(store, comment, reply_text)
-                    self.mark_comment_addressed(
-                        task_id, comment.id, post_remote_reply=False,
-                    )
-                    new_status = KatoCommentStatus.ADDRESSED.value
-                    self.logger.info(
-                        'comment %s on task %s marked addressed '
-                        '(agent turn finished)', comment.id, task_id,
-                    )
+                    if self._comment_expects_answer_only(task_id, comment):
+                        store.update_kato_status(
+                            comment.id,
+                            kato_status=KatoCommentStatus.WAITING.value,
+                        )
+                        new_status = KatoCommentStatus.WAITING.value
+                        self.logger.info(
+                            'comment %s on task %s answered and left open '
+                            '(question-only turn finished)', comment.id, task_id,
+                        )
+                    else:
+                        self.mark_comment_addressed(
+                            task_id, comment.id, post_remote_reply=False,
+                        )
+                        new_status = KatoCommentStatus.ADDRESSED.value
+                        self.logger.info(
+                            'comment %s on task %s marked addressed '
+                            '(agent turn finished)', comment.id, task_id,
+                        )
                 else:
                     store.update_kato_status(
                         comment.id,
@@ -1154,6 +1166,16 @@ class AgentService(MissionStepLoggerMixin, Service):
                     task_id,
                 )
         return completed
+
+    def _comment_expects_answer_only(self, task_id: str, comment) -> bool:
+        """True when a local diff comment should be answered, not fixed."""
+        from kato_core_lib.helpers.review_comment_utils import is_question_comment
+
+        target = comment
+        for reply in self._comment_thread_replies(task_id, getattr(comment, 'id', '')):
+            if str(getattr(reply, 'author', '')) != 'claude':
+                target = reply
+        return is_question_comment(target)
 
     def _add_comment_agent_reply(self, store, comment, result_text: str) -> None:
         """Mirror Claude's final answer back into the comment thread."""

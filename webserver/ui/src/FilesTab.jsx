@@ -36,7 +36,10 @@ import { cssEscapeAttr } from './utils/dom.js';
 import { countNoun } from './utils/pluralize.js';
 import { apiErrorMessage } from './utils/apiError.js';
 import { REPOSITORY_TAG_PREFIX } from './utils/katoTags.js';
-import { moreUrgentCommentStatus } from './utils/commentStatus.js';
+import {
+  fileTreeCommentStatus,
+  moreUrgentCommentStatus,
+} from './utils/commentStatus.js';
 import { useDismissOnOutsidePointerOrEscape } from './hooks/useDismissOnOutsidePointerOrEscape.js';
 
 
@@ -74,7 +77,7 @@ export function buildFilesCommentMeta(comments) {
     fileMap.set(filePath, {
       count: prev.count + 1,
       status: moreUrgentCommentStatus(
-        prev.status, String(comment?.kato_status || '').trim(),
+        prev.status, fileTreeCommentStatus(comment),
       ),
     });
   }

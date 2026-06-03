@@ -352,7 +352,7 @@ describe('buildFilesCommentMeta', () => {
   test('queued and working kato comments are counted in the tree badge', () => {
     const meta = buildFilesCommentMeta([
       { id: 'c1', repo_id: 'r', file_path: 'src/b.js', parent_id: '', kato_status: 'queued' },
-      { id: 'c2', repo_id: 'r', file_path: 'src/b.js', parent_id: '', kato_status: 'working' },
+      { id: 'c2', repo_id: 'r', file_path: 'src/b.js', parent_id: '', kato_status: 'in_progress' },
     ]);
     expect(meta.get('r').get('src/b.js').count).toBe(2);
   });
@@ -382,6 +382,28 @@ describe('buildFilesCommentMeta', () => {
     expect(entry.status).toBe('failed');
   });
 
+  test('badge status prefers open/waiting interaction over working and done', () => {
+    const meta = buildFilesCommentMeta([
+      { id: 'c1', repo_id: 'r', file_path: 'src/a.js', parent_id: '', kato_status: 'addressed' },
+      { id: 'c2', repo_id: 'r', file_path: 'src/a.js', parent_id: '', kato_status: 'in_progress' },
+      { id: 'c3', repo_id: 'r', file_path: 'src/a.js', parent_id: '', kato_status: 'waiting' },
+    ]);
+    const entry = meta.get('r').get('src/a.js');
+    expect(entry.count).toBe(3);
+    expect(entry.status).toBe('waiting');
+  });
+
+  test('badge status prefers plain open over working and done', () => {
+    const meta = buildFilesCommentMeta([
+      { id: 'c1', repo_id: 'r', file_path: 'src/a.js', parent_id: '', kato_status: 'addressed' },
+      { id: 'c2', repo_id: 'r', file_path: 'src/a.js', parent_id: '', kato_status: 'in_progress' },
+      { id: 'c3', repo_id: 'r', file_path: 'src/a.js', parent_id: '', kato_status: 'idle', status: 'open' },
+    ]);
+    const entry = meta.get('r').get('src/a.js');
+    expect(entry.count).toBe(3);
+    expect(entry.status).toBe('open');
+  });
+
   test('outdated comments are not counted (no phantom badge)', () => {
     const meta = buildFilesCommentMeta([
       { id: 'c1', repo_id: 'r', file_path: 'src/a.js', parent_id: '', outdated: true },
@@ -398,12 +420,12 @@ describe('buildFilesCommentMeta', () => {
     expect(meta.get('r')?.has('src/b.js')).toBeFalsy();
   });
 
-  test('unknown / idle kato_status leaves the badge status blank (neutral)', () => {
+  test('unknown / idle open comments tint the badge as open', () => {
     const meta = buildFilesCommentMeta([
       { id: 'c1', repo_id: 'r', file_path: 'src/a.js', parent_id: '', kato_status: 'idle' },
       { id: 'c2', repo_id: 'r', file_path: 'src/a.js', parent_id: '' },
     ]);
-    expect(meta.get('r').get('src/a.js').status).toBe('');
+    expect(meta.get('r').get('src/a.js').status).toBe('open');
   });
 });
 

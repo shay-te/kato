@@ -187,8 +187,12 @@ class CommentsContractTests(unittest.TestCase):
         for record in listed_after['comments']:
             record['id'] = '__FIXTURE_ID__'
             record['created_at_epoch'] = 0.0
+            record['kato_run_marker'] = '__RUN_MARKER__'
+            record['kato_run_started_at_epoch'] = 0.0
         created['comment']['id'] = '__FIXTURE_ID__'
         created['comment']['created_at_epoch'] = 0.0
+        created['comment']['kato_run_marker'] = '__RUN_MARKER__'
+        created['comment']['kato_run_started_at_epoch'] = 0.0
         return {
             'list_empty': empty_list,
             'list_after_create': listed_after,

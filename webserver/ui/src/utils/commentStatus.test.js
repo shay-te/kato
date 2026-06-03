@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   buildCommentStatusByLocation,
   commentStatusKey,
+  fileTreeCommentStatus,
   moreUrgentCommentStatus,
 } from './commentStatus.js';
 
@@ -22,9 +23,14 @@ test('commentStatusKey: missing / non-positive line normalises to 0', () => {
   assert.equal(commentStatusKey('a', -1), commentStatusKey('a', 0));
 });
 
-test('moreUrgentCommentStatus: failed beats addressed; queued beats addressed', () => {
-  assert.equal(moreUrgentCommentStatus('addressed', 'failed'), 'failed');
+test('moreUrgentCommentStatus: waiting/open beats active and done states', () => {
+  assert.equal(moreUrgentCommentStatus('addressed', 'waiting'), 'waiting');
+  assert.equal(moreUrgentCommentStatus('in_progress', 'open'), 'open');
   assert.equal(moreUrgentCommentStatus('queued', 'addressed'), 'queued');
+});
+
+test('moreUrgentCommentStatus: failed beats addressed', () => {
+  assert.equal(moreUrgentCommentStatus('addressed', 'failed'), 'failed');
 });
 
 test('moreUrgentCommentStatus: unknown / empty rank last', () => {
@@ -39,6 +45,22 @@ test('buildCommentStatusByLocation: keys root comments by file::line', () => {
   ]);
   assert.equal(map.get('src/a.js::5'), 'in_progress');
   assert.equal(map.get('src/b.js::9'), 'addressed');
+});
+
+test('fileTreeCommentStatus: unresolved idle/blank comments read as open', () => {
+  assert.equal(fileTreeCommentStatus({ status: 'open', kato_status: 'idle' }), 'open');
+  assert.equal(fileTreeCommentStatus({ status: 'open', kato_status: '' }), 'open');
+});
+
+test('fileTreeCommentStatus: concrete kato_status beats generic open', () => {
+  assert.equal(
+    fileTreeCommentStatus({ status: 'open', kato_status: 'addressed' }),
+    'addressed',
+  );
+  assert.equal(
+    fileTreeCommentStatus({ status: 'open', kato_status: 'waiting' }),
+    'waiting',
+  );
 });
 
 test('buildCommentStatusByLocation: skips replies, blank status, blank path', () => {

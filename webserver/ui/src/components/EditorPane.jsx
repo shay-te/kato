@@ -21,6 +21,7 @@ import { toast } from '../stores/toastStore.js';
 import { apiErrorMessage } from '../utils/apiError.js';
 import { commentDraftKey } from '../utils/composerDraft.js';
 import { copyRepoRelativePath } from '../utils/clipboard.js';
+import { useDismissOnOutsidePointerOrEscape } from '../hooks/useDismissOnOutsidePointerOrEscape.js';
 
 /**
  * Read-only Monaco editor that lives in the middle column.
@@ -40,7 +41,11 @@ import { copyRepoRelativePath } from '../utils/clipboard.js';
  * ``openFile`` shape:
  *   ``{ taskId, absolutePath, relativePath, repoId }``.
  */
-export default function EditorPane({ openFile, onCommentSpawned }) {
+export default function EditorPane({
+  openFile,
+  onCommentSpawned,
+  onViewStateChange,
+}) {
   const [state, setState] = useState({
     loading: false,
     error: '',
@@ -62,13 +67,35 @@ export default function EditorPane({ openFile, onCommentSpawned }) {
   const repoId = openFile?.repoId || '';
   const filePath = openFile?.relativePath || openFile?.absolutePath || '';
 
+  // Right-click menu on the file-path HEADER. The Monaco editor body
+  // already carries the same "Copy relative path" action in its native
+  // right-click menu (registered in handleEditorMount); this adds the
+  // identical action when the operator right-clicks the path label in
+  // the header strip instead of the code. Mirrors the Files tree +
+  // diff-file header menus — same helper, same copied ``repo:path``.
+  const [pathMenu, setPathMenu] = useState(null);
+  function openPathMenu(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!filePath) { return; }
+    setPathMenu({ x: event.clientX, y: event.clientY });
+  }
+  function closePathMenu() { setPathMenu(null); }
+  async function copyHeaderRelativePath() {
+    closePathMenu();
+    await copyRepoRelativePath(repoId, filePath);
+  }
+  useDismissOnOutsidePointerOrEscape(pathMenu, closePathMenu);
+
   // Refs so Monaco actions (registered once) always read latest
   // values without closing over stale state.
   const openFileRef = useRef(openFile);
   const appendRef = useRef(appendToInput);
   const setActiveLineRef = useRef(setActiveLine);
+  const onViewStateChangeRef = useRef(onViewStateChange);
   useEffect(() => { openFileRef.current = openFile; }, [openFile]);
   useEffect(() => { appendRef.current = appendToInput; }, [appendToInput]);
+  useEffect(() => { onViewStateChangeRef.current = onViewStateChange; }, [onViewStateChange]);
   useEffect(() => { setActiveLineRef.current = setActiveLine; }, []);
 
   // Monaco editor instance + decoration ids for hover line +
@@ -86,6 +113,15 @@ export default function EditorPane({ openFile, onCommentSpawned }) {
   const [zoneNode, setZoneNode] = useState(null);
   const zoneIdRef = useRef(null);
   const zoneObjRef = useRef(null);
+
+  function reportEditorViewState() {
+    const editor = editorRef.current;
+    const notify = onViewStateChangeRef.current;
+    if (!editor || typeof notify !== 'function') { return; }
+    const saveViewState = editor.saveViewState;
+    if (typeof saveViewState !== 'function') { return; }
+    notify({ editorViewState: saveViewState.call(editor) });
+  }
 
   // Comments scoped to the currently-open file. The /comments
   // endpoint returns the whole task's set (across repos + files);
@@ -229,6 +265,16 @@ export default function EditorPane({ openFile, onCommentSpawned }) {
 
   function handleEditorMount(editor, monaco) {
     editorRef.current = editor;
+    if (openFileRef.current?.editorViewState
+        && typeof editor.restoreViewState === 'function') {
+      editor.restoreViewState(openFileRef.current.editorViewState);
+    }
+    if (typeof editor.onDidScrollChange === 'function') {
+      editor.onDidScrollChange(reportEditorViewState);
+    }
+    if (typeof editor.onDidChangeCursorPosition === 'function') {
+      editor.onDidChangeCursorPosition(reportEditorViewState);
+    }
 
     // Right-click → "Add to chat" pushes the selected line range
     // into the chat composer as ``file:N-M``.
@@ -342,6 +388,15 @@ export default function EditorPane({ openFile, onCommentSpawned }) {
     setActiveLine(null);
     setReplyTo('');
   }, [filePath]);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    const viewState = openFile?.editorViewState;
+    if (!editor || !viewState || typeof editor.restoreViewState !== 'function') {
+      return;
+    }
+    editor.restoreViewState(viewState);
+  }, [openFile?.absolutePath, openFile?.editorViewState]);
 
   // Add / move / remove the inline-composer view zone whenever the
   // target line changes. Line < 0 (file-level) gets no zone — it
@@ -510,12 +565,30 @@ export default function EditorPane({ openFile, onCommentSpawned }) {
 
   return (
     <section id="editor-pane">
-      <header className="editor-pane-header">
+      <header className="editor-pane-header" onContextMenu={openPathMenu}>
         <span className="editor-pane-path" title={openFile.absolutePath}>
           {openFile.relativePath || openFile.absolutePath}
         </span>
         <span className="editor-pane-readonly-pill">read-only</span>
       </header>
+      {pathMenu && (
+        <div
+          className="diff-file-context-menu"
+          style={{ left: pathMenu.x, top: pathMenu.y }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+          role="menu"
+        >
+          <button
+            type="button"
+            className="diff-file-context-menu-item"
+            onClick={copyHeaderRelativePath}
+            role="menuitem"
+          >
+            Copy relative path
+          </button>
+        </div>
+      )}
       {fileComments.length > 0 && (
         <ChipStrip
           comments={fileComments}
@@ -621,8 +694,8 @@ export default function EditorPane({ openFile, onCommentSpawned }) {
 
 // Compact chip strip above the editor — one chip per comment on
 // the current file. Status colour mirrors the kato_status badge
-// CommentBubble shows ("queued" / "in_progress" / "addressed" /
-// "failed"); clicking a chip scrolls the editor to that line.
+// CommentBubble shows ("waiting" / "queued" / "in_progress" /
+// "addressed" / "failed"); clicking a chip scrolls the editor to that line.
 function ChipStrip({ comments, onJump, onAddOnLine }) {
   const chips = comments
     .filter((c) => !c.parent_id) // only top-of-thread chips
@@ -650,6 +723,7 @@ function ChipStrip({ comments, onJump, onAddOnLine }) {
 function statusLabel(c) {
   if (c.status === 'resolved') { return '✓ resolved'; }
   switch ((c.kato_status || 'idle').toLowerCase()) {
+    case 'waiting': return 'waiting';
     case 'queued': return '⏳ queued';
     case 'in_progress': return '⟳ working';
     case 'addressed': return '✓ done';

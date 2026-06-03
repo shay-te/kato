@@ -257,6 +257,40 @@ describe('DiffPane — renders ALL files, scrolls to the target', () => {
     expect(target.scrollIntoView).toHaveBeenCalledTimes(1);
   });
 
+  test('restores saved diff scroll without auto-scrolling to the target file', async () => {
+    fetchDiff.mockResolvedValue({ diffs: [] });
+    parseRepoDiffs.mockReturnValue(_repoDiffs());
+    const { container } = render(
+      <DiffPane
+        openFile={_open({
+          diffScrollTop: 345,
+          restoreViewState: true,
+        })}
+      />,
+    );
+    await screen.findAllByTestId('diff-file');
+    const body = container.querySelector('.diff-pane-body');
+    const target = container.querySelector('[data-diff-key="client::src/App.jsx"]');
+    await waitFor(() => {
+      expect(body.scrollTop).toBe(345);
+    });
+    expect(target.scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  test('reports diff scroll position changes', async () => {
+    fetchDiff.mockResolvedValue({ diffs: [] });
+    parseRepoDiffs.mockReturnValue(_repoDiffs());
+    const onViewStateChange = vi.fn();
+    const { container } = render(
+      <DiffPane openFile={_open()} onViewStateChange={onViewStateChange} />,
+    );
+    await screen.findAllByTestId('diff-file');
+    const body = container.querySelector('.diff-pane-body');
+    body.scrollTop = 222;
+    fireEvent.scroll(body);
+    expect(onViewStateChange).toHaveBeenCalledWith({ diffScrollTop: 222 });
+  });
+
   test('focusComment scrolls to the file\'s first comment thread', async () => {
     fetchDiff.mockResolvedValue({ diffs: [] });
     parseRepoDiffs.mockReturnValue(_repoDiffs());
