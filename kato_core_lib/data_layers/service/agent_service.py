@@ -799,30 +799,28 @@ class AgentService(MissionStepLoggerMixin, Service):
         records = (
             store.list_for_repo(repo_id) if repo_id else store.list()
         )
-        # Annotate each comment with ``outdated``: its anchor line no
-        # longer exists in the current file (the code was rewritten /
-        # shrank), so it can't render in the diff. The UI hides outdated
-        # comments from the tree badge so a phantom 💬 N never points at a
-        # comment that isn't visible anywhere. Line-count lookups are
-        # cached per (repo, file) for this call.
-        line_counts: dict[tuple[str, str], int | None] = {}
+        # Annotate each comment with ``outdated``: its original anchor
+        # line disappeared or now contains different text. The UI moves
+        # these threads to the file-level comments panel instead of
+        # rendering them on the wrong line.
+        anchor_cache: dict[tuple, object] = {}
         out: list[dict[str, object]] = []
         for record in records:
             data = record.to_dict()
             data['outdated'] = self._comment_anchor_is_outdated(
-                task_id, record, line_counts,
+                task_id, record, anchor_cache,
             )
             out.append(data)
         return out
 
     def _comment_anchor_is_outdated(self, task_id: str, record, cache: dict) -> bool:
-        """True when a line-anchored comment points past the current file.
+        """True when a line-anchored comment no longer matches the file.
 
         Only line-anchored comments (``line >= 1``) can go stale this way;
         file-level (``line < 1``) comments always render in the file panel.
         Conservative: if the file can't be read (missing, binary, path
-        unresolved) we report NOT outdated so a lookup glitch never hides a
-        real comment.
+        unresolved) we report NOT outdated so a lookup glitch never hides
+        a real comment.
         """
         line = int(getattr(record, 'line', -1) or -1)
         if line < 1:
@@ -831,11 +829,30 @@ class AgentService(MissionStepLoggerMixin, Service):
         file_path = str(getattr(record, 'file_path', '') or '').strip()
         if not repo_id or not file_path:
             return False
-        key = (repo_id, file_path)
-        if key not in cache:
-            cache[key] = self._file_line_count(task_id, repo_id, file_path)
-        count = cache[key]
-        return count is not None and line > count
+        count_key = ('count', repo_id, file_path)
+        if count_key not in cache:
+            cache[count_key] = self._file_line_count(task_id, repo_id, file_path)
+        count = cache[count_key]
+        if count is not None and line > count:
+            return True
+        original_hash = str(getattr(record, 'anchor_line_hash', '') or '')
+        if not original_hash:
+            return False
+        text_key = ('text', repo_id, file_path, line)
+        if text_key not in cache:
+            cache[text_key] = self._file_line_text(
+                task_id, repo_id, file_path, line,
+            )
+        current_text = cache[text_key]
+        if current_text is None:
+            return False
+        return original_hash != self._comment_anchor_line_hash(current_text)
+
+    def _comment_anchor_line_hash(self, text: str) -> str:
+        """Stable hash for a line snapshot used by local comments."""
+        import hashlib
+
+        return hashlib.sha256(str(text).encode('utf-8')).hexdigest()
 
     def _file_line_count(self, task_id: str, repo_id: str, file_path: str) -> int | None:
         """Line count of a workspace file, or None when it can't be read."""
@@ -853,6 +870,28 @@ class AgentService(MissionStepLoggerMixin, Service):
                 return sum(1 for _ in handle)
         except Exception:
             return None
+
+    def _file_line_text(
+        self, task_id: str, repo_id: str, file_path: str, line: int,
+    ) -> str | None:
+        """Text of a 1-based workspace file line, without the newline."""
+        if self._workspace_manager is None:
+            return None
+        try:
+            repo_path = self._workspace_manager.repository_path(task_id, repo_id)
+        except Exception:
+            return None
+        target = repo_path / file_path
+        try:
+            if not target.is_file():
+                return None
+            with target.open('r', encoding='utf-8', errors='replace') as handle:
+                for index, text in enumerate(handle, start=1):
+                    if index == int(line):
+                        return text.rstrip('\r\n')
+        except Exception:
+            return None
+        return None
 
     def add_task_comment(
         self,
@@ -893,6 +932,14 @@ class AgentService(MissionStepLoggerMixin, Service):
             body=str(body or '').strip(),
             source=CommentSource.LOCAL.value,
         )
+        if not record.parent_id and record.line >= 1:
+            anchor_text = self._file_line_text(
+                str(task_id), record.repo_id, record.file_path, record.line,
+            )
+            if anchor_text is not None:
+                record.anchor_line_hash = self._comment_anchor_line_hash(
+                    anchor_text,
+                )
         try:
             persisted = store.add(record)
         except ValueError as exc:

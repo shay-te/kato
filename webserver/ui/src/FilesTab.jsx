@@ -57,16 +57,13 @@ const EMPTY_STATS = { added: 0, deleted: 0 };
 // don't add to the count, matching the Bitbucket 💬 N convention.
 // ``status`` is the most-urgent kato_status across the file's open
 // threads (see moreUrgentCommentStatus in utils/commentStatus.js), used
-// to tint the badge.
+// to tint the badge. Outdated anchors still count: clicking the badge
+// opens the file panel where those unanchored comments are shown.
 export function buildFilesCommentMeta(comments) {
   const byRepo = new Map();
   for (const comment of comments || []) {
     if (String(comment?.parent_id || '')) { continue; }
     if (comment?.status === 'resolved') { continue; }
-    // Outdated = the comment's anchor line no longer exists in the file
-    // (code was rewritten/shrank), so it renders nowhere. Don't badge a
-    // file for a comment that isn't visible — the backend computes this.
-    if (comment?.outdated) { continue; }
     const filePath = String(comment?.file_path || '').trim();
     if (!filePath) { continue; }
     const repoId = String(comment?.repo_id || '').trim();

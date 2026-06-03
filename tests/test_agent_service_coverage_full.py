@@ -74,6 +74,36 @@ class CommentAnchorOutdatedTests(unittest.TestCase):
             service._comment_anchor_is_outdated('PROJ-1', record, {})
         )
 
+    def test_changed_anchor_line_is_outdated(self) -> None:
+        service = _bare_service()
+        original = service._comment_anchor_line_hash('original line')
+        record = SimpleNamespace(
+            line=2, repo_id='repo-a', file_path='f.py',
+            anchor_line_hash=original,
+        )
+        cache: dict = {}
+        with unittest.mock.patch.object(service, '_file_line_count', return_value=3), \
+             unittest.mock.patch.object(service, '_file_line_text',
+                                        return_value='changed line'):
+            self.assertTrue(
+                service._comment_anchor_is_outdated('PROJ-1', record, cache)
+            )
+
+    def test_matching_anchor_line_is_not_outdated(self) -> None:
+        service = _bare_service()
+        original = service._comment_anchor_line_hash('same line')
+        record = SimpleNamespace(
+            line=2, repo_id='repo-a', file_path='f.py',
+            anchor_line_hash=original,
+        )
+        cache: dict = {}
+        with unittest.mock.patch.object(service, '_file_line_count', return_value=3), \
+             unittest.mock.patch.object(service, '_file_line_text',
+                                        return_value='same line'):
+            self.assertFalse(
+                service._comment_anchor_is_outdated('PROJ-1', record, cache)
+            )
+
 
 class FileLineCountTests(unittest.TestCase):
     def test_returns_none_without_workspace_manager(self) -> None:
@@ -134,6 +164,29 @@ class FileLineCountTests(unittest.TestCase):
                 self.assertIsNone(
                     service._file_line_count('PROJ-1', 'repo-a', 'mod.py')
                 )
+
+    def test_reads_specific_file_line_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / 'src').mkdir()
+            (repo / 'src' / 'mod.py').write_text(
+                'alpha\n\ncharlie\n', encoding='utf-8',
+            )
+            wm = SimpleNamespace(
+                repository_path=MagicMock(return_value=repo),
+            )
+            service = _bare_service(workspace_manager=wm)
+            self.assertEqual(
+                service._file_line_text('PROJ-1', 'repo-a', 'src/mod.py', 1),
+                'alpha',
+            )
+            self.assertEqual(
+                service._file_line_text('PROJ-1', 'repo-a', 'src/mod.py', 2),
+                '',
+            )
+            self.assertIsNone(
+                service._file_line_text('PROJ-1', 'repo-a', 'src/mod.py', 9),
+            )
 
     def test_outdated_uses_cached_line_count(self) -> None:
         # End-to-end: a line past EOF reports outdated; a cached count is

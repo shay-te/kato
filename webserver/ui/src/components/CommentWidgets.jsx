@@ -106,6 +106,13 @@ export function CommentBubble({
   const author = comment.author || (comment.source === 'remote' ? 'remote' : 'operator');
   const isResolved = comment.status === 'resolved';
   const katoStatus = comment.kato_status;
+  const outdatedLine = Number(comment.line) > 0 ? ` ${comment.line}` : '';
+  const outdatedText = `Original line${outdatedLine} changed; shown as a file comment.`;
+  const outdatedBanner = comment.outdated && isRoot ? (
+    <div className="diff-file-comment-outdated-banner inline">
+      {outdatedText}
+    </div>
+  ) : null;
   const showMarkAddressed = (
     isRoot
     && typeof onMarkAddressed === 'function'
@@ -203,6 +210,7 @@ export function CommentBubble({
               ) : null}
             </div>
           )}
+          {outdatedBanner}
           <div className="diff-file-comment-body">
             {renderCommentMarkdown(comment.body)}
           </div>

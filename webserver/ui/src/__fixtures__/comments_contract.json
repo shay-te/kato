@@ -1,6 +1,7 @@
 {
   "create": {
     "comment": {
+      "anchor_line_hash": "",
       "author": "operator",
       "body": "fix it pls",
       "created_at_epoch": 0.0,
@@ -34,6 +35,7 @@
   "list_after_create": {
     "comments": [
       {
+        "anchor_line_hash": "",
         "author": "operator",
         "body": "fix it pls",
         "created_at_epoch": 0.0,

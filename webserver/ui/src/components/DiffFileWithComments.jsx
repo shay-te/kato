@@ -51,6 +51,43 @@ import { isLargeFile } from './diffFileSize.js';
 import DiffKindIcon from './DiffKindIcon.jsx';
 import { countNoun } from '../utils/pluralize.js';
 
+export function splitCommentsForDisplay(comments) {
+  const byLine = new Map();
+  const fileLevel = [];
+  const allComments = Array.isArray(comments) ? comments : [];
+  const byId = new Map();
+  const outdatedRoots = new Set();
+  for (const comment of allComments) {
+    byId.set(String(comment.id || ''), comment);
+    if (!comment.parent_id && comment.outdated) {
+      outdatedRoots.add(String(comment.id || ''));
+    }
+  }
+  function rootIdOf(comment) {
+    const seen = new Set();
+    let current = comment;
+    while (current?.parent_id && !seen.has(String(current.id || ''))) {
+      seen.add(String(current.id || ''));
+      const parent = byId.get(String(current.parent_id || ''));
+      if (!parent) { break; }
+      current = parent;
+    }
+    return String(current?.id || '');
+  }
+  for (const comment of allComments) {
+    const ln = Number(comment.line);
+    const isLineTarget = Number.isFinite(ln) && (ln >= 0 || isOldSideEncoded(ln));
+    const isOutdatedThread = outdatedRoots.has(rootIdOf(comment));
+    if (!comment.outdated && !isOutdatedThread && isLineTarget) {
+      if (!byLine.has(ln)) { byLine.set(ln, []); }
+      byLine.get(ln).push(comment);
+    } else {
+      fileLevel.push(comment);
+    }
+  }
+  return { commentsByLine: byLine, fileLevelComments: fileLevel };
+}
+
 // Default ``initiallyExpanded`` resolver: per-file rule only (no
 // awareness of sibling files). The parent ``ChangesTab`` overrides
 // this by passing ``initiallyExpanded`` derived from
@@ -158,21 +195,10 @@ function DiffFileWithComments({
     if (typeof onMutated === 'function') { onMutated(); }
   }
 
-  // Group comments by line so we can build the widgets dict and
-  // the file-level panel separately. Line < 0 means "file-level."
+  // Group comments by display target: live anchors render inline;
+  // outdated anchors move to the file-level panel.
   const { commentsByLine, fileLevelComments } = useMemo(() => {
-    const byLine = new Map();
-    const fileLevel = [];
-    for (const comment of comments) {
-      const ln = Number(comment.line);
-      if (Number.isFinite(ln) && (ln >= 0 || isOldSideEncoded(ln))) {
-        if (!byLine.has(ln)) { byLine.set(ln, []); }
-        byLine.get(ln).push(comment);
-      } else {
-        fileLevel.push(comment);
-      }
-    }
-    return { commentsByLine: byLine, fileLevelComments: fileLevel };
+    return splitCommentsForDisplay(comments);
   }, [comments]);
 
   // New-side line numbers that carry at least one OPEN (un-resolved)

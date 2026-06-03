@@ -1112,6 +1112,33 @@ class AddTaskCommentTests(unittest.TestCase):
         trigger.assert_called_once()
         self.assertTrue(result['triggered_immediately'])
 
+    def test_top_level_line_comment_stores_anchor_hash(self) -> None:
+        from kato_core_lib.comment_core_lib import CommentRecord
+
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        persisted = CommentRecord(
+            id='c1', body='comment', repo_id='r1', author='a',
+            source='local', file_path='f.py', line=2,
+        )
+        store.add.return_value = persisted
+        store.get.return_value = persisted
+        with patch.object(service, '_comment_store_for', return_value=store), \
+             patch.object(service, '_file_line_text',
+                          return_value='original line'), \
+             patch.object(service, '_maybe_trigger_comment_run',
+                          return_value=True):
+            result = service.add_task_comment(
+                'T1', repo_id='r1', file_path='f.py',
+                line=2, body='comment',
+            )
+        added = store.add.call_args.args[0]
+        self.assertTrue(result['ok'])
+        self.assertEqual(
+            added.anchor_line_hash,
+            service._comment_anchor_line_hash('original line'),
+        )
+
     def test_comment_prompt_includes_thread_replies(self) -> None:
         # A re-engaged run must see the operator's follow-up reply, not
         # just the original comment, so kato addresses the new pushback.

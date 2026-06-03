@@ -3990,11 +3990,20 @@ body.kato-resizing #left-pane-resizer::before {
   opacity: 0.9;
 }
 
-.diff-file-comment-resolved-banner {
+.diff-file-comment-resolved-banner,
+.diff-file-comment-outdated-banner {
   padding: 6px 10px;
+  font: 11px/1.4 inherit;
+}
+
+.diff-file-comment-resolved-banner {
   background: #1e3a8a;
   color: #cce0ff;
-  font: 11px/1.4 inherit;
+}
+
+.diff-file-comment-outdated-banner {
+  background: rgba(245, 158, 11, 0.1);
+  color: #f59e0b;
 }
 
 /* ----- Bitbucket-style comment card ----- */
@@ -4517,7 +4526,8 @@ body.kato-resizing #left-pane-resizer::before {
 
 /* Inline-resolved banner inside a CommentBubble (smaller than the
  * top-of-thread version since it sits inside the bubble). */
-.diff-file-comment-resolved-banner.inline {
+.diff-file-comment-resolved-banner.inline,
+.diff-file-comment-outdated-banner.inline {
   margin: -2px 0 5px 34px;
   padding: 3px 6px;
   border-radius: 3px;

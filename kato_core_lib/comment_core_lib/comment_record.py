@@ -87,6 +87,9 @@ class CommentRecord(object):
     # whose ``parent_id`` is another record's ``id`` is a reply in
     # that thread.
     parent_id: str = ''
+    # Hash of the original line text when a root comment is anchored.
+    # Used to avoid showing the thread on a changed line later.
+    anchor_line_hash: str = ''
     author: str = ''
     body: str = ''
     created_at_epoch: float = field(default_factory=time.time)
@@ -125,6 +128,7 @@ class CommentRecord(object):
             file_path=str(payload.get('file_path', '') or ''),
             line=int(payload.get('line', defaults.line) or defaults.line),
             parent_id=str(payload.get('parent_id', '') or ''),
+            anchor_line_hash=str(payload.get('anchor_line_hash', '') or ''),
             author=str(payload.get('author', '') or ''),
             body=str(payload.get('body', '') or ''),
             created_at_epoch=float(

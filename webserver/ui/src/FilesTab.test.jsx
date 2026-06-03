@@ -404,20 +404,20 @@ describe('buildFilesCommentMeta', () => {
     expect(entry.status).toBe('open');
   });
 
-  test('outdated comments are not counted (no phantom badge)', () => {
+  test('outdated comments are counted so the file badge opens the panel', () => {
     const meta = buildFilesCommentMeta([
       { id: 'c1', repo_id: 'r', file_path: 'src/a.js', parent_id: '', outdated: true },
       { id: 'c2', repo_id: 'r', file_path: 'src/a.js', parent_id: '' },
     ]);
-    // Only the live comment counts; the outdated one is dropped.
-    expect(meta.get('r').get('src/a.js').count).toBe(1);
+    expect(meta.get('r').get('src/a.js').count).toBe(2);
   });
 
-  test('a file whose only comment is outdated shows no badge', () => {
+  test('a file whose only comment is outdated still shows a badge', () => {
     const meta = buildFilesCommentMeta([
       { id: 'c1', repo_id: 'r', file_path: 'src/b.js', parent_id: '', outdated: true },
     ]);
-    expect(meta.get('r')?.has('src/b.js')).toBeFalsy();
+    expect(meta.get('r').get('src/b.js').count).toBe(1);
+    expect(meta.get('r').get('src/b.js').status).toBe('open');
   });
 
   test('unknown / idle open comments tint the badge as open', () => {

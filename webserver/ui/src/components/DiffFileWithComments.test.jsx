@@ -11,7 +11,9 @@ import { beforeEach, describe, test, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { parseDiff } from 'react-diff-view';
 
-import DiffFileWithComments from './DiffFileWithComments.jsx';
+import DiffFileWithComments, {
+  splitCommentsForDisplay,
+} from './DiffFileWithComments.jsx';
 import { LARGE_FILE_LINE_THRESHOLD } from './diffFileSize.js';
 
 const apiMocks = vi.hoisted(() => {
@@ -79,6 +81,17 @@ function renderDiff({ file, ...rest } = {}) {
 
 describe('DiffFileWithComments — collapse / expand integration', () => {
 
+  test('splitCommentsForDisplay moves outdated line comments to file-level', () => {
+    const fresh = { id: 'fresh', line: 3, status: 'open' };
+    const stale = { id: 'stale', line: 4, status: 'open', outdated: true };
+    const reply = { id: 'reply', parent_id: 'stale', line: 4, status: 'open' };
+    const result = splitCommentsForDisplay([fresh, stale, reply]);
+
+    expect(result.commentsByLine.get(3)).toEqual([fresh]);
+    expect(result.commentsByLine.has(4)).toBe(false);
+    expect(result.fileLevelComments).toEqual([stale, reply]);
+  });
+
   test('initiallyExpanded=true: diff body renders inline', () => {
     const { container } = renderDiff({ file: _file(10), initiallyExpanded: true });
 
@@ -144,6 +157,25 @@ describe('DiffFileWithComments — collapse / expand integration', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /collapse diff/i })).toBeInTheDocument();
     });
+  });
+
+  test('an outdated line comment renders in the file comments panel', () => {
+    const { container } = renderDiff({
+      file: _file(20),
+      initiallyExpanded: true,
+      comments: [{
+        id: 'c1',
+        body: 'stale line comment',
+        line: 3,
+        status: 'open',
+        file_path: 'src/file.py',
+        outdated: true,
+      }],
+    });
+
+    expect(screen.getByText('stale line comment')).toBeInTheDocument();
+    expect(screen.getByText(/Original line 3 changed/i)).toBeInTheDocument();
+    expect(container.querySelector('.diff-line-comments-host')).not.toBeInTheDocument();
   });
 
   test('a collapsed file with only resolved comments stays collapsed', () => {
