@@ -88,6 +88,20 @@ class AllSettingsGetTests(_Base):
         )
         self.assertTrue(bypass.get('danger'))
 
+    def test_general_section_exposes_lessons_path(self) -> None:
+        with patch.dict(os.environ, self._env()):
+            resp = self._client().get('/api/all-settings')
+        general = next(
+            s for s in resp.get_json()['sections'] if s['id'] == 'general'
+        )
+        lessons = next(
+            f for f in general['fields']
+            if f['key'] == 'KATO_LESSONS_PATH'
+        )
+
+        self.assertEqual(lessons['type'], 'text')
+        self.assertIn('lessons', lessons['label'].lower())
+
     def test_value_resolves_from_settings_json(self) -> None:
         self.settings_path.write_text(
             json.dumps({'KATO_MAX_PARALLEL_TASKS': '4'}), encoding='utf-8',
@@ -128,6 +142,17 @@ class AllSettingsPostTests(_Base):
         self.assertEqual(saved['KATO_SECURITY_SCANNER_ENABLED'], 'true')
         # .env untouched.
         self.assertEqual(self.env_path.read_text(encoding='utf-8'), env_before)
+
+    def test_writes_lessons_path_to_settings_json(self) -> None:
+        target = '/Users/shaytessler/Desktop/dev_kato/lessons.md'
+        with patch.dict(os.environ, self._env()):
+            resp = self._client().post(
+                '/api/all-settings',
+                json={'updates': {'KATO_LESSONS_PATH': target}},
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self._saved()['KATO_LESSONS_PATH'], target)
 
     def test_unknown_key_is_dropped(self) -> None:
         with patch.dict(os.environ, self._env()):

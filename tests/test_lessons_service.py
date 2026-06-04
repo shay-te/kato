@@ -123,6 +123,77 @@ class LessonsServiceExtractionTests(unittest.TestCase):
         self.assertEqual(self.dao.read_per_task('PROJ-1'), '- second\n')
 
 
+class LessonsServiceCandidateTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.state_dir = Path(self._tmp.name)
+        self.dao = LessonsDataAccess(self.state_dir)
+
+    def test_candidate_extract_saves_candidate_only(self) -> None:
+        llm = _FakeLLM('- use shared status derivation')
+        service = LessonsService(self.dao, llm)
+
+        lesson = service.extract_candidate_and_save(
+            'task__PROJ-1__prompt__a',
+            'operator prompt',
+        )
+
+        self.assertEqual(lesson, '- use shared status derivation')
+        self.assertEqual(
+            self.dao.read_candidate('task__PROJ-1__prompt__a'),
+            '- use shared status derivation\n',
+        )
+        self.assertEqual(self.dao.list_per_task_ids(), [])
+        self.assertEqual(self.dao.read_global_body(), '')
+
+    def test_promote_candidate_moves_to_pending_and_deletes_candidate(self) -> None:
+        self.dao.write_candidate('task__PROJ-1__prompt__a', '- candidate')
+        service = LessonsService(self.dao, _FakeLLM())
+
+        promoted = service.promote_candidate('task__PROJ-1__prompt__a')
+
+        self.assertEqual(promoted, '- candidate')
+        self.assertIsNone(self.dao.read_candidate('task__PROJ-1__prompt__a'))
+        self.assertEqual(
+            self.dao.read_per_task('task__PROJ-1__prompt__a'),
+            '- candidate\n',
+        )
+
+    def test_promote_candidates_filters_by_prefix(self) -> None:
+        self.dao.write_candidate('task__PROJ-1__prompt__a', '- a')
+        self.dao.write_candidate('task__PROJ-1__prompt__b', '- b')
+        self.dao.write_candidate('comment__PROJ-1__c1__a', '- c')
+        service = LessonsService(self.dao, _FakeLLM())
+
+        promoted = service.promote_candidates('task__PROJ-1__')
+
+        self.assertEqual(
+            promoted,
+            ['task__PROJ-1__prompt__a', 'task__PROJ-1__prompt__b'],
+        )
+        self.assertEqual(
+            set(self.dao.list_per_task_ids()),
+            {'task__PROJ-1__prompt__a', 'task__PROJ-1__prompt__b'},
+        )
+        self.assertEqual(
+            self.dao.list_candidate_ids(),
+            ['comment__PROJ-1__c1__a'],
+        )
+
+    def test_candidate_no_lesson_removes_stale_candidate(self) -> None:
+        self.dao.write_candidate('task__PROJ-1__prompt__a', '- stale')
+        service = LessonsService(self.dao, _FakeLLM('NO_LESSON'))
+
+        lesson = service.extract_candidate_and_save(
+            'task__PROJ-1__prompt__a',
+            'prompt',
+        )
+
+        self.assertEqual(lesson, '')
+        self.assertIsNone(self.dao.read_candidate('task__PROJ-1__prompt__a'))
+
+
 class LessonsServiceCompactTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()

@@ -46,33 +46,52 @@ def forgotten_task_ids() -> set[str]:
     return {str(item).strip() for item in data if str(item).strip()}
 
 
+def _normalize(task_id: object) -> str:
+    """Canonical key for forgotten-id membership tests.
+
+    Task ids reach the scan with disagreeing casing — the ticket platform
+    yields ``UNA-1495`` while on-disk records/workspaces are lowercased
+    (``una-1495``). A case-sensitive test silently fails to skip a forgotten
+    task and resurrects it on the next scan, so every membership check
+    compares on this ``.strip().lower()`` key (the same policy as
+    ``AgentService._norm_task_id``). The ORIGINAL case is what's stored.
+    """
+    return str(task_id or '').strip().lower()
+
+
 def is_forgotten(task_id: str) -> bool:
-    normalized = str(task_id or '').strip()
-    return bool(normalized) and normalized in forgotten_task_ids()
+    normalized = _normalize(task_id)
+    return bool(normalized) and normalized in {
+        _normalize(item) for item in forgotten_task_ids()
+    }
 
 
 def forget(task_id: str) -> None:
     """Mark a task forgotten so the scan skips it until it is re-adopted."""
-    normalized = str(task_id or '').strip()
-    if not normalized:
+    raw = str(task_id or '').strip()
+    if not raw:
         return
     ids = forgotten_task_ids()
-    if normalized in ids:
+    # Dedup case-insensitively — ``UNA-1495`` and ``una-1495`` are the same
+    # task, so the file never accumulates case-variant duplicates.
+    if _normalize(raw) in {_normalize(item) for item in ids}:
         return
-    ids.add(normalized)
+    ids.add(raw)
     _write(ids)
 
 
 def unforget(task_id: str) -> None:
     """Clear a task's forgotten mark — the operator re-adopted it."""
-    normalized = str(task_id or '').strip()
+    normalized = _normalize(task_id)
     if not normalized:
         return
     ids = forgotten_task_ids()
-    if normalized not in ids:
+    # Drop EVERY case-variant of the id — the mark may have been written in
+    # a different case than the one the operator re-adopts in.
+    remaining = {item for item in ids if _normalize(item) != normalized}
+    if remaining == ids:
         return
-    ids.discard(normalized)
-    _write(ids)
+    _write(remaining)
 
 
 def _write(ids: set[str]) -> None:

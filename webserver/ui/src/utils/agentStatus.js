@@ -89,12 +89,16 @@ export function badgeKindFor(kind) {
   return BADGE_KIND[kind] || '';
 }
 
+function dotStatusForKind(kind, resolved) {
+  if (kind === 'working') { return TAB_STATUS.WORKING; }
+  if (kind === 'approval') { return TAB_STATUS.ATTENTION; }
+  return resolved;
+}
+
 // session: the polled /api/sessions record. liveStatus: the active task's live
-// SSE facts {lifecycle, turnInFlight, pendingPermission} from agentStatusStore,
-// or null for background tabs. needsAttention: the caller's attention flag.
-// Returns { kind, label, title, dotClass } — the dotClass keeps the workspace
-// axis (resolveTabStatus + statusDotClass) so review/done/attention colours and
-// the provisioning/idle-alive modifiers are unchanged.
+// SSE facts {lifecycle, turnInFlight, pendingPermission} from agentStatusStore.
+// needsAttention: the caller's attention flag.
+// Returns { kind, label, title, dotClass } — kind drives the chip and the dot.
 export function deriveAgentStatus(session, liveStatus = null, needsAttention = false) {
   const baseStatus = deriveTabStatus(session);
   const kind = liveStatus
@@ -103,17 +107,15 @@ export function deriveAgentStatus(session, liveStatus = null, needsAttention = f
   const meta = STATUS_BY_KIND[kind] || STATUS_BY_KIND.unknown;
 
   const resolved = resolveTabStatus(session, needsAttention);
+  const dotStatus = dotStatusForKind(kind, resolved);
   const turnish = liveStatus ? !!liveStatus.turnInFlight : (session?.working === true);
-  const idleAlive = resolved === TAB_STATUS.ACTIVE
+  const idleAlive = dotStatus === TAB_STATUS.ACTIVE
     && !turnish
     && session?.working === false;
-  const dotClass = statusDotClass(resolved, {
+  const dotClass = statusDotClass(dotStatus, {
     isLoading: baseStatus === TAB_STATUS.PROVISIONING,
     idleAlive,
   });
 
-  // ``status`` is the resolved workspace-axis status (active/review/done/…
-  // with the attention override) — surfaces that key a dot/tooltip off the
-  // workspace axis (e.g. the tab tooltip's status dot) reuse it.
-  return { kind, label: meta.label, title: meta.title, dotClass, status: resolved };
+  return { kind, label: meta.label, title: meta.title, dotClass, status: dotStatus };
 }

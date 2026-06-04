@@ -16,9 +16,8 @@ export default function Tab({
 }) {
   const baseStatus = deriveTabStatus(session);
   // The agent dot + tooltip badge derive from the SAME value as the header chip
-  // (UNA-2492). For the active tab the live SSE status (from agentStatusStore)
-  // wins; background tabs fall back to the polled session fields.
-  const agent = deriveAgentStatus(session, active ? liveStatus : null, needsAttention);
+  // (UNA-2492). liveStatus is read from agentStatusStore by App/TabList.
+  const agent = deriveAgentStatus(session, liveStatus, needsAttention);
   const className = cx(
     'tab',
     active && 'active',

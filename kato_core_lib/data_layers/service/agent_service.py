@@ -936,6 +936,7 @@ class AgentService(MissionStepLoggerMixin, Service):
             persisted = store.add(record)
         except ValueError as exc:
             return {'ok': False, 'error': str(exc)}
+        self.capture_comment_lesson_candidate(str(task_id), persisted)
         # An operator reply RE-ENGAGES kato: it flips the thread's root
         # comment back to QUEUED (pending) and triggers a run, so kato
         # addresses the new reply (e.g. "no, do it differently") instead
@@ -976,6 +977,98 @@ class AgentService(MissionStepLoggerMixin, Service):
             'comment': persisted.to_dict(),
             'triggered_immediately': triggered,
         }
+
+    def capture_prompt_lesson_candidate(self, task_id: str, prompt: str) -> None:
+        """Best-effort candidate lesson extraction for operator chat prompts."""
+        text = str(prompt or '').strip()
+        if not text:
+            return
+        candidate_id = self._task_lesson_candidate_id(task_id, 'prompt')
+        context = f'Operator chat prompt for task {task_id}:\n{text}'
+        self._kick_lesson_candidate_extraction(candidate_id, context)
+
+    def capture_comment_lesson_candidate(self, task_id: str, comment) -> None:
+        """Best-effort candidate lesson extraction for operator diff comments."""
+        body = str(getattr(comment, 'body', '') or '').strip()
+        if not body:
+            return
+        comment_id = str(getattr(comment, 'id', '') or '').strip()
+        candidate_id = self._comment_lesson_candidate_id(task_id, comment_id)
+        file_path = str(getattr(comment, 'file_path', '') or '').strip()
+        line = int(getattr(comment, 'line', -1) or -1)
+        context = (
+            f'Operator diff comment for task {task_id}.\n'
+            f'File: {file_path or "(none)"}\n'
+            f'Line: {line}\n'
+            f'Comment:\n{body}'
+        )
+        self._kick_lesson_candidate_extraction(candidate_id, context)
+
+    def _kick_lesson_candidate_extraction(
+        self,
+        candidate_id: str,
+        source_context: str,
+    ) -> None:
+        if self._lessons_service is None:
+            return
+        import threading
+
+        def _run() -> None:
+            try:
+                self._lessons_service.extract_candidate_and_save(
+                    candidate_id, source_context,
+                )
+            except Exception:
+                pass
+
+        worker = threading.Thread(
+            target=_run,
+            name=f'kato-lesson-candidate-{candidate_id}',
+            daemon=True,
+        )
+        worker.start()
+
+    def _promote_lesson_candidates(
+        self,
+        prefix: str,
+        *,
+        compact: bool = True,
+    ) -> list[str]:
+        if self._lessons_service is None:
+            return []
+        try:
+            promoted = self._lessons_service.promote_candidates(prefix)
+            if promoted and compact:
+                self._lessons_service.compact()
+            return promoted
+        except Exception:
+            self.logger.exception('failed to promote lesson candidates')
+            return []
+
+    @staticmethod
+    def _task_lesson_candidate_prefix(task_id: str) -> str:
+        return f'task__{str(task_id or "").strip()}__'
+
+    @classmethod
+    def _task_lesson_candidate_id(cls, task_id: str, source: str) -> str:
+        return (
+            f'{cls._task_lesson_candidate_prefix(task_id)}'
+            f'{str(source or "prompt").strip()}__{uuid.uuid4().hex}'
+        )
+
+    @staticmethod
+    def _comment_lesson_candidate_prefix(task_id: str, comment_id: str) -> str:
+        return (
+            f'comment__{str(task_id or "").strip()}__'
+            f'{str(comment_id or "").strip()}__'
+        )
+
+    @classmethod
+    def _comment_lesson_candidate_id(cls, task_id: str, comment_id: str) -> str:
+        return (
+            f'{cls._comment_lesson_candidate_prefix(task_id, comment_id)}'
+            f'{uuid.uuid4().hex}'
+        )
 
     def drain_next_queued_task_comment(self, task_id: str) -> dict[str, object]:
         """Start the oldest queued local diff comment for this task if possible."""
@@ -1473,6 +1566,9 @@ class AgentService(MissionStepLoggerMixin, Service):
         )
         if updated is None:
             return {'ok': False, 'error': f'comment {comment_id!r} not found'}
+        self._promote_lesson_candidates(
+            self._comment_lesson_candidate_prefix(task_id, updated.id),
+        )
         remote_reply = {'attempted': False}
         if (
             post_remote_reply
@@ -3472,7 +3568,15 @@ class AgentService(MissionStepLoggerMixin, Service):
 
         def _run() -> None:
             try:
-                self._lessons_service.extract_and_save(task_id, task_context)
+                promoted = self._promote_lesson_candidates(
+                    self._task_lesson_candidate_prefix(task_id),
+                    compact=False,
+                )
+                lesson = self._lessons_service.extract_and_save(
+                    task_id, task_context,
+                )
+                if lesson or promoted:
+                    self._lessons_service.compact()
             except Exception:
                 # Service already logs; swallow so the worker thread
                 # never crashes anything visible to the operator.

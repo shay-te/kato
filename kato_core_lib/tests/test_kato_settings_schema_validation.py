@@ -16,6 +16,8 @@ from kato_core_lib.helpers.kato_settings_schema_utils import (
     _check_email,
     _check_type,
     _check_url,
+    all_settings_keys,
+    schema_for_api,
     validate_settings_values,
 )
 
@@ -130,6 +132,23 @@ class ValidateSettingsValuesTests(unittest.TestCase):
 
     def test_empty_input_returns_empty(self) -> None:
         self.assertEqual(validate_settings_values({}), [])
+
+
+class LessonsPathSchemaTests(unittest.TestCase):
+    def test_lessons_path_is_operator_editable(self) -> None:
+        self.assertIn('KATO_LESSONS_PATH', all_settings_keys())
+
+    def test_lessons_path_appears_in_general_section(self) -> None:
+        general = next(
+            section for section in schema_for_api()
+            if section['id'] == 'general'
+        )
+        field = next(
+            field for field in general['fields']
+            if field['key'] == 'KATO_LESSONS_PATH'
+        )
+
+        self.assertEqual(field['type'], 'text')
 
 
 if __name__ == '__main__':

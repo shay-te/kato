@@ -57,8 +57,7 @@ export default function App() {
   const attention = useTaskAttention();
   // Live agent status published by the active task's SessionDetail. Subscribed
   // once here and passed down (via TabList) so the tab dot/badge derive from the
-  // same value as the header chip (UNA-2492). Only the active task ever has a
-  // live entry; inactive tabs get null and fall back to polled status.
+  // same value as the header chip (UNA-2492).
   const [agentStatuses, setAgentStatuses] = useState({});
   useEffect(() => agentStatusStore.subscribe(setAgentStatuses), []);
   // Lifted from SessionDetail so the same recall function powers
@@ -330,7 +329,6 @@ export default function App() {
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
 
   const activeSession = sessions.find((s) => s.task_id === activeTaskId) || null;
-  const activeLiveStatus = (activeTaskId && agentStatuses[activeTaskId]) || null;
   const attentionTaskIds = useMemo(() => {
     return mergePendingPermissionTaskIds(
       attention.taskIds, sessions, toolMemory.recall,
@@ -451,7 +449,7 @@ export default function App() {
           sessions={sessions}
           activeTaskId={activeTaskId}
           attentionTaskIds={attentionTaskIds}
-          activeLiveStatus={activeLiveStatus}
+          agentStatuses={agentStatuses}
           onSelect={setActiveTaskId}
           onForget={requestForgetTask}
           onOpenAddTask={() => setAddTaskModalOpen(true)}

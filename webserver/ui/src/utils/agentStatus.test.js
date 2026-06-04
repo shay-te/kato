@@ -87,7 +87,7 @@ test('polled fallback: non-live tab reads closed when terminal, else sleeping', 
   assert.equal(deriveAgentStatus(session({ live: false, status: 'review' }), null, false).kind, 'sleeping');
 });
 
-// ---- dotClass preserves the workspace axis ---------------------------------
+// ---- dotClass follows the same agent kind as the chip -----------------------
 
 test('dotClass keeps the workspace status (review/done) and attention override', () => {
   const review = deriveAgentStatus(session({ status: 'review' }), null, false);
@@ -96,6 +96,18 @@ test('dotClass keeps the workspace status (review/done) and attention override',
 
   const attention = deriveAgentStatus(session({ status: 'review' }), null, true);
   assert.match(attention.dotClass, /status-attention/);
+});
+
+test('dotClass trusts live working kind even when the workspace status is review', () => {
+  const got = deriveAgentStatus(
+    session({ status: 'review', working: false }),
+    live({ turnInFlight: true }),
+    false,
+  );
+
+  assert.equal(got.kind, 'working');
+  assert.match(got.dotClass, /status-working/);
+  assert.equal(got.status, 'working');
 });
 
 test('dotClass marks provisioning as loading', () => {

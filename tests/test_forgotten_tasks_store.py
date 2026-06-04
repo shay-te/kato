@@ -48,6 +48,29 @@ class ForgottenTasksStoreTests(unittest.TestCase):
         self.assertFalse(store.is_forgotten('UNA-1'))
         self.assertTrue(store.is_forgotten('UNA-2'))
 
+    def test_membership_is_case_insensitive(self) -> None:
+        # The platform yields ``UNA-1495`` but on-disk records/workspaces are
+        # lowercased, so the forget mark and the scan's task id can disagree on
+        # case. A case-sensitive test silently failed to skip the task and
+        # resurrected it — the "I deleted it but it keeps coming back" bug.
+        store.forget('UNA-1495')
+        self.assertTrue(store.is_forgotten('una-1495'))
+        self.assertTrue(store.is_forgotten('UNA-1495'))
+        self.assertTrue(store.is_forgotten(' Una-1495 '))
+
+    def test_forget_dedupes_case_variants(self) -> None:
+        store.forget('UNA-1495')
+        store.forget('una-1495')  # same task, different case — not a new entry
+        self.assertEqual(store.forgotten_task_ids(), {'UNA-1495'})
+
+    def test_unforget_clears_any_case_variant(self) -> None:
+        # Re-adopting via a different case than the mark was written in must
+        # still clear it (otherwise adopt wouldn't actually un-forget).
+        store.forget('UNA-1495')
+        store.unforget('una-1495')
+        self.assertFalse(store.is_forgotten('UNA-1495'))
+        self.assertEqual(store.forgotten_task_ids(), set())
+
     def test_unforget_unknown_is_noop(self) -> None:
         store.forget('UNA-1')
         store.unforget('UNA-NOPE')

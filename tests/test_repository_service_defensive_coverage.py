@@ -471,7 +471,8 @@ class RestoreTaskRepositoryBranchesTests(unittest.TestCase):
         repo = SimpleNamespace(id='client', local_path='/x', destination_branch='main')
         service._validate_local_path = MagicMock()
         with patch.object(service, '_current_branch', return_value='main'), \
-             patch.object(service, '_working_tree_status', return_value=''):
+             patch.object(service, '_working_tree_status', return_value=''), \
+             patch.object(Path, 'is_dir', return_value=True):
             service._restore_task_repository(repo)
         # No git operations were attempted past this point.
 
@@ -483,9 +484,25 @@ class RestoreTaskRepositoryBranchesTests(unittest.TestCase):
         repo = SimpleNamespace(id='client', local_path='/x', destination_branch='main')
         with patch.object(service, '_current_branch', return_value='feat/x'), \
              patch.object(service, '_working_tree_status',
-                          return_value=' M file.py\n'):
+                          return_value=' M file.py\n'), \
+             patch.object(Path, 'is_dir', return_value=True):
             service._restore_task_repository(repo, force=False)
         service.logger.warning.assert_called_once()
+
+    def test_skips_restore_when_workspace_checkout_was_deleted(self) -> None:
+        service = _make_service()
+        service.logger = MagicMock()
+        repo = SimpleNamespace(
+            id='client',
+            local_path='/tmp/kato-missing-checkout',
+            destination_branch='main',
+        )
+        with patch.object(service, '_current_branch') as current_branch, \
+             patch.object(service, '_working_tree_status') as status:
+            service._restore_task_repository(repo, force=True)
+        current_branch.assert_not_called()
+        status.assert_not_called()
+        service.logger.info.assert_called_once()
 
 
 class UnstageReportLogTests(unittest.TestCase):

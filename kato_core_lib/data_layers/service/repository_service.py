@@ -830,6 +830,14 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         return repository
 
     def _restore_task_repository(self, repository, force: bool = False) -> None:
+        local_path = text_from_attr(repository, 'local_path')
+        if local_path and not (Path(local_path) / '.git').is_dir():
+            self.logger.info(
+                'skipping repository restore for %s because %s is no longer a git checkout',
+                repository.id,
+                local_path,
+            )
+            return
         self._validate_local_path(repository)
         destination_branch = text_from_attr(repository, 'destination_branch') or self.destination_branch(
             repository
@@ -1508,4 +1516,3 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
             generated_artifact_paths,
             validation_report_paths,
         )
-

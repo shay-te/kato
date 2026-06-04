@@ -127,6 +127,35 @@ class LessonsDataAccessTests(unittest.TestCase):
         self.assertFalse(self.dao.write_per_task('   ', '- a'))
         self.assertIsNone(self.dao.read_per_task(''))
 
+    # ----- candidates -----
+
+    def test_write_then_read_candidate_round_trip(self) -> None:
+        ok = self.dao.write_candidate('task__PROJ-1__prompt__abc', '- rule')
+        self.assertTrue(ok)
+        self.assertEqual(
+            self.dao.read_candidate('task__PROJ-1__prompt__abc'),
+            '- rule\n',
+        )
+
+    def test_list_candidate_ids_filters_by_prefix(self) -> None:
+        self.dao.write_candidate('task__PROJ-1__prompt__a', '- a')
+        self.dao.write_candidate('task__PROJ-1__prompt__b', '- b')
+        self.dao.write_candidate('comment__PROJ-1__c1__a', '- c')
+
+        self.assertEqual(
+            self.dao.list_candidate_ids('task__PROJ-1__'),
+            ['task__PROJ-1__prompt__a', 'task__PROJ-1__prompt__b'],
+        )
+
+    def test_delete_candidate_removes_file(self) -> None:
+        self.dao.write_candidate('candidate-1', '- a')
+        self.dao.delete_candidate('candidate-1')
+        self.assertIsNone(self.dao.read_candidate('candidate-1'))
+
+    def test_invalid_candidate_id_is_rejected(self) -> None:
+        self.assertFalse(self.dao.write_candidate('../escape', '- malicious'))
+        self.assertEqual(self.dao.list_candidate_ids(), [])
+
     # ----- global -----
 
     def test_write_then_read_global_round_trip(self) -> None:

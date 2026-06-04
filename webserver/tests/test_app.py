@@ -365,6 +365,31 @@ class WebserverAppTests(unittest.TestCase):
         self.assertEqual(len(send_calls[0][1]), 1)
         self.assertEqual(send_calls[0][1][0]['media_type'], 'image/png')
 
+    def test_post_message_captures_prompt_lesson_candidate(self):
+        live = MagicMock()
+        live.is_alive = True
+        live.send_user_message = MagicMock()
+
+        class _LiveManager(_FakeManager):
+            def get_session(self, task_id):
+                return live if task_id == 'PROJ-1' else None
+
+        manager = _LiveManager(records=[
+            _FakeRecord(task_id='PROJ-1', agent_session_id='abc'),
+        ])
+        agent_service = MagicMock()
+        app = create_app(session_manager=manager, agent_service=agent_service)
+        response = app.test_client().post(
+            '/api/sessions/PROJ-1/messages',
+            json={'text': 'please learn from this prompt'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        agent_service.capture_prompt_lesson_candidate.assert_called_once_with(
+            'PROJ-1',
+            'please learn from this prompt',
+        )
+
     def test_post_message_accepts_images_only_no_text(self):
         live = MagicMock()
         live.is_alive = True
@@ -648,7 +673,10 @@ class WebserverAppTests(unittest.TestCase):
         service = MagicMock()
         _advance_task_comments_after_result(event, service, 'PROJ-1')
         service.complete_in_progress_task_comments.assert_called_once_with(
-            'PROJ-1', success=True, result_text='Done.',
+            'PROJ-1',
+            success=True,
+            result_text='Done.',
+            result_received_at_epoch=0.0,
         )
         service.drain_next_queued_task_comment.assert_called_once_with('PROJ-1')
 
@@ -659,7 +687,10 @@ class WebserverAppTests(unittest.TestCase):
         service = MagicMock()
         _advance_task_comments_after_result(event, service, 'PROJ-1')
         service.complete_in_progress_task_comments.assert_called_once_with(
-            'PROJ-1', success=False, result_text='',
+            'PROJ-1',
+            success=False,
+            result_text='',
+            result_received_at_epoch=0.0,
         )
 
     def test_non_result_event_is_ignored(self):

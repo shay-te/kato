@@ -50,6 +50,27 @@ class ForgottenTaskScanSkipTests(unittest.TestCase):
             [c[PullRequestFields.ID] for c in contexts], ['UNA-OK'],
         )
 
+    def test_forgotten_task_skipped_despite_case_mismatch(self) -> None:
+        # The forget mark is stored uppercase (``UNA-2536``) but the platform
+        # task id can arrive in another case. A case-sensitive ``in`` test let
+        # the task slip through and get resurrected; the filter now normalises
+        # both sides, so the case-variant is still skipped.
+        forgotten_lowercase = types.SimpleNamespace(id='una-2536')
+        kept = types.SimpleNamespace(id='UNA-OK')
+        service = self._service([forgotten_lowercase, kept])
+        with patch(
+            'kato_core_lib.data_layers.service.review_comment_service.forgotten_task_ids',
+            return_value={'UNA-2536'},
+        ), patch.object(
+            service, '_review_task_pull_request_contexts', side_effect=self._ctx_for,
+        ) as mock_ctx:
+            contexts = service._review_pull_request_contexts()
+        gathered_ids = [call.args[0].id for call in mock_ctx.call_args_list]
+        self.assertEqual(gathered_ids, ['UNA-OK'])
+        self.assertEqual(
+            [c[PullRequestFields.ID] for c in contexts], ['UNA-OK'],
+        )
+
     def test_no_forgotten_keeps_every_task(self) -> None:
         kept = types.SimpleNamespace(id='UNA-OK')
         service = self._service([kept])

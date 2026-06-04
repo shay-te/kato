@@ -30,7 +30,7 @@ export default function TabList({
   sessions,
   activeTaskId,
   attentionTaskIds,
-  activeLiveStatus = null,
+  agentStatuses = {},
   onSelect,
   onForget,
   onOpenAddTask,
@@ -228,13 +228,14 @@ export default function TabList({
   const tabs = orderedSessions.map((session) => {
     const isActive = session.task_id === activeTaskId;
     const needsAttention = !!attentionTaskIds && attentionTaskIds.has(session.task_id);
+    const liveStatus = agentStatuses[session.task_id] || null;
     return (
       <Tab
         key={session.task_id}
         session={session}
         active={isActive}
         needsAttention={needsAttention}
-        liveStatus={isActive ? activeLiveStatus : null}
+        liveStatus={liveStatus}
         pinned={pinnedSet.has(session.task_id)}
         onSelect={onSelect}
         onForget={onForget}

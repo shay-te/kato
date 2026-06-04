@@ -288,7 +288,7 @@ class CompleteInProgressTaskCommentsTests(unittest.TestCase):
                 repo_id='repo-1',
                 file_path='src/file.py',
                 line=12,
-                body=body or impatient_comment(),
+                body=body or 'Fix this regression before review.',
                 author='op',
                 source=CommentSource.LOCAL.value,
                 kato_status=KatoCommentStatus(status).value,
@@ -590,7 +590,11 @@ class CompleteInProgressTaskCommentsTests(unittest.TestCase):
         )
 
     def test_per_comment_error_does_not_abort_the_rest(self) -> None:
-        ids, store = self._seed('T1', ['in_progress', 'in_progress'])
+        ids, store = self._seed(
+            'T1',
+            ['in_progress', 'in_progress'],
+            body='Fix this regression before marking the comment done.',
+        )
         bad_id, good_id = ids
 
         real_mark = self.service.mark_comment_addressed
@@ -656,6 +660,57 @@ class MarkCommentAddressedRemoteSyncTests(unittest.TestCase):
             result = service.mark_comment_addressed('T1', 'c1')
         sync.assert_called_once()
         self.assertTrue(result['ok'])
+
+    def test_promotes_comment_lesson_candidates_when_addressed(self) -> None:
+        from kato_core_lib.comment_core_lib import CommentRecord
+        lessons = MagicMock()
+        lessons.promote_candidates.return_value = ['comment__T1__c1__a']
+        service = AgentService(**_kwargs(lessons_service=lessons))
+        local = CommentRecord(id='c1', body='b', repo_id='r1', author='a')
+        store = MagicMock()
+        store.update_kato_status.return_value = local
+
+        with patch.object(service, '_comment_store_for', return_value=store):
+            result = service.mark_comment_addressed('T1', 'c1')
+
+        self.assertTrue(result['ok'])
+        lessons.promote_candidates.assert_called_once_with('comment__T1__c1__')
+        lessons.compact.assert_called_once_with()
+
+
+class CommentLessonCandidateCaptureTests(unittest.TestCase):
+    def test_add_task_comment_stages_candidate_without_compacting(self) -> None:
+        lessons = MagicMock()
+        lessons.extract_candidate_and_save.return_value = '- candidate'
+        service = AgentService(**_kwargs(lessons_service=lessons))
+        record = CommentRecord(
+            id='c1',
+            repo_id='r1',
+            file_path='src/app.py',
+            line=10,
+            body='make sure this lesson is learned',
+        )
+        store = MagicMock()
+        store.add.return_value = record
+        store.get.return_value = record
+        with patch.object(service, '_comment_store_for', return_value=store), \
+             patch.object(service, '_maybe_trigger_comment_run',
+                          return_value=False):
+            result = service.add_task_comment(
+                'T1',
+                repo_id='r1',
+                file_path='src/app.py',
+                line=10,
+                body='make sure this lesson is learned',
+            )
+
+        self.assertTrue(result['ok'])
+        import time
+        time.sleep(0.05)
+        lessons.extract_candidate_and_save.assert_called_once()
+        candidate_id = lessons.extract_candidate_and_save.call_args.args[0]
+        self.assertTrue(candidate_id.startswith('comment__T1__c1__'))
+        lessons.compact.assert_not_called()
 
 
 class SyncRemoteCommentsTests(unittest.TestCase):
@@ -1422,6 +1477,60 @@ class KickLessonExtractionTests(unittest.TestCase):
         # Worker fires async — give it a moment.
         import time
         time.sleep(0.05)
+        lessons.compact.assert_not_called()
+
+    def test_prompt_candidate_extraction_is_staged_not_compacted(self) -> None:
+        lessons = MagicMock()
+        lessons.extract_candidate_and_save.return_value = '- candidate'
+        service = AgentService(**_kwargs(lessons_service=lessons))
+
+        service.capture_prompt_lesson_candidate('T1', 'please fix the tabs')
+
+        import time
+        time.sleep(0.05)
+        lessons.extract_candidate_and_save.assert_called_once()
+        candidate_id = lessons.extract_candidate_and_save.call_args.args[0]
+        self.assertTrue(candidate_id.startswith('task__T1__prompt__'))
+        lessons.compact.assert_not_called()
+
+    def test_compacts_after_successful_lesson_extraction(self) -> None:
+        lessons = MagicMock()
+        lessons.extract_and_save.return_value = '- concrete rule'
+        service = AgentService(**_kwargs(lessons_service=lessons))
+
+        service._kick_lesson_extraction('T1', {}, {})
+
+        import time
+        time.sleep(0.05)
+        lessons.extract_and_save.assert_called()
+        lessons.compact.assert_called_once_with()
+
+    def test_finish_promotes_prompt_candidates_then_compacts_once(self) -> None:
+        lessons = MagicMock()
+        lessons.promote_candidates.return_value = ['task__T1__prompt__a']
+        lessons.extract_and_save.return_value = ''
+        service = AgentService(**_kwargs(lessons_service=lessons))
+
+        service._kick_lesson_extraction('T1', {}, {})
+
+        import time
+        time.sleep(0.05)
+        lessons.promote_candidates.assert_called_once_with('task__T1__')
+        lessons.extract_and_save.assert_called()
+        lessons.compact.assert_called_once_with()
+
+    def test_does_not_compact_when_no_lesson_was_extracted(self) -> None:
+        lessons = MagicMock()
+        lessons.extract_and_save.return_value = ''
+        lessons.promote_candidates.return_value = []
+        service = AgentService(**_kwargs(lessons_service=lessons))
+
+        service._kick_lesson_extraction('T1', {}, {})
+
+        import time
+        time.sleep(0.05)
+        lessons.extract_and_save.assert_called()
+        lessons.compact.assert_not_called()
 
 
 class TaskPublishStateTests(unittest.TestCase):

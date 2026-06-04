@@ -8,6 +8,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import TabList from './TabList.jsx';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import { TAB_STATUS } from '../constants/tabStatus.js';
+import { SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
 import {
   PINNED_TABS_STORAGE_KEY,
   readPinnedIds,
@@ -53,6 +54,22 @@ describe('TabList', () => {
     const tabs = container.querySelectorAll('li.tab');
     expect(tabs[0]).not.toHaveClass('active');
     expect(tabs[1]).toHaveClass('active');
+  });
+
+  test('uses agentStatuses by task id so a non-active working tab is orange', () => {
+    const { container } = render(
+      <TabList
+        sessions={[_session('A-1', { status: TAB_STATUS.REVIEW }), _session('A-2')]}
+        activeTaskId="A-2"
+        agentStatuses={{
+          'A-1': { lifecycle: SESSION_LIFECYCLE.STREAMING, turnInFlight: true },
+        }}
+        onSelect={() => {}}
+      />,
+    );
+    const tabs = container.querySelectorAll('li.tab');
+    expect(tabs[0].querySelector('.status-dot')).toHaveClass(`status-${TAB_STATUS.WORKING}`);
+    expect(tabs[1].querySelector('.status-dot')).not.toHaveClass(`status-${TAB_STATUS.WORKING}`);
   });
 
   test('active-tab auto-scroll moves the STRIP, never scrollIntoView', () => {

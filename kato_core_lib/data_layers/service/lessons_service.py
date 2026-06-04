@@ -2,20 +2,22 @@
 
 Lifecycle:
 
-  1. **Extract** — when a task is marked done (or a review-fix
-     completes), kato calls :meth:`extract_and_save` with a short
-     "what happened" context. The service asks Claude for ONE concrete
-     rule that would have prevented a real mistake on this task.
-     Junk is discarded — no extraction, no file. A real lesson lands
-     in ``lessons/<task-id>.md``, overwriting any prior write for the
-     same task.
+  1. **Candidate extract** — prompts/comments may be scanned early
+     into ``lesson-candidates/<source-id>.md``. Candidates are NOT
+     injected into Claude yet.
 
-  2. **Compact** — periodically (default >= 24h since last compact),
-     the service merges every per-task pending lesson into the global
-     ``lessons.md`` and drops duplicates / vague platitudes. The
-     timestamp header records the merge time.
+  2. **Promote / extract** — when work is validated (task finished,
+     comment addressed), kato either promotes the matching candidate
+     or calls :meth:`extract_and_save` with a short "what happened"
+     context. Junk is discarded. A real lesson lands in
+     ``lessons/<id>.md``.
 
-  3. **Inject** — :meth:`compose_addendum` returns the global file
+  3. **Compact** — the service merges pending lessons into the global
+     ``lessons.md`` and drops duplicates / vague platitudes. Startup
+     still runs periodic compaction, and validated promotions compact
+     immediately so the next spawn can learn.
+
+  4. **Inject** — :meth:`compose_addendum` returns the global file
      body for inclusion in the Claude system prompt on every spawn.
      The compact step rewrites this file in place; subsequent spawns
      pick up the new lessons without restarting kato.
@@ -101,6 +103,71 @@ class LessonsService(object):
         return self._data_access
 
     # ----- per-task capture -----
+
+    def extract_candidate_and_save(
+        self,
+        candidate_id: str,
+        source_context: str,
+    ) -> str:
+        """Extract an untrusted candidate lesson from prompt/comment text."""
+        normalized_id = str(candidate_id or '').strip()
+        if not normalized_id:
+            self.logger.warning(
+                'extract_candidate_and_save called with empty candidate id',
+            )
+            return ''
+        prompt = self._build_candidate_prompt(normalized_id, source_context)
+        try:
+            response = self._llm_one_shot(prompt)
+        except Exception:
+            self.logger.exception(
+                'candidate lesson extraction failed for %s',
+                normalized_id,
+            )
+            return ''
+        lesson = self._parse_extraction_response(response)
+        if not lesson:
+            self._data_access.delete_candidate(normalized_id)
+            return ''
+        self._data_access.write_candidate(normalized_id, lesson)
+        self.logger.info('saved candidate lesson for %s', normalized_id)
+        return lesson
+
+    def promote_candidate(
+        self,
+        candidate_id: str,
+        *,
+        lesson_id: str = '',
+    ) -> str:
+        """Move a validated candidate into pending lessons."""
+        normalized_id = str(candidate_id or '').strip()
+        target_id = str(lesson_id or candidate_id or '').strip()
+        if not normalized_id or not target_id:
+            return ''
+        content = self._data_access.read_candidate(normalized_id)
+        if not content:
+            return ''
+        lesson = self._parse_extraction_response(content)
+        if not lesson:
+            self._data_access.delete_candidate(normalized_id)
+            return ''
+        if not self._data_access.write_per_task(target_id, lesson):
+            return ''
+        self._data_access.delete_candidate(normalized_id)
+        self.logger.info(
+            'promoted candidate lesson %s to %s',
+            normalized_id, target_id,
+        )
+        return lesson
+
+    def promote_candidates(self, prefix: str) -> list[str]:
+        """Promote every candidate whose id starts with ``prefix``."""
+        promoted: list[str] = []
+        for candidate_id in self._data_access.list_candidate_ids(prefix):
+            lesson = self.promote_candidate(candidate_id)
+            if lesson:
+                promoted.append(candidate_id)
+        return promoted
 
     def extract_and_save(self, task_id: str, task_context: str) -> str:
         """Extract a lesson from ``task_context`` and overwrite the per-task file.
@@ -225,6 +292,24 @@ class LessonsService(object):
             f'\n'
             f'Task context:\n'
             f'{task_context}\n'
+        )
+
+    def _build_candidate_prompt(
+        self,
+        candidate_id: str,
+        source_context: str,
+    ) -> str:
+        return (
+            f'{EXTRACTION_INSTRUCTIONS}\n'
+            f'\n'
+            f'This is an early candidate from an operator prompt/comment. '
+            f'Extract only a concrete, future-useful rule. It will be '
+            f'validated before reaching the global lessons file.\n'
+            f'\n'
+            f'Candidate id: {candidate_id}\n'
+            f'\n'
+            f'Source context:\n'
+            f'{source_context}\n'
         )
 
     def _build_compact_prompt(

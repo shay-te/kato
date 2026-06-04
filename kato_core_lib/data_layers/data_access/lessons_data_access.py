@@ -11,6 +11,10 @@ File layout under ``state_dir``:
                                      per task. Overwritten every time
                                      the task is marked done. Deleted
                                      during compaction.
+      lesson-candidates/
+        <source-id>.md            <- untrusted lessons extracted early
+                                     from prompts/comments. Promoted to
+                                     lessons/ only after validation.
 
 The global file's first line is a compaction timestamp:
 
@@ -49,6 +53,7 @@ class LessonsDataAccess(object):
         self._state_dir = Path(state_dir)
         self._global_path = self._state_dir / 'lessons.md'
         self._per_task_dir = self._state_dir / 'lessons'
+        self._candidate_dir = self._state_dir / 'lesson-candidates'
         self.logger = configure_logger(self.__class__.__name__)
 
     @property
@@ -173,6 +178,66 @@ class LessonsDataAccess(object):
                 out[task_id] = content
         return out
 
+    # ----- candidate lessons -----
+
+    def read_candidate(self, candidate_id: str) -> str | None:
+        """Return candidate lesson content, or None if absent."""
+        path = self._candidate_path(candidate_id)
+        if path is None or not path.is_file():
+            return None
+        try:
+            return path.read_text(encoding='utf-8')
+        except OSError:
+            self.logger.exception(
+                'failed to read candidate lesson for %s at %s',
+                candidate_id, path,
+            )
+            return None
+
+    def write_candidate(self, candidate_id: str, content: str) -> bool:
+        """Overwrite a candidate lesson file."""
+        path = self._candidate_path(candidate_id)
+        if path is None:
+            self.logger.warning(
+                'rejected candidate lesson write for invalid id %r',
+                candidate_id,
+            )
+            return False
+        body = content if content.endswith('\n') else content + '\n'
+        return atomic_write_text(
+            path,
+            body,
+            logger=self.logger,
+            label=f'candidate lesson {candidate_id}',
+        )
+
+    def delete_candidate(self, candidate_id: str) -> None:
+        """Remove a candidate lesson file. No-op when absent."""
+        path = self._candidate_path(candidate_id)
+        if path is None or not path.is_file():
+            return
+        try:
+            path.unlink()
+        except OSError:
+            self.logger.exception(
+                'failed to delete candidate lesson at %s', path,
+            )
+
+    def list_candidate_ids(self, prefix: str = '') -> list[str]:
+        """Return sorted candidate ids, optionally filtered by prefix."""
+        if not self._candidate_dir.is_dir():
+            return []
+        normalized_prefix = str(prefix or '').strip()
+        ids = []
+        for entry in sorted(self._candidate_dir.iterdir()):
+            if not entry.is_file() or entry.suffix != '.md':
+                continue
+            candidate_id = entry.stem
+            if normalized_prefix and not candidate_id.startswith(normalized_prefix):
+                continue
+            ids.append(candidate_id)
+        return ids
+
     # ----- internals -----
 
     def _per_task_path(self, task_id: str) -> Path | None:
@@ -180,6 +245,12 @@ class LessonsDataAccess(object):
         if not normalized:
             return None
         return self._per_task_dir / f'{normalized}.md'
+
+    def _candidate_path(self, candidate_id: str) -> Path | None:
+        normalized = self._normalize_task_id(candidate_id)
+        if not normalized:
+            return None
+        return self._candidate_dir / f'{normalized}.md'
 
     @staticmethod
     def _normalize_task_id(task_id: str) -> str:

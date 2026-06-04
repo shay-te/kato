@@ -194,7 +194,14 @@ class PlanningSessionRunnerTests(unittest.TestCase):
         self.assertEqual(manager.statuses, [SESSION_STATUS_TERMINATED])
 
     def test_implement_task_raises_when_session_ends_without_terminal_event(self) -> None:
-        manager = _FakeManager(terminal_event=None)
+        # Genuine no-result crash: the record is STILL PRESENT (and not
+        # TERMINATED), so the session just died without emitting a result.
+        # That's the real "ended without a result event" case — distinct from
+        # a forgotten/deleted task (record removed), covered below.
+        manager = _FakeManager(
+            terminal_event=None,
+            record_status=SESSION_STATUS_REVIEW,
+        )
         # Mark the fake session dead so the runner exits the wait loop quickly.
         manager._session._is_alive = False
         runner = PlanningSessionRunner(
@@ -208,6 +215,30 @@ class PlanningSessionRunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'ended without a result event'):
             runner.implement_task(build_task(), prepared_task=prepared)
         self.assertEqual(manager.statuses, [SESSION_STATUS_TERMINATED])
+
+    def test_implement_task_raises_session_stopped_when_record_removed(self) -> None:
+        # When the operator forgets/deletes a task mid-session, the forget
+        # endpoint terminates with remove_record=True — so by the time the
+        # planning thread wakes, get_record() returns None. That's an
+        # intentional teardown, NOT a crash: raise SessionStoppedByUserError
+        # (so the review-comment batch aborts cleanly instead of logging a
+        # scary "ended without a result event" traceback, restoring git in a
+        # deleted dir, and scheduling a pointless retry).
+        manager = _FakeManager(terminal_event=None, record_status=None)
+        manager._session._is_alive = False
+        runner = PlanningSessionRunner(
+            session_manager=manager,
+            defaults=self.defaults,
+            max_wait_seconds=0.1,
+            clock=lambda: time.monotonic(),
+        )
+        prepared = _FakePrepared([_FakeRepo('client', '/tmp/client')])
+
+        with self.assertRaisesRegex(SessionStoppedByUserError, 'forgotten/deleted'):
+            runner.implement_task(build_task(), prepared_task=prepared)
+        # The record is already gone — update_status must NOT be called (it
+        # would resurrect a record for a task that no longer exists).
+        self.assertEqual(manager.statuses, [])
 
     def test_implement_task_keeps_polling_while_clock_is_under_deadline(self) -> None:
         # Branch 539->529: when ``poll_event`` returns None AND the
@@ -313,6 +344,7 @@ class PlanningSessionRunnerDockerModeTests(unittest.TestCase):
         cfg.allowed_tools = ''
         cfg.disallowed_tools = ''
         cfg.max_turns = None
+        cfg.timeout_seconds = overrides.get('timeout_seconds', None)
         cfg.effort = ''
         cfg.architecture_doc_path = ''
         return cfg
@@ -336,6 +368,15 @@ class PlanningSessionRunnerDockerModeTests(unittest.TestCase):
         )
         self.assertIsNotNone(runner)
         self.assertTrue(runner._defaults.docker_mode_on)
+
+    def test_from_config_uses_claude_timeout_for_stream_wait(self) -> None:
+        open_cfg = MagicMock()
+        open_cfg.claude = self._build_claude_cfg(timeout_seconds=1800)
+        runner = PlanningSessionRunner.from_config(
+            open_cfg, 'claude', session_manager=MagicMock(),
+        )
+        self.assertIsNotNone(runner)
+        self.assertEqual(runner._max_wait_seconds, 1800)
 
     def test_implement_task_forwards_docker_mode_on_to_session_manager(self) -> None:
         manager = _FakeManager(_terminal(result='ok'))

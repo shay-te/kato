@@ -121,6 +121,9 @@ class PlanningSessionRunner(object):
         return cls(
             session_manager=session_manager,
             defaults=defaults,
+            max_wait_seconds=_coerce_optional_int(
+                getattr(claude_cfg, 'timeout_seconds', None),
+            ),
             hook_runner=hook_runner,
         )
 
@@ -414,9 +417,18 @@ class PlanningSessionRunner(object):
             # clicked Stop (record status already TERMINATED by
             # terminate_session) vs. an unexpected crash.
             record = self._session_manager.get_record(task_id)
+            # A MISSING record means the task was forgotten/deleted mid-session
+            # (the forget endpoint terminates with ``remove_record=True``,
+            # wiping the record). That's an intentional teardown — the same
+            # class as an explicit Stop — NOT an agent crash. Recognise it so
+            # callers don't emit a scary "ended without a result event"
+            # traceback, restore a git branch in a directory that's already
+            # been deleted, or schedule a pointless retry for a task that no
+            # longer exists.
+            record_removed = record is None
             user_stopped = (
-                record is not None
-                and record.status == SESSION_STATUS_TERMINATED
+                record_removed
+                or record.status == SESSION_STATUS_TERMINATED
             )
             if not user_stopped:
                 self._session_manager.update_status(task_id, SESSION_STATUS_TERMINATED)
@@ -426,8 +438,12 @@ class PlanningSessionRunner(object):
                 'log_label': log_label,
             })
             if user_stopped:
+                reason = (
+                    'task was forgotten/deleted'
+                    if record_removed else 'stopped by user'
+                )
                 raise SessionStoppedByUserError(
-                    f'{log_label} for task {task_id} stopped by user'
+                    f'{log_label} for task {task_id} {reason}'
                 )
             raise RuntimeError(
                 f'{log_label} for task {task_id} ended without a result event'

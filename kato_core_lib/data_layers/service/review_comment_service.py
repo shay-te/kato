@@ -18,6 +18,7 @@ from provider_client_base.provider_client_base.helpers.mention_utils import (
 )
 from kato_core_lib.data_layers.service.agent_state_registry import AgentStateRegistry
 from kato_core_lib.data_layers.service.implementation_service import ImplementationService
+from kato_core_lib.data_layers.service.planning_session_runner import SessionStoppedByUserError
 from kato_core_lib.data_layers.service.repository_service import RepositoryService
 from kato_core_lib.data_layers.service.task_service import TaskService
 from kato_core_lib.helpers.forgotten_tasks_store import forgotten_task_ids
@@ -229,6 +230,19 @@ class ReviewCommentService(Service):
             return [
                 review_fix_result(comment, review_context) for comment in comments
             ]
+        except SessionStoppedByUserError:
+            # The task was stopped or forgotten/deleted mid review-fix — the
+            # session runner wiped its record, so this is an intentional
+            # teardown, not a failure. Don't restore a (now-deleted) workspace,
+            # don't log a crash, and don't re-raise (which would schedule a
+            # pointless retry). The forgotten mark keeps the scan from
+            # re-engaging until the operator re-adopts the task.
+            self.logger.info(
+                'review-fix for pull request %s aborted because the task was '
+                'stopped/forgotten mid-run — leaving it untouched',
+                comments[0].pull_request_id,
+            )
+            return []
         except Exception:
             # Restore the repository state once for the batch — it's
             # idempotent and the comments share the workspace clone.
@@ -276,9 +290,19 @@ class ReviewCommentService(Service):
         # platform poll, even though their PR may still be in review with
         # unresolved comments. Skip them until they're re-adopted (which clears
         # the mark). Read the set once per scan, not per task.
-        forgotten = forgotten_task_ids()
+        #
+        # Compare on a CASE-FOLDED key: the platform yields ``UNA-1495`` but
+        # the forgotten mark may have been written in another case (on-disk
+        # records/workspaces are lowercased). A case-sensitive ``in`` test
+        # silently fails to skip a forgotten task — the "it keeps coming back
+        # after I deleted it" bug — so normalise both sides (matches
+        # AgentService._norm_task_id).
+        forgotten = {fid.lower() for fid in forgotten_task_ids()}
+        skipped_forgotten: list[str] = []
         for task in self._task_service.get_review_tasks():
-            if str(getattr(task, 'id', '') or '').strip() in forgotten:
+            task_id = str(getattr(task, 'id', '') or '').strip()
+            if task_id.lower() in forgotten:
+                skipped_forgotten.append(task_id)
                 continue
             try:
                 task_contexts = self._review_task_pull_request_contexts(task)
@@ -297,6 +321,15 @@ class ReviewCommentService(Service):
                     continue
                 seen.add(key)
                 contexts.append(context)
+        if skipped_forgotten:
+            # Make the skip visible: a silent ``continue`` left "kato keeps
+            # resurrecting a task I deleted" impossible to diagnose. One line
+            # per scan, listing what was held back.
+            self.logger.info(
+                'review scan skipped %d forgotten task(s) — re-adopt to resume: %s',
+                len(skipped_forgotten),
+                ', '.join(skipped_forgotten),
+            )
         return contexts
 
     def _review_task_pull_request_contexts(self, task) -> list[dict[str, str]]:

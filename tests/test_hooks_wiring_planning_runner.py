@@ -186,6 +186,13 @@ class HooksWiringRunToTerminalTests(unittest.TestCase):
         # Force the wait loop to exit immediately by killing alive.
         manager._session._is_alive = False
         manager._session.terminal_event = None
+        # A genuine "agent died silently" needs the record STILL PRESENT — a
+        # MISSING record now reads as an intentional forget/delete (reason
+        # 'stopped'). Give it a present, non-terminated record so this stays
+        # the 'no_terminal_event' path.
+        present_record = MagicMock()
+        present_record.status = 'running'
+        manager.get_record = lambda task_id: present_record
         hook_runner = MagicMock()
         runner = _runner_with(manager, hook_runner)
         prepared = _FakePrepared([_FakeRepo('client', '/tmp/client')])

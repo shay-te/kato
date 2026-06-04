@@ -127,6 +127,19 @@ describe('SessionHeader — task summary + status dot', () => {
     expect(container.querySelector('.status-dot.status-active')).toBeInTheDocument();
   });
 
+  test('turnInFlight paints the dot and Claude chip as working', () => {
+    const { container } = render(
+      <SessionHeader
+        session={_session({ status: TAB_STATUS.REVIEW, working: false })}
+        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
+        turnInFlight={true}
+      />,
+    );
+
+    expect(container.querySelector('.status-dot.status-working')).toBeInTheDocument();
+    expect(screen.getByText('Claude: working')).toBeInTheDocument();
+  });
+
   test('needsAttention=true paints the dot with status-attention', () => {
     const { container } = render(
       <SessionHeader

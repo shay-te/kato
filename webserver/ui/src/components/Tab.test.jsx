@@ -9,6 +9,7 @@ import { render, screen, fireEvent, act } from '@testing-library/react';
 import Tab from './Tab.jsx';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import { TAB_STATUS } from '../constants/tabStatus.js';
+import { SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
 
 
 function _session(overrides = {}) {
@@ -62,13 +63,17 @@ describe('Tab', () => {
 
   test('status dot reflects the resolved status (attention overrides base)', () => {
     const { container } = render(
-      <Tab session={_session({ status: TAB_STATUS.ACTIVE })} needsAttention={true} onSelect={() => {}} />,
+      <Tab
+        session={_session({ status: TAB_STATUS.ACTIVE, working: false })}
+        needsAttention={true}
+        onSelect={() => {}}
+      />,
     );
     // resolveTabStatus → ATTENTION when needsAttention is true.
     expect(container.querySelector('.status-dot')).toHaveClass(`status-${TAB_STATUS.ATTENTION}`);
   });
 
-  test('working session keeps the clean resolved status dot', () => {
+  test('working session paints the working status dot', () => {
     const { container } = render(
       <Tab session={_session({ status: TAB_STATUS.REVIEW, working: true })} onSelect={() => {}} />,
     );
@@ -76,6 +81,19 @@ describe('Tab', () => {
     expect(dot).not.toHaveClass('is-working');
     expect(dot).toHaveClass(`status-${TAB_STATUS.WORKING}`);
     expect(dot).not.toHaveClass('is-idle-alive');
+  });
+
+  test('live working status paints the tab dot even when the session poll is stale', () => {
+    const { container } = render(
+      <Tab
+        session={_session({ status: TAB_STATUS.REVIEW, working: false })}
+        liveStatus={{ lifecycle: SESSION_LIFECYCLE.STREAMING, turnInFlight: true }}
+        onSelect={() => {}}
+      />,
+    );
+    const dot = container.querySelector('.status-dot');
+    expect(dot).toHaveClass(`status-${TAB_STATUS.WORKING}`);
+    expect(dot).not.toHaveClass(`status-${TAB_STATUS.REVIEW}`);
   });
 
   test('non-working session has no is-working class', () => {

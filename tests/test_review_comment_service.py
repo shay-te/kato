@@ -11,6 +11,7 @@ from kato_core_lib.data_layers.data.fields import (
 )
 from provider_client_base.provider_client_base.data.review_comment import ReviewComment
 from kato_core_lib.data_layers.service.agent_state_registry import AgentStateRegistry
+from kato_core_lib.data_layers.service.planning_session_runner import SessionStoppedByUserError
 from kato_core_lib.data_layers.service.review_comment_service import ReviewCommentService
 from kato_core_lib.helpers.review_comment_utils import review_comment_fixed_comment
 from tests.utils import build_review_comment, build_task
@@ -608,6 +609,44 @@ class ReviewCommentServiceTests(unittest.TestCase):
         )
         self.repository_service.reply_to_review_comment.assert_not_called()
         self.repository_service.resolve_review_comment.assert_not_called()
+        self.assertFalse(self.state_registry.is_review_comment_processed('client', '17', '99'))
+
+    def test_review_batch_aborts_cleanly_when_task_forgotten_mid_fix(self) -> None:
+        # The operator forgot/deleted the task mid review-fix, so the session
+        # runner raises SessionStoppedByUserError. The batch must treat this as
+        # an intentional teardown, NOT a failure: do NOT restore the (possibly
+        # deleted) workspace, do NOT re-raise (which would log a crash + have
+        # the scan retry forever). It just returns no results; the forgotten
+        # mark keeps the next scan from re-engaging.
+        self.implementation_service.fix_review_comment.side_effect = (
+            SessionStoppedByUserError('review-fix for task PROJ-1 task was forgotten/deleted')
+        )
+        comment = ReviewComment(
+            pull_request_id='17',
+            comment_id='99',
+            author='reviewer',
+            body='Please rename this variable.',
+        )
+        self.state_registry.remember_pull_request_context(
+            {
+                PullRequestFields.REPOSITORY_ID: 'client',
+                PullRequestFields.ID: '17',
+            },
+            'feature/proj-1/client',
+            task_id='PROJ-1',
+            task_summary='fix it already',
+        )
+
+        # No exception escapes — the intentional stop is swallowed. The batch
+        # returns [] (no results), which the singular wrapper maps to {}.
+        result = self.service.process_review_comment(comment)
+
+        self.assertEqual(result, {})
+        # The crash-path side effects must NOT happen.
+        self.repository_service.restore_task_repositories.assert_not_called()
+        self.repository_service.reply_to_review_comment.assert_not_called()
+        self.repository_service.resolve_review_comment.assert_not_called()
+        # Not marked processed — re-adopting the task lets it run again.
         self.assertFalse(self.state_registry.is_review_comment_processed('client', '17', '99'))
 
     def test_get_new_pull_request_comments_discovers_pull_request_context_for_review_task(self) -> None:

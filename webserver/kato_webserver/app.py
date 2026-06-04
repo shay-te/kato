@@ -2446,6 +2446,7 @@ def _register_post_message_route(app: Flask) -> None:
             images = []
         if not text and not images:
             return jsonify({'error': 'text or images is required'}), 400
+        _capture_prompt_lesson_candidate(app, task_id, text)
         manager = app.config['SESSION_MANAGER']
         # The CLI bakes ``--effort`` at spawn, so a changed effort only
         # takes hold on a fresh subprocess. If the operator switched to a
@@ -2471,6 +2472,21 @@ def _register_post_message_route(app: Flask) -> None:
         # ``resume_session_for_chat`` API. Defer until the operator
         # actually hits the idle-respawn-with-images case.
         return _spawn_or_reject_chat_session(app, task_id, text)
+
+
+def _capture_prompt_lesson_candidate(app: Flask, task_id: str, text: str) -> None:
+    """Best-effort early lesson candidate capture for chat prompts."""
+    service = app.config.get('AGENT_SERVICE')
+    capture = getattr(service, 'capture_prompt_lesson_candidate', None)
+    if not callable(capture):
+        return
+    try:
+        capture(task_id, text)
+    except Exception:
+        app.logger.exception(
+            'failed to capture prompt lesson candidate for task %s',
+            task_id,
+        )
 
 
 def _register_stop_session_route(app: Flask) -> None:

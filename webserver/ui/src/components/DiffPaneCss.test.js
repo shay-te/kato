@@ -159,6 +159,13 @@ test('Changed-file tree hover and selected states use opaque backgrounds', () =>
   assertDeclaration(selectedHoverBody, 'background', '#1f2937');
 });
 
+test('Project tree row hover stays transparent without opacity changes', () => {
+  const body = ruleBody('.tree-row:hover');
+
+  assertDeclaration(body, 'background', 'transparent');
+  assert.doesNotMatch(body, /opacity\s*:/);
+});
+
 test('Diff syntax colors JSX and stylesheet tokens like Bitbucket', () => {
   const tagBody = ruleBody('.diff-file .token.tag');
   const attrNameBody = ruleBody('.diff-file .token.attr-name');
