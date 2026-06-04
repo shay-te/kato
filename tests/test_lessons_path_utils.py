@@ -4,18 +4,20 @@ agent actually sees the lessons kato captures.
 The regression these pin: the lesson WRITER (LessonsService/LessonsDataAccess)
 and the lesson READER (the agent client, which reads ``claude.lessons_path``)
 must resolve to the SAME file. They used to diverge when ``KATO_LESSONS_PATH``
-was unset — the writer defaulted to ``~/.kato/lessons.md`` while the reader got
-'' and read nothing, so the agent "learned nothing".
+was unset — the writer had a default while the reader got '' and read nothing,
+so the agent "learned nothing".
 """
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from kato_core_lib.data_layers.data_access.lessons_data_access import (
     LessonsDataAccess,
 )
 from kato_core_lib.helpers.lessons_path_utils import (
     DEFAULT_LESSONS_PATH,
+    default_lessons_path,
     resolve_and_sync_lessons_path,
     resolve_lessons_path,
 )
@@ -42,8 +44,15 @@ class ResolveLessonsPathTests(unittest.TestCase):
         cfg = SimpleNamespace(lessons_path='~/custom/lessons.md')
         self.assertEqual(resolve_lessons_path(cfg), Path.home() / 'custom' / 'lessons.md')
 
-    def test_default_is_under_kato_home(self):
-        self.assertEqual(DEFAULT_LESSONS_PATH, Path.home() / '.kato' / 'lessons.md')
+    def test_default_is_under_workspaces_root(self):
+        with patch.dict('os.environ', {'KATO_WORKSPACES_ROOT': '/srv/workspaces'}):
+            self.assertEqual(
+                default_lessons_path(),
+                Path('/srv/workspaces/lessons.md'),
+            )
+
+    def test_legacy_default_constant_matches_current_process_default(self):
+        self.assertEqual(DEFAULT_LESSONS_PATH, default_lessons_path())
 
 
 class ResolveAndSyncTests(unittest.TestCase):
@@ -96,6 +105,12 @@ class WriterReaderAgreeTests(unittest.TestCase):
     def test_unconfigured_writer_and_reader_agree(self):
         # The bug case: KATO_LESSONS_PATH unset → config lessons_path ''.
         self._assert_agree(SimpleNamespace(lessons_path=''))
+
+    def test_unconfigured_writer_and_reader_agree_under_workspaces_root(self):
+        with patch.dict('os.environ', {'KATO_WORKSPACES_ROOT': '/srv/workspaces'}):
+            cfg = SimpleNamespace(lessons_path='')
+            self._assert_agree(cfg)
+            self.assertEqual(cfg.lessons_path, '/srv/workspaces/lessons.md')
 
     def test_configured_writer_and_reader_agree(self):
         self._assert_agree(SimpleNamespace(lessons_path='/var/kato-state/lessons.md'))

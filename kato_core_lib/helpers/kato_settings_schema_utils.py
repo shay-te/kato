@@ -108,7 +108,8 @@ SETTINGS_SCHEMA: list[dict] = [
             ('KATO_LESSONS_PATH', 'text',
              'Lessons file path',
              'Markdown file of compacted lessons appended to Claude\'s '
-             'system prompt on every spawn. Empty = ~/.kato/lessons.md.',
+             'system prompt on every spawn. Empty = '
+             'KATO_WORKSPACES_ROOT/lessons.md.',
              {}),
             ('KATO_APPROVED_REPOSITORIES_PATH', 'text',
              'Approvals sidecar path',

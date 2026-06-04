@@ -176,7 +176,7 @@ kato:
     # Path to the global compacted lessons file. Re-read on every
     # Claude spawn so newly-extracted lessons (after a "done" click or
     # a periodic compact) take effect on the next turn without
-    # restarting kato. Empty falls back to ``~/.kato/lessons.md``.
+    # restarting kato. Empty falls back to ``KATO_WORKSPACES_ROOT/lessons.md``.
     lessons_path: ${oc.env:KATO_LESSONS_PATH,""}
   task_scan:
     startup_delay_seconds: ${oc.decode:${oc.env:OPENHANDS_TASK_SCAN_STARTUP_DELAY_SECONDS,"5"}}

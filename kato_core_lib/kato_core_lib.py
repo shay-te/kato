@@ -533,7 +533,7 @@ class KatoCoreLib(CoreLib):
         """Construct ``LessonsService`` and kick off a startup compact if due.
 
         Resolves the lessons file path: explicit ``KATO_LESSONS_PATH``
-        wins, else defaults to ``~/.kato/lessons.md``. The state-dir
+        wins, else defaults under ``KATO_WORKSPACES_ROOT``. The state-dir
         for per-task pending files is the parent of that file.
         ``KATO_CLAUDE_BINARY`` and ``KATO_CLAUDE_MODEL`` thread into
         the one-shot LLM helper so extract / compact reuse the
@@ -543,8 +543,8 @@ class KatoCoreLib(CoreLib):
         # Resolve the lessons path ONCE and sync it back into the config, so the
         # agent client (which reads ``claude.lessons_path`` via the factory at
         # spawn time) injects the SAME file LessonsService writes. Previously the
-        # writer defaulted to ``~/.kato/lessons.md`` while an unset
-        # ``KATO_LESSONS_PATH`` left the reader with '' → the agent saw no
+        # writer and reader diverged when an unset ``KATO_LESSONS_PATH`` left
+        # the reader with '' → the agent saw no
         # lessons and kept repeating mistakes.
         lessons_path = resolve_and_sync_lessons_path(claude_cfg)
         state_dir = lessons_path.parent
