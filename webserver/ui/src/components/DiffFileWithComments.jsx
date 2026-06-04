@@ -92,11 +92,7 @@ export function splitCommentsForDisplay(comments) {
   return { commentsByLine: byLine, fileLevelComments: fileLevel };
 }
 
-// Default ``initiallyExpanded`` resolver: per-file rule only (no
-// awareness of sibling files). The parent ``ChangesTab`` overrides
-// this by passing ``initiallyExpanded`` derived from
-// ``decideAutoExpand`` over the FULL file list so the cumulative
-// budget can kick in.
+// Default ``initiallyExpanded`` resolver: per-file rule only.
 function _defaultInitiallyExpanded(file) {
   return !isLargeFile(file);
 }
@@ -137,6 +133,8 @@ function DiffFileWithComments({
   file, conflicted = false, repoId = '', repoCwd = '', taskId = '',
   initiallyExpanded,
   forceExpandToken = 0,
+  collapseToken = 0,
+  selected = false,
   onAddToChat,
   onFocusInTree,
   comments = [],
@@ -186,6 +184,10 @@ function DiffFileWithComments({
   useEffect(() => {
     if (forceExpandToken) { setExpanded(true); }
   }, [forceExpandToken]);
+  useEffect(() => {
+    if (!collapseToken || selected || userToggledExpandRef.current) { return; }
+    setExpanded(false);
+  }, [collapseToken, selected]);
 
   // Tokenisation walks every hunk synchronously and is by far the
   // hottest first-paint cost on big diffs. Skip it entirely when
@@ -757,6 +759,12 @@ function DiffFileWithComments({
       {fileLevelForm}
     </div>
   ) : null;
+  const bodyContent = diffBody || commentsPanel ? (
+    <div className="diff-file-body">
+      {diffBody}
+      {commentsPanel}
+    </div>
+  ) : null;
   const pathSegments = renderPathSegments(path);
   const focusPathButton = typeof onFocusInTree === 'function' ? (
     <button
@@ -822,15 +830,7 @@ function DiffFileWithComments({
         {focusPathButton}
       </StickyHeader>
       {pathContextMenu}
-      {/* Stable wrapper for everything below the sticky header. The
-          ``.diff-file`` card uses ``overflow: visible`` so its sticky
-          header keeps working, which means the card's rounded bottom
-          can't clip its children. Clipping THIS wrapper (a non-sticky
-          sibling) rounds the bottom to match the card. */}
-      <div className="diff-file-body">
-        {diffBody}
-        {commentsPanel}
-      </div>
+      {bodyContent}
     </section>
   );
 }

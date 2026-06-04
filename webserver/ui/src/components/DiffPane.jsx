@@ -9,7 +9,6 @@ import {
 } from '../diffModel.js';
 import { useChatComposer } from '../contexts/ChatComposerContext.jsx';
 import { apiErrorMessage } from '../utils/apiError.js';
-import { decideAutoExpand } from './diffFileSize.js';
 import DiffFileWithComments from './DiffFileWithComments.jsx';
 
 const EMPTY_COMMENTS = [];
@@ -193,26 +192,6 @@ export default function DiffPane({
       .filter(Boolean)
   ), [state.repoDiffs]);
 
-  // Per-file auto-expand decision keyed by anchor (repo + path). The
-  // cumulative-line budget (diffFileSize.js) runs across ALL files of
-  // ALL repos in render order — the browser pays to mount + tokenize
-  // every expanded file regardless of repo, so the budget must span
-  // them. This is the protection the pane was missing: it used to
-  // force-expand and synchronously tokenize EVERY file in the PR on
-  // open, the dominant cause of diff-open lag (worst on Safari).
-  const expandByKey = useMemo(() => {
-    const flat = [];
-    for (const { repo, files } of repoFileGroups) {
-      for (const file of files) {
-        flat.push({ key: diffAnchorKey(repo.repo_id, diffDisplayPath(file)), file });
-      }
-    }
-    const decisions = decideAutoExpand(flat.map((entry) => entry.file));
-    const map = new Map();
-    flat.forEach((entry, i) => { map.set(entry.key, decisions[i]); });
-    return map;
-  }, [repoFileGroups]);
-
   // Locate the rendered file node for a (repoId, path): exact anchor
   // match first, then a path-only match if the repo wasn't carried.
   const resolveFileNode = useCallback((rid, path) => (
@@ -331,12 +310,10 @@ export default function DiffPane({
                 const isTargetFile = key === targetKey
                   || (!repoId && path === relativePath);
                 const forceExpandToken = isTargetFile ? openRequestId : 0;
-                // Cumulative-budget decision; the file the operator
-                // actually opened always starts expanded (and stays
-                // force-expanded via forceExpandToken), so the thing they
-                // clicked is never hidden behind a "Show diff" button.
-                const initiallyExpanded = isTargetFile
-                  || (expandByKey.get(key) ?? false);
+                // Same stacked UI, much smaller DOM: every file keeps its
+                // card/header, but only the selected file opens its heavy
+                // react-diff-view table by default.
+                const initiallyExpanded = isTargetFile;
                 const conflicted = isFileConflicted(file, repo.conflictedFiles);
                 return (
                   <div
@@ -352,6 +329,8 @@ export default function DiffPane({
                       file={file}
                       initiallyExpanded={initiallyExpanded}
                       forceExpandToken={forceExpandToken}
+                      collapseToken={openRequestId}
+                      selected={isTargetFile}
                       conflicted={!!conflicted}
                       repoId={repo.repo_id}
                       repoCwd={repo.cwd}

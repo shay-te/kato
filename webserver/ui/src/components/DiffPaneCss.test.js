@@ -103,6 +103,12 @@ test('Diff file comments panel rounds the bottom of the file card', () => {
   assertDeclaration(body, 'border-radius', '0 0 10px 10px');
 });
 
+test('DiffPane skips offscreen diff bodies during scroll', () => {
+  const body = ruleBody('.diff-pane .diff-file-body');
+  assertDeclaration(body, 'content-visibility', 'auto');
+  assertDeclaration(body, 'contain-intrinsic-size', 'auto 720px');
+});
+
 test('Diff file header keeps the expand/collapse chevron on the left', () => {
   const body = ruleBody('.diff-file-header .diff-file-collapse-toggle');
   assertDeclaration(body, 'margin-left', '0');

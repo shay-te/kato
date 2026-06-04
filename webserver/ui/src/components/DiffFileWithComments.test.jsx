@@ -1,6 +1,6 @@
 // Component-level tests for DiffFileWithComments. The pure helpers
-// (countDiffLines, isLargeFile, decideAutoExpand) already have unit
-// tests; this file proves the React wiring:
+// (countDiffLines, isLargeFile) already have unit tests; this file
+// proves the React wiring:
 //
 //   - ``initiallyExpanded`` from ChangesTab drives the collapse state.
 //   - When unspecified, the per-file fallback rule applies.
@@ -61,21 +61,31 @@ function _file(lineCount, { type = 'modify', path = 'src/file.py' } = {}) {
 }
 
 
-function renderDiff({ file, ...rest } = {}) {
+function diffProps({ file, ...rest } = {}) {
+  return {
+    file: file || _file(10),
+    taskId: 'T1',
+    repoId: 'repo-1',
+    repoCwd: '/workspace/repo-1',
+    comments: [],
+    commentsLoading: false,
+    commentsError: '',
+    onMutated: vi.fn(),
+    onAddToChat: vi.fn(),
+    ...rest,
+  };
+}
+
+function renderDiff(props = {}) {
   return render(
     <DiffFileWithComments
-      file={file || _file(10)}
-      taskId="T1"
-      repoId="repo-1"
-      repoCwd="/workspace/repo-1"
-      comments={[]}
-      commentsLoading={false}
-      commentsError=""
-      onMutated={vi.fn()}
-      onAddToChat={vi.fn()}
-      {...rest}
+      {...diffProps(props)}
     />,
   );
+}
+
+function rerenderDiff(rerender, props = {}) {
+  rerender(<DiffFileWithComments {...diffProps(props)} />);
 }
 
 
@@ -109,6 +119,7 @@ describe('DiffFileWithComments — collapse / expand integration', () => {
     expect(toggle).not.toHaveTextContent(/42 lines/i);
     expect(screen.queryByText(/diff hidden/i)).not.toBeInTheDocument();
     expect(container.querySelector('.diff')).not.toBeInTheDocument();
+    expect(container.querySelector('.diff-file-body')).not.toBeInTheDocument();
   });
 
   test('clicking the toggle expands a collapsed diff', () => {
@@ -128,22 +139,34 @@ describe('DiffFileWithComments — collapse / expand integration', () => {
     });
     expect(screen.getByRole('button', { name: /expand diff/i })).toBeInTheDocument();
 
-    rerender(
-      <DiffFileWithComments
-        file={file}
-        taskId="T1"
-        repoId="repo-1"
-        comments={[]}
-        commentsLoading={false}
-        commentsError=""
-        onMutated={vi.fn()}
-        onAddToChat={vi.fn()}
-        initiallyExpanded={false}
-        forceExpandToken={1}
-      />,
-    );
+    rerenderDiff(rerender, {
+      file,
+      initiallyExpanded: false,
+      forceExpandToken: 1,
+    });
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /collapse diff/i })).toBeInTheDocument();
+    });
+  });
+
+  test('collapseToken collapses an auto-opened file when it is no longer selected', async () => {
+    const file = _file(20);
+    const { rerender } = renderDiff({
+      file,
+      initiallyExpanded: true,
+      selected: true,
+      collapseToken: 1,
+    });
+    expect(screen.getByRole('button', { name: /collapse diff/i })).toBeInTheDocument();
+
+    rerenderDiff(rerender, {
+      file,
+      initiallyExpanded: false,
+      selected: false,
+      collapseToken: 2,
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /expand diff/i })).toBeInTheDocument();
     });
   });
 

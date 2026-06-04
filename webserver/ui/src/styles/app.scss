@@ -3224,6 +3224,8 @@ code {
 .diff-pane .diff-file-body {
   border-radius: $RADIUS-0-0-10-10;
   overflow: hidden;
+  content-visibility: auto;
+  contain-intrinsic-size: auto $SPACE-720;
 }
 
 /* react-diff-view renders the body as ``<table class="diff">`` with
