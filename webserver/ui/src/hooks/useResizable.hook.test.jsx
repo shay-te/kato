@@ -151,6 +151,23 @@ describe('useResizable — clamping during drag', () => {
     });
     expect(result.current.width).toBe(200);  // clamped at min
   });
+
+  test('re-clamps the width down when maxWidth shrinks (viewport got narrower)', () => {
+    // The chat pane's maxWidth is dynamic = viewport − centre-min. When the
+    // window narrows, the stored width must drop to the new max so the centre
+    // pane is never squeezed below its minimum — without waiting for a drag.
+    window.localStorage.removeItem('kato.pane.dynamic');
+    const cfg = {
+      storageKey: 'kato.pane.dynamic', defaultWidth: 500, minWidth: 200,
+    };
+    const { result, rerender } = renderHook(
+      ({ maxWidth }) => useResizable({ ...cfg, maxWidth }),
+      { initialProps: { maxWidth: 900 } },
+    );
+    expect(result.current.width).toBe(500);   // within [200, 900]
+    rerender({ maxWidth: 350 });               // viewport shrank
+    expect(result.current.width).toBe(350);    // re-clamped down, no drag
+  });
 });
 
 

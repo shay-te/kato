@@ -35,6 +35,12 @@ const RIGHT_PANE_DEFAULT_WIDTH = 380;
 const RIGHT_PANE_MIN_WIDTH = 220;
 const RIGHT_PANE_MAX_WIDTH = 1400;
 const RIGHT_PANE_STORAGE_KEY = 'kato.rightPaneWidth';
+// The centre file/diff preview must stay usable no matter how wide the chat
+// is dragged: the chat's max width is capped at (viewport − this), so the
+// centre always keeps at least this many px and the LEFT tree collapses to
+// fill the gap instead. MUST match the centre column's min-width in app.scss
+// (#layout.has-top-tabs grid-template-columns).
+const CENTER_PANE_MIN_WIDTH = 360;
 const LEFT_PANE_DEFAULT_WIDTH = 320;
 const LEFT_PANE_MIN_WIDTH = 220;
 // Generous upper bound — operators routinely widen the Files /
@@ -297,11 +303,28 @@ export default function App() {
   const status = useStatusFeed(handleStatusEntry);
   const safetyState = useSafetyState();
 
+  // Track viewport width so the chat's max can leave the centre pane its
+  // minimum at any window size — a static cap squeezed the centre on
+  // narrower screens.
+  const [viewportWidth, setViewportWidth] = useState(
+    () => (typeof window !== 'undefined' ? window.innerWidth : 1920),
+  );
+  useEffect(() => {
+    const onResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
   const resizer = useResizable({
     storageKey: RIGHT_PANE_STORAGE_KEY,
     defaultWidth: RIGHT_PANE_DEFAULT_WIDTH,
     minWidth: RIGHT_PANE_MIN_WIDTH,
-    maxWidth: RIGHT_PANE_MAX_WIDTH,
+    // Cap so the centre pane always keeps CENTER_PANE_MIN_WIDTH: dragging the
+    // chat wider collapses the LEFT tree, never squeezes the centre below
+    // usable. Still bounded by the absolute ceiling.
+    maxWidth: Math.max(
+      RIGHT_PANE_MIN_WIDTH,
+      Math.min(RIGHT_PANE_MAX_WIDTH, viewportWidth - CENTER_PANE_MIN_WIDTH),
+    ),
     anchor: 'right',
   });
   const leftResizer = useResizable({

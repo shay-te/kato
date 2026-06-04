@@ -73,3 +73,36 @@ test('computeEventLogWindow returns full list when showAll is set', () => {
   assert.equal(result.visible.length, 1000);
   assert.equal(result.hidden, 0);
 });
+
+test('computeEventLogWindow snaps the window start back to the latest turn boundary', () => {
+  // The latest turn (a prompt + a long run of tool events) opens at index
+  // 300 — well before the default 200-tail (start = 800). Without snapping,
+  // the window would start mid-turn at 800 and the turn's "YOU ASKED"
+  // header would be hidden (the reported "prompt missing until I click
+  // show-older" bug). The boundary predicate must pull the start back to 300.
+  const entries = Array.from({ length: 1000 }, (_, i) => ({ i, prompt: i === 300 }));
+  const result = computeEventLogWindow(entries, false, (e) => !!e.prompt);
+  assert.equal(result.visible[0].i, 300);
+  assert.equal(result.visible[0].prompt, true);
+  assert.equal(result.hidden, 300);
+  assert.equal(result.visible.length, 700);
+});
+
+test('computeEventLogWindow keeps the plain tail when no boundary precedes the cut', () => {
+  // Only prompt is at 950 — already inside the 200-tail. There's no
+  // boundary at/before the cut (800), so nothing to snap to: the tail is
+  // unchanged and the header at 950 is naturally on screen.
+  const entries = Array.from({ length: 1000 }, (_, i) => ({ i, prompt: i === 950 }));
+  const result = computeEventLogWindow(entries, false, (e) => !!e.prompt);
+  assert.equal(result.visible[0].i, 800);
+  assert.equal(result.hidden, 800);
+  assert.equal(result.visible.length, 200);
+});
+
+test('computeEventLogWindow without a boundary predicate is the plain trailing window', () => {
+  // Back-compat: the 2-arg form behaves exactly as before (no snapping).
+  const entries = Array.from({ length: 1000 }, (_, i) => ({ i }));
+  const result = computeEventLogWindow(entries, false);
+  assert.equal(result.visible[0].i, 800);
+  assert.equal(result.hidden, 800);
+});

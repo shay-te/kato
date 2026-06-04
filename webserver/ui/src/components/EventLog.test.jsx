@@ -72,6 +72,25 @@ describe('EventLog — local entries', () => {
     ).toHaveTextContent('hello there');
   });
 
+  test('latest turn keeps its "YOU ASKED" header even when longer than the window', () => {
+    // Regression: a turn with more events than the trailing window (200)
+    // pushed its opening prompt out of view, so after a reload (empty cache
+    // → history replays straight into the windowed tail) the operator saw
+    // headerless bubbles until clicking "show older". The window now snaps
+    // back to the turn boundary so the prompt is always on screen.
+    const prompt = _local(BUBBLE_KIND.USER, 'do code review to yourself');
+    const filler = Array.from({ length: 205 }, (_, i) => _server({
+      type: 'assistant',
+      message: { id: `m${i}`, content: [{ type: 'text', text: `step ${i}` }] },
+    }));
+    const { container } = render(<EventLog entries={[prompt, ...filler]} />);
+    // The prompt is entry 0 — well past the trailing 200 — yet its sticky
+    // header still renders.
+    expect(
+      container.querySelector('.chat-sticky-prompt-text'),
+    ).toHaveTextContent('do code review to yourself');
+  });
+
   test('LOCAL bubble with image count appends "(N images attached)"', () => {
     const entry = {
       source: ENTRY_SOURCE.LOCAL,

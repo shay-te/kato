@@ -39,12 +39,34 @@ export function computeToolDetailsRender(lines, expanded) {
   return { visible: lines, overflowed: false };
 }
 
-export function computeEventLogWindow(entries, showAll) {
+// ``isTurnBoundary`` (optional) marks the entries that render as a
+// "YOU ASKED" prompt header. When given, the trailing window is extended
+// BACKWARD to the boundary that opens the turn the cut falls inside — so
+// the latest turn always shows its header. Without this, a single turn
+// longer than the window (a big agent turn with hundreds of tool events)
+// starts the window mid-turn, hiding the prompt until the operator clicks
+// "show older" — and that's exactly the state a fresh page load lands in:
+// the in-memory stream cache is empty, so the transcript replays from
+// history straight into the windowed tail with no header on screen.
+export function computeEventLogWindow(entries, showAll, isTurnBoundary) {
   if (showAll || entries.length <= EVENT_LOG_WINDOW_SIZE) {
     return { visible: entries, hidden: 0 };
   }
+  let start = entries.length - EVENT_LOG_WINDOW_SIZE;
+  if (typeof isTurnBoundary === 'function' && start > 0) {
+    let boundary = start;
+    while (boundary > 0 && !isTurnBoundary(entries[boundary])) {
+      boundary -= 1;
+    }
+    // Only snap when we actually landed on a boundary. If nothing before
+    // the cut is a prompt (e.g. autonomous preamble), keep the plain tail —
+    // there's no header to preserve there anyway.
+    if (isTurnBoundary(entries[boundary])) {
+      start = boundary;
+    }
+  }
   return {
-    visible: entries.slice(-EVENT_LOG_WINDOW_SIZE),
-    hidden: entries.length - EVENT_LOG_WINDOW_SIZE,
+    visible: entries.slice(start),
+    hidden: start,
   };
 }

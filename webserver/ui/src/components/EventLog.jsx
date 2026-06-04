@@ -68,7 +68,7 @@ export default function EventLog({
     [entries],
   );
   const window = useMemo(
-    () => computeEventLogWindow(visibleEntries, showAll),
+    () => computeEventLogWindow(visibleEntries, showAll, isPromptEntry),
     [visibleEntries, showAll],
   );
   // Only fetch live comment statuses when a comment-run prompt is
@@ -464,6 +464,26 @@ function entryCommentRunPrompt(entry) {
   const raw = entry.raw;
   if (!raw || raw.type !== CLAUDE_EVENT.USER) { return null; }
   return parseCommentRunPrompt(userMessageText(raw));
+}
+
+// True when an entry renders as a ``StickyPrompt`` (a "YOU ASKED" turn
+// boundary). MUST match the StickyPrompt-emitting paths above — a LOCAL
+// USER bubble, or a server/history ``user`` envelope that actually carries
+// prompt text or an image (tool-result ``user`` envelopes don't render a
+// header, so they must NOT count). Feeds ``computeEventLogWindow`` so the
+// trailing window always starts at a real header, keeping the latest
+// turn's prompt on screen even when the turn is longer than the window
+// (the "prompt missing until I click show-older after refresh" bug).
+function isPromptEntry(entry) {
+  if (!entry) { return false; }
+  if (entry.source === ENTRY_SOURCE.LOCAL) {
+    return (entry.kind || BUBBLE_KIND.SYSTEM) === BUBBLE_KIND.USER;
+  }
+  const raw = entry.raw;
+  if (!raw || raw.type !== CLAUDE_EVENT.USER) { return false; }
+  if (userMessageText(raw)) { return true; }
+  const content = Array.isArray(raw.message?.content) ? raw.message.content : [];
+  return content.some((block) => block && block.type === 'image');
 }
 
 function userBubbles(raw, index, onOpenFile) {

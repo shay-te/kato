@@ -431,7 +431,13 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
    * neighbouring columns off-screen and visually overlaps. The
    * 0-min lets the column shrink to whatever the grid told it
    * to be, and its own ``overflow`` handles the excess. */
-  grid-template-columns: minmax(0, var(--left-pane-width, 320px)) minmax(0, 1fr) minmax(0, var(--right-pane-width, 420px));
+  /* The centre column keeps a hard MIN width so widening the chat (or the
+   * left tree) can never squeeze the file/diff preview below usable. The
+   * chat's resizer max is viewport-aware (App.jsx CENTER_PANE_MIN_WIDTH), so
+   * the slack comes from the LEFT tree collapsing — its ``minmax(0, …)`` lets
+   * it shrink all the way out — never from the centre. Keep this 360px in
+   * sync with CENTER_PANE_MIN_WIDTH in App.jsx. */
+  grid-template-columns: minmax(0, var(--left-pane-width, 320px)) minmax(360px, 1fr) minmax(0, var(--right-pane-width, 420px));
   /* row 1: task tab strip · row 2: full-width task header bar ·
    * row 3: the three panels */
   grid-template-rows: auto auto minmax(0, 1fr);
@@ -1339,7 +1345,15 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
    * negative top would yank the bar up over the previous turn's last
    * bubble. The flex gap on .chat-turn handles spacing instead. */
   margin: 0 $SPACE-NEG-24;
-  background: linear-gradient(180deg, $C-CYAN-68-A18 0%, $C-NEUTRAL-04 100%);
+  /* Frosted glass, not clear glass. The bar stays translucent (the look
+   * we want), but a backdrop BLUR turns whatever scrolls behind it into
+   * an unreadable wash instead of legible text. The old top stop was 18%
+   * cyan with NO blur, so the previous turn's command bled straight
+   * through the "YOU ASKED" header. A stronger tint (A45) + the blur keeps
+   * the see-through feel while making the header readable. */
+  background: linear-gradient(180deg, $C-CYAN-68-A38 0%, $C-NEUTRAL-04 100%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  backdrop-filter: blur(16px) saturate(160%);
   border-top: 1px solid $C-CYAN-52-A40;
   border-bottom: 1px solid $C-CYAN-52-A40;
   box-shadow: $SHADOW-20;

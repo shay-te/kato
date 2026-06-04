@@ -229,14 +229,27 @@ describe('App — render shell', () => {
       .toContain('session=none');
   });
 
-  test('chat pane resizer allows a wide right column', () => {
-    render(<App />);
-    expect(useResizable).toHaveBeenCalledWith(
-      expect.objectContaining({
-        storageKey: 'kato.rightPaneWidth',
-        maxWidth: 1400,
-      }),
-    );
+  test('chat pane max is capped so the centre pane keeps its minimum width', () => {
+    // Viewport-aware: the chat can't be dragged so wide that the centre
+    // file/diff pane drops below CENTER_PANE_MIN_WIDTH (360) — the left tree
+    // collapses instead. At a 1200px viewport the chat tops out at 1200−360.
+    const original = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', {
+      value: 1200, configurable: true, writable: true,
+    });
+    try {
+      render(<App />);
+      expect(useResizable).toHaveBeenCalledWith(
+        expect.objectContaining({
+          storageKey: 'kato.rightPaneWidth',
+          maxWidth: 840,
+        }),
+      );
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        value: original, configurable: true, writable: true,
+      });
+    }
   });
 });
 
