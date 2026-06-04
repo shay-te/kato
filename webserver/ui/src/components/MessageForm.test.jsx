@@ -501,19 +501,51 @@ describe('MessageForm — effort selector', () => {
     expect(onEffortChange).toHaveBeenCalledWith('max');
   });
 
-  test('Auto option clears the effort (empty value)', () => {
-    const onEffortChange = vi.fn();
+  test('has NO "Auto" option — every choice is a concrete level', () => {
     renderForm({
       taskId: 'T1',
-      effortLevels: ['low', 'high'],
-      selectedEffort: 'high',
-      onEffortChange,
+      effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      selectedEffort: '',
+      effortDefault: 'high',
     });
-    fireEvent.change(
-      screen.getByRole('combobox', { name: /select reasoning effort/i }),
-      { target: { value: '' } },
-    );
-    expect(onEffortChange).toHaveBeenCalledWith('');
+    const select = screen.getByRole('combobox', { name: /select reasoning effort/i });
+    const optionValues = Array.from(select.querySelectorAll('option')).map((o) => o.value);
+    // No empty-value "Auto" option, and the label is gone too.
+    expect(optionValues).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+    expect(screen.queryByText(/Effort: Auto/i)).not.toBeInTheDocument();
+  });
+
+  test('with no override, shows the backend default (the level that will run)', () => {
+    renderForm({
+      taskId: 'T1',
+      effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      selectedEffort: '',
+      effortDefault: 'high',
+    });
+    expect(screen.getByRole('combobox', { name: /select reasoning effort/i }))
+      .toHaveValue('high');
+  });
+
+  test('an explicit override wins over the default', () => {
+    renderForm({
+      taskId: 'T1',
+      effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      selectedEffort: 'max',
+      effortDefault: 'high',
+    });
+    expect(screen.getByRole('combobox', { name: /select reasoning effort/i }))
+      .toHaveValue('max');
+  });
+
+  test('falls back to the first level when neither override nor default is set', () => {
+    renderForm({
+      taskId: 'T1',
+      effortLevels: ['low', 'medium', 'high'],
+      selectedEffort: '',
+      effortDefault: '',
+    });
+    expect(screen.getByRole('combobox', { name: /select reasoning effort/i }))
+      .toHaveValue('low');
   });
 });
 

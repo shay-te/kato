@@ -7,8 +7,10 @@ from unittest.mock import MagicMock
 
 from agent_core_lib.agent_core_lib.helpers.session_id_utils import AGENT_SESSION_ID
 from kato_webserver.app import (
+    DEFAULT_CHAT_EFFORT,
     _advance_task_comments_after_result,
     _complete_in_progress_task_comments,
+    _configured_chat_effort,
     _drain_queued_task_comment,
     _effort_change_needs_respawn,
     _event_stream_generator,
@@ -1207,6 +1209,69 @@ class EffortRespawnDecisionTests(unittest.TestCase):
         self.assertTrue(_effort_change_needs_respawn(
             self._app('high'), self._mgr(self._session(effort='low')), 'T1', [],
         ))
+
+
+class ChatEffortDefaultTests(unittest.TestCase):
+    """Removing "Auto" means kato resolves + passes a CONCRETE effort.
+
+    With no per-task override and no configured runner effort, the chat path
+    must fall back to a concrete level (DEFAULT_CHAT_EFFORT) so the CLI never
+    silently picks its own — the operator always knows the level that ran.
+    """
+
+    def test_default_is_concrete_not_empty(self):
+        # The whole point: never "" (which would mean no --effort / "Auto").
+        self.assertTrue(DEFAULT_CHAT_EFFORT)
+        self.assertEqual(DEFAULT_CHAT_EFFORT, 'high')
+
+    def test_configured_chat_effort_falls_back_to_concrete_default(self):
+        # Runner with no effort configured (or no runner at all) → the
+        # concrete default, never ''.
+        app = SimpleNamespace(config={'PLANNING_SESSION_RUNNER': None})
+        self.assertEqual(_configured_chat_effort(app), DEFAULT_CHAT_EFFORT)
+        runner = SimpleNamespace(_defaults=SimpleNamespace(effort=''))
+        app = SimpleNamespace(config={'PLANNING_SESSION_RUNNER': runner})
+        self.assertEqual(_configured_chat_effort(app), DEFAULT_CHAT_EFFORT)
+
+    def test_configured_chat_effort_respects_an_explicit_config(self):
+        runner = SimpleNamespace(_defaults=SimpleNamespace(effort='max'))
+        app = SimpleNamespace(config={'PLANNING_SESSION_RUNNER': runner})
+        self.assertEqual(_configured_chat_effort(app), 'max')
+
+    def test_chat_spawn_passes_concrete_effort_when_no_override(self):
+        # End-to-end: a tab whose subprocess has exited respawns, and the
+        # runner is handed an explicit effort (not '').
+        import tempfile
+        from claude_core_lib.claude_core_lib.session.manager import (
+            ClaudeSessionManager,
+        )
+
+        class _RecordingRunner:
+            def __init__(self):
+                self.calls = []
+
+            def resume_session_for_chat(self, **kwargs):
+                self.calls.append(kwargs)
+
+        with tempfile.TemporaryDirectory() as state_dir:
+            manager = ClaudeSessionManager(
+                state_dir=state_dir,
+                session_factory=lambda **_: None,
+            )
+            manager.adopt_session_id('PROJ-1', agent_session_id='pinned-id')
+            runner = _RecordingRunner()
+            app = create_app(
+                session_manager=manager,
+                planning_session_runner=runner,
+            )
+            response = app.test_client().post(
+                '/api/sessions/PROJ-1/messages',
+                json={'text': 'continue'},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        # No override was set, so the spawn must still carry a concrete level.
+        self.assertEqual(runner.calls[0]['effort'], DEFAULT_CHAT_EFFORT)
 
 
 if __name__ == '__main__':

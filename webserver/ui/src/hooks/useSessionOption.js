@@ -14,16 +14,25 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 // (``models`` vs ``levels`` for the list, ``model`` vs ``effort`` for
 // the current value), so those are passed in as config.
 //
-// Returns ``[options, selected, onChange]``.
+// ``defaultKey`` (optional) names a top-level field on the option-list
+// response that carries the concrete default the backend falls back to
+// when the task has no explicit override (e.g. ``/api/effort-levels``
+// returns ``{levels, default}``). It's surfaced so the picker can SHOW
+// that concrete value instead of an ambiguous "Auto" — the effort
+// equivalent of the model picker's per-option ``default: true`` flag.
+//
+// Returns ``[options, selected, onChange, defaultValue]``.
 export function useSessionOption(taskId, {
   fetchOptions,
   optionsKey,
   fetchCurrent,
   currentKey,
   setCurrent,
+  defaultKey,
 }) {
   const [options, setOptions] = useState([]);
   const [selected, setSelected] = useState('');
+  const [defaultValue, setDefaultValue] = useState('');
   const loadedRef = useRef(false);
 
   // Fetch the option catalogue once. Guarded so tab switches don't
@@ -34,6 +43,9 @@ export function useSessionOption(taskId, {
     fetchOptions().then((result) => {
       if (result && Array.isArray(result[optionsKey])) {
         setOptions(result[optionsKey]);
+      }
+      if (defaultKey && result && result[defaultKey] != null) {
+        setDefaultValue(String(result[defaultKey]));
       }
     }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -54,5 +66,5 @@ export function useSessionOption(taskId, {
     await setCurrent(taskId, value);
   }, [taskId, setCurrent]);
 
-  return [options, selected, onChange];
+  return [options, selected, onChange, defaultValue];
 }

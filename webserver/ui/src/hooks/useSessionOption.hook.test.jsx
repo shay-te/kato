@@ -112,6 +112,28 @@ describe('useSessionOption', () => {
     await waitFor(() => expect(result.current[1]).toBe('high'));
   });
 
+  test('exposes the list response default via defaultKey (4th return)', async () => {
+    // The effort picker needs the concrete default (no more "Auto") to show
+    // when a task has no override — it rides on the option-list response.
+    const cfg = {
+      fetchOptions: vi.fn().mockResolvedValue({ levels: ['low', 'high'], default: 'high' }),
+      optionsKey: 'levels',
+      fetchCurrent: vi.fn().mockResolvedValue({ effort: '' }),
+      currentKey: 'effort',
+      setCurrent: vi.fn().mockResolvedValue({ ok: true }),
+      defaultKey: 'default',
+    };
+    const { result } = renderHook(() => useSessionOption('T1', cfg));
+    await waitFor(() => expect(result.current[3]).toBe('high'));
+  });
+
+  test('default stays empty when no defaultKey is configured', async () => {
+    const cfg = _config();  // no defaultKey
+    const { result } = renderHook(() => useSessionOption('T1', cfg));
+    await waitFor(() => expect(result.current[0]).toHaveLength(1));
+    expect(result.current[3]).toBe('');
+  });
+
   test('a non-array list result is ignored (stays empty)', async () => {
     const cfg = _config({ fetchOptions: vi.fn().mockResolvedValue({ models: null }) });
     const { result } = renderHook(() => useSessionOption('T1', cfg));

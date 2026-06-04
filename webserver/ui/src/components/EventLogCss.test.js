@@ -28,6 +28,26 @@ test('EventLog sticky prompts wrap instead of truncating to one line', () => {
   assert.doesNotMatch(textBody, /white-space\s*:\s*nowrap\s*;/);
 });
 
+test('EventLog prompt keeps sticky positioning from the shared sticky header', () => {
+  const sharedBody = ruleBody('.sticky-section-header');
+  const promptBody = ruleBody('.chat-sticky-prompt');
+
+  assertDeclaration(sharedBody, 'position', 'sticky');
+  assert.doesNotMatch(promptBody, /position\s*:\s*relative\s*;/);
+});
+
+test('EventLog prompt is visually distinct from ordinary chat bubbles', () => {
+  const promptBody = ruleBody('.chat-sticky-prompt');
+  const labelBody = ruleBody('.chat-sticky-prompt-label');
+  const accentBody = ruleBody('.chat-sticky-prompt-toggle::before');
+
+  assert.match(promptBody, /background\s*:\s*linear-gradient\(/);
+  assertDeclaration(promptBody, 'border-top', '1px solid rgba\\(10, 132, 255, 0\\.4\\)');
+  assertDeclaration(promptBody, 'border-bottom', '1px solid rgba\\(10, 132, 255, 0\\.4\\)');
+  assertDeclaration(labelBody, 'color', '#cce0ff');
+  assertDeclaration(accentBody, 'width', '3px');
+});
+
 test('EventLog sticky prompts collapse to three lines with snippet expand button', () => {
   const wrapBody = ruleBody('.chat-sticky-prompt-text-wrap.is-collapsed');
   const expandBody = ruleBody('.chat-sticky-prompt-expand');

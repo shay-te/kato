@@ -57,6 +57,7 @@ const MessageForm = forwardRef(function MessageForm({
   onModelChange,
   effortLevels = [],
   selectedEffort = '',
+  effortDefault = '',
   onEffortChange,
 }, ref) {
   // Lazy initializer reads the persisted draft once on mount.
@@ -441,12 +442,11 @@ const MessageForm = forwardRef(function MessageForm({
           {effortLevels.length > 0 && (
             <ComposerSelect
               id="effort-selector"
-              tooltip="Reasoning effort for this chat. Higher = more thinking. 'Auto' uses the configured default. A change applies on the next message (the session re-spawns to take effect)."
+              tooltip="Reasoning effort for this chat. Higher = more thinking. Shows the level kato will actually run (the configured default until you pick one). A change applies on the next message (the session re-spawns to take effect)."
               ariaLabel="Select reasoning effort"
-              value={selectedEffort}
+              value={effectiveEffort(effortLevels, selectedEffort, effortDefault)}
               onChange={onEffortChange}
             >
-              <option value="">Effort: Auto</option>
               {effortLevels.map((level) => (
                 <option key={level} value={level}>{`Effort: ${level}`}</option>
               ))}
@@ -486,6 +486,22 @@ function effectiveModelId(models, selected) {
   }
   const flagged = models.find((m) => m.default);
   return (flagged || models[0] || {}).id || '';
+}
+
+
+// The effort dropdown shows a concrete level, never an ambiguous "Auto":
+// with no per-task override we select the backend's reported default (the
+// level kato actually passes to --effort when the operator hasn't chosen
+// one), falling back to the first advertised level. So the operator always
+// sees the effort that will run rather than the word "Auto".
+function effectiveEffort(levels, selected, fallback) {
+  if (selected) {
+    return selected;
+  }
+  if (fallback && levels.includes(fallback)) {
+    return fallback;
+  }
+  return levels[0] || '';
 }
 
 

@@ -2313,9 +2313,20 @@ def _chat_runner_defaults(app: Flask):
     return getattr(runner, '_defaults', None) if runner is not None else None
 
 
+# Concrete effort kato falls back to when neither a per-task override nor a
+# configured default is set. The composer used to show "Auto" here, which hid
+# the real effort — kato passed no --effort, so the CLI silently picked one and
+# the operator couldn't tell which. Surfacing a concrete level (and passing it
+# explicitly on spawn) means the effort actually used is always visible.
+DEFAULT_CHAT_EFFORT = 'high'
+
+
 def _configured_chat_effort(app: Flask) -> str:
     defaults = _chat_runner_defaults(app)
-    return str(getattr(defaults, 'effort', '') or '') if defaults is not None else ''
+    configured = (
+        str(getattr(defaults, 'effort', '') or '') if defaults is not None else ''
+    )
+    return configured or DEFAULT_CHAT_EFFORT
 
 
 def _discover_chat_effort_levels(app: Flask) -> list:
@@ -2683,7 +2694,10 @@ def _spawn_or_reject_chat_session(app: Flask, task_id: str, text: str):
     overrides = app.config.get('TASK_MODEL_OVERRIDES') or {}
     model_override = overrides.get(task_id, '')
     effort_overrides = app.config.get('TASK_EFFORT_OVERRIDES') or {}
-    effort_override = effort_overrides.get(task_id, '')
+    # No per-task override (or it was cleared) → pass the concrete chat default
+    # explicitly, so kato never falls through to the CLI's opaque built-in
+    # effort (the old "Auto"). The operator always knows the level that ran.
+    effort_override = effort_overrides.get(task_id, '') or _configured_chat_effort(app)
     try:
         runner.resume_session_for_chat(
             task_id=task_id,

@@ -159,7 +159,7 @@ export default function SessionDetail({
       setCurrent: setSessionModel,
     },
   );
-  const [effortLevels, selectedEffort, handleEffortChange] = useSessionOption(
+  const [effortLevels, selectedEffort, handleEffortChange, effortDefault] = useSessionOption(
     taskId,
     {
       fetchOptions: fetchEffortLevels,
@@ -167,6 +167,9 @@ export default function SessionDetail({
       fetchCurrent: fetchSessionEffort,
       currentKey: 'effort',
       setCurrent: setSessionEffort,
+      // ``/api/effort-levels`` carries the concrete default kato falls back
+      // to (no more "Auto"); the picker shows it when the task has no override.
+      defaultKey: 'default',
     },
   );
   // Prefer the App-level toolMemory when passed (so the same recall
@@ -535,6 +538,7 @@ export default function SessionDetail({
           onModelChange={handleModelChange}
           effortLevels={effortLevels}
           selectedEffort={selectedEffort}
+          effortDefault={effortDefault}
           onEffortChange={handleEffortChange}
         />
       </section>

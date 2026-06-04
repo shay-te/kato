@@ -1293,11 +1293,11 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
    * negative top margin: prompts are now nested one per turn, so a
    * negative top would yank the bar up over the previous turn's last
    * bubble. The flex gap on .chat-turn handles spacing instead. */
-  position: relative; /* anchor the comment-run jump icon (top-right) */
   margin: 0 -24px;
-  background: #0a0a0a;
-  border-bottom: 1px solid #2a2a2a;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+  background: linear-gradient(180deg, rgba(96, 165, 250, 0.18) 0%, #0a0a0a 100%);
+  border-top: 1px solid rgba(10, 132, 255, 0.4);
+  border-bottom: 1px solid rgba(10, 132, 255, 0.4);
+  box-shadow: 0 0 0 1px rgba(10, 132, 255, 0.4), 0 0 12px rgba(10, 132, 255, 0.55);
 }
 
 /* Jump-to-comment icon on a comment-run prompt (kato addressing an
@@ -1370,13 +1370,23 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   color: #f5f5f7;
 }
 
+.chat-sticky-prompt-toggle::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: #0a84ff;
+}
+
 .chat-sticky-prompt-label {
   flex-shrink: 0;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #737373;
+  color: #cce0ff;
   padding-top: 2px;
 }
 
