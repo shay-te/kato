@@ -80,6 +80,16 @@ describe('useSessionStream — EventSource lifecycle', () => {
     expect(FakeEventSource.instances[0].url).toMatch(/\/events$/);
   });
 
+  test('hydrate stamps lastEventAt to now (no stale "idle for X" on tab switch)', () => {
+    // The cached lastEventAt is when the operator last WATCHED the tab, not
+    // when the session last acted — so hydrate resets it to now. Without this
+    // a tab switch flashed "idle for Xm / may be stalled" until the backlog
+    // replayed. (Pre-fix this would be 0 from the empty cache.)
+    const before = Date.now();
+    const { result } = renderHook(() => useSessionStream('T1'));
+    expect(result.current.lastEventAt).toBeGreaterThanOrEqual(before);
+  });
+
   test('no EventSource is opened when taskId is empty', () => {
     renderHook(() => useSessionStream(''));
     expect(FakeEventSource.instances.length).toBe(0);

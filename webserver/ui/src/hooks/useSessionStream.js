@@ -408,8 +408,16 @@ export function useSessionStream(taskId, onIncomingEvent) {
       ? cached.lifecycle
       : SESSION_LIFECYCLE.CONNECTING;
     dispatch({
+      // Reset the activity clock to NOW on (re)hydrate. The cached
+      // ``lastEventAt`` is when the OPERATOR last watched this tab, not when
+      // the session last acted — events keep flowing on the backend while you
+      // view another tab. Carrying the stale value made the WorkingIndicator
+      // flash "idle for Xm / may be stalled" for the ~1s until the backlog
+      // replayed and refreshed it. Starting fresh means a tab switch never
+      // shows phantom silence; a genuinely stalled session still trips the
+      // warning once it's been quiet for the threshold AFTER the switch.
       type: ACTION_HYDRATE,
-      value: { ...cached, lifecycle: carriedLifecycle },
+      value: { ...cached, lifecycle: carriedLifecycle, lastEventAt: Date.now() },
     });
 
     const stream = new EventSource(
