@@ -36,6 +36,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from kato_core_lib.helpers.atomic_text_utils import atomic_write_text
+from kato_core_lib.helpers.lessons_path_utils import (
+    LESSON_CANDIDATES_DIRNAME,
+    LESSONS_PER_TASK_DIRNAME,
+)
 from kato_core_lib.helpers.logging_utils import configure_logger
 
 
@@ -52,8 +56,8 @@ class LessonsDataAccess(object):
     def __init__(self, state_dir: Path) -> None:
         self._state_dir = Path(state_dir)
         self._global_path = self._state_dir / 'lessons.md'
-        self._per_task_dir = self._state_dir / 'lessons'
-        self._candidate_dir = self._state_dir / 'lesson-candidates'
+        self._per_task_dir = self._state_dir / LESSONS_PER_TASK_DIRNAME
+        self._candidate_dir = self._state_dir / LESSON_CANDIDATES_DIRNAME
         self.logger = configure_logger(self.__class__.__name__)
 
     @property

@@ -1004,8 +1004,16 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   background: #737373;
 } /* gray: stopped */
 .status-provisioning {
-  background: #f5f5f7;
-} /* white: cloning */
+  background: #2997ff;
+} /* cyan: preparing/cloning the workspace (distinct from idle white) */
+/* Cyan spinner ring on the provisioning dot — a moving "progress" cue so the
+ * operator can tell a tab is actively preparing, not stuck. Overrides the
+ * generic grey is-loading ring below for this state only. */
+.status-dot.status-provisioning.is-loading::after {
+  border-top-color: #93c5fd;
+  border-right-color: #93c5fd;
+}
+
 .status-errored {
   background: #b91c1c;
 } /* red:   half-broken workspace */
@@ -3113,15 +3121,26 @@ code {
   margin-top: 10px;
 }
 
-/* Plain scrolling group label (multi-repo only) — NOT sticky, so it
- * never competes with the per-file sticky header at top:0. */
+/* Repo section header (multi-repo only) — NOT sticky, so it never competes
+ * with the per-file sticky header at top:0. A bold, bright band with an accent
+ * bar + a divider line above it so it's obvious which repo's changed files
+ * follow (the small dim grey label before was easy to miss). */
 .diff-pane-repo-name {
-  margin: 0 0 6px;
-  padding: 6px 4px;
-  font: 600 12px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: #a3a3a3;
+  margin: 16px 0 10px;
+  padding: 8px 10px;
+  font: 700 14px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.03em;
+  color: #f5f5f7;
   background: #2a2a2a;
-  border-bottom: 1px solid #2a2a2a;
+  border-radius: 6px;
+  border-left: 3px solid rgba(10, 132, 255, 0.55);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* No gap above the very first repo header — the pane padding already
+ * gives it room; the big top margin is only to separate adjacent repos. */
+.diff-pane-repo:first-child .diff-pane-repo-name {
+  margin-top: 0;
 }
 
 .diff-pane-file {
@@ -3882,6 +3901,41 @@ body.kato-resizing #left-pane-resizer::before {
   color: #f5f5f7;
   font-weight: 600;
   flex: 1;
+}
+
+/* Read-only repo badge in the repo header — kato has no push permission for
+ * this repo (external reference library). Orange "caution" pill; the agent can
+ * still edit it locally but changes are NOT pushed. Clicking re-checks push
+ * access (the refresh glyph) and reloads the tree. */
+.files-tab-repo-readonly {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-right: 6px;
+  padding: 2px 8px;
+  border: 1px solid rgba(245, 158, 11, 0.65);
+  border-radius: var(--radius-pill);
+  background: rgba(245, 158, 11, 0.35);
+  color: #f59e0b;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.files-tab-repo-readonly:hover {
+  background: rgba(245, 158, 11, 0.65);
+  border-color: #f59e0b;
+  color: #f5f5f7;
+}
+
+.files-tab-repo-readonly svg {
+  width: 10px;
+  height: 10px;
+  display: block;
 }
 
 /* Per-repo "view commit" affordance + dropdown menu (FilesTab).

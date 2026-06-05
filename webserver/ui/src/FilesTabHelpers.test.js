@@ -168,6 +168,24 @@ test('normalizeTrees defaults conflictedFiles to an empty Set when missing', fun
   assert.equal(normalized[0].conflictedFiles.size, 0);
 });
 
+test('normalizeTrees carries read_only through as readOnly', function () {
+  const normalized = normalizeTrees({
+    trees: [
+      { repo_id: 'client', cwd: '/ws/client', tree: [], read_only: false },
+      { repo_id: 'ext-lib', cwd: '/ws/ext-lib', tree: [], read_only: true },
+    ],
+  });
+  assert.equal(normalized[0].readOnly, false);
+  assert.equal(normalized[1].readOnly, true);
+});
+
+test('normalizeTrees defaults readOnly to false when absent', function () {
+  const normalized = normalizeTrees({
+    trees: [{ repo_id: 'client', cwd: '/ws/client', tree: [] }],
+  });
+  assert.equal(normalized[0].readOnly, false);
+});
+
 test('normalizeTrees handles legacy single-repo payload with conflicted_files', function () {
   const normalized = normalizeTrees({
     cwd: '/workspace/client',

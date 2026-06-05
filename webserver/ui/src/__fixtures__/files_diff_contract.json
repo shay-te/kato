@@ -85,6 +85,7 @@
         ],
         "conflicted_files": [],
         "cwd": "/__fixture__/client",
+        "read_only": false,
         "repo_id": "client",
         "tree": [
           {

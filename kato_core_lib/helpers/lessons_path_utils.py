@@ -26,6 +26,24 @@ from kato_core_lib.helpers.kato_paths_utils import kato_home_path
 
 LESSONS_FILENAME = 'lessons.md'
 
+# Subdirectories the lessons subsystem creates inside its state_dir — which
+# DEFAULTS to ``KATO_WORKSPACES_ROOT`` (see ``default_lessons_path``), so they
+# sit right next to the per-task workspace clones. They are kato state, NOT
+# task workspaces; the planning UI's workspace/session listing must skip them
+# or they surface as phantom task tabs (the "lesson-candidates" tab bug). Keep
+# these names in sync with ``LessonsDataAccess`` (which builds the same dirs).
+LESSONS_PER_TASK_DIRNAME = 'lessons'
+LESSON_CANDIDATES_DIRNAME = 'lesson-candidates'
+RESERVED_WORKSPACE_ROOT_DIRNAMES = frozenset({
+    LESSONS_PER_TASK_DIRNAME,
+    LESSON_CANDIDATES_DIRNAME,
+})
+
+
+def is_reserved_workspace_dirname(name: object) -> bool:
+    """True for a lessons-state dir that must never be listed as a task."""
+    return str(name or '').strip() in RESERVED_WORKSPACE_ROOT_DIRNAMES
+
 
 def default_lessons_path() -> Path:
     """Default lessons file under ``KATO_WORKSPACES_ROOT``."""

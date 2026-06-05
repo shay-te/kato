@@ -1211,6 +1211,102 @@ class EffortRespawnDecisionTests(unittest.TestCase):
         ))
 
 
+class LessonsTabsExcludedTests(unittest.TestCase):
+    """kato's lessons-state dirs (``lessons/`` · ``lesson-candidates/``) live
+    inside KATO_WORKSPACES_ROOT next to the task clones, so the workspace walk
+    lists them — but they are NOT tasks and must never surface as planning-UI
+    tabs. Lessons stay in files; they just get no tab."""
+
+    def test_session_list_excludes_lessons_state_dirs(self):
+        workspace_manager = _FakeWorkspaceManager(records=[
+            _FakeWorkspaceRecord(
+                task_id='UNA-2727', task_summary='real task',
+                status='active', repository_ids=['repo'],
+            ),
+            _FakeWorkspaceRecord(
+                task_id='lessons', status='errored', repository_ids=[],
+            ),
+            _FakeWorkspaceRecord(
+                task_id='lesson-candidates', status='errored', repository_ids=[],
+            ),
+        ])
+        app = create_app(
+            session_manager=_FakeManager(records=[]),
+            workspace_manager=workspace_manager,
+        )
+        response = app.test_client().get('/api/sessions')
+        self.assertEqual(response.status_code, 200)
+        task_ids = {entry['task_id'] for entry in response.get_json()}
+        self.assertIn('UNA-2727', task_ids)          # real task kept
+        self.assertNotIn('lessons', task_ids)         # phantom tab gone
+        self.assertNotIn('lesson-candidates', task_ids)
+
+
+class ReadOnlyRepoEndpointTests(unittest.TestCase):
+    """Read-only repos: /files badges them; the re-check endpoint can clear them."""
+
+    def setUp(self):
+        import os
+        from pathlib import Path
+        from unittest.mock import patch
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        ctx = patch.dict(
+            os.environ,
+            {'KATO_READ_ONLY_REPOS_PATH': str(Path(self._tmp.name) / 'ro.json')},
+        )
+        ctx.start()
+        self.addCleanup(ctx.stop)
+
+    def test_files_endpoint_marks_read_only_repos(self):
+        from pathlib import Path
+        from kato_core_lib.helpers.read_only_repos_store import set_read_only_repos
+        root = Path(self._tmp.name)
+        repo_a = root / 'PROJ-1' / 'client'
+        repo_b = root / 'PROJ-1' / 'ext-lib'
+        for repo in (repo_a, repo_b):
+            (repo / '.git').mkdir(parents=True)
+        set_read_only_repos('PROJ-1', ['ext-lib'])
+        workspace_manager = _FakeWorkspaceManager(
+            records=[_FakeWorkspaceRecord(
+                task_id='PROJ-1', repository_ids=['client', 'ext-lib'],
+            )],
+            repo_paths={
+                ('PROJ-1', 'client'): str(repo_a),
+                ('PROJ-1', 'ext-lib'): str(repo_b),
+            },
+        )
+        app = create_app(
+            session_manager=_FakeManager(records=[]),
+            workspace_manager=workspace_manager,
+        )
+        response = app.test_client().get('/api/sessions/PROJ-1/files')
+        self.assertEqual(response.status_code, 200)
+        by_id = {t['repo_id']: t for t in response.get_json()['trees']}
+        self.assertFalse(by_id['client']['read_only'])   # writable
+        self.assertTrue(by_id['ext-lib']['read_only'])    # reference / no push
+
+    def test_recheck_push_endpoint_reports_now_writable(self):
+        agent_service = SimpleNamespace(
+            recheck_repository_push_access=lambda task_id, repo_id: True,
+        )
+        app = create_app(
+            session_manager=_FakeManager(records=[]), agent_service=agent_service,
+        )
+        response = app.test_client().post(
+            '/api/sessions/PROJ-1/repositories/ext-lib/recheck-push',
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {'repo_id': 'ext-lib', 'read_only': False})
+
+    def test_recheck_push_endpoint_503_without_agent_service(self):
+        app = create_app(session_manager=_FakeManager(records=[]))
+        response = app.test_client().post(
+            '/api/sessions/PROJ-1/repositories/ext-lib/recheck-push',
+        )
+        self.assertEqual(response.status_code, 503)
+
+
 class ChatEffortDefaultTests(unittest.TestCase):
     """Removing "Auto" means kato resolves + passes a CONCRETE effort.
 

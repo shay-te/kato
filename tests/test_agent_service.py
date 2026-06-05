@@ -27,6 +27,14 @@ from tests.utils import build_review_comment_payload, build_task, build_test_cfg
 
 class AgentServiceTests(unittest.TestCase):
     def setUp(self) -> None:
+        import os
+        import tempfile
+        from pathlib import Path
+        _ro = patch.dict(os.environ, {
+            'KATO_READ_ONLY_REPOS_PATH': str(Path(tempfile.mkdtemp()) / 'ro.json'),
+        })
+        _ro.start()
+        self.addCleanup(_ro.stop)
         self.task_description = 'whats wrong with you please fix it'
         self.pr_description = (
             'Files changed:\n'
@@ -86,6 +94,10 @@ class AgentServiceTests(unittest.TestCase):
             prepare_task_branches=Mock(side_effect=lambda repositories, repository_branches: repositories),
             destination_branch=Mock(return_value='master'),
             _ensure_branch_is_pushable=Mock(),
+            # Preflight partitions push access via the non-raising
+            # is_branch_pushable; default writable so the happy paths keep
+            # every repo (per-test overrides flip it to read-only).
+            is_branch_pushable=Mock(return_value=True),
             _ensure_branch_has_task_changes=Mock(),
             restore_task_repositories=Mock(),
             get_repository=Mock(side_effect=lambda repository_id: {
@@ -685,29 +697,23 @@ class AgentServiceTests(unittest.TestCase):
             self.task_client.add_comment.call_args.args[1],
         )
 
-    def test_process_assigned_task_restores_repositories_when_git_push_validation_fails_before_implementation(self) -> None:
-        self.repository_service._ensure_branch_is_pushable.side_effect = RuntimeError(
-            'failed to push branch PROJ-1'
-        )
+    def test_process_assigned_task_restores_repositories_when_no_repo_is_pushable(self) -> None:
+        # A SINGLE un-pushable repo no longer fails the task (it's marked
+        # read-only). But when EVERY repo is un-pushable there's nothing kato
+        # can publish, so it still restores the repos and moves the issue back.
+        self.repository_service.is_branch_pushable.return_value = False
         task = self.task_data_access.get_assigned_tasks()[0]
 
         results = self.service.process_assigned_task(task)
 
         self.assertIsNone(results)
         self.repository_service.resolve_task_repositories.assert_called_once_with(task)
-        self.repository_service.prepare_task_repositories.assert_called_once_with(
-            [self.client_repo, self.backend_repo]
-        )
-        self.repository_service.prepare_task_branches.assert_called_once()
         self.repository_service.restore_task_repositories.assert_called_once_with(
             [self.client_repo, self.backend_repo],
             force=True,
         )
-        self.task_client.add_comment.assert_called_once()
-        self.assertIn(
-            'Kato agent stopped working on this task: failed to push branch PROJ-1',
-            self.task_client.add_comment.call_args.args[1],
-        )
+        # A notice was posted (read-only repos + the no-writable rejection).
+        self.task_client.add_comment.assert_called()
         self.assertEqual(
             self.task_client.move_issue_to_state.call_args_list,
             [unittest.mock.call('PROJ-1', 'State', 'Todo')],
@@ -715,10 +721,10 @@ class AgentServiceTests(unittest.TestCase):
         self.kato_client.implement_task.assert_not_called()
         self.kato_client.test_task.assert_not_called()
 
-    def test_validate_task_branch_push_access_returns_false_without_failure_handler(self) -> None:
-        self.service._task_preflight_service._task_branch_push_validator.validate = Mock(
-            side_effect=RuntimeError('failed to push branch PROJ-1')
-        )
+    def test_validate_task_branch_push_access_returns_false_when_no_repo_writable(self) -> None:
+        # No repo is pushable → returns False. With no failure handler given it
+        # just reports the blockage (no restore).
+        self.repository_service.is_branch_pushable.return_value = False
         prepared_task = types.SimpleNamespace(
             repositories=[self.client_repo],
             repository_branches={'client': 'feature/proj-1/client'},
@@ -730,10 +736,6 @@ class AgentServiceTests(unittest.TestCase):
         )
 
         self.assertFalse(result)
-        self.service._task_preflight_service._task_branch_push_validator.validate.assert_called_once_with(
-            [self.client_repo],
-            {'client': 'feature/proj-1/client'},
-        )
         self.repository_service.restore_task_repositories.assert_not_called()
 
     def test_process_assigned_task_handles_ambiguous_or_missing_repository_scope(self) -> None:

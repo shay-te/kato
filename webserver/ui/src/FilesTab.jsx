@@ -7,6 +7,7 @@ import {
   fetchFileTree,
   fetchRepoCommits,
   fetchTaskComments,
+  recheckRepositoryPush,
   syncTaskRepositories,
 } from './api.js';
 import AddRepositoryModal from './components/AddRepositoryModal.jsx';
@@ -337,6 +338,17 @@ export default function FilesTab({
   }
   function collapseAll() { setCollapsed(new Set(repoIds)); }
   function expandAll() { setCollapsed(new Set()); }
+  // "Try again" on a read-only repo badge: re-test push access, then reload the
+  // tree so the badge reflects the new state (cleared once push is granted).
+  async function recheckPush(repoId) {
+    const id = String(repoId || '').trim();
+    if (!taskId || !id) { return; }
+    try {
+      await recheckRepositoryPush(taskId, id);
+    } finally {
+      setSyncTick((n) => n + 1);
+    }
+  }
   function openPathMenu(event, relativePath, repoId = '') {
     event.preventDefault();
     event.stopPropagation();
@@ -495,6 +507,7 @@ export default function FilesTab({
           onPickFile={appendToInput}
           onOpenFile={onOpenFile}
           onOpenPathMenu={openPathMenu}
+          onRecheckPush={recheckPush}
           searchTerm={deferredQuery}
           conflictedFiles={repoTree.conflictedFiles}
           changedFiles={repoTree.changedFiles}
@@ -670,7 +683,7 @@ export function buildFilesDiffMeta(repoDiffs) {
 
 function RepoTree({
   repoTree, width, collapsed, onToggle, onPickFile,
-  onOpenFile, onOpenPathMenu,
+  onOpenFile, onOpenPathMenu, onRecheckPush,
   searchTerm = '', conflictedFiles, changedFiles, diffMeta = EMPTY_DIFF_META,
   commentMeta = EMPTY_COMMENT_META,
   showAllFiles = false, taskId = '', focusFileTarget = null,
@@ -879,6 +892,21 @@ function RepoTree({
             (not the whole header) so it never doubles up with the
             commits button's own tooltip. */}
         <span className="files-tab-repo-name" data-tooltip={repoTree.cwd}>{heading}</span>
+        {repoTree.readOnly && (
+          <button
+            type="button"
+            className="files-tab-repo-readonly tooltip-above"
+            data-tooltip="Read-only: kato has no push permission for this repo. The agent can edit it for reference, but changes here are NOT pushed. Click to re-check push access."
+            aria-label={`${heading} is read-only — re-check push access`}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (typeof onRecheckPush === 'function') { onRecheckPush(repoId); }
+            }}
+          >
+            <span>read-only</span>
+            <Icon name="refresh" />
+          </button>
+        )}
         {repoId && taskId && (
           <button
             type="button"

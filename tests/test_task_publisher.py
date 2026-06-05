@@ -111,6 +111,40 @@ class TaskPublisherTests(unittest.TestCase):
         )
         self.assertEqual(first_context_call.args[2], 'conversation-1')
 
+    def test_publish_task_execution_skips_read_only_repository(self) -> None:
+        # A repo kato can't push to (marked read-only by the preflight) is never
+        # PR'd — only the writable repo gets a pull request, and the task still
+        # publishes. One un-pushable reference repo no longer blocks the task.
+        task = build_task(description='whats wrong with you please fix it')
+        prepared_task = types.SimpleNamespace(
+            repositories=[
+                types.SimpleNamespace(id='client', destination_branch='master'),
+                types.SimpleNamespace(id='ext-lib', destination_branch='main'),
+            ],
+            repository_branches={'client': 'UNA-1', 'ext-lib': 'UNA-1'},
+            read_only_repository_ids={'ext-lib'},
+        )
+        execution = {
+            ImplementationFields.SUCCESS: True,
+            ImplementationFields.AGENT_SESSION_ID: 'conversation-1',
+            Task.summary.key: 'Files changed:\n- client/app.ts',
+            ImplementationFields.MESSAGE: 'Validation report:\n- verified.',
+        }
+        self.repository_service.create_pull_request.side_effect = [{
+            PullRequestFields.REPOSITORY_ID: 'client',
+            PullRequestFields.ID: '17',
+            PullRequestFields.TITLE: 'PROJ-1: fix',
+            PullRequestFields.URL: 'https://bitbucket/pr/17',
+            PullRequestFields.SOURCE_BRANCH: 'UNA-1',
+            PullRequestFields.DESTINATION_BRANCH: 'master',
+        }]
+
+        result = self.publisher.publish_task_execution(task, prepared_task, execution)
+
+        # Only the writable repo was PR'd; the read-only one was skipped.
+        self.assertEqual(self.repository_service.create_pull_request.call_count, 1)
+        self.assertEqual(result[StatusFields.STATUS], StatusFields.READY_FOR_REVIEW)
+
     def test_publish_task_execution_partial_failure_reports_failure(self) -> None:
         task = build_task(description='whats wrong with you please fix it')
         prepared_task = types.SimpleNamespace(

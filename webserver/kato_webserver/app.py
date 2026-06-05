@@ -1413,11 +1413,32 @@ def _register_http_routes(app: Flask) -> None:
             not_found_message='favicon not found',
         )
 
+    @app.post('/api/sessions/<task_id>/repositories/<repo_id>/recheck-push')
+    def recheck_repository_push(task_id: str, repo_id: str):
+        """Re-test push access for a read-only repo (the tree's "try again").
+
+        Returns ``{repo_id, read_only}`` — ``read_only`` is false once kato can
+        push (push permission was granted); the UI then reloads the tree.
+        """
+        agent_service = app.config.get('AGENT_SERVICE')
+        recheck = getattr(agent_service, 'recheck_repository_push_access', None)
+        if not callable(recheck):
+            return jsonify({'error': 'push re-check is not available'}), 503
+        try:
+            pushable = recheck(task_id, repo_id)
+        except Exception as exc:
+            return jsonify({'error': str(exc)}), 500
+        return jsonify({'repo_id': repo_id, 'read_only': not pushable})
+
     @app.get('/api/sessions/<task_id>/files')
     def list_session_files(task_id: str):
         manager = app.config['SESSION_MANAGER']
         workspace_manager = app.config.get('WORKSPACE_MANAGER')
         agent_service = app.config.get('AGENT_SERVICE')
+        # Repos kato can't push to (read-only / reference) — badge them in the
+        # tree so the operator knows edits there won't be published.
+        from kato_core_lib.helpers.read_only_repos_store import read_only_repos
+        read_only_ids = read_only_repos(task_id)
         repository_ids = _task_repository_ids(workspace_manager, task_id)
         # Multi-repo task: enumerate every clone so the UI can render
         # one tree per repo. Single-repo / legacy: fall back to the
@@ -1431,6 +1452,7 @@ def _register_http_routes(app: Flask) -> None:
                 trees.append({
                     'repo_id': repo_id,
                     'cwd': cwd,
+                    'read_only': repo_id in read_only_ids,
                     'tree': tracked_file_tree(cwd),
                     # Conflict markers — same source as the Changes
                     # tab. UI marks each path with a warning icon so
@@ -3140,6 +3162,9 @@ def _records_as_dicts(
     ``has_changes_pending`` (true when kato is paused awaiting push
     approval — the workspace has commits ready to push).
     """
+    from kato_core_lib.helpers.lessons_path_utils import (
+        is_reserved_workspace_dirname,
+    )
     live_session_ids = _live_session_ids(session_manager)
     working_session_ids = _working_session_ids(session_manager)
     pending_permission_tool_by_task = _pending_permission_tool_by_task(session_manager)
@@ -3155,7 +3180,15 @@ def _records_as_dicts(
             )
             for record in session_manager.list_records()
         ]
-    workspace_records = workspace_manager.list_workspaces()
+    # Skip kato's own lessons-state dirs (``lessons/`` / ``lesson-candidates/``)
+    # — they live inside KATO_WORKSPACES_ROOT next to the task clones, so the
+    # workspace walk lists them, but they are NOT tasks and must never show as
+    # tabs (the "lesson-candidates"/"lessons" phantom-tab bug). Lessons stay in
+    # files; they just don't get a UI tab.
+    workspace_records = [
+        record for record in workspace_manager.list_workspaces()
+        if not is_reserved_workspace_dirname(getattr(record, 'task_id', ''))
+    ]
     session_ids_by_task = _session_ids_by_task(session_manager)
     awaiting_push = getattr(agent_service, 'is_awaiting_push_approval', None)
     return [

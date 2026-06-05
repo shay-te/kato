@@ -794,6 +794,24 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
             )
         return inferred_branch
 
+    def is_branch_pushable(self, repository, branch_name: str) -> bool:
+        """True when kato can push ``branch_name`` to ``repository``'s remote.
+
+        Non-raising counterpart of ``_ensure_branch_is_pushable``. Used by the
+        preflight to PARTITION repos into writable vs read-only (reference): a
+        repo kato lacks push rights to (e.g. an external library returning a
+        403) is marked read-only instead of rejecting the whole task.
+        """
+        try:
+            self._ensure_branch_is_pushable(
+                text_from_attr(repository, 'local_path'),
+                branch_name,
+                repository,
+            )
+            return True
+        except Exception:
+            return False
+
     def _ensure_branch_is_pushable(
         self,
         local_path: str,

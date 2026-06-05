@@ -190,7 +190,20 @@ class TaskPublisher(MissionStepLoggerMixin, Service):
         description = pull_request_description(task, execution)
         agent_session_id = fix_session_id(execution.get(ImplementationFields.AGENT_SESSION_ID))
         commit_message = self._task_commit_message(task)
+        read_only_ids = getattr(prepared_task, 'read_only_repository_ids', None) or set()
         for repository in prepared_task.repositories or []:
+            if str(getattr(repository, 'id', '') or '') in read_only_ids:
+                # Read-only / reference repo (no push permission) — kato never
+                # pushes or opens a PR for it. The agent's local edits there are
+                # intentionally not published. Listed as unchanged so the
+                # summary makes clear it was deliberately skipped.
+                self._log_task_step(
+                    task.id,
+                    'skipping read-only repository %s (no push permission)',
+                    repository.id,
+                )
+                unchanged_repositories.append(repository.id)
+                continue
             outcome = self._create_pull_request_for_repository(
                 task,
                 prepared_task,

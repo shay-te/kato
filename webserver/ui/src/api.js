@@ -431,6 +431,18 @@ export function fetchFileTree(taskId) {
   return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/files`);
 }
 
+// Re-test push access for a read-only repo (the tree's "try again"). The
+// envelope body carries ``{repo_id, read_only}`` — read_only flips false once
+// kato can push (permission granted), and the caller reloads the tree.
+export function recheckRepositoryPush(taskId, repoId) {
+  if (!taskId || !repoId) { return Promise.resolve({ ok: false, error: 'missing id' }); }
+  return requestEnvelope(
+    `/api/sessions/${encodeURIComponent(taskId)}`
+    + `/repositories/${encodeURIComponent(repoId)}/recheck-push`,
+    { method: 'POST' },
+  );
+}
+
 /**
  * Load a single tracked file's contents from the task workspace.
  * Server-side guards: path-traversal, 1MB cap, binary detection.

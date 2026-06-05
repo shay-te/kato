@@ -299,6 +299,44 @@ class AgentService(MissionStepLoggerMixin, Service):
     def get_assigned_tasks(self) -> list[Task]:
         return self._task_service.get_assigned_tasks()
 
+    def recheck_repository_push_access(self, task_id: str, repo_id: str) -> bool:
+        """Re-run the push-access check for one repo's workspace clone.
+
+        Powers the planning UI's "try again" on a read-only repo badge: if push
+        access has since been granted the repo is dropped from the read-only
+        store (it becomes writable again); otherwise it stays read-only.
+        Returns ``True`` when the repo is now pushable.
+        """
+        import copy
+        from kato_core_lib.helpers.read_only_repos_store import (
+            clear_read_only_repo,
+            read_only_repos,
+            set_read_only_repos,
+        )
+        workspace_manager = getattr(self, '_workspace_manager', None)
+        if workspace_manager is None:
+            return False
+        clone_path = workspace_manager.repository_path(task_id, repo_id)
+        try:
+            repository = copy.copy(self._repository_service.get_repository(repo_id))
+        except Exception:
+            self.logger.exception(
+                'recheck: cannot resolve repository %s for task %s', repo_id, task_id,
+            )
+            return False
+        repository.local_path = str(clone_path)
+        # The task branch is the task id (build_branch_name == normalized_text
+        # of the id, i.e. just stripped).
+        branch_name = str(task_id).strip()
+        pushable = self._repository_service.is_branch_pushable(repository, branch_name)
+        if pushable:
+            clear_read_only_repo(task_id, repo_id)
+        else:
+            still = read_only_repos(task_id)
+            still.add(str(repo_id))
+            set_read_only_repos(task_id, still)
+        return pushable
+
     @property
     def parallel_task_runner(self):
         """Worker pool used by the scan job to run tasks concurrently.
@@ -496,8 +534,19 @@ class AgentService(MissionStepLoggerMixin, Service):
     def _safe_list_workspaces(self) -> list:
         if self._workspace_manager is None:
             return []
+        from kato_core_lib.helpers.lessons_path_utils import (
+            is_reserved_workspace_dirname,
+        )
         try:
-            return list(self._workspace_manager.list_workspaces())
+            # Drop kato's own lessons-state dirs (lessons/ · lesson-candidates/)
+            # that sit inside KATO_WORKSPACES_ROOT next to the task clones — they
+            # are NOT tasks and must never be treated as workspaces (phantom
+            # "lessons"/"lesson-candidates" tabs).
+            return [
+                record
+                for record in self._workspace_manager.list_workspaces()
+                if not is_reserved_workspace_dirname(getattr(record, 'task_id', ''))
+            ]
         except Exception:
             self.logger.exception('failed to list workspaces')
             return []

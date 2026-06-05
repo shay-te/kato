@@ -7,6 +7,8 @@ import {
 } from '../api.js';
 import { useBusyAction } from './useBusyAction.js';
 import { usePolling } from './usePolling.js';
+import { formatPushResult } from '../components/sessionHeaderFormatters.js';
+import { toastResult } from '../stores/toastStore.js';
 
 const POLL_INTERVAL_MS = 10_000;
 
@@ -48,7 +50,22 @@ export function useTaskPublish(taskId) {
   usePolling(refresh, POLL_INTERVAL_MS, [taskId], { enabled: !!taskId });
 
   const [pushBusy, push] = useBusyAction(
-    () => pushTask(taskId), { enabled: !!taskId, onDone: refresh },
+    () => pushTask(taskId),
+    {
+      enabled: !!taskId,
+      onDone: (result) => {
+        refresh();
+        // Notify on push completion — same visible confirmation as finishing a
+        // task. Green when something pushed, red on failure, info on a no-op.
+        const pushed = (result?.body || {}).pushed || {};
+        const failed = (pushed.failed_repositories || []).length > 0;
+        const pushedOk = (pushed.pushed_repositories || []).length > 0;
+        toastResult({
+          ...formatPushResult(result, taskId),
+          kind: (!result?.ok || failed) ? 'error' : (pushedOk ? 'success' : 'info'),
+        });
+      },
+    },
   );
   const [pullBusy, pull] = useBusyAction(
     () => pullTask(taskId), { enabled: !!taskId, onDone: refresh },

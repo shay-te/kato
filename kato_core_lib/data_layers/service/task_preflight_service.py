@@ -583,26 +583,100 @@ class TaskPreflightService(MissionStepLoggerMixin, Service):
         *,
         failure_handler: Callable[[Task, Exception, PreparedTaskContext | None], None] | None = None,
     ) -> bool:
-        try:
-            self._task_branch_push_validator.validate(
-                prepared_task.repositories,
-                prepared_task.repository_branches,
+        # Partition repos into writable vs read-only instead of rejecting the
+        # whole task on the first un-pushable repo. A repo kato can't push to
+        # (no push permission — e.g. an external reference library returning a
+        # 403) is marked READ-ONLY: kato skips its branch push + PR, but the
+        # task still runs on the repos it CAN push. Only a task with NO writable
+        # repo is a real failure — there'd be nothing for kato to publish.
+        repositories = list(prepared_task.repositories or [])
+        read_only = set(getattr(prepared_task, 'read_only_repository_ids', None) or set())
+        writable: list[str] = []
+        # Defensive: the real RepositoryService always exposes is_branch_pushable;
+        # a stripped-down test stub may not — treat its repos as writable (the
+        # old no-partition behaviour) rather than crash.
+        is_pushable = getattr(self._repository_service, 'is_branch_pushable', None)
+        for repository in repositories:
+            repo_id = str(getattr(repository, 'id', '') or '')
+            if repo_id in read_only:
+                continue  # already flagged (e.g. explicit reference tag)
+            branch_name = prepared_task.repository_branches.get(repo_id, '')
+            pushable = bool(branch_name) and (
+                is_pushable is None or is_pushable(repository, branch_name)
             )
-        except Exception as exc:
-            if failure_handler is None:
-                self._log_task_step(
-                    task.id,
-                    'pre-start retry check is still blocked during task branch push validation: %s',
-                    exc,
-                )
-                return False
-            self.logger.exception(
-                'failed to validate task branch push access for task %s',
+            if pushable:
+                writable.append(repo_id)
+            else:
+                read_only.add(repo_id)
+        prepared_task.read_only_repository_ids = read_only
+        self._persist_read_only_repositories(task, read_only)
+
+        if read_only:
+            self._notify_read_only_repositories(task, sorted(read_only))
+
+        if writable:
+            return True
+
+        # Every repo is read-only — nothing kato can publish. Keep this a real
+        # failure (the old hard-reject), but ONLY when no repo is pushable
+        # rather than when any single one isn't.
+        exc = RuntimeError(
+            f'task {task.id} has no writable repository — kato has push access '
+            'to none of its repos, so there is nothing to publish'
+        )
+        if failure_handler is None:
+            self._log_task_step(
                 task.id,
+                'pre-start retry check still blocked: no writable repository (%s)',
+                exc,
             )
-            failure_handler(task, exc, prepared_task)
             return False
-        return True
+        self.logger.warning('task %s has no writable repository — rejecting', task.id)
+        failure_handler(task, exc, prepared_task)
+        return False
+
+    def _persist_read_only_repositories(self, task: Task, read_only: set[str]) -> None:
+        """Persist the read-only set so the UI tree + publish step can read it.
+
+        Survives across scans / restarts. Clearing a now-pushable task writes
+        nothing when there was no prior entry, so it doesn't churn the file.
+        """
+        try:
+            from kato_core_lib.helpers.read_only_repos_store import (
+                forget_task as _clear_read_only,
+                set_read_only_repos,
+            )
+            if read_only:
+                set_read_only_repos(str(task.id), read_only)
+            else:
+                _clear_read_only(str(task.id))
+        except Exception:
+            self.logger.exception(
+                'failed to persist read-only repos for task %s', task.id,
+            )
+
+    def _notify_read_only_repositories(self, task: Task, repo_ids: list[str]) -> None:
+        """Log + post a UI notice that ``repo_ids`` are read-only (no push)."""
+        names = ', '.join(repo_ids)
+        self._log_task_step(
+            task.id,
+            'read-only repo(s) — no push permission; kato will skip push/PR for '
+            'them and work the writable repos: %s',
+            names,
+        )
+        try:
+            self._task_service.add_comment(
+                str(task.id),
+                f'ℹ️ Kato has no push permission for: {names}. These '
+                'are treated as read-only (reference) repos — kato cloned them '
+                'for context and the agent may read/edit them, but it will NOT '
+                'push or open a PR for them. Work continues on the repos kato '
+                'can push to.',
+            )
+        except Exception:
+            self.logger.exception(
+                'failed to post read-only-repository notice for task %s', task.id,
+            )
 
     def validate_task_branch_publishability(
         self,

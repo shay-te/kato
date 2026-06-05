@@ -17,6 +17,9 @@ export function normalizeTrees(payload) {
         tree: entry?.tree || [],
         conflictedFiles: new Set(conflicts),
         changedFiles: new Set(changed),
+        // Repo kato can't push to (reference / no push permission). The tree
+        // badges it so the operator knows edits there won't be published.
+        readOnly: !!entry?.read_only,
       };
     });
   }

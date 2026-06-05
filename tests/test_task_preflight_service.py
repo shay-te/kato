@@ -15,6 +15,12 @@ from tests.utils import build_task
 
 class TaskPreflightServiceTests(unittest.TestCase):
     def setUp(self) -> None:
+        import os
+        _ro = patch.dict(os.environ, {
+            'KATO_READ_ONLY_REPOS_PATH': str(Path(tempfile.mkdtemp()) / 'ro.json'),
+        })
+        _ro.start()
+        self.addCleanup(_ro.stop)
         self.task = build_task(
             summary='Update the client and backend flow',
             description='Implement the client and backend change',
@@ -39,6 +45,9 @@ class TaskPreflightServiceTests(unittest.TestCase):
             lambda repositories, repository_branches: repositories
         )
         self.repository_service.build_branch_name.return_value = 'feature/proj-1/client'
+        # Push-access partition: default to "writable" so the happy path keeps
+        # every repo. Per-test overrides flip individual repos to read-only.
+        self.repository_service.is_branch_pushable.return_value = True
         self.task_branch_push_validator = Mock()
         self.task_branch_publishability_validator = Mock()
         self.task_branch_push_validator.validate.return_value = None
@@ -69,10 +78,12 @@ class TaskPreflightServiceTests(unittest.TestCase):
             self.repositories,
             {'client': 'feature/proj-1/client'},
         )
-        self.task_branch_push_validator.validate.assert_called_once_with(
-            self.repositories,
-            {'client': 'feature/proj-1/client'},
+        # Push access is now partitioned per-repo (not an all-or-nothing
+        # validate). Every repo is pushable here, so none are read-only.
+        self.repository_service.is_branch_pushable.assert_called_with(
+            self.repository, 'feature/proj-1/client',
         )
+        self.assertEqual(result.read_only_repository_ids, set())
 
     def test_prepare_task_execution_context_attaches_repository_agents_instructions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -203,12 +214,37 @@ class TaskPreflightServiceTests(unittest.TestCase):
         mock_prepare_task_start.assert_called_once_with(self.task)
         self.task_model_access_validator.validate.assert_not_called()
 
-    def test_validate_task_branch_push_access_returns_false_without_failure_handler(self) -> None:
-        self.task_branch_push_validator.validate.side_effect = RuntimeError('missing push')
+    def test_validate_task_branch_push_access_returns_false_when_no_repo_writable(self) -> None:
+        # Every repo is un-pushable → nothing kato can publish → fail (no
+        # failure handler given, so it just returns False).
+        self.repository_service.is_branch_pushable.return_value = False
 
         result = self.service.validate_task_branch_push_access(self.task, self.prepared_task)
 
         self.assertFalse(result)
+        self.assertEqual(self.prepared_task.read_only_repository_ids, {'client'})
+
+    def test_validate_task_branch_push_access_marks_unpushable_repo_read_only_and_continues(self) -> None:
+        # One pushable + one un-pushable repo: kato does NOT reject the task —
+        # it marks the un-pushable repo read-only, notifies, and continues.
+        writable = types.SimpleNamespace(id='client', local_path='/ws/client')
+        readonly = types.SimpleNamespace(id='ext-lib', local_path='/ws/ext-lib')
+        prepared = PreparedTaskContext(
+            branch_name='UNA-1',
+            repositories=[writable, readonly],
+            repository_branches={'client': 'UNA-1', 'ext-lib': 'UNA-1'},
+        )
+        self.repository_service.is_branch_pushable.side_effect = (
+            lambda repo, branch: repo.id == 'client'
+        )
+
+        result = self.service.validate_task_branch_push_access(self.task, prepared)
+
+        self.assertTrue(result)  # continues — not rejected
+        self.assertEqual(prepared.read_only_repository_ids, {'ext-lib'})
+        # The operator is notified (UI comment) about the read-only repo.
+        self.task_service.add_comment.assert_called_once()
+        self.assertIn('ext-lib', self.task_service.add_comment.call_args.args[1])
 
     def test_validate_task_branch_publishability_invokes_failure_handler_when_blocked(self) -> None:
         self.task_branch_publishability_validator.validate.side_effect = RuntimeError('no changes')

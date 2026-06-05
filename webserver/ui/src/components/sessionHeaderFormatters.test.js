@@ -4,10 +4,31 @@ import assert from 'node:assert/strict';
 import {
   formatFinishResult,
   formatPullResult,
+  formatPushResult,
   formatPushSummary,
   formatRequestFailure,
   formatUpdateSourceResult,
 } from './sessionHeaderFormatters.js';
+
+test('formatPushResult titles with the task id and summarises the push', () => {
+  const out = formatPushResult({
+    ok: true,
+    body: { pushed: { pushed_repositories: ['client', 'backend'] } },
+  }, 'UNA-1');
+  assert.equal(out.title, 'Pushed (UNA-1)');
+  assert.match(out.message, /pushed 2 repo\(s\): client, backend/);
+});
+
+test('formatPushResult falls back to a generic title without a task id', () => {
+  const out = formatPushResult({ ok: true, body: { pushed: {} } });
+  assert.equal(out.title, 'Pushed');
+});
+
+test('formatPushResult surfaces a request failure', () => {
+  const out = formatPushResult({ ok: false, error: 'boom' }, 'UNA-1');
+  assert.equal(typeof out.title, 'string');
+  assert.equal(out.title.length > 0, true);
+});
 
 // Three previously-duplicated formatters now share building blocks
 // here. The tests pin the bullet shape + classification rules so

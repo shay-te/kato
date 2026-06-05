@@ -17,12 +17,15 @@ vi.mock('../api.js', () => ({
   pushTask: vi.fn(),
 }));
 
+vi.mock('../stores/toastStore.js', () => ({ toastResult: vi.fn() }));
+
 import {
   createTaskPullRequest,
   fetchTaskPublishState,
   pullTask,
   pushTask,
 } from '../api.js';
+import { toastResult } from '../stores/toastStore.js';
 import { useTaskPublish } from './useTaskPublish.js';
 
 
@@ -31,6 +34,32 @@ beforeEach(() => {
   createTaskPullRequest.mockReset();
   pullTask.mockReset();
   pushTask.mockReset();
+  toastResult.mockReset();
+});
+
+
+describe('useTaskPublish — push notification', () => {
+
+  test('a successful push fires a confirmation toast (mirrors task-done)', async () => {
+    fetchTaskPublishState.mockResolvedValue({});
+    pushTask.mockResolvedValue({
+      ok: true, body: { pushed: { pushed_repositories: ['client'] } },
+    });
+    const { result } = renderHook(() => useTaskPublish('T1'));
+    await act(async () => { await result.current.push(); });
+    expect(toastResult).toHaveBeenCalledTimes(1);
+    const arg = toastResult.mock.calls[0][0];
+    expect(arg.kind).toBe('success');
+    expect(arg.title).toContain('Pushed');
+  });
+
+  test('a failed push toasts an error', async () => {
+    fetchTaskPublishState.mockResolvedValue({});
+    pushTask.mockResolvedValue({ ok: false, error: 'remote rejected' });
+    const { result } = renderHook(() => useTaskPublish('T1'));
+    await act(async () => { await result.current.push(); });
+    expect(toastResult.mock.calls[0][0].kind).toBe('error');
+  });
 });
 
 

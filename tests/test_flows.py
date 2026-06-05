@@ -331,6 +331,9 @@ class TaskFixFlowTests(unittest.TestCase):
             prepare_task_repositories=Mock(side_effect=prepare_repos),
             prepare_task_branches=Mock(side_effect=prepare_branches),
             _ensure_branch_is_pushable=Mock(side_effect=ensure_pushable),
+            # Preflight now partitions push access via the public, non-raising
+            # is_branch_pushable; record the same step + report writable.
+            is_branch_pushable=Mock(side_effect=lambda repo, branch: ensure_pushable() or True),
             _ensure_branch_has_task_changes=Mock(side_effect=ensure_publishable),
             destination_branch=Mock(return_value='main'),
             restore_task_repositories=Mock(),

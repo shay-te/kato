@@ -186,6 +186,22 @@ export function formatFinishResult(result, taskId = '') {
   };
 }
 
+// Toast for the operator-triggered Push button (POST /push). Mirrors the
+// finish (task-done) toast but push-only — no PR / move-to-review step — so a
+// manual push gets the same visible confirmation as finishing a task.
+export function formatPushResult(result, taskId = '') {
+  if (!result || !result.ok) {
+    return formatRequestFailure(result, 'Push request failed');
+  }
+  const pushed = (result.body || {}).pushed || {};
+  const line = formatPushSummary(pushed) || `• push: ${pushed.error || 'no action'}`;
+  const trimmedTask = String(taskId || '').trim();
+  return {
+    title: trimmedTask ? `Pushed (${trimmedTask})` : 'Pushed',
+    message: line,
+  };
+}
+
 function formatPullRequestStepLine(pr) {
   const created = pr.created_pull_requests || [];
   const skipped = pr.skipped_existing || [];

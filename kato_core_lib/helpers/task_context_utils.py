@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from agent_core_lib.agent_core_lib.helpers.session_id_utils import fix_session_id
 from kato_core_lib.data_layers.data.task import Task
@@ -14,6 +14,13 @@ class PreparedTaskContext(object):
     repositories: list[object]
     repository_branches: dict[str, str]
     agents_instructions: str = ''
+    # Repos kato cloned but must NOT push to — no push permission (a 403 on the
+    # preflight push check) or explicitly marked reference. The agent may still
+    # read/edit them locally for context, but the publish step skips branch
+    # push + PR for them. Populated by the preflight push-access check so one
+    # un-pushable reference repo (e.g. an external library) doesn't reject the
+    # whole task — kato just works the writable repos and notes the rest.
+    read_only_repository_ids: set[str] = field(default_factory=set)
 
 
 def task_has_actionable_definition(task: Task) -> bool:
