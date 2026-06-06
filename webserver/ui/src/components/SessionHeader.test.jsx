@@ -484,6 +484,28 @@ describe('SessionHeader — Push / Pull / PR buttons', () => {
 });
 
 
+describe('SessionHeader — Code review button', () => {
+
+  test('routes the review prompt through onSendPrompt (the composer path)', async () => {
+    // Regression: the button used to call postChatMessage directly, which
+    // on a sleeping session delivered nothing visible. It must go through
+    // onSendPrompt (SessionDetail.onSendMessage) so it shows in chat +
+    // wakes the session.
+    const onSendPrompt = vi.fn().mockResolvedValue(true);
+    render(
+      <SessionHeader
+        session={_session()}
+        streamLifecycle={SESSION_LIFECYCLE.IDLE}
+        onSendPrompt={onSendPrompt}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /code review/i }));
+    await waitFor(() => expect(onSendPrompt).toHaveBeenCalledTimes(1));
+    expect(onSendPrompt.mock.calls[0][0]).toMatch(/CODE REVIEW/);
+  });
+});
+
+
 describe('SessionHeader — Open pull request button', () => {
 
   const openBtn = () =>

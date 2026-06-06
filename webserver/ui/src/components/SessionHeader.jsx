@@ -35,6 +35,7 @@ export default function SessionHeader({
   streamLifecycle,
   turnInFlight = false,
   searchSlot = null,
+  onSendPrompt = null,
 }) {
   const [resuming, setResuming] = useState(false);
   const [adoptModalOpen, setAdoptModalOpen] = useState(false);
@@ -192,23 +193,29 @@ export default function SessionHeader({
     },
   );
 
-  // "Code review" — sends the detailed PR-review prompt into the chat so
-  // the agent self-reviews this task's diff before the PR opens.
+  // "Code review" — routes the detailed PR-review prompt through the SAME
+  // composer send path (onSendPrompt → SessionDetail.onSendMessage) as
+  // typing it: it shows in the chat, wakes a sleeping session (reconnects
+  // the stream on respawn), and queues if Claude is mid-turn. A raw
+  // postChatMessage skipped all of that, so on a sleeping session nothing
+  // appeared.
   const [reviewing, onCodeReview] = useBusyAction(
-    () => postChatMessage(session.task_id, PREDEFINED_PROMPTS.codeReview),
+    () => (typeof onSendPrompt === 'function'
+      ? onSendPrompt(PREDEFINED_PROMPTS.codeReview)
+      : Promise.resolve(false)),
     {
-      onDone: (result) => {
-        toast.show(result && result.ok
+      onDone: (delivered) => {
+        toast.show(delivered
           ? {
             kind: 'success',
             title: 'Code review requested',
-            message: 'Asked Claude to review this task’s changes before the PR.',
+            message: 'Sent the review prompt to Claude (queued if it’s mid-turn).',
             durationMs: 5000,
           }
           : {
             kind: 'error',
             title: 'Couldn’t request review',
-            message: 'The chat session didn’t accept the message — try again.',
+            message: 'The chat didn’t accept the prompt — try again.',
             durationMs: 6000,
           });
       },

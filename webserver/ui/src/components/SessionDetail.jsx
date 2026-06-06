@@ -477,6 +477,7 @@ export default function SessionDetail({
       onSessionAdopted={onSessionAdopted}
       streamLifecycle={stream.lifecycle}
       turnInFlight={stream.turnInFlight}
+      onSendPrompt={onSendMessage}
       searchSlot={
         <ChatSearch
           query={searchQuery}

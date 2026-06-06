@@ -2,6 +2,8 @@ CODE REVIEW — do NOT change behavior, REVIEW the work on this task's branch be
 
 You are reviewing your OWN changes for this task across every repo in the workspace, as if you were a strict senior reviewer who will REJECT the PR on any real issue. Review the full diff of each repo's task branch against its default branch.
 
+Approach this with FRESH EYES: drop every assumption you formed while writing this code — assume nothing is correct until you've confirmed it. Read the diff DEEPLY, LINE BY LINE — every changed line, both sides of each hunk, and the surrounding context it touches. Do NOT skim, do NOT trust your earlier intent; verify what the code actually does now.
+
 Produce a structured report (markdown). For each finding give file:line, severity (BLOCKER / MAJOR / MINOR / NIT), and a one-line fix. Then FIX every BLOCKER and MAJOR in the code (leave MINOR/NIT as a checklist for me).
 
 1. CORRECTNESS
