@@ -836,11 +836,16 @@ function RepoTree({
     <p className="files-tab-message">No changed files match this search.</p>
   ) : null;
   let body;
+  // A search query searches ALL files (Cmd+P), not just the changed set —
+  // otherwise typing a filename that lives in an unchanged file shows "no
+  // match" and the box reads as broken. Empty query → respect the toggle
+  // (changed view by default).
+  const showAllForSearch = showAllFiles || isFiltering;
   if (collapsed) {
     body = null;
-  } else if (!showAllFiles && changedTreeContent) {
+  } else if (!showAllForSearch && changedTreeContent) {
     body = changedTreeContent;
-  } else if (!showAllFiles && emptyChangedSearch) {
+  } else if (!showAllForSearch && emptyChangedSearch) {
     body = emptyChangedSearch;
   } else if (treeData.length === 0) {
     body = <p className="files-tab-message">No tracked files in this repo.</p>;
