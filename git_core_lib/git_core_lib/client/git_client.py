@@ -144,6 +144,49 @@ class GitClientMixin:
         result = self._run_git(local_path, args, failure_message, repository)
         return result.stdout.strip()
 
+    def git_grep(
+        self,
+        local_path: str,
+        query: str,
+        *,
+        limit: int = 200,
+        repository=None,
+    ) -> list[dict]:
+        """Content search via ``git grep`` over tracked files in a repo.
+
+        Returns ``[{path, line, text}]`` (repo-relative paths), fixed-string
+        + case-insensitive, binary files skipped (``-I``), capped at
+        ``limit`` lines. ``git grep`` exits 1 on "no matches" — that's NOT
+        an error here; only other non-zero codes raise.
+        """
+        normalized = str(query or '').strip()
+        if not normalized:
+            return []
+        self._validate_git_executable()
+        result = self._run_git_subprocess(
+            local_path,
+            # ``--untracked`` so the agent's brand-new (uncommitted) files
+            # are searchable too; .gitignore is still respected.
+            ['grep', '--no-color', '-n', '-I', '-i', '-F', '--untracked', '-e', normalized],
+            repository,
+        )
+        if result.returncode not in (0, 1):
+            raise RuntimeError(f'git grep failed: {self._failure_detail(result)}')
+        matches: list[dict] = []
+        for raw_line in (result.stdout or '').splitlines():
+            # ``path:line:text`` — split only twice so colons in ``text`` survive.
+            parts = raw_line.split(':', 2)
+            if len(parts) < 3:
+                continue
+            try:
+                line_no = int(parts[1])
+            except ValueError:
+                continue
+            matches.append({'path': parts[0], 'line': line_no, 'text': parts[2]})
+            if len(matches) >= limit:
+                break
+        return matches
+
     # ----- reference / status queries -----
 
     def _git_reference_exists(self, local_path: str, reference: str) -> bool:

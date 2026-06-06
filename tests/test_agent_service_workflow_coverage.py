@@ -47,6 +47,52 @@ class ConfiguredDestinationBranchTests(unittest.TestCase):
         self.assertEqual(service.configured_destination_branch('r1'), 'main')
 
 
+class SearchTaskWorkspaceTests(unittest.TestCase):
+    def _service(self, repo_ids, grep_by_path):
+        wm = MagicMock()
+        wm.get.return_value = SimpleNamespace(repository_ids=repo_ids)
+        wm.repository_path.side_effect = lambda task, repo: f'/wk/{task}/{repo}'
+        repo = MagicMock()
+        repo.git_grep.side_effect = (
+            lambda path, q, limit=200: grep_by_path.get(path, [])
+        )
+        return AgentService(**_kwargs(repository_service=repo, workspace_manager=wm))
+
+    def test_aggregates_matches_with_repo_id_and_abs_path(self) -> None:
+        svc = self._service(['backend', 'client'], {
+            '/wk/T1/backend': [{'path': 'a.py', 'line': 1, 'text': 'project_list'}],
+            '/wk/T1/client': [{'path': 'b.js', 'line': 2, 'text': 'projectList'}],
+        })
+        out = svc.search_task_workspace('T1', 'project')
+        self.assertEqual(len(out['matches']), 2)
+        first = out['matches'][0]
+        self.assertEqual(first['repo_id'], 'backend')
+        self.assertEqual(first['abs_path'], '/wk/T1/backend/a.py')
+        self.assertEqual(first['line'], 1)
+
+    def test_blank_query_or_task_returns_empty(self) -> None:
+        svc = self._service(['backend'], {})
+        self.assertEqual(svc.search_task_workspace('T1', '   ')['matches'], [])
+        self.assertEqual(svc.search_task_workspace('', 'q')['matches'], [])
+
+    def test_per_repo_grep_failure_is_skipped(self) -> None:
+        wm = MagicMock()
+        wm.get.return_value = SimpleNamespace(repository_ids=['a', 'b'])
+        wm.repository_path.side_effect = lambda task, repo: f'/wk/{repo}'
+        repo = MagicMock()
+
+        def grep(path, q, limit=200):
+            if path == '/wk/a':
+                raise RuntimeError('boom')
+            return [{'path': 'ok.py', 'line': 1, 'text': 'z'}]
+
+        repo.git_grep.side_effect = grep
+        svc = AgentService(**_kwargs(repository_service=repo, workspace_manager=wm))
+        svc.logger = MagicMock()
+        out = svc.search_task_workspace('T1', 'q')
+        self.assertEqual([m['repo_id'] for m in out['matches']], ['b'])
+
+
 class ListAllAssignedTasksTests(unittest.TestCase):
     def test_returns_empty_on_task_service_exception(self) -> None:
         task_service = MagicMock()

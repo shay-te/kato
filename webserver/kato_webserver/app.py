@@ -2151,6 +2151,19 @@ def _register_http_routes(app: Flask) -> None:
         state['task_id'] = task_id
         return jsonify(state)
 
+    @app.get('/api/sessions/<task_id>/search')
+    def search_task_workspace_content(task_id: str):
+        """Content (grep) search across the task's workspace repos."""
+        query = str(request.args.get('q', '') or '').strip()
+        agent_service = app.config.get('AGENT_SERVICE')
+        search = getattr(agent_service, 'search_task_workspace', None)
+        if not query or not callable(search):
+            return jsonify({'matches': [], 'truncated': False, 'query': query})
+        try:
+            return jsonify(search(task_id, query))
+        except Exception as exc:
+            return jsonify({'error': str(exc), 'matches': [], 'query': query}), 500
+
     @app.delete('/api/sessions/<task_id>/workspace')
     def forget_task_workspace(task_id: str):
         """Manual escape hatch: wipe everything for ``task_id``.

@@ -148,6 +148,18 @@ export function fetchTaskPublishState(taskId) {
   );
 }
 
+// Content (grep) search across the task's workspace repos. Returns
+// { matches: [{repo_id, path, line, text}], truncated, query }.
+export function searchTaskWorkspaceContent(taskId, query) {
+  const q = String(query || '').trim();
+  if (!taskId || !q) {
+    return Promise.resolve({ matches: [], truncated: false, query: q });
+  }
+  return fetchJson(
+    `/api/sessions/${encodeURIComponent(taskId)}/search?q=${encodeURIComponent(q)}`,
+  );
+}
+
 export function pushTask(taskId) {
   if (!taskId) { return { ok: false, error: 'no task id' }; }
   return requestEnvelope(

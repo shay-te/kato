@@ -5,9 +5,35 @@ import {
   activateTreeNode,
   attachIds,
   folderContainsChange,
+  groupContentMatchesByFile,
   matchTreeNode,
   normalizeTrees,
 } from './FilesTabHelpers.js';
+
+
+test('groupContentMatchesByFile groups lines per file, first-seen order', () => {
+  const matches = [
+    { repo_id: 'be', path: 'a.py', abs_path: '/wk/be/a.py', line: 3, text: 'x' },
+    { repo_id: 'be', path: 'a.py', abs_path: '/wk/be/a.py', line: 9, text: 'y' },
+    { repo_id: 'fe', path: 'b.js', abs_path: '/wk/fe/b.js', line: 1, text: 'z' },
+  ];
+  const groups = groupContentMatchesByFile(matches);
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].repoId, 'be');
+  assert.equal(groups[0].path, 'a.py');
+  assert.equal(groups[0].absPath, '/wk/be/a.py');
+  assert.deepEqual(groups[0].lines, [{ line: 3, text: 'x' }, { line: 9, text: 'y' }]);
+  assert.equal(groups[1].repoId, 'fe');
+  assert.equal(groups[1].lines.length, 1);
+});
+
+test('groupContentMatchesByFile tolerates empty / malformed input', () => {
+  assert.deepEqual(groupContentMatchesByFile([]), []);
+  assert.deepEqual(groupContentMatchesByFile(null), []);
+  const groups = groupContentMatchesByFile([null, { repo_id: 'r', path: 'p' }]);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].lines[0].line, 0);
+});
 
 
 test('file activation is a no-op — left-click only opens, never pastes to chat', function () {

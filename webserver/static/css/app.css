@@ -5196,6 +5196,70 @@ body.kato-resizing #left-pane-resizer::before {
   color: #fecaca;
 }
 
+.files-content-search {
+  border-bottom: 1px solid #2a2a2a;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+}
+
+.files-content-search-head {
+  padding: 8px 12px 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #a3a3a3;
+}
+
+.files-content-search-file {
+  margin-bottom: 6px;
+}
+
+.files-content-search-path {
+  padding: 2px 12px;
+  font-size: 12px;
+  color: #f5f5f7;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.files-content-search-repo {
+  color: #93c5fd;
+}
+
+.files-content-search-line {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 2px 12px 2px 16px;
+  cursor: pointer;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  color: #a3a3a3;
+}
+
+.files-content-search-line:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #f5f5f7;
+}
+
+.files-content-search-lineno {
+  flex-shrink: 0;
+  min-width: 34px;
+  text-align: right;
+  color: #525252;
+}
+
+.files-content-search-snippet {
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .tree-row {
   --level: 0;
   display: flex;

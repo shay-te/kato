@@ -204,5 +204,59 @@ class InferDefaultBranchTests(unittest.TestCase):
                 GitClientMixin._infer_default_branch('/repo')
 
 
+class GitGrepTests(unittest.TestCase):
+    def _client(self):
+        client = _Client()
+        client._validate_git_executable = lambda: None
+        return client
+
+    def test_parses_path_line_text_triples(self) -> None:
+        client = self._client()
+        stdout = (
+            'src/app.py:12:def project_list(self):\n'
+            'src/util.py:3:    # project_list helper\n'
+        )
+        with patch.object(client, '_run_git_subprocess',
+                          return_value=_completed(returncode=0, stdout=stdout)):
+            out = client.git_grep('/repo', 'project_list')
+        self.assertEqual(out, [
+            {'path': 'src/app.py', 'line': 12, 'text': 'def project_list(self):'},
+            {'path': 'src/util.py', 'line': 3, 'text': '    # project_list helper'},
+        ])
+
+    def test_exit_code_1_means_no_matches_not_an_error(self) -> None:
+        client = self._client()
+        with patch.object(client, '_run_git_subprocess',
+                          return_value=_completed(returncode=1, stdout='')):
+            self.assertEqual(client.git_grep('/repo', 'nope'), [])
+
+    def test_other_nonzero_exit_raises(self) -> None:
+        client = self._client()
+        with patch.object(client, '_run_git_subprocess',
+                          return_value=_completed(returncode=128, stderr='fatal')):
+            with self.assertRaisesRegex(RuntimeError, 'git grep failed'):
+                client.git_grep('/repo', 'x')
+
+    def test_blank_query_is_a_no_op(self) -> None:
+        client = self._client()
+        self.assertEqual(client.git_grep('/repo', '   '), [])
+
+    def test_colons_in_match_text_are_preserved(self) -> None:
+        client = self._client()
+        stdout = 'a.py:5:url = "http://x:8080"\n'
+        with patch.object(client, '_run_git_subprocess',
+                          return_value=_completed(returncode=0, stdout=stdout)):
+            out = client.git_grep('/repo', 'url')
+        self.assertEqual(out[0]['text'], 'url = "http://x:8080"')
+
+    def test_limit_caps_the_results(self) -> None:
+        client = self._client()
+        stdout = ''.join(f'f{i}.py:{i}:hit\n' for i in range(10))
+        with patch.object(client, '_run_git_subprocess',
+                          return_value=_completed(returncode=0, stdout=stdout)):
+            out = client.git_grep('/repo', 'hit', limit=3)
+        self.assertEqual(len(out), 3)
+
+
 if __name__ == '__main__':
     unittest.main()

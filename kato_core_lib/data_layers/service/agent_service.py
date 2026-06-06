@@ -3,6 +3,7 @@ from agent_core_lib.agent_core_lib.helpers.text_utils import text_from_mapping
 
 import copy
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass
@@ -3853,6 +3854,66 @@ class AgentService(MissionStepLoggerMixin, Service):
             'has_changes_to_push': has_changes_to_push,
             'has_pull_request': has_pull_request,
             'pull_request_urls': pull_request_urls,
+        }
+
+    def search_task_workspace(
+        self, task_id: str, query: str, *, limit: int = 200,
+    ) -> dict[str, object]:
+        """Content (grep) search across every repo in the task's workspace.
+
+        Runs ``git grep`` per repo clone (fast, respects .gitignore, covers
+        the agent's untracked new files) and returns flat
+        ``{repo_id, path, line, text}`` matches — what the Files-tab search
+        shows so the operator can find a symbol like ``project_list`` by
+        its CONTENT, not just by filename. Best-effort + capped.
+        """
+        normalized = str(task_id or '').strip()
+        normalized_query = str(query or '').strip()
+        if not normalized or not normalized_query or self._workspace_manager is None:
+            return {'matches': [], 'truncated': False, 'query': normalized_query}
+        try:
+            workspace = self._workspace_manager.get(normalized)
+        except Exception:
+            workspace = None
+        if workspace is None:
+            return {'matches': [], 'truncated': False, 'query': normalized_query}
+        repo_ids = list(getattr(workspace, 'repository_ids', None) or [])
+        matches: list[dict] = []
+        truncated = False
+        for repo_id in repo_ids:
+            if len(matches) >= limit:
+                truncated = True
+                break
+            try:
+                repo_path = str(
+                    self._workspace_manager.repository_path(normalized, repo_id),
+                )
+            except Exception:
+                continue
+            if not repo_path:
+                continue
+            try:
+                repo_matches = self._repository_service.git_grep(
+                    repo_path, normalized_query, limit=limit - len(matches),
+                )
+            except Exception:
+                self.logger.exception(
+                    'content search failed for task %s repo %s',
+                    normalized, repo_id,
+                )
+                continue
+            for entry in repo_matches:
+                matches.append({
+                    'repo_id': repo_id,
+                    # Absolute path so the editor (which loads by abs path)
+                    # can open the hit directly.
+                    'abs_path': os.path.join(repo_path, entry.get('path', '')),
+                    **entry,
+                })
+        return {
+            'matches': matches,
+            'truncated': truncated or len(matches) >= limit,
+            'query': normalized_query,
         }
 
     def _resolve_publish_context(self, task_id: str):

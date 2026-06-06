@@ -5254,6 +5254,72 @@ body.kato-resizing #left-pane-resizer::before {
   color: $C-RED-89;
 }
 
+// Content (grep) search results panel — sits above the file trees when a
+// query is active.
+.files-content-search {
+  border-bottom: 1px solid $C-NEUTRAL-16;
+  padding-bottom: $SPACE-8;
+  margin-bottom: $SPACE-8;
+}
+
+.files-content-search-head {
+  padding: $SPACE-8 $SPACE-12 $SPACE-4;
+  font-size: $TEXT-11;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: $C-NEUTRAL-64;
+}
+
+.files-content-search-file {
+  margin-bottom: $SPACE-6;
+}
+
+.files-content-search-path {
+  padding: $SPACE-2 $SPACE-12;
+  font-size: $TEXT-12;
+  color: $C-NEUTRAL-96;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.files-content-search-repo {
+  color: $C-CYAN-78;
+}
+
+.files-content-search-line {
+  display: flex;
+  gap: $SPACE-8;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: $SPACE-2 $SPACE-12 $SPACE-2 $SPACE-16;
+  cursor: pointer;
+  font-family: ui-monospace, monospace;
+  font-size: $TEXT-12;
+  color: $C-NEUTRAL-64;
+}
+
+.files-content-search-line:hover {
+  background: $C-NEUTRAL-100-A06;
+  color: $C-NEUTRAL-96;
+}
+
+.files-content-search-lineno {
+  flex-shrink: 0;
+  min-width: 34px;
+  text-align: right;
+  color: $C-NEUTRAL-32;
+}
+
+.files-content-search-snippet {
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .tree-row {
   --level: 0;
   display: flex;

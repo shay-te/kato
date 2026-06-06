@@ -153,3 +153,32 @@ function relativePathForRepo(path, cwd) {
   }
   return normalizedPath.replace(/^\/+/, '');
 }
+
+
+// Group flat content-search matches ({repo_id, abs_path, path, line, text})
+// by file, preserving first-seen order, so the results render as
+// file → its matching lines. Pure — unit-tested without React.
+export function groupContentMatchesByFile(matches) {
+  const groups = [];
+  const byKey = new Map();
+  for (const match of matches || []) {
+    if (!match) { continue; }
+    const repoId = String(match.repo_id || '');
+    const path = String(match.path || '');
+    const key = `${repoId}::${path}`;
+    let group = byKey.get(key);
+    if (!group) {
+      group = {
+        key,
+        repoId,
+        path,
+        absPath: String(match.abs_path || ''),
+        lines: [],
+      };
+      byKey.set(key, group);
+      groups.push(group);
+    }
+    group.lines.push({ line: Number(match.line) || 0, text: String(match.text || '') });
+  }
+  return groups;
+}

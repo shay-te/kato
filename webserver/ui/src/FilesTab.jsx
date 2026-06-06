@@ -12,6 +12,7 @@ import {
 } from './api.js';
 import AddRepositoryModal from './components/AddRepositoryModal.jsx';
 import CommitDiffModal from './components/CommitDiffModal.jsx';
+import ContentSearchResults from './components/ContentSearchResults.jsx';
 import DiffKindIcon from './components/DiffKindIcon.jsx';
 import Icon from './components/Icon.jsx';
 import StickyHeader from './components/StickyHeader.jsx';
@@ -558,6 +559,17 @@ export default function FilesTab({
       {toolbar}
     </header>
   );
+  // Content (grep) results — only when there's a query. Shown above the
+  // (filename-filtered) trees so a symbol like ``project_list`` is findable
+  // by its CONTENT, not just by filename.
+  const contentResults = deferredQuery.trim().length >= 2 ? (
+    <ContentSearchResults
+      taskId={taskId}
+      query={deferredQuery}
+      onOpenFile={onOpenFile}
+    />
+  ) : null;
+
   return (
     <div className="files-tab">
       {header}
@@ -566,6 +578,7 @@ export default function FilesTab({
         ref={containerRef}
         onScroll={(e) => { scrollTopRef.current = e.currentTarget.scrollTop; }}
       >
+        {contentResults}
         {body}
       </div>
       {pathMenu && (
