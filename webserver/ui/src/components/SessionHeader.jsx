@@ -8,6 +8,7 @@ import {
   updateTaskSource,
 } from '../api.js';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
+import { PREDEFINED_PROMPTS } from '../predefined_prompts/index.js';
 import { useBusyAction } from '../hooks/useBusyAction.js';
 import { usePushApproval } from '../hooks/usePushApproval.js';
 import { useTaskPublish } from '../hooks/useTaskPublish.js';
@@ -187,6 +188,29 @@ export default function SessionHeader({
             ? 'success'
             : 'warning';
         toastResult({ ...formatFinishResult(result, session.task_id), kind });
+      },
+    },
+  );
+
+  // "Code review" — sends the detailed PR-review prompt into the chat so
+  // the agent self-reviews this task's diff before the PR opens.
+  const [reviewing, onCodeReview] = useBusyAction(
+    () => postChatMessage(session.task_id, PREDEFINED_PROMPTS.codeReview),
+    {
+      onDone: (result) => {
+        toast.show(result && result.ok
+          ? {
+            kind: 'success',
+            title: 'Code review requested',
+            message: 'Asked Claude to review this task’s changes before the PR.',
+            durationMs: 5000,
+          }
+          : {
+            kind: 'error',
+            title: 'Couldn’t request review',
+            message: 'The chat session didn’t accept the message — try again.',
+            durationMs: 6000,
+          });
       },
     },
   );
@@ -394,6 +418,17 @@ export default function SessionHeader({
           {sessionIdBadgeRight}
           {searchSlot}
           {approvePushButton}
+          <button
+            id="session-code-review"
+            type="button"
+            className="session-action tooltip-below"
+            data-tooltip="Code review — ask Claude to strictly review this task's changes (correctness, security, tests, redundancy, comment cleanup) and fix blockers before the PR."
+            onClick={onCodeReview}
+            disabled={reviewing}
+            aria-label={reviewing ? 'Requesting review…' : 'Code review'}
+          >
+            <BusyIcon busy={reviewing} idle="diff" />
+          </button>
           <button
             id="session-push"
             type="button"
