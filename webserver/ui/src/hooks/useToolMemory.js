@@ -41,17 +41,19 @@ export function useToolMemory() {
     return () => window.removeEventListener('storage', onStorage);
   }, []);
 
+  // ``command`` (optional) scopes a decision to an exact command for
+  // command-keyed tools (Bash); omit it for tool-level decisions.
   const remember = useCallback(
-    (toolName, allow) => toolDecisionsStore.remember(toolName, allow),
+    (toolName, allow, command = '') => toolDecisionsStore.remember(toolName, allow, command),
     [],
   );
   const recall = useCallback(
-    (toolName) => toolDecisionsStore.recall(toolName),
+    (toolName, command = '') => toolDecisionsStore.recall(toolName, command),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [version],
   );
   const forget = useCallback(
-    (toolName) => toolDecisionsStore.forget(toolName),
+    (toolName, command = '') => toolDecisionsStore.forget(toolName, command),
     [],
   );
   const entries = useCallback(

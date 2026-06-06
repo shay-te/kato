@@ -7035,6 +7035,24 @@ body.kato-resizing #left-pane-resizer::before {
   background: $C-RED-31-A18;
 }
 
+// Claude-permissions: filter box + the per-command code line.
+.settings-perm-filter {
+  width: 100%;
+  margin-bottom: $SPACE-10;
+}
+
+.settings-perm-command {
+  display: block;
+  margin-top: $SPACE-2;
+  font-family: ui-monospace, monospace;
+  font-size: $TEXT-11;
+  color: $C-NEUTRAL-64;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 360px;
+}
+
 .settings-drawer-action-secondary {
   background: transparent;
   border-color: $C-NEUTRAL-16;

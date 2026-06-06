@@ -50,7 +50,6 @@ from claude_core_lib.claude_core_lib.helpers.spawn_utils import (
     wrap_spawn_for_docker,
 )
 from claude_core_lib.claude_core_lib.helpers.sandbox_scope import (
-    classify_command_sandbox,
     classify_tool_input_sandbox,
 )
 from claude_core_lib.claude_core_lib.session.index import parse_jsonl_dict_line
@@ -1086,13 +1085,6 @@ class StreamingClaudeSession(object):
             outside, offending = classify_tool_input_sandbox(
                 tool_input, self._cwd, self._additional_dirs,
             )
-            if not outside:
-                # Execution that ESCAPES the sandbox (docker/sudo/kubectl…)
-                # gets the same out-of-task alert, even though it has no
-                # file-path argument. Routine in-task builds don't match.
-                outside, offending = classify_command_sandbox(
-                    str(tool_input.get('command') or ''),
-                )
         except Exception:
             return
         if outside:

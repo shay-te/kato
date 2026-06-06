@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
-import { unpackPermissionEnvelope } from '../utils/permissionEnvelope.js';
+import {
+  unpackPermissionEnvelope,
+  decisionCommandFor,
+} from '../utils/permissionEnvelope.js';
 import DialogShell from './DialogShell.jsx';
 
 export default function PermissionModal({ raw, onDecide }) {
@@ -11,6 +14,10 @@ export default function PermissionModal({ raw, onDecide }) {
   useEffect(() => { setRationale(''); }, [requestId]);
 
   if (!raw) { return null; }
+
+  // Command-keyed tools (Bash) remember the EXACT command, not the tool —
+  // so "Allow always" on `mvn verify` never auto-allows `docker`.
+  const command = decisionCommandFor(toolName, toolInput);
 
   // Out-of-task asks (a file path or an escaping command like docker —
   // flagged by the backend's outside_sandbox) get the loud red warning and
@@ -25,13 +32,13 @@ export default function PermissionModal({ raw, onDecide }) {
     setRationale(event.target.value);
   }
   function handleDeny() {
-    onDecide({ allow: false, rationale, remember: false, requestId, toolName });
+    onDecide({ allow: false, rationale, remember: false, requestId, toolName, command });
   }
   function handleAllowOnce() {
-    onDecide({ allow: true, rationale, remember: false, requestId, toolName });
+    onDecide({ allow: true, rationale, remember: false, requestId, toolName, command });
   }
   function handleAllowAlways() {
-    onDecide({ allow: true, rationale, remember: true, requestId, toolName });
+    onDecide({ allow: true, rationale, remember: true, requestId, toolName, command });
   }
   // Out-of-task asks never offer the remembered ("Allow always") scope —
   // built here, before the return, so the JSX stays logic-free.

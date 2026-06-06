@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import PermissionModal from './PermissionModal.jsx';
-import { unpackPermissionEnvelope } from '../utils/permissionEnvelope.js';
+import {
+  unpackPermissionEnvelope,
+  decisionCommandFor,
+} from '../utils/permissionEnvelope.js';
 
 export default function PermissionDecisionContainer({
   pending,
@@ -15,14 +18,18 @@ export default function PermissionDecisionContainer({
 
   useEffect(() => {
     if (!pending) { return; }
-    const { toolName, requestId, outsideSandbox } = unpackPermissionEnvelope(pending);
+    const {
+      toolName, toolInput, requestId, outsideSandbox,
+    } = unpackPermissionEnvelope(pending);
     if (!requestId || requestId === autoFailedRequestId) { return; }
-    // Out-of-task asks never auto-resolve from a remembered decision (a
-    // tool-name "allow" would otherwise approve an out-of-folder ask, or an
-    // escaping command like docker, silently) — force the modal so the
-    // operator decides each one explicitly.
+    // Out-of-task asks never auto-resolve from a remembered decision — force
+    // the modal so the operator decides each one explicitly.
     if (outsideSandbox) { return; }
-    const remembered = recallToolDecision(toolName);
+    // Command-keyed tools (Bash) recall by the EXACT command, so a
+    // remembered `mvn verify` never auto-resolves a `docker` ask.
+    const remembered = recallToolDecision(
+      toolName, decisionCommandFor(toolName, toolInput),
+    );
     if (!remembered) { return; }
     const allow = remembered === 'allow';
     let cancelled = false;
@@ -59,10 +66,13 @@ export default function PermissionDecisionContainer({
 
   if (!pending) { return null; }
   const {
-    toolName: pendingTool, requestId: pendingRequestId, outsideSandbox: pendingOutside,
+    toolName: pendingTool, toolInput: pendingInput,
+    requestId: pendingRequestId, outsideSandbox: pendingOutside,
   } = unpackPermissionEnvelope(pending);
   const autoSubmitting = submittingRequestId && submittingRequestId === pendingRequestId;
-  const remembered = recallToolDecision(pendingTool);
+  const remembered = recallToolDecision(
+    pendingTool, decisionCommandFor(pendingTool, pendingInput),
+  );
   // Out-of-task asks are never hidden behind a remembered decision — they
   // always surface the modal (see the auto-resolve guard above).
   const hideRemembered = remembered && !pendingOutside
@@ -70,7 +80,7 @@ export default function PermissionDecisionContainer({
   if (autoSubmitting || hideRemembered) { return null; }
 
   async function handleDecide(decision) {
-    const { allow, rationale, remember, requestId, toolName } = decision;
+    const { allow, rationale, remember, requestId, toolName, command } = decision;
     setSubmittingRequestId(requestId);
     const delivered = await deliverDecision(onSubmit, {
       requestId,
@@ -80,7 +90,8 @@ export default function PermissionDecisionContainer({
     });
     setSubmittingRequestId('');
     if (!delivered) { return; }
-    if (remember) { rememberToolDecision(toolName, allow); }
+    // Command-keyed tools remember the exact command (passed by the modal).
+    if (remember) { rememberToolDecision(toolName, allow, command || ''); }
     onDismiss();
     setAutoFailedRequestId('');
     const verb = allow ? '✓ approved' : '✗ denied';

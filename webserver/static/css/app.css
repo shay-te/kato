@@ -6972,6 +6972,23 @@ body.kato-resizing #left-pane-resizer::before {
   background: rgba(127, 29, 29, 0.18);
 }
 
+.settings-perm-filter {
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.settings-perm-command {
+  display: block;
+  margin-top: 2px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: #a3a3a3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 360px;
+}
+
 .settings-drawer-action-secondary {
   background: transparent;
   border-color: #2a2a2a;

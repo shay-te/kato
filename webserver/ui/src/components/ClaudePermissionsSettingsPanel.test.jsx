@@ -78,4 +78,31 @@ describe('ClaudePermissionsSettingsPanel', () => {
     act(() => { toolDecisionsStore.setDecision('Bash', 'allow'); });
     expect(screen.getByText('Bash')).toBeInTheDocument();
   });
+
+  test('a command-keyed Bash entry shows its command + clears by command', () => {
+    toolDecisionsStore.remember('Bash', true, 'mvn -B verify');
+    toolDecisionsStore.remember('Bash', true, 'docker run x');
+    render(<ClaudePermissionsSettingsPanel />);
+    expect(screen.getByText('mvn -B verify')).toBeInTheDocument();
+    expect(screen.getByText('docker run x')).toBeInTheDocument();
+
+    // Clear ONLY the docker command — mvn stays.
+    const dockerRow = screen.getByText('docker run x').closest('tr');
+    fireEvent.click(within(dockerRow).getByRole('button', { name: /clear/i }));
+    expect(toolDecisionsStore.recall('Bash', 'docker run x')).toBeNull();
+    expect(toolDecisionsStore.recall('Bash', 'mvn -B verify')).toBe('allow');
+  });
+
+  test('the filter narrows the listed entries', () => {
+    toolDecisionsStore.remember('Bash', true, 'mvn -B verify');
+    toolDecisionsStore.remember('Bash', true, 'docker run x');
+    toolDecisionsStore.setDecision('Edit', 'allow');
+    render(<ClaudePermissionsSettingsPanel />);
+    fireEvent.change(screen.getByLabelText(/filter saved permissions/i), {
+      target: { value: 'docker' },
+    });
+    expect(screen.getByText('docker run x')).toBeInTheDocument();
+    expect(screen.queryByText('mvn -B verify')).toBeNull();
+    expect(screen.queryByText('Edit')).toBeNull();
+  });
 });

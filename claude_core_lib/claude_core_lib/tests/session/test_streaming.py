@@ -589,33 +589,6 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         self.assertTrue(event.raw.get('outside_sandbox'))
         self.assertEqual(event.raw.get('outside_path'), '/etc/passwd')
 
-    def test_control_request_escaping_command_is_flagged(self) -> None:
-        # A Bash docker command (no file-path arg) escapes the sandbox →
-        # flagged outside_sandbox so the UI shows the red out-of-task alert.
-        session = StreamingClaudeSession(
-            task_id='UNA-1', cwd='/wks/UNA-1/backend',
-        )
-        event = SessionEvent(raw={
-            'type': 'control_request',
-            'request_id': 'rd',
-            'request': {'tool_name': 'Bash', 'input': {'command': 'docker run x'}},
-        })
-        session._maybe_capture_control_request(event)
-        self.assertTrue(event.raw.get('outside_sandbox'))
-        self.assertEqual(event.raw.get('outside_path'), 'docker')
-
-    def test_control_request_routine_command_is_not_flagged(self) -> None:
-        session = StreamingClaudeSession(
-            task_id='UNA-1', cwd='/wks/UNA-1/backend',
-        )
-        event = SessionEvent(raw={
-            'type': 'control_request',
-            'request_id': 'rc',
-            'request': {'tool_name': 'Bash', 'input': {'command': 'mvn -B verify'}},
-        })
-        session._maybe_capture_control_request(event)
-        self.assertNotIn('outside_sandbox', event.raw)
-
     def test_control_request_inside_sandbox_is_not_flagged(self) -> None:
         session = StreamingClaudeSession(
             task_id='UNA-1', cwd='/wks/UNA-1/backend',

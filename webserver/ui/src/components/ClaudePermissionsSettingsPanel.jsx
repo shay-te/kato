@@ -1,38 +1,43 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { toolDecisionsStore } from '../stores/toolDecisionsStore.js';
 import { toast } from '../stores/toastStore.js';
+import { filterPermissionRows } from './ClaudePermissionsHelpers.js';
 import SettingsPanelBody from './settings/SettingsPanelBody.jsx';
 import SettingsPanelHead from './settings/SettingsPanelHead.jsx';
 
-// "Claude permissions" tab — lists the remembered "Allow always" /
-// "Deny always" decisions the operator gave Claude (the localStorage
-// ``kato.toolDecisions.v1`` set), and lets them re-scope or clear each.
+// "Claude permissions" tab — lists every remembered "Allow always" /
+// "Deny always" decision (the localStorage ``kato.toolDecisions.v1`` set).
+// Tool-level tools (Edit, Read…) show one row; command-keyed tools (Bash)
+// show ONE ROW PER EXACT COMMAND, so the operator curates which specific
+// commands auto-run (allowing `mvn verify` never allows `docker`). A
+// filter box narrows a long list.
 //
-// Mirrors the Repository-approvals tab in shape, but there is no
-// Save/diff cycle: every change applies + persists instantly through
-// the shared ``toolDecisionsStore``, so the permission PROMPT (which
-// reads the same store) sees a revoke the moment it happens — no stale
-// auto-allow window. The panel subscribes to the store so an approval
-// granted from a live prompt shows up here without a reload.
+// No Save/diff cycle: changes persist instantly through the shared
+// ``toolDecisionsStore``, so the permission prompt (same store) sees a
+// revoke immediately — no stale auto-allow window. Subscribes so an
+// approval granted from a live prompt appears here without a reload.
 
 export default function ClaudePermissionsSettingsPanel() {
   const [rows, setRows] = useState(() => toolDecisionsStore.entries());
+  const [filter, setFilter] = useState('');
 
   useEffect(
     () => toolDecisionsStore.subscribe(() => setRows(toolDecisionsStore.entries())),
     [],
   );
 
-  function setScope(tool, decision) {
-    toolDecisionsStore.setDecision(tool, decision);
+  const visible = useMemo(() => filterPermissionRows(rows, filter), [rows, filter]);
+
+  function setScope(key, decision) {
+    toolDecisionsStore.setDecisionByKey(key, decision);
   }
 
-  function clearOne(tool) {
-    toolDecisionsStore.forget(tool);
+  function clearOne(key, label) {
+    toolDecisionsStore.forgetByKey(key);
     toast.show({
       kind: 'info',
       title: 'Permission cleared',
-      message: `kato will ask again next time Claude uses ${tool}.`,
+      message: `kato will ask again next time: ${label}.`,
       durationMs: 4000,
     });
   }
@@ -42,10 +47,13 @@ export default function ClaudePermissionsSettingsPanel() {
     toast.show({
       kind: 'info',
       title: 'All permissions cleared',
-      message: 'kato will ask again for every tool.',
+      message: 'kato will ask again for every tool/command.',
       durationMs: 4000,
     });
   }
+
+  const empty = rows.length === 0;
+  const noMatches = !empty && visible.length === 0;
 
   return (
     <div className="settings-drawer-panel">
@@ -53,71 +61,90 @@ export default function ClaudePermissionsSettingsPanel() {
         <p>
           The <strong>Allow always</strong> / <strong>Deny always</strong>{' '}
           decisions you gave Claude, remembered across kato and browser
-          restarts. Change the scope or clear one to be asked again.
-          Requests that reach <strong>outside the task folder</strong> are
-          never remembered here — they always prompt.
+          restarts. Bash entries are <strong>per exact command</strong> —
+          allowing one command never allows another. Change the scope or
+          clear one to be asked again. Requests that reach{' '}
+          <strong>outside the task folder</strong> are never remembered here.
         </p>
       </SettingsPanelHead>
 
       <SettingsPanelBody>
         <>
-          {rows.length === 0 ? (
+          {empty ? (
             <p className="settings-drawer-message">
               No saved permissions yet. When you click{' '}
-              <strong>Allow always</strong> on a permission prompt, the tool
-              shows up here.
+              <strong>Allow always</strong> on a permission prompt, it shows
+              up here.
             </p>
           ) : (
-            <table className="settings-drawer-approvals-table">
-              <thead>
-                <tr>
-                  <th>Tool</th>
-                  <th>Scope</th>
-                  <th aria-label="Actions" />
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map(({ tool, decision }) => (
-                  <tr key={tool}>
-                    <td>
-                      <div className="settings-drawer-approval-id">{tool}</div>
-                    </td>
-                    <td>
-                      <select
-                        className="settings-drawer-input is-compact"
-                        value={decision}
-                        aria-label={`Scope for ${tool}`}
-                        onChange={(ev) => setScope(tool, ev.target.value)}
-                      >
-                        <option value="allow">always allow</option>
-                        <option value="deny">always deny</option>
-                      </select>
-                    </td>
-                    <td>
-                      <button
-                        type="button"
-                        className="settings-drawer-perm-clear"
-                        onClick={() => clearOne(tool)}
-                      >
-                        Clear
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+            <>
+              <input
+                type="search"
+                className="settings-drawer-input settings-perm-filter"
+                placeholder="Filter by tool or command…"
+                value={filter}
+                onChange={(ev) => setFilter(ev.target.value)}
+                spellCheck={false}
+                aria-label="Filter saved permissions"
+              />
+              {noMatches ? (
+                <p className="settings-drawer-message">No permissions match the filter.</p>
+              ) : (
+                <table className="settings-drawer-approvals-table">
+                  <thead>
+                    <tr>
+                      <th>Tool / command</th>
+                      <th>Scope</th>
+                      <th aria-label="Actions" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visible.map(({ key, tool, command, decision }) => (
+                      <tr key={key}>
+                        <td>
+                          <div className="settings-drawer-approval-id">{tool}</div>
+                          {command && (
+                            <code className="settings-perm-command" title={command}>
+                              {command}
+                            </code>
+                          )}
+                        </td>
+                        <td>
+                          <select
+                            className="settings-drawer-input is-compact"
+                            value={decision}
+                            aria-label={`Scope for ${command || tool}`}
+                            onChange={(ev) => setScope(key, ev.target.value)}
+                          >
+                            <option value="allow">always allow</option>
+                            <option value="deny">always deny</option>
+                          </select>
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="settings-drawer-perm-clear"
+                            onClick={() => clearOne(key, command || tool)}
+                          >
+                            Clear
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
 
-          {rows.length > 0 && (
-            <div className="settings-drawer-actions">
-              <button
-                type="button"
-                className="settings-drawer-action-secondary"
-                onClick={clearAll}
-              >
-                Clear all ({rows.length})
-              </button>
-            </div>
+              <div className="settings-drawer-actions">
+                <button
+                  type="button"
+                  className="settings-drawer-action-secondary"
+                  onClick={clearAll}
+                >
+                  Clear all ({rows.length})
+                </button>
+              </div>
+            </>
           )}
         </>
       </SettingsPanelBody>
