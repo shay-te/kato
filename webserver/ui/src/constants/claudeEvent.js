@@ -27,4 +27,8 @@ export const CLAUDE_SYSTEM_SUBTYPE = Object.freeze({
   // admin-client`` / ``✓ all repositories cloned — starting agent``
   // bubbles in the chat tab while kato is preparing the workspace.
   PREFLIGHT: 'preflight',
+  // Kato-synthetic: the agent wrote outside the task folder without a
+  // permission request (e.g. a /tmp scratch file the CLI auto-accepted).
+  // Rendered as a loud warning bubble so it's never silent.
+  SANDBOX_WARNING: 'kato_sandbox_warning',
 });

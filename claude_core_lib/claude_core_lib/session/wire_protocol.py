@@ -30,6 +30,12 @@ CLAUDE_EVENT_CONTROL_RESPONSE = 'control_response'
 CLAUDE_EVENT_PERMISSION_RESPONSE = 'permission_response'
 
 CLAUDE_SYSTEM_SUBTYPE_INIT = 'init'
+# Kato-synthetic: injected when the agent WRITES to a path outside the
+# task folder without a permission request (the CLI auto-accepts scratch
+# paths like /tmp under acceptEdits, so kato's permission-time warning
+# never fires for them). Surfaces a loud chat bubble so an out-of-folder
+# write is never silent.
+CLAUDE_SYSTEM_SUBTYPE_SANDBOX_WARNING = 'kato_sandbox_warning'
 
 PERMISSION_REQUEST_EVENT_TYPES = frozenset({
     CLAUDE_EVENT_PERMISSION_REQUEST,

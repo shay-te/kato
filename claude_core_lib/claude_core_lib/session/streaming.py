@@ -36,6 +36,7 @@ from claude_core_lib.claude_core_lib.session.wire_protocol import (
     CLAUDE_EVENT_RESULT,
     CLAUDE_EVENT_SYSTEM,
     CLAUDE_SYSTEM_SUBTYPE_INIT,
+    CLAUDE_SYSTEM_SUBTYPE_SANDBOX_WARNING,
     PERMISSION_REQUEST_EVENT_TYPES,
 )
 from agent_core_lib.agent_core_lib.helpers.credential_scan import (
@@ -278,6 +279,10 @@ class StreamingClaudeSession(object):
         # stayed constant and the WS loop stopped forwarding new events.
         self._recent_events: list[SessionEvent] = []
         self._recent_events_lock = threading.Lock()
+        # Out-of-task-folder write paths already warned about this session,
+        # so a repeated edit to the same external file doesn't spam the
+        # chat. Touched only from the single stdout-reader thread.
+        self._sandbox_warned_paths: set[str] = set()
         # Notified every time an event is appended OR the session
         # terminates. SSE consumers wait on it instead of busy-polling
         # ``recent_events()`` every 100ms — that polling pattern was
@@ -911,6 +916,7 @@ class StreamingClaudeSession(object):
             # ``outside_sandbox`` flag must be on the raw before it ships).
             self._maybe_capture_control_request(event)
             self._publish_event(event)
+            self._maybe_warn_out_of_sandbox_write(event)
             self._maybe_capture_session_id(event)
             self._maybe_fire_done_sentinel(event)
             self._log_event_for_operator(event)
@@ -1044,6 +1050,72 @@ class StreamingClaudeSession(object):
         if outside:
             event.raw['outside_sandbox'] = True
             event.raw['outside_path'] = offending
+
+    # Tools that WRITE to the filesystem. A self-authorized write outside
+    # the task folder is the one we must never let pass silently.
+    _SANDBOX_WRITE_TOOLS = frozenset({
+        'Write', 'Edit', 'MultiEdit', 'NotebookEdit',
+    })
+
+    def _maybe_warn_out_of_sandbox_write(self, event: SessionEvent) -> None:
+        """Inject a loud chat warning when the agent WRITES outside the task.
+
+        kato's permission-time warning only fires on tool calls Claude
+        routes to it as a ``control_request``. Under ``acceptEdits`` the
+        CLI auto-accepts writes to scratch paths (e.g. ``/tmp``) WITHOUT
+        asking, so those never reached the permission path and slipped by
+        unnoticed. This scans the live ``assistant`` tool-use stream
+        directly and emits a synthetic ``system``/sandbox-warning event
+        for each NEW out-of-folder write path — so an out-of-task write is
+        always visible, even when kato couldn't gate it. Best-effort: any
+        parse error leaves the stream untouched.
+        """
+        if event.event_type != 'assistant':
+            return
+        try:
+            warnings = self._out_of_sandbox_write_paths(event)
+        except Exception:
+            return
+        for path in warnings:
+            if path in self._sandbox_warned_paths:
+                continue
+            self._sandbox_warned_paths.add(path)
+            self._publish_event(SessionEvent(raw={
+                'type': CLAUDE_EVENT_SYSTEM,
+                'subtype': CLAUDE_SYSTEM_SUBTYPE_SANDBOX_WARNING,
+                'outside_path': path,
+                'message': (
+                    f'Claude wrote OUTSIDE the task folder: {path} — no '
+                    'approval was requested (the CLI auto-accepts scratch '
+                    'paths like /tmp). Review this change.'
+                ),
+            }))
+            self.logger.warning(
+                'task %s: agent wrote outside the task sandbox without a '
+                'permission request: %s', self._task_id, path,
+            )
+
+    def _out_of_sandbox_write_paths(self, event: SessionEvent) -> list[str]:
+        """Out-of-folder file paths from the WRITE tool_use blocks of an
+        ``assistant`` event (empty when none / not an assistant turn)."""
+        raw = event.raw if isinstance(event.raw, dict) else {}
+        message = raw.get('message')
+        content = message.get('content') if isinstance(message, dict) else None
+        if not isinstance(content, list):
+            return []
+        paths: list[str] = []
+        for block in content:
+            if not isinstance(block, dict) or block.get('type') != 'tool_use':
+                continue
+            if str(block.get('name') or '') not in self._SANDBOX_WRITE_TOOLS:
+                continue
+            tool_input = block.get('input')
+            outside, offending = classify_tool_input_sandbox(
+                tool_input, self._cwd, self._additional_dirs,
+            )
+            if outside and offending not in paths:
+                paths.append(offending)
+        return paths
 
     def pending_control_request_tool(self) -> str:
         """Tool name on the oldest currently-waiting control request, or ''.

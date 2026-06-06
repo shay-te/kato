@@ -338,6 +338,18 @@ function serverBubblesFor(raw, index, isHistory = false, onOpenFile, liveAgentSe
           </Bubble>,
         ];
       }
+      if (raw.subtype === CLAUDE_SYSTEM_SUBTYPE.SANDBOX_WARNING) {
+        // Kato-synthetic: the agent wrote outside the task folder without
+        // a permission request. Rendered as a loud ERROR-kind bubble so
+        // an out-of-folder write is never silent.
+        const message = String(raw.message || '').trim();
+        if (!message) { return []; }
+        return [
+          <Bubble key={keyOf(raw, index, 'sandbox-warn')} kind={BUBBLE_KIND.ERROR}>
+            <strong>⚠ {message}</strong>
+          </Bubble>,
+        ];
+      }
       return [];
     case CLAUDE_EVENT.ASSISTANT:
       return assistantBubbles(raw, index, onOpenFile);

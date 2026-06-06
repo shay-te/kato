@@ -605,6 +605,79 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         session._maybe_capture_control_request(event)
         self.assertNotIn('outside_sandbox', event.raw)
 
+    def test_out_of_sandbox_write_emits_warning_event(self) -> None:
+        # A Write to /tmp (outside the task folder) that the CLI
+        # auto-accepted — no permission request — must still surface a
+        # synthetic system warning in the stream.
+        session = StreamingClaudeSession(
+            task_id='UNA-1', cwd='/wks/UNA-1/backend',
+            additional_dirs=['/wks/UNA-1/client'],
+        )
+        event = SessionEvent(raw={
+            'type': 'assistant',
+            'message': {'content': [
+                {'type': 'tool_use', 'name': 'Write',
+                 'input': {'file_path': '/tmp/UNA-2727-prs.md', 'content': 'x'}},
+            ]},
+        })
+        session._maybe_warn_out_of_sandbox_write(event)
+        warnings = [
+            e for e in session._recent_events
+            if e.event_type == 'system'
+            and e.subtype == 'kato_sandbox_warning'
+        ]
+        self.assertEqual(len(warnings), 1)
+        self.assertEqual(warnings[0].raw.get('outside_path'), '/tmp/UNA-2727-prs.md')
+
+    def test_in_sandbox_write_emits_no_warning(self) -> None:
+        session = StreamingClaudeSession(
+            task_id='UNA-1', cwd='/wks/UNA-1/backend',
+        )
+        event = SessionEvent(raw={
+            'type': 'assistant',
+            'message': {'content': [
+                {'type': 'tool_use', 'name': 'Edit',
+                 'input': {'file_path': '/wks/UNA-1/backend/src/a.py'}},
+            ]},
+        })
+        session._maybe_warn_out_of_sandbox_write(event)
+        self.assertEqual(session._recent_events, [])
+
+    def test_out_of_sandbox_write_warns_once_per_path(self) -> None:
+        session = StreamingClaudeSession(
+            task_id='UNA-1', cwd='/wks/UNA-1/backend',
+        )
+        raw = {
+            'type': 'assistant',
+            'message': {'content': [
+                {'type': 'tool_use', 'name': 'Write',
+                 'input': {'file_path': '/tmp/x.md'}},
+            ]},
+        }
+        session._maybe_warn_out_of_sandbox_write(SessionEvent(raw=dict(raw)))
+        session._maybe_warn_out_of_sandbox_write(SessionEvent(raw=dict(raw)))
+        warnings = [
+            e for e in session._recent_events
+            if e.event_type == 'system'
+        ]
+        self.assertEqual(len(warnings), 1)
+
+    def test_bash_to_external_path_does_not_warn(self) -> None:
+        # Non-write tools (no trustworthy path arg) don't trigger the
+        # write warning — only Write/Edit/MultiEdit/NotebookEdit do.
+        session = StreamingClaudeSession(
+            task_id='UNA-1', cwd='/wks/UNA-1/backend',
+        )
+        event = SessionEvent(raw={
+            'type': 'assistant',
+            'message': {'content': [
+                {'type': 'tool_use', 'name': 'Bash',
+                 'input': {'command': 'cat /tmp/x'}},
+            ]},
+        })
+        session._maybe_warn_out_of_sandbox_write(event)
+        self.assertEqual(session._recent_events, [])
+
     def test_stderr_indicates_stale_resume_false_when_no_resume_id(self) -> None:
         session = self._build_session(resume_session_id='')
         # No resume id configured → marker check short-circuits.
