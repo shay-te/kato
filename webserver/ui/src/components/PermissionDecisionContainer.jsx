@@ -25,8 +25,8 @@ export default function PermissionDecisionContainer({
     // Out-of-task asks never auto-resolve from a remembered decision — force
     // the modal so the operator decides each one explicitly.
     if (outsideSandbox) { return; }
-    // Command-keyed tools (Bash) recall by the EXACT command, so a
-    // remembered `mvn verify` never auto-resolves a `docker` ask.
+    // Command-keyed tools (Bash) recall by the command's PROGRAM, so a
+    // remembered `mvn` auto-resolves any future `mvn …` but never a `docker` ask.
     const remembered = recallToolDecision(
       toolName, decisionCommandFor(toolName, toolInput),
     );
@@ -90,7 +90,7 @@ export default function PermissionDecisionContainer({
     });
     setSubmittingRequestId('');
     if (!delivered) { return; }
-    // Command-keyed tools remember the exact command (passed by the modal).
+    // Command-keyed tools remember the command's program signature (from the modal).
     if (remember) { rememberToolDecision(toolName, allow, command || ''); }
     onDismiss();
     setAutoFailedRequestId('');

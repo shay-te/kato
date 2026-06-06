@@ -11,7 +11,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { unpackPermissionEnvelope } from './permissionEnvelope.js';
+import {
+  unpackPermissionEnvelope,
+  commandSignatureOf,
+  decisionCommandFor,
+} from './permissionEnvelope.js';
 
 
 // ---------------------------------------------------------------------------
@@ -125,6 +129,76 @@ test('unpack: prefers tool_name over tool when both present', function () {
     tool_name: 'NewName', tool: 'OldName',
   });
   assert.equal(result.toolName, 'NewName');
+});
+
+// ---------------------------------------------------------------------------
+// commandSignatureOf — the remembered KEY is the program, not the verbatim
+// (path/arg-specific) line, so the same command matches across task folders.
+// ---------------------------------------------------------------------------
+
+test('signature: bare program with args → just the program', function () {
+  assert.equal(commandSignatureOf('mvn -B verify'), 'mvn');
+  assert.equal(commandSignatureOf('ls -la src/test/java/com/una/x'), 'ls');
+});
+
+test('signature: strips the leading `cd <task-path> &&` so it matches across folders', function () {
+  // The exact pain from the screenshot: every command was prefixed with a
+  // task-specific `cd …/UNA-2727`, so no two ever matched.
+  const a = commandSignatureOf('cd /Users/x/dev_kato/UNA-2727 && mvn -B verify');
+  const b = commandSignatureOf('cd /Users/x/dev_kato/UNA-2742 && mvn -B verify');
+  assert.equal(a, 'mvn');
+  assert.equal(b, 'mvn');
+  assert.equal(a, b); // different task folders → same remembered key
+});
+
+test('signature: strips leading env-var assignments and `export …`', function () {
+  assert.equal(commandSignatureOf('JAVA_HOME=/x/y mvn verify'), 'mvn');
+  assert.equal(commandSignatureOf('export JAVA_HOME=/x && mvn verify'), 'mvn');
+});
+
+test('signature: basename-only — path / ./ prefixes do not fork the key', function () {
+  assert.equal(commandSignatureOf('/usr/local/bin/docker ps'), 'docker');
+  assert.equal(commandSignatureOf('./gradlew build'), 'gradlew');
+});
+
+test('signature: a chain keeps EVERY program so a new one re-prompts', function () {
+  // Safety: tacking `rm -rf` onto an allowed `mvn` must NOT ride the `mvn`
+  // grant — the signatures differ, so the chained command asks again.
+  assert.equal(commandSignatureOf('mvn verify && rm -rf target'), 'mvn rm');
+  assert.notEqual(
+    commandSignatureOf('mvn verify && rm -rf target'),
+    commandSignatureOf('mvn verify'),
+  );
+});
+
+test('signature: dedups repeats, keeps first-seen order', function () {
+  assert.equal(commandSignatureOf('git add . && git commit -m x && git push'), 'git');
+  assert.equal(commandSignatureOf('docker build . && mvn test && docker push'), 'docker mvn');
+});
+
+test('signature: pipes count as separate programs', function () {
+  assert.equal(commandSignatureOf('cat log | grep ERROR'), 'cat grep');
+});
+
+test('signature: navigation-only command keys on the navigation verb', function () {
+  // Nothing meaningful after stripping noise → fall back to the noise verb
+  // so a bare `cd` is still a real, clearable entry (never an empty key).
+  assert.equal(commandSignatureOf('cd /Users/x/somewhere'), 'cd');
+});
+
+test('signature: empty / whitespace → empty', function () {
+  assert.equal(commandSignatureOf(''), '');
+  assert.equal(commandSignatureOf('   '), '');
+  assert.equal(commandSignatureOf(null), '');
+});
+
+test('decisionCommandFor: Bash keys on the signature, non-Bash stays tool-level', function () {
+  assert.equal(
+    decisionCommandFor('Bash', { command: 'cd /x/UNA-1 && mvn verify' }),
+    'mvn',
+  );
+  assert.equal(decisionCommandFor('Edit', { file_path: '/x' }), '');
+  assert.equal(decisionCommandFor('Bash', {}), '');
 });
 
 test('unpack: preserves rich input objects', function () {

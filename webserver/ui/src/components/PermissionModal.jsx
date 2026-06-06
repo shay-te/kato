@@ -15,8 +15,10 @@ export default function PermissionModal({ raw, onDecide }) {
 
   if (!raw) { return null; }
 
-  // Command-keyed tools (Bash) remember the EXACT command, not the tool —
-  // so "Allow always" on `mvn verify` never auto-allows `docker`.
+  // Command-keyed tools (Bash) remember the command's PROGRAM (e.g. `mvn`),
+  // not the tool and not the verbatim line — so "Allow always" on
+  // `mvn verify` covers future `mvn` runs (in any task folder) but never
+  // auto-allows `docker`. The modal still shows the real command below.
   const command = decisionCommandFor(toolName, toolInput);
 
   // Out-of-task asks (a file path or an escaping command like docker —

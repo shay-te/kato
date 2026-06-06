@@ -8,8 +8,9 @@ import SettingsPanelHead from './settings/SettingsPanelHead.jsx';
 // "Claude permissions" tab — lists every remembered "Allow always" /
 // "Deny always" decision (the localStorage ``kato.toolDecisions.v1`` set).
 // Tool-level tools (Edit, Read…) show one row; command-keyed tools (Bash)
-// show ONE ROW PER EXACT COMMAND, so the operator curates which specific
-// commands auto-run (allowing `mvn verify` never allows `docker`). A
+// show ONE ROW PER PROGRAM (the command's program signature — `mvn`,
+// `docker`, `ls` — not the verbatim, path-specific line), so the operator
+// curates which programs auto-run (allowing `mvn` never allows `docker`). A
 // filter box narrows a long list.
 //
 // No Save/diff cycle: changes persist instantly through the shared
@@ -61,8 +62,9 @@ export default function ClaudePermissionsSettingsPanel() {
         <p>
           The <strong>Allow always</strong> / <strong>Deny always</strong>{' '}
           decisions you gave Claude, remembered across kato and browser
-          restarts. Bash entries are <strong>per exact command</strong> —
-          allowing one command never allows another. Change the scope or
+          restarts. Bash entries are <strong>per program</strong> (e.g.{' '}
+          <code>mvn</code>, <code>docker</code>) — allowing one program never
+          allows another, and matches it in any task folder. Change the scope or
           clear one to be asked again. Requests that reach{' '}
           <strong>outside the task folder</strong> are never remembered here.
         </p>

@@ -20,24 +20,64 @@ export function unpackPermissionEnvelope(raw) {
   };
 }
 
-// Tools whose remembered decision is keyed by the exact COMMAND, not the
-// tool name — so "Allow always" on one Bash command (e.g. `mvn verify`)
-// does NOT silently allow another (e.g. `docker run`). Each command is its
-// own entry in Settings → Permissions.
+// Tools whose remembered decision is keyed by the COMMAND, not the tool
+// name — so "Allow always" on `mvn …` does NOT silently allow `docker …`.
+// Each distinct command gets its own entry in Settings → Permissions.
 const COMMAND_KEYED_TOOLS = new Set(['Bash']);
 
 export function isCommandKeyedTool(toolName) {
   return COMMAND_KEYED_TOOLS.has(String(toolName || ''));
 }
 
-// The command an execution tool will run (whitespace-normalized), or ''.
+// The full command an execution tool will run (whitespace-normalized), or
+// ''. Used for DISPLAY (the modal shows the real command); the remembered
+// key uses commandSignatureOf instead.
 export function commandOf(toolInput) {
   if (!toolInput || typeof toolInput !== 'object') { return ''; }
   return String(toolInput.command || '').replace(/\s+/g, ' ').trim();
 }
 
-// The (tool, command) pair to remember/recall for a request: the command
-// only for command-keyed tools, else '' (tool-level).
+// Pure-navigation / setup builtins that get prepended to almost every
+// command (`cd <task-workspace> && …`, `export JAVA_HOME=… && …`). Keying on
+// these would collapse everything into one entry — effectively a tool-wide
+// allow — so they're treated as noise and dropped from the signature unless
+// a command is ONLY navigation (then we key on it so a bare `cd` still works).
+const NOISE_PROGRAMS = new Set(['cd', 'pushd', 'popd', 'export', 'source', '.']);
+
+// The program a single shell segment invokes, basename-only:
+//   "JAVA_HOME=/x mvn -B verify" → "mvn"   "/usr/local/bin/docker ps" → "docker"
+//   "./gradlew build"            → "gradlew"
+function _programOfSegment(segment) {
+  const tokens = String(segment).trim().split(/\s+/).filter(Boolean);
+  let i = 0;
+  // Skip leading env-var assignments (FOO=bar) — they prefix, not invoke.
+  while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) { i += 1; }
+  const prog = tokens[i];
+  if (!prog) { return ''; }
+  return prog.replace(/^.*\//, ''); // strip any path → basename (also kills ./)
+}
+
+// The remembered KEY for a command: the set of programs it actually runs,
+// path/arg/cwd-independent, so the same `mvn verify` matches across task
+// folders. ALL programs in a chain are included (deduped, in order) so that
+// `mvn … && rm -rf …` ("mvn rm") never matches a remembered bare `mvn` — a
+// new program tacked onto an allowed one re-prompts instead of riding through.
+export function commandSignatureOf(command) {
+  const normalized = String(command || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) { return ''; }
+  const meaningful = [];
+  const noise = [];
+  for (const segment of normalized.split(/&&|\|\||[;|]/)) {
+    const prog = _programOfSegment(segment);
+    if (!prog) { continue; }
+    const bucket = NOISE_PROGRAMS.has(prog) ? noise : meaningful;
+    if (!bucket.includes(prog)) { bucket.push(prog); }
+  }
+  return (meaningful.length ? meaningful : noise).join(' ');
+}
+
+// The (tool, command-signature) pair to remember/recall for a request: the
+// program signature for command-keyed tools, else '' (tool-level).
 export function decisionCommandFor(toolName, toolInput) {
-  return isCommandKeyedTool(toolName) ? commandOf(toolInput) : '';
+  return isCommandKeyedTool(toolName) ? commandSignatureOf(commandOf(toolInput)) : '';
 }
