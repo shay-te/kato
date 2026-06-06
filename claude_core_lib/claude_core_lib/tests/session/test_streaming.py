@@ -1030,6 +1030,62 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         )
         self.assertTrue(session.is_working)
 
+    def test_is_working_true_while_waiting_on_a_background_monitor(self) -> None:
+        # Turn closed (result) but it scheduled a Monitor wait → the agent
+        # is still working (waiting on the build), not idle.
+        session = self._build_session()
+        session._proc = SimpleNamespace(poll=lambda: None)  # alive
+        session._recent_events.append(SessionEvent(raw={
+            'type': 'assistant',
+            'message': {'content': [
+                {'type': 'tool_use', 'name': 'Monitor',
+                 'input': {'command': 'until build done', 'timeout': 600000}},
+            ]},
+        }))
+        session._recent_events.append(SessionEvent(raw={'type': 'result'}))
+        self.assertTrue(session.is_working)
+
+    def test_is_working_true_while_waiting_on_run_in_background_tool(self) -> None:
+        session = self._build_session()
+        session._proc = SimpleNamespace(poll=lambda: None)
+        session._recent_events.append(SessionEvent(raw={
+            'type': 'assistant',
+            'message': {'content': [
+                {'type': 'tool_use', 'name': 'Bash',
+                 'input': {'command': 'mvn test', 'run_in_background': True}},
+            ]},
+        }))
+        session._recent_events.append(SessionEvent(raw={'type': 'result'}))
+        self.assertTrue(session.is_working)
+
+    def test_is_working_false_for_ordinary_closed_turn(self) -> None:
+        # A normal turn that ended (no background wait) is idle.
+        session = self._build_session()
+        session._proc = SimpleNamespace(poll=lambda: None)
+        session._recent_events.append(SessionEvent(raw={
+            'type': 'assistant',
+            'message': {'content': [
+                {'type': 'tool_use', 'name': 'Edit',
+                 'input': {'file_path': '/wks/x.py'}},
+            ]},
+        }))
+        session._recent_events.append(SessionEvent(raw={'type': 'result'}))
+        self.assertFalse(session.is_working)
+
+    def test_waiting_clears_once_a_newer_plain_turn_closes(self) -> None:
+        # After the wait, the agent does a final plain turn → idle again
+        # (the Monitor is in an OLDER turn, behind a newer result).
+        session = self._build_session()
+        session._proc = SimpleNamespace(poll=lambda: None)
+        session._recent_events.append(SessionEvent(raw={
+            'type': 'assistant',
+            'message': {'content': [{'type': 'tool_use', 'name': 'Monitor', 'input': {}}]},
+        }))
+        session._recent_events.append(SessionEvent(raw={'type': 'result'}))
+        session._recent_events.append(SessionEvent(raw={'type': 'assistant'}))
+        session._recent_events.append(SessionEvent(raw={'type': 'result'}))
+        self.assertFalse(session.is_working)
+
     def test_is_working_false_when_init_followed_by_result(self) -> None:
         # A completed turn leaves a trailing ``result`` that wins over the
         # older ``init`` — an idle, between-turns session never reads as

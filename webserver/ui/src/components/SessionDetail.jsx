@@ -53,9 +53,13 @@ export default function SessionDetail({
     agentStatusStore.setStatus(taskId, {
       lifecycle: stream.lifecycle,
       turnInFlight: stream.turnInFlight,
+      awaitingBackground: stream.awaitingBackground,
       pendingPermission: !!stream.pendingPermission,
     });
-  }, [taskId, stream.lifecycle, stream.turnInFlight, stream.pendingPermission]);
+  }, [
+    taskId, stream.lifecycle, stream.turnInFlight,
+    stream.awaitingBackground, stream.pendingPermission,
+  ]);
 
   // Drop this task's live entry when the active tab changes. SessionDetail is
   // keyed per task, so unmount fires for the OLD task; clearStatus removes only

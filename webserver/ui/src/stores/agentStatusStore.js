@@ -28,6 +28,7 @@ function sameStatus(a, b) {
   if (!a || !b) { return false; }
   return a.lifecycle === b.lifecycle
     && a.turnInFlight === b.turnInFlight
+    && a.awaitingBackground === b.awaitingBackground
     && a.pendingPermission === b.pendingPermission;
 }
 
@@ -42,12 +43,14 @@ export const agentStatusStore = {
   setStatus(taskId, {
     lifecycle = '',
     turnInFlight = false,
+    awaitingBackground = false,
     pendingPermission = false,
   } = {}) {
     if (!taskId) { return; }
     const next = {
       lifecycle,
       turnInFlight: !!turnInFlight,
+      awaitingBackground: !!awaitingBackground,
       pendingPermission: !!pendingPermission,
     };
     if (sameStatus(_statuses[taskId], next)) { return; }

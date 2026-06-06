@@ -398,17 +398,57 @@ class StreamingClaudeSession(object):
         if not self.is_alive:
             return False
         with self._recent_events_lock:
-            for event in reversed(self._recent_events):
-                event_type = event.event_type
-                if event_type == CLAUDE_EVENT_RESULT:
-                    return False
-                if event_type in ('assistant', 'stream_event', 'user'):
-                    return True
-                if (
-                    event_type == CLAUDE_EVENT_SYSTEM
-                    and event.subtype == CLAUDE_SYSTEM_SUBTYPE_INIT
-                ):
-                    return True
+            events = list(self._recent_events)
+        for index in range(len(events) - 1, -1, -1):
+            event = events[index]
+            event_type = event.event_type
+            if event_type == CLAUDE_EVENT_RESULT:
+                # Turn closed. If it scheduled a background WAIT (a Monitor
+                # / run_in_background tool) the agent is still effectively
+                # working — waiting on that result — so keep it "working"
+                # until a newer turn supersedes it. Otherwise it's idle.
+                return self._turn_scheduled_background_wait(events, index)
+            if event_type in ('assistant', 'stream_event', 'user'):
+                return True
+            if (
+                event_type == CLAUDE_EVENT_SYSTEM
+                and event.subtype == CLAUDE_SYSTEM_SUBTYPE_INIT
+            ):
+                return True
+        return False
+
+    # Tools that park the agent on a long-running wait (it scheduled the
+    # work and is blocked on its result). Treated as "still working" even
+    # after the turn closes, so a 10-minute test/build wait doesn't read
+    # as idle. ``run_in_background`` on any tool counts too.
+    _BACKGROUND_WAIT_TOOLS = frozenset({'Monitor'})
+
+    def _turn_scheduled_background_wait(self, events, result_index: int) -> bool:
+        """True if the turn ending at ``result_index`` left a background
+        wait outstanding (its last actions include a Monitor / background
+        tool). Scans backward over that one turn only (stops at the prior
+        ``result``)."""
+        for j in range(result_index - 1, -1, -1):
+            if events[j].event_type == CLAUDE_EVENT_RESULT:
+                return False
+            if self._event_has_background_wait_tool(events[j]):
+                return True
+        return False
+
+    def _event_has_background_wait_tool(self, event: SessionEvent) -> bool:
+        raw = event.raw if isinstance(event.raw, dict) else {}
+        message = raw.get('message')
+        content = message.get('content') if isinstance(message, dict) else None
+        if not isinstance(content, list):
+            return False
+        for block in content:
+            if not isinstance(block, dict) or block.get('type') != 'tool_use':
+                continue
+            if str(block.get('name') or '') in self._BACKGROUND_WAIT_TOOLS:
+                return True
+            tool_input = block.get('input')
+            if isinstance(tool_input, dict) and tool_input.get('run_in_background') is True:
+                return True
         return False
 
     @property

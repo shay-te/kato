@@ -1,5 +1,6 @@
 import { SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
 import { TAB_STATUS } from '../constants/tabStatus.js';
+import { AGENT_STATUS_KIND } from '../constants/agentStatusKind.js';
 import { deriveTabStatus, resolveTabStatus, statusDotClass } from './tabStatus.js';
 
 // THE single source of truth for agent (Claude/Codex) liveness.
@@ -18,31 +19,34 @@ import { deriveTabStatus, resolveTabStatus, statusDotClass } from './tabStatus.j
 // kind → { label (chip word), title (tooltip) }. Ported verbatim from the old
 // SessionHeader.describeClaudeStatus so the chip text/classes are unchanged.
 const STATUS_BY_KIND = {
-  provisioning: { label: 'provisioning', title: 'Workspace is being set up.' },
-  working: { label: 'working', title: 'Claude is processing the current turn.' },
-  approval: { label: 'approval', title: 'Claude is paused waiting for your approval.' },
-  idle: { label: 'idle', title: 'Claude is connected and waiting for input.' },
-  connecting: { label: 'connecting', title: 'Connecting to the Claude session…' },
-  sleeping: { label: 'sleeping', title: 'No live subprocess — kato will respawn Claude on the next message.' },
-  closed: { label: 'closed', title: 'The Claude subprocess for this task has ended.' },
-  missing: { label: 'no record', title: 'No record for this task on the server.' },
-  unknown: { label: '—', title: 'Claude status unknown.' },
+  [AGENT_STATUS_KIND.PROVISIONING]: { label: 'provisioning', title: 'Workspace is being set up.' },
+  [AGENT_STATUS_KIND.WORKING]: { label: 'working', title: 'Claude is processing the current turn.' },
+  [AGENT_STATUS_KIND.APPROVAL]: { label: 'approval', title: 'Claude is paused waiting for your approval.' },
+  [AGENT_STATUS_KIND.IDLE]: { label: 'idle', title: 'Claude is connected and waiting for input.' },
+  [AGENT_STATUS_KIND.CONNECTING]: { label: 'connecting', title: 'Connecting to the Claude session…' },
+  [AGENT_STATUS_KIND.SLEEPING]: { label: 'sleeping', title: 'No live subprocess — kato will respawn Claude on the next message.' },
+  [AGENT_STATUS_KIND.CLOSED]: { label: 'closed', title: 'The Claude subprocess for this task has ended.' },
+  [AGENT_STATUS_KIND.MISSING]: { label: 'no record', title: 'No record for this task on the server.' },
+  [AGENT_STATUS_KIND.UNKNOWN]: { label: '—', title: 'Claude status unknown.' },
 };
 
 const KIND_BY_LIFECYCLE = {
-  [SESSION_LIFECYCLE.STREAMING]: 'idle',
-  [SESSION_LIFECYCLE.CONNECTING]: 'connecting',
-  [SESSION_LIFECYCLE.IDLE]: 'sleeping',
-  [SESSION_LIFECYCLE.CLOSED]: 'closed',
-  [SESSION_LIFECYCLE.MISSING]: 'missing',
+  [SESSION_LIFECYCLE.STREAMING]: AGENT_STATUS_KIND.IDLE,
+  [SESSION_LIFECYCLE.CONNECTING]: AGENT_STATUS_KIND.CONNECTING,
+  [SESSION_LIFECYCLE.IDLE]: AGENT_STATUS_KIND.SLEEPING,
+  [SESSION_LIFECYCLE.CLOSED]: AGENT_STATUS_KIND.CLOSED,
+  [SESSION_LIFECYCLE.MISSING]: AGENT_STATUS_KIND.MISSING,
 };
 
 // Live (active-task) path — ported from describeClaudeStatus's precedence.
 function liveKind(liveStatus, baseStatus, needsAttention) {
-  if (baseStatus === TAB_STATUS.PROVISIONING) { return 'provisioning'; }
-  if (liveStatus.turnInFlight) { return 'working'; }
-  if (needsAttention) { return 'approval'; }
-  return KIND_BY_LIFECYCLE[liveStatus.lifecycle] || 'unknown';
+  if (baseStatus === TAB_STATUS.PROVISIONING) { return AGENT_STATUS_KIND.PROVISIONING; }
+  // ``awaitingBackground`` = turn closed but the agent is blocked on a
+  // background wait it scheduled (Monitor / run_in_background) — still
+  // working, not idle.
+  if (liveStatus.turnInFlight || liveStatus.awaitingBackground) { return AGENT_STATUS_KIND.WORKING; }
+  if (needsAttention) { return AGENT_STATUS_KIND.APPROVAL; }
+  return KIND_BY_LIFECYCLE[liveStatus.lifecycle] || AGENT_STATUS_KIND.UNKNOWN;
 }
 
 // Workspace states where the subprocess is gone for good — the task is
@@ -62,24 +66,26 @@ const TERMINAL_STATUSES = new Set([
 // shows is not a pollable fact, so background tabs can't reproduce it — and
 // don't need to (that tab will respawn on the next message → sleeping).
 function polledKind(session, baseStatus) {
-  if (baseStatus === TAB_STATUS.PROVISIONING) { return 'provisioning'; }
-  if (session?.working === true) { return 'working'; }
-  if (session?.has_pending_permission) { return 'approval'; }
-  if (session?.live === true) { return 'idle'; }
+  if (baseStatus === TAB_STATUS.PROVISIONING) { return AGENT_STATUS_KIND.PROVISIONING; }
+  if (session?.working === true) { return AGENT_STATUS_KIND.WORKING; }
+  if (session?.has_pending_permission) { return AGENT_STATUS_KIND.APPROVAL; }
+  if (session?.live === true) { return AGENT_STATUS_KIND.IDLE; }
   if (session?.live === false) {
-    return TERMINAL_STATUSES.has(baseStatus) ? 'closed' : 'sleeping';
+    return TERMINAL_STATUSES.has(baseStatus)
+      ? AGENT_STATUS_KIND.CLOSED
+      : AGENT_STATUS_KIND.SLEEPING;
   }
-  return 'unknown';
+  return AGENT_STATUS_KIND.UNKNOWN;
 }
 
 // The only tab-tooltip badge CSS classes that exist are is-work/idle/sleep/wait.
 const BADGE_KIND = {
-  working: 'work',
-  idle: 'idle',
-  connecting: 'idle',
-  sleeping: 'sleep',
-  closed: 'sleep',
-  approval: 'wait',
+  [AGENT_STATUS_KIND.WORKING]: 'work',
+  [AGENT_STATUS_KIND.IDLE]: 'idle',
+  [AGENT_STATUS_KIND.CONNECTING]: 'idle',
+  [AGENT_STATUS_KIND.SLEEPING]: 'sleep',
+  [AGENT_STATUS_KIND.CLOSED]: 'sleep',
+  [AGENT_STATUS_KIND.APPROVAL]: 'wait',
 };
 
 // Map a status kind to the tooltip badge's ``is-*`` class. Returns '' for kinds
@@ -90,8 +96,8 @@ export function badgeKindFor(kind) {
 }
 
 function dotStatusForKind(kind, resolved) {
-  if (kind === 'working') { return TAB_STATUS.WORKING; }
-  if (kind === 'approval') { return TAB_STATUS.ATTENTION; }
+  if (kind === AGENT_STATUS_KIND.WORKING) { return TAB_STATUS.WORKING; }
+  if (kind === AGENT_STATUS_KIND.APPROVAL) { return TAB_STATUS.ATTENTION; }
   return resolved;
 }
 
@@ -104,7 +110,7 @@ export function deriveAgentStatus(session, liveStatus = null, needsAttention = f
   const kind = liveStatus
     ? liveKind(liveStatus, baseStatus, needsAttention)
     : polledKind(session, baseStatus);
-  const meta = STATUS_BY_KIND[kind] || STATUS_BY_KIND.unknown;
+  const meta = STATUS_BY_KIND[kind] || STATUS_BY_KIND[AGENT_STATUS_KIND.UNKNOWN];
 
   const resolved = resolveTabStatus(session, needsAttention);
   const dotStatus = dotStatusForKind(kind, resolved);

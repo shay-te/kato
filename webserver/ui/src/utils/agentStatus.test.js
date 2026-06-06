@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { deriveAgentStatus, badgeKindFor } from './agentStatus.js';
+import { AGENT_STATUS_KIND } from '../constants/agentStatusKind.js';
 import { SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
 
 // A plain "active workspace, live subprocess" session. Individual tests tweak
@@ -128,4 +129,26 @@ test('badgeKindFor maps kinds to the existing tooltip badge classes', () => {
   assert.equal(badgeKindFor('provisioning'), '');
   assert.equal(badgeKindFor('missing'), '');
   assert.equal(badgeKindFor('unknown'), '');
+});
+
+// ---- awaitingBackground: a scheduled background wait reads as working -------
+
+test('awaitingBackground (turn closed, blocked on a Monitor wait) → working', () => {
+  const got = deriveAgentStatus(
+    session(),
+    // turn closed (turnInFlight false) but waiting on a background task
+    live({ lifecycle: SESSION_LIFECYCLE.STREAMING, turnInFlight: false, awaitingBackground: true }),
+    false,
+  );
+  assert.equal(got.kind, AGENT_STATUS_KIND.WORKING);
+  assert.equal(got.label, 'working');
+});
+
+test('no awaitingBackground + closed turn → idle (unchanged)', () => {
+  const got = deriveAgentStatus(
+    session(),
+    live({ lifecycle: SESSION_LIFECYCLE.STREAMING, turnInFlight: false }),
+    false,
+  );
+  assert.equal(got.kind, AGENT_STATUS_KIND.IDLE);
 });

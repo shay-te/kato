@@ -40,9 +40,30 @@ function emptyTaskState() {
     eventKeys: new Set(),
     lifecycle: SESSION_LIFECYCLE.CONNECTING,
     turnInFlight: false,
+    // The just-closed turn scheduled a long background wait (Monitor /
+    // run_in_background) and is blocked on it — still "working", not idle.
+    // Cleared when the next turn starts or the session closes.
+    awaitingBackground: false,
+    // Transient: a background-wait tool_use was seen in the OPEN turn, so
+    // the upcoming RESULT knows to flip ``awaitingBackground``.
+    turnHasBackgroundWait: false,
     pendingPermission: null,
     lastEventAt: 0,
   };
+}
+
+// Tools that park the agent on a long-running wait (it scheduled work and
+// is blocked on its result). MUST match the backend
+// StreamingClaudeSession._BACKGROUND_WAIT_TOOLS.
+const BACKGROUND_WAIT_TOOLS = new Set(['Monitor']);
+
+function eventHasBackgroundWaitTool(raw) {
+  const content = raw && raw.message && raw.message.content;
+  if (!Array.isArray(content)) { return false; }
+  return content.some((block) => block
+    && block.type === 'tool_use'
+    && (BACKGROUND_WAIT_TOOLS.has(block.name)
+      || (block.input && block.input.run_in_background === true)));
 }
 
 function readCachedState(taskId) {
@@ -198,13 +219,21 @@ export function reducer(state, action) {
           lifecycle: action.value,
           pendingPermission: null,
           turnInFlight: false,
+          awaitingBackground: false,
+          turnHasBackgroundWait: false,
         };
       }
       return { ...state, lifecycle: action.value };
     case ACTION_DISMISS_PERMISSION:
       return { ...state, pendingPermission: null };
     case ACTION_MARK_TURN_BUSY:
-      return { ...state, turnInFlight: action.value };
+      // A freshly-sent message is a new turn — it supersedes any prior
+      // background wait.
+      return {
+        ...state,
+        turnInFlight: action.value,
+        awaitingBackground: action.value ? false : state.awaitingBackground,
+      };
     default:
       return state;
   }
@@ -315,15 +344,25 @@ function reduceIncomingEvent(state, raw, receivedAtEpoch) {
       // PROVISIONING status anyway.
       if (raw.subtype === CLAUDE_SYSTEM_SUBTYPE.INIT) {
         next.turnInFlight = true;
+        next.awaitingBackground = false;
       }
       break;
     case CLAUDE_EVENT.ASSISTANT:
       next.turnInFlight = true;
+      next.awaitingBackground = false;
+      // Remember a background-wait tool seen this turn so the closing
+      // RESULT can keep the status "working" while the agent waits on it.
+      if (eventHasBackgroundWaitTool(raw)) {
+        next.turnHasBackgroundWait = true;
+      }
       break;
     case CLAUDE_EVENT.RESULT:
-      // RESULT ends the turn AND clears pending. turnInFlight is live-
-      // only (inline); pendingPermission clearing is shared.
+      // RESULT ends the turn AND clears pending. If the turn scheduled a
+      // background wait (Monitor / run_in_background), stay "working"
+      // (awaitingBackground) until the next turn or session close.
       next.turnInFlight = false;
+      next.awaitingBackground = !!state.turnHasBackgroundWait;
+      next.turnHasBackgroundWait = false;
       applyPermissionTransition(next, raw, state, { strict: true });
       break;
     default:
@@ -467,6 +506,7 @@ export function useSessionStream(taskId, onIncomingEvent) {
     events: state.events,
     lifecycle: state.lifecycle,
     turnInFlight: state.turnInFlight,
+    awaitingBackground: state.awaitingBackground,
     pendingPermission: state.pendingPermission,
     lastEventAt: state.lastEventAt,
     appendLocalEvent: (event) => dispatch({ type: ACTION_LOCAL_EVENT, event }),
