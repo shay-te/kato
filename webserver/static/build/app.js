@@ -725,10 +725,16 @@ Approach this with FRESH EYES: drop every assumption you formed while writing th
 
 Produce a structured report (markdown). For each finding give file:line, severity (BLOCKER / MAJOR / MINOR / NIT), and a one-line fix. Then FIX every BLOCKER and MAJOR in the code (leave MINOR/NIT as a checklist for me).
 
-1. CORRECTNESS
-   - Logic bugs, off-by-one, wrong conditionals, unhandled None/empty/error cases.
-   - Edge cases the change introduces or fails to handle.
+1. BUGS & CORRECTNESS (primary goal — actively HUNT for bugs, don't just skim)
+   - Logic errors, off-by-one, inverted/wrong conditionals, operator-precedence slips.
+   - Unhandled None/null/undefined, empty collections, missing keys, mutable default args.
+   - Boundary/edge cases: zero, negative, very large, empty, unicode, duplicate, out-of-order inputs.
+   - Error handling: swallowed exceptions, wrong/over-broad catch, partial failure leaving bad state.
+   - Concurrency/races, ordering assumptions, shared-state mutation, re-entrancy, await/async gaps.
+   - Resource leaks (files, handles, connections, subprocesses), unclosed contexts, unbounded growth.
+   - Off-contract returns: a function returns a shape callers don't expect (None vs [], dict vs bool).
    - Regressions: find every call site of changed signatures/return shapes and verify each still holds.
+   - For each suspected bug, give the CONCRETE input/scenario that triggers it and the wrong result.
 
 2. SECURITY (hard gate)
    - NO secrets, tokens, API keys, or credential-shaped strings in any committed file.
