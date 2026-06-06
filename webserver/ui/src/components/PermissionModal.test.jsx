@@ -9,13 +9,16 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import PermissionModal from './PermissionModal.jsx';
 
 
+// Default fixture uses a NON-execution tool (Edit) so the generic
+// rendering/button tests exercise the ordinary path. Execution (Bash) is
+// high-risk and has its own tests below.
 function _raw(overrides = {}) {
   return {
     type: 'control_request',
     request_id: 'req-1',
     request: {
       request_id: 'req-1',
-      tool_name: 'Bash',
+      tool_name: 'Edit',
       input: { command: 'ls -la' },
     },
     ...overrides,
@@ -39,7 +42,7 @@ describe('PermissionModal — rendering', () => {
 
   test('shows the tool name in the header', () => {
     render(<PermissionModal raw={_raw()} onDecide={vi.fn()} />);
-    expect(screen.getByText('Bash')).toBeInTheDocument();
+    expect(screen.getByText('Edit')).toBeInTheDocument();
   });
 
   test('renders all three action buttons', () => {
@@ -114,6 +117,25 @@ describe('PermissionModal — rendering', () => {
     // Field label "changes" present, value formatted as JSON.
     expect(screen.getByText('changes')).toBeInTheDocument();
   });
+
+  test('execution (Bash) ask shows the red EXECUTE warning + the command', () => {
+    const { container } = render(<PermissionModal raw={_raw({
+      request: { request_id: 'r', tool_name: 'Bash', input: { command: 'docker run x' } },
+    })} onDecide={vi.fn()} />);
+    const warn = container.querySelector('#permission-execution');
+    expect(warn).toBeInTheDocument();
+    expect(warn.querySelector('h1').textContent).toMatch(/EXECUTE SOFTWARE/);
+    expect(warn.textContent).toMatch(/docker run x/);
+  });
+
+  test('execution (Bash) ask withholds the "Allow always" button', () => {
+    render(<PermissionModal raw={_raw({
+      request: { request_id: 'r', tool_name: 'Bash', input: { command: 'docker ps' } },
+    })} onDecide={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /deny/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /allow once/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /allow always/i })).toBeNull();
+  });
 });
 
 
@@ -129,7 +151,7 @@ describe('PermissionModal — onDecide dispatch', () => {
     expect(arg.allow).toBe(false);
     expect(arg.remember).toBe(false);
     expect(arg.requestId).toBe('req-1');
-    expect(arg.toolName).toBe('Bash');
+    expect(arg.toolName).toBe('Edit');
   });
 
   test('Allow once → allow=true, remember=false', () => {
@@ -138,7 +160,7 @@ describe('PermissionModal — onDecide dispatch', () => {
     fireEvent.click(screen.getByRole('button', { name: /allow once/i }));
 
     expect(onDecide.mock.calls[0][0]).toMatchObject({
-      allow: true, remember: false, requestId: 'req-1', toolName: 'Bash',
+      allow: true, remember: false, requestId: 'req-1', toolName: 'Edit',
     });
   });
 
@@ -148,7 +170,7 @@ describe('PermissionModal — onDecide dispatch', () => {
     fireEvent.click(screen.getByRole('button', { name: /allow always/i }));
 
     expect(onDecide.mock.calls[0][0]).toMatchObject({
-      allow: true, remember: true, requestId: 'req-1', toolName: 'Bash',
+      allow: true, remember: true, requestId: 'req-1', toolName: 'Edit',
     });
   });
 

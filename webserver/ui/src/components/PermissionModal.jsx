@@ -1,5 +1,9 @@
 import { useEffect, useState } from 'react';
-import { unpackPermissionEnvelope } from '../utils/permissionEnvelope.js';
+import {
+  unpackPermissionEnvelope,
+  isExecutionTool,
+  executionCommand,
+} from '../utils/permissionEnvelope.js';
 import DialogShell from './DialogShell.jsx';
 
 export default function PermissionModal({ raw, onDecide }) {
@@ -12,8 +16,16 @@ export default function PermissionModal({ raw, onDecide }) {
 
   if (!raw) { return null; }
 
+  // Execution (running software) and out-of-sandbox both get the loud red
+  // treatment and never offer a remembered ("Allow always") scope, so
+  // nothing dangerous runs silently on a past decision.
+  const isExecution = isExecutionTool(toolName);
+  const highRisk = outsideSandbox || isExecution;
   const fields = renderFields(toolInput);
   const sandboxWarning = renderSandboxWarning(outsideSandbox, outsidePath, toolName);
+  const executionWarning = renderExecutionWarning(
+    isExecution && !outsideSandbox, toolName, executionCommand(toolInput),
+  );
   const denyTooltip = `Deny this ${toolName} request. Claude will see your rationale (if any) and decide what to do next.`;
   const allowOnceTitle = `Approve this ${toolName} request only — kato will ask again next time.`;
   const allowAlwaysTitle = `Approve and remember ${toolName} — kato won't ask again, even after a kato or browser restart, until you clear it from settings.`;
@@ -29,10 +41,11 @@ export default function PermissionModal({ raw, onDecide }) {
   function handleAllowAlways() {
     onDecide({ allow: true, rationale, remember: true, requestId, toolName });
   }
-  // Out-of-sandbox asks never offer the remembered ("Allow always")
-  // scope — built here, before the return, so the JSX stays logic-free.
+  // High-risk asks (out-of-sandbox / execution) never offer the remembered
+  // ("Allow always") scope — built here, before the return, so the JSX
+  // stays logic-free.
   const allowAlwaysButton = renderAllowAlwaysButton(
-    outsideSandbox, allowAlwaysTitle, handleAllowAlways,
+    highRisk, allowAlwaysTitle, handleAllowAlways,
   );
 
   return (
@@ -44,6 +57,7 @@ export default function PermissionModal({ raw, onDecide }) {
       subtitleId="permission-tool-name"
     >
       {sandboxWarning}
+      {executionWarning}
       <div id="permission-fields">{fields}</div>
       <details id="permission-raw" className="modal-raw">
         <summary>raw envelope</summary>
@@ -104,9 +118,34 @@ function renderSandboxWarning(outsideSandbox, outsidePath, toolName) {
   );
 }
 
-// The remembered-scope button — withheld (null) for out-of-sandbox asks.
-function renderAllowAlwaysButton(outsideSandbox, allowAlwaysTitle, onAllowAlways) {
-  if (outsideSandbox) { return null; }
+// Loud alarm when the agent wants to EXECUTE software (run a command).
+// Shows the command on its own line. Returns null for non-execution asks,
+// and is suppressed when the out-of-sandbox warning is already showing
+// (one red banner is enough).
+function renderExecutionWarning(isExecution, toolName, command) {
+  if (!isExecution) { return null; }
+  const commandLine = command
+    ? <code className="permission-sandbox-warning-path">{command}</code>
+    : null;
+  return (
+    <div id="permission-execution" className="permission-sandbox-warning" role="alert">
+      <h1 className="permission-sandbox-warning-title">
+        ⚠ CLAUDE WANTS TO EXECUTE SOFTWARE
+      </h1>
+      {commandLine}
+      <p className="permission-sandbox-warning-body">
+        This {toolName} runs a command on your machine. Approve it
+        <strong> only for this single action</strong> — a remembered approval
+        is not offered for execution.
+      </p>
+    </div>
+  );
+}
+
+// The remembered-scope button — withheld (null) for high-risk asks
+// (out-of-sandbox / execution).
+function renderAllowAlwaysButton(highRisk, allowAlwaysTitle, onAllowAlways) {
+  if (highRisk) { return null; }
   return (
     <button
       id="permission-allow-always"
