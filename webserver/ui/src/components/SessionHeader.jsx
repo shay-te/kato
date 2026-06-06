@@ -8,7 +8,7 @@ import {
   updateTaskSource,
 } from '../api.js';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
-import { PREDEFINED_PROMPTS } from '../predefined_prompts/index.js';
+import { promptStore } from '../stores/promptStore.js';
 import { useBusyAction } from '../hooks/useBusyAction.js';
 import { usePushApproval } from '../hooks/usePushApproval.js';
 import { useTaskPublish } from '../hooks/useTaskPublish.js';
@@ -201,7 +201,7 @@ export default function SessionHeader({
   // appeared.
   const [reviewing, onCodeReview] = useBusyAction(
     () => (typeof onSendPrompt === 'function'
-      ? onSendPrompt(PREDEFINED_PROMPTS.codeReview)
+      ? onSendPrompt(promptStore.get('codeReview'))
       : Promise.resolve(false)),
     {
       onDone: (delivered) => {

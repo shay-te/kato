@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import ClaudePermissionsSettingsPanel from './ClaudePermissionsSettingsPanel.jsx';
+import PromptsSettingsPanel from './PromptsSettingsPanel.jsx';
 import GitProvidersSettingsPanel from './GitProvidersSettingsPanel.jsx';
 import NotificationsSettingsPanel from './NotificationsSettingsPanel.jsx';
 import RepositoriesSettingsPanel from './RepositoriesSettingsPanel.jsx';
@@ -21,6 +22,7 @@ import { cx } from '../utils/cx.js';
 const TAB_REPOS = 'repositories';
 const TAB_APPROVALS = 'approvals';
 const TAB_PERMISSIONS = 'claude-permissions';
+const TAB_PROMPTS = 'prompts';
 const TAB_TASK_PROVIDER = 'task-provider';
 const TAB_GIT_PROVIDER = 'git-provider';
 const TAB_NOTIFICATIONS = 'notifications';
@@ -30,6 +32,7 @@ const BESPOKE_TABS = [
   { id: TAB_REPOS, label: 'Repositories' },
   { id: TAB_APPROVALS, label: 'Approvals' },
   { id: TAB_PERMISSIONS, label: 'Permissions' },
+  { id: TAB_PROMPTS, label: 'Prompts' },
   { id: TAB_TASK_PROVIDER, label: 'Task provider' },
   { id: TAB_GIT_PROVIDER, label: 'Git provider' },
   { id: TAB_NOTIFICATIONS, label: 'Notifications' },
@@ -78,6 +81,8 @@ export default function SettingsDrawer({
     panel = <RepositoryApprovalsSettingsPanel />;
   } else if (tab === TAB_PERMISSIONS) {
     panel = <ClaudePermissionsSettingsPanel />;
+  } else if (tab === TAB_PROMPTS) {
+    panel = <PromptsSettingsPanel />;
   } else if (tab === TAB_TASK_PROVIDER) {
     panel = <TaskProviderSettingsPanel />;
   } else if (tab === TAB_GIT_PROVIDER) {
