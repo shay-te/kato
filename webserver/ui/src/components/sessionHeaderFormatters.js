@@ -186,6 +186,54 @@ export function formatFinishResult(result, taskId = '') {
   };
 }
 
+// Toast for the operator-triggered "Merge default branch" button.
+// Lists EVERY repo touched — each merged repo with its commit count +
+// source branch, each already-up-to-date repo, each failure — instead of
+// a bare count (or the old generic "nothing to merge"), so the operator
+// sees exactly which repositories were merged from master. The conflict
+// path stays in the component (it has async side effects — it messages
+// the agent to resolve); this covers the clean merged / skipped / failed
+// / nothing outcomes.
+export function formatMergeResult(result) {
+  if (!result || !result.ok) {
+    return formatRequestFailure(result, 'Merge failed');
+  }
+  const body = result.body || {};
+  const merged = body.merged_repositories || [];
+  const skipped = body.skipped_repositories || [];
+  const failed = body.failed_repositories || [];
+
+  const lines = [];
+  for (const entry of merged) {
+    const count = Number(entry.commits_merged || 0);
+    const branch = String(entry.default_branch || '').trim() || 'default branch';
+    lines.push(`✓ ${entry.repository_id}: merged ${count} commit(s) from ${branch}`);
+  }
+  for (const entry of skipped) {
+    lines.push(`• ${entry.repository_id}: already up to date`);
+  }
+  lines.push(...formatFailedLines(failed));
+  if (lines.length === 0) {
+    lines.push('• no repositories eligible to merge');
+  }
+
+  let title;
+  let kind;
+  if (merged.length) {
+    title = failed.length ? 'Default branch merged (partial)' : 'Default branch merged';
+    kind = failed.length ? 'warning' : 'success';
+  } else if (failed.length) {
+    title = 'Merge failed';
+    kind = 'error';
+  } else {
+    // Every repo already contained the default branch — list them so the
+    // operator sees what was checked, not a vague "nothing to merge".
+    title = 'Nothing to merge';
+    kind = 'info';
+  }
+  return { title, kind, message: lines.join('\n') };
+}
+
 // Toast for the operator-triggered Push button (POST /push).
 //
 // IMPORTANT: ``/push`` returns the FLAT ``push_task`` payload —

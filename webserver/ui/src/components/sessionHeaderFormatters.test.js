@@ -3,12 +3,86 @@ import assert from 'node:assert/strict';
 
 import {
   formatFinishResult,
+  formatMergeResult,
   formatPullResult,
   formatPushResult,
   formatPushSummary,
   formatRequestFailure,
   formatUpdateSourceResult,
 } from './sessionHeaderFormatters.js';
+
+
+test('formatMergeResult lists each merged repo with its commit count + branch', () => {
+  const out = formatMergeResult({
+    ok: true,
+    body: {
+      merged_repositories: [
+        { repository_id: 'pii-core-lib', commits_merged: 3, default_branch: 'master' },
+        { repository_id: 'task-core-lib', commits_merged: 1, default_branch: 'master' },
+      ],
+      skipped_repositories: [],
+      failed_repositories: [],
+    },
+  });
+  assert.equal(out.title, 'Default branch merged');
+  assert.equal(out.kind, 'success');
+  assert.match(out.message, /✓ pii-core-lib: merged 3 commit\(s\) from master/);
+  assert.match(out.message, /✓ task-core-lib: merged 1 commit\(s\) from master/);
+});
+
+test('formatMergeResult: nothing to merge LISTS the already-up-to-date repos', () => {
+  const out = formatMergeResult({
+    ok: true,
+    body: {
+      merged_repositories: [],
+      skipped_repositories: [
+        { repository_id: 'core-lib', reason: 'already_up_to_date' },
+        { repository_id: 'llm-core-lib', reason: 'already_up_to_date' },
+      ],
+      failed_repositories: [],
+    },
+  });
+  assert.equal(out.title, 'Nothing to merge');
+  assert.equal(out.kind, 'info');
+  assert.match(out.message, /• core-lib: already up to date/);
+  assert.match(out.message, /• llm-core-lib: already up to date/);
+});
+
+test('formatMergeResult: a failure with no merges is an error toast', () => {
+  const out = formatMergeResult({
+    ok: true,
+    body: {
+      merged_repositories: [],
+      skipped_repositories: [],
+      failed_repositories: [{ repository_id: 'pay-core-lib', error: 'fetch refused' }],
+    },
+  });
+  assert.equal(out.title, 'Merge failed');
+  assert.equal(out.kind, 'error');
+  assert.match(out.message, /✗ pay-core-lib: fetch refused/);
+});
+
+test('formatMergeResult: partial (some merged, some failed) downgrades to warning', () => {
+  const out = formatMergeResult({
+    ok: true,
+    body: {
+      merged_repositories: [{ repository_id: 'a', commits_merged: 2, default_branch: 'main' }],
+      skipped_repositories: [{ repository_id: 'b', reason: 'already_up_to_date' }],
+      failed_repositories: [{ repository_id: 'c', error: 'boom' }],
+    },
+  });
+  assert.equal(out.title, 'Default branch merged (partial)');
+  assert.equal(out.kind, 'warning');
+  assert.match(out.message, /✓ a: merged 2 commit\(s\) from main/);
+  assert.match(out.message, /• b: already up to date/);
+  assert.match(out.message, /✗ c: boom/);
+});
+
+test('formatMergeResult surfaces a request failure', () => {
+  const out = formatMergeResult({ ok: false, error: 'network' });
+  assert.equal(out.kind, 'error');
+  assert.match(out.message, /network/);
+});
 
 // ``/push`` returns the FLAT ``push_task`` payload: ``pushed`` is a
 // boolean and the repo lists live at the top level of ``body`` (NOT

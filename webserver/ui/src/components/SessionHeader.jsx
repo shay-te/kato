@@ -20,6 +20,7 @@ import AdoptSessionModal from './AdoptSessionModal.jsx';
 import Icon, { BusyIcon } from './Icon.jsx';
 import {
   formatFinishResult,
+  formatMergeResult,
   formatPullResult,
   formatUpdateSourceResult,
 } from './sessionHeaderFormatters.js';
@@ -124,28 +125,11 @@ export default function SessionHeader({
           });
           return;
         }
-        const mergedRepos = Array.isArray(body.merged_repositories)
-          ? body.merged_repositories : [];
-        if (mergedRepos.length > 0) {
-          const total = mergedRepos.reduce(
-            (n, r) => n + (Number(r.commits_merged) || 0), 0,
-          );
-          toast.show({
-            kind: 'success',
-            title: 'Default branch merged',
-            message: `Clean merge into ${mergedRepos.length} repo(s) `
-              + `(${total} commit(s)). No conflicts.`,
-            durationMs: 7000,
-          });
-          return;
-        }
-        toast.show({
-          kind: 'info',
-          title: 'Nothing to merge',
-          message: 'Task branch already contains the default branch '
-            + '(or no repo was eligible).',
-          durationMs: 6000,
-        });
+        // Clean / skipped / failed / nothing — one toast that NAMES every
+        // repo merged from the default branch (formatMergeResult). The
+        // conflict path above is handled separately (it messages Claude).
+        const merged = formatMergeResult(result);
+        toast.show({ ...merged, durationMs: merged.kind === 'success' ? 7000 : 6000 });
       },
     },
   );
