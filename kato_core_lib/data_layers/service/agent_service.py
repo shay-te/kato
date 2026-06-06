@@ -86,6 +86,10 @@ _ON_DEMAND_PUSH_EXPECTED_ERRORS = (RepositoryHasNoChangesError,)
 # ``--resume`` respawn that never picks up the piped message.
 _COMMENT_SEND_ACK_GRACE_SECONDS = 60.0
 _COMMENT_RUN_MARKER_PREFIX = 'KATO_LOCAL_COMMENT_RUN:'
+# How long a PR-existence lookup is reused before re-hitting the provider.
+# The UI polls publish-state every 10s; PR existence rarely changes, so a
+# 2-minute window collapses an 8-repo task's ~48 calls/min down to ~4.
+_PR_LOOKUP_TTL_SECONDS = 120.0
 
 
 @dataclass(frozen=True)
@@ -193,6 +197,16 @@ class AgentService(MissionStepLoggerMixin, Service):
         # reply to a comment is about a completely unrelated change).
         self._comment_dispatch_locks: dict[str, _threading.Lock] = {}
         self._comment_dispatch_locks_lock = _threading.Lock()
+        # TTL cache for PR-existence lookups. ``task_publish_state`` runs
+        # one ``find_pull_requests`` per repo, and the planning UI polls
+        # it every 10s — for a multi-repo task that's a provider-API
+        # storm that trips Bitbucket 429s (and the 40-100s retry backoffs
+        # then block worker threads + stall the Approvals tab). PR
+        # existence barely changes, so we cache per (repo, branch) and
+        # serve stale-on-error so a 429 quiets itself instead of
+        # re-firing every poll. {(repo_id, branch): (epoch, result)}.
+        self._pr_lookup_cache: dict[tuple[str, str], tuple[float, list]] = {}
+        self._pr_lookup_cache_lock = _threading.Lock()
         self._state_registry = state_registry or AgentStateRegistry()
         self._review_comment_service = review_comment_service or ReviewCommentService(
             self._task_service,
@@ -3738,6 +3752,47 @@ class AgentService(MissionStepLoggerMixin, Service):
         )
         worker.start()
 
+    def _cached_find_pull_requests(self, repository, branch_name: str) -> list:
+        """PR-existence lookup with a short TTL cache + stale-on-error.
+
+        Collapses the per-poll provider calls ``task_publish_state``
+        makes (one per repo, every 10s) so a multi-repo task doesn't trip
+        Bitbucket 429s. On a provider error (429, transient network) we
+        reuse the last known result — or an empty list — and CACHE it, so
+        a rate-limit storm quiets itself instead of re-firing (and
+        blocking on the 40-100s retry backoff) on every poll. One warning
+        line per failure, never a per-poll traceback.
+        """
+        key = (str(getattr(repository, 'id', '') or ''), str(branch_name or ''))
+        now = time.time()
+        with self._pr_lookup_cache_lock:
+            cached = self._pr_lookup_cache.get(key)
+            if cached is not None and (now - cached[0]) < _PR_LOOKUP_TTL_SECONDS:
+                return cached[1]
+        try:
+            result = self._repository_service.find_pull_requests(
+                repository, source_branch=branch_name,
+            ) or []
+        except Exception as exc:
+            with self._pr_lookup_cache_lock:
+                stale = self._pr_lookup_cache.get(key)
+            value = stale[1] if stale is not None else []
+            # Cache the fallback so the next poll within the TTL skips the
+            # provider entirely — that's what breaks the 429 storm.
+            with self._pr_lookup_cache_lock:
+                self._pr_lookup_cache[key] = (now, value)
+            self.logger.warning(
+                'PR lookup failed for repository %s (branch %s): %s — '
+                'serving %s for up to %ds',
+                key[0], key[1], exc,
+                'cached PRs' if value else 'no-PR',
+                int(_PR_LOOKUP_TTL_SECONDS),
+            )
+            return value
+        with self._pr_lookup_cache_lock:
+            self._pr_lookup_cache[key] = (now, result)
+        return result
+
     def task_publish_state(self, task_id: str) -> dict[str, object]:
         """Workspace + push-readiness + PR-existence summary for the UI.
 
@@ -3786,16 +3841,7 @@ class AgentService(MissionStepLoggerMixin, Service):
                         'branch-needs-push check failed for task %s repository %s',
                         normalized, repository.id,
                     )
-            try:
-                existing = self._repository_service.find_pull_requests(
-                    repository, source_branch=branch_name,
-                )
-            except Exception:
-                self.logger.exception(
-                    'PR lookup failed for task %s repository %s',
-                    normalized, repository.id,
-                )
-                continue
+            existing = self._cached_find_pull_requests(repository, branch_name)
             if existing:
                 has_pull_request = True
                 first = existing[0] if isinstance(existing[0], dict) else {}

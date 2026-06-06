@@ -327,6 +327,50 @@ class RequeueOrphanedInProgressCommentsTests(unittest.TestCase):
             self.assertEqual(service.requeue_orphaned_in_progress_comments(), [])
 
 
+class CachedFindPullRequestsTests(unittest.TestCase):
+    """PR-lookup TTL cache: collapse per-poll provider calls + serve
+    stale-on-error so a Bitbucket 429 storm quiets itself."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix='kato-prcache-')
+        self.addCleanup(self._tmp.cleanup)
+        self.service, _ = build_real_agent_service(Path(self._tmp.name))
+
+    def _repo_service(self, **kwargs):
+        rs = MagicMock()
+        for key, val in kwargs.items():
+            setattr(rs.find_pull_requests, key, val)
+        self.service._repository_service = rs
+        return rs
+
+    def test_second_call_within_ttl_hits_cache_not_provider(self) -> None:
+        rs = self._repo_service(return_value=[{'url': 'http://pr/1'}])
+        repo = SimpleNamespace(id='r1')
+        first = self.service._cached_find_pull_requests(repo, 'b')
+        second = self.service._cached_find_pull_requests(repo, 'b')
+        self.assertEqual(first, [{'url': 'http://pr/1'}])
+        self.assertEqual(second, first)
+        rs.find_pull_requests.assert_called_once()
+
+    def test_provider_error_serves_empty_and_caches_it(self) -> None:
+        rs = self._repo_service(side_effect=RuntimeError('429'))
+        repo = SimpleNamespace(id='r1')
+        self.assertEqual(self.service._cached_find_pull_requests(repo, 'b'), [])
+        # Cached → the next poll within the TTL does NOT re-hit the
+        # provider (this is what breaks the 429 storm).
+        self.service._cached_find_pull_requests(repo, 'b')
+        rs.find_pull_requests.assert_called_once()
+
+    def test_provider_error_serves_stale_result_when_available(self) -> None:
+        rs = self._repo_service(side_effect=RuntimeError('429'))
+        repo = SimpleNamespace(id='r1')
+        # Seed an EXPIRED entry (epoch 0) → re-fetch attempted → errors →
+        # stale value served.
+        self.service._pr_lookup_cache[('r1', 'b')] = (0.0, [{'url': 'http://pr/old'}])
+        out = self.service._cached_find_pull_requests(repo, 'b')
+        self.assertEqual(out, [{'url': 'http://pr/old'}])
+
+
 class CompleteInProgressTaskCommentsTests(unittest.TestCase):
     """End-of-turn pipeline transition. Real store, real status writes."""
 
@@ -1666,7 +1710,11 @@ class TaskPublishStateTests(unittest.TestCase):
                                         SimpleNamespace(id='T1'))):
             result = service.task_publish_state('T1')
         self.assertFalse(result['has_pull_request'])
-        service.logger.exception.assert_called()
+        # The cache helper swallows the provider error and logs ONE
+        # warning (no per-poll traceback) — that's what tames the 429
+        # storm. has_pull_request stays False (no PR known).
+        service.logger.warning.assert_called()
+        service.logger.exception.assert_not_called()
 
 
 class ResolvePublishContextTests(unittest.TestCase):

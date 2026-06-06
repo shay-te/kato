@@ -541,7 +541,11 @@ class SpawnCommentAgentWorkspaceSummaryTests(unittest.TestCase):
         kwargs = runner.resume_session_for_chat.call_args.kwargs
         self.assertEqual(kwargs['task_id'], 'PROJ-1')
         self.assertEqual(kwargs['message'], 'prompt text')
-        wm.get.assert_called_once_with('PROJ-1')
+        # The respawn now also surfaces the task's sibling repos as
+        # --add-dirs (empty here: this workspace stub has no repos).
+        self.assertEqual(kwargs['additional_dirs'], [])
+        # get() is read for BOTH the summary and the sibling-repo set.
+        wm.get.assert_called_with('PROJ-1')
 
     def test_no_workspace_manager_leaves_summary_blank(self) -> None:
         # 1954->1957 false arc: workspace_manager is None, so the summary
