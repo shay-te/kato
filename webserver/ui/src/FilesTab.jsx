@@ -895,7 +895,7 @@ function RepoTree({
         {repoTree.readOnly && (
           <button
             type="button"
-            className="files-tab-repo-readonly tooltip-above"
+            className="files-tab-repo-readonly tooltip-anchor-right"
             data-tooltip="Read-only: kato has no push permission for this repo. The agent can edit it for reference, but changes here are NOT pushed. Click to re-check push access."
             aria-label={`${heading} is read-only — re-check push access`}
             onClick={(event) => {
@@ -903,8 +903,7 @@ function RepoTree({
               if (typeof onRecheckPush === 'function') { onRecheckPush(repoId); }
             }}
           >
-            <span>read-only</span>
-            <Icon name="refresh" />
+            RO
           </button>
         )}
         {repoId && taskId && (

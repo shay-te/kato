@@ -4003,21 +4003,23 @@ body.kato-resizing #left-pane-resizer::before {
  * this repo (external reference library). Orange "caution" pill; the agent can
  * still edit it locally but changes are NOT pushed. Clicking re-checks push
  * access (the refresh glyph) and reloads the tree. */
+// Compact "RO" chip (read-only). Small, fixed-size pill — the full
+// explanation lives in the tooltip (anchored right so it can't be cut off
+// by the files panel's scroll overflow).
 .files-tab-repo-readonly {
   display: inline-flex;
   align-items: center;
-  gap: $SPACE-4;
+  justify-content: center;
   flex-shrink: 0;
   margin-right: $SPACE-6;
-  padding: 2px $SPACE-8;
+  padding: 1px $SPACE-6;
   border: 1px solid $C-ORANGE-50-A65;
   border-radius: var(--radius-pill);
   background: $C-ORANGE-50-A35;
   color: $C-ORANGE-50;
   font-size: $TEXT-10;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.06em;
   cursor: pointer;
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
@@ -4028,10 +4030,21 @@ body.kato-resizing #left-pane-resizer::before {
   color: $C-NEUTRAL-96;
 }
 
-.files-tab-repo-readonly svg {
-  width: 10px;
-  height: 10px;
-  display: block;
+// Tooltip variant: anchor the bubble's RIGHT edge to the element and grow
+// LEFT (instead of the default centered, which overflows the panel's right
+// edge and gets clipped by the scroller). Used by the RO chip.
+[data-tooltip].tooltip-anchor-right:hover::after,
+[data-tooltip].tooltip-anchor-right:focus-visible::after {
+  left: auto;
+  right: 0;
+  transform: none;
+}
+
+[data-tooltip].tooltip-anchor-right:hover::before,
+[data-tooltip].tooltip-anchor-right:focus-visible::before {
+  left: auto;
+  right: $SPACE-8;
+  transform: none;
 }
 
 /* Per-repo "view commit" affordance + dropdown menu (FilesTab).
