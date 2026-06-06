@@ -53,6 +53,14 @@ Produce a structured report (markdown). For each finding give file:line, severit
    - Every change is in-scope for this task. Flag anything unrelated.
    - All edits are inside the task folder (no out-of-sandbox writes).
 
+BEFORE YOU REPORT — RUN ALL THE TESTS (mandatory, do this last)
+- After fixing the BLOCKERs/MAJORs, RUN THE FULL TEST SUITE of every repo you touched
+  (not just the files you changed) — the project's normal test command for each.
+- If any test fails, FIX it and re-run until green, or list the failure as a BLOCKER if
+  you can't. Do NOT report "READY" while any test is red.
+- The report MUST include the test results: per repo, the exact command run and the
+  pass/fail counts (e.g. "core-lib: 312 passed, 0 failed"). No tests run = NOT READY.
+
 OUTPUT FORMAT
 - Open with a SUMMARY TABLE — one row per file that has findings, columns:
   | File | Blocker | Major | Minor | Nit | Total |
@@ -60,5 +68,6 @@ OUTPUT FORMAT
 - Then list the findings themselves, PRIORITIZED top to bottom by severity:
   all BLOCKERs first, then MAJORs, then MINORs, then NITs — most important issues
   at the top so I can act on them in order. Within a severity, order by impact.
+- Then a TEST RESULTS section: one line per repo with the command + pass/fail counts.
 
 End with a PR-readiness verdict (READY / NOT READY) and, if NOT READY, the exact remaining blockers. Be concise — no praise, only findings.

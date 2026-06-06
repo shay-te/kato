@@ -772,6 +772,14 @@ Produce a structured report (markdown). For each finding give file:line, severit
    - Every change is in-scope for this task. Flag anything unrelated.
    - All edits are inside the task folder (no out-of-sandbox writes).
 
+BEFORE YOU REPORT — RUN ALL THE TESTS (mandatory, do this last)
+- After fixing the BLOCKERs/MAJORs, RUN THE FULL TEST SUITE of every repo you touched
+  (not just the files you changed) — the project's normal test command for each.
+- If any test fails, FIX it and re-run until green, or list the failure as a BLOCKER if
+  you can't. Do NOT report "READY" while any test is red.
+- The report MUST include the test results: per repo, the exact command run and the
+  pass/fail counts (e.g. "core-lib: 312 passed, 0 failed"). No tests run = NOT READY.
+
 OUTPUT FORMAT
 - Open with a SUMMARY TABLE — one row per file that has findings, columns:
   | File | Blocker | Major | Minor | Nit | Total |
@@ -779,6 +787,7 @@ OUTPUT FORMAT
 - Then list the findings themselves, PRIORITIZED top to bottom by severity:
   all BLOCKERs first, then MAJORs, then MINORs, then NITs — most important issues
   at the top so I can act on them in order. Within a severity, order by impact.
+- Then a TEST RESULTS section: one line per repo with the command + pass/fail counts.
 
 End with a PR-readiness verdict (READY / NOT READY) and, if NOT READY, the exact remaining blockers. Be concise — no praise, only findings.
 `}),hme="kato.promptOverrides.v1",fme=Object.freeze([{id:"codeReview",label:"Code review",description:'Sent by the "Code review" toolbar button (the diff icon).',default:met.codeReview}]);function _et(i){const e=fme.find(t=>t.id===i);return e?e.default:""}function gme(){const i=cC(Up(hme,null),null);return!i||typeof i!="object"?{}:i}function bet(i){qp(hme,JSON.stringify(i))}let zu=gme();const p$=tL(()=>zu);function pme(i){zu=i,bet(i),p$.emit()}const Nf={subscribe:p$.subscribe,get(i){return String(zu[i]||"").trim()||_et(i)},override(i){return String(zu[i]||"")},isCustom(i){return!!String(zu[i]||"").trim()},setOverride(i,e){if(!i)return;const t=String(e||"");if(!t.trim()){this.reset(i);return}zu[i]!==t&&pme({...zu,[i]:t})},reset(i){if(!i||!(i in zu))return;const e={...zu};delete e[i],pme(e)},syncFromStorage(){zu=gme(),p$.emit()}};function ju(i,{enabled:e=!0,onDone:t}={}){const[n,s]=N.useState(!1),r=N.useRef(i);r.current=i;const o=N.useRef(t);o.current=t;const a=N.useCallback(async(...l)=>{if(n||!e)return null;s(!0);const c=await r.current(...l);return s(!1),o.current&&o.current(c),c},[n,e]);return[n,a]}const vet=5e3;function wet(i){const[e,t]=N.useState(!1);N.useEffect(()=>{i||t(!1)},[i]),GL(async()=>{try{const r=await YPe(i);t(!!(r!=null&&r.awaiting_push_approval))}catch{}},vet,[i],{enabled:!!i});const[n,s]=ju(()=>ZPe(i),{enabled:!!i,onDone:r=>{r.ok&&t(!1)}});return{awaiting:e,busy:n,approve:s}}function mme(i,e={}){const{pushedSummary:t}=e,n=i.pushed_repositories||[],s=i.skipped_repositories||[],r=i.failed_repositories||[];return n.length?t==="count_only"?`✓ pushed ${n.length} repo(s) to remote`:`✓ pushed ${n.length} repo(s): ${n.join(", ")}`:s.length?`• push skipped — already in sync (${s.length} repo(s))`:r.length?`✗ push failed: ${r.map(a=>`${a.repository_id}: ${a.error}`).join("; ")}`:null}function lO(i){return(i||[]).map(e=>`✗ ${e.repository_id}: ${e.error}`)}function YL(i,e){return{title:e,kind:"error",message:Wp(i,"unknown error")}}function yet(i){if(!i||!i.ok)return YL(i,"Pull failed");const e=i.body||{},t=e.pulled_repositories||[],n=e.skipped_repositories||[],s=e.failed_repositories||[],r=[];for(const o of t){const a=Number(o.commits_pulled||0);r.push(`✓ ${o.repository_id}: pulled ${a} commit(s)`)}for(const o of n)r.push(Cet(o));return r.push(...lO(s)),r.length===0&&r.push("• no repositories in workspace"),{title:t.length?s.length?"Pull partially completed":"Pulled":"Nothing to pull",kind:xet({pulled:t,skipped:n,failed:s}),message:r.join(`
