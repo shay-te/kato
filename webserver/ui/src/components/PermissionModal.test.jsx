@@ -9,9 +9,6 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import PermissionModal from './PermissionModal.jsx';
 
 
-// Default fixture uses a NON-execution tool (Edit) so the generic
-// rendering/button tests exercise the ordinary path. Execution (Bash) is
-// high-risk and has its own tests below.
 function _raw(overrides = {}) {
   return {
     type: 'control_request',
@@ -118,22 +115,15 @@ describe('PermissionModal — rendering', () => {
     expect(screen.getByText('changes')).toBeInTheDocument();
   });
 
-  test('execution (Bash) ask shows the red EXECUTE warning + the command', () => {
+  test('an escaping command (backend-flagged outside_sandbox) shows the red warning + withholds Allow always', () => {
+    // The backend flags docker/sudo/etc. as outside_sandbox; the modal then
+    // reuses the out-of-task treatment (red banner, no remembered scope).
     const { container } = render(<PermissionModal raw={_raw({
+      outside_sandbox: true,
+      outside_path: 'docker',
       request: { request_id: 'r', tool_name: 'Bash', input: { command: 'docker run x' } },
     })} onDecide={vi.fn()} />);
-    const warn = container.querySelector('#permission-execution');
-    expect(warn).toBeInTheDocument();
-    expect(warn.querySelector('h1').textContent).toMatch(/EXECUTE SOFTWARE/);
-    expect(warn.textContent).toMatch(/docker run x/);
-  });
-
-  test('execution (Bash) ask withholds the "Allow always" button', () => {
-    render(<PermissionModal raw={_raw({
-      request: { request_id: 'r', tool_name: 'Bash', input: { command: 'docker ps' } },
-    })} onDecide={vi.fn()} />);
-    expect(screen.getByRole('button', { name: /deny/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /allow once/i })).toBeInTheDocument();
+    expect(container.querySelector('#permission-outside-sandbox')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /allow always/i })).toBeNull();
   });
 });

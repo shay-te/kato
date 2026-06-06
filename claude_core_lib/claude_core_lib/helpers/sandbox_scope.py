@@ -19,7 +19,48 @@ disk, and still catches ``../`` escapes (the actual attack vector).
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
+
+# Commands that ESCAPE the task sandbox — they run software outside the
+# task folder (containers, the host system, another cluster) or with
+# elevated privilege, regardless of cwd. An agent reaching for one of
+# these gets the loud out-of-task alert + always-prompt, while ordinary
+# in-task build/test commands (mvn, npm, pytest, cd into the task) are
+# left to the normal rememberable flow. Heuristic by design — tune freely.
+_SANDBOX_ESCAPE_COMMANDS = frozenset({
+    'docker', 'docker-compose', 'podman', 'nerdctl', 'colima', 'minikube',
+    'kubectl', 'helm', 'vagrant',
+    'sudo', 'su', 'doas',
+    'systemctl', 'launchctl', 'service',
+})
+
+_SHELL_SEPARATORS = re.compile(r'&&|\|\||[;|\n]')
+
+
+def classify_command_sandbox(command: str) -> tuple[bool, str]:
+    """Return ``(escapes, offending_command)`` for a shell command.
+
+    Splits on shell separators and checks the LEADING program of each
+    sub-command against the escape list (skipping ``FOO=bar`` env
+    prefixes, resolving ``/usr/bin/docker`` → ``docker``). Routine build
+    chains (``cd <task> && mvn verify``) return ``(False, '')``.
+    """
+    text = str(command or '').strip()
+    if not text:
+        return False, ''
+    for sub in _SHELL_SEPARATORS.split(text):
+        tokens = sub.strip().split()
+        index = 0
+        # Skip leading ``NAME=value`` env assignments.
+        while index < len(tokens) and '=' in tokens[index] and not tokens[index].startswith('-'):
+            index += 1
+        if index >= len(tokens):
+            continue
+        program = tokens[index].rsplit('/', 1)[-1]
+        if program in _SANDBOX_ESCAPE_COMMANDS:
+            return True, program
+    return False, ''
 
 # Tool-input keys that name a filesystem path the agent intends to
 # touch. Covers Read/Edit/Write/MultiEdit (``file_path``), generic

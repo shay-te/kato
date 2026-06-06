@@ -1,9 +1,6 @@
 import { useEffect, useState } from 'react';
 import PermissionModal from './PermissionModal.jsx';
-import {
-  unpackPermissionEnvelope,
-  isExecutionTool,
-} from '../utils/permissionEnvelope.js';
+import { unpackPermissionEnvelope } from '../utils/permissionEnvelope.js';
 
 export default function PermissionDecisionContainer({
   pending,
@@ -20,13 +17,11 @@ export default function PermissionDecisionContainer({
     if (!pending) { return; }
     const { toolName, requestId, outsideSandbox } = unpackPermissionEnvelope(pending);
     if (!requestId || requestId === autoFailedRequestId) { return; }
-    // High-risk asks never auto-resolve from a remembered decision — force
-    // the modal (with its loud warning) so the operator decides each one:
-    //   * out-of-sandbox: a tool-name "allow" would otherwise approve an
-    //     out-of-folder ask too;
-    //   * execution (Bash/Monitor): kato must never silently run software
-    //     (docker, build scripts) on a past "allow always".
-    if (outsideSandbox || isExecutionTool(toolName)) { return; }
+    // Out-of-task asks never auto-resolve from a remembered decision (a
+    // tool-name "allow" would otherwise approve an out-of-folder ask, or an
+    // escaping command like docker, silently) — force the modal so the
+    // operator decides each one explicitly.
+    if (outsideSandbox) { return; }
     const remembered = recallToolDecision(toolName);
     if (!remembered) { return; }
     const allow = remembered === 'allow';
@@ -68,11 +63,9 @@ export default function PermissionDecisionContainer({
   } = unpackPermissionEnvelope(pending);
   const autoSubmitting = submittingRequestId && submittingRequestId === pendingRequestId;
   const remembered = recallToolDecision(pendingTool);
-  // High-risk asks (out-of-sandbox / execution) are never hidden behind a
-  // remembered decision — they always surface the modal (see the
-  // auto-resolve guard above).
-  const highRisk = pendingOutside || isExecutionTool(pendingTool);
-  const hideRemembered = remembered && !highRisk
+  // Out-of-task asks are never hidden behind a remembered decision — they
+  // always surface the modal (see the auto-resolve guard above).
+  const hideRemembered = remembered && !pendingOutside
     && pendingRequestId !== autoFailedRequestId;
   if (autoSubmitting || hideRemembered) { return null; }
 

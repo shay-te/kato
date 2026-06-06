@@ -18,9 +18,6 @@ import { render, screen, waitFor, act } from '@testing-library/react';
 import PermissionDecisionContainer from './PermissionDecisionContainer.jsx';
 
 
-// Generic fixture uses a NON-execution tool (Edit) so the remembered
-// auto-allow path is exercised. Execution (Bash) never auto-resolves —
-// it has its own test below.
 function _pending(overrides = {}) {
   return {
     type: 'control_request',
@@ -156,29 +153,6 @@ describe('PermissionDecisionContainer — auto-allow / auto-deny', () => {
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).toBeInTheDocument();
     });
-  });
-});
-
-
-describe('PermissionDecisionContainer — execution never auto-resolves', () => {
-
-  test('a Bash (execution) ask shows the modal even when remembered "allow"', async () => {
-    const onSubmit = vi.fn().mockResolvedValue(true);
-    render(
-      <PermissionDecisionContainer
-        pending={_pending({
-          request: { request_id: 'req-1', tool_name: 'Bash', input: { command: 'docker run x' } },
-        })}
-        onDismiss={vi.fn()}
-        onSubmit={onSubmit}
-        onAuditBubble={vi.fn()}
-        recallToolDecision={() => 'allow'}
-        rememberToolDecision={vi.fn()}
-      />,
-    );
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeInTheDocument());
-    expect(onSubmit).not.toHaveBeenCalled();
-    expect(screen.queryByRole('button', { name: /allow always/i })).toBeNull();
   });
 });
 

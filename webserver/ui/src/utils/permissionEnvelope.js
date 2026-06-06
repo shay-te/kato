@@ -19,19 +19,3 @@ export function unpackPermissionEnvelope(raw) {
     outsidePath: String(raw?.outside_path || nested.outside_path || ''),
   };
 }
-
-// Tools that EXECUTE software (run arbitrary commands). These get the red,
-// always-prompt treatment — kato must never silently run `docker`, build
-// scripts, etc. on a remembered approval. Bash is the vector; Monitor runs
-// a command in its wait loop too.
-const EXECUTION_TOOLS = new Set(['Bash', 'Monitor']);
-
-export function isExecutionTool(toolName) {
-  return EXECUTION_TOOLS.has(String(toolName || ''));
-}
-
-// The command string an execution tool will run (for the warning), or ''.
-export function executionCommand(toolInput) {
-  if (!toolInput || typeof toolInput !== 'object') { return ''; }
-  return String(toolInput.command || '').trim();
-}

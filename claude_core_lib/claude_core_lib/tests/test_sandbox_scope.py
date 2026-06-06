@@ -2,6 +2,7 @@ import os
 import unittest
 
 from claude_core_lib.claude_core_lib.helpers.sandbox_scope import (
+    classify_command_sandbox,
     classify_tool_input_sandbox,
 )
 
@@ -129,6 +130,49 @@ class ClassifyToolInputSandboxTests(unittest.TestCase):
             '/work/UNA-1/admin-backend', (),
         )
         self.assertTrue(outside)
+
+
+class ClassifyCommandSandboxTests(unittest.TestCase):
+    def test_docker_is_flagged(self) -> None:
+        self.assertEqual(classify_command_sandbox('docker run x'), (True, 'docker'))
+
+    def test_sudo_kubectl_systemctl_flagged(self) -> None:
+        self.assertTrue(classify_command_sandbox('sudo rm -rf /')[0])
+        self.assertTrue(classify_command_sandbox('kubectl get pods')[0])
+        self.assertTrue(classify_command_sandbox('systemctl restart x')[0])
+
+    def test_flagged_in_a_chain(self) -> None:
+        self.assertEqual(
+            classify_command_sandbox('cd repo && docker compose up'),
+            (True, 'docker'),
+        )
+
+    def test_full_path_to_escape_command_is_flagged(self) -> None:
+        self.assertEqual(
+            classify_command_sandbox('/usr/local/bin/docker ps'), (True, 'docker'),
+        )
+
+    def test_env_prefix_before_escape_command(self) -> None:
+        self.assertEqual(
+            classify_command_sandbox('FOO=bar sudo make'), (True, 'sudo'),
+        )
+
+    def test_routine_build_is_not_flagged(self) -> None:
+        # The exact legitimate command from the report: cd into the task,
+        # scratch /tmp log, set JAVA_HOME, mvn verify. No escape command.
+        cmd = (
+            "cd /wk/UNA-2742/kafka-connect-solr && rm -f /tmp/mvn-cov.log && "
+            "export JAVA_HOME=/Library/Java/x && export PATH=$JAVA_HOME/bin:$PATH && "
+            "mvn -B -DskipITs verify 2>&1 > /tmp/mvn-cov.log"
+        )
+        self.assertEqual(classify_command_sandbox(cmd), (False, ''))
+
+    def test_npm_pytest_git_not_flagged(self) -> None:
+        for cmd in ('npm test', 'pytest -q', 'git status', 'ls -la', 'make build'):
+            self.assertEqual(classify_command_sandbox(cmd), (False, ''))
+
+    def test_blank_command_is_not_flagged(self) -> None:
+        self.assertEqual(classify_command_sandbox('   '), (False, ''))
 
     def test_cwd_root_itself_is_inside(self) -> None:
         outside, _ = classify_tool_input_sandbox(
