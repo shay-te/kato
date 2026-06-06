@@ -53,4 +53,12 @@ Produce a structured report (markdown). For each finding give file:line, severit
    - Every change is in-scope for this task. Flag anything unrelated.
    - All edits are inside the task folder (no out-of-sandbox writes).
 
+OUTPUT FORMAT
+- Open with a SUMMARY TABLE — one row per file that has findings, columns:
+  | File | Blocker | Major | Minor | Nit | Total |
+  Sort by Total descending (worst files first); add a TOTALS row at the bottom.
+- Then list the findings themselves, PRIORITIZED top to bottom by severity:
+  all BLOCKERs first, then MAJORs, then MINORs, then NITs — most important issues
+  at the top so I can act on them in order. Within a severity, order by impact.
+
 End with a PR-readiness verdict (READY / NOT READY) and, if NOT READY, the exact remaining blockers. Be concise — no praise, only findings.
