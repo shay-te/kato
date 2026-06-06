@@ -735,6 +735,11 @@ Produce a structured report (markdown). For each finding give file:line, severit
    - Off-contract returns: a function returns a shape callers don't expect (None vs [], dict vs bool).
    - Regressions: find every call site of changed signatures/return shapes and verify each still holds.
    - For each suspected bug, give the CONCRETE input/scenario that triggers it and the wrong result.
+   - FREE HANDS: this list is a starting point, NOT a limit. Nobody knows what bugs are in
+     here — so hunt openly. Follow anything that smells off, trace the data flow end to end,
+     question every assumption, and chase your suspicions wherever they lead — into callers,
+     callees, configs, tests, and adjacent code the diff touches. If something feels wrong but
+     fits no category above, report it anyway. Use your full judgment; surprise me.
 
 2. SECURITY (hard gate)
    - NO secrets, tokens, API keys, or credential-shaped strings in any committed file.
