@@ -865,7 +865,6 @@ function RepoTree({
   const changedTreeContent = hasChangedFiles && filteredChangedNodes.length > 0 ? (
     <ChangedFilesTree
       nodes={filteredChangedNodes}
-      stats={changedTree.stats}
       conflictedFiles={conflictedFiles}
       commentMeta={commentMeta}
       closedFolders={closedChangedFolders}
@@ -1039,7 +1038,7 @@ function CommitDropdown({ state, onPick, onClose }) {
 }
 
 function ChangedFilesTree({
-  nodes, stats, conflictedFiles, commentMeta = EMPTY_COMMENT_META,
+  nodes, conflictedFiles, commentMeta = EMPTY_COMMENT_META,
   closedFolders, selectedKey, onToggleFolder, onSelectFile, onOpenPathMenu,
   repoId = '',
 }) {
@@ -1061,10 +1060,9 @@ function ChangedFilesTree({
   ));
   return (
     <div className="files-changed-tree-wrap">
-      <div className="diff-tree-summary files-tree-summary">
-        <span className="diff-tree-title">Lines updated</span>
-        <FilesLineStats stats={stats} />
-      </div>
+      {/* The repo's +/- totals now live inline in the repo header
+          (renderRepoHeaderStats), so the old "Lines updated" summary row
+          here would just duplicate them. */}
       <div className="diff-file-tree files-changed-tree">
         {rows}
       </div>

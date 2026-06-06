@@ -4830,20 +4830,6 @@ body.kato-resizing #left-pane-resizer::before {
   padding: 6px 8px 10px;
 }
 
-.diff-tree-summary {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
-  padding: 0 4px;
-}
-
-.diff-tree-title {
-  color: #f5f5f7;
-  font-size: 15px;
-  font-weight: 700;
-}
-
 .diff-line-stats {
   margin-left: auto;
   display: inline-flex;
@@ -5019,10 +5005,6 @@ body.kato-resizing #left-pane-resizer::before {
 
 .files-changed-tree-wrap {
   padding: 8px 6px 12px;
-}
-
-.files-tree-summary {
-  margin: 0 4px 10px;
 }
 
 .files-changed-tree-row {

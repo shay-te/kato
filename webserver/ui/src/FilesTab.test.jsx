@@ -467,7 +467,7 @@ describe('FilesTab — render shell', () => {
     fetchFileTree.mockResolvedValue(FILE_TREE_PAYLOAD);
     fetchDiff.mockResolvedValue(DIFF_PAYLOAD);
     render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
-    expect(await screen.findByText('Lines updated')).toBeInTheDocument();
+    expect(await screen.findByText('Changed.js')).toBeInTheDocument();
     expect(screen.getByText('client').closest('header'))
       .toHaveClass('sticky-section-header');
     expect(screen.getByText('Changed.js')).toBeInTheDocument();
@@ -567,7 +567,7 @@ describe('FilesTab — render shell', () => {
     fetchFileTree.mockResolvedValue(fileTreePayload);
     fetchDiff.mockResolvedValue(diffPayload);
     render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
-    expect(await screen.findByText('Lines updated')).toBeInTheDocument();
+    expect(await screen.findByText('Changed.js')).toBeInTheDocument();
     expect(screen.getByLabelText(/merge conflict/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Show all files' }));
@@ -594,7 +594,7 @@ describe('FilesTab — render shell', () => {
       },
     });
     render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
-    expect(await screen.findByText('Lines updated')).toBeInTheDocument();
+    expect(await screen.findByText('Changed.js')).toBeInTheDocument();
     // 2 root threads on src/Changed.js (reply excluded).
     await waitFor(() => {
       expect(screen.getByLabelText('Jump to 2 comments')).toBeInTheDocument();
@@ -661,7 +661,7 @@ describe('FilesTab — render shell', () => {
     fetchDiff.mockResolvedValue(DIFF_PAYLOAD);
     fetchTaskComments.mockResolvedValue({ ok: true, body: { comments: [] } });
     render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
-    expect(await screen.findByText('Lines updated')).toBeInTheDocument();
+    expect(await screen.findByText('Changed.js')).toBeInTheDocument();
     expect(screen.queryByLabelText(/comment/i)).not.toBeInTheDocument();
   });
 });
@@ -888,11 +888,11 @@ describe('FilesTab — chaos / random button mashing', () => {
         <FilesTab taskId={`CHAOS-${seed}`} onOpenFile={vi.fn()} />,
       );
       // Wait for the initial diff load so the tree is real before we
-      // start mashing. Two repos in the chaos payload → two "Lines
-      // updated" headers (one per repo). ``findAllByText`` returns
-      // once at least one is present.
-      const headers = await screen.findAllByText('Lines updated');
-      expect(headers.length).toBeGreaterThanOrEqual(1);
+      // start mashing. The client repo's changed-file row ("Changed.js")
+      // only renders once the diff has resolved. ``findAllByText``
+      // returns once at least one is present.
+      const changedRows = await screen.findAllByText('Changed.js');
+      expect(changedRows.length).toBeGreaterThanOrEqual(1);
 
       // Seed the clipboard so the post-loop invariant has teeth even
       // if the random sequence never lands on a successful menu copy.
@@ -1020,7 +1020,7 @@ describe('FilesTab — chaos / random button mashing', () => {
     const { container } = render(
       <FilesTab taskId="solo-task" onOpenFile={vi.fn()} />,
     );
-    expect(await screen.findByText('Lines updated')).toBeInTheDocument();
+    expect(await screen.findByText('Changed.js')).toBeInTheDocument();
 
     // Seed the clipboard so the "no backend: leak" check below has
     // teeth even if the random sequence never lands on a copy.

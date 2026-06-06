@@ -4883,20 +4883,6 @@ body.kato-resizing #left-pane-resizer::before {
   padding: $SPACE-6 $SPACE-8 $SPACE-10;
 }
 
-.diff-tree-summary {
-  display: flex;
-  align-items: center;
-  gap: $SPACE-10;
-  margin-bottom: $SPACE-10;
-  padding: 0 $SPACE-4;
-}
-
-.diff-tree-title {
-  color: $C-NEUTRAL-96;
-  font-size: $TEXT-15;
-  font-weight: 700;
-}
-
 .diff-line-stats {
   margin-left: auto;
   display: inline-flex;
@@ -5072,10 +5058,6 @@ body.kato-resizing #left-pane-resizer::before {
 
 .files-changed-tree-wrap {
   padding: $SPACE-8 $SPACE-6 $SPACE-12;
-}
-
-.files-tree-summary {
-  margin: 0 $SPACE-4 $SPACE-10;
 }
 
 .files-changed-tree-row {
