@@ -3910,7 +3910,7 @@ body.kato-resizing #left-pane-resizer::before {
 .files-tab-repo {
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 12px;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
   overflow: visible;
   background: rgba(255, 255, 255, 0.06);
 }
@@ -3919,7 +3919,7 @@ body.kato-resizing #left-pane-resizer::before {
   display: flex;
   gap: 8px;
   align-items: center;
-  padding: 10px 12px;
+  padding: 6px 12px;
   border-radius: 12px 12px 0 0;
   background: #2a2a2a;
   cursor: pointer;
@@ -3927,6 +3927,35 @@ body.kato-resizing #left-pane-resizer::before {
   font-weight: 600;
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06);
   transition: background 120ms ease;
+}
+
+.files-tab-repo-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.files-tab-repo-added {
+  color: #79f2c0;
+}
+
+.files-tab-repo-deleted {
+  color: #fecaca;
+}
+
+.files-tab-repo-comments {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: #a3a3a3;
+}
+.files-tab-repo-comments svg {
+  width: 11px;
+  height: 11px;
 }
 
 .files-tab-repo-header:hover {

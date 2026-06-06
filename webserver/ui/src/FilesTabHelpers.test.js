@@ -4,11 +4,27 @@ import test from 'node:test';
 import {
   activateTreeNode,
   attachIds,
+  countRepoComments,
   folderContainsChange,
   groupContentMatchesByFile,
   matchTreeNode,
   normalizeTrees,
 } from './FilesTabHelpers.js';
+
+
+test('countRepoComments sums the per-file counts', () => {
+  const meta = new Map([
+    ['a.py', { count: 2, status: 'open' }],
+    ['b.py', { count: 1, status: 'open' }],
+  ]);
+  assert.equal(countRepoComments(meta), 3);
+});
+
+test('countRepoComments is 0 for empty / non-map input', () => {
+  assert.equal(countRepoComments(new Map()), 0);
+  assert.equal(countRepoComments(null), 0);
+  assert.equal(countRepoComments(undefined), 0);
+});
 
 
 test('groupContentMatchesByFile groups lines per file, first-seen order', () => {

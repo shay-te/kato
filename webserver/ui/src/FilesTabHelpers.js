@@ -182,3 +182,15 @@ export function groupContentMatchesByFile(matches) {
   }
   return groups;
 }
+
+
+// Total un-resolved comment count for a repo from its file→{count} meta
+// map (buildFilesCommentMeta values). 0 when none. Pure.
+export function countRepoComments(commentMeta) {
+  if (!commentMeta || typeof commentMeta.values !== 'function') { return 0; }
+  let total = 0;
+  for (const entry of commentMeta.values()) {
+    total += Number(entry?.count) || 0;
+  }
+  return total;
+}

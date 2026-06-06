@@ -30,6 +30,7 @@ import { copyRepoRelativePath } from './utils/clipboard.js';
 import {
   activateTreeNode,
   attachIds,
+  countRepoComments,
   folderContainsChange,
   matchTreeNode,
   normalizeTrees,
@@ -694,6 +695,30 @@ export function buildFilesDiffMeta(repoDiffs) {
 }
 
 
+// Inline repo-header summary: ``+N −M`` git stats and a comment count.
+// Returns null when there's nothing to show (clean repo, no comments).
+function renderRepoHeaderStats(stats, commentCount) {
+  const added = Number(stats?.added) || 0;
+  const deleted = Number(stats?.deleted) || 0;
+  if (!added && !deleted && !commentCount) { return null; }
+  return (
+    <span className="files-tab-repo-stats">
+      {added > 0 && <span className="files-tab-repo-added">+{added}</span>}
+      {deleted > 0 && <span className="files-tab-repo-deleted">−{deleted}</span>}
+      {commentCount > 0 && (
+        <span
+          className="files-tab-repo-comments"
+          title={`${commentCount} open comment(s)`}
+        >
+          <Icon name="comment" />
+          {commentCount}
+        </span>
+      )}
+    </span>
+  );
+}
+
+
 function RepoTree({
   repoTree, width, collapsed, onToggle, onPickFile,
   onOpenFile, onOpenPathMenu, onRecheckPush,
@@ -721,6 +746,12 @@ function RepoTree({
   const changedTree = useMemo(() => {
     return buildDiffFileTree(changedFilesList);
   }, [changedFilesList]);
+  // Inline header summary: git +/− totals for this repo and its open
+  // comment count, so the operator reads the repo's state without
+  // expanding it. Built before the return to keep the JSX logic-free.
+  const headerStats = renderRepoHeaderStats(
+    changedTree.stats, countRepoComments(commentMeta),
+  );
   const filteredChangedNodes = useMemo(() => {
     return filterChangedFileTree(changedTree.nodes, searchTerm);
   }, [changedTree.nodes, searchTerm]);
@@ -910,6 +941,7 @@ function RepoTree({
             (not the whole header) so it never doubles up with the
             commits button's own tooltip. */}
         <span className="files-tab-repo-name" data-tooltip={repoTree.cwd}>{heading}</span>
+        {headerStats}
         {repoTree.readOnly && (
           <button
             type="button"
