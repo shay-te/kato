@@ -265,6 +265,68 @@ class RequeueStuckInProgressCommentsTests(unittest.TestCase):
         self.assertEqual(requeued, [{'task_id': 'UNA-1', 'comment_id': ids[1]}])
 
 
+class RequeueOrphanedInProgressCommentsTests(unittest.TestCase):
+    """RUNTIME recovery: an IN_PROGRESS comment whose session is gone
+    must be requeued so the task's queue stops being blocked. Gated on
+    no-live-session + grace so a legitimately running comment is never
+    yanked."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix='kato-orphan-')
+        self.addCleanup(self._tmp.cleanup)
+
+    def _service(self, session_manager=None):
+        service, workspace_service = build_real_agent_service(
+            Path(self._tmp.name), session_manager=session_manager,
+        )
+        return service, workspace_service
+
+    def _seed_in_progress(self, workspace_service, task_id, *, started_at=0.0):
+        materialize_workspace(workspace_service, task_id)
+        store = real_store_for(workspace_service, task_id)
+        record = store.add(CommentRecord(
+            repo_id='repo-1', body=impatient_comment(), author='op',
+            source=CommentSource.LOCAL.value,
+            kato_status=KatoCommentStatus.IN_PROGRESS.value,
+        ))
+        if started_at:
+            store.start_kato_run(record.id, started_at_epoch=started_at)
+        return record.id
+
+    def test_orphan_with_no_live_session_is_requeued(self) -> None:
+        # No session manager → no live subprocess → the IN_PROGRESS
+        # comment is orphaned and gets flipped back to QUEUED.
+        service, ws = self._service(session_manager=None)
+        cid = self._seed_in_progress(ws, 'UNA-1')  # started_at=0 → old orphan
+        requeued = service.requeue_orphaned_in_progress_comments()
+        self.assertEqual(requeued, [{'task_id': 'UNA-1', 'comment_id': cid}])
+        on_disk = {c.id: c.kato_status for c in real_store_for(ws, 'UNA-1').list()}
+        self.assertEqual(on_disk[cid], KatoCommentStatus.QUEUED.value)
+
+    def test_live_alive_session_is_not_requeued(self) -> None:
+        # A still-alive subprocess might be working the comment — leave it.
+        alive = SimpleNamespace(is_alive=True)
+        sm = MagicMock()
+        sm.get_session.return_value = alive
+        service, ws = self._service(session_manager=sm)
+        self._seed_in_progress(ws, 'UNA-1')
+        with patch.object(service, '_task_has_busy_turn', return_value=False):
+            self.assertEqual(service.requeue_orphaned_in_progress_comments(), [])
+
+    def test_recent_run_within_grace_is_not_requeued(self) -> None:
+        # A comment whose run started seconds ago (session still spawning)
+        # must NOT be yanked back and double-dispatched.
+        service, ws = self._service(session_manager=None)
+        self._seed_in_progress(ws, 'UNA-1', started_at=time.time())
+        self.assertEqual(service.requeue_orphaned_in_progress_comments(), [])
+
+    def test_busy_turn_is_not_requeued(self) -> None:
+        service, ws = self._service(session_manager=None)
+        self._seed_in_progress(ws, 'UNA-1')
+        with patch.object(service, '_task_has_busy_turn', return_value=True):
+            self.assertEqual(service.requeue_orphaned_in_progress_comments(), [])
+
+
 class CompleteInProgressTaskCommentsTests(unittest.TestCase):
     """End-of-turn pipeline transition. Real store, real status writes."""
 

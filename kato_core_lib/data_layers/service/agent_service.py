@@ -22,6 +22,7 @@ from kato_core_lib.validation.startup_dependency_validator import (
     StartupDependencyValidator,
 )
 from kato_core_lib.helpers.logging_utils import configure_logger
+from kato_core_lib.helpers.workspace_repo_utils import sibling_repository_dirs
 from kato_core_lib.helpers.mission_logging_utils import MissionStepLoggerMixin
 from kato_core_lib.data_layers.data.task import Task
 from kato_core_lib.data_layers.service.implementation_service import ImplementationService
@@ -1217,6 +1218,91 @@ class AgentService(MissionStepLoggerMixin, Service):
                 )
         return requeued
 
+    def requeue_orphaned_in_progress_comments(self) -> list[dict[str, object]]:
+        """Runtime recovery for comments orphaned IN_PROGRESS.
+
+        ``requeue_stuck_in_progress_comments`` only runs at BOOT (every
+        session is dead then). At RUNTIME a comment can still be orphaned:
+        the session it was dispatched into is terminated/replaced — a
+        review-fix respawn, an effort-change respawn, a forget+re-adopt —
+        WITHOUT a ``RESULT`` that ``advance_finished_comment_runs`` could
+        match. Its ``IN_PROGRESS`` state then blocks the whole task's
+        queue forever: ``next_queued`` never returns it, and
+        ``_task_has_in_progress_comment`` makes every QUEUED comment
+        decline to start. That's the "comment never executed" report —
+        the queue stays stuck until the next kato restart re-queues it.
+
+        Per task, requeue an IN_PROGRESS comment ONLY when its run is
+        provably gone: the task has NO live subprocess AND is not
+        mid-turn, AND the run started more than the ack grace ago. The
+        grace stops a comment whose session is still SPAWNING (briefly
+        not-alive) from being yanked back and double-dispatched. A
+        legitimately running comment (live, busy session) is never
+        touched. Runs AFTER ``advance_finished_comment_runs`` in the
+        watcher tick, so a comment whose RESULT is still in a live buffer
+        is completed first and only true orphans are requeued.
+        """
+        from kato_core_lib.comment_core_lib import KatoCommentStatus
+
+        requeued: list[dict[str, object]] = []
+        now = time.time()
+        for record in self._safe_list_workspaces():
+            task_id = str(getattr(record, 'task_id', '') or '').strip()
+            if not task_id:
+                continue
+            # A live subprocess (or a busy turn) might still be working
+            # the comment — leave it on the WORKING badge.
+            session = None
+            if self._session_manager is not None:
+                try:
+                    session = self._session_manager.get_session(task_id)
+                except Exception:
+                    session = None
+            if session is not None and getattr(session, 'is_alive', False):
+                continue
+            if self._task_has_busy_turn(task_id):
+                continue
+            store = self._comment_store_for(task_id)
+            if store is None:
+                continue
+            try:
+                comments = store.list()
+            except Exception:
+                self.logger.exception(
+                    'failed to list comments requeuing orphans for task %s',
+                    task_id,
+                )
+                continue
+            for comment in comments:
+                if comment.kato_status != KatoCommentStatus.IN_PROGRESS.value:
+                    continue
+                started = float(
+                    getattr(comment, 'kato_run_started_at_epoch', 0.0) or 0.0,
+                )
+                # Unknown start time → treat as an old orphan (requeue).
+                if started > 0 and (now - started) < _COMMENT_SEND_ACK_GRACE_SECONDS:
+                    continue
+                try:
+                    store.update_kato_status(
+                        comment.id,
+                        kato_status=KatoCommentStatus.QUEUED.value,
+                    )
+                except Exception:
+                    self.logger.exception(
+                        'failed to requeue orphaned comment %s on task %s',
+                        comment.id, task_id,
+                    )
+                    continue
+                self.logger.info(
+                    'requeued orphaned IN_PROGRESS comment %s on task %s '
+                    '(session gone, no result) — drain will rerun it',
+                    comment.id, task_id,
+                )
+                requeued.append(
+                    {'task_id': task_id, 'comment_id': comment.id},
+                )
+        return requeued
+
     def complete_in_progress_task_comments(
         self,
         task_id: str,
@@ -2269,16 +2355,26 @@ class AgentService(MissionStepLoggerMixin, Service):
         if self._workspace_manager is not None:
             workspace = self._workspace_manager.get(task_id)
             summary = str(getattr(workspace, 'task_summary', '') or '')
+        # Expose the task's OTHER repo clones too. Without this a
+        # comment-driven respawn spawned a single-repo session that
+        # couldn't read across repos (the cross-repo "that repo is
+        # forbidden" refusal) and made every sibling-repo path look
+        # outside the sandbox. Mirrors the chat-send route's --add-dir set.
+        additional_dirs = sibling_repository_dirs(
+            self._workspace_manager, task_id, cwd,
+        )
         self.logger.info(
             'comment %s on task %s: respawning Claude to work on it '
-            '(cwd=%s)',
+            '(cwd=%s, +%d repo(s))',
             getattr(record, 'id', '<unknown>'), task_id, cwd or '<none>',
+            len(additional_dirs),
         )
         runner.resume_session_for_chat(
             task_id=task_id,
             message=prompt,
             cwd=cwd,
             task_summary=summary,
+            additional_dirs=additional_dirs,
         )
         return True
 
@@ -3162,7 +3258,7 @@ class AgentService(MissionStepLoggerMixin, Service):
         normalized = str(task_id or '').strip()
         if not normalized:
             return {'pushed': False, 'task_id': task_id, 'error': 'empty task id'}
-        repos, _branch_name, _task = self._resolve_publish_context(normalized)
+        repos, branch_name_for_task, _task = self._resolve_publish_context(normalized)
         if not repos:
             return {
                 'pushed': False,
@@ -3230,6 +3326,10 @@ class AgentService(MissionStepLoggerMixin, Service):
         return {
             'pushed': bool(pushed_repositories),
             'task_id': normalized,
+            # The task branch the work was pushed to — surfaced in the
+            # Push toast so the operator sees "pushed … to branch <x>"
+            # instead of a bare repo list.
+            'branch': branch_name_for_task,
             'pushed_repositories': pushed_repositories,
             'skipped_repositories': skipped_repositories,
             'failed_repositories': failed_repositories,

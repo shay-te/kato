@@ -819,6 +819,20 @@ class PushTaskTests(unittest.TestCase):
         self.assertTrue(result['pushed'])
         self.assertEqual(result['pushed_repositories'], ['r1'])
 
+    def test_payload_carries_the_task_branch_for_the_toast(self) -> None:
+        # The Push toast says "pushed … to branch <x>" — the branch
+        # comes from this payload key, resolved off the publish context.
+        repo_obj = SimpleNamespace(id='r1')
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'feat/x'
+        repo.branch_needs_push.return_value = True
+        service = AgentService(**_kwargs(repository_service=repo))
+        with patch.object(service, '_resolve_publish_context',
+                          return_value=([repo_obj], 'feat/x',
+                                        SimpleNamespace(id='T1'))):
+            result = service.push_task('T1')
+        self.assertEqual(result['branch'], 'feat/x')
+
     def test_swallows_branch_needs_push_exception(self) -> None:
         repo_obj = SimpleNamespace(id='r1')
         repo = MagicMock()

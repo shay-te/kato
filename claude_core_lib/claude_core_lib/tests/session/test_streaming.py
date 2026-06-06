@@ -572,6 +572,39 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         self.assertEqual(event.event_type, 'system')
         self.assertEqual(event.subtype, 'init')
 
+    def test_control_request_outside_sandbox_is_flagged_on_event(self) -> None:
+        # An Edit targeting a path outside the task cwd + add-dirs gets
+        # ``outside_sandbox``/``outside_path`` stamped on the event raw so
+        # the UI can warn + withhold the remembered-approval scope.
+        session = StreamingClaudeSession(
+            task_id='UNA-1', cwd='/wks/UNA-1/backend',
+            additional_dirs=['/wks/UNA-1/client'],
+        )
+        event = SessionEvent(raw={
+            'type': 'control_request',
+            'request_id': 'r1',
+            'request': {'tool_name': 'Edit', 'input': {'file_path': '/etc/passwd'}},
+        })
+        session._maybe_capture_control_request(event)
+        self.assertTrue(event.raw.get('outside_sandbox'))
+        self.assertEqual(event.raw.get('outside_path'), '/etc/passwd')
+
+    def test_control_request_inside_sandbox_is_not_flagged(self) -> None:
+        session = StreamingClaudeSession(
+            task_id='UNA-1', cwd='/wks/UNA-1/backend',
+            additional_dirs=['/wks/UNA-1/client'],
+        )
+        event = SessionEvent(raw={
+            'type': 'control_request',
+            'request_id': 'r2',
+            'request': {
+                'tool_name': 'Edit',
+                'input': {'file_path': '/wks/UNA-1/backend/src/app.py'},
+            },
+        })
+        session._maybe_capture_control_request(event)
+        self.assertNotIn('outside_sandbox', event.raw)
+
     def test_stderr_indicates_stale_resume_false_when_no_resume_id(self) -> None:
         session = self._build_session(resume_session_id='')
         # No resume id configured → marker check short-circuits.
@@ -902,11 +935,39 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         # Last event is ``result`` → turn closed → not working.
         self.assertFalse(session.is_working)
 
-    def test_is_working_returns_false_when_only_system_events(self) -> None:
+    def test_is_working_returns_false_when_only_non_init_system_events(self) -> None:
         session = self._build_session()
         session._proc = SimpleNamespace(poll=lambda: None)  # alive
         session._recent_events.append(SessionEvent(raw={'type': 'system'}))
-        # No assistant/result events → not actively working.
+        # A bare ``system`` event (no ``init`` subtype) is not a turn-start
+        # marker → not actively working.
+        self.assertFalse(session.is_working)
+
+    def test_is_working_true_on_trailing_system_init(self) -> None:
+        # Mirrors the planning UI's ``turnInFlight`` reducer, which flips
+        # working on ``system/init``. An autonomous prompt goes to stdin
+        # with no ``user`` event, so during the context-read window before
+        # the first ``assistant`` reply, ``init`` is the only marker. A
+        # backgrounded tab (polled ``is_working``) MUST agree with the
+        # focused tab (live ``turnInFlight``) or the dot flips on focus.
+        session = self._build_session()
+        session._proc = SimpleNamespace(poll=lambda: None)  # alive
+        session._recent_events.append(
+            SessionEvent(raw={'type': 'system', 'subtype': 'init'}),
+        )
+        self.assertTrue(session.is_working)
+
+    def test_is_working_false_when_init_followed_by_result(self) -> None:
+        # A completed turn leaves a trailing ``result`` that wins over the
+        # older ``init`` — an idle, between-turns session never reads as
+        # working just because its turn opened with an ``init``.
+        session = self._build_session()
+        session._proc = SimpleNamespace(poll=lambda: None)  # alive
+        session._recent_events.append(
+            SessionEvent(raw={'type': 'system', 'subtype': 'init'}),
+        )
+        session._recent_events.append(SessionEvent(raw={'type': 'assistant'}))
+        session._recent_events.append(SessionEvent(raw={'type': 'result'}))
         self.assertFalse(session.is_working)
 
     def test_validate_image_blocks_rejects_non_list_input(self) -> None:

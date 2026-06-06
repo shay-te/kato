@@ -157,6 +157,38 @@ describe('PermissionDecisionContainer — auto-allow / auto-deny', () => {
 });
 
 
+describe('PermissionDecisionContainer — out-of-sandbox never auto-resolves', () => {
+
+  test('an out-of-sandbox ask shows the modal even when the tool is remembered', async () => {
+    // The remembered decision is keyed by tool name; without the guard
+    // an "allow always"'d Edit would silently approve an out-of-sandbox
+    // Edit too. The modal must surface so the operator decides explicitly.
+    const onSubmit = vi.fn().mockResolvedValue(true);
+
+    render(
+      <PermissionDecisionContainer
+        pending={_pending({
+          outside_sandbox: true,
+          outside_path: '/etc/passwd',
+          request: { request_id: 'req-1', tool_name: 'Edit', input: { file_path: '/etc/passwd' } },
+        })}
+        onDismiss={vi.fn()}
+        onSubmit={onSubmit}
+        onAuditBubble={vi.fn()}
+        recallToolDecision={() => 'allow'}
+        rememberToolDecision={vi.fn()}
+      />,
+    );
+
+    // No silent auto-submit…
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeInTheDocument());
+    expect(onSubmit).not.toHaveBeenCalled();
+    // …and no remembered scope offered.
+    expect(screen.queryByRole('button', { name: /allow always/i })).toBeNull();
+  });
+});
+
+
 describe('PermissionDecisionContainer — no remembered decision', () => {
 
   test('renders the modal when nothing is remembered for the tool', () => {

@@ -1356,9 +1356,15 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
    * we want), but a backdrop BLUR turns whatever scrolls behind it into
    * an unreadable wash instead of legible text. The old top stop was 18%
    * cyan with NO blur, so the previous turn's command bled straight
-   * through the "YOU ASKED" header. A stronger tint (A45) + the blur keeps
-   * the see-through feel while making the header readable. */
-  background: linear-gradient(180deg, $C-CYAN-68-A38 0%, $C-NEUTRAL-04 100%);
+   * through the "YOU ASKED" header. A stronger tint (A38) + the blur keeps
+   * the see-through feel while making the header readable.
+   *
+   * The bottom stop is a LOW-alpha cyan (A18), NOT near-black neutral:
+   * fading to $C-NEUTRAL-04 left the lower half of a tall (wrapped /
+   * expanded) prompt reading as a dark, "unfilled" band. Tinting the
+   * whole gradient cyan keeps the frosted fill edge-to-edge while still
+   * giving a gentle top-to-bottom fade. */
+  background: linear-gradient(180deg, $C-CYAN-68-A38 0%, $C-CYAN-68-A18 100%);
   -webkit-backdrop-filter: blur(16px) saturate(160%);
   backdrop-filter: blur(16px) saturate(160%);
   border-top: 1px solid $C-CYAN-52-A40;
@@ -2874,6 +2880,49 @@ code {
   word-break: break-word;
   max-height: 240px;
   overflow-y: auto;
+}
+
+// Out-of-sandbox alarm: shown when the agent's permission ask reaches a
+// path outside the task folder. Deliberately loud — red, big, uppercase —
+// so the operator can't miss that this grant escapes the sandbox.
+.permission-sandbox-warning {
+  border: 1px solid $C-RED-51-A55;
+  background: $C-RED-31-A18;
+  border-radius: $RADIUS-4;
+  padding: $SPACE-10;
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-8;
+}
+
+.permission-sandbox-warning-title {
+  margin: 0;
+  font-size: $TEXT-18;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: $C-RED-51-A95;
+  line-height: 1.25;
+}
+
+// The offending path on its OWN line — not mixed into the prose — so
+// the operator can read exactly what's being touched at a glance.
+.permission-sandbox-warning-path {
+  display: block;
+  font-family: ui-monospace, monospace;
+  font-size: $TEXT-12;
+  color: $C-NEUTRAL-96;
+  background: $C-NEUTRAL-04;
+  border: 1px solid $C-RED-42-A35;
+  border-radius: $RADIUS-4;
+  padding: $SPACE-8 $SPACE-10;
+  word-break: break-all;
+}
+
+.permission-sandbox-warning-body {
+  margin: 0;
+  font-size: $TEXT-13;
+  color: $C-NEUTRAL-96;
 }
 
 .modal-raw {
@@ -6886,6 +6935,25 @@ body.kato-resizing #left-pane-resizer::before {
 .settings-drawer-action-secondary:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+// Per-row "Clear" on the Claude-permissions table: a quiet text button
+// that warms to red on hover (clearing a saved grant is destructive-ish
+// — kato will start asking again).
+.settings-drawer-perm-clear {
+  padding: $SPACE-2 $SPACE-8;
+  border-radius: $RADIUS-4;
+  border: 1px solid transparent;
+  background: transparent;
+  color: $C-NEUTRAL-64;
+  font-size: $TEXT-12;
+  cursor: pointer;
+}
+
+.settings-drawer-perm-clear:hover {
+  color: $C-RED-51-A95;
+  border-color: $C-RED-51-A55;
+  background: $C-RED-31-A18;
 }
 
 .settings-drawer-action-secondary {

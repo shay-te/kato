@@ -1312,9 +1312,15 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
    * we want), but a backdrop BLUR turns whatever scrolls behind it into
    * an unreadable wash instead of legible text. The old top stop was 18%
    * cyan with NO blur, so the previous turn's command bled straight
-   * through the "YOU ASKED" header. A stronger tint (A45) + the blur keeps
-   * the see-through feel while making the header readable. */
-  background: linear-gradient(180deg, rgba(96, 165, 250, 0.38) 0%, #0a0a0a 100%);
+   * through the "YOU ASKED" header. A stronger tint (A38) + the blur keeps
+   * the see-through feel while making the header readable.
+   *
+   * The bottom stop is a LOW-alpha cyan (A18), NOT near-black neutral:
+   * fading to $C-NEUTRAL-04 left the lower half of a tall (wrapped /
+   * expanded) prompt reading as a dark, "unfilled" band. Tinting the
+   * whole gradient cyan keeps the frosted fill edge-to-edge while still
+   * giving a gentle top-to-bottom fade. */
+  background: linear-gradient(180deg, rgba(96, 165, 250, 0.38) 0%, rgba(96, 165, 250, 0.18) 100%);
   -webkit-backdrop-filter: blur(16px) saturate(160%);
   backdrop-filter: blur(16px) saturate(160%);
   border-top: 1px solid rgba(10, 132, 255, 0.4);
@@ -2831,6 +2837,44 @@ code {
   word-break: break-word;
   max-height: 240px;
   overflow-y: auto;
+}
+
+.permission-sandbox-warning {
+  border: 1px solid rgba(220, 38, 38, 0.55);
+  background: rgba(127, 29, 29, 0.18);
+  border-radius: 4px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.permission-sandbox-warning-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(220, 38, 38, 0.95);
+  line-height: 1.25;
+}
+
+.permission-sandbox-warning-path {
+  display: block;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  color: #f5f5f7;
+  background: #0a0a0a;
+  border: 1px solid rgba(185, 28, 28, 0.35);
+  border-radius: 4px;
+  padding: 8px 10px;
+  word-break: break-all;
+}
+
+.permission-sandbox-warning-body {
+  margin: 0;
+  font-size: 13px;
+  color: #f5f5f7;
 }
 
 .modal-raw {
@@ -6839,6 +6883,22 @@ body.kato-resizing #left-pane-resizer::before {
 .settings-drawer-action-secondary:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.settings-drawer-perm-clear {
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #a3a3a3;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.settings-drawer-perm-clear:hover {
+  color: rgba(220, 38, 38, 0.95);
+  border-color: rgba(220, 38, 38, 0.55);
+  background: rgba(127, 29, 29, 0.18);
 }
 
 .settings-drawer-action-secondary {

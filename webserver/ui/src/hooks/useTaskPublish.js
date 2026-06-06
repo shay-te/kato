@@ -56,14 +56,11 @@ export function useTaskPublish(taskId) {
       onDone: (result) => {
         refresh();
         // Notify on push completion — same visible confirmation as finishing a
-        // task. Green when something pushed, red on failure, info on a no-op.
-        const pushed = (result?.body || {}).pushed || {};
-        const failed = (pushed.failed_repositories || []).length > 0;
-        const pushedOk = (pushed.pushed_repositories || []).length > 0;
-        toastResult({
-          ...formatPushResult(result, taskId),
-          kind: (!result?.ok || failed) ? 'error' : (pushedOk ? 'success' : 'info'),
-        });
+        // task. ``formatPushResult`` reads the FLAT push payload and returns
+        // its own ``kind`` (success / warning / error / info); we don't
+        // re-derive it here — the old re-derivation read ``body.pushed`` as a
+        // dict (it's a bool) so every push toasted blue "info / no action".
+        toastResult(formatPushResult(result, taskId));
       },
     },
   );

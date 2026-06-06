@@ -9,7 +9,11 @@ dispatch logic of its own):
   1. ``advance_finished_comment_runs()`` — detect comment turns whose
      RESULT has landed in the session's event buffer and mark them
      ADDRESSED/FAILED, which chains straight to the next queued comment.
-  2. ``drain_all_queued_task_comments()`` — start any comment still
+  2. ``requeue_orphaned_in_progress_comments()`` — rescue a comment stuck
+     IN_PROGRESS because its session was replaced/terminated with no
+     matching RESULT (a review-fix respawn, etc.). Without this its
+     IN_PROGRESS state blocks the task's whole queue until restart.
+  3. ``drain_all_queued_task_comments()`` — start any comment still
      QUEUED, re-trying a dispatch the busy-check declined a tick ago.
 
 Why it exists: without an always-on server-side drain, a queued comment
@@ -95,10 +99,12 @@ class CommentRunWatcher(object):
     def tick(self) -> int:
         """One drain pass. Returns the count of comment state changes.
 
-        Advance first (complete finished turns → chains the next), then
-        drain (start anything still queued, retrying declined dispatches).
-        Each call is best-effort and isolated so one failing pass never
-        strands the other or kills the watcher.
+        Order matters: (1) advance — complete finished turns → chains the
+        next; (2) requeue orphans — rescue an IN_PROGRESS comment whose
+        session died with no result (runs AFTER advance so a still-live
+        RESULT completes first and only true orphans requeue); (3) drain —
+        start anything still queued. Each call is best-effort and isolated
+        so one failing pass never strands the others or kills the watcher.
         """
         service = self._service
         if service is None:
@@ -111,6 +117,14 @@ class CommentRunWatcher(object):
             except Exception:
                 self.logger.exception(
                     'comment-run watcher: advance-finished pass failed',
+                )
+        requeue = getattr(service, 'requeue_orphaned_in_progress_comments', None)
+        if callable(requeue):
+            try:
+                changes += len(requeue() or [])
+            except Exception:
+                self.logger.exception(
+                    'comment-run watcher: orphan-requeue pass failed',
                 )
         drain = getattr(service, 'drain_all_queued_task_comments', None)
         if callable(drain):

@@ -15,8 +15,13 @@ export default function PermissionDecisionContainer({
 
   useEffect(() => {
     if (!pending) { return; }
-    const { toolName, requestId } = unpackPermissionEnvelope(pending);
+    const { toolName, requestId, outsideSandbox } = unpackPermissionEnvelope(pending);
     if (!requestId || requestId === autoFailedRequestId) { return; }
+    // A remembered decision is keyed by TOOL NAME, so a tool that was
+    // "allow always"'d in-sandbox would otherwise auto-allow an
+    // out-of-sandbox ask too. Never auto-resolve those — force the modal
+    // (with its loud warning) so the operator decides each one explicitly.
+    if (outsideSandbox) { return; }
     const remembered = recallToolDecision(toolName);
     if (!remembered) { return; }
     const allow = remembered === 'allow';
@@ -53,10 +58,15 @@ export default function PermissionDecisionContainer({
   ]);
 
   if (!pending) { return null; }
-  const { toolName: pendingTool, requestId: pendingRequestId } = unpackPermissionEnvelope(pending);
+  const {
+    toolName: pendingTool, requestId: pendingRequestId, outsideSandbox: pendingOutside,
+  } = unpackPermissionEnvelope(pending);
   const autoSubmitting = submittingRequestId && submittingRequestId === pendingRequestId;
   const remembered = recallToolDecision(pendingTool);
-  const hideRemembered = remembered && pendingRequestId !== autoFailedRequestId;
+  // Out-of-sandbox asks are never hidden behind a remembered decision —
+  // they always surface the modal (see the auto-resolve guard above).
+  const hideRemembered = remembered && !pendingOutside
+    && pendingRequestId !== autoFailedRequestId;
   if (autoSubmitting || hideRemembered) { return null; }
 
   async function handleDecide(decision) {

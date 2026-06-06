@@ -97,6 +97,18 @@ const MessageForm = forwardRef(function MessageForm({
   const formRef = useRef(null);
   const pendingCaretRef = useRef(null);
 
+  // "Live state now owns the draft." Set after any local mutation that
+  // supersedes the server draft (clear, send, paste-images, remove-image):
+  // blocks a slow in-flight hydrate read (issued at mount) from re-applying
+  // a stale prompt over what the operator just did. Folded into one call so
+  // the three refs can't drift out of sync across the (previously copy-pasted)
+  // mutation sites.
+  function markDraftSettled() {
+    imagesSettledRef.current = true;
+    draftEditedRef.current = true;
+    draftSyncReadyRef.current = true;
+  }
+
   // Auto-grow the textarea on every value change (typing, draft
   // hydration, fragment paste). The hook resets to a single-line
   // height when the draft is empty and returns the resize fn so the
@@ -206,9 +218,7 @@ const MessageForm = forwardRef(function MessageForm({
       });
     },
     clear() {
-      imagesSettledRef.current = true; // live state owns the draft; block a late hydrate
-      draftEditedRef.current = true;
-      draftSyncReadyRef.current = true;
+      markDraftSettled(); // live state owns the draft; block a late hydrate
       setValue('');
       setAttachments([]);
       writeDraft(taskId, '');
@@ -242,9 +252,7 @@ const MessageForm = forwardRef(function MessageForm({
     if (result === false) { return; }
     // The live state now owns the draft: this blocks an in-flight hydrate read
     // (issued at mount, slow to resolve) from re-applying the just-sent images.
-    imagesSettledRef.current = true;
-    draftEditedRef.current = true;
-    draftSyncReadyRef.current = true;
+    markDraftSettled();
     setValue('');
     setAttachments([]);
     writeDraft(taskId, '');
@@ -339,9 +347,7 @@ const MessageForm = forwardRef(function MessageForm({
     if (parts.length > 0) {
       // The operator is actively attaching — the live state owns the draft, so
       // a still-in-flight hydrate read must not clobber it.
-      imagesSettledRef.current = true;
-      draftEditedRef.current = true;
-      draftSyncReadyRef.current = true;
+      markDraftSettled();
       const next = parts.map((part) => ({ part, previewUrl: _previewUrl(part) }));
       setAttachments((prev) => [...prev, ...next]);
     }
@@ -356,9 +362,7 @@ const MessageForm = forwardRef(function MessageForm({
   }
 
   function removeAttachment(index) {
-    imagesSettledRef.current = true; // live state owns the draft
-    draftEditedRef.current = true;
-    draftSyncReadyRef.current = true;
+    markDraftSettled(); // live state owns the draft
     setAttachments((prev) => prev.filter((_, i) => i !== index));
   }
 

@@ -3,7 +3,9 @@ import { unpackPermissionEnvelope } from '../utils/permissionEnvelope.js';
 import DialogShell from './DialogShell.jsx';
 
 export default function PermissionModal({ raw, onDecide }) {
-  const { requestId, toolName, toolInput } = unpackPermissionEnvelope(raw);
+  const {
+    requestId, toolName, toolInput, outsideSandbox, outsidePath,
+  } = unpackPermissionEnvelope(raw);
   const [rationale, setRationale] = useState('');
 
   useEffect(() => { setRationale(''); }, [requestId]);
@@ -11,6 +13,7 @@ export default function PermissionModal({ raw, onDecide }) {
   if (!raw) { return null; }
 
   const fields = renderFields(toolInput);
+  const sandboxWarning = renderSandboxWarning(outsideSandbox, outsidePath, toolName);
   const denyTooltip = `Deny this ${toolName} request. Claude will see your rationale (if any) and decide what to do next.`;
   const allowOnceTitle = `Approve this ${toolName} request only — kato will ask again next time.`;
   const allowAlwaysTitle = `Approve and remember ${toolName} — kato won't ask again, even after a kato or browser restart, until you clear it from settings.`;
@@ -26,6 +29,11 @@ export default function PermissionModal({ raw, onDecide }) {
   function handleAllowAlways() {
     onDecide({ allow: true, rationale, remember: true, requestId, toolName });
   }
+  // Out-of-sandbox asks never offer the remembered ("Allow always")
+  // scope — built here, before the return, so the JSX stays logic-free.
+  const allowAlwaysButton = renderAllowAlwaysButton(
+    outsideSandbox, allowAlwaysTitle, handleAllowAlways,
+  );
 
   return (
     <DialogShell
@@ -35,6 +43,7 @@ export default function PermissionModal({ raw, onDecide }) {
       subtitle={toolName}
       subtitleId="permission-tool-name"
     >
+      {sandboxWarning}
       <div id="permission-fields">{fields}</div>
       <details id="permission-raw" className="modal-raw">
         <summary>raw envelope</summary>
@@ -66,17 +75,48 @@ export default function PermissionModal({ raw, onDecide }) {
         >
           Allow once
         </button>
-        <button
-          id="permission-allow-always"
-          type="button"
-          className="primary tooltip-above"
-          data-tooltip={allowAlwaysTitle}
-          onClick={handleAllowAlways}
-        >
-          Allow always
-        </button>
+        {allowAlwaysButton}
       </div>
     </DialogShell>
+  );
+}
+
+// The loud out-of-sandbox alarm: an <h1> headline, the offending path on
+// its OWN line, then the single-action guidance. Returns null when the
+// ask is in-sandbox. Built outside the JSX return so the render stays
+// logic-free (AGENTS.md "no logic inside JSX").
+function renderSandboxWarning(outsideSandbox, outsidePath, toolName) {
+  if (!outsideSandbox) { return null; }
+  const pathLine = outsidePath
+    ? <code className="permission-sandbox-warning-path">{outsidePath}</code>
+    : null;
+  return (
+    <div id="permission-outside-sandbox" className="permission-sandbox-warning" role="alert">
+      <h1 className="permission-sandbox-warning-title">
+        ⚠ CLAUDE IS REACHING OUTSIDE THE TASK FOLDER
+      </h1>
+      {pathLine}
+      <p className="permission-sandbox-warning-body">
+        Approve this {toolName} <strong>only for this single action</strong>.
+        A remembered approval is not offered for out-of-sandbox access.
+      </p>
+    </div>
+  );
+}
+
+// The remembered-scope button — withheld (null) for out-of-sandbox asks.
+function renderAllowAlwaysButton(outsideSandbox, allowAlwaysTitle, onAllowAlways) {
+  if (outsideSandbox) { return null; }
+  return (
+    <button
+      id="permission-allow-always"
+      type="button"
+      className="primary tooltip-above"
+      data-tooltip={allowAlwaysTitle}
+      onClick={onAllowAlways}
+    >
+      Allow always
+    </button>
   );
 }
 

@@ -186,20 +186,59 @@ export function formatFinishResult(result, taskId = '') {
   };
 }
 
-// Toast for the operator-triggered Push button (POST /push). Mirrors the
-// finish (task-done) toast but push-only — no PR / move-to-review step — so a
-// manual push gets the same visible confirmation as finishing a task.
+// Toast for the operator-triggered Push button (POST /push).
+//
+// IMPORTANT: ``/push`` returns the FLAT ``push_task`` payload —
+// ``{pushed: <bool>, branch, pushed_repositories, skipped_repositories,
+// failed_repositories}`` — NOT the nested ``{pushed: {...}}`` shape the
+// finish toast carries. Reading ``body.pushed`` as a dict here was the
+// "Pushed · push: no action" bug: ``body.pushed`` is a boolean, so the
+// summary always saw empty lists and fell through to "no action" no
+// matter what actually pushed. This reads the flat lists directly,
+// names each repo, and reports the branch so the operator can see
+// exactly what moved and where. Returns its own ``kind`` (success /
+// warning / error / info) so the caller doesn't re-derive it off the
+// wrong shape.
 export function formatPushResult(result, taskId = '') {
   if (!result || !result.ok) {
     return formatRequestFailure(result, 'Push request failed');
   }
-  const pushed = (result.body || {}).pushed || {};
-  const line = formatPushSummary(pushed) || `• push: ${pushed.error || 'no action'}`;
+  const body = result.body || {};
+  const pushed = body.pushed_repositories || [];
+  const skipped = body.skipped_repositories || [];
+  const failed = body.failed_repositories || [];
+  const branch = String(body.branch || '').trim();
+  const onBranch = branch ? ` to branch ${branch}` : '';
   const trimmedTask = String(taskId || '').trim();
-  return {
-    title: trimmedTask ? `Pushed (${trimmedTask})` : 'Pushed',
-    message: line,
-  };
+  const suffix = trimmedTask ? ` (${trimmedTask})` : '';
+
+  const lines = [];
+  if (pushed.length) {
+    lines.push(`✓ pushed ${pushed.length} repo(s)${onBranch}: ${pushed.join(', ')}`);
+  }
+  for (const entry of skipped) {
+    lines.push(`• ${entry.repository_id}: ${entry.reason || 'nothing to push'}`);
+  }
+  lines.push(...formatFailedLines(failed));
+
+  // Title + kind reflect what actually happened — never claim "Pushed"
+  // when nothing moved (the misleading original).
+  let title;
+  let kind;
+  if (pushed.length) {
+    title = `Pushed${suffix}`;
+    kind = failed.length ? 'warning' : 'success';
+  } else if (failed.length) {
+    title = `Push failed${suffix}`;
+    kind = 'error';
+  } else {
+    title = `Nothing to push${suffix}`;
+    kind = 'info';
+    if (lines.length === 0) {
+      lines.push('• all repos already in sync — nothing to push');
+    }
+  }
+  return { title, kind, message: lines.join('\n') };
 }
 
 function formatPullRequestStepLine(pr) {

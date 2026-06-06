@@ -40,10 +40,20 @@ beforeEach(() => {
 
 describe('useTaskPublish — push notification', () => {
 
-  test('a successful push fires a confirmation toast (mirrors task-done)', async () => {
+  // ``/push`` returns the FLAT push payload (``pushed`` is a bool; the
+  // repo lists are top-level). The toast's kind comes straight from
+  // ``formatPushResult`` — the hook must NOT re-derive it (the old
+  // re-derivation read ``body.pushed`` as a dict → every push was blue
+  // "info / no action").
+  test('a successful push fires a green confirmation toast naming the branch', async () => {
     fetchTaskPublishState.mockResolvedValue({});
     pushTask.mockResolvedValue({
-      ok: true, body: { pushed: { pushed_repositories: ['client'] } },
+      ok: true,
+      body: {
+        pushed: true, branch: 'T1',
+        pushed_repositories: ['client'],
+        skipped_repositories: [], failed_repositories: [],
+      },
     });
     const { result } = renderHook(() => useTaskPublish('T1'));
     await act(async () => { await result.current.push(); });
@@ -51,6 +61,25 @@ describe('useTaskPublish — push notification', () => {
     const arg = toastResult.mock.calls[0][0];
     expect(arg.kind).toBe('success');
     expect(arg.title).toContain('Pushed');
+    expect(arg.message).toContain('branch T1');
+  });
+
+  test('a no-op push toasts blue "Nothing to push" (not a misleading green "Pushed")', async () => {
+    fetchTaskPublishState.mockResolvedValue({});
+    pushTask.mockResolvedValue({
+      ok: true,
+      body: {
+        pushed: false, branch: 'T1',
+        pushed_repositories: [],
+        skipped_repositories: [{ repository_id: 'client', reason: 'nothing to push' }],
+        failed_repositories: [],
+      },
+    });
+    const { result } = renderHook(() => useTaskPublish('T1'));
+    await act(async () => { await result.current.push(); });
+    const arg = toastResult.mock.calls[0][0];
+    expect(arg.kind).toBe('info');
+    expect(arg.title).toContain('Nothing to push');
   });
 
   test('a failed push toasts an error', async () => {

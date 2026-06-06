@@ -1,4 +1,5 @@
 import Icon from './Icon.jsx';
+import { cx } from '../utils/cx.js';
 
 // Maps a diff-file change kind to the FontAwesome icon name used in
 // the file tree and diff headers. Shared by FilesTab's tree rows and
@@ -16,9 +17,7 @@ export const DIFF_KIND_ICON = {
 // used on file-tree rows without changing the base chrome.
 export default function DiffKindIcon({ kind, extraClass = '' }) {
   const iconName = DIFF_KIND_ICON[kind] || 'edit';
-  const className = extraClass
-    ? `diff-file-row-kind ${extraClass} kind-${kind || 'modify'}`
-    : `diff-file-row-kind kind-${kind || 'modify'}`;
+  const className = cx('diff-file-row-kind', extraClass, `kind-${kind || 'modify'}`);
   return (
     <span className={className}>
       <Icon name={iconName} />

@@ -19,19 +19,30 @@ from kato_core_lib.data_layers.service.comment_run_watcher import (
 )
 
 
-def _service(advance=None, drain=None) -> MagicMock:
+def _service(advance=None, drain=None, requeue=None) -> MagicMock:
     svc = MagicMock()
     svc.advance_finished_comment_runs.return_value = advance or []
+    svc.requeue_orphaned_in_progress_comments.return_value = requeue or []
     svc.drain_all_queued_task_comments.return_value = drain or []
     return svc
 
 
 class CommentRunWatcherTickTests(unittest.TestCase):
-    def test_tick_runs_advance_then_drain_and_counts_changes(self) -> None:
-        svc = _service(advance=[{'a': 1}], drain=[{'b': 1}, {'b': 2}])
+    def test_tick_runs_advance_requeue_then_drain_and_counts_changes(self) -> None:
+        svc = _service(
+            advance=[{'a': 1}], requeue=[{'r': 1}], drain=[{'b': 1}, {'b': 2}],
+        )
         changes = CommentRunWatcher(service=svc).tick()
-        self.assertEqual(changes, 3)
+        self.assertEqual(changes, 4)
         svc.advance_finished_comment_runs.assert_called_once_with()
+        svc.requeue_orphaned_in_progress_comments.assert_called_once_with()
+        svc.drain_all_queued_task_comments.assert_called_once_with()
+
+    def test_orphan_requeue_failure_does_not_stop_the_drain(self) -> None:
+        svc = _service(drain=[{'b': 1}])
+        svc.requeue_orphaned_in_progress_comments.side_effect = RuntimeError('boom')
+        watcher = CommentRunWatcher(service=svc)
+        self.assertEqual(watcher.tick(), 1)
         svc.drain_all_queued_task_comments.assert_called_once_with()
 
     def test_tick_is_a_noop_with_no_service(self) -> None:

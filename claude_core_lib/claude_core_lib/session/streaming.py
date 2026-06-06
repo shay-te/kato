@@ -48,6 +48,9 @@ from claude_core_lib.claude_core_lib.helpers.spawn_utils import (
     build_claude_subprocess_env,
     wrap_spawn_for_docker,
 )
+from claude_core_lib.claude_core_lib.helpers.sandbox_scope import (
+    classify_tool_input_sandbox,
+)
 from claude_core_lib.claude_core_lib.session.index import parse_jsonl_dict_line
 from agent_core_lib.agent_core_lib.helpers.logging_utils import configure_logger
 from agent_core_lib.agent_core_lib.helpers.text_utils import (
@@ -369,7 +372,23 @@ class StreamingClaudeSession(object):
 
         - first ``result`` → turn closed, not working,
         - first ``assistant`` / ``stream_event`` / ``user`` → mid-turn,
-        - only ``system`` events → idle (just spawned, no work yet).
+        - first ``system``/``init`` (no following ``result``) → mid-turn,
+        - nothing matched → idle.
+
+        The ``system``/``init`` case is load-bearing and MUST match the
+        UI reducer (useSessionStream.js: ``turnInFlight = true`` on
+        ``system/init``). An autonomous task prompt is written straight
+        to Claude's stdin and is NEVER echoed back as a ``user`` event,
+        so for the multi-second window while Claude reads context before
+        its first ``assistant`` reply the only marker on the wire is the
+        ``init`` event. Without counting it, a BACKGROUNDED tab (polled
+        ``is_working``) reads "idle" during that whole window while the
+        FOCUSED tab (live ``turnInFlight``) reads "working" — the two
+        status surfaces disagree and the dot flips on focus (the
+        focus-dependent-status bug). A crashed/exited subprocess can't
+        get stuck "working" here: ``is_alive`` gates the whole walk, and
+        any completed turn leaves a trailing ``result`` that returns
+        False before the older ``init`` is ever reached.
         """
         if not self.is_alive:
             return False
@@ -379,6 +398,11 @@ class StreamingClaudeSession(object):
                 if event_type == CLAUDE_EVENT_RESULT:
                     return False
                 if event_type in ('assistant', 'stream_event', 'user'):
+                    return True
+                if (
+                    event_type == CLAUDE_EVENT_SYSTEM
+                    and event.subtype == CLAUDE_SYSTEM_SUBTYPE_INIT
+                ):
                     return True
         return False
 
@@ -880,9 +904,14 @@ class StreamingClaudeSession(object):
                 # audit signal. Detective-only: the agent's text has
                 # already crossed to Anthropic.
                 self._scan_terminal_for_credentials(event)
+            # Capture + sandbox-annotate the control request BEFORE
+            # publishing: ``_publish_event`` appends to ``_recent_events``
+            # and wakes SSE tailers, so annotating after it would race a
+            # tailer that serializes the event in the gap (the
+            # ``outside_sandbox`` flag must be on the raw before it ships).
+            self._maybe_capture_control_request(event)
             self._publish_event(event)
             self._maybe_capture_session_id(event)
-            self._maybe_capture_control_request(event)
             self._maybe_fire_done_sentinel(event)
             self._log_event_for_operator(event)
                 # Don't break here — let the subprocess close stdout itself.
@@ -991,6 +1020,30 @@ class StreamingClaudeSession(object):
             return
         with self._pending_control_requests_lock:
             self._pending_control_requests[request_id] = request
+        self._annotate_sandbox_scope(event, request)
+
+    def _annotate_sandbox_scope(self, event: SessionEvent, request: dict) -> None:
+        """Flag a permission ask that reaches outside the task sandbox.
+
+        Writes ``outside_sandbox``/``outside_path`` onto the event's raw
+        payload (the dict forwarded over SSE) so the planning UI can
+        shout a warning and withhold the *remembered* approval scope —
+        an "allow always" for a path outside the task folder would hand
+        the agent standing out-of-sandbox access on every future run.
+        The classification is purely lexical (see ``sandbox_scope``); on
+        any error we leave the event unflagged (fail-open on the WARNING,
+        never fail-closed into a crash of the permission pipeline).
+        """
+        try:
+            tool_input = request.get('input') or {}
+            outside, offending = classify_tool_input_sandbox(
+                tool_input, self._cwd, self._additional_dirs,
+            )
+        except Exception:
+            return
+        if outside:
+            event.raw['outside_sandbox'] = True
+            event.raw['outside_path'] = offending
 
     def pending_control_request_tool(self) -> str:
         """Tool name on the oldest currently-waiting control request, or ''.

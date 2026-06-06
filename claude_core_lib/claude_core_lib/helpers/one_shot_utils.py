@@ -16,6 +16,8 @@ from __future__ import annotations
 import subprocess
 from typing import Callable
 
+from agent_core_lib.agent_core_lib.helpers.text_utils import condensed_text
+
 
 _DEFAULT_TIMEOUT_SECONDS = 120
 
@@ -61,8 +63,10 @@ def claude_one_shot(
         ) from exc
     if completed.returncode != 0:
         stderr = (completed.stderr or '').strip()
+        stdout = condensed_text(completed.stdout)
+        detail = stderr or stdout or '<no output>'
         raise ClaudeOneShotError(
-            f'claude one-shot exited {completed.returncode}: {stderr or "<no stderr>"}'
+            f'claude one-shot exited {completed.returncode}: {detail}'
         )
     return completed.stdout or ''
 

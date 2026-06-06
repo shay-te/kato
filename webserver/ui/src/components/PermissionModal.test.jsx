@@ -72,6 +72,37 @@ describe('PermissionModal — rendering', () => {
     expect(screen.getByPlaceholderText(/rationale/i)).toBeInTheDocument();
   });
 
+  test('out-of-sandbox ask shows the loud h1 warning + names the path', () => {
+    const { container } = render(<PermissionModal raw={_raw({
+      outside_sandbox: true,
+      outside_path: '/etc/passwd',
+      request: { request_id: 'req-1', tool_name: 'Edit', input: { file_path: '/etc/passwd' } },
+    })} onDecide={vi.fn()} />);
+    const warn = container.querySelector('#permission-outside-sandbox');
+    expect(warn).toBeInTheDocument();
+    // The title is an <h1> and reads in uppercase.
+    const h1 = warn.querySelector('h1');
+    expect(h1).toBeInTheDocument();
+    expect(h1.textContent).toMatch(/OUTSIDE THE TASK FOLDER/);
+    expect(warn.textContent).toMatch(/\/etc\/passwd/);
+  });
+
+  test('out-of-sandbox ask withholds the "Allow always" button', () => {
+    render(<PermissionModal raw={_raw({
+      outside_sandbox: true, outside_path: '/etc/x',
+      request: { request_id: 'req-1', tool_name: 'Edit', input: { file_path: '/etc/x' } },
+    })} onDecide={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /deny/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /allow once/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /allow always/i })).toBeNull();
+  });
+
+  test('in-sandbox ask shows no warning and keeps "Allow always"', () => {
+    const { container } = render(<PermissionModal raw={_raw()} onDecide={vi.fn()} />);
+    expect(container.querySelector('#permission-outside-sandbox')).toBeNull();
+    expect(screen.getByRole('button', { name: /allow always/i })).toBeInTheDocument();
+  });
+
   test('object-valued tool input is rendered as JSON string', () => {
     render(<PermissionModal raw={_raw({
       request: {

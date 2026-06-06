@@ -93,6 +93,18 @@ class ClaudeOneShotTests(unittest.TestCase):
             with self.assertRaisesRegex(ClaudeOneShotError, 'auth required'):
                 claude_one_shot('x')
 
+    def test_nonzero_exit_uses_stdout_when_stderr_empty(self) -> None:
+        with patch(
+            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
+            return_value=_CompletedProcess(
+                1,
+                'API Error: Server is temporarily limiting requests\nRate limited',
+                '',
+            ),
+        ):
+            with self.assertRaisesRegex(ClaudeOneShotError, 'Rate limited'):
+                claude_one_shot('x')
+
     def test_timeout_raises(self) -> None:
         with patch(
             'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',

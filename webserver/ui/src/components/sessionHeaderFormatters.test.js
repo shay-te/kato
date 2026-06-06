@@ -10,22 +10,91 @@ import {
   formatUpdateSourceResult,
 } from './sessionHeaderFormatters.js';
 
-test('formatPushResult titles with the task id and summarises the push', () => {
+// ``/push`` returns the FLAT ``push_task`` payload: ``pushed`` is a
+// boolean and the repo lists live at the top level of ``body`` (NOT
+// nested under ``pushed`` like the finish toast). These tests pin that
+// real shape — the previous nested-shape tests were the reason the
+// "Pushed · push: no action" bug shipped (the backend never produced
+// the shape the test asserted).
+
+test('formatPushResult names pushed repos, the branch, and marks success', () => {
   const out = formatPushResult({
     ok: true,
-    body: { pushed: { pushed_repositories: ['client', 'backend'] } },
+    body: {
+      pushed: true,
+      branch: 'UNA-1',
+      pushed_repositories: ['client', 'backend'],
+      skipped_repositories: [],
+      failed_repositories: [],
+    },
   }, 'UNA-1');
   assert.equal(out.title, 'Pushed (UNA-1)');
-  assert.match(out.message, /pushed 2 repo\(s\): client, backend/);
+  assert.equal(out.kind, 'success');
+  assert.match(out.message, /pushed 2 repo\(s\) to branch UNA-1: client, backend/);
+});
+
+test('formatPushResult: nothing pushed reads "Nothing to push", not a misleading "Pushed"', () => {
+  const out = formatPushResult({
+    ok: true,
+    body: {
+      pushed: false,
+      branch: 'UNA-2742',
+      pushed_repositories: [],
+      skipped_repositories: [{ repository_id: 'admin-backend', reason: 'nothing to push' }],
+      failed_repositories: [],
+    },
+  }, 'UNA-2742');
+  assert.equal(out.title, 'Nothing to push (UNA-2742)');
+  assert.equal(out.kind, 'info');
+  assert.match(out.message, /admin-backend: nothing to push/);
+  assert.doesNotMatch(out.message, /no action/);
+});
+
+test('formatPushResult: all-failed push is an error toast that lists the repos', () => {
+  const out = formatPushResult({
+    ok: true,
+    body: {
+      pushed: false,
+      branch: 'UNA-2742',
+      pushed_repositories: [],
+      skipped_repositories: [],
+      failed_repositories: [{ repository_id: 'kafka-connect-elasticsearch', error: '403 no push access' }],
+    },
+  }, 'UNA-2742');
+  assert.equal(out.title, 'Push failed (UNA-2742)');
+  assert.equal(out.kind, 'error');
+  assert.match(out.message, /✗ kafka-connect-elasticsearch: 403 no push access/);
+});
+
+test('formatPushResult: partial (some pushed, some failed) downgrades to a warning', () => {
+  const out = formatPushResult({
+    ok: true,
+    body: {
+      pushed: true,
+      branch: 'UNA-9',
+      pushed_repositories: ['client'],
+      skipped_repositories: [],
+      failed_repositories: [{ repository_id: 'lib', error: 'denied' }],
+    },
+  }, 'UNA-9');
+  assert.equal(out.title, 'Pushed (UNA-9)');
+  assert.equal(out.kind, 'warning');
+  assert.match(out.message, /pushed 1 repo\(s\) to branch UNA-9: client/);
+  assert.match(out.message, /✗ lib: denied/);
 });
 
 test('formatPushResult falls back to a generic title without a task id', () => {
-  const out = formatPushResult({ ok: true, body: { pushed: {} } });
-  assert.equal(out.title, 'Pushed');
+  const out = formatPushResult({
+    ok: true,
+    body: { pushed: false, pushed_repositories: [], skipped_repositories: [], failed_repositories: [] },
+  });
+  assert.equal(out.title, 'Nothing to push');
+  assert.match(out.message, /already in sync/);
 });
 
 test('formatPushResult surfaces a request failure', () => {
   const out = formatPushResult({ ok: false, error: 'boom' }, 'UNA-1');
+  assert.equal(out.kind, 'error');
   assert.equal(typeof out.title, 'string');
   assert.equal(out.title.length > 0, true);
 });

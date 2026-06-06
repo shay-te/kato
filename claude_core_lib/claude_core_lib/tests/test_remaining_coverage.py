@@ -69,7 +69,20 @@ class OneShotUtilsTests(unittest.TestCase):
         )
         completed = MagicMock(returncode=1, stdout='', stderr='')
         with patch('subprocess.run', return_value=completed):
-            with self.assertRaisesRegex(ClaudeOneShotError, '<no stderr>'):
+            with self.assertRaisesRegex(ClaudeOneShotError, '<no output>'):
+                claude_one_shot('prompt')
+
+    def test_claude_one_shot_uses_stdout_when_stderr_empty(self) -> None:
+        from claude_core_lib.claude_core_lib.helpers.one_shot_utils import (
+            claude_one_shot, ClaudeOneShotError,
+        )
+        completed = MagicMock(
+            returncode=1,
+            stdout='API Error: Server is temporarily limiting requests\nRate limited',
+            stderr='',
+        )
+        with patch('subprocess.run', return_value=completed):
+            with self.assertRaisesRegex(ClaudeOneShotError, 'Rate limited'):
                 claude_one_shot('prompt')
 
     def test_make_claude_one_shot_returns_closure(self) -> None:

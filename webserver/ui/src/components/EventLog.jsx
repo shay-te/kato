@@ -515,9 +515,7 @@ function useExpandable() {
 // snippets. ``extraClass`` adds the sticky-prompt modifier; ``ariaExpanded``
 // opts the prompt into the ``aria-expanded`` attribute (tool-details omits it).
 function ExpandToggle({ expanded, onToggle, extraClass = '', ariaExpanded = false }) {
-  const className = extraClass
-    ? `bubble-tool-details-expand ${extraClass}`
-    : 'bubble-tool-details-expand';
+  const className = cx('bubble-tool-details-expand', extraClass);
   const ariaProps = ariaExpanded ? { 'aria-expanded': expanded } : {};
   return (
     <button
