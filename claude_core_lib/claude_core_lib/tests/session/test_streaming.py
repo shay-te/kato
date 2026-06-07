@@ -1132,6 +1132,19 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         self.assertTrue(envelope.get('outside_sandbox'))
         self.assertEqual(envelope.get('outside_path'), '/Users/x/other-repo/secret.py')
 
+    def test_pending_control_requests_flags_docker_escape_command(self) -> None:
+        # docker mounts host paths into a container kato never sees — flagged
+        # outside_sandbox so the modal warns + withholds "Allow always", even
+        # though the bind path itself is scratch (/tmp).
+        session = StreamingClaudeSession(task_id='T', cwd='/work/UNA-1/repo')
+        session._pending_control_requests = {
+            'r1': {'tool_name': 'Bash', 'input': {'command':
+                   'docker run --rm -v /tmp/x:/data alpine cat /data/f'}},
+        }
+        envelope = session.pending_control_requests()[0]
+        self.assertTrue(envelope.get('outside_sandbox'))
+        self.assertIn('docker', envelope.get('outside_path', ''))
+
     def test_pending_control_requests_in_folder_bash_not_flagged(self) -> None:
         session = StreamingClaudeSession(task_id='T', cwd='/work/UNA-1/repo')
         session._pending_control_requests = {

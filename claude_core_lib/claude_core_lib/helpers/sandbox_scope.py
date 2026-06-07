@@ -222,3 +222,46 @@ def classify_command_sandbox(
         if not any(_is_within(resolved, root) for root in norm_roots):
             return True, raw
     return False, ''
+
+
+# Commands that operate OUTSIDE the task sandbox by nature, regardless of which
+# paths they name: container runtimes can bind-mount any host path into a
+# container kato never sees (``docker run -v /:/host``), and privilege /
+# namespace tools step around the workspace entirely. A remembered "Allow
+# always" on one of these would silently green-light every future escape, so
+# they get the loud warning + no remembered grant — Allow ONCE only.
+_COMMAND_SEGMENT_SPLIT = re.compile(r'&&|\|\||[;|]')
+_ENV_ASSIGNMENT = re.compile(r'^[A-Za-z_]\w*=')
+_ESCAPE_PROGRAMS = frozenset({
+    'docker', 'docker-compose', 'podman', 'nerdctl', 'kubectl', 'ctr',
+    'sudo', 'doas', 'chroot', 'nsenter', 'unshare',
+})
+
+
+def _segment_program(segment: str) -> str:
+    """The basename of the program a single command segment invokes (after any
+    leading ``VAR=val`` env assignments), or ''."""
+    tokens = [t for t in segment.strip().split() if t]
+    index = 0
+    while index < len(tokens) and _ENV_ASSIGNMENT.match(tokens[index]):
+        index += 1
+    if index >= len(tokens):
+        return ''
+    return tokens[index].rsplit('/', 1)[-1]
+
+
+def classify_command_escape(command: str) -> tuple[bool, str]:
+    """Return ``(escapes, program)`` when a command invokes a container-runtime
+    / privilege / namespace primitive (``docker``, ``sudo``, ``chroot``, …).
+
+    These reach the host *around* any path sandbox, so they are treated like an
+    out-of-sandbox ask: red warning, no remembered grant. Checks the program of
+    every ``&&``/``;``/``|`` segment (so ``cd /x && docker run`` and
+    ``sudo docker …`` are both caught), de-obfuscated first so quotes/$HOME
+    can't hide the program name."""
+    text = _deobfuscate_command(command)
+    for segment in _COMMAND_SEGMENT_SPLIT.split(text):
+        program = _segment_program(segment)
+        if program and program in _ESCAPE_PROGRAMS:
+            return True, program
+    return False, ''

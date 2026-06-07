@@ -3,6 +3,7 @@ import unittest
 from unittest import mock
 
 from claude_core_lib.claude_core_lib.helpers.sandbox_scope import (
+    classify_command_escape,
     classify_command_sandbox,
     classify_tool_input_sandbox,
 )
@@ -423,6 +424,68 @@ class ClassifyCommandSandboxAdversarialTests(unittest.TestCase):
         # If HOME *is* the workspace parent, $HOME-relative stays inside.
         with mock.patch.dict(os.environ, {'HOME': self.TASK}):
             self.assertClean('cat $HOME/admin-backend/app/x.py')
+
+
+class ClassifyCommandEscapeTests(unittest.TestCase):
+    """Container-runtime / privilege escapes reach the host around any path
+    sandbox, so they must be flagged regardless of which paths they name."""
+
+    def test_docker_run_is_flagged(self):
+        escapes, program = classify_command_escape(
+            'docker run --rm -v /tmp/x:/data alpine sh -c "cat /data/f"',
+        )
+        self.assertTrue(escapes)
+        self.assertEqual(program, 'docker')
+
+    def test_the_reported_jfr_docker_command_is_flagged(self):
+        cmd = (
+            'mkdir -p /tmp/jfr-validation && rm -f /tmp/jfr-validation/*.jfr '
+            '&& docker run --rm -v /tmp/jfr-validation:/var/lib/kafka-streams '
+            '--entrypoint sh eclipse-temurin:17-jre-jammy -c '
+            "'exec java -version' 2>&1 | tail -20"
+        )
+        escapes, program = classify_command_escape(cmd)
+        self.assertTrue(escapes)
+        self.assertEqual(program, 'docker')
+
+    def test_escape_after_cd_and_env_and_sudo(self):
+        self.assertEqual(
+            classify_command_escape('cd /tmp && FOO=bar docker compose up')[1],
+            'docker',
+        )
+        self.assertEqual(
+            classify_command_escape('sudo rm -rf /')[1], 'sudo',
+        )
+        self.assertEqual(
+            classify_command_escape('cat x.txt | sudo tee /etc/hosts')[1],
+            'sudo',
+        )
+
+    def test_absolute_runtime_path_is_still_an_escape(self):
+        self.assertEqual(
+            classify_command_escape('/usr/local/bin/docker ps')[1], 'docker',
+        )
+
+    def test_other_runtimes_and_namespace_tools(self):
+        for cmd, prog in (
+            ('podman run alpine', 'podman'),
+            ('nerdctl ps', 'nerdctl'),
+            ('kubectl get pods', 'kubectl'),
+            ('chroot /mnt /bin/sh', 'chroot'),
+            ('nsenter -t 1 -m', 'nsenter'),
+            ('docker-compose up -d', 'docker-compose'),
+        ):
+            self.assertEqual(classify_command_escape(cmd)[1], prog, cmd)
+
+    def test_ordinary_commands_are_not_escapes(self):
+        for cmd in (
+            'git status', 'ls -la', 'mvn -B verify', 'grep -rn TODO src',
+            'echo "use docker to deploy"',   # mentions docker, doesn't run it
+            'cat Dockerfile',                 # reads a file named like it
+            'python3 dockerize.py',           # program is python3
+        ):
+            escapes, _ = classify_command_escape(cmd)
+            self.assertFalse(escapes, cmd)
 
 
 if __name__ == '__main__':

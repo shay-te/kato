@@ -50,6 +50,7 @@ from claude_core_lib.claude_core_lib.helpers.spawn_utils import (
     wrap_spawn_for_docker,
 )
 from claude_core_lib.claude_core_lib.helpers.sandbox_scope import (
+    classify_command_escape,
     classify_command_sandbox,
     classify_tool_input_sandbox,
 )
@@ -1144,10 +1145,18 @@ class StreamingClaudeSession(object):
             return outside, offending
         command = tool_input.get('command') if isinstance(tool_input, dict) else ''
         if command:
-            return classify_command_sandbox(
+            outside, offending = classify_command_sandbox(
                 command, self._cwd, self._additional_dirs,
                 self._sandbox_allowed_paths,
             )
+            if outside:
+                return outside, offending
+            # A container-runtime / privilege escape (docker, sudo, …) reaches
+            # the host AROUND any path sandbox — treat it as out-of-sandbox so
+            # it gets the red warning and no remembered grant.
+            escapes, program = classify_command_escape(command)
+            if escapes:
+                return True, f'{program} (runs outside the task sandbox)'
         return False, ''
 
     # Tools that WRITE to the filesystem. A self-authorized write outside

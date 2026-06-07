@@ -55,10 +55,21 @@ Two detectors (`claude_core_lib/.../helpers/sandbox_scope.py`):
   static obfuscation (quote-splitting `/Use"rs"/dev`, backslash escaping,
   `$HOME`/`${HOME}` indirection).
 
+- **Escape commands:** container runtimes and privilege/namespace tools
+  (`docker`, `docker-compose`, `podman`, `nerdctl`, `kubectl`, `sudo`,
+  `chroot`, `nsenter`, …) reach the host *around* any path sandbox — e.g.
+  `docker run -v /:/host` mounts the whole disk into a container kato never
+  sees. These are flagged out-of-sandbox **by the command itself**, no matter
+  which paths it names, so a remembered "Allow always" can't green-light a
+  future escape. (Allow *once* still works for a one-off, e.g. a JFR
+  validation run.)
+
 **Exempt (never warns):** paths inside the task, the configured
 `lessons.md`/`architecture.md` (the agent is *meant* to touch those), system
 trees (`/usr`,`/etc`,…), URLs (`//host/…`), and glob/regex fragments
 (`*/main/*`). This keeps `git`/`ls`/`mvn` from drowning you in false alarms.
+A command that merely *mentions* `docker` in text (`echo "use docker"`) or
+reads a file named `Dockerfile` is not an escape — only an actual invocation.
 
 ### Limits of the warning layer (read this)
 
