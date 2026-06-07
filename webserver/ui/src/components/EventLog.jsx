@@ -299,7 +299,7 @@ function TurnCopyButton() {
       <button
         ref={ref}
         type="button"
-        className="chat-turn-copy tooltip-end"
+        className="chat-turn-copy tooltip-start"
         onClick={handleCopy}
         aria-label="Copy response"
         data-tooltip={copied ? 'Copied' : 'Copy the full response'}

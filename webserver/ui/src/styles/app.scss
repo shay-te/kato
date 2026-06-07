@@ -6392,6 +6392,25 @@ body.kato-resizing #left-pane-resizer::before {
   transform: none;
 }
 
+/* Mirror of tooltip-end for buttons near the LEFT edge of their container
+ * (e.g. the chat copy button, indented just inside the chat panel): anchors
+ * the tooltip's LEFT edge to the trigger and grows to the RIGHT, so it stays
+ * inside the panel instead of being clipped on the left. */
+[data-tooltip].tooltip-start:hover::after,
+[data-tooltip].tooltip-start:focus-visible::after {
+  left: 0;
+  right: auto;
+  transform: none;
+  max-width: 220px;
+}
+
+[data-tooltip].tooltip-start:hover::before,
+[data-tooltip].tooltip-start:focus-visible::before {
+  left: 6px;
+  right: auto;
+  transform: none;
+}
+
 /* Combo: above + end (e.g. for buttons near bottom-right corners). */
 [data-tooltip].tooltip-above.tooltip-end:hover::after,
 [data-tooltip].tooltip-above.tooltip-end:focus-visible::after {
