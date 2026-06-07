@@ -1161,6 +1161,52 @@ class PendingPermissionProbeTests(unittest.TestCase):
         )
         self.assertEqual(_session_pending_permission_tool(session), 'Bash')
 
+    def test_pending_permissions_feed_spans_all_tasks(self):
+        # The cross-task feed must surface asks from EVERY live session, each
+        # tagged with its task_id — so the modal can pop no matter which task
+        # is in focus.
+        sessions = {
+            'POJ-1': SimpleNamespace(pending_control_requests=lambda: [
+                {'type': 'control_request', 'request_id': 'r1',
+                 'request': {'tool_name': 'Bash', 'input': {'command': 'mvn'}}},
+            ]),
+            'POJ-2': SimpleNamespace(pending_control_requests=lambda: [
+                {'type': 'control_request', 'request_id': 'r2',
+                 'request': {'tool_name': 'Edit', 'input': {}}},
+            ]),
+        }
+        records = [_FakeWorkspaceRecord(task_id='POJ-1'),
+                   _FakeWorkspaceRecord(task_id='POJ-2')]
+        manager = _FakeManager(records=records)
+        manager.get_session = lambda task_id: sessions.get(task_id)
+        client = create_app(session_manager=manager).test_client()
+
+        body = client.get('/api/permissions/pending').get_json()
+        pending = body['pending']
+        self.assertEqual(len(pending), 2)
+        by_task = {e['task_id']: e for e in pending}
+        self.assertEqual(by_task['POJ-1']['request_id'], 'r1')
+        self.assertEqual(by_task['POJ-2']['request']['tool_name'], 'Edit')
+
+    def test_pending_permissions_feed_skips_failing_sessions(self):
+        def boom():
+            raise RuntimeError('probe failed')
+        sessions = {
+            'OK': SimpleNamespace(pending_control_requests=lambda: [
+                {'type': 'control_request', 'request_id': 'ok1', 'request': {}},
+            ]),
+            'BAD': SimpleNamespace(pending_control_requests=boom),
+        }
+        records = [_FakeWorkspaceRecord(task_id='OK'),
+                   _FakeWorkspaceRecord(task_id='BAD')]
+        manager = _FakeManager(records=records)
+        manager.get_session = lambda task_id: sessions.get(task_id)
+        client = create_app(session_manager=manager).test_client()
+
+        pending = client.get('/api/permissions/pending').get_json()['pending']
+        # The raising session is skipped; the healthy one still reports.
+        self.assertEqual([e['task_id'] for e in pending], ['OK'])
+
     def test_live_probe_empty_string_returns_empty(self):
         from kato_webserver.app import _session_pending_permission_tool
 

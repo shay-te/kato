@@ -2327,6 +2327,7 @@ def _register_streaming_routes(app: Flask) -> None:
     _register_post_message_route(app)
     _register_stop_session_route(app)
     _register_post_permission_route(app)
+    _register_get_pending_permissions_route(app)
 
 
 def _register_session_events_route(app: Flask) -> None:
@@ -2613,6 +2614,38 @@ def _register_post_permission_route(app: Flask) -> None:
             'tool': str(payload.get('tool', '') or ''),
         })
         return jsonify({'status': 'delivered', 'allow': allow})
+
+
+def _register_get_pending_permissions_route(app: Flask) -> None:
+    @app.get('/api/permissions/pending')
+    def get_pending_permissions():
+        """Every unanswered permission ask across ALL live sessions.
+
+        The per-task SSE stream delivers a ``control_request`` only to the
+        browser tab that has that session open, so a permission ask on a
+        backgrounded task would otherwise wait until the operator clicked
+        into it. The UI polls this so the modal pops no matter which task is
+        in focus, each envelope tagged with the task it belongs to (and a
+        human label for the title). Best-effort: a session that can't report
+        its pending asks is skipped, never fails the whole feed.
+        """
+        manager = app.config['SESSION_MANAGER']
+        pending: list[dict] = []
+        for record, session in _iter_live_sessions(manager):
+            probe = getattr(session, 'pending_control_requests', None)
+            if not callable(probe):
+                continue
+            try:
+                envelopes = probe() or []
+            except Exception:
+                continue
+            for envelope in envelopes:
+                if not isinstance(envelope, dict):
+                    continue
+                envelope = dict(envelope)
+                envelope['task_id'] = record.task_id
+                pending.append(envelope)
+        return jsonify({'pending': pending})
 
 
 def _run_pre_tool_use_hook(app: Flask, task_id: str, payload: dict):

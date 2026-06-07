@@ -3,6 +3,7 @@ import AdoptTaskModal from './components/AdoptTaskModal.jsx';
 import DiffPane from './components/DiffPane.jsx';
 import EditorPane from './components/EditorPane.jsx';
 import ForgetTaskModal from './components/ForgetTaskModal.jsx';
+import GlobalPermissionContainer from './components/GlobalPermissionContainer.jsx';
 import Header from './components/Header.jsx';
 import Layout from './components/Layout.jsx';
 import OrchestratorActivityFeed from './components/OrchestratorActivityFeed.jsx';
@@ -547,6 +548,13 @@ export default function App() {
       <ChatComposerContext.Provider value={composerContextValue}>
         {layout}
       </ChatComposerContext.Provider>
+      {/* Permission asks on BACKGROUND tasks — the focused task is handled by
+          its own SSE container in SessionDetail. Together they guarantee a
+          prompt no matter which task is in view. */}
+      <GlobalPermissionContainer
+        activeTaskId={activeTaskId}
+        toolMemory={toolMemory}
+      />
       {forgetCandidate && (
         <ForgetTaskModal
           session={forgetCandidate}

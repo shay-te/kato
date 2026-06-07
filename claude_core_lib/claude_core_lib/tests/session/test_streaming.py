@@ -1099,6 +1099,26 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         session._recent_events.append(SessionEvent(raw={'type': 'result'}))
         self.assertFalse(session.is_working)
 
+    def test_pending_control_requests_returns_full_envelopes(self) -> None:
+        # The global cross-task feed needs the WHOLE envelope (request_id +
+        # request) for every waiting ask, shaped like the SSE control_request
+        # so the same modal renders it.
+        session = self._build_session()
+        session._pending_control_requests = {
+            'req-1': {'tool_name': 'Bash', 'input': {'command': 'mvn verify'}},
+            'req-2': {'tool_name': 'Edit', 'input': {'file_path': '/wks/x.py'}},
+        }
+        envelopes = session.pending_control_requests()
+        self.assertEqual(len(envelopes), 2)
+        by_id = {e['request_id']: e for e in envelopes}
+        self.assertEqual(by_id['req-1']['type'], 'control_request')
+        self.assertEqual(by_id['req-1']['request']['tool_name'], 'Bash')
+        self.assertEqual(by_id['req-2']['request']['input']['file_path'], '/wks/x.py')
+
+    def test_pending_control_requests_empty_when_none_waiting(self) -> None:
+        session = self._build_session()
+        self.assertEqual(session.pending_control_requests(), [])
+
     def test_is_working_true_during_send_warmup_before_any_event(self) -> None:
         # THE focus-dependent-status fix: the operator just sent a message
         # (user_messages_sent > result_events_received) but Claude hasn't

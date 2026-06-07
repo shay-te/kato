@@ -64,6 +64,13 @@ export function fetchSessionList() {
   return fetchJson('/api/sessions');
 }
 
+// Every unanswered permission ask across ALL live sessions (not just the
+// focused tab's SSE stream) — so the modal can pop no matter which task is
+// in view. Returns ``{ pending: [{ task_id, type, request_id, request, … }] }``.
+export function fetchPendingPermissions() {
+  return fetchJson('/api/permissions/pending');
+}
+
 export function fetchSafetyState() {
   return fetchJson('/api/safety');
 }

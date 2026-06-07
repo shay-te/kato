@@ -9,6 +9,10 @@
 export function unpackPermissionEnvelope(raw) {
   const nested = (raw && typeof raw.request === 'object' && raw.request) || {};
   return {
+    // Which task this ask belongs to — stamped by the global pending-permissions
+    // feed so a cross-task modal can name it in the title. '' for the focused
+    // task's own SSE envelope (the operator already knows which tab they're on).
+    taskId: String(raw?.task_id || nested.task_id || ''),
     requestId: String(raw?.request_id || raw?.id || nested.request_id || nested.id || ''),
     toolName: String(
       raw?.tool_name || raw?.tool

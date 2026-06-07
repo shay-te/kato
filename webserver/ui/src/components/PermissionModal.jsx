@@ -7,7 +7,7 @@ import DialogShell from './DialogShell.jsx';
 
 export default function PermissionModal({ raw, onDecide }) {
   const {
-    requestId, toolName, toolInput, outsideSandbox, outsidePath,
+    taskId, requestId, toolName, toolInput, outsideSandbox, outsidePath,
   } = unpackPermissionEnvelope(raw);
   const [rationale, setRationale] = useState('');
 
@@ -48,11 +48,18 @@ export default function PermissionModal({ raw, onDecide }) {
     outsideSandbox, allowAlwaysTitle, handleAllowAlways,
   );
 
+  // When the ask is for a task other than the one in focus (the global
+  // cross-task feed stamps ``task_id``), name it in the title so the operator
+  // knows WHICH task is waiting — not just "approval requested".
+  const title = taskId
+    ? `${taskId} wants permission`
+    : 'Approval requested';
+
   return (
     <DialogShell
       id="permission-modal"
       ariaLabelledBy="permission-modal-title"
-      title="Approval requested"
+      title={title}
       subtitle={toolName}
       subtitleId="permission-tool-name"
     >

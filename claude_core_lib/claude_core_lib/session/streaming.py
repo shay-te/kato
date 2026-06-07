@@ -1224,6 +1224,46 @@ class StreamingClaudeSession(object):
                 return tool_name or '<unknown>'
         return ''
 
+    def pending_control_requests(self) -> list[dict[str, Any]]:
+        """Full envelopes for every currently-waiting control request, oldest
+        first.
+
+        Powers the GLOBAL permission feed: the per-task SSE stream only
+        delivers a ``control_request`` to the ONE browser tab that has that
+        session open, so a permission ask on a BACKGROUNDED task would never
+        reach the operator until they happened to click into it. This lets
+        the webserver surface every unanswered ask across all live sessions,
+        so the modal can pop no matter which task is in focus.
+
+        Each envelope is shaped exactly like the ``control_request`` event
+        the SSE path emits (``type``/``request_id``/``request``), so the same
+        ``unpackPermissionEnvelope`` + ``PermissionModal`` render it
+        unchanged — including the lexical sandbox-scope flags (the live
+        capture annotates the EVENT, not the stored request, so we re-derive
+        them here; fail-open, never crash the feed)."""
+        with self._pending_control_requests_lock:
+            items = list(self._pending_control_requests.items())
+        envelopes: list[dict[str, Any]] = []
+        for request_id, request in items:
+            if not isinstance(request, dict):
+                continue
+            envelope: dict[str, Any] = {
+                'type': CLAUDE_EVENT_CONTROL_REQUEST,
+                'request_id': request_id,
+                'request': request,
+            }
+            try:
+                outside, offending = classify_tool_input_sandbox(
+                    request.get('input') or {}, self._cwd, self._additional_dirs,
+                )
+                if outside:
+                    envelope['outside_sandbox'] = True
+                    envelope['outside_path'] = offending
+            except Exception:
+                pass
+            envelopes.append(envelope)
+        return envelopes
+
     def _log_event_for_operator(self, event: SessionEvent) -> None:
         """Surface high-signal events to the kato terminal log.
 

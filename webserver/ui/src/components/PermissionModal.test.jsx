@@ -42,6 +42,17 @@ describe('PermissionModal — rendering', () => {
     expect(screen.getByText('Edit')).toBeInTheDocument();
   });
 
+  test('default title when no task_id (focused-task ask)', () => {
+    render(<PermissionModal raw={_raw()} onDecide={vi.fn()} />);
+    expect(screen.getByText('Approval requested')).toBeInTheDocument();
+  });
+
+  test('titles with the task code for a cross-task ask (task_id stamped)', () => {
+    render(<PermissionModal raw={_raw({ task_id: 'POJ-2' })} onDecide={vi.fn()} />);
+    expect(screen.getByText('POJ-2 wants permission')).toBeInTheDocument();
+    expect(screen.queryByText('Approval requested')).toBeNull();
+  });
+
   test('renders all three action buttons', () => {
     render(<PermissionModal raw={_raw()} onDecide={vi.fn()} />);
     expect(screen.getByRole('button', { name: /deny/i })).toBeInTheDocument();
