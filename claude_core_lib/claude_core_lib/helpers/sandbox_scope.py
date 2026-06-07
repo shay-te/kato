@@ -137,30 +137,59 @@ def classify_tool_input_sandbox(
 # call, e.g. ``python3 -c "...open('/Users/x/other/file.py')..."`` — a
 # token-only scan (looking for args that START with ``/``) misses those.
 _COMMAND_ABS_PATH = re.compile(r'[~/][\w./~+=*-]*')
-# Only USER / PROJECT space is interesting: other repos and secrets live under
-# the home tree. System paths (/usr,/etc,…), URLs (//host/…), and glob/regex
-# fragments (``/main/*`` from a ``-path`` arg) all fall outside these prefixes
-# and are ignored — that is what keeps command scanning from drowning the
-# operator in the false alarms that got it removed once before.
+# Relative paths that climb OUT with ``..`` (e.g. ``../../other-repo/secret``),
+# anywhere in the command. The lookbehind keeps it from re-matching the tail of
+# an absolute path already caught above (``/a/b/../c`` — the ``../c`` there is
+# preceded by ``/``). Resolved against ``cwd``; only ones that actually escape
+# the sandbox are flagged, so an in-task ``../sibling-repo/x`` stays clean.
+_COMMAND_REL_DOTDOT = re.compile(r'(?<![\w/~])(?:[\w.~+=*-]+/)*\.\.(?:/[\w.~+=*-]*)*')
+# Only USER / PROJECT space is interesting for ABSOLUTE paths: other repos and
+# secrets live under the home tree. System paths (/usr,/etc,…), URLs (//host/…),
+# and glob/regex fragments (``/main/*``) fall outside these prefixes and are
+# ignored — that is what keeps command scanning from drowning the operator in
+# false alarms. (Relative ``..`` escapes are flagged regardless of destination:
+# climbing out of the workspace is itself the signal.)
 _USER_SPACE_PREFIXES = ('/Users/', '/home/')
+# Shell ``$HOME`` / ``${HOME}`` → ``~`` so home-relative escapes resolve.
+_HOME_VAR = re.compile(r'\$\{?HOME\}?')
+
+
+def _deobfuscate_command(command: str) -> str:
+    """Strip shell quoting/escaping so a path can't hide from the scanner.
+
+    ``/Use"rs"/dev`` (quote-split), ``cat\\ /Users/x`` (backslash-escaped), and
+    ``'...'``/``\"...\"``/backtick wrappers around a buried path are all flattened
+    so the raw path text is visible. ``$HOME``/``${HOME}`` collapse to ``~``.
+    NOTE: this defeats *static* obfuscation only — a path built at RUNTIME from
+    an arbitrary ``$VAR``, base64, or fetched data cannot be seen here; that is
+    what KATO_CLAUDE_DOCKER (real OS confinement) is for."""
+    text = str(command or '')
+    text = text.replace('\\', '')
+    text = text.replace('"', '').replace("'", '').replace('`', '')
+    return _HOME_VAR.sub('~', text)
 
 
 def _command_path_args(command: str) -> list[str]:
-    """Absolute USER/PROJECT-space paths referenced anywhere in a shell command.
+    """Filesystem paths referenced anywhere in a shell command that are worth
+    sandbox-checking: absolute home-tree paths, plus relative ``..`` escapes.
 
-    Scans for ``/…`` / ``~/…`` substrings (inside quotes, ``open('…')``, etc.)
-    and keeps only those under the home tree — where other repos and secrets
-    live. System paths, URLs, and glob fragments are deliberately ignored."""
+    Quotes/backslashes are stripped first so a buried or split path is seen
+    whole. System paths, URLs, and glob fragments are left out of the absolute
+    set on purpose (low-noise); relative ``..`` paths are included and the
+    caller decides if they actually escape."""
+    text = _deobfuscate_command(command)
     args: list[str] = []
-    for match in _COMMAND_ABS_PATH.finditer(str(command or '')):
+    for match in _COMMAND_ABS_PATH.finditer(text):
         raw = match.group(0)
         if len(raw) < 2:
             continue
         # Normalize before the home-tree test so ``~``, ``..``, ``.`` and
-        # doubled slashes can't dodge it (e.g. ``/Users/x/../../etc`` or
-        # ``/Users/x/./y``). The host part of an ``http://…`` URL stays a
-        # ``//host`` prefix that never matches the home roots.
+        # doubled slashes can't dodge it (e.g. ``/Users/x/../../etc``).
         if os.path.normpath(os.path.expanduser(raw)).startswith(_USER_SPACE_PREFIXES):
+            args.append(raw)
+    for match in _COMMAND_REL_DOTDOT.finditer(text):
+        raw = match.group(0)
+        if '..' in raw.split('/'):  # a real ``..`` segment, not ``foo..bar``
             args.append(raw)
     return args
 
@@ -174,17 +203,20 @@ def classify_command_sandbox(
     """Return ``(outside, offending_path)`` for a shell command's path args.
 
     Companion to ``classify_tool_input_sandbox`` for Bash: a ``grep`` / ``cat``
-    / ``python -c "open('…')"`` naming an absolute USER-space path that escapes
-    the sandbox (another repo, ``~/.ssh``, …) is flagged so the UI can warn +
-    withhold a remembered grant. Conservative by design — only home-tree paths
-    are considered, and the sandbox roots + ``allowed_paths`` allow-list are
-    exempt, so an ordinary ``git``/``ls``/``mvn`` never trips it."""
+    / ``python -c "open('…')"`` naming a path that escapes the sandbox (another
+    repo, ``~/.ssh``, a ``../../`` climb-out) is flagged so the UI can warn +
+    withhold a remembered grant. Hardened against quote-splitting, backslash
+    escaping and ``$HOME`` indirection; the sandbox roots + ``allowed_paths``
+    allow-list are exempt, so ordinary ``git``/``ls``/``mvn`` never trips it.
+
+    Static-only by nature: a path computed at runtime ($VAR, base64, fetched)
+    is invisible here — KATO_CLAUDE_DOCKER is the OS-level guarantee."""
     norm_roots = _effective_roots(cwd, additional_dirs)
     if not norm_roots:
         return False, ''
     norm_allowed = {_normalize(p, cwd) for p in allowed_paths if p}
     for raw in _command_path_args(command):
-        resolved = os.path.normpath(os.path.expanduser(raw))
+        resolved = _normalize(os.path.expanduser(raw), cwd)
         if resolved in norm_allowed:
             continue
         if not any(_is_within(resolved, root) for root in norm_roots):

@@ -380,6 +380,50 @@ class ClassifyCommandSandboxAdversarialTests(unittest.TestCase):
     def test_relative_paths_only_is_clean(self):
         self.assertClean('grep -rn TODO src/ test/ ./scripts/build.sh')
 
+    # ---- obfuscation hardening: must still FLAG --------------------------
+
+    def test_quote_split_path_is_flagged(self):
+        # ``/Use"rs"/dev`` tries to dodge a substring match by splitting the
+        # path with quotes — deobfuscation flattens it.
+        self.assertFlagged(
+            'cat /Use"rs"/dev/Desktop/other/sec"ret".txt',
+            '/Users/dev/Desktop/other/secret.txt',
+        )
+
+    def test_backslash_escaped_path_is_flagged(self):
+        self.assertFlagged(
+            'cat \\/Users\\/dev\\/Desktop\\/other\\/secret',
+            '/Users/dev/Desktop/other/secret',
+        )
+
+    def test_home_variable_indirection_is_flagged(self):
+        self.assertFlagged('cat $HOME/.ssh/id_rsa', '~/.ssh/id_rsa')
+        self.assertFlagged('cat ${HOME}/.aws/credentials', '~/.aws/credentials')
+
+    def test_relative_dotdot_climb_out_is_flagged(self):
+        # cwd is …/UNA-1/admin-backend; ``../../UNA-2/repo`` climbs into a
+        # different task and must be caught even though it's relative.
+        outside, _ = self._run('cat ../../UNA-2/repo/.env')
+        self.assertTrue(outside)
+
+    def test_relative_dotdot_buried_in_quotes_is_flagged(self):
+        outside, _ = self._run(
+            "python3 -c \"print(open('../../../etc/shadow').read())\"",
+        )
+        self.assertTrue(outside)
+
+    # ---- obfuscation hardening: must still stay CLEAN --------------------
+
+    def test_relative_dotdot_staying_in_task_is_clean(self):
+        # …/admin-backend/../admin-client resolves to a sibling repo of the
+        # SAME task (an additional_dir) — inside, not an escape.
+        self.assertClean('cat ../admin-client/src/Main.java')
+
+    def test_home_var_into_the_task_is_clean(self):
+        # If HOME *is* the workspace parent, $HOME-relative stays inside.
+        with mock.patch.dict(os.environ, {'HOME': self.TASK}):
+            self.assertClean('cat $HOME/admin-backend/app/x.py')
+
 
 if __name__ == '__main__':
     unittest.main()
