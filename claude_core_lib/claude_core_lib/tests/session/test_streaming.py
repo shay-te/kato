@@ -1099,6 +1099,43 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         session._recent_events.append(SessionEvent(raw={'type': 'result'}))
         self.assertFalse(session.is_working)
 
+    def test_is_working_true_during_send_warmup_before_any_event(self) -> None:
+        # THE focus-dependent-status fix: the operator just sent a message
+        # (user_messages_sent > result_events_received) but Claude hasn't
+        # emitted its first event yet, so the newest LOGGED event is still
+        # the prior turn's ``result``. The live (focused) reducer reads
+        # ``turnInFlight`` (set on send) → working; polled ``is_working``
+        # MUST agree or the dot flips when the tab is backgrounded.
+        session = self._build_session()
+        session._proc = SimpleNamespace(poll=lambda: None)  # alive
+        session._recent_events.append(SessionEvent(raw={'type': 'assistant'}))
+        session._recent_events.append(SessionEvent(raw={'type': 'result'}))
+        # A fresh message was forwarded after that closed turn.
+        session._user_messages_sent = 2
+        session._last_user_message_sent_epoch = time.time()
+        self.assertTrue(session.is_working)
+
+    def test_is_working_false_when_unacked_turn_has_gone_stale(self) -> None:
+        # Same counters, but the send is older than the ack grace → the
+        # subprocess is STALLED, not warming up. ``is_working`` must flip
+        # back to False so ``_task_session_is_stalled`` can age it out and
+        # kato can requeue; otherwise a stuck session reads "working" forever.
+        session = self._build_session()
+        session._proc = SimpleNamespace(poll=lambda: None)  # alive
+        session._recent_events.append(SessionEvent(raw={'type': 'result'}))
+        session._user_messages_sent = 2
+        session._last_user_message_sent_epoch = time.time() - 600.0
+        self.assertFalse(session.is_working)
+
+    def test_is_working_false_for_unacked_turn_when_subprocess_dead(self) -> None:
+        # A pending send on a DEAD subprocess never reads working — the turn
+        # can't be in flight if nothing is running to answer it.
+        session = self._build_session()
+        session._proc = None  # not alive
+        session._user_messages_sent = 1
+        session._last_user_message_sent_epoch = time.time()
+        self.assertFalse(session.is_working)
+
     def test_validate_image_blocks_rejects_non_list_input(self) -> None:
         from claude_core_lib.claude_core_lib.session.streaming import _validate_image_blocks
         self.assertEqual(_validate_image_blocks('not a list'), [])

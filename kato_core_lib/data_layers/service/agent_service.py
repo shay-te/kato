@@ -85,7 +85,14 @@ _ON_DEMAND_PUSH_EXPECTED_ERRORS = (RepositoryHasNoChangesError,)
 # ``user_messages_sent > result_events_received`` past it. Read by
 # ``_task_session_is_stalled``; the classic trigger is a post-restart
 # ``--resume`` respawn that never picks up the piped message.
-_COMMENT_SEND_ACK_GRACE_SECONDS = 60.0
+#
+# This is the SAME budget the Claude transport's ``is_working`` uses to keep
+# an unacked turn reading "working" during warm-up — imported as one value so
+# the two can't drift: ``_task_session_is_stalled`` requires ``is_working`` to
+# have already flipped False before it ages a stall out.
+from claude_core_lib.claude_core_lib.session.streaming import (
+    TURN_ACK_GRACE_SECONDS as _COMMENT_SEND_ACK_GRACE_SECONDS,
+)
 _COMMENT_RUN_MARKER_PREFIX = 'KATO_LOCAL_COMMENT_RUN:'
 # How long a PR-existence lookup is reused before re-hitting the provider.
 # The UI polls publish-state every 10s; PR existence rarely changes, so a

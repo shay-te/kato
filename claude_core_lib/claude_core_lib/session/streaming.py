@@ -70,6 +70,22 @@ def _wait_for_exit(proc: subprocess.Popen, timeout: float) -> bool:
         return False
 
 
+# How long a sent-but-unanswered user message reads as "working" before
+# ``is_working`` lets it fall back to idle. Covers the warm-up window where
+# ``send_user_message`` has written to stdin but Claude has not yet emitted
+# its first event (we don't pass --include-partial-messages, so NOTHING marks
+# that window on the wire). Without it a BACKGROUNDED tab (polled
+# ``is_working``) reads "idle" while the FOCUSED tab (live ``turnInFlight``,
+# set on send) reads "working" — the focus-dependent status-dot bug.
+#
+# This is the SAME budget kato's comment dispatch uses to age out a stalled
+# session (``_COMMENT_SEND_ACK_GRACE_SECONDS`` imports this very value), and
+# they MUST stay equal: ``_task_session_is_stalled`` requires ``is_working``
+# to have already flipped False by the time it ages a stall out, so the
+# warm-up grace here may not exceed the dispatch grace there.
+TURN_ACK_GRACE_SECONDS = 60.0
+
+
 # Hard caps on attached images. Anthropic's API allows up to 20 images
 # per request and ~5MB per image; kato is more conservative because a
 # misclick on a 4K screenshot can blow up the prompt and the per-task
@@ -368,35 +384,38 @@ class StreamingClaudeSession(object):
 
     @property
     def is_working(self) -> bool:
-        """True when Claude is mid-turn — has spoken but not finalized.
+        """True when Claude is mid-turn — a message is in flight.
 
-        Mirrors the planning UI's ``turnInFlight`` reducer, so the tab
-        dot in the sidebar can dim once a turn closes (``result`` event)
-        even when the subprocess stays alive for the next message. Walks
-        the event log from the newest end:
+        Mirrors the planning UI's ``turnInFlight`` reducer, so the tab dot
+        is identical whether the tab is FOCUSED (live SSE ``turnInFlight``)
+        or BACKGROUNDED (this property, polled every 5s). When the two
+        disagree the dot flips on focus — the focus-dependent status bug.
 
-        - first ``result`` → turn closed, not working,
-        - first ``assistant`` / ``stream_event`` / ``user`` → mid-turn,
-        - first ``system``/``init`` (no following ``result``) → mid-turn,
-        - nothing matched → idle.
+        The reducer flips ``turnInFlight`` true the instant the operator
+        SENDS a message, long before any event comes back. This property
+        must do the same, and the event log alone cannot: we deliberately
+        omit --include-partial-messages, so during the multi-second warm-up
+        between ``send_user_message`` (stdin) and Claude's first
+        ``assistant`` event there is NOTHING on the wire — the newest
+        logged event is the PRIOR turn's ``result``, which reads "idle".
 
-        The ``system``/``init`` case is load-bearing and MUST match the
-        UI reducer (useSessionStream.js: ``turnInFlight = true`` on
-        ``system/init``). An autonomous task prompt is written straight
-        to Claude's stdin and is NEVER echoed back as a ``user`` event,
-        so for the multi-second window while Claude reads context before
-        its first ``assistant`` reply the only marker on the wire is the
-        ``init`` event. Without counting it, a BACKGROUNDED tab (polled
-        ``is_working``) reads "idle" during that whole window while the
-        FOCUSED tab (live ``turnInFlight``) reads "working" — the two
-        status surfaces disagree and the dot flips on focus (the
-        focus-dependent-status bug). A crashed/exited subprocess can't
-        get stuck "working" here: ``is_alive`` gates the whole walk, and
-        any completed turn leaves a trailing ``result`` that returns
-        False before the older ``init`` is ever reached.
+        Two signals, in order:
+
+        1. A sent-but-unanswered message inside ``TURN_ACK_GRACE_SECONDS``
+           (``user_messages_sent > result_events_received``) — the warm-up
+           window AND the whole turn that follows. Bounded by the grace so
+           a STALLED subprocess (alive, stopped reading stdin) ages back to
+           idle instead of sticking "working" forever; ``is_alive`` gates it
+           too, so a dead subprocess never reads working.
+        2. Otherwise the latest turn has closed — walk the log for the
+           background-WAIT case (a Monitor / run_in_background the turn
+           scheduled and is still blocked on counts as working until a
+           newer turn supersedes it).
         """
         if not self.is_alive:
             return False
+        if self._has_unacked_turn_within_grace():
+            return True
         with self._recent_events_lock:
             events = list(self._recent_events)
         for index in range(len(events) - 1, -1, -1):
@@ -416,6 +435,21 @@ class StreamingClaudeSession(object):
             ):
                 return True
         return False
+
+    def _has_unacked_turn_within_grace(self) -> bool:
+        """True when a forwarded user message has no ``result`` yet AND the
+        send is recent (< ``TURN_ACK_GRACE_SECONDS``).
+
+        This is the inverse of the stalled-session condition: a fresh
+        unacked turn is "working" (it just hasn't reached the wire); an
+        aged unacked turn is a stall, so this returns False and lets the
+        caller fall back to idle (kato's dispatch path then requeues it)."""
+        if self.user_messages_sent <= self.result_events_received:
+            return False
+        last_sent = self.last_user_message_sent_epoch
+        if last_sent <= 0:
+            return False
+        return (time.time() - last_sent) < TURN_ACK_GRACE_SECONDS
 
     # Tools that park the agent on a long-running wait (it scheduled the
     # work and is blocked on its result). Treated as "still working" even
