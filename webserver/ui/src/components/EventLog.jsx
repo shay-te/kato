@@ -10,6 +10,7 @@ import { ENTRY_SOURCE } from '../constants/entrySource.js';
 import { formatToolUse, toolUseFilePath } from '../utils/formatToolUse.js';
 import { parseCommentRunPrompt } from '../utils/commentRunPrompt.js';
 import { commentStatusKey } from '../utils/commentStatus.js';
+import { copyTextToClipboard } from '../utils/clipboard.js';
 import { useCommentStatusMap } from '../hooks/useCommentStatusMap.js';
 import { MessageFilter } from '../utils/MessageFilter.js';
 import { isPinnedToBottom, scrollToBottom } from '../utils/scrollUtils.js';
@@ -244,7 +245,10 @@ export default function EventLog({
           <div className="chat-turn chat-turn--preamble">{turns.preamble}</div>
         )}
         {turns.turns.map((turn) => (
-          <div className="chat-turn" key={turn[0].key}>{turn}</div>
+          <div className="chat-turn" key={turn[0].key}>
+            {turn}
+            {turnHasResponse(turn) && <TurnCopyButton />}
+          </div>
         ))}
         {/* The working indicator lives INSIDE the scroll container as
             the last entry, so it scrolls with the messages and trails
@@ -252,6 +256,58 @@ export default function EventLog({
         {footer}
       </div>
     </CommentStatusContext.Provider>
+  );
+}
+
+// True when a turn produced an actual Claude answer (an ASSISTANT bubble),
+// not just tool calls / system notices — so the copy button only shows where
+// there's response text to copy.
+function turnHasResponse(turn) {
+  return turn.some((el) => el?.props?.kind === BUBBLE_KIND.ASSISTANT);
+}
+
+// Concatenate the visible text of every ASSISTANT bubble inside a rendered
+// turn (DOM element), in order. Reads textContent rather than re-deriving from
+// React state — the same DOM the search highlighter walks — so it copies
+// exactly what the operator sees.
+export function collectTurnResponseText(turnEl) {
+  if (!turnEl) { return ''; }
+  const parts = turnEl.querySelectorAll('.bubble.assistant .bubble-content');
+  return Array.from(parts)
+    .map((el) => (el.textContent || '').trim())
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+// Copy-the-whole-response button pinned at the bottom of a turn (like the
+// chat apps). Walks up to its ``.chat-turn`` and copies every assistant
+// bubble's text, with brief "Copied" feedback.
+function TurnCopyButton() {
+  const ref = useRef(null);
+  const [copied, setCopied] = useState(false);
+  async function handleCopy() {
+    const text = collectTurnResponseText(ref.current?.closest('.chat-turn'));
+    if (!text) { return; }
+    try {
+      await copyTextToClipboard(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch (_) { /* clipboard unavailable — leave the button idle */ }
+  }
+  return (
+    <div className="chat-turn-actions">
+      <button
+        ref={ref}
+        type="button"
+        className="chat-turn-copy tooltip-end"
+        onClick={handleCopy}
+        aria-label="Copy response"
+        data-tooltip={copied ? 'Copied' : 'Copy the full response'}
+      >
+        <Icon name={copied ? 'check' : 'copy'} />
+        <span className="chat-turn-copy-label">{copied ? 'Copied' : 'Copy'}</span>
+      </button>
+    </div>
   );
 }
 

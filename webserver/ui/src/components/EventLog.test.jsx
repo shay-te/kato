@@ -870,3 +870,51 @@ describe('EventLog — comment-run prompt jump icon', () => {
     expect(container.querySelector('.chat-sticky-prompt-comment-jump')).toBeNull();
   });
 });
+
+
+describe('EventLog — copy-response button', () => {
+  const _assistant = (text) => _server({
+    type: 'assistant',
+    message: { id: `m-${text}`, content: [{ type: 'text', text }] },
+  });
+
+  test('a turn with an assistant response shows a copy button', () => {
+    render(
+      <EventLog entries={[
+        _local(BUBBLE_KIND.USER, 'ask one'),
+        _assistant('the full answer'),
+      ]} />,
+    );
+    expect(screen.getByRole('button', { name: 'Copy response' })).toBeInTheDocument();
+  });
+
+  test('clicking copy writes the assistant text to the clipboard', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    render(
+      <EventLog entries={[
+        _local(BUBBLE_KIND.USER, 'ask one'),
+        _assistant('first part'),
+        _assistant('second part'),
+      ]} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Copy response' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    expect(writeText).toHaveBeenCalledWith('first part\n\nsecond part');
+  });
+
+  test('a turn with no assistant response (tool-only) has no copy button', () => {
+    render(
+      <EventLog entries={[
+        _local(BUBBLE_KIND.USER, 'just run a tool'),
+        _server({
+          type: 'assistant',
+          message: { id: 'm-tool', content: [
+            { type: 'tool_use', name: 'Bash', input: { command: 'ls' } },
+          ] },
+        }),
+      ]} />,
+    );
+    expect(screen.queryByRole('button', { name: 'Copy response' })).toBeNull();
+  });
+});

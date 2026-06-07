@@ -1341,6 +1341,40 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   gap: $SPACE-12;
 }
 
+/* Copy-the-whole-response button at the bottom of a turn. Indented to line
+ * up with the bubble CONTENT column (14px dot + 10px gap), and faint until
+ * the turn is hovered so it doesn't clutter the transcript. */
+.chat-turn-actions {
+  display: flex;
+  padding-left: 24px;
+  margin-top: $SPACE-NEG-2;
+}
+
+.chat-turn-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: $SPACE-6;
+  padding: $SPACE-2 $SPACE-8;
+  border: 1px solid transparent;
+  border-radius: $RADIUS-4;
+  background: transparent;
+  color: $C-NEUTRAL-64;
+  font-size: $TEXT-12;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
+}
+
+.chat-turn:hover .chat-turn-copy,
+.chat-turn-copy:focus-visible {
+  opacity: 1;
+}
+
+.chat-turn-copy:hover {
+  background: $C-NEUTRAL-100-A06;
+  color: $C-NEUTRAL-96;
+}
+
 /* ───── sticky "you asked" prompt (Claude VS Code plugin style) ──
  * Pinned at the top of its turn so the operator never loses the
  * request the agent is working on. Long prompts collapse to three
