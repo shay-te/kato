@@ -1119,6 +1119,28 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         session = self._build_session()
         self.assertEqual(session.pending_control_requests(), [])
 
+    def test_pending_control_requests_flags_bash_command_outside_sandbox(self) -> None:
+        # A grep reading an ABSOLUTE path outside the task folder is flagged
+        # outside_sandbox in the feed, so the modal warns + withholds a
+        # remembered grant — even though Bash has no structured path arg.
+        session = StreamingClaudeSession(task_id='T', cwd='/work/UNA-1/repo')
+        session._pending_control_requests = {
+            'r1': {'tool_name': 'Bash',
+                   'input': {'command': 'cat /Users/x/other-repo/secret.py'}},
+        }
+        envelope = session.pending_control_requests()[0]
+        self.assertTrue(envelope.get('outside_sandbox'))
+        self.assertEqual(envelope.get('outside_path'), '/Users/x/other-repo/secret.py')
+
+    def test_pending_control_requests_in_folder_bash_not_flagged(self) -> None:
+        session = StreamingClaudeSession(task_id='T', cwd='/work/UNA-1/repo')
+        session._pending_control_requests = {
+            'r1': {'tool_name': 'Bash',
+                   'input': {'command': 'grep -rn x src/main'}},
+        }
+        envelope = session.pending_control_requests()[0]
+        self.assertNotIn('outside_sandbox', envelope)
+
     def test_is_working_true_during_send_warmup_before_any_event(self) -> None:
         # THE focus-dependent-status fix: the operator just sent a message
         # (user_messages_sent > result_events_received) but Claude hasn't

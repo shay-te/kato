@@ -19,6 +19,7 @@ disk, and still catches ``../`` escapes (the actual attack vector).
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 # Tool-input keys that name a filesystem path the agent intends to
@@ -128,4 +129,69 @@ def classify_tool_input_sandbox(
             continue
         if not any(_is_within(resolved, root) for root in norm_roots):
             return True, raw_path
+    return False, ''
+
+
+# Command-segment separators and the system/scratch trees a shell command may
+# touch WITHOUT it meaning the agent is rummaging in another project. Reading a
+# binary or a config under these is low-signal; flagging them is exactly the
+# false-alarm noise that got command-string scanning removed once before. So we
+# warn only on escapes into USER / PROJECT space (other repos, ~/.ssh, …).
+_COMMAND_SEGMENT_SPLIT = re.compile(r'&&|\|\||[;|]')
+_ENV_ASSIGNMENT = re.compile(r'^[A-Za-z_]\w*=')
+_SYSTEM_PREFIXES = (
+    '/usr', '/bin', '/sbin', '/opt', '/etc', '/var', '/tmp', '/dev',
+    '/proc', '/sys', '/Library', '/System', '/private', '/Applications',
+)
+
+
+def _command_path_args(command: str) -> list[str]:
+    """Absolute-looking (``/...`` or ``~...``) path ARGUMENTS in a shell
+    command — never the program itself.
+
+    Deliberately narrow: per segment we drop leading ``VAR=val`` assignments
+    and the program token (the binary, e.g. ``/usr/local/bin/docker``), then
+    keep only absolute tokens. Relative args (resolved inside ``cwd``) and
+    globs are ignored — parsing every shell token reliably is a fool's errand,
+    so we only look at the unambiguous absolute escapes."""
+    args: list[str] = []
+    for segment in _COMMAND_SEGMENT_SPLIT.split(str(command or '')):
+        tokens = [t for t in segment.strip().split() if t]
+        i = 0
+        while i < len(tokens) and _ENV_ASSIGNMENT.match(tokens[i]):
+            i += 1
+        i += 1  # skip the program token
+        for token in tokens[i:]:
+            cleaned = token.strip().strip('\'"').rstrip('\\;),')
+            if cleaned and cleaned.startswith(('/', '~')):
+                args.append(cleaned)
+    return args
+
+
+def classify_command_sandbox(
+    command: str,
+    cwd: str,
+    additional_dirs: tuple[str, ...] | list[str] = (),
+    allowed_paths: tuple[str, ...] | list[str] = (),
+) -> tuple[bool, str]:
+    """Return ``(outside, offending_path)`` for a shell command's path args.
+
+    Companion to ``classify_tool_input_sandbox`` for Bash: a ``grep`` / ``cat``
+    / redirect that names an ABSOLUTE path escaping the sandbox (another repo,
+    ``~/.ssh``, …) is flagged so the UI can warn + withhold a remembered
+    grant. Conservative by design — the program token, system/scratch dirs,
+    relative paths, and the ``allowed_paths`` allow-list are all exempt, so an
+    ordinary ``git``/``ls``/``mvn`` never trips it."""
+    norm_roots = _effective_roots(cwd, additional_dirs)
+    if not norm_roots:
+        return False, ''
+    norm_allowed = {_normalize(p, cwd) for p in allowed_paths if p}
+    for raw in _command_path_args(command):
+        resolved = os.path.normpath(os.path.expanduser(raw))
+        if resolved in norm_allowed:
+            continue
+        if any(_is_within(resolved, prefix) for prefix in _SYSTEM_PREFIXES):
+            continue
+        if not any(_is_within(resolved, root) for root in norm_roots):
+            return True, raw
     return False, ''

@@ -50,6 +50,7 @@ from claude_core_lib.claude_core_lib.helpers.spawn_utils import (
     wrap_spawn_for_docker,
 )
 from claude_core_lib.claude_core_lib.helpers.sandbox_scope import (
+    classify_command_sandbox,
     classify_tool_input_sandbox,
 )
 from claude_core_lib.claude_core_lib.session.index import parse_jsonl_dict_line
@@ -1122,16 +1123,32 @@ class StreamingClaudeSession(object):
         never fail-closed into a crash of the permission pipeline).
         """
         try:
-            tool_input = request.get('input') or {}
-            outside, offending = classify_tool_input_sandbox(
-                tool_input, self._cwd, self._additional_dirs,
-                self._sandbox_allowed_paths,
-            )
+            outside, offending = self._classify_sandbox(request.get('input') or {})
         except Exception:
             return
         if outside:
             event.raw['outside_sandbox'] = True
             event.raw['outside_path'] = offending
+
+    def _classify_sandbox(self, tool_input) -> tuple[bool, str]:
+        """``(outside, offending_path)`` for a tool input — structured path
+        args first, then (for Bash) the command's absolute path arguments.
+
+        One place so the live SSE annotation and the global pending-permissions
+        feed classify identically."""
+        outside, offending = classify_tool_input_sandbox(
+            tool_input, self._cwd, self._additional_dirs,
+            self._sandbox_allowed_paths,
+        )
+        if outside:
+            return outside, offending
+        command = tool_input.get('command') if isinstance(tool_input, dict) else ''
+        if command:
+            return classify_command_sandbox(
+                command, self._cwd, self._additional_dirs,
+                self._sandbox_allowed_paths,
+            )
+        return False, ''
 
     # Tools that WRITE to the filesystem. A self-authorized write outside
     # the task folder is the one we must never let pass silently.
@@ -1262,10 +1279,7 @@ class StreamingClaudeSession(object):
                 'request': request,
             }
             try:
-                outside, offending = classify_tool_input_sandbox(
-                    request.get('input') or {}, self._cwd, self._additional_dirs,
-                    self._sandbox_allowed_paths,
-                )
+                outside, offending = self._classify_sandbox(request.get('input') or {})
                 if outside:
                     envelope['outside_sandbox'] = True
                     envelope['outside_path'] = offending
