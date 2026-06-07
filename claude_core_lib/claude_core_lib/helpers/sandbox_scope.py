@@ -156,7 +156,11 @@ def _command_path_args(command: str) -> list[str]:
         raw = match.group(0)
         if len(raw) < 2:
             continue
-        if os.path.expanduser(raw).startswith(_USER_SPACE_PREFIXES):
+        # Normalize before the home-tree test so ``~``, ``..``, ``.`` and
+        # doubled slashes can't dodge it (e.g. ``/Users/x/../../etc`` or
+        # ``/Users/x/./y``). The host part of an ``http://…`` URL stays a
+        # ``//host`` prefix that never matches the home roots.
+        if os.path.normpath(os.path.expanduser(raw)).startswith(_USER_SPACE_PREFIXES):
             args.append(raw)
     return args
 

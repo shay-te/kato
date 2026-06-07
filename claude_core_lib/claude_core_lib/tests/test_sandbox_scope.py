@@ -227,5 +227,159 @@ class ClassifyCommandSandboxTests(unittest.TestCase):
         self.assertEqual(classify_command_sandbox('', self.UCWD), (False, ''))
 
 
+class ClassifyCommandSandboxAdversarialTests(unittest.TestCase):
+    """Super-challenging commands: forbidden home-tree paths buried deep in
+    quotes / JSON / subshells / long text MUST be caught, while in-task paths,
+    the allow-list, system paths, URLs and glob/regex fragments MUST NOT
+    false-alarm."""
+
+    TASK = '/Users/dev/.kato/workspaces/UNA-1'
+    CWD = TASK + '/admin-backend'
+    ADD = (TASK + '/admin-client',)  # sibling repo of the SAME task
+    ALLOWED = (
+        '/Users/dev/.kato/lessons.md',
+        '/Users/dev/.kato/architecture.md',
+    )
+
+    def _run(self, cmd):
+        return classify_command_sandbox(cmd, self.CWD, self.ADD, self.ALLOWED)
+
+    def assertFlagged(self, cmd, expected_offending):
+        outside, offending = self._run(cmd)
+        self.assertTrue(outside, f'expected FLAG but was clean:\n  {cmd}')
+        self.assertEqual(offending, expected_offending)
+
+    def assertClean(self, cmd):
+        outside, offending = self._run(cmd)
+        self.assertFalse(
+            outside, f'expected CLEAN but flagged {offending!r}:\n  {cmd}',
+        )
+
+    # ---- MUST FLAG: a forbidden home-tree path, however buried -------------
+
+    def test_buried_in_quoted_python_open(self):
+        self.assertFlagged(
+            "python3 -c \"import ast; ast.parse(open("
+            "'/Users/dev/Desktop/dev/ob-love/update_server.py').read())\"",
+            '/Users/dev/Desktop/dev/ob-love/update_server.py',
+        )
+
+    def test_buried_in_a_wall_of_text(self):
+        cmd = (
+            'echo "kicking off a long multi-stage diagnostic that scans every '
+            'module and service and eventually slurps the production secrets '
+            'living at" /Users/dev/Desktop/secrets/prod.env " and then keeps '
+            'going for a while talking about totally unrelated things"'
+        )
+        self.assertFlagged(cmd, '/Users/dev/Desktop/secrets/prod.env')
+
+    def test_inside_a_json_request_body(self):
+        self.assertFlagged(
+            'curl -s -XPOST http://localhost:8080/run '
+            '-d \'{"script":"/Users/dev/Desktop/dev/other-repo/deploy.sh",'
+            '"env":"prod"}\'',
+            '/Users/dev/Desktop/dev/other-repo/deploy.sh',
+        )
+
+    def test_after_an_equals_flag(self):
+        self.assertFlagged(
+            'mytool --verbose --config=/Users/dev/Desktop/other/config.yaml',
+            '/Users/dev/Desktop/other/config.yaml',
+        )
+
+    def test_nested_double_quotes_in_node_eval(self):
+        self.assertFlagged(
+            'bash -c "node -e \\"require(\'fs\')'
+            '.readFileSync(\'/Users/dev/Desktop/other/key.pem\')\\""',
+            '/Users/dev/Desktop/other/key.pem',
+        )
+
+    def test_inside_a_command_substitution(self):
+        self.assertFlagged(
+            'cat $(ls /Users/dev/Desktop/other/dropbox)',
+            '/Users/dev/Desktop/other/dropbox',
+        )
+
+    def test_sibling_task_workspace_is_outside(self):
+        # A DIFFERENT task's clone under the same workspaces root is still out.
+        self.assertFlagged(
+            'cat /Users/dev/.kato/workspaces/UNA-2/repo/.env',
+            '/Users/dev/.kato/workspaces/UNA-2/repo/.env',
+        )
+
+    def test_prefix_similar_task_is_outside(self):
+        # ``UNA-12`` string-prefixes ``UNA-1`` but is a different dir — the
+        # separator guard must keep it OUT (no naive startswith false-inside).
+        self.assertFlagged(
+            'grep token /Users/dev/.kato/workspaces/UNA-12/repo/secrets.txt',
+            '/Users/dev/.kato/workspaces/UNA-12/repo/secrets.txt',
+        )
+
+    def test_dotdot_traversal_into_a_sibling_task(self):
+        outside, _ = self._run(
+            'cat /Users/dev/.kato/workspaces/UNA-1/../UNA-2/secret',
+        )
+        self.assertTrue(outside)
+
+    def test_home_dotfile_buried_with_a_scratch_path(self):
+        with mock.patch.dict(os.environ, {'HOME': '/Users/dev'}):
+            # ``/tmp/out.tgz`` is scratch (ignored); ``~/.aws/credentials`` is
+            # the real escape and must be caught.
+            self.assertFlagged(
+                'tar czf /tmp/out.tgz ~/.aws/credentials',
+                '~/.aws/credentials',
+            )
+
+    def test_forbidden_wins_over_inside_and_allowed_paths(self):
+        # Same command touches an in-task file, the allow-listed lessons.md,
+        # AND a forbidden path — the forbidden one must be the offender.
+        cmd = (
+            'python3 merge.py '
+            '/Users/dev/.kato/workspaces/UNA-1/admin-backend/in.json '
+            '/Users/dev/.kato/lessons.md '
+            '/Users/dev/Desktop/other/leak.json'
+        )
+        self.assertFlagged(cmd, '/Users/dev/Desktop/other/leak.json')
+
+    # ---- MUST NOT FLAG: in-task / allow-list / system / URL / glob --------
+
+    def test_in_task_path_buried_in_python_open_is_clean(self):
+        self.assertClean(
+            "python3 -c \"open('/Users/dev/.kato/workspaces/UNA-1/"
+            "admin-backend/app/config.py').read()\"",
+        )
+
+    def test_sibling_repo_of_same_task_is_clean(self):
+        self.assertClean(
+            'cat /Users/dev/.kato/workspaces/UNA-1/admin-client/pom.xml',
+        )
+
+    def test_dotdot_staying_inside_the_task_is_clean(self):
+        self.assertClean(
+            'cat /Users/dev/.kato/workspaces/UNA-1/admin-backend/../'
+            'admin-client/src/Main.java',
+        )
+
+    def test_allowlisted_lessons_buried_is_clean(self):
+        self.assertClean(
+            "python3 -c \"print(open('/Users/dev/.kato/lessons.md').read())\"",
+        )
+
+    def test_system_path_buried_is_clean(self):
+        self.assertClean('python3 -c "print(open(\'/etc/hosts\').read())"')
+
+    def test_url_with_userlike_path_is_clean(self):
+        # ``/Users/dev`` appears in the URL PATH, but it's behind ``//host`` so
+        # it never reads as a home-tree filesystem path.
+        self.assertClean('curl https://cdn.example.com/Users/dev/avatar.png')
+
+    def test_glob_and_regex_fragments_are_clean(self):
+        self.assertClean('find . -path "*/main/*" -name "*.java"')
+        self.assertClean("sed -i 's|/var/log/app|/tmp/app|g' run.log")
+
+    def test_relative_paths_only_is_clean(self):
+        self.assertClean('grep -rn TODO src/ test/ ./scripts/build.sh')
+
+
 if __name__ == '__main__':
     unittest.main()
