@@ -3919,11 +3919,11 @@ body.kato-resizing #left-pane-resizer::before {
   display: flex;
   gap: 8px;
   align-items: center;
-  padding: 6px 12px;
+  padding: 6px 12px 6px 10px;
   border-radius: 12px 12px 0 0;
   background: #2a2a2a;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06);
   transition: background 120ms ease;
@@ -3964,7 +3964,7 @@ body.kato-resizing #left-pane-resizer::before {
 
 .files-tab-repo-chevron {
   color: rgba(245, 245, 247, 0.65);
-  width: 12px;
+  width: 16px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5276,7 +5276,7 @@ body.kato-resizing #left-pane-resizer::before {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 3px 8px;
+  padding: 3px 8px 3px 10px;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;

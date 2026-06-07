@@ -3971,11 +3971,15 @@ body.kato-resizing #left-pane-resizer::before {
   display: flex;
   gap: $SPACE-8;
   align-items: center;
-  padding: $SPACE-6 $SPACE-12;
+  // Left inset + chevron box + gap match the tree rows below
+  // (.diff-file-tree-row / .tree-row), so the repo title's collapse chevron
+  // sits in the SAME column as the tree's chevrons — in both Changes and the
+  // full tree. Font size also matches the tree rows (14px).
+  padding: $SPACE-6 $SPACE-12 $SPACE-6 $SPACE-10;
   border-radius: $RADIUS-12-12-0-0;
   background: $C-NEUTRAL-16;
   cursor: pointer;
-  font-size: $TEXT-12;
+  font-size: $TEXT-14;
   font-weight: 600;
   box-shadow: $SHADOW-23;
   transition: background 120ms ease;
@@ -4011,7 +4015,9 @@ body.kato-resizing #left-pane-resizer::before {
 
 .files-tab-repo-chevron {
   color: $C-NEUTRAL-96-A65;
-  width: 12px;
+  // 16px to match the tree-row chevron box (.diff-file-tree-chevron /
+  // .tree-row-chevron) so the chevrons line up as one column.
+  width: 16px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5331,7 +5337,9 @@ body.kato-resizing #left-pane-resizer::before {
   display: flex;
   align-items: center;
   gap: $SPACE-8;
-  padding: $SPACE-3 $SPACE-8;
+  // Left inset 10 (not 8) so the depth-0 chevron shares the SAME column as
+  // the repo header + the Changes tree (both inset 10). Right padding stays 8.
+  padding: $SPACE-3 $SPACE-8 $SPACE-3 $SPACE-10;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;

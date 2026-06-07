@@ -753,6 +753,7 @@ Produce a structured report (markdown). For each finding give file:line, severit
 
 4. CODE QUALITY (per AGENTS.md)
    - No duplicated logic — reuse existing helpers/components; flag copy-paste.
+   - No magic numbers — extract them to named constants (literals are OK in tests only).
    - No dead/orphaned code (uncalled functions, unused imports/vars).
    - Names match surrounding code; idiom consistent.
    - No debug prints, console.logs, TODO/FIXME, or leftover scratch code.
