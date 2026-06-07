@@ -266,13 +266,15 @@ function turnHasResponse(turn) {
   return turn.some((el) => el?.props?.kind === BUBBLE_KIND.ASSISTANT);
 }
 
-// Concatenate the visible text of every ASSISTANT bubble inside a rendered
-// turn (DOM element), in order. Reads textContent rather than re-deriving from
-// React state — the same DOM the search highlighter walks — so it copies
-// exactly what the operator sees.
+// Concatenate the visible text of EVERY bubble inside a rendered turn (DOM
+// element), in order — the whole response to that prompt: assistant prose plus
+// the tool activity / notices in between, like copying a full chat reply. The
+// turn's sticky "YOU ASKED" header is not a ``.bubble`` so the prompt itself is
+// excluded. Reads textContent (the same DOM the search highlighter walks) so it
+// copies exactly what the operator sees.
 export function collectTurnResponseText(turnEl) {
   if (!turnEl) { return ''; }
-  const parts = turnEl.querySelectorAll('.bubble.assistant .bubble-content');
+  const parts = turnEl.querySelectorAll('.bubble-content');
   return Array.from(parts)
     .map((el) => (el.textContent || '').trim())
     .filter(Boolean)
@@ -280,8 +282,8 @@ export function collectTurnResponseText(turnEl) {
 }
 
 // Copy-the-whole-response button pinned at the bottom of a turn (like the
-// chat apps). Walks up to its ``.chat-turn`` and copies every assistant
-// bubble's text, with brief "Copied" feedback.
+// chat apps). Walks up to its ``.chat-turn`` and copies the entire response to
+// that prompt (every bubble), with brief "Copied" feedback.
 function TurnCopyButton() {
   const ref = useRef(null);
   const [copied, setCopied] = useState(false);

@@ -903,6 +903,31 @@ describe('EventLog — copy-response button', () => {
     expect(writeText).toHaveBeenCalledWith('first part\n\nsecond part');
   });
 
+  test('copy captures the ENTIRE response — prose AND the tool activity between', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    render(
+      <EventLog entries={[
+        _local(BUBBLE_KIND.USER, 'do the thing'),
+        _assistant('let me check the file'),
+        _server({
+          type: 'assistant',
+          message: { id: 'm-tool', content: [
+            { type: 'tool_use', name: 'Bash', input: { command: 'grep TODO app.js' } },
+          ] },
+        }),
+        _assistant('done — found two TODOs'),
+      ]} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Copy response' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    const copied = writeText.mock.calls[0][0];
+    expect(copied).toContain('let me check the file');
+    expect(copied).toContain('done — found two TODOs');
+    // The tool step is part of the response too.
+    expect(copied).toContain('grep TODO app.js');
+  });
+
   test('a turn with no assistant response (tool-only) has no copy button', () => {
     render(
       <EventLog entries={[
