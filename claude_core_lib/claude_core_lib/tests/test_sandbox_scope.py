@@ -138,6 +138,25 @@ class ClassifyToolInputSandboxTests(unittest.TestCase):
         )
         self.assertFalse(outside)
 
+    def test_allowed_path_outside_sandbox_is_not_flagged(self) -> None:
+        # kato's configured lessons.md / architecture.md live outside the task
+        # folder but the agent is MEANT to touch them — an exact allow-list
+        # match must NOT trip the out-of-sandbox warning.
+        lessons = os.path.normpath('/Users/x/Desktop/dev_kato/lessons.md')
+        outside, _ = classify_tool_input_sandbox(
+            {'file_path': lessons}, CWD, ADD, (lessons,),
+        )
+        self.assertFalse(outside)
+
+    def test_other_outside_path_still_flagged_with_allowlist(self) -> None:
+        # The allow-list is exact: a DIFFERENT outside file still warns.
+        lessons = os.path.normpath('/Users/x/Desktop/dev_kato/lessons.md')
+        outside, offending = classify_tool_input_sandbox(
+            {'file_path': '/etc/passwd'}, CWD, ADD, (lessons,),
+        )
+        self.assertTrue(outside)
+        self.assertEqual(offending, '/etc/passwd')
+
 
 if __name__ == '__main__':
     unittest.main()

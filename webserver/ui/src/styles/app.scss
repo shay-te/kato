@@ -1473,17 +1473,19 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   overflow: hidden;
 }
 
-/* Fade spans the FULL prompt box (under the "You asked" label too),
- * not just the text column — so it anchors to the full-width toggle,
- * sitting ``$SPACE-9`` up to align with the clipped text bottom (the
- * toggle's bottom padding). The z-index:2 expand button stays above. */
+/* Fade spans the FULL prompt box — both its WIDTH (under the "You asked"
+ * label too, anchored to the full-width toggle) and its HEIGHT (top to
+ * bottom), so the gradient fills the entire collapsed blue box rather than
+ * sitting as a short band at the bottom. Transparent at the top keeps the
+ * first line readable; it deepens toward the bottom to signal "more below,
+ * click to expand". The z-index:2 expand button stays above. */
 .chat-sticky-prompt.is-collapsible:not(.is-expanded) .chat-sticky-prompt-toggle::after {
   content: "";
   position: absolute;
   left: 0;
   right: 0;
-  bottom: $SPACE-9;
-  height: 2.5em;
+  top: 0;
+  bottom: 0;
   pointer-events: none;
   background: linear-gradient(to bottom, $C-NEUTRAL-05-A00 0%, $C-NEUTRAL-05-A86 66%, $C-NEUTRAL-16 100%);
 }
@@ -2834,6 +2836,13 @@ code {
   font-size: $TEXT-14;
   color: $C-NEUTRAL-64;
   font-weight: 500;
+}
+
+// The task code inside the permission modal title ("UNA-2742 wants
+// permission") — bold + brighter so the operator sees WHICH task at a glance.
+.permission-modal-task {
+  font-weight: 700;
+  color: $C-NEUTRAL-96;
 }
 
 .modal-head {
@@ -5337,9 +5346,11 @@ body.kato-resizing #left-pane-resizer::before {
   display: flex;
   align-items: center;
   gap: $SPACE-8;
-  // Left inset 10 (not 8) so the depth-0 chevron shares the SAME column as
-  // the repo header + the Changes tree (both inset 10). Right padding stays 8.
-  padding: $SPACE-3 $SPACE-8 $SPACE-3 $SPACE-10;
+  // NOTE: react-arborist sets ``padding-left`` as an INLINE style per row
+  // (its indent mechanism), which overrides any padding-left here — the
+  // depth-0 left inset that aligns the chevron with the repo header lives in
+  // the Node's ``rowStyle`` (FilesTab.jsx), not in this rule.
+  padding: $SPACE-3 $SPACE-8;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;

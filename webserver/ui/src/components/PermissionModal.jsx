@@ -5,7 +5,7 @@ import {
 } from '../utils/permissionEnvelope.js';
 import DialogShell from './DialogShell.jsx';
 
-export default function PermissionModal({ raw, onDecide }) {
+export default function PermissionModal({ raw, onDecide, taskCode = '' }) {
   const {
     taskId, requestId, toolName, toolInput, outsideSandbox, outsidePath,
   } = unpackPermissionEnvelope(raw);
@@ -48,11 +48,13 @@ export default function PermissionModal({ raw, onDecide }) {
     outsideSandbox, allowAlwaysTitle, handleAllowAlways,
   );
 
-  // When the ask is for a task other than the one in focus (the global
-  // cross-task feed stamps ``task_id``), name it in the title so the operator
-  // knows WHICH task is waiting — not just "approval requested".
-  const title = taskId
-    ? `${taskId} wants permission`
+  // Always name the task in the title so the operator knows WHICH task is
+  // waiting — not just "approval requested". ``taskCode`` comes straight from
+  // the rendering surface (the focused task's SSE envelope has no task_id);
+  // the cross-task feed also stamps ``task_id`` on the envelope itself.
+  const code = taskCode || taskId;
+  const title = code
+    ? <><strong className="permission-modal-task">{code}</strong> wants permission</>
     : 'Approval requested';
 
   return (

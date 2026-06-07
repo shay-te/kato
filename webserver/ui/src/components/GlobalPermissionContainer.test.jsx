@@ -41,7 +41,8 @@ describe('GlobalPermissionContainer', () => {
   test('pops a titled modal for an ask on a background task', async () => {
     fetchPendingPermissions.mockResolvedValue({ pending: [_ask('POJ-2')] });
     render(<GlobalPermissionContainer activeTaskId="POJ-1" toolMemory={_memory} />);
-    expect(await screen.findByText('POJ-2 wants permission')).toBeInTheDocument();
+    const heading = await screen.findByRole('heading');
+    expect(heading).toHaveTextContent('POJ-2 wants permission');
   });
 
   test('does NOT duplicate the focused task\'s own ask (SSE owns it)', async () => {

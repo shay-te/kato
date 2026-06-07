@@ -49,8 +49,16 @@ describe('PermissionModal — rendering', () => {
 
   test('titles with the task code for a cross-task ask (task_id stamped)', () => {
     render(<PermissionModal raw={_raw({ task_id: 'POJ-2' })} onDecide={vi.fn()} />);
-    expect(screen.getByText('POJ-2 wants permission')).toBeInTheDocument();
+    expect(screen.getByRole('heading')).toHaveTextContent('POJ-2 wants permission');
+    // The task code is its own bold element.
+    expect(screen.getByText('POJ-2')).toHaveClass('permission-modal-task');
     expect(screen.queryByText('Approval requested')).toBeNull();
+  });
+
+  test('taskCode prop titles the focused-task modal (SSE envelope has no task_id)', () => {
+    render(<PermissionModal raw={_raw()} onDecide={vi.fn()} taskCode="POJ-1" />);
+    expect(screen.getByRole('heading')).toHaveTextContent('POJ-1 wants permission');
+    expect(screen.getByText('POJ-1')).toHaveClass('permission-modal-task');
   });
 
   test('renders all three action buttons', () => {

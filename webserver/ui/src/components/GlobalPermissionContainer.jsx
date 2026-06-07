@@ -76,6 +76,7 @@ export default function GlobalPermissionContainer({ activeTaskId, toolMemory }) 
       onAuditBubble={() => { /* cross-task: no focused chat to bubble into */ }}
       recallToolDecision={toolMemory.recall}
       rememberToolDecision={toolMemory.remember}
+      taskCode={current.task_id}
     />
   );
 }

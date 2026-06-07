@@ -1429,17 +1429,19 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   overflow: hidden;
 }
 
-/* Fade spans the FULL prompt box (under the "You asked" label too),
- * not just the text column — so it anchors to the full-width toggle,
- * sitting ``$SPACE-9`` up to align with the clipped text bottom (the
- * toggle's bottom padding). The z-index:2 expand button stays above. */
+/* Fade spans the FULL prompt box — both its WIDTH (under the "You asked"
+ * label too, anchored to the full-width toggle) and its HEIGHT (top to
+ * bottom), so the gradient fills the entire collapsed blue box rather than
+ * sitting as a short band at the bottom. Transparent at the top keeps the
+ * first line readable; it deepens toward the bottom to signal "more below,
+ * click to expand". The z-index:2 expand button stays above. */
 .chat-sticky-prompt.is-collapsible:not(.is-expanded) .chat-sticky-prompt-toggle::after {
   content: "";
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 9px;
-  height: 2.5em;
+  top: 0;
+  bottom: 0;
   pointer-events: none;
   background: linear-gradient(to bottom, rgba(13, 13, 15, 0) 0%, rgba(13, 13, 15, 0.86) 66%, #2a2a2a 100%);
 }
@@ -2791,6 +2793,11 @@ code {
   font-size: 14px;
   color: #a3a3a3;
   font-weight: 500;
+}
+
+.permission-modal-task {
+  font-weight: 700;
+  color: #f5f5f7;
 }
 
 .modal-head {
@@ -5276,7 +5283,7 @@ body.kato-resizing #left-pane-resizer::before {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 3px 8px 3px 10px;
+  padding: 3px 8px;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;

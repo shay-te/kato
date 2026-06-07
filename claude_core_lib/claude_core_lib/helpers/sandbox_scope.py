@@ -95,6 +95,7 @@ def classify_tool_input_sandbox(
     tool_input: Any,
     cwd: str,
     additional_dirs: tuple[str, ...] | list[str] = (),
+    allowed_paths: tuple[str, ...] | list[str] = (),
 ) -> tuple[bool, str]:
     """Return ``(outside, offending_path)`` for an agent tool input.
 
@@ -103,6 +104,12 @@ def classify_tool_input_sandbox(
     ``--add-dir`` set. Relative paths resolve against ``cwd``. The first
     escaping path found is returned (in ``_PATH_KEYS`` order) so the UI
     can name it.
+
+    ``allowed_paths`` are SPECIFIC files the product intentionally lets the
+    agent touch even though they live outside the task folder — e.g. kato's
+    configured ``lessons_path`` / ``architecture_doc_path``. The agent is
+    SUPPOSED to read/write those, so an exact match is never flagged. They
+    are passed in (not hard-coded) to keep this lib product-agnostic.
 
     Conservative on BOTH ends so it neither over-warns nor under-warns:
     - No path argument (e.g. a bare Bash command) → ``(False, '')``. The
@@ -114,8 +121,11 @@ def classify_tool_input_sandbox(
     norm_roots = _effective_roots(cwd, additional_dirs)
     if not norm_roots:
         return False, ''
+    norm_allowed = {_normalize(p, cwd) for p in allowed_paths if p}
     for raw_path in _candidate_paths(tool_input):
         resolved = _normalize(raw_path, cwd)
+        if resolved in norm_allowed:
+            continue
         if not any(_is_within(resolved, root) for root in norm_roots):
             return True, raw_path
     return False, ''

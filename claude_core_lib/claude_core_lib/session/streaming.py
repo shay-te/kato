@@ -250,6 +250,13 @@ class StreamingClaudeSession(object):
         self._session_id_correction_callback = None
         self._architecture_doc_path = normalized_text(architecture_doc_path)
         self._lessons_path = normalized_text(lessons_path)
+        # Configured product files the agent is MEANT to touch (kato writes
+        # learned lessons here and reads the architecture doc), even though
+        # they live outside the task folder. Allow-listed so the
+        # out-of-sandbox warning never fires on them. See sandbox_scope.
+        self._sandbox_allowed_paths = tuple(
+            p for p in (self._architecture_doc_path, self._lessons_path) if p
+        )
         # Extra directories Claude is allowed to read/edit beyond
         # ``cwd``. For multi-repo tasks the chat path uses this to
         # surface sibling repo clones (e.g. all task repos under
@@ -1118,6 +1125,7 @@ class StreamingClaudeSession(object):
             tool_input = request.get('input') or {}
             outside, offending = classify_tool_input_sandbox(
                 tool_input, self._cwd, self._additional_dirs,
+                self._sandbox_allowed_paths,
             )
         except Exception:
             return
@@ -1186,6 +1194,7 @@ class StreamingClaudeSession(object):
             tool_input = block.get('input')
             outside, offending = classify_tool_input_sandbox(
                 tool_input, self._cwd, self._additional_dirs,
+                self._sandbox_allowed_paths,
             )
             if outside and offending not in paths:
                 paths.append(offending)
@@ -1255,6 +1264,7 @@ class StreamingClaudeSession(object):
             try:
                 outside, offending = classify_tool_input_sandbox(
                     request.get('input') or {}, self._cwd, self._additional_dirs,
+                    self._sandbox_allowed_paths,
                 )
                 if outside:
                     envelope['outside_sandbox'] = True

@@ -51,6 +51,9 @@ import { useDismissOnOutsidePointerOrEscape } from './hooks/useDismissOnOutsideP
 // edits, pulls, syncs). Honors document visibility so a background
 // kato tab doesn't keep hammering the server.
 const AUTO_POLL_INTERVAL_MS = 5000;
+// Depth-0 left inset (px) for the full (arborist) tree, so its top-level
+// chevron aligns with the repo header chevron and the Changes tree.
+const TREE_ROW_DEPTH0_INSET = 10;
 const EMPTY_DIFF_META = new Map();
 const EMPTY_COMMENT_META = new Map();
 const EMPTY_STATS = { added: 0, deleted: 0 };
@@ -1246,7 +1249,16 @@ function Node({
     folderChanged ? 'changed-ancestor' : '',
   ].filter(Boolean).join(' ');
   const level = Number.isFinite(node.level) ? node.level : 0;
-  const rowStyle = { ...style, '--level': level };
+  // react-arborist owns ``paddingLeft`` (its indent). Add a fixed depth-0
+  // inset so the top-level chevron lands in the SAME column as the repo
+  // header chevron and the Changes tree (both inset 10px). Added to
+  // arborist's per-level value so deeper levels stay indented.
+  const arboristPadLeft = Number.parseFloat(style?.paddingLeft) || 0;
+  const rowStyle = {
+    ...style,
+    paddingLeft: arboristPadLeft + TREE_ROW_DEPTH0_INSET,
+    '--level': level,
+  };
   const folderChevron = isFolder ? (
     <span className="tree-row-chevron">
       <Icon name={node.isOpen ? 'chevron-down' : 'chevron-right'} />

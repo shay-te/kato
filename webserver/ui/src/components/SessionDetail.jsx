@@ -554,6 +554,7 @@ export default function SessionDetail({
         onAuditBubble={stream.appendLocalEvent}
         recallToolDecision={memory.recall}
         rememberToolDecision={memory.remember}
+        taskCode={taskId}
       />
     </main>
   );

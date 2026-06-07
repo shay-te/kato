@@ -12,6 +12,7 @@ export default function PermissionDecisionContainer({
   onAuditBubble,
   recallToolDecision,
   rememberToolDecision,
+  taskCode = '',
 }) {
   const [submittingRequestId, setSubmittingRequestId] = useState('');
   const [autoFailedRequestId, setAutoFailedRequestId] = useState('');
@@ -103,7 +104,7 @@ export default function PermissionDecisionContainer({
   }
 
   return (
-    <PermissionModal raw={pending} onDecide={handleDecide} />
+    <PermissionModal raw={pending} onDecide={handleDecide} taskCode={taskCode} />
   );
 }
 
