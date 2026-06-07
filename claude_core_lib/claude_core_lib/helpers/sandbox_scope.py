@@ -132,39 +132,32 @@ def classify_tool_input_sandbox(
     return False, ''
 
 
-# Command-segment separators and the system/scratch trees a shell command may
-# touch WITHOUT it meaning the agent is rummaging in another project. Reading a
-# binary or a config under these is low-signal; flagging them is exactly the
-# false-alarm noise that got command-string scanning removed once before. So we
-# warn only on escapes into USER / PROJECT space (other repos, ~/.ssh, …).
-_COMMAND_SEGMENT_SPLIT = re.compile(r'&&|\|\||[;|]')
-_ENV_ASSIGNMENT = re.compile(r'^[A-Za-z_]\w*=')
-_SYSTEM_PREFIXES = (
-    '/usr', '/bin', '/sbin', '/opt', '/etc', '/var', '/tmp', '/dev',
-    '/proc', '/sys', '/Library', '/System', '/private', '/Applications',
-)
+# Absolute-path substrings ANYWHERE in a command — not just space-separated
+# tokens. The path the agent reads is often buried inside quotes / a function
+# call, e.g. ``python3 -c "...open('/Users/x/other/file.py')..."`` — a
+# token-only scan (looking for args that START with ``/``) misses those.
+_COMMAND_ABS_PATH = re.compile(r'[~/][\w./~+=*-]*')
+# Only USER / PROJECT space is interesting: other repos and secrets live under
+# the home tree. System paths (/usr,/etc,…), URLs (//host/…), and glob/regex
+# fragments (``/main/*`` from a ``-path`` arg) all fall outside these prefixes
+# and are ignored — that is what keeps command scanning from drowning the
+# operator in the false alarms that got it removed once before.
+_USER_SPACE_PREFIXES = ('/Users/', '/home/')
 
 
 def _command_path_args(command: str) -> list[str]:
-    """Absolute-looking (``/...`` or ``~...``) path ARGUMENTS in a shell
-    command — never the program itself.
+    """Absolute USER/PROJECT-space paths referenced anywhere in a shell command.
 
-    Deliberately narrow: per segment we drop leading ``VAR=val`` assignments
-    and the program token (the binary, e.g. ``/usr/local/bin/docker``), then
-    keep only absolute tokens. Relative args (resolved inside ``cwd``) and
-    globs are ignored — parsing every shell token reliably is a fool's errand,
-    so we only look at the unambiguous absolute escapes."""
+    Scans for ``/…`` / ``~/…`` substrings (inside quotes, ``open('…')``, etc.)
+    and keeps only those under the home tree — where other repos and secrets
+    live. System paths, URLs, and glob fragments are deliberately ignored."""
     args: list[str] = []
-    for segment in _COMMAND_SEGMENT_SPLIT.split(str(command or '')):
-        tokens = [t for t in segment.strip().split() if t]
-        i = 0
-        while i < len(tokens) and _ENV_ASSIGNMENT.match(tokens[i]):
-            i += 1
-        i += 1  # skip the program token
-        for token in tokens[i:]:
-            cleaned = token.strip().strip('\'"').rstrip('\\;),')
-            if cleaned and cleaned.startswith(('/', '~')):
-                args.append(cleaned)
+    for match in _COMMAND_ABS_PATH.finditer(str(command or '')):
+        raw = match.group(0)
+        if len(raw) < 2:
+            continue
+        if os.path.expanduser(raw).startswith(_USER_SPACE_PREFIXES):
+            args.append(raw)
     return args
 
 
@@ -177,11 +170,11 @@ def classify_command_sandbox(
     """Return ``(outside, offending_path)`` for a shell command's path args.
 
     Companion to ``classify_tool_input_sandbox`` for Bash: a ``grep`` / ``cat``
-    / redirect that names an ABSOLUTE path escaping the sandbox (another repo,
-    ``~/.ssh``, …) is flagged so the UI can warn + withhold a remembered
-    grant. Conservative by design — the program token, system/scratch dirs,
-    relative paths, and the ``allowed_paths`` allow-list are all exempt, so an
-    ordinary ``git``/``ls``/``mvn`` never trips it."""
+    / ``python -c "open('…')"`` naming an absolute USER-space path that escapes
+    the sandbox (another repo, ``~/.ssh``, …) is flagged so the UI can warn +
+    withhold a remembered grant. Conservative by design — only home-tree paths
+    are considered, and the sandbox roots + ``allowed_paths`` allow-list are
+    exempt, so an ordinary ``git``/``ls``/``mvn`` never trips it."""
     norm_roots = _effective_roots(cwd, additional_dirs)
     if not norm_roots:
         return False, ''
@@ -189,8 +182,6 @@ def classify_command_sandbox(
     for raw in _command_path_args(command):
         resolved = os.path.normpath(os.path.expanduser(raw))
         if resolved in norm_allowed:
-            continue
-        if any(_is_within(resolved, prefix) for prefix in _SYSTEM_PREFIXES):
             continue
         if not any(_is_within(resolved, root) for root in norm_roots):
             return True, raw

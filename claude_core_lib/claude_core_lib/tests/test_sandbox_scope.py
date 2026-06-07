@@ -1,5 +1,6 @@
 import os
 import unittest
+from unittest import mock
 
 from claude_core_lib.claude_core_lib.helpers.sandbox_scope import (
     classify_command_sandbox,
@@ -160,57 +161,70 @@ class ClassifyToolInputSandboxTests(unittest.TestCase):
 
 
 class ClassifyCommandSandboxTests(unittest.TestCase):
+    # User-space task folder so the within-roots check is exercised the same
+    # way it runs in production (kato workspaces live under the home tree).
+    UCWD = '/Users/dev/.kato/workspaces/UNA-1/repo'
 
     def test_grep_into_another_repo_is_flagged(self) -> None:
         outside, offending = classify_command_sandbox(
-            'grep -rn secret /Users/x/Desktop/dev/other-repo/src', CWD, ADD,
+            'grep -rn secret /Users/dev/Desktop/dev/other-repo/src', self.UCWD,
         )
         self.assertTrue(outside)
-        self.assertEqual(offending, '/Users/x/Desktop/dev/other-repo/src')
+        self.assertEqual(offending, '/Users/dev/Desktop/dev/other-repo/src')
 
-    def test_reading_home_dotfile_is_flagged(self) -> None:
-        outside, offending = classify_command_sandbox(
-            'cat ~/.ssh/id_rsa', CWD, ADD,
+    def test_absolute_path_buried_in_a_quoted_python_string_is_flagged(self) -> None:
+        # The exact reported miss: the path is inside ``open('…')`` in a
+        # ``python3 -c`` string, not a space-separated token.
+        cmd = (
+            "python3 -c \"import ast; "
+            "ast.parse(open('/Users/dev/Desktop/dev/ob-love-devops-local/"
+            "update_server.py').read()); print('OK')\""
         )
+        outside, offending = classify_command_sandbox(cmd, self.UCWD)
+        self.assertTrue(outside)
+        self.assertEqual(
+            offending,
+            '/Users/dev/Desktop/dev/ob-love-devops-local/update_server.py',
+        )
+
+    def test_reading_a_home_dotfile_is_flagged(self) -> None:
+        with mock.patch.dict(os.environ, {'HOME': '/Users/dev'}):
+            outside, offending = classify_command_sandbox(
+                'cat ~/.ssh/id_rsa', self.UCWD,
+            )
         self.assertTrue(outside)
         self.assertEqual(offending, '~/.ssh/id_rsa')
 
     def test_cd_into_task_folder_then_relative_args_is_inside(self) -> None:
-        # The classic prefix: cd into the task workspace, then relative paths.
-        cmd = (
-            'cd /work/UNA-1 && grep -rnE "x" admin-backend/src admin-client/src'
-        )
-        outside, _ = classify_command_sandbox(cmd, CWD, ADD)
+        cmd = 'cd /Users/dev/.kato/workspaces/UNA-1/repo && grep -rn x src/main'
+        outside, _ = classify_command_sandbox(cmd, self.UCWD)
         self.assertFalse(outside)
 
-    def test_relative_paths_are_not_flagged(self) -> None:
+    def test_relative_paths_and_globs_are_not_flagged(self) -> None:
+        # ``*/main/*`` contains a ``/main/*`` substring but isn't user-space,
+        # so it must NOT false-alarm (the classic command-scan noise).
         outside, _ = classify_command_sandbox(
-            'find . -name "*.java" -path "*/main/*"', CWD, ADD,
+            'find . -name "*.java" -path "*/main/*"', self.UCWD,
         )
         self.assertFalse(outside)
 
-    def test_system_dirs_are_exempt(self) -> None:
-        # Reading a binary/config under a system tree is low-signal noise.
-        for cmd in ('cat /etc/hosts', 'ls /usr/local/bin', 'grep x /var/log/y'):
-            outside, _ = classify_command_sandbox(cmd, CWD, ADD)
+    def test_system_paths_and_urls_are_ignored(self) -> None:
+        for cmd in (
+            'cat /etc/hosts', 'ls /usr/local/bin', 'grep x /var/log/y',
+            'curl https://example.com/api/data',
+        ):
+            outside, _ = classify_command_sandbox(cmd, self.UCWD)
             self.assertFalse(outside, cmd)
 
-    def test_absolute_program_path_is_not_the_offender(self) -> None:
-        # The program token itself (even an absolute one) is skipped.
-        outside, _ = classify_command_sandbox(
-            '/usr/local/bin/python script.py', CWD, ADD,
-        )
-        self.assertFalse(outside)
-
     def test_allowed_path_in_command_is_exempt(self) -> None:
-        lessons = os.path.normpath('/Users/x/Desktop/dev_kato/lessons.md')
+        lessons = os.path.normpath('/Users/dev/.kato/lessons.md')
         outside, _ = classify_command_sandbox(
-            f'cat {lessons}', CWD, ADD, (lessons,),
+            f'cat {lessons}', self.UCWD, (), (lessons,),
         )
         self.assertFalse(outside)
 
     def test_empty_command_is_inside(self) -> None:
-        self.assertEqual(classify_command_sandbox('', CWD, ADD), (False, ''))
+        self.assertEqual(classify_command_sandbox('', self.UCWD), (False, ''))
 
 
 if __name__ == '__main__':
