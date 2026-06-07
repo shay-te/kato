@@ -34,6 +34,7 @@ export default function SessionHeader({
   onSessionAdopted,
   streamLifecycle,
   turnInFlight = false,
+  awaitingBackground = false,
   searchSlot = null,
   onSendPrompt = null,
 }) {
@@ -271,11 +272,14 @@ export default function SessionHeader({
 
   // One derivation drives BOTH the dot and the chip — the same value the tab
   // surfaces use — so the header and tab can never disagree (UNA-2492). The
-  // header is always the active task, so the live stream lifecycle/turnInFlight
-  // feed it directly (no store read needed here).
+  // header is always the active task, so the live stream feeds it directly.
+  // ``awaitingBackground`` MUST be included: liveKind counts it as "working"
+  // (a Monitor / run_in_background wait), and the tab badge already passes it
+  // via agentStatusStore — omitting it here made the header read "idle" while
+  // the tab read "working" during a background wait.
   const agent = deriveAgentStatus(
     session,
-    { lifecycle: streamLifecycle, turnInFlight },
+    { lifecycle: streamLifecycle, turnInFlight, awaitingBackground },
     needsAttention,
   );
   const stopLabel = stopping ? 'Stopping…' : 'Stop';

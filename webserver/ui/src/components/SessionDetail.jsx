@@ -481,6 +481,7 @@ export default function SessionDetail({
       onSessionAdopted={onSessionAdopted}
       streamLifecycle={stream.lifecycle}
       turnInFlight={stream.turnInFlight}
+      awaitingBackground={stream.awaitingBackground}
       onSendPrompt={onSendMessage}
       searchSlot={
         <ChatSearch

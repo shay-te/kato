@@ -140,6 +140,21 @@ describe('SessionHeader — task summary + status dot', () => {
     expect(screen.getByText('Claude: working')).toBeInTheDocument();
   });
 
+  test('awaitingBackground reads as working too (matches the tab badge)', () => {
+    // Turn closed but the agent is blocked on a Monitor / run_in_background
+    // wait. The tab badge counts this as working; the header MUST agree, or
+    // the operator sees "idle" up top while the tab dot pulses "working".
+    render(
+      <SessionHeader
+        session={_session({ status: TAB_STATUS.REVIEW, working: false })}
+        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
+        turnInFlight={false}
+        awaitingBackground={true}
+      />,
+    );
+    expect(screen.getByText('Claude: working')).toBeInTheDocument();
+  });
+
   test('needsAttention=true paints the dot with status-attention', () => {
     const { container } = render(
       <SessionHeader
