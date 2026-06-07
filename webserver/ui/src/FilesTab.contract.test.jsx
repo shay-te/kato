@@ -108,7 +108,7 @@ describe('FilesTab — contract with real Flask /files + /diff payloads', () => 
       <FilesTab taskId={fixture.expected.task_id} onOpenFile={vi.fn()} />,
     );
     // Header confirms the diff load completed (one repo in the fixture).
-    expect(await screen.findByText('Lines updated')).toBeInTheDocument();
+    expect(await screen.findByText(fixture.expected.changed_basenames[0])).toBeInTheDocument();
     // Every basename the real backend reported as changed must
     // appear in the rendered tree.
     for (const base of fixture.expected.changed_basenames) {
@@ -122,7 +122,7 @@ describe('FilesTab — contract with real Flask /files + /diff payloads', () => 
     render(
       <FilesTab taskId={fixture.expected.task_id} onOpenFile={vi.fn()} />,
     );
-    expect(await screen.findByText('Lines updated')).toBeInTheDocument();
+    expect(await screen.findByText(fixture.expected.changed_basenames[0])).toBeInTheDocument();
 
     // Pick a real changed file (basename) from the fixture.
     const targetBase = fixture.expected.changed_basenames[0];
@@ -191,7 +191,7 @@ describe('FilesTab — contract with real Flask /files + /diff payloads', () => 
     render(
       <FilesTab taskId={fixture.expected.task_id} onOpenFile={vi.fn()} />,
     );
-    expect(await screen.findByText('Lines updated')).toBeInTheDocument();
+    expect(await screen.findByText(fixture.expected.changed_basenames[0])).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Show all files' }));
     // Expand the first folder we can find in the tree.
     const folderNodes = walkFolderNames(fixture.files.trees[0].tree);
