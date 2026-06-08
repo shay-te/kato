@@ -77,7 +77,12 @@ export function commandSignatureOf(command) {
     const bucket = NOISE_PROGRAMS.has(prog) ? noise : meaningful;
     if (!bucket.includes(prog)) { bucket.push(prog); }
   }
-  return (meaningful.length ? meaningful : noise).join(' ');
+  // A non-empty command MUST never yield an empty signature: an empty key
+  // collapses a command-keyed Bash decision to the bare tool name `Bash`, i.e.
+  // a tool-WIDE "allow all bash" grant — exactly what command-keying prevents.
+  // Fall back to the whole normalized command (e.g. a pure `FOO=bar` env line,
+  // or a redirect-only command) so the grant stays specific.
+  return (meaningful.length ? meaningful : noise).join(' ') || normalized;
 }
 
 // The (tool, command-signature) pair to remember/recall for a request: the

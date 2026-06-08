@@ -106,12 +106,10 @@ function entryDedupeKey(entry) {
     }
     return `server:${rawFingerprint(entry.raw)}`;
   }
-  // HISTORY entries always have ``received_at_epoch === 0`` (the
-  // server stamps zero on disk-replayed events to mark them as
-  // archival). Use a compact fingerprint for identity — replays of
-  // the same JSONL produce identical raw dicts so the fingerprint is
-  // stable, and we avoid walking the full payload via JSON.stringify
-  // (which is the dominant cost during long-history replay).
+  // HISTORY entries key on a compact content fingerprint — NOT the epoch.
+  // (The epoch is now the JSONL timestamp, carried for display only; keeping
+  // identity content-based means replays of the same JSONL dedupe stably and
+  // we avoid the JSON.stringify cost on long histories.)
   return `history:${rawFingerprint(entry.raw)}`;
 }
 

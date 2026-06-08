@@ -2625,8 +2625,8 @@ def _register_get_pending_permissions_route(app: Flask) -> None:
         browser tab that has that session open, so a permission ask on a
         backgrounded task would otherwise wait until the operator clicked
         into it. The UI polls this so the modal pops no matter which task is
-        in focus, each envelope tagged with the task it belongs to (and a
-        human label for the title). Best-effort: a session that can't report
+        in focus, each envelope tagged with the ``task_id`` it belongs to (the
+        UI titles the modal with it). Best-effort: a session that can't report
         its pending asks is skipped, never fails the whole feed.
         """
         manager = app.config['SESSION_MANAGER']

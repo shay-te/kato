@@ -192,6 +192,20 @@ test('signature: empty / whitespace → empty', function () {
   assert.equal(commandSignatureOf(null), '');
 });
 
+test('signature: a NON-empty command never collapses to an empty key (no tool-wide over-allow)', function () {
+  // A command with no resolvable program (only env assignments / redirects)
+  // must NOT yield '' — an empty signature would make a remembered Bash
+  // decision key as the bare tool `Bash` = allow-all-bash. Falls back to the
+  // whole normalized command so the grant stays specific.
+  assert.equal(commandSignatureOf('FOO=bar'), 'FOO=bar');
+  assert.equal(commandSignatureOf('FOO=bar BAZ=qux'), 'FOO=bar BAZ=qux');
+  // The invariant that matters: a non-empty command is NEVER an empty key.
+  for (const cmd of ['FOO=bar', 'FOO=bar BAZ=qux', 'X=1 Y=2 Z=3']) {
+    assert.notEqual(commandSignatureOf(cmd), '', cmd);
+    assert.notEqual(decisionCommandFor('Bash', { command: cmd }), '', cmd);
+  }
+});
+
 test('decisionCommandFor: Bash keys on the signature, non-Bash stays tool-level', function () {
   assert.equal(
     decisionCommandFor('Bash', { command: 'cd /x/UNA-1 && mvn verify' }),
