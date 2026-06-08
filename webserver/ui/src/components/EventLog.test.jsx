@@ -4,15 +4,28 @@
 // ReferenceError at render time. Fixed in EventLog.jsx; the
 // "long tool-details rendering" test below pins the regression.
 
-import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 // Keep the real pin math (other tests don't touch scrolling) but spy
 // scrollToBottom so the task-switch test can assert the log is
-// yanked to the newest message on tab change.
+// yanked to the newest message on tab change. ``pinned`` is controllable so
+// the scroll-to-bottom button test can simulate "scrolled up" (jsdom has no
+// real layout, so isPinnedToBottom would always read true otherwise).
+const scrollState = vi.hoisted(() => ({ override: null }));
 vi.mock('../utils/scrollUtils.js', async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, scrollToBottom: vi.fn() };
+  return {
+    ...actual,
+    scrollToBottom: vi.fn(),
+    // Real pin math by default (other tests rely on it); a test can force the
+    // "scrolled up" answer by setting scrollState.override = false.
+    isPinnedToBottom: (node, threshold) => (
+      scrollState.override === null
+        ? actual.isPinnedToBottom(node, threshold)
+        : scrollState.override
+    ),
+  };
 });
 
 // The comment-run jump icon tints by live comment status, polled via
@@ -941,5 +954,55 @@ describe('EventLog — copy-response button', () => {
       ]} />,
     );
     expect(screen.queryByRole('button', { name: 'Copy response' })).toBeNull();
+  });
+});
+
+
+describe('EventLog — prompt timestamp', () => {
+  test('a prompt with an epoch shows its time', () => {
+    const { container } = render(
+      <EventLog entries={[{
+        source: ENTRY_SOURCE.LOCAL,
+        kind: BUBBLE_KIND.USER,
+        text: 'do the thing',
+        receivedAtEpoch: 1717000000, // fixed epoch (seconds)
+      }]} />,
+    );
+    const time = container.querySelector('.chat-sticky-prompt-time');
+    expect(time).toBeInTheDocument();
+    expect(time.textContent.trim().length).toBeGreaterThan(0);
+  });
+
+  test('a prompt with no epoch shows no time (replayed history)', () => {
+    const { container } = render(
+      <EventLog entries={[_local(BUBBLE_KIND.USER, 'no time here')]} />,
+    );
+    expect(container.querySelector('.chat-sticky-prompt-time')).toBeNull();
+  });
+});
+
+
+describe('EventLog — scroll-to-latest button', () => {
+  afterEach(() => { scrollState.override = null; });
+
+  test('hidden while pinned to the bottom', () => {
+    render(<EventLog entries={[_local(BUBBLE_KIND.USER, 'hi')]} />);
+    expect(screen.queryByRole('button', { name: 'Scroll to latest' })).toBeNull();
+  });
+
+  test('appears after scrolling up, and jumps back on click', () => {
+    const { container } = render(
+      <EventLog entries={[_local(BUBBLE_KIND.USER, 'hi')]} />,
+    );
+    const log = container.querySelector('#event-log');
+    scrollState.override = false;      // simulate "scrolled up off the bottom"
+    fireEvent.scroll(log);
+    const btn = screen.getByRole('button', { name: 'Scroll to latest' });
+    expect(btn).toBeInTheDocument();
+    scrollToBottom.mockClear();
+    fireEvent.click(btn);
+    expect(scrollToBottom).toHaveBeenCalled();
+    // Clicking re-pins, so the button hides again.
+    expect(screen.queryByRole('button', { name: 'Scroll to latest' })).toBeNull();
   });
 });

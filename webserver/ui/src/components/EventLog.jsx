@@ -54,6 +54,11 @@ export default function EventLog({
   // the scroll listener below). New content only yanks to the
   // bottom while this is true.
   const pinnedRef = useRef(true);
+  // Mirror of ``pinnedRef`` as React state, purely to drive the
+  // scroll-to-bottom button's visibility (the ref can't trigger a
+  // re-render). setState bails when the value is unchanged, so this only
+  // re-renders on the threshold crossing, not on every scroll tick.
+  const [atBottom, setAtBottom] = useState(true);
   const [showAll, setShowAll] = useState(false);
   // Dedupe is O(N) over the entire event list; without memoization
   // it re-runs every time the parent re-renders (tab switches,
@@ -94,10 +99,20 @@ export default function EventLog({
   useEffect(() => {
     const node = containerRef.current;
     if (!node) { return undefined; }
-    const onScroll = () => { pinnedRef.current = isPinnedToBottom(node); };
+    const onScroll = () => {
+      const pinned = isPinnedToBottom(node);
+      pinnedRef.current = pinned;
+      setAtBottom(pinned);
+    };
     node.addEventListener('scroll', onScroll, { passive: true });
     return () => node.removeEventListener('scroll', onScroll);
   }, []);
+
+  function handleScrollToBottom() {
+    pinnedRef.current = true;
+    setAtBottom(true);
+    scrollToBottom(containerRef.current);
+  }
 
   // New content / banner / tab switch: follow the bottom while the
   // tracked intent says "pinned". We deliberately use the intent
@@ -254,6 +269,19 @@ export default function EventLog({
             the last entry, so it scrolls with the messages and trails
             the newest one instead of floating over the chat. */}
         {footer}
+        {/* Jump-to-latest: sticky to the scrollport bottom, shown only when
+            the operator has scrolled up off the newest message. */}
+        {!atBottom && (
+          <button
+            type="button"
+            className="event-log-scroll-bottom"
+            onClick={handleScrollToBottom}
+            aria-label="Scroll to latest"
+            data-tooltip="Scroll to latest"
+          >
+            <Icon name="chevron-down" />
+          </button>
+        )}
       </div>
     </CommentStatusContext.Provider>
   );
@@ -345,7 +373,7 @@ function bubblesFor(entry, index, onOpenFile, liveAgentSessionId = '') {
     // new event and dropped StickyPrompt expanded state).
     const key = localKey('local', display);
     if ((entry.kind || BUBBLE_KIND.SYSTEM) === BUBBLE_KIND.USER) {
-      return [<StickyPrompt key={key} text={display} />];
+      return [<StickyPrompt key={key} text={display} epoch={entry.receivedAtEpoch} />];
     }
     return [
       <Bubble key={key} kind={entry.kind || BUBBLE_KIND.SYSTEM}>
@@ -359,10 +387,13 @@ function bubblesFor(entry, index, onOpenFile, liveAgentSessionId = '') {
     entry?.source === ENTRY_SOURCE.HISTORY,
     onOpenFile,
     liveAgentSessionId,
+    entry?.receivedAtEpoch,
   );
 }
 
-function serverBubblesFor(raw, index, isHistory = false, onOpenFile, liveAgentSessionId = '') {
+function serverBubblesFor(
+  raw, index, isHistory = false, onOpenFile, liveAgentSessionId = '', epoch = 0,
+) {
   if (!raw || !raw.type) { return []; }
   switch (raw.type) {
     case CLAUDE_EVENT.SYSTEM:
@@ -419,7 +450,7 @@ function serverBubblesFor(raw, index, isHistory = false, onOpenFile, liveAgentSe
       // X", so kato's prompts must show up in the chat just like
       // typed messages do. Duplicate echoes of typed messages are
       // suppressed upstream by ``MessageFilter.dedupeUserEchoes``.
-      return userBubbles(raw, index, onOpenFile);
+      return userBubbles(raw, index, onOpenFile, epoch);
     case CLAUDE_EVENT.STREAM_EVENT:
       return [];
     case CLAUDE_EVENT.RESULT:
@@ -556,7 +587,7 @@ function isPromptEntry(entry) {
   return content.some((block) => block && block.type === 'image');
 }
 
-function userBubbles(raw, index, onOpenFile) {
+function userBubbles(raw, index, onOpenFile, epoch = 0) {
   const rawContent = (raw.message || {}).content;
   const content = Array.isArray(rawContent) ? rawContent : [];
   const text = userMessageText(raw);
@@ -566,7 +597,12 @@ function userBubbles(raw, index, onOpenFile) {
   if (!text && imageCount === 0) { return []; }
   const display = withImageCountSuffix(text, imageCount);
   return [
-    <StickyPrompt key={keyOf(raw, index, 'user')} text={display} onOpenFile={onOpenFile} />,
+    <StickyPrompt
+      key={keyOf(raw, index, 'user')}
+      text={display}
+      onOpenFile={onOpenFile}
+      epoch={epoch}
+    />,
   ];
 }
 
@@ -602,8 +638,21 @@ function ExpandToggle({ expanded, onToggle, extraClass = '', ariaExpanded = fals
 // One operator prompt, rendered as a sticky section header. Long
 // prompts collapse to three lines with the same expand button style
 // used by tool-output snippets.
-function StickyPrompt({ text, onOpenFile }) {
+// "Jun 8, 14:32" from an epoch in SECONDS — the operator's local time. Empty
+// when the epoch is missing/0 (replayed history carries no per-event time).
+function formatPromptTime(epoch) {
+  const seconds = Number(epoch) || 0;
+  if (seconds <= 0) { return ''; }
+  const date = new Date(seconds * 1000);
+  if (Number.isNaN(date.getTime())) { return ''; }
+  const day = date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return `${day}, ${time}`;
+}
+
+function StickyPrompt({ text, onOpenFile, epoch = 0 }) {
   const [expanded, toggle] = useExpandable();
+  const promptTime = formatPromptTime(epoch);
   const commentStatusMap = useContext(CommentStatusContext);
   const promptText = String(text || '');
   // A comment-run prompt (kato addressing an operator diff comment) gets
@@ -663,7 +712,12 @@ function StickyPrompt({ text, onOpenFile }) {
     <StickyHeader className={promptClass}>
       {jumpToComment}
       <div className="chat-sticky-prompt-toggle">
-        <span className="chat-sticky-prompt-label">You asked</span>
+        <span className="chat-sticky-prompt-meta">
+          <span className="chat-sticky-prompt-label">You asked</span>
+          {promptTime && (
+            <span className="chat-sticky-prompt-time">{promptTime}</span>
+          )}
+        </span>
         <span className={textWrapClass}>
           <span className="chat-sticky-prompt-text">{promptText}</span>
           {expandButton}

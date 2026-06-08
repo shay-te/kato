@@ -1312,6 +1312,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 #event-log {
   flex: 1;
   overflow-y: auto;
+  position: relative;
   /* No top padding: a sticky prompt sticks to the scrollport's
    * CONTENT box, so any top padding becomes a dead strip between
    * the header and the pinned prompt (content scrolls visibly
@@ -1322,6 +1323,41 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   display: flex;
   flex-direction: column;
   gap: $SPACE-12;
+  /* Always-visible scrollbar: macOS overlay scrollbars auto-hide, which
+   * read as "no scrollbar" in the chat. Force a slim, persistent one. */
+  scrollbar-width: thin;
+  scrollbar-color: $C-NEUTRAL-96-A42 transparent;
+  @include custom-scrollbar(
+    10px, $C-NEUTRAL-96-A42, transparent, $thumb-radius: $RADIUS-PILL
+  );
+}
+
+/* Jump-to-latest button — sticky to the scrollport bottom (floats above the
+ * composer), only rendered when the operator has scrolled up off the newest
+ * message. Right-aligned so it never sits over the message text. */
+.event-log-scroll-bottom {
+  position: sticky;
+  bottom: calc(var(--composer-h, $SPACE-94) + var(--queued-h, 0px) + #{$SPACE-12});
+  align-self: flex-end;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-CIRCLE;
+  background: $C-NEUTRAL-16;
+  color: $C-NEUTRAL-96;
+  cursor: pointer;
+  box-shadow: $SHADOW-21;
+  transition: background 120ms ease, border-color 120ms ease, transform 90ms ease;
+}
+
+.event-log-scroll-bottom:hover {
+  background: $C-NEUTRAL-100-A10;
+  border-color: $C-NEUTRAL-45;
+  transform: translateY(-1px);
 }
 
 #event-log > :first-child {
@@ -1342,8 +1378,8 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 }
 
 /* Copy-the-whole-response button at the bottom of a turn. Indented to line
- * up with the bubble CONTENT column (14px dot + 10px gap), and faint until
- * the turn is hovered so it doesn't clutter the transcript. */
+ * up with the bubble CONTENT column (14px dot + 10px gap). Always visible
+ * (muted at rest, brighter on hover) so it's never hidden behind a hover. */
 .chat-turn-actions {
   display: flex;
   padding-left: 24px;
@@ -1361,13 +1397,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   color: $C-NEUTRAL-64;
   font-size: $TEXT-12;
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
-}
-
-.chat-turn:hover .chat-turn-copy,
-.chat-turn-copy:focus-visible {
-  opacity: 1;
+  transition: background 120ms ease, color 120ms ease;
 }
 
 .chat-turn-copy:hover {
@@ -1486,6 +1516,16 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   background: $C-CYAN-52;
 }
 
+// Left column of the prompt header: the "You asked" label stacked over the
+// timestamp, kept narrow so the prompt text fills the rest of the row.
+.chat-sticky-prompt-meta {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-2;
+  padding-top: $SPACE-2;
+}
+
 .chat-sticky-prompt-label {
   flex-shrink: 0;
   font-size: $TEXT-10;
@@ -1493,7 +1533,14 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: $C-CYAN-90;
-  padding-top: $SPACE-2;
+}
+
+// When the prompt was asked — date + local time, dimmer than the label.
+.chat-sticky-prompt-time {
+  font-size: $TEXT-10;
+  color: $C-NEUTRAL-64;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .chat-sticky-prompt-text-wrap {

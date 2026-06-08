@@ -509,7 +509,13 @@ export function useSessionStream(taskId, onIncomingEvent) {
     awaitingBackground: state.awaitingBackground,
     pendingPermission: state.pendingPermission,
     lastEventAt: state.lastEventAt,
-    appendLocalEvent: (event) => dispatch({ type: ACTION_LOCAL_EVENT, event }),
+    // Stamp the wall-clock at append (epoch SECONDS, matching the server's
+    // ``received_at_epoch``) so an optimistic local prompt shows its time —
+    // the operator's own prompts are LOCAL entries, not server-echoed.
+    appendLocalEvent: (event) => dispatch({
+      type: ACTION_LOCAL_EVENT,
+      event: { receivedAtEpoch: Date.now() / 1000, ...event },
+    }),
     markTurnBusy: (value) => dispatch({ type: ACTION_MARK_TURN_BUSY, value }),
     dismissPermission: () => dispatch({ type: ACTION_DISMISS_PERMISSION }),
     reconnect: () => setStreamGeneration((n) => n + 1),
