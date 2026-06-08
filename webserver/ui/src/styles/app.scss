@@ -4076,14 +4076,19 @@ body.kato-resizing #left-pane-resizer::before {
  * this repo (external reference library). Orange "caution" pill; the agent can
  * still edit it locally but changes are NOT pushed. Clicking re-checks push
  * access (the refresh glyph) and reloads the tree. */
-// Compact "RO" chip (read-only). Small, fixed-size pill — the full
-// explanation lives in the tooltip (anchored right so it can't be cut off
-// by the files panel's scroll overflow).
-.files-tab-repo-readonly {
+// Compact "RO" chip (read-only). Small pill — the full explanation lives in
+// the tooltip. NOTE: the repo header renders as a <header>, so the global
+// ``header button:not(.header-status)`` reset (transparent 32px CIRCLE)
+// matches this button and out-specifies a single-class rule — which is what
+// flattened the chip into plain text. Scope the selector to the repo header so
+// it wins, and explicitly undo the forced 32px box.
+.files-tab-repo-header .files-tab-repo-readonly {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  width: auto;
+  height: auto;
   margin-right: $SPACE-6;
   padding: 1px $SPACE-6;
   border: 1px solid $C-ORANGE-50-A65;
@@ -4097,7 +4102,7 @@ body.kato-resizing #left-pane-resizer::before {
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
-.files-tab-repo-readonly:hover {
+.files-tab-repo-header .files-tab-repo-readonly:hover {
   background: $C-ORANGE-50-A65;
   border-color: $C-ORANGE-50;
   color: $C-NEUTRAL-96;
