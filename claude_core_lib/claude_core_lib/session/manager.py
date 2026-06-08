@@ -382,6 +382,20 @@ class ClaudeSessionManager(object):
             )
             return
         if source is None:
+            # We have a resume id but no transcript on disk anywhere under
+            # ~/.claude/projects. ``claude --resume <id>`` will still be
+            # passed, but with nothing to load Claude spawns a memoryless
+            # session that LOOKS resumed ("session started · <id>" with no
+            # prior context) — exactly the "he forgot everything after
+            # restart" symptom. Nothing we can copy here; warn loudly so the
+            # operator sees WHY continuity was lost instead of a silent drop.
+            self.logger.warning(
+                'resume id %s has no transcript on disk (looked under '
+                '~/.claude/projects); spawn at %s will start without prior '
+                'conversation history',
+                resume_session_id,
+                target_cwd,
+            )
             return
         try:
             target_dir = claude_project_dir_for_cwd(target_cwd)

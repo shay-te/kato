@@ -399,6 +399,34 @@ class ClaudeSessionManagerTests(unittest.TestCase):
             'JSONL should have been copied into the new cwd project dir',
         )
 
+    def test_resume_warns_when_transcript_missing_on_disk(self) -> None:
+        # The real-world "he forgot everything after restart" symptom:
+        # a resume id is on file but no JSONL exists anywhere under
+        # ~/.claude/projects (cleaned, never flushed, etc). kato still
+        # passes --resume <id>, so Claude spawns a memoryless session
+        # that LOOKS resumed. The manager must warn loudly so the
+        # operator sees WHY continuity was lost — not silently no-op.
+        import os
+        sessions_root = self.state_dir / 'claude-sessions'
+        sessions_root.mkdir(parents=True)
+        record = PlanningSessionRecord(
+            task_id='PROJ-88',
+            agent_session_id='gone-session-uuid',
+            status='terminated',
+            cwd='/tmp/gone/repo',
+        )
+        self.manager._records[self.manager._lookup_key('PROJ-88')] = record
+        self.manager._persist_record(record)
+
+        os.environ['KATO_CLAUDE_SESSIONS_ROOT'] = str(sessions_root)
+        self.addCleanup(os.environ.pop, 'KATO_CLAUDE_SESSIONS_ROOT', None)
+        with self.assertLogs(self.manager.logger, level='WARNING') as cm:
+            self.manager.start_session(task_id='PROJ-88', cwd='/tmp/new/repo')
+        self.assertTrue(
+            any('no transcript on disk' in line for line in cm.output),
+            'missing resume transcript should warn the operator',
+        )
+
 
 class PlanningSessionRecordTests(unittest.TestCase):
     def test_round_trips_through_dict(self) -> None:
