@@ -11,7 +11,7 @@
     "test": "npm run test:node && npm run test:vitest",
     "test:node": "node --test src/*.test.js src/utils/*.test.js src/hooks/*.test.js src/components/*.test.js src/stores/*.test.js",
     "test:vitest": "vitest run",
-    "dedup": "npx --yes jscpd src"
+    "dedup": "npx --yes jscpd@3.5.10 src"
   },
   "dependencies": {
     "@fortawesome/fontawesome-svg-core": "^7.2.0",

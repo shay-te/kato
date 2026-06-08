@@ -2855,7 +2855,10 @@ code {
   background: $C-NEUTRAL-04;
   border: 1px solid $C-NEUTRAL-16;
   border-radius: $RADIUS-8;
-  padding: $SPACE-20 $SPACE-24;
+  // Title and body both sit at this left padding (they're aligned — there is
+  // no title-specific indent); trimmed from 24px so the heading hugs the edge
+  // a little more instead of floating in a wide gutter.
+  padding: $SPACE-16 $SPACE-20;
   max-width: 720px;
   width: 100%;
   max-height: 80vh;
