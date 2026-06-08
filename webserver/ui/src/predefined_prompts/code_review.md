@@ -4,6 +4,8 @@ You are reviewing your OWN changes for this task across every repo in the worksp
 
 Approach this with FRESH EYES: drop every assumption you formed while writing this code — assume nothing is correct until you've confirmed it. Read the diff DEEPLY, LINE BY LINE — every changed line, both sides of each hunk, and the surrounding context it touches. Do NOT skim, do NOT trust your earlier intent; verify what the code actually does now.
 
+REVIEW THE SYSTEM, NOT THE DIFF. The diff is a clue, not the boundary — most nasty bugs live in `caller → changed function → downstream consumer`, not in the changed lines themselves. For every changed line: (1) find all callers, (2) find all downstream consumers, (3) trace the complete data flow end to end, (4) verify the system's invariants still hold. You are reviewing BEHAVIOR, not lines.
+
 Produce a structured report (markdown). For each finding give file:line, severity (BLOCKER / MAJOR / MINOR / NIT), and a one-line fix. Then FIX every BLOCKER and MAJOR in the code (leave MINOR/NIT as a checklist for me).
 
 1. BUGS & CORRECTNESS (primary goal — actively HUNT for bugs, don't just skim)
@@ -22,14 +24,21 @@ Produce a structured report (markdown). For each finding give file:line, severit
      callees, configs, tests, and adjacent code the diff touches. If something feels wrong but
      fits no category above, report it anyway. Use your full judgment; surprise me.
 
-2. SECURITY (hard gate)
+2. SECURITY (hard gate — assume every input is HOSTILE)
+   - Trace every user-/agent-controlled value from entrypoint to sink. Injection of every kind
+     (SQL / command / path traversal / prompt injection / SSRF / XSS), unsafe deserialization,
+     auth & permission checks, privilege escalation, tenant / cross-task isolation. Follow tainted
+     data end-to-end — don't stop at the first boundary.
    - NO secrets, tokens, API keys, or credential-shaped strings in any committed file.
    - NO compiled/generated artifacts staged: __pycache__/, *.pyc, .pytest_cache, node_modules, build/dist. (These trip GitHub Push Protection / GH013 and block the push — flag and remove any that exist.)
-   - Injection (SQL/command/path traversal), auth/permission checks, unsafe deserialization.
 
 3. TESTS
-   - Does every new/changed code path have a test that would FAIL without the change?
-   - Run the repo's test suite; report pass/fail with the command used. A change with no test, or a test that doesn't exercise the change, is a BLOCKER.
+   - WRITE a test for ALL new code you wrote. Every new/changed function, branch, and edge case
+     gets a test that would FAIL without the change. A missing test is not just flagged — ADD it
+     now (in the repo's existing test style/location), then run it.
+   - A change with no test, or a test that doesn't exercise the change, is a BLOCKER until you've
+     written one.
+   - Run the repo's test suite; report pass/fail with the command used.
    - No skipped/commented-out tests left behind.
 
 4. CODE QUALITY (per AGENTS.md)
@@ -48,12 +57,52 @@ Produce a structured report (markdown). For each finding give file:line, severit
    - DELETE obvious comments that restate the next line.
    - Collapse any multi-paragraph comment block down to its essential point.
 
-6. CROSS-REPO CONSISTENCY
+6. ARCHITECTURE & DESIGN (assume this code still exists in 3 years)
+   - Designs that technically work but raise future complexity; violations of the repo's existing patterns.
+   - Hidden coupling between modules; abstractions that leak implementation details.
+   - Business logic that migrated into infra layers, or infra concerns that leaked into domain logic.
+   - Circular dependencies; changes that widen the blast radius of a failure.
+   - For each: name the future failure mode, why it's risky, and the SMALLEST safer design.
+
+7. PRODUCTION FAILURE MODES (most reviewers skip this — don't)
+   - For every changed path, ask "what happens if this fails in production?" Simulate: network
+     timeout, process restart mid-operation, duplicate event, out-of-order event, message replay,
+     stale cache, partial write, downstream/service unavailable, clock skew, concurrent requests.
+   - Trace system state before and after. Report any path that can corrupt state, lose data,
+     duplicate data, deadlock, retry forever, or leak resources. Give the concrete sequence.
+
+8. PERFORMANCE (if the path is hot — skip for clearly cold/one-shot code)
+   - Assume the path runs at high volume. Algorithmic complexity, N+1 queries, repeated
+     serialize/deserialize or JSON parsing, redundant network / DB calls, lock contention, hot
+     loops, needless allocations. For each finding: current complexity → improved → expected impact.
+
+9. CONTRACTS & COMPATIBILITY (if a shared shape changed)
+   - Every changed API response / DTO / schema / event / message / DB record / tool response:
+     check backward AND forward compatibility — nullability changes, enum changes, field
+     add/remove, default values. Trace EVERY producer and consumer and confirm they still agree.
+
+10. DATABASE SAFETY (if there are migrations / queries)
+   - Indexes, migrations, locking, transactions, isolation levels. Look for full table scans,
+     missing indexes, long-running transactions, races. A migration that cannot safely run (or
+     roll back) against a live production DB is a BLOCKER.
+
+11. OBSERVABILITY (if it breaks at 3am, can an engineer diagnose it?)
+   - Silent failures, swallowed exceptions, missing context in logs/errors, impossible-to-debug
+     code paths. Flag where a failure would be invisible or untraceable.
+
+12. CROSS-REPO CONSISTENCY
    - If a shared contract changed (signature, schema, constant), every repo that depends on it is updated consistently. List the repos touched and confirm they agree.
 
-7. SCOPE
+13. SCOPE
    - Every change is in-scope for this task. Flag anything unrelated.
    - All edits are inside the task folder (no out-of-sandbox writes).
+
+14. ATTACK YOUR OWN CHANGE (the capstone — this catches the worst bugs)
+   - Assume the author (you) is WRONG. Spend at least as much effort trying to DISPROVE correctness
+     as confirming it. For each change ask: what assumption is false? what input breaks this? what
+     happens at 10x scale? after 6 months of data growth? what would wake me at 3am? Do NOT stop at
+     the first issue — keep going until no plausible failure mode remains. The best reviewers don't
+     verify correctness; they try to break it.
 
 BEFORE YOU REPORT — RUN ALL THE TESTS (mandatory, do this last)
 - After fixing the BLOCKERs/MAJORs, RUN THE FULL TEST SUITE of every repo you touched
