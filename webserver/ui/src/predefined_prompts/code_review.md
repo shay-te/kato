@@ -6,7 +6,13 @@ Approach this with FRESH EYES: drop every assumption you formed while writing th
 
 REVIEW THE SYSTEM, NOT THE DIFF. The diff is a clue, not the boundary — most nasty bugs live in `caller → changed function → downstream consumer`, not in the changed lines themselves. For every changed line: (1) find all callers, (2) find all downstream consumers, (3) trace the complete data flow end to end, (4) verify the system's invariants still hold. You are reviewing BEHAVIOR, not lines.
 
+ASSUME THE TESTS ARE WRONG. Passing tests prove only that the tests passed — NOT that the code is correct. Never use green tests as evidence of correctness; verify the behavior yourself from the code.
+
+SYSTEM INVARIANTS. Before reviewing, name the system's core invariants that this change touches (e.g. no data loss, exactly-once / no-duplicate processing, task/tenant isolation, cache consistency, authorization boundaries, "a forgotten task stays forgotten", "no out-of-sandbox writes"). For every change, verify each still holds. A violated invariant is a BLOCKER.
+
 Produce a structured report (markdown). For each finding give file:line, severity (BLOCKER / MAJOR / MINOR / NIT), and a one-line fix. Then FIX every BLOCKER and MAJOR in the code (leave MINOR/NIT as a checklist for me).
+
+EVIDENCE, NOT SPECULATION. Every BLOCKER and MAJOR must show: the exact code path, the exact triggering scenario (concrete input/sequence), why the existing tests did not catch it, and a caller/callee trace that proves it. If you cannot demonstrate a concrete failure, DOWNGRADE the finding — no "this might/could break" without proof.
 
 1. BUGS & CORRECTNESS (primary goal — actively HUNT for bugs, don't just skim)
    - Logic errors, off-by-one, inverted/wrong conditionals, operator-precedence slips.
@@ -38,6 +44,10 @@ Produce a structured report (markdown). For each finding give file:line, severit
      now (in the repo's existing test style/location), then run it.
    - A change with no test, or a test that doesn't exercise the change, is a BLOCKER until you've
      written one.
+   - REVIEW THE TESTS AS PRODUCTION CODE: a test that can't fail when the feature breaks is no
+     test. Hunt for assertions that don't verify the actual behavior, mocks that hide the bug,
+     tests coupled to implementation details, and tests that pass for the wrong reason — flip the
+     code to confirm the test would actually go red.
    - Run the repo's test suite; report pass/fail with the command used.
    - No skipped/commented-out tests left behind.
 
@@ -46,6 +56,7 @@ Produce a structured report (markdown). For each finding give file:line, severit
    - No magic numbers — extract them to named constants (literals are OK in tests only).
    - No dead/orphaned code (uncalled functions, unused imports/vars).
    - Hunt DEEPLY for dead & redundant code, not just the diff: trace each new/changed symbol's callers across the whole repo, and DELETE anything now-unreferenced — orphaned helpers, superseded code paths, near-duplicate implementations (consolidate into one), and their tests. "It still passes" is not enough; if it's unreachable or duplicated, remove it.
+   - For every NEW implementation, actively ask: did it make an OLD one obsolete? is there now a duplicate path, dead config, or stale test? Prefer DELETION over addition.
    - Names match surrounding code; idiom consistent.
    - No debug prints, console.logs, TODO/FIXME, or leftover scratch code.
    - (Frontend) No logic inside JSX; computations live in helpers.
@@ -71,10 +82,13 @@ Produce a structured report (markdown). For each finding give file:line, severit
    - Trace system state before and after. Report any path that can corrupt state, lose data,
      duplicate data, deadlock, retry forever, or leak resources. Give the concrete sequence.
 
-8. PERFORMANCE (if the path is hot — skip for clearly cold/one-shot code)
+8. PERFORMANCE & OPERATIONAL COST (if the path is hot — skip for clearly cold/one-shot code)
    - Assume the path runs at high volume. Algorithmic complexity, N+1 queries, repeated
      serialize/deserialize or JSON parsing, redundant network / DB calls, lock contention, hot
      loops, needless allocations. For each finding: current complexity → improved → expected impact.
+   - Estimate the cost delta: DB/cache load, memory, network traffic, queue depth, storage growth.
+     Flag any UNBOUNDED growth (a list/map/file/log that only ever grows). If complexity increased,
+     justify why.
 
 9. CONTRACTS & COMPATIBILITY (if a shared shape changed)
    - Every changed API response / DTO / schema / event / message / DB record / tool response:
