@@ -50,16 +50,29 @@ class ClaudeCliClient(object):
     SAFE_PERMISSION_MODE = 'acceptEdits'
     BYPASS_PERMISSION_MODE = 'bypassPermissions'
     DEFAULT_ALLOWED_TOOLS = 'Edit,Write,Read,Bash,Glob,Grep'
-    # Hard, non-overridable denylist. Kato is the only component that
-    # ever runs git operations (commit, push, branch, reset, fetch,
-    # rebase, ...). Claude must NEVER invoke git directly: it would race
-    # with kato's branch state machine, bypass the publish-step retry
-    # logic, and could push work kato hasn't validated. Every shape of
-    # `git ...` we know Claude Code's allow-pattern matcher recognizes
-    # is listed here. The two patterns cover both the colon-form
-    # (`Bash(git:*)`) and the bare-form (`Bash(git *)`) that Claude
-    # versions accept.
-    GIT_DENY_PATTERNS = ('Bash(git:*)', 'Bash(git *)')
+    # Hard, non-overridable denylist for MUTATING git only. Kato owns the
+    # branch state machine + publish/push path, so Claude must never commit,
+    # push, reset, branch, fetch, rebase, etc. — those would race kato and
+    # could push unvalidated work. But READ-ONLY git (status/log/diff/show/
+    # blame…) is safe and essential: the self-review workflow literally needs
+    # `git diff master...branch` to see what changed. Read-only git is NOT
+    # listed here, so it falls through to the normal permission prompt (the
+    # operator approves it, or "allow always git"). Each mutating subcommand is
+    # listed in both the colon-form (`Bash(git push:*)`) and bare-form
+    # (`Bash(git push *)`) that different Claude versions accept.
+    _GIT_MUTATING_SUBCOMMANDS = (
+        'push', 'commit', 'merge', 'rebase', 'reset', 'checkout', 'switch',
+        'restore', 'cherry-pick', 'revert', 'am', 'apply', 'add', 'rm', 'mv',
+        'clean', 'stash', 'tag', 'branch', 'remote', 'fetch', 'pull', 'clone',
+        'init', 'config', 'gc', 'prune', 'filter-branch', 'filter-repo',
+        'update-ref', 'update-index', 'symbolic-ref', 'worktree', 'submodule',
+        'sparse-checkout', 'bisect', 'notes', 'replace', 'fast-import',
+    )
+    GIT_DENY_PATTERNS = tuple(
+        pattern
+        for sub in _GIT_MUTATING_SUBCOMMANDS
+        for pattern in (f'Bash(git {sub}:*)', f'Bash(git {sub} *)')
+    )
     SMOKE_TEST_PROMPT = 'Reply with exactly: ok. Do not call any tools.'
     SMOKE_TEST_TIMEOUT_SECONDS = 120
     VERSION_PROBE_TIMEOUT_SECONDS = 30

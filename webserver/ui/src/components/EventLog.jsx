@@ -782,14 +782,15 @@ function localKey(prefix, text) {
 // can evolve independently and stay testable without a JSX
 // transformer.
 
-// Strip the ``+ ``/``- `` diff markers (and ``---`` separators) that
-// formatToolUse adds, so a copied Write body / diff pastes as clean source
-// rather than a pseudo-diff.
+// Strip the line prefixes formatToolUse adds — ``+ `` (added), ``- `` (removed)
+// and the 2-space context indent — plus ``---`` separators, so a copied Write
+// body / Edit diff pastes as clean source. The marker alternative is tried
+// first, so a content line that itself starts with spaces keeps its indent.
 function stripToolDetailPrefixes(details) {
   return String(details || '')
     .split('\n')
     .filter((line) => line !== '---')
-    .map((line) => line.replace(/^[+-] /, ''))
+    .map((line) => line.replace(/^(?:[+-] |  )/, ''))
     .join('\n');
 }
 

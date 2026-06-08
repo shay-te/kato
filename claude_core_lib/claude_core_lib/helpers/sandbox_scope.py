@@ -236,18 +236,41 @@ _ESCAPE_PROGRAMS = frozenset({
     'docker', 'docker-compose', 'podman', 'nerdctl', 'kubectl', 'ctr',
     'sudo', 'doas', 'chroot', 'nsenter', 'unshare',
 })
+# Benign wrapper programs that RUN another program (their last/inner argument);
+# we step transparently through them so ``env docker``, ``xargs docker``,
+# ``time docker``, ``timeout 10 docker`` don't hide an escape behind the
+# wrapper. NOT in _ESCAPE_PROGRAMS — sudo/doas are escapes in their own right,
+# so they stay there and are flagged directly.
+_WRAPPER_PROGRAMS = frozenset({
+    'env', 'xargs', 'command', 'nohup', 'time', 'nice', 'timeout',
+    'stdbuf', 'setsid', 'ionice',
+})
 
 
 def _segment_program(segment: str) -> str:
-    """The basename of the program a single command segment invokes (after any
-    leading ``VAR=val`` env assignments), or ''."""
+    """The basename of the program a command segment actually invokes — stepping
+    over leading ``VAR=val`` env assignments AND benign wrapper programs
+    (``env``/``xargs``/``time``/``nice``/``timeout``…) plus their own flags/
+    numeric args, so ``env docker`` resolves to ``docker``. '' when none."""
     tokens = [t for t in segment.strip().split() if t]
     index = 0
-    while index < len(tokens) and _ENV_ASSIGNMENT.match(tokens[index]):
+    while index < len(tokens):
+        if _ENV_ASSIGNMENT.match(tokens[index]):
+            index += 1
+            continue
+        program = tokens[index].rsplit('/', 1)[-1]
+        if program not in _WRAPPER_PROGRAMS:
+            return program
+        # Step over the wrapper and any of ITS option flags / numeric args
+        # (``nice -n 5 docker``, ``timeout 10 docker``) to reach the inner cmd.
         index += 1
-    if index >= len(tokens):
-        return ''
-    return tokens[index].rsplit('/', 1)[-1]
+        while index < len(tokens) and (
+            tokens[index].startswith('-')
+            or tokens[index].isdigit()
+            or _ENV_ASSIGNMENT.match(tokens[index])
+        ):
+            index += 1
+    return ''
 
 
 def classify_command_escape(command: str) -> tuple[bool, str]:
@@ -255,10 +278,10 @@ def classify_command_escape(command: str) -> tuple[bool, str]:
     / privilege / namespace primitive (``docker``, ``sudo``, ``chroot``, …).
 
     These reach the host *around* any path sandbox, so they are treated like an
-    out-of-sandbox ask: red warning, no remembered grant. Checks the program of
-    every ``&&``/``;``/``|`` segment (so ``cd /x && docker run`` and
-    ``sudo docker …`` are both caught), de-obfuscated first so quotes/$HOME
-    can't hide the program name."""
+    out-of-sandbox ask: red warning, no remembered grant. Checks the effective
+    program of every ``&&``/``;``/``|`` segment (so ``cd /x && docker run``,
+    ``sudo docker …`` and ``env/xargs/time docker`` are all caught),
+    de-obfuscated first so quotes/$HOME can't hide the program name."""
     text = _deobfuscate_command(command)
     for segment in _COMMAND_SEGMENT_SPLIT.split(text):
         program = _segment_program(segment)

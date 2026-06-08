@@ -1564,16 +1564,17 @@ class BuildCommandPartialBranchTests(unittest.TestCase):
         # Branch 976->975: when the operator's disallowed list ALREADY
         # contains a git deny pattern, the merge must not append it a
         # second time (``if pattern not in seen`` is False, loop
-        # continues). The other git pattern is still added exactly once.
+        # continues). The other git patterns are still added exactly once.
+        already = ClaudeCliClient.GIT_DENY_PATTERNS[0]
         merged = ClaudeCliClient._merge_disallowed_with_git_deny(
-            'Write, Bash(git:*)',
+            f'Write, {already}',
         )
         entries = merged.split(',')
-        self.assertEqual(entries.count('Bash(git:*)'), 1)
-        self.assertEqual(entries.count('Bash(git *)'), 1)
+        self.assertEqual(entries.count(already), 1)
+        self.assertEqual(entries.count(ClaudeCliClient.GIT_DENY_PATTERNS[1]), 1)
         self.assertIn('Write', entries)
         # Operator entry order is preserved; git patterns are appended.
-        self.assertEqual(entries[:2], ['Write', 'Bash(git:*)'])
+        self.assertEqual(entries[:2], ['Write', already])
 
 
 class ParseCompletedProcessBlankResultTests(unittest.TestCase):

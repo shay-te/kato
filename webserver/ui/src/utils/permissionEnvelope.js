@@ -52,13 +52,17 @@ const NOISE_PROGRAMS = new Set(['cd', 'pushd', 'popd', 'export', 'source', '.'])
 //   "JAVA_HOME=/x mvn -B verify" → "mvn"   "/usr/local/bin/docker ps" → "docker"
 //   "./gradlew build"            → "gradlew"
 function _programOfSegment(segment) {
-  const tokens = String(segment).trim().split(/\s+/).filter(Boolean);
+  // Strip leading subshell openers / backticks so `(cd /x && mvn)`, `$(mvn)`
+  // and `` `mvn` `` resolve to the real program, not a `(cd` / `$(mvn` token.
+  const tokens = String(segment).replace(/^[\s($`]+/, '')
+    .split(/\s+/).filter(Boolean);
   let i = 0;
   // Skip leading env-var assignments (FOO=bar) — they prefix, not invoke.
   while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) { i += 1; }
   const prog = tokens[i];
   if (!prog) { return ''; }
-  return prog.replace(/^.*\//, ''); // strip any path → basename (also kills ./)
+  // Drop trailing subshell closers/backticks, then strip any path → basename.
+  return prog.replace(/[)`]+$/, '').replace(/^.*\//, '');
 }
 
 // The remembered KEY for a command: the set of programs it actually runs,

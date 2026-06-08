@@ -140,6 +140,13 @@ class ModuleLevelHelperTests(unittest.TestCase):
         self.assertEqual(_epoch_from_iso(None), 0.0)
         self.assertEqual(_epoch_from_iso('not-a-timestamp'), 0.0)
 
+    def test_epoch_from_iso_naive_timestamp_is_read_as_utc(self):
+        # An offset-less timestamp must be treated as UTC, not local time.
+        from kato_webserver.app import _epoch_from_iso
+        naive = _epoch_from_iso('2026-06-08T14:32:00')
+        withz = _epoch_from_iso('2026-06-08T14:32:00Z')
+        self.assertEqual(naive, withz)
+
     def test_record_cwd_or_none_returns_none_when_record_missing(self):
         manager = _FakeManager()
         self.assertIsNone(_record_cwd_or_none(manager, 'NO-SUCH'))

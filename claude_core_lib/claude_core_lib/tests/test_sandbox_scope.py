@@ -466,6 +466,24 @@ class ClassifyCommandEscapeTests(unittest.TestCase):
             classify_command_escape('/usr/local/bin/docker ps')[1], 'docker',
         )
 
+    def test_escape_behind_a_benign_wrapper_is_still_caught(self):
+        for cmd, prog in (
+            ('env docker run alpine', 'docker'),
+            ('xargs docker rmi', 'docker'),
+            ('time docker build .', 'docker'),
+            ('nice -n 5 docker ps', 'docker'),
+            ('timeout 10 docker compose up', 'docker'),
+            ('nohup podman run x', 'podman'),
+            ('cd /tmp && env FOO=bar docker run', 'docker'),
+        ):
+            self.assertEqual(classify_command_escape(cmd)[1], prog, cmd)
+
+    def test_mentioning_an_escape_program_as_an_arg_is_not_flagged(self):
+        # ``docker`` is the ARGUMENT, not the program — must not false-positive.
+        for cmd in ('echo docker', 'git commit -m "use docker"', 'grep docker f',
+                    'cat docker-compose.yml'):
+            self.assertFalse(classify_command_escape(cmd)[0], cmd)
+
     def test_other_runtimes_and_namespace_tools(self):
         for cmd, prog in (
             ('podman run alpine', 'podman'),

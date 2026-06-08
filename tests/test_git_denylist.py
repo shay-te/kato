@@ -18,6 +18,26 @@ class GitDenylistMergeTests(unittest.TestCase):
         for pattern in ClaudeCliClient.GIT_DENY_PATTERNS:
             self.assertIn(pattern, merged.split(','))
 
+    def test_mutating_git_is_denied(self) -> None:
+        # push/commit/reset/… stay hard-denied so Claude can't race kato.
+        items = ClaudeCliClient._merge_disallowed_with_git_deny('').split(',')
+        for sub in ('push', 'commit', 'reset', 'checkout', 'rebase',
+                    'branch', 'merge', 'fetch', 'pull', 'clone'):
+            self.assertIn(f'Bash(git {sub}:*)', items, sub)
+
+    def test_read_only_git_is_NOT_denied(self) -> None:
+        # status/log/diff/show/blame must fall through to the approval prompt
+        # so the self-review workflow can read the branch diff.
+        merged = ClaudeCliClient._merge_disallowed_with_git_deny('')
+        items = merged.split(',')
+        for sub in ('status', 'log', 'diff', 'show', 'blame', 'rev-parse',
+                    'ls-files', 'shortlog'):
+            self.assertNotIn(f'Bash(git {sub}:*)', items, sub)
+            self.assertNotIn(f'Bash(git {sub} *)', items, sub)
+        # And the old catch-all that denied ALL git is gone.
+        self.assertNotIn('Bash(git:*)', items)
+        self.assertNotIn('Bash(git *)', items)
+
     def test_operator_extension_is_preserved(self) -> None:
         merged = ClaudeCliClient._merge_disallowed_with_git_deny('Bash(rm:*),WebFetch')
         items = merged.split(',')

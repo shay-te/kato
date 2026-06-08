@@ -180,6 +180,11 @@ test('signature: pipes count as separate programs', function () {
   assert.equal(commandSignatureOf('cat log | grep ERROR'), 'cat grep');
 });
 
+test('signature: subshell wrappers resolve to the real program', function () {
+  assert.equal(commandSignatureOf('(cd /x && mvn verify)'), 'mvn');
+  assert.equal(commandSignatureOf('$(which mvn)'), 'which');
+});
+
 test('signature: navigation-only command keys on the navigation verb', function () {
   // Nothing meaningful after stripping noise → fall back to the noise verb
   // so a bare `cd` is still a real, clearable entry (never an empty key).

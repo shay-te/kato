@@ -974,6 +974,30 @@ describe('EventLog — copy-response button', () => {
     expect(copied).toContain('SELECT 1;');
     expect(copied).not.toMatch(/^[+-] /m); // diff markers stripped
   });
+
+  test('Edit copy strips diff markers + 2-space context indent, keeps content indent', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    render(
+      <EventLog entries={[_server({
+        type: 'assistant',
+        message: { id: 'm-e', content: [{
+          type: 'tool_use', name: 'Edit',
+          input: {
+            file_path: '/x/a.py',
+            old_string: 'def foo():\n    return 1',
+            new_string: 'def foo():\n    return 2',
+          },
+        }] },
+      })]} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Copy block' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    const copied = writeText.mock.calls[0][0];
+    expect(copied).not.toMatch(/^[+-] /m);   // no diff markers
+    expect(copied).toMatch(/^def foo\(\):/m); // context line flush-left
+    expect(copied).toMatch(/^    return 2$/m); // content indentation preserved
+  });
 });
 
 

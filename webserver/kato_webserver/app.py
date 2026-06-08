@@ -3021,8 +3021,14 @@ def _epoch_from_iso(value) -> float:
     if not text:
         return 0.0
     try:
-        from datetime import datetime
-        return datetime.fromisoformat(text).timestamp()
+        from datetime import datetime, timezone
+        parsed = datetime.fromisoformat(text)
+        # A naive (offset-less) timestamp would otherwise be read as LOCAL
+        # time → wrong epoch. Claude always emits the trailing ``Z``, but assume
+        # UTC if a future format ever drops it.
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
     except (ValueError, OSError):
         return 0.0
 
