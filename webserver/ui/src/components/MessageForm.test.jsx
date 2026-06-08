@@ -131,6 +131,30 @@ describe('MessageForm — draft persistence (operator scenario)', () => {
     expect(window.localStorage.getItem(`${DRAFT_STORAGE_PREFIX}T1`)).toBeNull();
   });
 
+  test('ultracode toggle prepends the keyword to the sent message', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(true);
+    renderForm({ taskId: 'T1', onSubmit });
+    const textarea = screen.getByRole('textbox');
+    fireEvent.change(textarea, { target: { value: 'audit the cascade' } });
+    // Off by default → plain text.
+    const toggle = screen.getByRole('button', { name: /ultracode/i });
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    // Arm it, then send.
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
+    expect(onSubmit).toHaveBeenCalledWith('ultracode\n\naudit the cascade', []);
+  });
+
+  test('ultracode OFF sends the message unchanged', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(true);
+    renderForm({ taskId: 'T1', onSubmit });
+    const textarea = screen.getByRole('textbox');
+    fireEvent.change(textarea, { target: { value: 'just a normal message' } });
+    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
+    expect(onSubmit).toHaveBeenCalledWith('just a normal message', []);
+  });
+
   test('Bug: draft + textarea survive when onSubmit returns false (send failed)', async () => {
     // Operator clicks Send → backend returns an error envelope →
     // SessionDetail's onSendMessage returns false. The draft must

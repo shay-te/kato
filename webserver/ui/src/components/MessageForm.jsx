@@ -92,6 +92,11 @@ const MessageForm = forwardRef(function MessageForm({
   const draftEditedRef = useRef(false);
   const draftSyncReadyRef = useRef(false);
   const [dragging, setDragging] = useState(false);
+  // "ultracode" opt-in: kato has no such setting — it's a Claude Code
+  // workflow-mode PROMPT KEYWORD. When on, we prepend it to the message so the
+  // agent authors/runs multi-agent workflows (only takes effect if the spawned
+  // Claude supports it). Off by default — it can trigger expensive fan-out.
+  const [ultracode, setUltracode] = useState(false);
   const fileInputRef = useRef(null);
   const textareaRef = useRef(null);
   const formRef = useRef(null);
@@ -238,9 +243,11 @@ const MessageForm = forwardRef(function MessageForm({
     // but never throw). If the send failed, KEEP the draft so the
     // operator can retry — losing the text on a network failure
     // was a real operator pain point.
+    // Prepend the ultracode keyword when the toggle is on (and there's text).
+    const outgoing = ultracode && trimmed ? `ultracode\n\n${trimmed}` : trimmed;
     let result;
     try {
-      result = await onSubmit(trimmed, attachments.map((a) => a.part));
+      result = await onSubmit(outgoing, attachments.map((a) => a.part));
     } catch (_err) {
       // Send threw — caller will have surfaced an error bubble.
       // Preserve the draft + textarea so the operator can retry.
@@ -428,6 +435,16 @@ const MessageForm = forwardRef(function MessageForm({
             style={{ display: 'none' }}
             onChange={handleFilePickerChange}
           />
+          <button
+            type="button"
+            className={`composer-ultracode tooltip-above ${ultracode ? 'is-on' : ''}`}
+            data-tooltip="ultracode: have the agent run multi-agent workflows for this message (prepends the keyword). Off by default — it can fan out into many subagents. Only works if your installed Claude supports it."
+            aria-pressed={ultracode}
+            aria-label="Toggle ultracode"
+            onClick={() => setUltracode((on) => !on)}
+          >
+            ultracode
+          </button>
         </div>
         <div className="composer-toolbar-right">
           {availableModels.length > 0 && (

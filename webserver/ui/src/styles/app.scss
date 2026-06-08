@@ -2842,6 +2842,32 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   border-color: $C-NEUTRAL-100-A06;
 }
 
+/* ultracode opt-in pill — off (muted) by default; cyan when armed. */
+.composer-ultracode {
+  flex-shrink: 0;
+  height: 26px;
+  padding: 0 $SPACE-10;
+  border-radius: $RADIUS-PILL;
+  border: 1px solid $C-NEUTRAL-16;
+  background: transparent;
+  color: $C-NEUTRAL-64;
+  font: 600 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.composer-ultracode:hover {
+  color: $C-NEUTRAL-96;
+  border-color: $C-NEUTRAL-45;
+}
+
+.composer-ultracode.is-on {
+  background: $C-CYAN-52-A18;
+  border-color: $C-CYAN-52-A40;
+  color: $C-CYAN-78;
+}
+
 /* Round send button — iOS-blue accent when armed, dimmed when
  * empty. Glows softly to telegraph the primary action without
  * shouting. */
