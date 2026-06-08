@@ -1584,6 +1584,13 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   bottom: 0;
 }
 
+/* Expanded: the "Click to collapse" button is absolutely pinned to the
+ * bottom-right, so without room it sits ON the last line of the prompt. Add
+ * bottom padding to the text area when expanded so the button clears it. */
+.chat-sticky-prompt.is-expanded .chat-sticky-prompt-toggle {
+  padding-bottom: $SPACE-32;
+}
+
 /* Chat stream — vertical, dot-prefixed, Claude Code CLI style. Each
  * bubble is a row: a colored dot on the left, a small kind label, and
  * the content stacked vertically. No left/right alignment shifts, no

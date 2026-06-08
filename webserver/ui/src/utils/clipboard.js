@@ -5,8 +5,16 @@ export async function copyTextToClipboard(text) {
   const value = String(text || '');
   if (!value) { return; }
   if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-    await navigator.clipboard.writeText(value);
-    return;
+    try {
+      await navigator.clipboard.writeText(value);
+      return;
+    } catch (_) {
+      // The async Clipboard API rejects when the document isn't focused
+      // (common in a VSCode webview on the FIRST click — the click focuses
+      // the view, so a retry would work) or when permission is denied. Fall
+      // through to the execCommand path, which doesn't need focus, so the
+      // first click copies instead of silently doing nothing.
+    }
   }
   if (typeof document === 'undefined') {
     throw new Error('clipboard unavailable');
