@@ -2996,12 +2996,35 @@ def _replay_history_from_disk(agent_session_id: str):
         return
     # Emit under a distinct event type so the client doesn't run these
     # through the live-state reducer (otherwise an archived ``assistant``
-    # event would set turnInFlight=true forever).
+    # event would set turnInFlight=true forever). Carry the JSONL line's
+    # ``timestamp`` as ``received_at_epoch`` so replayed prompts show WHEN
+    # they were asked (0 would hide the time after a reload). It is NOT the
+    # dedupe key for history (a content fingerprint is — see keyForEntry),
+    # so this is display-only.
     for raw in events:
         yield _sse_message(
             SSE_EVENT_SESSION_HISTORY_EVENT,
-            {'event': {'received_at_epoch': 0, 'raw': raw}},
+            {'event': {
+                'received_at_epoch': _epoch_from_iso(raw.get('timestamp')),
+                'raw': raw,
+            }},
         )
+
+
+def _epoch_from_iso(value) -> float:
+    """Best-effort ISO-8601 → epoch seconds; 0.0 on anything unparseable.
+
+    Claude JSONL lines carry a ``timestamp`` like
+    ``2026-06-08T14:32:00.000Z`` (Python 3.11's ``fromisoformat`` accepts the
+    trailing ``Z``)."""
+    text = str(value or '').strip()
+    if not text:
+        return 0.0
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(text).timestamp()
+    except (ValueError, OSError):
+        return 0.0
 
 
 def _replay_session_backlog(session, agent_service=None, task_id=''):

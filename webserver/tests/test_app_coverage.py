@@ -122,6 +122,24 @@ class ModuleLevelHelperTests(unittest.TestCase):
     """Pure helpers that route handlers depend on. Hitting them
     directly saves spinning a full Flask app per branch."""
 
+    def test_epoch_from_iso_parses_jsonl_timestamp(self):
+        from kato_webserver.app import _epoch_from_iso
+        # Claude JSONL ``timestamp`` (with the trailing Z) → a positive epoch.
+        epoch = _epoch_from_iso('2026-06-08T14:32:00.000Z')
+        self.assertGreater(epoch, 0.0)
+        # Round-trips to the same instant.
+        from datetime import datetime, timezone
+        self.assertEqual(
+            datetime.fromtimestamp(epoch, tz=timezone.utc).strftime('%Y-%m-%dT%H:%M'),
+            '2026-06-08T14:32',
+        )
+
+    def test_epoch_from_iso_is_zero_for_empty_or_garbage(self):
+        from kato_webserver.app import _epoch_from_iso
+        self.assertEqual(_epoch_from_iso(''), 0.0)
+        self.assertEqual(_epoch_from_iso(None), 0.0)
+        self.assertEqual(_epoch_from_iso('not-a-timestamp'), 0.0)
+
     def test_record_cwd_or_none_returns_none_when_record_missing(self):
         manager = _FakeManager()
         self.assertIsNone(_record_cwd_or_none(manager, 'NO-SUCH'))

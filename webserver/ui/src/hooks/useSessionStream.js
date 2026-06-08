@@ -199,7 +199,7 @@ export function reducer(state, action) {
       return next;
     }
     case ACTION_INCOMING_HISTORY:
-      return reduceIncomingHistory(state, action.event);
+      return reduceIncomingHistory(state, action.event, action.receivedAtEpoch);
     case ACTION_LOCAL_EVENT: {
       _localEventCounter += 1;
       const enriched = { ...action.event, localId: _localEventCounter };
@@ -372,8 +372,11 @@ function reduceIncomingEvent(state, raw, receivedAtEpoch) {
   return next;
 }
 
-function reduceIncomingHistory(state, raw) {
-  const entry = { source: ENTRY_SOURCE.HISTORY, raw };
+function reduceIncomingHistory(state, raw, receivedAtEpoch) {
+  // ``receivedAtEpoch`` (from the JSONL timestamp) is display-only here — the
+  // history dedupe key is a content fingerprint, not the epoch — so a replayed
+  // prompt can still show WHEN it was asked.
+  const entry = { source: ENTRY_SOURCE.HISTORY, raw, receivedAtEpoch: Number(receivedAtEpoch || 0) };
   const { state: appended, appended: didAppend } = appendEntryIfNew(state, entry);
   if (!didAppend) { return state; }
   const next = appended;
@@ -479,7 +482,11 @@ export function useSessionStream(taskId, onIncomingEvent) {
     stream.addEventListener('session_history_event', (event) => {
       const unwrapped = unwrapSessionEvent(event);
       if (!unwrapped) { return; }
-      dispatch({ type: ACTION_INCOMING_HISTORY, event: unwrapped.raw });
+      dispatch({
+        type: ACTION_INCOMING_HISTORY,
+        event: unwrapped.raw,
+        receivedAtEpoch: unwrapped.envelope?.received_at_epoch,
+      });
     });
     stream.addEventListener('session_idle', () => {
       dispatch({ type: ACTION_LIFECYCLE, value: SESSION_LIFECYCLE.IDLE });

@@ -992,11 +992,30 @@ describe('EventLog — prompt timestamp', () => {
     expect(time.textContent.trim().length).toBeGreaterThan(0);
   });
 
-  test('a prompt with no epoch shows no time (replayed history)', () => {
+  test('a prompt with no epoch shows no time', () => {
     const { container } = render(
       <EventLog entries={[_local(BUBBLE_KIND.USER, 'no time here')]} />,
     );
     expect(container.querySelector('.chat-sticky-prompt-time')).toBeNull();
+  });
+
+  test('a replayed server/history prompt shows its time from received_at_epoch', () => {
+    // History prompts now carry the JSONL timestamp as received_at_epoch,
+    // threaded through serverBubblesFor → userBubbles → StickyPrompt.
+    const { container } = render(
+      <EventLog entries={[{
+        source: ENTRY_SOURCE.SERVER,
+        receivedAtEpoch: 1717000000,
+        raw: {
+          type: CLAUDE_EVENT.USER,
+          uuid: 'h1',
+          message: { content: [{ type: 'text', text: 'replayed prompt' }] },
+        },
+      }]} />,
+    );
+    const time = container.querySelector('.chat-sticky-prompt-time');
+    expect(time).toBeInTheDocument();
+    expect(time.textContent.trim().length).toBeGreaterThan(0);
   });
 });
 
