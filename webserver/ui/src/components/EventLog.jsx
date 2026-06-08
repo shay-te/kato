@@ -10,7 +10,7 @@ import { ENTRY_SOURCE } from '../constants/entrySource.js';
 import { formatToolUse, toolUseFilePath } from '../utils/formatToolUse.js';
 import { parseCommentRunPrompt } from '../utils/commentRunPrompt.js';
 import { commentStatusKey } from '../utils/commentStatus.js';
-import { copyTextToClipboard } from '../utils/clipboard.js';
+import { useCopyAction } from '../hooks/useCopyAction.js';
 import { useCommentStatusMap } from '../hooks/useCommentStatusMap.js';
 import { MessageFilter } from '../utils/MessageFilter.js';
 import { isPinnedToBottom, scrollToBottom } from '../utils/scrollUtils.js';
@@ -313,24 +313,13 @@ export function collectTurnResponseText(turnEl) {
 // chat apps). Walks up to its ``.chat-turn`` and copies the entire response to
 // that prompt (every bubble), with brief "Copied" feedback.
 function TurnCopyButton() {
-  const ref = useRef(null);
-  const [copied, setCopied] = useState(false);
-  async function handleCopy() {
-    const text = collectTurnResponseText(ref.current?.closest('.chat-turn'));
-    if (!text) { return; }
-    try {
-      await copyTextToClipboard(text);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
-    } catch (_) { /* clipboard unavailable — leave the button idle */ }
-  }
+  const { copied, copy } = useCopyAction();
   return (
     <div className="chat-turn-actions">
       <button
-        ref={ref}
         type="button"
         className="chat-turn-copy tooltip-start"
-        onClick={handleCopy}
+        onClick={(e) => copy(collectTurnResponseText(e.currentTarget.closest('.chat-turn')), e)}
         aria-label="Copy response"
         data-tooltip={copied ? 'Copied' : 'Copy the full response'}
       >
@@ -520,6 +509,12 @@ function assistantBubbles(raw, index, onOpenFile) {
           <Icon name="file" />
         </button>
       ) : null;
+      // Copy the block's content (the details) — e.g. a Write's file body or
+      // a diff — with the ``+ ``/``- `` diff markers stripped so it pastes
+      // clean. Only when there's a details payload to copy.
+      const copyBtn = details ? (
+        <ToolCopyButton text={stripToolDetailPrefixes(details)} />
+      ) : null;
       toolBubbles.push(
         <Bubble
           key={keyOf(raw, index, `tool-${block.id || toolBubbles.length}`)}
@@ -528,6 +523,7 @@ function assistantBubbles(raw, index, onOpenFile) {
           <span className="bubble-tool-summary">
             {`→ ${summary}`}
             {revealBtn}
+            {copyBtn}
           </span>
           {details && <ToolDetails details={details} />}
         </Bubble>,
@@ -785,6 +781,34 @@ function localKey(prefix, text) {
 // sibling ``eventLogTruncation.js`` so the rendering and the rules
 // can evolve independently and stay testable without a JSX
 // transformer.
+
+// Strip the ``+ ``/``- `` diff markers (and ``---`` separators) that
+// formatToolUse adds, so a copied Write body / diff pastes as clean source
+// rather than a pseudo-diff.
+function stripToolDetailPrefixes(details) {
+  return String(details || '')
+    .split('\n')
+    .filter((line) => line !== '---')
+    .map((line) => line.replace(/^[+-] /, ''))
+    .join('\n');
+}
+
+// Copy button for a tool-output block (Write body, diff, command output),
+// shown in the block's summary line next to the open-file affordance.
+function ToolCopyButton({ text }) {
+  const { copied, copy } = useCopyAction();
+  return (
+    <button
+      type="button"
+      className="bubble-tool-copy tooltip-end"
+      onClick={(e) => copy(text, e)}
+      aria-label={copied ? 'Copied' : 'Copy block'}
+      data-tooltip={copied ? 'Copied!' : 'Copy block'}
+    >
+      <Icon name={copied ? 'check' : 'copy'} />
+    </button>
+  );
+}
 
 function ToolDetails({ details }) {
   const [expanded, toggle] = useExpandable();

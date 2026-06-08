@@ -1707,6 +1707,31 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   color: $C-CYAN-90;
 }
 
+/* Copy-the-block button in a tool summary line — same affordance as the
+ * open-file reveal next to it, neutral until hovered. */
+.bubble-tool-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  width: 18px;
+  height: 18px;
+  margin-left: $SPACE-6;
+  padding: 0;
+  border: none;
+  border-radius: $RADIUS-4;
+  background: $C-NEUTRAL-100-A06;
+  color: $C-NEUTRAL-64;
+  font-size: $TEXT-10;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.bubble-tool-copy:hover {
+  background: $C-NEUTRAL-100-A10;
+  color: $C-NEUTRAL-96;
+}
+
 /* ----- tool-details code box -----
  *
  * No border (operator asked us to drop it) and intentionally NOT
@@ -4100,11 +4125,20 @@ body.kato-resizing #left-pane-resizer::before {
 
 .files-tab-repo-deleted { color: $C-RED-89; }
 
+// Repo-header comment count: a pill chip like the per-file comment badges in
+// the tree (.tree-row-comments), in the open-comment cyan so it reads as a
+// comment indicator rather than plain grey text.
 .files-tab-repo-comments {
   display: inline-flex;
   align-items: center;
-  gap: $SPACE-2;
-  color: $C-NEUTRAL-64;
+  gap: $SPACE-4;
+  flex-shrink: 0;
+  padding: $SPACE-1 $SPACE-7;
+  border-radius: $RADIUS-PILL;
+  border: 1px solid $C-CYAN-52-A18;
+  background: $C-NEUTRAL-100-A06;
+  color: $C-CYAN-78;
+  font: 600 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
 
   svg { width: 11px; height: 11px; }
 }

@@ -1,8 +1,7 @@
-import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Icon from './Icon.jsx';
-import { copyTextToClipboard } from '../utils/clipboard.js';
+import { useCopyAction } from '../hooks/useCopyAction.js';
 
 // Renders Claude assistant text as GitHub-flavored markdown.
 // Fenced ``` blocks get a copy button; everything else (headings,
@@ -41,20 +40,7 @@ function PreBlock({ children }) {
 }
 
 function FencedCodeBlock({ language, text }) {
-  const [copied, setCopied] = useState(false);
-  const onCopy = async () => {
-    try {
-      await copyTextToClipboard(text);
-      setCopied(true);
-      // Revert the icon after a short tick so the operator sees the
-      // confirmation without the button getting stuck on "copied".
-      window.setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard API can be blocked (insecure context, denied
-      // permission). Stay silent — the operator can still select +
-      // copy manually.
-    }
-  };
+  const { copied, copy } = useCopyAction();
   return (
     <div className="md-code-block">
       <div className="md-code-block-header">
@@ -62,7 +48,7 @@ function FencedCodeBlock({ language, text }) {
         <button
           type="button"
           className="md-code-block-copy"
-          onClick={onCopy}
+          onClick={(e) => copy(text, e)}
           aria-label={copied ? 'Copied' : 'Copy code'}
           data-tooltip={copied ? 'Copied!' : 'Copy code'}
         >

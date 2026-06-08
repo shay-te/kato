@@ -36,6 +36,7 @@ Produce a structured report (markdown). For each finding give file:line, severit
    - No duplicated logic — reuse existing helpers/components; flag copy-paste.
    - No magic numbers — extract them to named constants (literals are OK in tests only).
    - No dead/orphaned code (uncalled functions, unused imports/vars).
+   - Hunt DEEPLY for dead & redundant code, not just the diff: trace each new/changed symbol's callers across the whole repo, and DELETE anything now-unreferenced — orphaned helpers, superseded code paths, near-duplicate implementations (consolidate into one), and their tests. "It still passes" is not enough; if it's unreachable or duplicated, remove it.
    - Names match surrounding code; idiom consistent.
    - No debug prints, console.logs, TODO/FIXME, or leftover scratch code.
    - (Frontend) No logic inside JSX; computations live in helpers.

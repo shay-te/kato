@@ -955,6 +955,25 @@ describe('EventLog — copy-response button', () => {
     );
     expect(screen.queryByRole('button', { name: 'Copy response' })).toBeNull();
   });
+
+  test('a tool block with details gets a Copy-block button (clean, no diff markers)', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    render(
+      <EventLog entries={[_server({
+        type: 'assistant',
+        message: { id: 'm-w', content: [{
+          type: 'tool_use', name: 'Write',
+          input: { file_path: '/x/migrate.sql', content: '-- migration\nSELECT 1;' },
+        }] },
+      })]} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Copy block' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    const copied = writeText.mock.calls[0][0];
+    expect(copied).toContain('SELECT 1;');
+    expect(copied).not.toMatch(/^[+-] /m); // diff markers stripped
+  });
 });
 
 
