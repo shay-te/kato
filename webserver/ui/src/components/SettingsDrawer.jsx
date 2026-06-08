@@ -10,6 +10,7 @@ import TaskProviderSettingsPanel from './TaskProviderSettingsPanel.jsx';
 import { fetchAllSettings } from '../api.js';
 import { useEscapeKey } from '../hooks/useEscapeKey.js';
 import { cx } from '../utils/cx.js';
+import { buildSettingsIndex, filterSettingsIndex } from '../utils/settingsSearch.js';
 
 // Right-side drawer hosting every operator-editable setting under
 // tabs. Five tabs have bespoke logic (provider switchers, the
@@ -44,10 +45,13 @@ export default function SettingsDrawer({
   notificationProps,
 }) {
   const [tab, setTab] = useState(TAB_REPOS);
-  // Schema section descriptors {id,label} for the data-driven tabs.
-  // Fetched once when the drawer first opens.
-  const [schemaTabs, setSchemaTabs] = useState([]);
+  // Raw schema sections (with fields) for the data-driven tabs AND the
+  // cross-tab search index. Fetched once when the drawer first opens.
+  const [schemaSections, setSchemaSections] = useState([]);
   const [schemaLoaded, setSchemaLoaded] = useState(false);
+  // "Find a setting" query + the field to scroll-highlight after a jump.
+  const [query, setQuery] = useState('');
+  const [highlightKey, setHighlightKey] = useState('');
 
   useEffect(() => {
     if (!open || schemaLoaded) { return; }
@@ -57,15 +61,24 @@ export default function SettingsDrawer({
       const sections = Array.isArray(result.body?.sections)
         ? result.body.sections
         : [];
-      setSchemaTabs(sections.map((s) => ({
-        id: `schema:${s.id}`,
-        sectionId: s.id,
-        label: s.label,
-      })));
+      setSchemaSections(sections);
       setSchemaLoaded(true);
     });
     return () => { cancelled = true; };
   }, [open, schemaLoaded]);
+
+  const schemaTabs = schemaSections.map((s) => ({
+    id: `schema:${s.id}`, sectionId: s.id, label: s.label,
+  }));
+  const searchResults = filterSettingsIndex(
+    buildSettingsIndex(schemaSections, BESPOKE_TABS), query,
+  );
+
+  function jumpToSetting(result) {
+    setTab(result.tabId);
+    setHighlightKey(result.kind === 'field' ? result.key : '');
+    setQuery('');
+  }
 
   // ESC closes the drawer. Bound only while open so other ESC
   // consumers (chat search, modals) aren't double-fired.
@@ -91,7 +104,13 @@ export default function SettingsDrawer({
     panel = <NotificationsSettingsPanel {...(notificationProps || {})} />;
   } else if (tab.startsWith('schema:')) {
     const sectionId = tab.slice('schema:'.length);
-    panel = <SchemaSettingsPanel key={sectionId} sectionId={sectionId} />;
+    panel = (
+      <SchemaSettingsPanel
+        key={sectionId}
+        sectionId={sectionId}
+        highlightKey={highlightKey}
+      />
+    );
   }
 
   const allTabs = [...BESPOKE_TABS, ...schemaTabs];
@@ -121,6 +140,41 @@ export default function SettingsDrawer({
             ×
           </button>
         </header>
+        <div className="settings-drawer-search">
+          <input
+            type="search"
+            className="settings-drawer-search-input"
+            placeholder="Search settings…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            aria-label="Search settings"
+          />
+          {query && (
+            <div className="settings-drawer-search-results" role="listbox">
+              {searchResults.length === 0 ? (
+                <div className="settings-drawer-search-empty">
+                  No settings match “{query}”.
+                </div>
+              ) : (
+                searchResults.map((r) => (
+                  <button
+                    key={`${r.tabId}:${r.key || r.label}`}
+                    type="button"
+                    role="option"
+                    className="settings-drawer-search-result"
+                    onClick={() => jumpToSetting(r)}
+                  >
+                    <span className="settings-drawer-search-result-label">{r.label}</span>
+                    {r.key && (
+                      <code className="settings-drawer-search-result-key">{r.key}</code>
+                    )}
+                    <span className="settings-drawer-search-result-section">{r.section}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+        </div>
         <nav className="settings-drawer-tabs" role="tablist">
           {allTabs.map((t) => (
             <button

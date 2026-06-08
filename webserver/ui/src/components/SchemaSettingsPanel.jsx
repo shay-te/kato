@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { fetchAllSettings, updateAllSettings, fetchOpenRouterModels } from '../api.js';
 import { useRestartingSave } from '../hooks/useRestartingSave.js';
@@ -21,9 +21,26 @@ import RestartBanner from './settings/RestartBanner.jsx';
 // (server whitelists to the schema). The operator's .env is never
 // touched. Restart required — banner shown after a save.
 
-export default function SchemaSettingsPanel({ sectionId }) {
+export default function SchemaSettingsPanel({ sectionId, highlightKey = '' }) {
   const [meta, setMeta] = useState({ sections: [], settingsFilePath: '' });
   const [draft, setDraft] = useState({});
+  const fieldsRef = useRef(null);
+
+  // When the operator jumps here from the settings search, scroll the matched
+  // field into view and flash it so they spot the one they searched for.
+  useEffect(() => {
+    if (!highlightKey || !fieldsRef.current) { return undefined; }
+    const row = fieldsRef.current.querySelector(
+      `[data-field-key="${CSS.escape(highlightKey)}"]`,
+    );
+    if (!row) { return undefined; }
+    row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    row.classList.add('is-search-highlight');
+    const handle = window.setTimeout(
+      () => row.classList.remove('is-search-highlight'), 1800,
+    );
+    return () => window.clearTimeout(handle);
+  }, [highlightKey, sectionId, meta.sections]);
 
   const { loading, error, refresh } = useSettingsResource(fetchAllSettings, (body) => {
     const sections = Array.isArray(body.sections) ? body.sections : [];
@@ -113,7 +130,7 @@ export default function SchemaSettingsPanel({ sectionId }) {
         </div>
       )}
 
-      <div className="settings-drawer-fields">
+      <div className="settings-drawer-fields" ref={fieldsRef}>
         {section.fields.map((f) => (
           <SchemaField
             key={f.key}
@@ -213,6 +230,7 @@ export function SchemaField({ field, value, onChange }) {
   return (
     <>
     <label
+      data-field-key={field.key}
       className={[
         'settings-drawer-field',
         field.danger ? 'is-danger' : '',

@@ -6941,6 +6941,99 @@ body.kato-resizing #left-pane-resizer::before {
   background: #2a2a2a;
 }
 
+/* "Find a setting" search — a box under the header; results drop down over
+ * the tabs/body so the operator can jump to any setting's tab without knowing
+ * which tab it's in. */
+.settings-drawer-search {
+  position: relative;
+  padding: 8px 12px 0;
+}
+
+.settings-drawer-search-input {
+  width: 100%;
+  padding: 7px 11px;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  background: #0a0a0a;
+  color: #f5f5f7;
+  font-size: 13px;
+}
+
+.settings-drawer-search-input:focus-visible {
+  outline: none;
+  border-color: rgba(10, 132, 255, 0.4);
+}
+
+.settings-drawer-search-results {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: calc(100% + 4px);
+  z-index: 20;
+  max-height: 420px;
+  overflow-y: auto;
+  background: #0a0a0a;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.settings-drawer-search-result {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 11px;
+  border: 0;
+  border-bottom: 1px solid #2a2a2a;
+  background: transparent;
+  color: #f5f5f7;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-drawer-search-result:hover,
+.settings-drawer-search-result:focus-visible {
+  background: rgba(255, 255, 255, 0.06);
+  outline: none;
+}
+
+.settings-drawer-search-result-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings-drawer-search-result-key {
+  font: 600 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #93c5fd;
+}
+
+.settings-drawer-search-result-section {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #a3a3a3;
+}
+
+.settings-drawer-search-empty {
+  padding: 11px;
+  font-size: 13px;
+  color: #a3a3a3;
+}
+
+/* Flash the field the operator jumped to from search. */
+.settings-drawer-field.is-search-highlight {
+  animation: kato-setting-flash 1.8s ease-out;
+}
+
+@keyframes kato-setting-flash {
+  0%, 30% {
+    background: rgba(10, 132, 255, 0.18);
+  }
+  100% {
+    background: transparent;
+  }
+}
 .settings-drawer-tabs {
   display: flex;
   flex-wrap: wrap;

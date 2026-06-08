@@ -7010,6 +7010,96 @@ body.kato-resizing #left-pane-resizer::before {
   background: $C-NEUTRAL-16;
 }
 
+/* "Find a setting" search — a box under the header; results drop down over
+ * the tabs/body so the operator can jump to any setting's tab without knowing
+ * which tab it's in. */
+.settings-drawer-search {
+  position: relative;
+  padding: $SPACE-8 $SPACE-12 0;
+}
+
+.settings-drawer-search-input {
+  width: 100%;
+  padding: $SPACE-7 $SPACE-11;
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-8;
+  background: $C-NEUTRAL-04;
+  color: $C-NEUTRAL-96;
+  font-size: $TEXT-13;
+}
+
+.settings-drawer-search-input:focus-visible {
+  outline: none;
+  border-color: $C-CYAN-52-A40;
+}
+
+.settings-drawer-search-results {
+  position: absolute;
+  left: $SPACE-12;
+  right: $SPACE-12;
+  top: calc(100% + #{$SPACE-4});
+  z-index: 20;
+  max-height: 420px;
+  overflow-y: auto;
+  background: $C-NEUTRAL-04;
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-8;
+  box-shadow: $SHADOW-21;
+}
+
+.settings-drawer-search-result {
+  display: flex;
+  align-items: baseline;
+  gap: $SPACE-8;
+  width: 100%;
+  padding: $SPACE-7 $SPACE-11;
+  border: 0;
+  border-bottom: 1px solid $C-NEUTRAL-16;
+  background: transparent;
+  color: $C-NEUTRAL-96;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-drawer-search-result:hover,
+.settings-drawer-search-result:focus-visible {
+  background: $C-NEUTRAL-100-A06;
+  outline: none;
+}
+
+.settings-drawer-search-result-label {
+  font-size: $TEXT-13;
+  font-weight: 600;
+}
+
+.settings-drawer-search-result-key {
+  font: 600 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: $C-CYAN-78;
+}
+
+.settings-drawer-search-result-section {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: $TEXT-11;
+  color: $C-NEUTRAL-64;
+}
+
+.settings-drawer-search-empty {
+  padding: $SPACE-11;
+  font-size: $TEXT-13;
+  color: $C-NEUTRAL-64;
+}
+
+/* Flash the field the operator jumped to from search. */
+.settings-drawer-field.is-search-highlight {
+  animation: kato-setting-flash 1.8s ease-out;
+}
+
+@keyframes kato-setting-flash {
+  0%, 30% { background: $C-CYAN-52-A18; }
+  100% { background: transparent; }
+}
+
 .settings-drawer-tabs {
   display: flex;
   flex-wrap: wrap;
