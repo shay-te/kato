@@ -190,6 +190,25 @@ class FindSessionFileTests(unittest.TestCase):
 
         self.assertEqual(result, target)
 
+    def test_duplicate_copies_resolve_to_the_newest_by_mtime(self) -> None:
+        # One session id can live under several project dirs (cwd-drift
+        # leaves snapshots behind; adoption copies). The LIVE conversation
+        # is the newest copy — returning a stale snapshot here would replay
+        # (and via the resume-migration path even resurrect) an older state
+        # of the chat. Glob order is arbitrary, so this must be mtime-based.
+        stale = self.projects_root / 'enc-old-cwd' / 'session-id.jsonl'
+        stale.parent.mkdir(parents=True)
+        stale.write_text('{"turn": 1}\n', encoding='utf-8')
+        live = self.projects_root / 'enc-new-cwd' / 'session-id.jsonl'
+        live.parent.mkdir(parents=True)
+        live.write_text('{"turn": 1}\n{"turn": 2}\n', encoding='utf-8')
+        os.utime(stale, (1_000, 1_000))
+        os.utime(live, (2_000, 2_000))
+
+        result = find_session_file('session-id', projects_root=self.projects_root)
+
+        self.assertEqual(result, live)
+
 
 class LoadHistoryEventsTests(unittest.TestCase):
     """Existing replay logic gets light coverage here for safety."""

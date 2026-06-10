@@ -349,6 +349,19 @@ export default function SessionDetail({
     await deliverMessage(target.text, target.images);
   }
 
+  // A chat switch is being requested (ChatsMenu POSTed /chats). Killing the
+  // live subprocess flips ``turnInFlight`` true→false — the same falling
+  // edge a NORMAL turn end produces — and the SSE ``session_closed`` from
+  // the kill can land before the POST even resolves. Without this flag the
+  // flush effect below would treat the kill as a turn end and deliver a
+  // queued message written for the OLD conversation straight into the
+  // fresh/resumed chat as its opener. Armed BEFORE the request fires;
+  // cleared on completion (onChatChanged) or on failure (ChatsMenu).
+  const chatSwitchPendingRef = useRef(false);
+  const onChatSwitchPending = useCallback((pending) => {
+    chatSwitchPendingRef.current = !!pending;
+  }, []);
+
   // Flush the queue one message at a time as each turn ends.
   // Delivering a queued message re-enters the busy state, so the
   // next one waits for the turn after — messages stay strictly
@@ -358,6 +371,7 @@ export default function SessionDetail({
     const wasInFlight = prevTurnInFlightRef.current;
     prevTurnInFlightRef.current = stream.turnInFlight;
     if (wasInFlight && !stream.turnInFlight
+        && !chatSwitchPendingRef.current
         && queuedMessagesRef.current.length > 0) {
       const next = queuedMessagesRef.current[0];
       commitQueue((prev) => prev.filter((item) => item.id !== next.id));
@@ -425,16 +439,41 @@ export default function SessionDetail({
   // transcript and reconnect — the SSE then replays the now-active chat's
   // history (nothing, for a brand-new chat) into the clean slate. The old
   // conversation stays navigable from the chats menu.
+  //
+  // Queued composer messages were written as follow-ups to the conversation
+  // the operator just LEFT — auto-flushing them would make a stale
+  // instruction the opener of the new chat. Discard them, echoing the texts
+  // in a bubble so nothing is silently lost. The switch itself is confirmed
+  // by the ChatsMenu toast; a "switched" bubble is deliberately NOT added
+  // (the history replay appends after it, so it would land at the top of
+  // the resumed transcript where nobody reads it).
   function onChatChanged(result) {
     const sessionId = String(result?.[AGENT_SESSION_ID] || '').trim();
+    const discarded = queuedMessagesRef.current || [];
+    chatSwitchPendingRef.current = false;
+    prevTurnInFlightRef.current = false;
+    if (discarded.length > 0) {
+      commitQueue(() => []);
+    }
     stream.resetChat();
-    stream.appendLocalEvent({
-      source: ENTRY_SOURCE.LOCAL,
-      kind: BUBBLE_KIND.SYSTEM,
-      text: sessionId
-        ? `🗂 switched chat — resuming Claude session ${sessionId.slice(0, 8)}… on the next message.`
-        : '🆕 new chat — your next message starts a fresh Claude session. The previous conversation is in the chats menu.',
-    });
+    const discardNote = discarded.length > 0
+      ? `\nDiscarded ${discarded.length} queued message(s) written for the previous chat:\n`
+        + discarded.map((item) => `  • ${item.text}`).join('\n')
+      : '';
+    if (!sessionId) {
+      stream.appendLocalEvent({
+        source: ENTRY_SOURCE.LOCAL,
+        kind: BUBBLE_KIND.SYSTEM,
+        text: '🆕 new chat — your next message starts a fresh Claude session. '
+          + `The previous conversation is in the chats menu.${discardNote}`,
+      });
+    } else if (discarded.length > 0) {
+      stream.appendLocalEvent({
+        source: ENTRY_SOURCE.LOCAL,
+        kind: BUBBLE_KIND.SYSTEM,
+        text: `🗂 switched chat.${discardNote}`,
+      });
+    }
   }
 
   const hasVisible = useMemo(() => hasVisibleBubbles(stream.events), [stream.events]);
@@ -496,6 +535,7 @@ export default function SessionDetail({
       onResume={onResume}
       onSessionAdopted={onSessionAdopted}
       onChatChanged={onChatChanged}
+      onChatSwitchPending={onChatSwitchPending}
       streamLifecycle={stream.lifecycle}
       turnInFlight={stream.turnInFlight}
       awaitingBackground={stream.awaitingBackground}

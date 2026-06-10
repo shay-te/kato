@@ -126,4 +126,83 @@ describe('ChatsMenu', () => {
     });
     expect(screen.getByRole('button', { name: /new chat/i })).toBeInTheDocument();
   });
+
+  test('mid-turn: first click arms a warning, second click confirms the switch', async () => {
+    // Switching kills the live subprocess — while Claude is mid-turn the
+    // operator must explicitly confirm.
+    render(<ChatsMenu taskId="T1" turnInFlight />);
+    fireEvent.click(screen.getByRole('button', { name: 'Chats' }));
+    const newChat = await screen.findByRole('button', { name: /new chat/i });
+
+    fireEvent.click(newChat);
+    expect(startTaskChat).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent(/mid-turn/i);
+
+    fireEvent.click(newChat);
+    await waitFor(() => {
+      expect(startTaskChat).toHaveBeenCalledWith('T1', '');
+    });
+  });
+
+  test('idle: no confirmation step — first click acts immediately', async () => {
+    render(<ChatsMenu taskId="T1" turnInFlight={false} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Chats' }));
+    fireEvent.click(await screen.findByRole('button', { name: /new chat/i }));
+    await waitFor(() => {
+      expect(startTaskChat).toHaveBeenCalledWith('T1', '');
+    });
+  });
+
+  test('arms the switch-pending flag BEFORE the request and clears it on failure', async () => {
+    // The backend kill can flip the stream's turn state before the POST
+    // resolves — the parent must already be suppressing the queued-message
+    // flush by then. On failure the old chat is untouched, so the flag is
+    // released (normal flushing resumes).
+    const onChatSwitchPending = vi.fn();
+    let resolvePost;
+    startTaskChat.mockReturnValue(new Promise((resolve) => { resolvePost = resolve; }));
+    render(
+      <ChatsMenu taskId="T1" onChatSwitchPending={onChatSwitchPending} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Chats' }));
+    fireEvent.click(await screen.findByRole('button', { name: /new chat/i }));
+    expect(onChatSwitchPending).toHaveBeenCalledWith(true);  // armed pre-flight
+
+    resolvePost({ ok: false, status: 409, body: { error: 'busy' } });
+    await waitFor(() => {
+      expect(onChatSwitchPending).toHaveBeenLastCalledWith(false);
+    });
+  });
+
+  test('on success the pending flag is NOT cleared here — onChatChanged owns it', async () => {
+    // Clearing in the menu would race onChatChanged's queue discard; the
+    // parent clears the flag as part of the same handler.
+    const onChatSwitchPending = vi.fn();
+    const onChatChanged = vi.fn();
+    startTaskChat.mockResolvedValue({ ok: true, body: {} });
+    render(
+      <ChatsMenu
+        taskId="T1"
+        onChatChanged={onChatChanged}
+        onChatSwitchPending={onChatSwitchPending}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Chats' }));
+    fireEvent.click(await screen.findByRole('button', { name: /new chat/i }));
+    await waitFor(() => {
+      expect(onChatChanged).toHaveBeenCalled();
+    });
+    expect(onChatSwitchPending).toHaveBeenCalledWith(true);
+    expect(onChatSwitchPending).not.toHaveBeenCalledWith(false);
+  });
+
+  test('Escape closes the menu', async () => {
+    render(<ChatsMenu taskId="T1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Chats' }));
+    await screen.findByRole('menu');
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => {
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    });
+  });
 });

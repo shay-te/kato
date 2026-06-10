@@ -105,7 +105,7 @@ export function formatRepoRelativePath(repoId, relativePath) {
 
 // True when either side of a diff file appears in the conflicted-set.
 // Empty / missing sets short-circuit to false. Shared by the file
-// tree (FilesTab) and the stacked diff pane so both flag the same
+// tree (FilesTab) and the single-file diff pane so both flag the same
 // rows as conflicted.
 export function isFileConflicted(file, conflictedSet) {
   if (!conflictedSet || conflictedSet.size === 0) { return false; }
@@ -118,8 +118,8 @@ export function isFileConflicted(file, conflictedSet) {
 // missing side to ``/dev/null`` for pure add/delete — a deleted file
 // must show its OLD path, not ``/dev/null`` (the screenshot bug:
 // every deleted row read "/dev/null"). Exported for tests + reused
-// by DiffPane / DiffFileWithComments so list rows and centre anchors
-// agree on the path.
+// by DiffPane / DiffFileWithComments so list rows and the centre
+// pane's selected file agree on the path.
 export function diffDisplayPath(file) {
   const real = (p) => (p && p !== '/dev/null' ? p : '');
   const newP = real(file.newPath);

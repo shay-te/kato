@@ -91,6 +91,7 @@ export default function FilesTab({
   workspaceVersion = 0,
   focusFilterSignal = 0,
   focusFileTarget = null,
+  openFile = null,
   onOpenFile,
 }) {
   const { appendToInput } = useChatComposer();
@@ -521,6 +522,7 @@ export default function FilesTab({
           showAllFiles={showAllFiles}
           taskId={taskId}
           focusFileTarget={focusFileTarget}
+          openFile={openFile}
         />
       );
     });
@@ -728,6 +730,7 @@ function RepoTree({
   searchTerm = '', conflictedFiles, changedFiles, diffMeta = EMPTY_DIFF_META,
   commentMeta = EMPTY_COMMENT_META,
   showAllFiles = false, taskId = '', focusFileTarget = null,
+  openFile = null,
 }) {
   const repoRef = useRef(null);
   // Last focus-request id we scrolled/expanded for. The focus effect
@@ -765,7 +768,15 @@ function RepoTree({
   const treeHeight = Math.max(120, Math.min(treeData.length * 28 + 8, 800));
   const chevronName = collapsed ? 'chevron-right' : 'chevron-down';
   const [closedChangedFolders, setClosedChangedFolders] = useState(() => new Set());
-  const [selectedChangedKey, setSelectedChangedKey] = useState('');
+  // Selection is DERIVED from the centre pane's open file — the single
+  // source of truth — instead of per-repo local state. With local state,
+  // each RepoTree kept its own stale "selected" row: in a multi-repo task
+  // two repos could highlight simultaneously, and ArrowUp/ArrowDown
+  // resumed from a row that wasn't the file actually on screen.
+  const selectedChangedKey = useMemo(
+    () => changedSelectionKeyFor(openFile, repoId, diffMeta),
+    [openFile, repoId, diffMeta],
+  );
   // Per-repo commit dropdown state. Populated lazily on first
   // open so we don't fetch ``/commits`` for every repo on every
   // file-tree refetch (would be 5+ extra HTTP calls per
@@ -788,7 +799,9 @@ function RepoTree({
     const focusInfo = findChangedFileFocusInfo(changedTree.nodes, targetPath);
     if (!focusInfo) { return undefined; }
     handledChangedFocusRef.current = requestId;
-    setSelectedChangedKey(changedFileSelectionKey(focusInfo.file));
+    // (Selection itself derives from openFile — the focus request always
+    // names the file already open in the centre, so the highlight is
+    // already on it; this effect's job is expand + scroll only.)
     setClosedChangedFolders((prev) => {
       let changed = false;
       const next = new Set(prev);
@@ -857,7 +870,8 @@ function RepoTree({
     });
   }
   function selectChangedFile(file, { focusComment = false } = {}) {
-    setSelectedChangedKey(changedFileSelectionKey(file));
+    // Opening the file IS selecting it — the highlight derives from the
+    // openFile round-trip (App state), keeping every surface in sync.
     if (typeof onOpenFile === 'function') {
       onOpenFile({
         ...changedFileOpenTarget({ cwd: repoTree.cwd, repo_id: repoId }, file),
@@ -873,6 +887,10 @@ function RepoTree({
   );
   function handleChangedTreeKeyDown(event) {
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') { return; }
+    // Leave modifier combos to the browser/OS (Cmd+ArrowUp = scroll to
+    // top on macOS, Alt/Shift selections, etc.) — only the bare arrows
+    // drive the file walk.
+    if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) { return; }
     event.preventDefault();
     const files = visibleChangedFiles;
     if (files.length === 0) { return; }
@@ -882,6 +900,8 @@ function RepoTree({
     );
     // No current selection: ArrowDown starts at the first file,
     // ArrowUp at the last. At either end the selection stays put.
+    // (Scope note: the walk covers THIS repo's tree — each repo's tree is
+    // its own focusable widget; arrows don't cross repo boundaries.)
     const nextIndex = index === -1
       ? (delta > 0 ? 0 : files.length - 1)
       : Math.min(files.length - 1, Math.max(0, index + delta));
@@ -889,9 +909,11 @@ function RepoTree({
     const file = files[nextIndex];
     selectChangedFile(file);
     // Keep the newly selected row in view without yanking the tree —
-    // 'nearest' only scrolls when the row is actually off-screen.
+    // 'nearest' only scrolls when the row is actually off-screen. The
+    // kind attribute disambiguates a delete+add pair sharing one path.
     window.requestAnimationFrame(() => {
-      const selector = `[data-changed-file-path="${cssEscapeAttr(diffDisplayPath(file))}"]`;
+      const selector = `[data-changed-file-path="${cssEscapeAttr(diffDisplayPath(file))}"]`
+        + `[data-changed-file-kind="${cssEscapeAttr(file.type || 'modify')}"]`;
       const row = repoRef.current?.querySelector(selector);
       if (row && typeof row.scrollIntoView === 'function') {
         row.scrollIntoView({ block: 'nearest' });
@@ -1145,6 +1167,8 @@ function ChangedFilesTreeNode({
       <div className="diff-file-tree-group">
         <button
           type="button"
+          role="treeitem"
+          aria-expanded={!isClosed}
           className="diff-file-tree-row files-changed-tree-row is-folder"
           style={{ '--depth': depth }}
           onClick={() => onToggleFolder(node.key)}
@@ -1181,9 +1205,12 @@ function ChangedFilesTreeNode({
   return (
     <button
       type="button"
+      role="treeitem"
+      aria-selected={selected}
       className={className}
       style={{ '--depth': depth }}
       data-changed-file-path={path}
+      data-changed-file-kind={kind}
       title={`Open ${path} in the centre diff`}
       onClick={() => onSelectFile(file)}
       onContextMenu={(event) => onOpenPathMenu(event, path, repoId)}
@@ -1393,6 +1420,19 @@ function changedFileNodeMatches(node, raw) {
 
 function changedFileSelectionKey(file) {
   return `${file.type || 'modify'}:${diffDisplayPath(file)}`;
+}
+
+// The selection key for THIS repo's changed tree, derived from the centre
+// pane's open file. Empty when the open file belongs to another repo (an
+// explicit repoId mismatch) or isn't one of this repo's changed files.
+function changedSelectionKeyFor(openFile, repoId, diffMeta) {
+  const path = String(openFile?.relativePath || '').trim();
+  if (!path) { return ''; }
+  const targetRepo = String(openFile?.repoId || '').trim();
+  if (targetRepo && targetRepo !== repoId) { return ''; }
+  const meta = diffMeta.get(path);
+  if (!meta || !meta.file) { return ''; }
+  return changedFileSelectionKey(meta.file);
 }
 
 // Files visible in the changed tree, in render order — folders whose key

@@ -1061,7 +1061,30 @@ def _register_http_routes(app: Flask) -> None:
         manager = app.config['SESSION_MANAGER']
         record = manager.get_record(task_id)
         if record is None:
-            return jsonify({'error': f'no session record for task {task_id}'}), 404
+            if agent_session_id:
+                return jsonify({
+                    'error': f'no session record for task {task_id}',
+                }), 404
+            # "New chat" on a task that never had a chat: nothing to
+            # detach — succeed as a no-op (the first message will spawn
+            # fresh anyway) instead of confusing the operator with a 404.
+            return jsonify({
+                'task_id': task_id,
+                AGENT_SESSION_ID: '',
+                'previous_session_ids': [],
+            })
+        # A kato comment-run owns the live session right now. Switching
+        # would kill it mid-fix; the watcher would then requeue the
+        # comment and redispatch it INTO the operator's new chat —
+        # hijacking the conversation they just asked for. Refuse instead.
+        if _task_has_in_progress_comment_run(app, task_id):
+            return jsonify({
+                'error': (
+                    'kato is working on a review comment for this task; '
+                    'wait for it to finish (or stop the session) before '
+                    'switching chats'
+                ),
+            }), 409
         if agent_session_id:
             known = {read_session_id_from(record)}
             known.update(getattr(record, 'previous_session_ids', []) or [])
@@ -2527,21 +2550,43 @@ def _match_model_alias(configured: str, ids: list) -> str:
 
     Matches exactly first (``opus`` → ``opus``; a codex slug → itself), then by
     Claude family so a full id like ``claude-opus-4-8`` still resolves to the
-    ``opus`` alias the picker offers. Fable has no CLI alias — the picker offers
-    a full id (e.g. ``claude-fable-5``) — so a family match falls through to the
-    offered full id of that family.
+    ``opus`` alias the picker offers (the alias genuinely runs the latest, so
+    family-level matching is truthful there). Fable is stricter — see
+    ``_match_pinned_fable_id``.
     """
     candidate = (configured or '').strip().lower()
     if candidate in ids:
         return candidate
-    for family in ('fable', 'opus', 'sonnet', 'haiku'):
-        if candidate != family and not candidate.startswith(f'claude-{family}'):
-            continue
-        if family in ids:
+    for family in ('opus', 'sonnet', 'haiku'):
+        if family in ids and (candidate == family or candidate.startswith(f'claude-{family}')):
             return family
-        for offered in ids:
-            if isinstance(offered, str) and offered.startswith(f'claude-{family}'):
-                return offered
+    return _match_pinned_fable_id(candidate, ids)
+
+
+def _match_pinned_fable_id(candidate: str, ids: list) -> str:
+    """Match a configured fable id to the offered pinned id — same version only.
+
+    Fable has no CLI alias: the picker offers a pinned FULL id and spawn
+    passes the configured value verbatim, so a family-level fallback could
+    flag a DIFFERENT concrete model than the one that will actually run
+    (e.g. configured ``claude-fable-5`` highlighted as an offered
+    ``claude-fable-6``). Only suffix variants of the SAME version match
+    (``claude-fable-5[1m]`` → ``claude-fable-5``). The bare word ``fable``
+    matches nothing — the CLI rejects ``--model fable``, and mapping it
+    would legitimize a config that fails at spawn.
+    """
+    from claude_core_lib.claude_core_lib.helpers.model_catalog import (
+        family_version_from_model_id,
+    )
+    wanted = family_version_from_model_id(candidate)
+    if wanted is None or wanted[0] != 'fable':
+        return ''
+    for offered in ids:
+        if not isinstance(offered, str):
+            continue
+        parsed = family_version_from_model_id(offered)
+        if parsed is not None and parsed[:3] == wanted[:3]:
+            return offered
     return ''
 
 
@@ -2860,12 +2905,36 @@ def _spawn_or_reject_chat_session(app: Flask, task_id: str, text: str):
     return jsonify({'status': 'spawned', 'text': text})
 
 
+def _task_has_in_progress_comment_run(app, task_id: str) -> bool:
+    """Is a kato comment-run currently occupying this task's session?
+
+    Conservative on failure (False): the chats switch should not be
+    bricked by a comment-store hiccup — the UI's own mid-turn confirm
+    still stands between the operator and a blind kill.
+    """
+    agent_service = app.config.get('AGENT_SERVICE')
+    list_comments = getattr(agent_service, 'list_task_comments', None)
+    if not callable(list_comments):
+        return False
+    try:
+        comments = list_comments(task_id)
+    except Exception:
+        return False
+    return any(
+        str(comment.get('kato_status', '') or '') == 'in_progress'
+        for comment in comments
+        if isinstance(comment, dict)
+    )
+
+
 def _claude_session_metadata_by_id(wanted_ids):
     """Map session id → on-disk transcript metadata for the given ids.
 
     Best-effort: ids whose JSONL isn't on disk simply have no entry, and
     any index failure returns an empty map — the chats list still renders
-    with bare ids.
+    with bare ids. When one session id has multiple transcript copies on
+    disk (cwd-drift snapshots, adopt copies), keep the NEWEST — the older
+    snapshot would otherwise win the dict insert and show stale previews.
     """
     if not wanted_ids:
         return {}
@@ -2875,11 +2944,14 @@ def _claude_session_metadata_by_id(wanted_ids):
         rows = list_sessions(max_results=10000)
     except Exception:
         return {}
-    return {
-        row.agent_session_id: row
-        for row in rows
-        if row.agent_session_id in wanted_ids
-    }
+    best: dict = {}
+    for row in rows:
+        if row.agent_session_id not in wanted_ids:
+            continue
+        current = best.get(row.agent_session_id)
+        if current is None or row.last_modified_epoch > current.last_modified_epoch:
+            best[row.agent_session_id] = row
+    return best
 
 
 def _migrate_adopted_session_transcript(

@@ -498,6 +498,7 @@ export default function App() {
           activeTaskId={activeTaskId}
           workspaceVersion={activeWorkspaceVersion}
           focusFileTarget={fileTreeFocusTarget}
+          openFile={activeOpenFile}
           onOpenFile={handleOpenFile}
           onResizePointerDown={leftResizer.onPointerDown}
         />

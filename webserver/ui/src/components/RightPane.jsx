@@ -6,6 +6,7 @@ export default function RightPane({
   activeTaskId,
   workspaceVersion = 0,
   focusFileTarget = null,
+  openFile = null,
   width,
   onResizePointerDown,
   onOpenFile,
@@ -46,6 +47,7 @@ export default function RightPane({
           workspaceVersion={workspaceVersion}
           focusFilterSignal={focusFilterSignal}
           focusFileTarget={focusFileTarget}
+          openFile={openFile}
           onOpenFile={onOpenFile}
         />
       </div>

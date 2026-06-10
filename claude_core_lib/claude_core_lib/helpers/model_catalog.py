@@ -40,8 +40,13 @@ _ANTHROPIC_VERSION = '2023-06-01'
 _SESSION_LOG_SCAN_LIMIT = 80
 # Minor is optional so a future ``claude-opus-5`` still labels as "Opus 5"; an
 # extra ``-<date>`` suffix (``claude-haiku-4-5-20251001``) or context-window
-# marker (``claude-fable-5[1m]``) is ignored.
-_MODEL_ID_RE = re.compile(r'^claude-(fable|opus|sonnet|haiku)-(\d+)(?:-(\d+))?')
+# marker (``claude-fable-5[1m]``) is ignored. The minor group caps at 3
+# digits WITH a trailing-digit boundary so a date directly after a no-minor
+# major (``claude-sonnet-4-20250514`` — a real historical id shape) is
+# recognised as a date, not parsed as minor 20250514 (which would outrank
+# every genuine 4.x in the highest-version comparison and garble labels —
+# and, for fable, the pinned id itself).
+_MODEL_ID_RE = re.compile(r'^claude-(fable|opus|sonnet|haiku)-(\d+)(?:-(\d{1,3})(?!\d))?')
 _FAMILIES = ('fable', 'opus', 'sonnet', 'haiku')
 
 # The catalog changes only when Anthropic ships a model, so we cache — but with a
@@ -148,7 +153,7 @@ def _labels_from_models_api() -> dict[str, dict]:
             continue
         model_id = str(entry.get('id') or '')
         display = str(entry.get('display_name') or '')
-        parsed = _family_version_from_model_id(model_id)
+        parsed = family_version_from_model_id(model_id)
         if parsed is None or not display:
             continue
         family = parsed[0]
@@ -197,11 +202,14 @@ def _labels_from_session_logs() -> dict[str, dict]:
 
 
 def _clean_model_id(parsed: tuple) -> str:
-    """``("opus", 4, 8, "Opus 4.8")`` → ``"claude-opus-4-8"`` — drops date/context suffixes.
+    """``("opus", 4, 8, "Opus 4.8")`` → ``"claude-opus-4-8"``.
 
-    A no-minor id (``("fable", 5, 0, "Fable 5")``) keeps the short form
-    ``claude-fable-5``: the label carries a ``.`` only when the source id had a
-    minor segment, so a real x.0 release ("Sonnet 5.0") still round-trips.
+    Date/context suffixes never reach here — ``_MODEL_ID_RE`` refuses to
+    parse a date segment as the minor (see its comment), so the rebuilt id
+    is always the bare family-major[-minor] form. A no-minor id
+    (``("fable", 5, 0, "Fable 5")``) keeps the short form ``claude-fable-5``:
+    the label carries a ``.`` only when the source id had a real minor
+    segment, so an x.0 release ("Sonnet 5.0") still round-trips.
     """
     family, major, minor, label = parsed
     return f'claude-{family}-{major}-{minor}' if '.' in label else f'claude-{family}-{major}'
@@ -240,7 +248,7 @@ def _model_versions_in_log(log: Path) -> dict[str, tuple[int, int, str]]:
                 event = json.loads(line)
             except Exception:
                 continue
-            parsed = _family_version_from_model_id(_model_id_of_event(event))
+            parsed = family_version_from_model_id(_model_id_of_event(event))
             if parsed and parsed[0] not in found:
                 family, major, minor, label = parsed
                 found[family] = (major, minor, label)
@@ -260,7 +268,7 @@ def _model_id_of_event(event: dict) -> str:
     return str(model or '')
 
 
-def _family_version_from_model_id(model_id: str) -> tuple[str, int, int, str] | None:
+def family_version_from_model_id(model_id: str) -> tuple[str, int, int, str] | None:
     """``"claude-opus-4-8"`` → ``("opus", 4, 8, "Opus 4.8")``; ``None`` if not a real id.
 
     The numeric ``(major, minor)`` lets callers pick the highest version; the label

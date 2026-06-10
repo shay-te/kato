@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { fetchTaskChats, startTaskChat } from '../api.js';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
+import { useEscapeKey } from '../hooks/useEscapeKey.js';
 import { toast } from '../stores/toastStore.js';
 import Icon from './Icon.jsx';
 
@@ -8,10 +9,25 @@ import Icon from './Icon.jsx';
 // current conversation (the next message spawns a fresh Claude session);
 // picking a previous chat resumes that conversation instead. The detached
 // chat is never lost — it stays in the list and can be returned to.
-export default function ChatsMenu({ taskId, onChatChanged }) {
+export default function ChatsMenu({
+  taskId,
+  onChatChanged,
+  onChatSwitchPending = null,
+  turnInFlight = false,
+}) {
   const [open, setOpen] = useState(false);
   const [state, setState] = useState({ status: 'idle', chats: [], error: '' });
   const [busy, setBusy] = useState(false);
+  // Mid-turn guard: switching chats KILLS the live subprocess. When Claude
+  // is mid-turn, the first click arms this with the requested target and
+  // shows a warning; only a second click on the same target proceeds.
+  const [confirmTarget, setConfirmTarget] = useState(null);
+
+  function close() {
+    setOpen(false);
+    setConfirmTarget(null);
+  }
+  useEscapeKey(close, open);
 
   async function loadChats() {
     setState({ status: 'loading', chats: [], error: '' });
@@ -30,12 +46,28 @@ export default function ChatsMenu({ taskId, onChatChanged }) {
   function toggle() {
     const next = !open;
     setOpen(next);
+    setConfirmTarget(null);
     if (next) { loadChats(); }
+  }
+
+  function notifySwitchPending(pending) {
+    if (typeof onChatSwitchPending === 'function') {
+      onChatSwitchPending(pending);
+    }
   }
 
   async function runChatAction(agentSessionId, successToast) {
     if (busy) { return; }
+    if (turnInFlight && confirmTarget !== agentSessionId) {
+      setConfirmTarget(agentSessionId);
+      return;
+    }
     setBusy(true);
+    // Armed BEFORE the request: the backend kill flips the stream's
+    // turn-in-flight state (possibly before the POST resolves), and the
+    // parent must not mistake that for a turn end (queued-message flush).
+    notifySwitchPending(true);
+    let succeeded = false;
     try {
       const result = await startTaskChat(taskId, agentSessionId);
       if (!result.ok) {
@@ -44,13 +76,20 @@ export default function ChatsMenu({ taskId, onChatChanged }) {
         });
         return;
       }
-      setOpen(false);
+      succeeded = true;
+      close();
       toast.show(successToast);
       if (typeof onChatChanged === 'function') {
         onChatChanged(result.body || {});
       }
     } finally {
       setBusy(false);
+      if (!succeeded) {
+        // Failure / early return: the old chat is untouched, so re-enable
+        // the normal queued-message flush. (On success onChatChanged
+        // already cleared the flag while discarding the stale queue.)
+        notifySwitchPending(false);
+      }
     }
   }
 
@@ -65,7 +104,7 @@ export default function ChatsMenu({ taskId, onChatChanged }) {
 
   function onPickChat(chat) {
     if (chat.active) {
-      setOpen(false);
+      close();
       return;
     }
     const sid = String(chat[AGENT_SESSION_ID] || '');
@@ -116,11 +155,18 @@ export default function ChatsMenu({ taskId, onChatChanged }) {
     });
   }
 
+  const confirmWarning = confirmTarget !== null ? (
+    <p className="chats-menu-confirm" role="alert">
+      Claude is mid-turn — switching kills the current run.
+      Click the same chat again to confirm.
+    </p>
+  ) : null;
+
   const menu = open ? (
     <>
       <div
         className="chats-menu-backdrop"
-        onClick={() => setOpen(false)}
+        onClick={close}
         aria-hidden="true"
       />
       <div className="chats-menu" role="menu">
@@ -132,6 +178,7 @@ export default function ChatsMenu({ taskId, onChatChanged }) {
         >
           <Icon name="plus" /> New chat
         </button>
+        {confirmWarning}
         {listContent}
       </div>
     </>

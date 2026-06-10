@@ -326,10 +326,12 @@ def migrate_session_to_workspace(
     doesn't already exist (Claude Code creates it lazily on first
     write, so it may not be there yet for a never-used cwd).
 
-    Idempotent: if the destination already exists with the same
-    contents (or the source IS the destination), the copy is a no-op.
-    Best-effort — a failure is logged and ``None`` returned so the
-    adoption flow can decide how to surface it.
+    Idempotent and rewind-safe: when the source IS the destination, or
+    the destination already holds a transcript at least as new as the
+    source (mtime), the copy is a no-op — an older snapshot must never
+    overwrite the live conversation. Best-effort — a failure is logged
+    and ``None`` returned so the adoption flow can decide how to
+    surface it.
     """
     source = Path(str(transcript_path or '')).expanduser()
     if not source.is_file():
@@ -354,6 +356,16 @@ def migrate_session_to_workspace(
         # ``resolve`` follows symlinks; a missing target raises only
         # on older Python where ``strict=False`` is the default — fall
         # through to the copy.
+        pass
+    # Never clobber a NEWER destination with an older snapshot. One
+    # session id can exist under several project dirs (cwd-drift leaves
+    # snapshots behind; adoption copies rather than moves); if the
+    # destination already holds a more recent transcript, copying the
+    # older source over it would permanently rewind the conversation.
+    try:
+        if target.is_file() and target.stat().st_mtime >= source.stat().st_mtime:
+            return target
+    except OSError:
         pass
     try:
         shutil.copyfile(source, target)

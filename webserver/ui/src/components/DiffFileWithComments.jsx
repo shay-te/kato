@@ -156,10 +156,9 @@ function DiffFileWithComments({
   // the page lag (typing in the chat composer, opening the adopt
   // modal, etc.). Below the threshold the file expands by default
   // — the operator's normal flow is unchanged.
-  // ``initiallyExpanded`` (when passed by ChangesTab) reflects the
-  // cumulative-budget decision over the full file list. Fall back
-  // to the per-file rule when called from a context that doesn't
-  // know about siblings (e.g. CommitDiffModal showing one file).
+  // ``initiallyExpanded`` (passed by DiffPane, which always expands
+  // its single selected file) overrides the per-file size rule; the
+  // rule is the fallback for callers that don't pass it.
   const [expanded, setExpanded] = useState(() => (
     typeof initiallyExpanded === 'boolean'
       ? initiallyExpanded

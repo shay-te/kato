@@ -2270,6 +2270,79 @@ class StartNewChatTests(unittest.TestCase):
         self.assertEqual(record.previous_session_ids, [first_id])
         self.assertEqual(record.agent_session_id, '')
 
+    def test_concurrent_forget_during_new_chat_raises_value_error_not_keyerror(self) -> None:
+        # forget-task (terminate_session(remove_record=True)) takes only the
+        # global lock, not the spawn lock start_new_chat holds — it can pop
+        # the record between start_new_chat's two locked sections. That must
+        # surface as the same ValueError as "no record" (the endpoint maps
+        # it to 404), never an unhandled KeyError (a 500).
+        self.manager.start_session(task_id='PROJ-1')
+        original_terminate = self.manager.terminate_session
+
+        def forgetting_terminate(task_id, *, remove_record=False):
+            original_terminate(task_id, remove_record=remove_record)
+            # Simulate the concurrent forget landing in the unlocked window.
+            original_terminate(task_id, remove_record=True)
+
+        with patch.object(
+            self.manager, 'terminate_session', side_effect=forgetting_terminate,
+        ):
+            with self.assertRaises(ValueError):
+                self.manager.start_new_chat('PROJ-1')
+
+    def test_late_correction_from_a_terminated_session_cannot_refill_a_fresh_chat(self) -> None:
+        # The reader thread of a killed subprocess can outlive terminate and
+        # fire a late init-id correction. After "new chat" blanked the
+        # record, that callback must NOT re-pin the detached id as active.
+        session = self.manager.start_session(task_id='PROJ-1')
+        old_id = session.agent_session_id
+        self.manager.start_new_chat('PROJ-1')
+
+        self.manager._correct_session_id_in_record(
+            'proj-1', 'PROJ-1', old_id,
+            expected_existing_id=old_id,
+            can_replace_existing=True,
+            source_session=session,  # no longer the registered session
+        )
+
+        record = self.manager.get_record('PROJ-1')
+        self.assertEqual(record.agent_session_id, '')  # fresh chat stays fresh
+        self.assertEqual(record.previous_session_ids, [old_id])
+
+    def test_correction_from_the_registered_session_still_fills_a_blank_record(self) -> None:
+        # The guard must not break the legit path: the CURRENT session
+        # reporting its id into a blank record is the normal first-spawn
+        # correction flow.
+        session = self.manager.start_session(task_id='PROJ-1')
+        with self.manager._lock:
+            self.manager._records['proj-1'].agent_session_id = ''
+
+        self.manager._correct_session_id_in_record(
+            'proj-1', 'PROJ-1', 'corrected-id',
+            source_session=session,
+        )
+
+        record = self.manager.get_record('PROJ-1')
+        self.assertEqual(record.agent_session_id, 'corrected-id')
+
+    def test_forget_deletes_transcripts_of_previous_chats_too(self) -> None:
+        # A multi-chat task holds one JSONL per conversation; forgetting the
+        # task must clean them ALL up, not just the active chat's.
+        first = self.manager.start_session(task_id='PROJ-1')
+        first_id = first.agent_session_id
+        self.manager.start_new_chat('PROJ-1')
+        second = self.manager.start_session(task_id='PROJ-1')
+        second_id = second.agent_session_id
+
+        deleted = []
+        with patch(
+            'claude_core_lib.claude_core_lib.session.history.delete_session_file',
+            side_effect=lambda sid: deleted.append(sid) or True,
+        ):
+            self.manager.terminate_session('PROJ-1', remove_record=True)
+
+        self.assertEqual(sorted(deleted), sorted([first_id, second_id]))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -339,11 +339,13 @@ class ClaudeSessionManager(object):
             session._session_id_correction_callback = (
                 lambda sid, k=lookup_key, t=normalized_task_id,
                 expected=correction_expected_id,
-                can_replace=correction_can_replace: (
+                can_replace=correction_can_replace,
+                source=session: (
                     self._correct_session_id_in_record(
                         k, t, sid,
                         expected_existing_id=expected,
                         can_replace_existing=can_replace,
+                        source_session=source,
                     )
                 )
             )
@@ -629,6 +631,7 @@ class ClaudeSessionManager(object):
         *,
         expected_existing_id: str = '',
         can_replace_existing: bool = False,
+        source_session=None,
     ) -> None:
         """Update the persisted record when Claude reports a different session id.
 
@@ -651,6 +654,21 @@ class ClaudeSessionManager(object):
                     record.agent_session_id = actual_id
                     record.updated_at_epoch = time.time()
                     self._persist_record(record)
+                return
+            if not record_id and source_session is not None \
+                    and self._sessions.get(lookup_key) is not source_session:
+                # A BLANK record id is an intentional state ("fresh chat"
+                # detached the conversation) — only the CURRENTLY registered
+                # session may fill it. The reader thread of a just-terminated
+                # subprocess can outlive terminate (join timeout) and fire a
+                # late init; accepting its id here would silently re-pin the
+                # detached chat as active and undo the operator's new chat.
+                self.logger.info(
+                    'task %s: ignoring session id %s reported by a '
+                    'no-longer-registered session (record is intentionally '
+                    'detached)',
+                    task_id, actual_id,
+                )
                 return
             if record_id:
                 can_replace = (
@@ -872,7 +890,16 @@ class ClaudeSessionManager(object):
             # flips the record status to TERMINATED and persists it.
             self.terminate_session(task_id)
             with self._lock:
-                record = self._records[lookup_key]
+                # Re-fetch with a guard: terminate_session drops the global
+                # lock between our two locked sections, and a concurrent
+                # forget-task (terminate_session(remove_record=True) takes
+                # only the global lock, not this spawn lock) can pop the
+                # record in that window.
+                record = self._records.get(lookup_key)
+                if record is None:
+                    raise ValueError(
+                        f'no session record for task {normalized_task_id}'
+                    )
                 current_id = fix_session_id(record.agent_session_id)
                 history = [
                     sid for sid in session_id_list(record.previous_session_ids)
@@ -883,9 +910,15 @@ class ClaudeSessionManager(object):
                 record.previous_session_ids = history
                 record.agent_session_id = target_id
                 record.updated_at_epoch = time.time()
-                self._persist_record(record)
+                # Clear the workspace mirror BEFORE persisting: if kato dies
+                # between the two steps, the record still holds the old id
+                # (chat unchanged, mirror re-syncs on the next persist) —
+                # whereas persist-then-clear could leave a blank record with
+                # a stale mirror that resurrects the old chat via the
+                # workspace-seed/history-replay fallbacks.
                 if not target_id:
                     self._clear_workspace_agent_session(record.task_id)
+                self._persist_record(record)
                 return record
 
     def _clear_workspace_agent_session(self, task_id: str) -> None:
@@ -1068,34 +1101,43 @@ class ClaudeSessionManager(object):
             )
 
     def _forget_claude_transcript(self, record, task_id: str) -> None:
-        """Delete the Claude CLI transcript for a forgotten task.
+        """Delete the Claude CLI transcripts for a forgotten task.
 
         Called only on the ``remove_record=True`` path (task done /
         closed / operator forget). The workspace clones + kato
         session record are already gone by here; the Claude
-        transcript under ``~/.claude/projects/`` would otherwise
-        accumulate forever. Best-effort — a unlink failure must not
-        break ``terminate_session``.
+        transcripts under ``~/.claude/projects/`` would otherwise
+        accumulate forever. Covers the ACTIVE chat and every detached
+        previous chat — multi-chat tasks would otherwise leak one
+        JSONL per old conversation. Best-effort — a unlink failure
+        must not break ``terminate_session``.
         """
-        agent_session_id = read_session_id_from(record)
-        if not agent_session_id:
+        active_id = read_session_id_from(record)
+        previous_ids = session_id_list(
+            getattr(record, 'previous_session_ids', None),
+        )
+        all_ids = ([active_id] if active_id else []) + [
+            sid for sid in previous_ids if sid != active_id
+        ]
+        if not all_ids:
             return
-        try:
-            from claude_core_lib.claude_core_lib.session.history import (
-                delete_session_file,
-            )
-            if delete_session_file(agent_session_id):
-                self.logger.info(
-                    'deleted Claude transcript %s for forgotten task %s',
+        from claude_core_lib.claude_core_lib.session.history import (
+            delete_session_file,
+        )
+        for agent_session_id in all_ids:
+            try:
+                if delete_session_file(agent_session_id):
+                    self.logger.info(
+                        'deleted Claude transcript %s for forgotten task %s',
+                        agent_session_id,
+                        task_id,
+                    )
+            except Exception:
+                self.logger.exception(
+                    'failed deleting Claude transcript %s for task %s',
                     agent_session_id,
                     task_id,
                 )
-        except Exception:
-            self.logger.exception(
-                'failed deleting Claude transcript %s for task %s',
-                agent_session_id,
-                task_id,
-            )
 
     def _delete_persisted_record(self, task_id: str) -> None:
         # Delete EVERY state file that maps to this task's canonical

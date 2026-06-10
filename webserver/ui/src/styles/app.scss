@@ -1245,7 +1245,10 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 }
 
 .chats-menu-new:hover {
-  background: $C-NEUTRAL-16;
+  /* The menu surface itself is $C-NEUTRAL-16 — hover needs a
+   * DIFFERENT value or it's invisible; the white-alpha overlay
+   * reads as a lift on any dark base. */
+  background: $C-NEUTRAL-100-A10;
 }
 
 .chats-menu-empty {
@@ -1257,6 +1260,16 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 
 .chats-menu-empty.error {
   color: $C-RED-71;
+}
+
+/* Mid-turn guard: shown after the first click on a chat action while
+ * Claude is working — the second click confirms the kill. */
+.chats-menu-confirm {
+  padding: $SPACE-8 $SPACE-12;
+  margin: 0;
+  color: $C-ORANGE-50;
+  font: 600 12px/1.4 inherit;
+  border-bottom: 1px solid $C-NEUTRAL-100-A10;
 }
 
 .chats-menu-row {
@@ -1275,7 +1288,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 }
 
 .chats-menu-row:hover {
-  background: $C-NEUTRAL-16;
+  background: $C-NEUTRAL-100-A10;
 }
 
 .chats-menu-row.is-active {
@@ -3453,42 +3466,8 @@ code {
   scroll-behavior: smooth;
 }
 
-/* Every changed file is its own box, stacked here. The left list
- * scroll-to lands on a file; ``scroll-margin-top`` keeps its first
- * lines clear of the sticky header. */
-.diff-pane-repo {
-  margin-bottom: $SPACE-8;
-}
-
-/* First box breathing room — in-flow margin (scrolls away), NOT
- * container padding, so it doesn't create a sticky dead-strip. */
-.diff-pane-repo:first-child {
-  margin-top: $SPACE-10;
-}
-
-/* Repo section header (multi-repo only) — NOT sticky, so it never competes
- * with the per-file sticky header at top:0. A bold, bright band with an accent
- * bar + a divider line above it so it's obvious which repo's changed files
- * follow (the small dim grey label before was easy to miss). */
-.diff-pane-repo-name {
-  margin: $SPACE-16 0 $SPACE-10;
-  padding: $SPACE-8 $SPACE-10;
-  font: 700 14px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: 0.03em;
-  color: $C-NEUTRAL-96;
-  background: $C-NEUTRAL-16;
-  border-radius: $RADIUS-6;
-  border-left: 3px solid $C-CYAN-52-A55;
-  border-top: 1px solid $C-NEUTRAL-100-A10;
-}
-
-/* No gap above the very first repo header — the pane padding already
- * gives it room; the big top margin is only to separate adjacent repos. */
-.diff-pane-repo:first-child .diff-pane-repo-name {
-  margin-top: 0;
-}
-
 .diff-pane-file {
+  margin-top: $SPACE-10;
   margin-bottom: $SPACE-16;
   /* Clear the sticky title (~36px) so a scrolled-to file's first
    * lines aren't hidden under it. */

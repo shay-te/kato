@@ -4,6 +4,7 @@
 // behavior is a render-only composition of well-tested deps
 // (react-arborist for the tree).
 
+import React from 'react';
 import { beforeEach, describe, test, expect, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
@@ -524,6 +525,13 @@ describe('FilesTab — render shell', () => {
       <FilesTab
         taskId="T1"
         onOpenFile={vi.fn()}
+        // The focus request always names the file already open in the
+        // centre (the click came from its diff header) — selection
+        // derives from openFile, the focus effect expands + scrolls.
+        openFile={{
+          taskId: 'T1', repoId: 'client',
+          relativePath: 'src/Changed.js', view: 'diff',
+        }}
         focusFileTarget={{
           repoId: 'client',
           relativePath: 'src/Changed.js',
@@ -542,6 +550,58 @@ describe('FilesTab — render shell', () => {
       });
     });
     window.HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
+  });
+
+  test('selection highlights only the repo the open file belongs to', async () => {
+    // Multi-repo regression: per-repo local selection used to leave two
+    // repos highlighted simultaneously. Derived selection keys on the
+    // open file's repoId, so only the matching repo's row lights up.
+    const samePathTwoRepos = {
+      trees: ['client', 'backend'].map((repo) => ({
+        repo_id: repo,
+        cwd: `/tmp/${repo}`,
+        tree: [{
+          name: 'src',
+          path: `/tmp/${repo}/src`,
+          children: [{ name: 'Changed.js', path: `/tmp/${repo}/src/Changed.js` }],
+        }],
+        changed_files: ['src/Changed.js'],
+        conflicted_files: [],
+      })),
+    };
+    const diffFor = (repo) => [
+      'diff --git a/src/Changed.js b/src/Changed.js',
+      'index 1111111..2222222 100644',
+      '--- a/src/Changed.js',
+      '+++ b/src/Changed.js',
+      '@@ -1 +1 @@',
+      `-old-${repo}`,
+      `+new-${repo}`,
+      '',
+    ].join('\n');
+    fetchFileTree.mockResolvedValue(samePathTwoRepos);
+    fetchDiff.mockResolvedValue({
+      diffs: [
+        { repo_id: 'client', cwd: '/tmp/client', diff: diffFor('client'), conflicted_files: [] },
+        { repo_id: 'backend', cwd: '/tmp/backend', diff: diffFor('backend'), conflicted_files: [] },
+      ],
+    });
+    render(
+      <FilesTab
+        taskId="T1"
+        onOpenFile={vi.fn()}
+        openFile={{
+          taskId: 'T1', repoId: 'backend',
+          relativePath: 'src/Changed.js', view: 'diff',
+        }}
+      />,
+    );
+    const labels = await screen.findAllByText('Changed.js');
+    expect(labels).toHaveLength(2);
+    const selectedRows = labels
+      .map((label) => label.closest('button'))
+      .filter((row) => row.classList.contains('selected'));
+    expect(selectedRows).toHaveLength(1);
   });
 
   test('ArrowDown / ArrowUp walk the changed files and open each in the diff', async () => {
@@ -585,32 +645,52 @@ describe('FilesTab — render shell', () => {
     };
     fetchFileTree.mockResolvedValue(twoFileTree);
     fetchDiff.mockResolvedValue(twoFileDiff);
-    const onOpenFile = vi.fn();
-    render(<FilesTab taskId="T1" onOpenFile={onOpenFile} />);
+    const calls = [];
+    // Selection DERIVES from the openFile round-trip through App state —
+    // the harness mirrors App.handleOpenFile feeding openFile back down.
+    function Harness() {
+      const [openFile, setOpenFile] = React.useState(null);
+      return (
+        <FilesTab
+          taskId="T1"
+          openFile={openFile}
+          onOpenFile={(info) => {
+            calls.push(info);
+            setOpenFile({ ...info, taskId: 'T1' });
+          }}
+        />
+      );
+    }
+    render(<Harness />);
     await screen.findByText('Changed.js');
 
     const tree = screen.getByRole('tree');
     // No selection yet → ArrowDown starts at the first file.
     fireEvent.keyDown(tree, { key: 'ArrowDown' });
-    expect(onOpenFile).toHaveBeenLastCalledWith(expect.objectContaining({
+    expect(calls.at(-1)).toEqual(expect.objectContaining({
       relativePath: 'src/Changed.js', view: 'diff',
     }));
     fireEvent.keyDown(tree, { key: 'ArrowDown' });
-    expect(onOpenFile).toHaveBeenLastCalledWith(expect.objectContaining({
+    expect(calls.at(-1)).toEqual(expect.objectContaining({
       relativePath: 'src/Other.js', view: 'diff',
     }));
     // Already on the last file → ArrowDown stays put, no extra open.
     fireEvent.keyDown(tree, { key: 'ArrowDown' });
-    expect(onOpenFile).toHaveBeenCalledTimes(2);
+    expect(calls).toHaveLength(2);
     fireEvent.keyDown(tree, { key: 'ArrowUp' });
-    expect(onOpenFile).toHaveBeenLastCalledWith(expect.objectContaining({
+    expect(calls.at(-1)).toEqual(expect.objectContaining({
       relativePath: 'src/Changed.js', view: 'diff',
     }));
-    // The selection highlight follows the keyboard.
+    // The selection highlight follows the keyboard (derived from openFile).
     await waitFor(() => {
       expect(screen.getByText('Changed.js').closest('button'))
         .toHaveClass('selected');
     });
+    expect(screen.getByText('Other.js').closest('button'))
+      .not.toHaveClass('selected');
+    // Modifier combos are left to the browser (Cmd+ArrowDown etc.).
+    fireEvent.keyDown(tree, { key: 'ArrowDown', metaKey: true });
+    expect(calls).toHaveLength(3);
   });
 
   test('does NOT re-scroll the tree on a background refresh that CHANGES data (same focus request)', async () => {

@@ -21,9 +21,15 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 // Expose onResume via a button so the resume path (deliverMessage,
 // bypassing the queue) can be exercised. Layout tests ignore it.
 vi.mock('./SessionHeader.jsx', () => ({
-  default: ({ onResume }) => (
+  default: ({ onResume, onChatChanged, onChatSwitchPending }) => (
     <div data-testid="session-header">
       <button type="button" onClick={onResume}>mock-resume</button>
+      <button type="button" onClick={() => onChatSwitchPending(true)}>
+        mock-chat-pending
+      </button>
+      <button type="button" onClick={() => onChatChanged({})}>
+        mock-chat-changed
+      </button>
     </div>
   ),
   SessionHeaderPlaceholder: () => (
@@ -279,6 +285,7 @@ describe('SessionDetail — working indicator placement', () => {
       appendLocalEvent: vi.fn(),
       markTurnBusy: vi.fn(),
       reconnect: vi.fn(),
+      resetChat: vi.fn(),
       dismissPermission: vi.fn(),
       ...overrides,
     };
@@ -379,6 +386,7 @@ describe('SessionDetail — outgoing message queue', () => {
       appendLocalEvent: vi.fn(),
       markTurnBusy: vi.fn(),
       reconnect: vi.fn(),
+      resetChat: vi.fn(),
       dismissPermission: vi.fn(),
       ...overrides,
     };
@@ -471,6 +479,46 @@ describe('SessionDetail — outgoing message queue', () => {
     });
     expect(postChatMessage).toHaveBeenCalledTimes(1);
     expect(idle.markTurnBusy).toHaveBeenCalledWith(true);
+  });
+
+  test('a chat switch DISCARDS queued messages instead of flushing them into the new chat', async () => {
+    // BLOCKER regression: switching chats kills the live subprocess, which
+    // flips turnInFlight true→false — the same falling edge a normal turn
+    // end produces. Without the pending guard, the flush effect delivered
+    // a message written for the OLD conversation as the opener of the
+    // fresh/resumed chat.
+    postChatMessage.mockClear();
+    const busy = _stream({ turnInFlight: true });
+    useSessionStream.mockReturnValue(busy);
+    const { rerender } = render(<SessionDetail session={{ task_id: 'T1' }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));  // queues 'hello'
+    expect(screen.getByText('hello')).toBeInTheDocument();
+
+    // ChatsMenu arms the pending flag BEFORE its POST fires…
+    fireEvent.click(screen.getByRole('button', { name: 'mock-chat-pending' }));
+    // …then the backend kill produces the falling edge. NO flush.
+    const killed = _stream({ turnInFlight: false });
+    useSessionStream.mockReturnValue(killed);
+    rerender(<SessionDetail session={{ task_id: 'T1' }} />);
+    await Promise.resolve();
+    expect(postChatMessage).not.toHaveBeenCalled();
+
+    // POST resolves → onChatChanged wipes the transcript AND the queue,
+    // echoing the discarded text in the notice bubble.
+    fireEvent.click(screen.getByRole('button', { name: 'mock-chat-changed' }));
+    expect(killed.resetChat).toHaveBeenCalled();
+    expect(screen.queryByRole('list', { name: /queued messages/i }))
+      .not.toBeInTheDocument();
+    expect(killed.appendLocalEvent).toHaveBeenCalledWith(expect.objectContaining({
+      text: expect.stringContaining('hello'),
+    }));
+    // Later turn ends still flush nothing — the queue is gone.
+    useSessionStream.mockReturnValue(_stream({ turnInFlight: true }));
+    rerender(<SessionDetail session={{ task_id: 'T1' }} />);
+    useSessionStream.mockReturnValue(_stream({ turnInFlight: false }));
+    rerender(<SessionDetail session={{ task_id: 'T1' }} />);
+    await Promise.resolve();
+    expect(postChatMessage).not.toHaveBeenCalled();
   });
 
   test('switching tasks drops the pending queue (no cross-task send)', async () => {
@@ -614,6 +662,7 @@ describe('SessionDetail — permission dialog auto-reconnect', () => {
       appendLocalEvent: vi.fn(),
       markTurnBusy: vi.fn(),
       reconnect: vi.fn(),
+      resetChat: vi.fn(),
       dismissPermission: vi.fn(),
       ...overrides,
     };

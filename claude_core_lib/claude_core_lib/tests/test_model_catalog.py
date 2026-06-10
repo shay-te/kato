@@ -278,25 +278,25 @@ class ModelCatalogTests(unittest.TestCase):
 
     def test_family_version_returns_numeric_major_minor(self) -> None:
         self.assertEqual(
-            model_catalog._family_version_from_model_id('claude-opus-4-8'),
+            model_catalog.family_version_from_model_id('claude-opus-4-8'),
             ('opus', 4, 8, 'Opus 4.8'),
         )
         self.assertEqual(
-            model_catalog._family_version_from_model_id('claude-haiku-4-5-20251001'),
+            model_catalog.family_version_from_model_id('claude-haiku-4-5-20251001'),
             ('haiku', 4, 5, 'Haiku 4.5'),
         )
         # No minor → sorts as 0 but the label stays "Opus 5".
         self.assertEqual(
-            model_catalog._family_version_from_model_id('claude-opus-5'),
+            model_catalog.family_version_from_model_id('claude-opus-5'),
             ('opus', 5, 0, 'Opus 5'),
         )
         self.assertEqual(
-            model_catalog._family_version_from_model_id('claude-fable-5'),
+            model_catalog.family_version_from_model_id('claude-fable-5'),
             ('fable', 5, 0, 'Fable 5'),
         )
-        self.assertIsNone(model_catalog._family_version_from_model_id('<synthetic>'))
-        self.assertIsNone(model_catalog._family_version_from_model_id(''))
-        self.assertIsNone(model_catalog._family_version_from_model_id('gpt-4o'))
+        self.assertIsNone(model_catalog.family_version_from_model_id('<synthetic>'))
+        self.assertIsNone(model_catalog.family_version_from_model_id(''))
+        self.assertIsNone(model_catalog.family_version_from_model_id('gpt-4o'))
 
     def test_family_version_handles_future_version_shapes(self) -> None:
         # A future release (new minor, double-digit minor, new major, or no minor)
@@ -309,11 +309,11 @@ class ModelCatalogTests(unittest.TestCase):
         }
         for model_id, expected in cases.items():
             self.assertEqual(
-                model_catalog._family_version_from_model_id(model_id)[3], expected,
+                model_catalog.family_version_from_model_id(model_id)[3], expected,
             )
         # A brand-new FAMILY (new model name) isn't one of the selectable
         # families, so it is deliberately not labelled — it can't be selected.
-        self.assertIsNone(model_catalog._family_version_from_model_id('claude-neptune-1-0'))
+        self.assertIsNone(model_catalog.family_version_from_model_id('claude-neptune-1-0'))
 
     def test_clean_model_id_round_trips_real_zero_minor(self) -> None:
         # "Sonnet 5.0" has a real minor segment — must NOT collapse to claude-sonnet-5.
@@ -323,6 +323,49 @@ class ModelCatalogTests(unittest.TestCase):
         )
         self.assertEqual(
             model_catalog._clean_model_id(('fable', 5, 0, 'Fable 5')), 'claude-fable-5',
+        )
+
+    def test_date_after_no_minor_major_is_not_parsed_as_the_minor(self) -> None:
+        # Real historical ids exist with NO minor and a date right after the
+        # major (claude-sonnet-4-20250514). Parsing the date as the minor
+        # would make (4, 20250514) outrank every genuine 4.x in the
+        # highest-version comparison and garble the label — and, for fable,
+        # corrupt the pinned id itself.
+        self.assertEqual(
+            model_catalog.family_version_from_model_id('claude-sonnet-4-20250514'),
+            ('sonnet', 4, 0, 'Sonnet 4'),
+        )
+        self.assertEqual(
+            model_catalog.family_version_from_model_id('claude-fable-5-20260301'),
+            ('fable', 5, 0, 'Fable 5'),
+        )
+
+    def test_old_dated_no_minor_log_does_not_outrank_a_real_minor(self) -> None:
+        # A resumed pre-2025-Q3 transcript (claude-sonnet-4-20250514) in the
+        # scan window must not beat the genuinely newer sonnet 4.6 — the
+        # "Sonnet 4.20250514" garbled-label regression.
+        self._write_session_log('old.jsonl', [
+            {'type': 'assistant', 'message': {'model': 'claude-sonnet-4-20250514'}},
+        ])
+        self._write_session_log('new.jsonl', [
+            {'type': 'assistant', 'message': {'model': 'claude-sonnet-4-6'}},
+        ])
+        labels = model_catalog._labels_from_session_logs()
+        self.assertEqual(
+            labels['sonnet'],
+            {'label': 'Sonnet 4.6', 'model_id': 'claude-sonnet-4-6'},
+        )
+
+    def test_dated_fable_snapshot_does_not_poison_the_pin_id(self) -> None:
+        # A dated fable snapshot id must surface as plain fable 5 (clean
+        # id) — not as id 'claude-fable-5-20260301' / label
+        # 'Fable 5.20260301' shadowing genuine 5.x releases.
+        self._write_session_log('f.jsonl', [
+            {'type': 'assistant', 'message': {'model': 'claude-fable-5-20260301'}},
+        ])
+        labels = model_catalog._labels_from_session_logs()
+        self.assertEqual(
+            labels['fable'], {'label': 'Fable 5', 'model_id': 'claude-fable-5'},
         )
 
     def test_model_id_of_event_handles_both_shapes_and_junk(self) -> None:

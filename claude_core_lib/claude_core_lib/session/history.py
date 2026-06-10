@@ -11,6 +11,7 @@ pipeline — pure I/O, no kato types — so it stays trivially testable.
 from __future__ import annotations
 
 import glob
+import os
 from pathlib import Path
 
 from agent_core_lib.agent_core_lib.helpers.session_id_utils import (
@@ -63,7 +64,22 @@ def find_session_file(
     matches = glob.glob(pattern)
     if not matches:
         return None
+    # One session id can exist under multiple project dirs — kato's
+    # cwd-drift handling deliberately leaves the source JSONL behind as a
+    # historical snapshot, and adoption copies rather than moves. Pick the
+    # NEWEST copy (the live conversation), not glob's arbitrary readdir
+    # order: returning a stale snapshot here would replay (and, via the
+    # resume-migration path, even resurrect) an older state of the chat.
+    if len(matches) > 1:
+        matches.sort(key=_mtime_or_zero, reverse=True)
     return Path(matches[0])
+
+
+def _mtime_or_zero(path: str) -> float:
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return 0.0
 
 
 def delete_session_file(

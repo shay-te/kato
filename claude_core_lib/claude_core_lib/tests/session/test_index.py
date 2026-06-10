@@ -516,6 +516,52 @@ class MigrateSessionToWorkspaceTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertTrue(first.is_file())
 
+    def test_never_overwrites_a_newer_destination_with_an_older_snapshot(self) -> None:
+        # Duplicate transcript copies of one session id are a designed state
+        # (cwd-drift snapshots, adopt copies). When the destination already
+        # holds a NEWER transcript than the source, copying would rewind the
+        # conversation — the migration must be a no-op that keeps the
+        # destination's contents.
+        target_cwd = '/Users/dev/.kato/workspaces/PROJ-1/myproj'
+        first = migrate_session_to_workspace(
+            transcript_path=str(self.source_path),
+            target_cwd=target_cwd,
+        )
+        # The destination conversation advanced (a turn was appended).
+        newer_content = first.read_text(encoding='utf-8') + '{"type": "user"}\n'
+        first.write_text(newer_content, encoding='utf-8')
+        os.utime(self.source_path, (1_000, 1_000))   # stale snapshot
+        os.utime(first, (2_000, 2_000))              # live, newer
+
+        result = migrate_session_to_workspace(
+            transcript_path=str(self.source_path),
+            target_cwd=target_cwd,
+        )
+
+        self.assertEqual(result, first)
+        self.assertEqual(first.read_text(encoding='utf-8'), newer_content)
+
+    def test_still_copies_when_the_source_is_newer(self) -> None:
+        # The adopt flow's whole point: the operator's checkout transcript
+        # (newer) must replace the workspace's stale copy.
+        target_cwd = '/Users/dev/.kato/workspaces/PROJ-1/myproj'
+        first = migrate_session_to_workspace(
+            transcript_path=str(self.source_path),
+            target_cwd=target_cwd,
+        )
+        os.utime(first, (1_000, 1_000))              # stale workspace copy
+        fresh_content = self.source_path.read_text(encoding='utf-8') \
+            + '{"type": "assistant"}\n'
+        self.source_path.write_text(fresh_content, encoding='utf-8')
+        os.utime(self.source_path, (2_000, 2_000))   # operator's live copy
+
+        result = migrate_session_to_workspace(
+            transcript_path=str(self.source_path),
+            target_cwd=target_cwd,
+        )
+
+        self.assertEqual(result.read_text(encoding='utf-8'), fresh_content)
+
     def test_creates_target_dir_when_missing(self) -> None:
         # Cwd has never been used by Claude Code, so its project
         # dir doesn't exist yet. Migration creates it.

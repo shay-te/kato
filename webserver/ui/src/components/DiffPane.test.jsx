@@ -216,6 +216,99 @@ describe('DiffPane — renders ONLY the selected file', () => {
     expect(file.getAttribute('data-force-expand-token')).toBe('7');
   });
 
+  test('switching files resets the pane scroll to the top and reports it', async () => {
+    // The scroll container survives selection swaps (only the inner file
+    // card remounts) — without an explicit reset, file B opened after
+    // reading deep into file A lands mid-file, and the browser's clamp
+    // scroll event persists A's leftover offset into B's remembered view.
+    fetchDiff.mockResolvedValue({ diffs: [] });
+    parseRepoDiffs.mockReturnValue(_repoDiffs());
+    const onViewStateChange = vi.fn();
+    const { container, rerender } = render(
+      <DiffPane openFile={_open()} onViewStateChange={onViewStateChange} />,
+    );
+    await screen.findByTestId('diff-file');
+    const body = container.querySelector('.diff-pane-body');
+    body.scrollTop = 444;  // operator read deep into file A
+
+    rerender(
+      <DiffPane
+        openFile={_open({ relativePath: 'api/auth.py', repoId: 'backend' })}
+        onViewStateChange={onViewStateChange}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId('diff-file').getAttribute('data-path'))
+        .toBe('api/auth.py');
+    });
+    await waitFor(() => {
+      expect(body.scrollTop).toBe(0);
+    });
+    expect(onViewStateChange).toHaveBeenCalledWith({ diffScrollTop: 0 });
+  });
+
+  test('mount with a saved scroll offset is NOT reset (tab-return restore)', async () => {
+    fetchDiff.mockResolvedValue({ diffs: [] });
+    parseRepoDiffs.mockReturnValue(_repoDiffs());
+    const onViewStateChange = vi.fn();
+    const { container } = render(
+      <DiffPane
+        openFile={_open({ diffScrollTop: 345, restoreViewState: true })}
+        onViewStateChange={onViewStateChange}
+      />,
+    );
+    await screen.findByTestId('diff-file');
+    const body = container.querySelector('.diff-pane-body');
+    await waitFor(() => {
+      expect(body.scrollTop).toBe(345);
+    });
+    // The reset effect must not have stomped the restore on mount.
+    expect(onViewStateChange).not.toHaveBeenCalledWith({ diffScrollTop: 0 });
+  });
+
+  test('switching to a file in another repo drops the previous repo\'s comments', async () => {
+    // Same relative path in two repos: while repo B's comments are still
+    // loading, repo A's threads must NOT render on repo B's file.
+    const repos = [
+      {
+        repo_id: 'client', cwd: '/w/client', conflictedFiles: new Set(),
+        files: [{ type: 'modify', newPath: 'src/shared.js', oldPath: 'src/shared.js', hunks: [] }],
+      },
+      {
+        repo_id: 'backend', cwd: '/w/backend', conflictedFiles: new Set(),
+        files: [{ type: 'modify', newPath: 'src/shared.js', oldPath: 'src/shared.js', hunks: [] }],
+      },
+    ];
+    fetchDiff.mockResolvedValue({ diffs: [] });
+    parseRepoDiffs.mockReturnValue(repos);
+    let resolveBackend;
+    fetchTaskComments.mockImplementation((_taskId, rid) => (
+      rid === 'client'
+        ? Promise.resolve({
+          ok: true,
+          body: { comments: [{ id: 'c1', file_path: 'src/shared.js' }] },
+        })
+        : new Promise((resolve) => { resolveBackend = resolve; })
+    ));
+    const { rerender } = render(
+      <DiffPane openFile={_open({ relativePath: 'src/shared.js', repoId: 'client' })} />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId('diff-file').getAttribute('data-comments')).toBe('1');
+    });
+
+    rerender(
+      <DiffPane openFile={_open({ relativePath: 'src/shared.js', repoId: 'backend' })} />,
+    );
+    // Repo B's fetch is still pending — repo A's comment must be gone.
+    await waitFor(() => {
+      const file = screen.getByTestId('diff-file');
+      expect(file.getAttribute('data-repo')).toBe('backend');
+      expect(file.getAttribute('data-comments')).toBe('0');
+    });
+    resolveBackend({ ok: true, body: { comments: [] } });
+  });
+
   test('restores saved diff scroll position', async () => {
     fetchDiff.mockResolvedValue({ diffs: [] });
     parseRepoDiffs.mockReturnValue(_repoDiffs());

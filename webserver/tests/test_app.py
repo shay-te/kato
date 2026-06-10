@@ -340,9 +340,39 @@ class WebserverAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn('adopt', response.get_json()['error'])
 
-    def test_start_task_chat_unknown_task_is_404(self):
+    def test_start_task_chat_no_record_fresh_chat_is_a_noop_success(self):
+        # "New chat" on a task that never had a chat: nothing to detach —
+        # the first message will spawn fresh anyway, so a 404 would just
+        # read as breakage to the operator.
         response = self.client.post('/api/sessions/NOPE/chats', json={})
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload[AGENT_SESSION_ID], '')
+        self.assertEqual(payload['previous_session_ids'], [])
+
+    def test_start_task_chat_no_record_switch_is_404(self):
+        # Switching to a named chat NEEDS a record — that id can't be ours.
+        response = self.client.post(
+            '/api/sessions/NOPE/chats', json={AGENT_SESSION_ID: 'some-id'},
+        )
         self.assertEqual(response.status_code, 404)
+
+    def test_start_task_chat_refuses_during_an_in_progress_comment_run(self):
+        # Switching kills the live subprocess; mid comment-run that would
+        # requeue the comment and redispatch it INTO the operator's new
+        # chat. The endpoint refuses with 409 instead.
+        class _BusyAgentService:
+            def list_task_comments(self, task_id):  # noqa: ARG002
+                return [{'id': 'c1', 'kato_status': 'in_progress'}]
+
+        manager = _FakeManager(records=[_FakeRecord(
+            task_id='PROJ-1', agent_session_id='cur', previous_session_ids=[],
+        )])
+        app = create_app(session_manager=manager)
+        app.config['AGENT_SERVICE'] = _BusyAgentService()
+        response = app.test_client().post('/api/sessions/PROJ-1/chats', json={})
+        self.assertEqual(response.status_code, 409)
+        self.assertIn('review comment', response.get_json()['error'])
 
     def test_adopt_claude_session_endpoint_rejects_pinned_id_change(self):
         class _PinnedManager(_FakeManager):
@@ -1114,11 +1144,16 @@ class ModelEndpointTests(unittest.TestCase):
         self.assertEqual(_match_model_alias('claude-opus-4-8', ids), 'opus')  # full id → family
         self.assertEqual(_match_model_alias('gpt-5.5', ['gpt-5.5']), 'gpt-5.5')  # codex direct
         self.assertEqual(_match_model_alias('mystery-model', ids), '')  # no match
-        # Fable: the picker offers a full id, so both the bare family word and any
-        # configured fable id resolve to the offered full id.
+        # Fable: the picker offers a pinned FULL id and spawn passes the
+        # configured value verbatim, so only SAME-version variants match —
+        # a family-level fallback would highlight a model that won't run.
         self.assertEqual(_match_model_alias('claude-fable-5', ids), 'claude-fable-5')
-        self.assertEqual(_match_model_alias('fable', ids), 'claude-fable-5')
         self.assertEqual(_match_model_alias('claude-fable-5[1m]', ids), 'claude-fable-5')
+        # A different concrete version must NOT be flagged as "will run".
+        self.assertEqual(_match_model_alias('claude-fable-6', ids), '')
+        # Bare 'fable' has no CLI alias — the CLI rejects it at spawn, so
+        # the picker must not legitimize it by highlighting a real model.
+        self.assertEqual(_match_model_alias('fable', ids), '')
 
     def test_get_openrouter_models_returns_catalog(self):
         from unittest.mock import patch

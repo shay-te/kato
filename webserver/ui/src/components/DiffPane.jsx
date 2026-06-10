@@ -135,6 +135,19 @@ export default function DiffPane({
   }, [state.repoDiffs, repoId, relativePath]);
   const selectedRepoId = selected?.repo.repo_id || '';
 
+  // Selection moved to a file in a DIFFERENT repo: drop the previous
+  // repo's comments immediately. Without this, repo A's threads render on
+  // repo B's file (same relative path = same byFile key) for the whole
+  // fetch round-trip, and the signature guard alone wouldn't help — it
+  // only suppresses identical payloads, not cross-repo staleness.
+  const commentsRepoRef = useRef('');
+  useEffect(() => {
+    if (commentsRepoRef.current === selectedRepoId) { return; }
+    commentsRepoRef.current = selectedRepoId;
+    commentsSigRef.current = '';
+    setComments({ loading: true, error: '', byFile: new Map() });
+  }, [selectedRepoId]);
+
   // One comments fetch for the selected file's repo. Re-runs when a
   // comment mutation bumps ``commentsTick`` or the diff refreshes.
   useEffect(() => {
@@ -206,6 +219,31 @@ export default function DiffPane({
     if (!node || !Number.isFinite(scrollTop) || scrollTop <= 0) { return; }
     node.scrollTop = scrollTop;
   }, [state.status, openRequestId, openFile?.diffScrollTop]);
+
+  // Reset the pane to the TOP whenever the rendered file SWAPS. The scroll
+  // container (.diff-pane-body) survives selection changes — only the inner
+  // file card remounts — so without this, opening file B after reading deep
+  // into file A lands mid-file (browser keeps/clamps the old scrollTop), and
+  // the clamp's scroll event would then persist file A's leftover offset
+  // into file B's remembered view state. Initialized on mount WITHOUT
+  // resetting, so the diffScrollTop restore effect above (same file,
+  // restoreViewState tab return) still wins.
+  const renderedFileKeyRef = useRef(null);
+  const selectedFileKey = selected
+    ? diffAnchorKey(selected.repo.repo_id, selected.path) : '';
+  useEffect(() => {
+    if (state.status !== 'ready' || !selectedFileKey) { return; }
+    if (renderedFileKeyRef.current === null) {
+      renderedFileKeyRef.current = selectedFileKey;
+      return;
+    }
+    if (renderedFileKeyRef.current === selectedFileKey) { return; }
+    renderedFileKeyRef.current = selectedFileKey;
+    const node = bodyRef.current;
+    if (node) { node.scrollTop = 0; }
+    const notify = onViewStateChangeRef.current;
+    if (typeof notify === 'function') { notify({ diffScrollTop: 0 }); }
+  }, [state.status, selectedFileKey]);
 
   function handleBodyScroll(event) {
     const notify = onViewStateChangeRef.current;

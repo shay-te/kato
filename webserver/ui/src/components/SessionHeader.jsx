@@ -34,6 +34,7 @@ export default function SessionHeader({
   onResume,
   onSessionAdopted,
   onChatChanged = null,
+  onChatSwitchPending = null,
   streamLifecycle,
   turnInFlight = false,
   awaitingBackground = false,
@@ -533,6 +534,8 @@ export default function SessionHeader({
           <ChatsMenu
             taskId={session.task_id}
             onChatChanged={onChatChanged}
+            onChatSwitchPending={onChatSwitchPending}
+            turnInFlight={turnInFlight}
           />
           <button
             id="session-adopt-claude"
