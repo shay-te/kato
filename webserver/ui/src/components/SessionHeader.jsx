@@ -18,6 +18,7 @@ import { deriveAgentStatus } from '../utils/agentStatus.js';
 import { SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
 import { toast, toastResult } from '../stores/toastStore.js';
 import AdoptSessionModal from './AdoptSessionModal.jsx';
+import ChatsMenu from './ChatsMenu.jsx';
 import Icon, { BusyIcon } from './Icon.jsx';
 import {
   formatFinishResult,
@@ -32,6 +33,7 @@ export default function SessionHeader({
   onStopped,
   onResume,
   onSessionAdopted,
+  onChatChanged = null,
   streamLifecycle,
   turnInFlight = false,
   awaitingBackground = false,
@@ -528,6 +530,10 @@ export default function SessionHeader({
           >
             <BusyIcon busy={syncing} idle="history" />
           </button>
+          <ChatsMenu
+            taskId={session.task_id}
+            onChatChanged={onChatChanged}
+          />
           <button
             id="session-adopt-claude"
             type="button"
@@ -563,6 +569,7 @@ export function SessionHeaderPlaceholder() {
     { icon: 'refresh', label: 'Update source' },
     { icon: 'check', label: 'Finish', primary: true },
     { icon: 'history', label: 'Sync now' },
+    { icon: 'comment', label: 'Chats' },
     { icon: 'link', label: 'Adopt session' },
     { icon: 'stop', label: 'Stop' },
   ];

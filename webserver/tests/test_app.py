@@ -259,6 +259,91 @@ class WebserverAppTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
+    def test_list_task_chats_orders_active_first_then_newest_detached(self):
+        manager = _FakeManager(records=[_FakeRecord(
+            task_id='PROJ-1',
+            agent_session_id='cur',
+            previous_session_ids=['old-1', 'old-2'],
+        )])
+        app = create_app(session_manager=manager)
+        with unittest.mock.patch.dict(
+            'os.environ', {'KATO_CLAUDE_SESSIONS_ROOT': tempfile.mkdtemp()},
+        ):
+            response = app.test_client().get('/api/sessions/PROJ-1/chats')
+        self.assertEqual(response.status_code, 200)
+        chats = response.get_json()['chats']
+        self.assertEqual(
+            [c[AGENT_SESSION_ID] for c in chats], ['cur', 'old-2', 'old-1'],
+        )
+        self.assertEqual([c['active'] for c in chats], [True, False, False])
+
+    def test_list_task_chats_unknown_task_is_empty(self):
+        response = self.client.get('/api/sessions/NOPE/chats')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()['chats'], [])
+
+    def test_start_task_chat_fresh_calls_manager_with_blank_id(self):
+        calls = []
+
+        class _ChatManager(_FakeManager):
+            def start_new_chat(self, task_id, *, agent_session_id=''):
+                calls.append((task_id, agent_session_id))
+                return _FakeRecord(
+                    task_id=task_id,
+                    agent_session_id='',
+                    previous_session_ids=['cur'],
+                )
+
+        manager = _ChatManager(records=[_FakeRecord(
+            task_id='PROJ-1', agent_session_id='cur', previous_session_ids=[],
+        )])
+        app = create_app(session_manager=manager)
+        response = app.test_client().post('/api/sessions/PROJ-1/chats', json={})
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload[AGENT_SESSION_ID], '')
+        self.assertEqual(payload['previous_session_ids'], ['cur'])
+        self.assertEqual(calls, [('PROJ-1', '')])
+
+    def test_start_task_chat_switches_to_a_previous_chat(self):
+        calls = []
+
+        class _ChatManager(_FakeManager):
+            def start_new_chat(self, task_id, *, agent_session_id=''):
+                calls.append((task_id, agent_session_id))
+                return _FakeRecord(
+                    task_id=task_id,
+                    agent_session_id=agent_session_id,
+                    previous_session_ids=['cur'],
+                )
+
+        manager = _ChatManager(records=[_FakeRecord(
+            task_id='PROJ-1',
+            agent_session_id='cur',
+            previous_session_ids=['old-1'],
+        )])
+        app = create_app(session_manager=manager)
+        response = app.test_client().post(
+            '/api/sessions/PROJ-1/chats', json={AGENT_SESSION_ID: 'old-1'},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()[AGENT_SESSION_ID], 'old-1')
+        self.assertEqual(calls, [('PROJ-1', 'old-1')])
+
+    def test_start_task_chat_rejects_a_foreign_session_id(self):
+        # External sessions go through adopt — the chats switch only
+        # navigates between THIS task's own conversations.
+        response = self.client.post(
+            '/api/sessions/PROJ-1/chats',
+            json={AGENT_SESSION_ID: 'not-one-of-ours'},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('adopt', response.get_json()['error'])
+
+    def test_start_task_chat_unknown_task_is_404(self):
+        response = self.client.post('/api/sessions/NOPE/chats', json={})
+        self.assertEqual(response.status_code, 404)
+
     def test_adopt_claude_session_endpoint_rejects_pinned_id_change(self):
         class _PinnedManager(_FakeManager):
             def adopt_session_id(self, task_id, *, agent_session_id, task_summary=''):
@@ -992,6 +1077,8 @@ class ModelEndpointTests(unittest.TestCase):
         # hardcoded pinned id like 'claude-opus-4-7' that goes stale.
         self.assertIn('sonnet', ids)
         self.assertIn('opus', ids)
+        # Fable has no CLI alias — it's offered as a pinned full model id.
+        self.assertTrue(any(i.startswith('claude-fable-') for i in ids))
         defaults = [m['id'] for m in body['models'] if m.get('default')]
         self.assertEqual(defaults, ['sonnet'])
 
@@ -1021,12 +1108,17 @@ class ModelEndpointTests(unittest.TestCase):
 
     def test_match_model_alias_handles_alias_full_id_and_miss(self):
         from kato_webserver.app import _match_model_alias
-        ids = ['opus', 'sonnet', 'haiku']
+        ids = ['claude-fable-5', 'opus', 'sonnet', 'haiku']
         self.assertEqual(_match_model_alias('opus', ids), 'opus')
         self.assertEqual(_match_model_alias('OPUS', ids), 'opus')
         self.assertEqual(_match_model_alias('claude-opus-4-8', ids), 'opus')  # full id → family
         self.assertEqual(_match_model_alias('gpt-5.5', ['gpt-5.5']), 'gpt-5.5')  # codex direct
         self.assertEqual(_match_model_alias('mystery-model', ids), '')  # no match
+        # Fable: the picker offers a full id, so both the bare family word and any
+        # configured fable id resolve to the offered full id.
+        self.assertEqual(_match_model_alias('claude-fable-5', ids), 'claude-fable-5')
+        self.assertEqual(_match_model_alias('fable', ids), 'claude-fable-5')
+        self.assertEqual(_match_model_alias('claude-fable-5[1m]', ids), 'claude-fable-5')
 
     def test_get_openrouter_models_returns_catalog(self):
         from unittest.mock import patch

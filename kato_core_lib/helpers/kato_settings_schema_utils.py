@@ -130,7 +130,8 @@ SETTINGS_SCHEMA: list[dict] = [
              {}),
             ('KATO_CLAUDE_MODEL', 'text', 'Model override',
              'Alias (opus/sonnet/haiku → latest) or full name '
-             '(e.g. claude-sonnet-4-6). Empty = Claude Code default.', {}),
+             '(e.g. claude-fable-5, claude-sonnet-4-6). '
+             'Empty = Claude Code default.', {}),
             ('KATO_CLAUDE_MAX_TURNS', 'number', 'Max turns',
              'Cap on agent turns per task. Empty = no cap.', {}),
             ('KATO_CLAUDE_EFFORT', 'select', 'Reasoning effort',

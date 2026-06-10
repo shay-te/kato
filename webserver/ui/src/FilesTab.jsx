@@ -865,6 +865,39 @@ function RepoTree({
       });
     }
   }
+  // Visible files in render order (closed folders hide their children) —
+  // the ArrowUp/ArrowDown walk order for keyboard navigation.
+  const visibleChangedFiles = useMemo(
+    () => listVisibleChangedFiles(filteredChangedNodes, closedChangedFolders),
+    [filteredChangedNodes, closedChangedFolders],
+  );
+  function handleChangedTreeKeyDown(event) {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') { return; }
+    event.preventDefault();
+    const files = visibleChangedFiles;
+    if (files.length === 0) { return; }
+    const delta = event.key === 'ArrowDown' ? 1 : -1;
+    const index = files.findIndex(
+      (file) => changedFileSelectionKey(file) === selectedChangedKey,
+    );
+    // No current selection: ArrowDown starts at the first file,
+    // ArrowUp at the last. At either end the selection stays put.
+    const nextIndex = index === -1
+      ? (delta > 0 ? 0 : files.length - 1)
+      : Math.min(files.length - 1, Math.max(0, index + delta));
+    if (nextIndex === index) { return; }
+    const file = files[nextIndex];
+    selectChangedFile(file);
+    // Keep the newly selected row in view without yanking the tree —
+    // 'nearest' only scrolls when the row is actually off-screen.
+    window.requestAnimationFrame(() => {
+      const selector = `[data-changed-file-path="${cssEscapeAttr(diffDisplayPath(file))}"]`;
+      const row = repoRef.current?.querySelector(selector);
+      if (row && typeof row.scrollIntoView === 'function') {
+        row.scrollIntoView({ block: 'nearest' });
+      }
+    });
+  }
   const changedTreeContent = hasChangedFiles && filteredChangedNodes.length > 0 ? (
     <ChangedFilesTree
       nodes={filteredChangedNodes}
@@ -875,6 +908,7 @@ function RepoTree({
       onToggleFolder={toggleChangedFolder}
       onSelectFile={selectChangedFile}
       onOpenPathMenu={onOpenPathMenu}
+      onKeyDown={handleChangedTreeKeyDown}
       repoId={repoId}
     />
   ) : null;
@@ -1043,6 +1077,7 @@ function CommitDropdown({ state, onPick, onClose }) {
 function ChangedFilesTree({
   nodes, conflictedFiles, commentMeta = EMPTY_COMMENT_META,
   closedFolders, selectedKey, onToggleFolder, onSelectFile, onOpenPathMenu,
+  onKeyDown,
   repoId = '',
 }) {
   const rows = nodes.map((node) => (
@@ -1066,7 +1101,15 @@ function ChangedFilesTree({
       {/* The repo's +/- totals now live inline in the repo header
           (renderRepoHeaderStats), so the old "Lines updated" summary row
           here would just duplicate them. */}
-      <div className="diff-file-tree files-changed-tree">
+      {/* role/tabIndex: the tree itself is focusable so ArrowUp/ArrowDown
+          move the file selection — clicking any row (a button) also puts
+          focus inside, and the keydown bubbles to this container. */}
+      <div
+        className="diff-file-tree files-changed-tree"
+        role="tree"
+        tabIndex={0}
+        onKeyDown={onKeyDown}
+      >
         {rows}
       </div>
     </div>
@@ -1350,6 +1393,21 @@ function changedFileNodeMatches(node, raw) {
 
 function changedFileSelectionKey(file) {
   return `${file.type || 'modify'}:${diffDisplayPath(file)}`;
+}
+
+// Files visible in the changed tree, in render order — folders whose key
+// is in ``closedFolders`` contribute nothing. This is the walk order for
+// ArrowUp/ArrowDown keyboard navigation. Exported for unit tests.
+export function listVisibleChangedFiles(nodes, closedFolders) {
+  const files = [];
+  for (const node of nodes || []) {
+    if (node.kind === 'file') {
+      files.push(node.file);
+    } else if (!closedFolders?.has(node.key)) {
+      files.push(...listVisibleChangedFiles(node.children, closedFolders));
+    }
+  }
+  return files;
 }
 
 function joinRelativePath(parent, child) {

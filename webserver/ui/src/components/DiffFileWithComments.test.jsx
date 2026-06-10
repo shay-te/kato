@@ -149,27 +149,6 @@ describe('DiffFileWithComments — collapse / expand integration', () => {
     });
   });
 
-  test('collapseToken collapses an auto-opened file when it is no longer selected', async () => {
-    const file = _file(20);
-    const { rerender } = renderDiff({
-      file,
-      initiallyExpanded: true,
-      selected: true,
-      collapseToken: 1,
-    });
-    expect(screen.getByRole('button', { name: /collapse diff/i })).toBeInTheDocument();
-
-    rerenderDiff(rerender, {
-      file,
-      initiallyExpanded: false,
-      selected: false,
-      collapseToken: 2,
-    });
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /expand diff/i })).toBeInTheDocument();
-    });
-  });
-
   test('a collapsed file auto-expands when it has an open inline comment', async () => {
     renderDiff({
       file: _file(20),

@@ -516,6 +516,23 @@ export function adoptAgentSession(taskId, agentSessionId) {
   );
 }
 
+// The task's chats — the active conversation plus the detached ones the
+// operator can navigate back to (chats menu in the session header).
+export function fetchTaskChats(taskId) {
+  return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/chats`);
+}
+
+// Empty ``agentSessionId`` starts a FRESH chat (next message spawns a
+// brand-new Claude session); a non-empty id switches back to one of the
+// task's previous chats.
+export function startTaskChat(taskId, agentSessionId = '') {
+  if (!taskId) { return { ok: false, error: 'no task id' }; }
+  return postEnvelope(
+    `/api/sessions/${encodeURIComponent(taskId)}/chats`,
+    { [AGENT_SESSION_ID]: agentSessionId },
+  );
+}
+
 // Send a chat message with optional image attachments. The endpoint
 // accepts the same shape as ``postSession(taskId, 'messages', {text})``
 // but with an extra ``images`` array of ``{media_type, data}``

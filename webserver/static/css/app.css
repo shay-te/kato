@@ -1154,6 +1154,106 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   margin-left: auto;
 }
 
+/* ───── chats menu (session header) ──────────────────────────────────
+ * Dropdown under the header's Chats button: "New chat" action on top,
+ * then the task's conversations (active first, then detached ones the
+ * operator can switch back to). Same visual family as the FilesTab
+ * commit menu. */
+.chats-menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.chats-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+}
+
+.chats-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 10;
+  padding: 4px 0;
+  background: #2a2a2a;
+  border: 1px solid #2a2a2a;
+  border-radius: 4px;
+  max-height: 360px;
+  overflow-y: auto;
+  min-width: 320px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+}
+
+.chats-menu-new {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid #2a2a2a;
+  padding: 8px 12px;
+  cursor: pointer;
+  color: #f5f5f7;
+  font: 600 12px/1.3 inherit;
+}
+
+.chats-menu-new:hover {
+  background: #2a2a2a;
+}
+
+.chats-menu-empty {
+  padding: 8px 12px;
+  margin: 0;
+  color: #a3a3a3;
+  font: 12px/1.4 inherit;
+}
+
+.chats-menu-empty.error {
+  color: #f87171;
+}
+
+.chats-menu-row {
+  display: grid;
+  grid-template-columns: 72px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 6px 12px;
+  cursor: pointer;
+  color: #f5f5f7;
+  font: 12px/1.3 inherit;
+}
+
+.chats-menu-row:hover {
+  background: #2a2a2a;
+}
+
+.chats-menu-row.is-active {
+  color: #7d8590;
+}
+
+.chats-menu-row-sid {
+  color: #f59e0b;
+  font-family: ui-monospace, monospace;
+}
+
+.chats-menu-row-preview {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chats-menu-row-meta {
+  color: #737373;
+  font-size: 11px;
+}
+
 #session-task-summary {
   /* Match the task code (#session-task-id, a bold white <strong>):
      same colour + weight so the id and the summary read as one

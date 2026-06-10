@@ -81,6 +81,10 @@ class PlanningSessionRecord(object):
     # the send is rejected. Empty string disables the check (wait-planning
     # tabs that aren't owned by the orchestrator).
     expected_branch: str = ''
+    # Earlier chats for this task, oldest first. ``start_new_chat`` pushes
+    # the detached session id here so the operator can navigate back to an
+    # old conversation (each id resumes via the normal --resume path).
+    previous_session_ids: list = field(default_factory=list)
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
 
@@ -95,7 +99,18 @@ class PlanningSessionRecord(object):
             updated_at_epoch=float(payload.get('updated_at_epoch', time.time()) or time.time()),
             cwd=text_from_mapping(payload, 'cwd'),
             expected_branch=str(payload.get('expected_branch', '') or ''),
+            previous_session_ids=session_id_list(payload.get('previous_session_ids')),
         )
+
+
+def session_id_list(value) -> list:
+    """Normalize a raw payload value into a clean, de-duplicated id list."""
+    ids: list = []
+    for item in (value if isinstance(value, list) else []):
+        fixed = fix_session_id(item)
+        if fixed and fixed not in ids:
+            ids.append(fixed)
+    return ids
 
 
 class ClaudeSessionManager(object):
@@ -696,6 +711,10 @@ class ClaudeSessionManager(object):
             # a real branch. Falling back to the persisted value would
             # silently re-arm a stale lock from a prior buggy run.
             expected_branch=normalized_text(expected_branch),
+            # Chat history survives respawns — only start_new_chat edits it.
+            previous_session_ids=list(
+                previous_record.previous_session_ids if previous_record else [],
+            ),
         )
         self._records[self._lookup_key(normalized_task_id)] = record
         self._persist_record(record)
@@ -808,6 +827,77 @@ class ClaudeSessionManager(object):
                 self._persist_record(record)
                 self._mirror_to_workspace_metadata(record)
                 return record
+
+    def start_new_chat(
+        self,
+        task_id: str,
+        *,
+        agent_session_id: str = '',
+    ) -> PlanningSessionRecord:
+        """Detach the task's current chat; optionally re-attach a previous one.
+
+        The detached chat's session id is pushed onto
+        ``record.previous_session_ids`` so the operator can navigate back to
+        it later. With an empty ``agent_session_id`` the next message spawns
+        a brand-new Claude session ("fresh chat"); with a non-empty id
+        (typically one of ``previous_session_ids``) the next spawn resumes
+        that conversation instead. A live subprocess is terminated first —
+        unlike ``adopt_session_id`` (an external handoff that refuses to
+        tear down a running process), switching chats is the operator
+        explicitly leaving the current one.
+
+        On a fresh chat the workspace-metadata mirror is also blanked:
+        ``resolve_agent_session_id`` falls back to it when the record's id
+        is empty, so a stale mirror would replay the OLD chat's transcript
+        into the new tab (and re-pin the old id on the next boot's
+        workspace seed).
+        """
+        target_id = fix_session_id(agent_session_id)
+        normalized_task_id = self._normalize_task_id(task_id)
+        lookup_key = self._lookup_key(task_id)
+        with self._lock:
+            spawn_lock = self._spawn_locks.setdefault(
+                lookup_key, threading.Lock(),
+            )
+        with spawn_lock:
+            with self._lock:
+                record = self._records.get(lookup_key)
+                if record is None:
+                    raise ValueError(
+                        f'no session record for task {normalized_task_id}'
+                    )
+                if target_id and target_id == fix_session_id(record.agent_session_id):
+                    return record  # already the active chat — nothing to do
+            # Kill the live subprocess (if any). terminate_session also
+            # flips the record status to TERMINATED and persists it.
+            self.terminate_session(task_id)
+            with self._lock:
+                record = self._records[lookup_key]
+                current_id = fix_session_id(record.agent_session_id)
+                history = [
+                    sid for sid in session_id_list(record.previous_session_ids)
+                    if sid != target_id
+                ]
+                if current_id and current_id != target_id and current_id not in history:
+                    history.append(current_id)
+                record.previous_session_ids = history
+                record.agent_session_id = target_id
+                record.updated_at_epoch = time.time()
+                self._persist_record(record)
+                if not target_id:
+                    self._clear_workspace_agent_session(record.task_id)
+                return record
+
+    def _clear_workspace_agent_session(self, task_id: str) -> None:
+        if self._workspace_manager is None:
+            return
+        try:
+            self._workspace_manager.clear_agent_session(task_id)
+        except Exception:
+            self.logger.exception(
+                'failed to clear workspace agent session id for task %s',
+                task_id,
+            )
 
     def update_status(self, task_id: str, status: str) -> None:
         if status not in SUPPORTED_SESSION_STATUSES:

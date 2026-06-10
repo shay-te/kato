@@ -1198,6 +1198,106 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   margin-left: auto;
 }
 
+/* ───── chats menu (session header) ──────────────────────────────────
+ * Dropdown under the header's Chats button: "New chat" action on top,
+ * then the task's conversations (active first, then detached ones the
+ * operator can switch back to). Same visual family as the FilesTab
+ * commit menu. */
+.chats-menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.chats-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+}
+
+.chats-menu {
+  position: absolute;
+  top: calc(100% + #{$SPACE-4});
+  right: 0;
+  z-index: 10;
+  padding: $SPACE-4 0;
+  background: $C-NEUTRAL-16;
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-4;
+  max-height: 360px;
+  overflow-y: auto;
+  min-width: 320px;
+  box-shadow: $SHADOW-24;
+}
+
+.chats-menu-new {
+  display: flex;
+  align-items: center;
+  gap: $SPACE-8;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid $C-NEUTRAL-16;
+  padding: $SPACE-8 $SPACE-12;
+  cursor: pointer;
+  color: $C-NEUTRAL-96;
+  font: 600 12px/1.3 inherit;
+}
+
+.chats-menu-new:hover {
+  background: $C-NEUTRAL-16;
+}
+
+.chats-menu-empty {
+  padding: $SPACE-8 $SPACE-12;
+  margin: 0;
+  color: $C-NEUTRAL-64;
+  font: 12px/1.4 inherit;
+}
+
+.chats-menu-empty.error {
+  color: $C-RED-71;
+}
+
+.chats-menu-row {
+  display: grid;
+  grid-template-columns: 72px 1fr auto;
+  gap: $SPACE-8;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: $SPACE-6 $SPACE-12;
+  cursor: pointer;
+  color: $C-NEUTRAL-96;
+  font: 12px/1.3 inherit;
+}
+
+.chats-menu-row:hover {
+  background: $C-NEUTRAL-16;
+}
+
+.chats-menu-row.is-active {
+  color: $C-CYAN-53;
+}
+
+.chats-menu-row-sid {
+  color: $C-ORANGE-50;
+  font-family: ui-monospace, monospace;
+}
+
+.chats-menu-row-preview {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chats-menu-row-meta {
+  color: $C-NEUTRAL-45;
+  font-size: $TEXT-11;
+}
+
 #session-task-summary {
   /* Match the task code (#session-task-id, a bold white <strong>):
      same colour + weight so the id and the summary read as one

@@ -260,6 +260,22 @@ class WorkspaceServiceTests(unittest.TestCase):
             ),
         )
 
+    def test_clear_agent_session_blanks_id_but_keeps_cwd(self) -> None:
+        # ``update_agent_session`` keeps the existing id on empty input,
+        # so detaching a chat needs the explicit clear verb.
+        self.service.create(task_id='PROJ-1')
+        self.service.update_agent_session(
+            'PROJ-1', agent_session_id='sess-1', cwd='/tmp/wks',
+        )
+        self.service.clear_agent_session('PROJ-1')
+        record = self.service.get('PROJ-1')
+        assert record is not None
+        self.assertEqual(record.agent_session_id, '')
+        self.assertEqual(record.cwd, '/tmp/wks')
+
+    def test_clear_agent_session_returns_none_for_missing_workspace(self) -> None:
+        self.assertIsNone(self.service.clear_agent_session('NOPE'))
+
     # ----- delete -----
 
     def test_delete_removes_the_folder(self) -> None:

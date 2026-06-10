@@ -25,6 +25,7 @@ import FilesTab, {
   buildFilesDiffMeta,
   filterChangedFileTree,
   formatSyncResult,
+  listVisibleChangedFiles,
 } from './FilesTab.jsx';
 import { fetchDiff, fetchFileTree, fetchTaskComments } from './api.js';
 
@@ -454,6 +455,40 @@ describe('filterChangedFileTree', () => {
 });
 
 
+describe('listVisibleChangedFiles — keyboard walk order', () => {
+  const fileNode = (path) => ({
+    kind: 'file', key: `f:${path}`, name: path.split('/').pop(),
+    file: { type: 'modify', newPath: path, oldPath: path },
+  });
+  const folderNode = (key, children) => ({
+    kind: 'folder', key, name: key, children,
+  });
+
+  test('flattens files in render order', () => {
+    const nodes = [
+      folderNode('src', [fileNode('src/a.js'), fileNode('src/b.js')]),
+      fileNode('top.js'),
+    ];
+    expect(listVisibleChangedFiles(nodes, new Set()).map((f) => f.newPath))
+      .toEqual(['src/a.js', 'src/b.js', 'top.js']);
+  });
+
+  test('a closed folder hides its files from the walk', () => {
+    const nodes = [
+      folderNode('src', [fileNode('src/a.js')]),
+      fileNode('top.js'),
+    ];
+    expect(listVisibleChangedFiles(nodes, new Set(['src'])).map((f) => f.newPath))
+      .toEqual(['top.js']);
+  });
+
+  test('tolerates empty / nullish input', () => {
+    expect(listVisibleChangedFiles(null, new Set())).toEqual([]);
+    expect(listVisibleChangedFiles([], null)).toEqual([]);
+  });
+});
+
+
 describe('FilesTab — render shell', () => {
 
   test('renders without crashing when activeTaskId is null', () => {
@@ -507,6 +542,75 @@ describe('FilesTab — render shell', () => {
       });
     });
     window.HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
+  });
+
+  test('ArrowDown / ArrowUp walk the changed files and open each in the diff', async () => {
+    const twoFileTree = {
+      trees: [{
+        ...FILE_TREE_PAYLOAD.trees[0],
+        tree: [{
+          name: 'src',
+          path: '/tmp/client/src',
+          children: [
+            { name: 'Changed.js', path: '/tmp/client/src/Changed.js' },
+            { name: 'Other.js', path: '/tmp/client/src/Other.js' },
+          ],
+        }],
+        changed_files: ['src/Changed.js', 'src/Other.js'],
+      }],
+    };
+    const twoFileDiff = {
+      diffs: [{
+        repo_id: 'client',
+        cwd: '/tmp/client',
+        diff: [
+          'diff --git a/src/Changed.js b/src/Changed.js',
+          'index 1111111..2222222 100644',
+          '--- a/src/Changed.js',
+          '+++ b/src/Changed.js',
+          '@@ -1 +1 @@',
+          '-old',
+          '+new',
+          'diff --git a/src/Other.js b/src/Other.js',
+          'index 3333333..4444444 100644',
+          '--- a/src/Other.js',
+          '+++ b/src/Other.js',
+          '@@ -1 +1 @@',
+          '-before',
+          '+after',
+          '',
+        ].join('\n'),
+        conflicted_files: [],
+      }],
+    };
+    fetchFileTree.mockResolvedValue(twoFileTree);
+    fetchDiff.mockResolvedValue(twoFileDiff);
+    const onOpenFile = vi.fn();
+    render(<FilesTab taskId="T1" onOpenFile={onOpenFile} />);
+    await screen.findByText('Changed.js');
+
+    const tree = screen.getByRole('tree');
+    // No selection yet → ArrowDown starts at the first file.
+    fireEvent.keyDown(tree, { key: 'ArrowDown' });
+    expect(onOpenFile).toHaveBeenLastCalledWith(expect.objectContaining({
+      relativePath: 'src/Changed.js', view: 'diff',
+    }));
+    fireEvent.keyDown(tree, { key: 'ArrowDown' });
+    expect(onOpenFile).toHaveBeenLastCalledWith(expect.objectContaining({
+      relativePath: 'src/Other.js', view: 'diff',
+    }));
+    // Already on the last file → ArrowDown stays put, no extra open.
+    fireEvent.keyDown(tree, { key: 'ArrowDown' });
+    expect(onOpenFile).toHaveBeenCalledTimes(2);
+    fireEvent.keyDown(tree, { key: 'ArrowUp' });
+    expect(onOpenFile).toHaveBeenLastCalledWith(expect.objectContaining({
+      relativePath: 'src/Changed.js', view: 'diff',
+    }));
+    // The selection highlight follows the keyboard.
+    await waitFor(() => {
+      expect(screen.getByText('Changed.js').closest('button'))
+        .toHaveClass('selected');
+    });
   });
 
   test('does NOT re-scroll the tree on a background refresh that CHANGES data (same focus request)', async () => {

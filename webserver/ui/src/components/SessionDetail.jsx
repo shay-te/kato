@@ -421,6 +421,22 @@ export default function SessionDetail({
     });
   }
 
+  // Fresh chat / chat switch (ChatsMenu in the header): wipe the rendered
+  // transcript and reconnect — the SSE then replays the now-active chat's
+  // history (nothing, for a brand-new chat) into the clean slate. The old
+  // conversation stays navigable from the chats menu.
+  function onChatChanged(result) {
+    const sessionId = String(result?.[AGENT_SESSION_ID] || '').trim();
+    stream.resetChat();
+    stream.appendLocalEvent({
+      source: ENTRY_SOURCE.LOCAL,
+      kind: BUBBLE_KIND.SYSTEM,
+      text: sessionId
+        ? `🗂 switched chat — resuming Claude session ${sessionId.slice(0, 8)}… on the next message.`
+        : '🆕 new chat — your next message starts a fresh Claude session. The previous conversation is in the chats menu.',
+    });
+  }
+
   const hasVisible = useMemo(() => hasVisibleBubbles(stream.events), [stream.events]);
   const banner = lifecycleBanner(stream.lifecycle, taskId, hasVisible);
   const composerDisabled = !canSend(stream.lifecycle, session);
@@ -479,6 +495,7 @@ export default function SessionDetail({
       onStopped={onStopped}
       onResume={onResume}
       onSessionAdopted={onSessionAdopted}
+      onChatChanged={onChatChanged}
       streamLifecycle={stream.lifecycle}
       turnInFlight={stream.turnInFlight}
       awaitingBackground={stream.awaitingBackground}

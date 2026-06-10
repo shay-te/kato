@@ -524,6 +524,16 @@ export function useSessionStream(taskId, onIncomingEvent) {
     markTurnBusy: (value) => dispatch({ type: ACTION_MARK_TURN_BUSY, value }),
     dismissPermission: () => dispatch({ type: ACTION_DISMISS_PERMISSION }),
     reconnect: () => setStreamGeneration((n) => n + 1),
+    // The operator started a fresh chat / switched chats: drop the cached
+    // transcript AND the in-memory one, then reconnect — the SSE replays
+    // the (new) active session's history into the clean slate. A bare
+    // reconnect() isn't enough: hydrate would restore the old chat's
+    // bubbles from the cache and the new chat would render on top of them.
+    resetChat: () => {
+      clearTaskStreamCache(taskIdRef.current);
+      dispatch({ type: ACTION_HYDRATE, value: emptyTaskState() });
+      setStreamGeneration((n) => n + 1);
+    },
   };
 }
 

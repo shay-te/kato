@@ -5,6 +5,10 @@ The selectable model IDs are the stable ``claude`` CLI ALIASES — ``opus`` /
 (``--model`` help: "Provide an alias for the latest model"), so the model the host
 actually runs can never go stale. Only the human-facing LABEL can drift.
 
+``fable`` (the tier above opus) has no CLI alias yet, so it is served as a
+pinned FULL model id (``claude-fable-5``); discovery upgrades the pin itself —
+id and label together — when a newer fable model appears in either source.
+
 We enrich the labels with the live version (e.g. "Opus 4.8") from two sources, in
 order of authority:
 
@@ -35,8 +39,10 @@ _ANTHROPIC_VERSION = '2023-06-01'
 # small window covers all three families on any active install while bounding I/O.
 _SESSION_LOG_SCAN_LIMIT = 80
 # Minor is optional so a future ``claude-opus-5`` still labels as "Opus 5"; an
-# extra ``-<date>`` suffix (``claude-haiku-4-5-20251001``) is ignored.
-_MODEL_ID_RE = re.compile(r'^claude-(opus|sonnet|haiku)-(\d+)(?:-(\d+))?')
+# extra ``-<date>`` suffix (``claude-haiku-4-5-20251001``) or context-window
+# marker (``claude-fable-5[1m]``) is ignored.
+_MODEL_ID_RE = re.compile(r'^claude-(fable|opus|sonnet|haiku)-(\d+)(?:-(\d+))?')
+_FAMILIES = ('fable', 'opus', 'sonnet', 'haiku')
 
 # The catalog changes only when Anthropic ships a model, so we cache — but with a
 # TTL, not forever. A permanent process cache meant a freshly released version
@@ -44,15 +50,28 @@ _MODEL_ID_RE = re.compile(r'^claude-(opus|sonnet|haiku)-(\d+)(?:-(\d+))?')
 # was restarted; the TTL lets the label self-heal within minutes instead.
 _CACHE_TTL_SECONDS = 600.0
 
-# Alias families, in display order. ``id`` is what we pass to ``claude --model``
-# (always resolves to the latest); the version-less ``label`` is the guaranteed
-# non-stale fallback. ``default`` mirrors the prior hardcoded default (sonnet).
+# Selectable families, in display order. ``id`` is what we pass to
+# ``claude --model``; ``family`` is the discovery key. For opus/sonnet/haiku the
+# id is the stable CLI ALIAS (always resolves to the latest), so the version-less
+# ``label`` is the guaranteed non-stale fallback. Fable has NO CLI alias yet
+# (``--model fable`` is rejected), so its id is a pinned FULL model id — the
+# label matches that pinned id exactly, and discovery upgrades both id and label
+# together when a newer fable model shows up (API or session logs), so neither
+# can drift from the other. ``default`` mirrors the prior hardcoded default.
 _ALIASES = (
-    {'id': 'opus', 'label': 'Opus'},
-    {'id': 'sonnet', 'label': 'Sonnet', 'default': True},
-    {'id': 'haiku', 'label': 'Haiku'},
+    {'id': 'claude-fable-5', 'label': 'Fable 5', 'family': 'fable'},
+    {'id': 'opus', 'label': 'Opus', 'family': 'opus'},
+    {'id': 'sonnet', 'label': 'Sonnet', 'family': 'sonnet', 'default': True},
+    {'id': 'haiku', 'label': 'Haiku', 'family': 'haiku'},
 )
-FALLBACK_MODELS = tuple(dict(a) for a in _ALIASES)
+
+
+def _public_model(alias: dict) -> dict:
+    """The picker-facing shape — ``family`` is internal, drop it."""
+    return {k: v for k, v in alias.items() if k != 'family'}
+
+
+FALLBACK_MODELS = tuple(_public_model(a) for a in _ALIASES)
 
 _cache: list[dict] | None = None
 _cache_stamp: float = 0.0
@@ -88,53 +107,61 @@ def reset_models_cache() -> None:
 
 
 def _aliases_with_live_labels() -> list[dict]:
-    labels = _latest_labels_by_family()
+    live_by_family = _latest_by_family()
     out: list[dict] = []
     for alias in _ALIASES:
-        model = dict(alias)
-        live = labels.get(alias['id'])
+        model = _public_model(alias)
+        live = live_by_family.get(alias['family'])
         if live:
-            model['label'] = live
+            model['label'] = live['label']
+            if alias['id'] != alias['family']:
+                # Pinned-full-id entry (fable): track the newest discovered id so
+                # the pin self-heals when a newer model of that family ships.
+                model['id'] = live['model_id']
         out.append(model)
     return out
 
 
-def _latest_labels_by_family() -> dict[str, str]:
-    """Map alias family → its newest display label (e.g. ``opus`` → "Opus 4.8").
+def _latest_by_family() -> dict[str, dict]:
+    """Map family → ``{label, model_id}`` for its newest model (e.g. "Opus 4.8").
 
     The authoritative Anthropic models API wins per family; any family it doesn't
     cover (e.g. no credential) is filled from the CLI's own session logs. Returns
-    ``{}`` only when both sources are empty, so callers fall back to version-less
-    labels. Best-effort — never raises.
+    ``{}`` only when both sources are empty, so callers fall back to the static
+    entries. Best-effort — never raises.
     """
-    labels = _labels_from_models_api()
-    for family, label in _labels_from_session_logs().items():
-        labels.setdefault(family, label)
-    return labels
+    latest = _labels_from_models_api()
+    for family, live in _labels_from_session_logs().items():
+        latest.setdefault(family, live)
+    return latest
 
 
-def _labels_from_models_api() -> dict[str, str]:
-    """Family → display label from the Anthropic models API (``{}`` if no credential)."""
+def _labels_from_models_api() -> dict[str, dict]:
+    """Family → ``{label, model_id}`` from the Anthropic models API (``{}`` if no credential)."""
     data = _fetch_models_api()
     if not data:
         return {}
-    labels: dict[str, str] = {}
+    latest: dict[str, dict] = {}
     # ``data`` is newest-first, so the first match per family is the latest.
     for entry in data:
         if not isinstance(entry, dict):
             continue
         model_id = str(entry.get('id') or '')
         display = str(entry.get('display_name') or '')
-        for family in ('opus', 'sonnet', 'haiku'):
-            if family in labels:
-                continue
-            if model_id.startswith(f'claude-{family}-') and display:
-                labels[family] = _strip_claude_prefix(display)
-    return labels
+        parsed = _family_version_from_model_id(model_id)
+        if parsed is None or not display:
+            continue
+        family = parsed[0]
+        if family not in latest:
+            latest[family] = {
+                'label': _strip_claude_prefix(display),
+                'model_id': _clean_model_id(parsed),
+            }
+    return latest
 
 
-def _labels_from_session_logs() -> dict[str, str]:
-    """Family → label derived from resolved model ids in the CLI's session logs.
+def _labels_from_session_logs() -> dict[str, dict]:
+    """Family → ``{label, model_id}`` from resolved ids in the CLI's session logs.
 
     Credential-free: the ``claude`` CLI records the concrete model it resolved an
     alias to (e.g. ``claude-opus-4-8``) on every assistant turn it writes to
@@ -145,7 +172,7 @@ def _labels_from_session_logs() -> dict[str, str]:
     downgrade opus back to 4.7 the moment an old 4.7 session is resumed/re-touched.
     Returns ``{}`` on any failure (no logs, unreadable, parse error).
     """
-    best: dict[str, tuple[int, int, str]] = {}
+    best: dict[str, tuple] = {}
     try:
         logs = _recent_session_logs()
     except Exception:
@@ -160,7 +187,24 @@ def _labels_from_session_logs() -> dict[str, str]:
             # Compare on (major, minor); keep the higher version's label.
             if current is None or candidate[:2] > current[:2]:
                 best[family] = candidate
-    return {family: candidate[2] for family, candidate in best.items()}
+    return {
+        family: {
+            'label': candidate[2],
+            'model_id': _clean_model_id((family,) + candidate),
+        }
+        for family, candidate in best.items()
+    }
+
+
+def _clean_model_id(parsed: tuple) -> str:
+    """``("opus", 4, 8, "Opus 4.8")`` → ``"claude-opus-4-8"`` — drops date/context suffixes.
+
+    A no-minor id (``("fable", 5, 0, "Fable 5")``) keeps the short form
+    ``claude-fable-5``: the label carries a ``.`` only when the source id had a
+    minor segment, so a real x.0 release ("Sonnet 5.0") still round-trips.
+    """
+    family, major, minor, label = parsed
+    return f'claude-{family}-{major}-{minor}' if '.' in label else f'claude-{family}-{major}'
 
 
 def _recent_session_logs() -> list[Path]:
@@ -184,7 +228,7 @@ def _model_versions_in_log(log: Path) -> dict[str, tuple[int, int, str]]:
 
     First occurrence per family wins within a file (a session runs one model); the
     cheap ``'claude-'`` substring pre-check skips the JSON parse on lines that can't
-    hold a model id, and the scan stops once all three families are seen so a long
+    hold a model id, and the scan stops once every family is seen so a long
     transcript rarely costs more than its opening turns.
     """
     found: dict[str, tuple[int, int, str]] = {}
@@ -200,7 +244,7 @@ def _model_versions_in_log(log: Path) -> dict[str, tuple[int, int, str]]:
             if parsed and parsed[0] not in found:
                 family, major, minor, label = parsed
                 found[family] = (major, minor, label)
-                if len(found) == 3:
+                if len(found) == len(_FAMILIES):
                     break
     return found
 
@@ -230,15 +274,6 @@ def _family_version_from_model_id(model_id: str) -> tuple[str, int, int, str] | 
     version = f'{major}.{minor}' if minor is not None else major
     return family, int(major), int(minor) if minor is not None else 0, \
         f'{family.capitalize()} {version}'
-
-
-def _family_label_from_model_id(model_id: str) -> tuple[str, str] | None:
-    """``"claude-opus-4-8"`` → ``("opus", "Opus 4.8")``; ``None`` if not a real id."""
-    parsed = _family_version_from_model_id(model_id)
-    if parsed is None:
-        return None
-    family, _major, _minor, label = parsed
-    return family, label
 
 
 def _strip_claude_prefix(display: str) -> str:

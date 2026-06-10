@@ -2125,5 +2125,151 @@ class DeletePersistedRecordGlobOSErrorTests(unittest.TestCase):
         self.assertFalse(canonical.is_file())
 
 
+class _ChatFakeWorkspaceManager:
+    """Records mirror calls so chat tests can assert on the workspace side."""
+
+    def __init__(self) -> None:
+        self.cleared: list[str] = []
+        self.updated: list[tuple] = []
+
+    def list_workspaces(self):
+        return []
+
+    def update_agent_session(self, task_id, *, agent_session_id='', cwd=''):
+        self.updated.append((task_id, agent_session_id, cwd))
+
+    def clear_agent_session(self, task_id):
+        self.cleared.append(task_id)
+
+
+class StartNewChatTests(unittest.TestCase):
+    """start_new_chat — detach the current chat / navigate back to an old one."""
+
+    def setUp(self) -> None:
+        self._tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tempdir.cleanup)
+        self.state_dir = Path(self._tempdir.name)
+        self._fakes: list[_FakeStreamingSession] = []
+
+        def factory(**kwargs):
+            session = _FakeStreamingSession(**kwargs)
+            if not session.resume_session_id:
+                # Each FRESH spawn is a new conversation — give it a unique
+                # id (the base fake derives one id per task, which would
+                # make chat #2 collide with chat #1).
+                session._agent_session_id = (
+                    f'fake-session-{session.task_id}-{len(self._fakes)}'
+                )
+            self._fakes.append(session)
+            return session
+
+        self.manager = ClaudeSessionManager(
+            state_dir=self.state_dir,
+            session_factory=factory,
+        )
+
+    def test_fresh_chat_detaches_id_and_keeps_it_in_history(self) -> None:
+        first = self.manager.start_session(task_id='PROJ-1')
+        first_id = first.agent_session_id
+
+        record = self.manager.start_new_chat('PROJ-1')
+
+        self.assertEqual(record.agent_session_id, '')
+        self.assertEqual(record.previous_session_ids, [first_id])
+        self.assertEqual(first.terminate_calls, 1)  # live subprocess stopped
+        # Persisted — a restart must not resurrect the detached chat.
+        persisted = json.loads((self.state_dir / 'proj-1.json').read_text())
+        self.assertEqual(persisted[AGENT_SESSION_ID], '')
+        self.assertEqual(persisted['previous_session_ids'], [first_id])
+
+    def test_next_spawn_after_fresh_chat_does_not_resume(self) -> None:
+        first = self.manager.start_session(task_id='PROJ-1')
+        first_id = first.agent_session_id
+        self.manager.start_new_chat('PROJ-1')
+
+        second = self.manager.start_session(task_id='PROJ-1')
+
+        self.assertEqual(second.resume_session_id, '')   # brand-new conversation
+        self.assertNotEqual(second.agent_session_id, first_id)
+        record = self.manager.get_record('PROJ-1')
+        self.assertEqual(record.agent_session_id, second.agent_session_id)
+        # History survives the respawn — the old chat stays navigable.
+        self.assertEqual(record.previous_session_ids, [first_id])
+
+    def test_switch_back_to_a_previous_chat(self) -> None:
+        first = self.manager.start_session(task_id='PROJ-1')
+        first_id = first.agent_session_id
+        self.manager.start_new_chat('PROJ-1')
+        second = self.manager.start_session(task_id='PROJ-1')
+        second_id = second.agent_session_id
+
+        record = self.manager.start_new_chat('PROJ-1', agent_session_id=first_id)
+
+        self.assertEqual(record.agent_session_id, first_id)
+        # The chat we left moved into history; the target left it.
+        self.assertEqual(record.previous_session_ids, [second_id])
+        self.assertEqual(second.terminate_calls, 1)
+        # The next spawn resumes the switched-to conversation.
+        resumed = self.manager.start_session(task_id='PROJ-1')
+        self.assertEqual(resumed.resume_session_id, first_id)
+
+    def test_switching_to_the_active_chat_is_a_noop(self) -> None:
+        session = self.manager.start_session(task_id='PROJ-1')
+        current_id = session.agent_session_id
+
+        record = self.manager.start_new_chat(
+            'PROJ-1', agent_session_id=current_id,
+        )
+
+        self.assertEqual(record.agent_session_id, current_id)
+        self.assertEqual(session.terminate_calls, 0)  # live session untouched
+
+    def test_unknown_task_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            self.manager.start_new_chat('NOPE-1')
+
+    def test_fresh_chat_clears_the_workspace_mirror(self) -> None:
+        # ``resolve_agent_session_id`` falls back to workspace metadata
+        # when the record id is blank — a stale mirror would replay the
+        # OLD chat into the new tab. Fresh chat must blank both sides.
+        workspaces = _ChatFakeWorkspaceManager()
+        self.manager.attach_workspace_manager(workspaces)
+        self.manager.start_session(task_id='PROJ-1')
+
+        self.manager.start_new_chat('PROJ-1')
+
+        self.assertEqual(workspaces.cleared, ['PROJ-1'])
+
+    def test_switching_chats_mirrors_the_target_id_not_a_clear(self) -> None:
+        workspaces = _ChatFakeWorkspaceManager()
+        self.manager.attach_workspace_manager(workspaces)
+        first = self.manager.start_session(task_id='PROJ-1')
+        first_id = first.agent_session_id
+        self.manager.start_new_chat('PROJ-1')
+        self.manager.start_session(task_id='PROJ-1')
+        workspaces.cleared.clear()
+        workspaces.updated.clear()
+
+        self.manager.start_new_chat('PROJ-1', agent_session_id=first_id)
+
+        self.assertEqual(workspaces.cleared, [])
+        self.assertIn(
+            ('PROJ-1', first_id, '/tmp/repo'), workspaces.updated,
+        )
+
+    def test_previous_session_ids_round_trip_from_disk(self) -> None:
+        first = self.manager.start_session(task_id='PROJ-1')
+        first_id = first.agent_session_id
+        self.manager.start_new_chat('PROJ-1')
+
+        rebooted = ClaudeSessionManager(
+            state_dir=self.state_dir,
+            session_factory=lambda **kw: _FakeStreamingSession(**kw),
+        )
+        record = rebooted.get_record('PROJ-1')
+        self.assertEqual(record.previous_session_ids, [first_id])
+        self.assertEqual(record.agent_session_id, '')
+
+
 if __name__ == '__main__':
     unittest.main()

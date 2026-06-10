@@ -208,6 +208,17 @@ class WorkspaceService(Service):
 
         return self._mutate(task_id, apply)
 
+    def clear_agent_session(self, task_id: str) -> WorkspaceRecord | None:
+        """Blank the bound agent session id (the operator detached the chat).
+
+        ``update_agent_session`` deliberately KEEPS the existing id when
+        given an empty one (partial updates must not blank it), so
+        detaching gets its own explicit verb. The cwd is untouched.
+        """
+        return self._mutate(
+            task_id, lambda record: setattr(record, 'agent_session_id', ''),
+        )
+
     def update_resume_on_startup(
         self, task_id: str, resume_on_startup: bool,
     ) -> WorkspaceRecord | None:

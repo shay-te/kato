@@ -1012,6 +1012,78 @@ def _register_http_routes(app: Flask) -> None:
             'transcript_migrated_to': migration_path,
         })
 
+    @app.get('/api/sessions/<task_id>/chats')
+    def list_task_chats(task_id: str):
+        """List the task's chats — the active one plus detached previous ones.
+
+        Each entry carries transcript metadata (turn count, first/last
+        user-message previews, mtime) when the JSONL is on disk, so the
+        chats menu can label conversations meaningfully. The active chat
+        (if it has a session id yet) comes first; previous chats follow
+        newest-detached first.
+        """
+        manager = app.config['SESSION_MANAGER']
+        record = manager.get_record(task_id)
+        if record is None:
+            return jsonify({'task_id': task_id, 'chats': []})
+        active_id = read_session_id_from(record)
+        previous_ids = [
+            sid for sid in getattr(record, 'previous_session_ids', []) or []
+            if sid and sid != active_id
+        ]
+        ordered = ([active_id] if active_id else []) + list(reversed(previous_ids))
+        meta_by_id = _claude_session_metadata_by_id(set(ordered))
+        chats = []
+        for sid in ordered:
+            row = meta_by_id.get(sid)
+            chats.append({
+                AGENT_SESSION_ID: sid,
+                'active': sid == active_id,
+                'last_modified_epoch': row.last_modified_epoch if row else 0.0,
+                'turn_count': row.turn_count if row else 0,
+                'first_user_message': row.first_user_message if row else '',
+                'last_user_message': row.last_user_message if row else '',
+            })
+        return jsonify({'task_id': record.task_id, 'chats': chats})
+
+    @app.post('/api/sessions/<task_id>/chats')
+    def start_task_chat(task_id: str):
+        """Start a fresh chat, or switch back to one of the task's own chats.
+
+        Empty body (or no id) → detach the current chat and let the next
+        message spawn a brand-new Claude session. With an id → it must be
+        one of THIS task's chats (current or previous); use the adopt
+        endpoint to attach an external session. The live subprocess (if
+        any) is terminated as part of the switch.
+        """
+        payload = request.get_json(silent=True) or {}
+        agent_session_id = fix_session_id(payload.get(AGENT_SESSION_ID))
+        manager = app.config['SESSION_MANAGER']
+        record = manager.get_record(task_id)
+        if record is None:
+            return jsonify({'error': f'no session record for task {task_id}'}), 404
+        if agent_session_id:
+            known = {read_session_id_from(record)}
+            known.update(getattr(record, 'previous_session_ids', []) or [])
+            if agent_session_id not in known:
+                return jsonify({
+                    'error': (
+                        'that session id is not one of this task\'s chats; '
+                        'use adopt-agent-session to attach an external session'
+                    ),
+                }), 400
+        try:
+            record = manager.start_new_chat(
+                task_id, agent_session_id=agent_session_id,
+            )
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 404
+        return jsonify({
+            'task_id': record.task_id,
+            AGENT_SESSION_ID: record.agent_session_id,
+            'previous_session_ids': list(record.previous_session_ids),
+        })
+
     @app.get('/healthz')
     def healthz():
         return {'status': 'ok'}
@@ -2455,14 +2527,21 @@ def _match_model_alias(configured: str, ids: list) -> str:
 
     Matches exactly first (``opus`` → ``opus``; a codex slug → itself), then by
     Claude family so a full id like ``claude-opus-4-8`` still resolves to the
-    ``opus`` alias the picker offers.
+    ``opus`` alias the picker offers. Fable has no CLI alias — the picker offers
+    a full id (e.g. ``claude-fable-5``) — so a family match falls through to the
+    offered full id of that family.
     """
     candidate = (configured or '').strip().lower()
     if candidate in ids:
         return candidate
-    for family in ('opus', 'sonnet', 'haiku'):
-        if family in ids and (candidate == family or candidate.startswith(f'claude-{family}')):
+    for family in ('fable', 'opus', 'sonnet', 'haiku'):
+        if candidate != family and not candidate.startswith(f'claude-{family}'):
+            continue
+        if family in ids:
             return family
+        for offered in ids:
+            if isinstance(offered, str) and offered.startswith(f'claude-{family}'):
+                return offered
     return ''
 
 
@@ -2779,6 +2858,28 @@ def _spawn_or_reject_chat_session(app: Flask, task_id: str, text: str):
     except Exception as exc:
         return jsonify({'error': str(exc)}), 500
     return jsonify({'status': 'spawned', 'text': text})
+
+
+def _claude_session_metadata_by_id(wanted_ids):
+    """Map session id → on-disk transcript metadata for the given ids.
+
+    Best-effort: ids whose JSONL isn't on disk simply have no entry, and
+    any index failure returns an empty map — the chats list still renders
+    with bare ids.
+    """
+    if not wanted_ids:
+        return {}
+    from claude_core_lib.claude_core_lib.session.index import list_sessions
+
+    try:
+        rows = list_sessions(max_results=10000)
+    except Exception:
+        return {}
+    return {
+        row.agent_session_id: row
+        for row in rows
+        if row.agent_session_id in wanted_ids
+    }
 
 
 def _migrate_adopted_session_transcript(
