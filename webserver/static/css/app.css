@@ -4217,6 +4217,10 @@ body.kato-resizing #left-pane-resizer::before {
   color: #f5f5f7;
   font-weight: 600;
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Read-only repo badge in the repo header — kato has no push permission for
@@ -5063,6 +5067,10 @@ body.kato-resizing #left-pane-resizer::before {
 .diff-repo-name {
   color: #f5f5f7;
   font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .diff-repo-range {

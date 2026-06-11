@@ -4271,6 +4271,13 @@ body.kato-resizing #left-pane-resizer::before {
   color: $C-NEUTRAL-96;
   font-weight: 600;
   flex: 1;
+  // Truncate long repo names (ob-love-admin-client) with an ellipsis instead
+  // of wrapping the header across lines — the full path is already available
+  // in the name's data-tooltip. Same idiom as .tree-row-name.
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Read-only repo badge in the repo header — kato has no push permission for
@@ -5126,6 +5133,12 @@ body.kato-resizing #left-pane-resizer::before {
 .diff-repo-name {
   color: $C-NEUTRAL-96;
   font-weight: 600;
+  // Same truncation as .files-tab-repo-name — long repo names ellipsize
+  // rather than wrap the diff header.
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .diff-repo-range {
