@@ -22,6 +22,7 @@ import {
 } from '../utils/queuedMessagesStore.js';
 import { useSessionOption } from '../hooks/useSessionOption.js';
 import { useToolMemory } from '../hooks/useToolMemory.js';
+import { toast } from '../stores/toastStore.js';
 import { fetchEffortLevels, fetchModels, fetchSessionEffort, fetchSessionModel, postChatMessage, postSession, setSessionEffort, setSessionModel } from '../api.js';
 
 export default function SessionDetail({
@@ -454,24 +455,33 @@ export default function SessionDetail({
     prevTurnInFlightRef.current = false;
     if (discarded.length > 0) {
       commitQueue(() => []);
+      // Also wipe the durable copies IMPERATIVELY: if the operator
+      // switched task tabs while the POST was in flight, this component
+      // is unmounted — the setState above no-ops and the persist effect
+      // never runs, so the stale queue would resurrect on return and
+      // auto-flush into the new chat (the exact bug being prevented).
+      writeQueuedMessages(taskId, []);
+      persistQueuedMessages(taskId, []);
+      queuedMessagesRef.current = [];
+      // Surface the dropped texts in a TOAST, not (only) a chat bubble:
+      // on a switch, the history replay appends after local bubbles, so
+      // a bubble lands at the top of the transcript where the auto-scroll
+      // to bottom hides it.
+      toast.show({
+        kind: 'warning',
+        title: `Discarded ${discarded.length} queued message(s)`,
+        message: 'They were written for the previous chat:\n'
+          + discarded.map((item) => `• ${item.text}`).join('\n'),
+        durationMs: 12000,
+      });
     }
     stream.resetChat();
-    const discardNote = discarded.length > 0
-      ? `\nDiscarded ${discarded.length} queued message(s) written for the previous chat:\n`
-        + discarded.map((item) => `  • ${item.text}`).join('\n')
-      : '';
     if (!sessionId) {
       stream.appendLocalEvent({
         source: ENTRY_SOURCE.LOCAL,
         kind: BUBBLE_KIND.SYSTEM,
         text: '🆕 new chat — your next message starts a fresh Claude session. '
-          + `The previous conversation is in the chats menu.${discardNote}`,
-      });
-    } else if (discarded.length > 0) {
-      stream.appendLocalEvent({
-        source: ENTRY_SOURCE.LOCAL,
-        kind: BUBBLE_KIND.SYSTEM,
-        text: `🗂 switched chat.${discardNote}`,
+          + 'The previous conversation is in the chats menu.',
       });
     }
   }

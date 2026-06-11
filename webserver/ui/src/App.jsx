@@ -407,6 +407,10 @@ export default function App() {
       // name): DiffPane scrolls to the file's first comment thread,
       // not just the top of the file section.
       focusComment: !!info.focusComment,
+      // The changed-file kind ('delete' | 'add' | …) when the click came
+      // from a changed-tree row — lets the tree highlight the exact row
+      // of a delete+add pair sharing one display path.
+      kind: String(info.kind || ''),
     };
     openFileRef.current = nextOpenFile;
     rememberFileView(nextOpenFile);

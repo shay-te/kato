@@ -227,23 +227,25 @@ export default function DiffPane({
   // the clamp's scroll event would then persist file A's leftover offset
   // into file B's remembered view state. Initialized on mount WITHOUT
   // resetting, so the diffScrollTop restore effect above (same file,
-  // restoreViewState tab return) still wins.
+  // restoreViewState tab return) still wins. A focusComment open also
+  // skips the reset — the thread-scroll effect above owns positioning
+  // there, and an instant scrollTop=0 would ABORT its in-flight smooth
+  // scroll (a comment-badge click on a same-repo file would land at the
+  // top of the file instead of on the thread).
   const renderedFileKeyRef = useRef(null);
   const selectedFileKey = selected
     ? diffAnchorKey(selected.repo.repo_id, selected.path) : '';
   useEffect(() => {
     if (state.status !== 'ready' || !selectedFileKey) { return; }
-    if (renderedFileKeyRef.current === null) {
-      renderedFileKeyRef.current = selectedFileKey;
-      return;
-    }
-    if (renderedFileKeyRef.current === selectedFileKey) { return; }
+    const previousKey = renderedFileKeyRef.current;
     renderedFileKeyRef.current = selectedFileKey;
+    if (previousKey === null || previousKey === selectedFileKey) { return; }
+    if (focusComment) { return; }
     const node = bodyRef.current;
     if (node) { node.scrollTop = 0; }
     const notify = onViewStateChangeRef.current;
     if (typeof notify === 'function') { notify({ diffScrollTop: 0 }); }
-  }, [state.status, selectedFileKey]);
+  }, [state.status, selectedFileKey, focusComment]);
 
   function handleBodyScroll(event) {
     const notify = onViewStateChangeRef.current;

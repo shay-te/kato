@@ -267,6 +267,7 @@ describe('changedFileOpenTarget — payload a row hands to the centre pane', () 
       relativePath: 'src/App.jsx',
       repoId: 'client',
       view: 'diff',
+      kind: 'modify',
     });
   });
 
@@ -286,6 +287,9 @@ describe('changedFileOpenTarget — payload a row hands to the centre pane', () 
     );
     expect(t.relativePath).toBe('gone.txt');
     expect(t.absolutePath).toBe('/w/r/gone.txt');
+    // The kind rides along so the tree can highlight the exact row of a
+    // delete+add pair sharing one path.
+    expect(t.kind).toBe('delete');
   });
 
   test('no cwd → relative path is used as-is (no leading slash)', () => {

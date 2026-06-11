@@ -1073,16 +1073,19 @@ def _register_http_routes(app: Flask) -> None:
                 AGENT_SESSION_ID: '',
                 'previous_session_ids': [],
             })
-        # A kato comment-run owns the live session right now. Switching
-        # would kill it mid-fix; the watcher would then requeue the
-        # comment and redispatch it INTO the operator's new chat —
-        # hijacking the conversation they just asked for. Refuse instead.
-        if _task_has_in_progress_comment_run(app, task_id):
+        # A kato comment-run owns (or is about to own) the session.
+        # Switching would kill an IN_PROGRESS fix mid-run — the watcher
+        # then requeues it — and a QUEUED comment would be dispatched by
+        # the next 2s watcher tick straight INTO the operator's new chat,
+        # hijacking the conversation they just asked for. Refuse both.
+        # (Note: stopping the session does NOT cancel a comment-run — the
+        # watcher respawns it — so the message doesn't suggest that.)
+        if _task_has_active_comment_run(app, task_id):
             return jsonify({
                 'error': (
-                    'kato is working on a review comment for this task; '
-                    'wait for it to finish (or stop the session) before '
-                    'switching chats'
+                    'kato is working on (or has queued) a review comment '
+                    'for this task; wait for it to finish before switching '
+                    'chats'
                 ),
             }), 409
         if agent_session_id:
@@ -2522,26 +2525,32 @@ def _configured_chat_model(app: Flask) -> str:
 def _apply_configured_default(app: Flask, models: list) -> list:
     """Re-point the ``default`` flag onto the model the runner actually falls back to.
 
-    The composer now shows the default-flagged model (instead of an ambiguous
-    "Default" entry) when a task has no per-task override, so that flag must name
-    the model spawn would really use: ``runner._defaults.model`` if configured,
-    otherwise the CLI's own default (whatever discovery already flagged). If the
-    configured value doesn't match one of the offered ids, the existing flag is
-    left untouched.
+    The composer shows the default-flagged model (instead of an ambiguous
+    "Default" entry) when a task has no per-task override, so that flag must
+    name the model spawn would really use: ``runner._defaults.model`` if
+    configured, otherwise the CLI's own default (whatever discovery already
+    flagged). A configured value that matches NO offered id is surfaced as
+    its own flagged entry — spawn passes it verbatim, so leaving the
+    discovery flag (e.g. sonnet) in place would make the picker claim a
+    model that will not run (the no-ambiguous-picker rule).
     """
     configured = _configured_chat_model(app)
     if not configured:
         return models
     target = _match_model_alias(configured, [m.get('id') for m in models])
-    if not target:
-        return models
     adjusted = []
     for model in models:
         model = dict(model)
         model.pop('default', None)
-        if model.get('id') == target:
+        if target and model.get('id') == target:
             model['default'] = True
         adjusted.append(model)
+    if not target:
+        adjusted.append({
+            'id': configured,
+            'label': f'{configured} (configured)',
+            'default': True,
+        })
     return adjusted
 
 
@@ -2905,12 +2914,16 @@ def _spawn_or_reject_chat_session(app: Flask, task_id: str, text: str):
     return jsonify({'status': 'spawned', 'text': text})
 
 
-def _task_has_in_progress_comment_run(app, task_id: str) -> bool:
-    """Is a kato comment-run currently occupying this task's session?
+def _task_has_active_comment_run(app, task_id: str) -> bool:
+    """Is a kato comment-run occupying — or queued to occupy — the session?
 
-    Conservative on failure (False): the chats switch should not be
-    bricked by a comment-store hiccup — the UI's own mid-turn confirm
-    still stands between the operator and a blind kill.
+    QUEUED counts as blocking too: a fresh-chat detach leaves a blank
+    record, and the comment watcher's next 2-second tick would dispatch
+    the queued comment as a fresh spawn whose id gets pinned as the
+    ACTIVE chat — the operator's "new chat" would open as a comment-fix
+    conversation. Conservative on failure (False): the chats switch
+    should not be bricked by a comment-store hiccup — the UI's own
+    mid-turn confirm still stands between the operator and a blind kill.
     """
     agent_service = app.config.get('AGENT_SERVICE')
     list_comments = getattr(agent_service, 'list_task_comments', None)
@@ -2921,7 +2934,7 @@ def _task_has_in_progress_comment_run(app, task_id: str) -> bool:
     except Exception:
         return False
     return any(
-        str(comment.get('kato_status', '') or '') == 'in_progress'
+        str(comment.get('kato_status', '') or '') in ('in_progress', 'queued')
         for comment in comments
         if isinstance(comment, dict)
     )

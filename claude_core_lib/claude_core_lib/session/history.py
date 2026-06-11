@@ -95,23 +95,37 @@ def delete_session_file(
     CLI transcript — which would otherwise accumulate forever under
     ``~/.claude/projects/`` — should go too.
 
-    Returns ``True`` when a file was removed, ``False`` when there
-    was nothing to delete (no id, no matching transcript) or the
-    unlink failed. Best-effort + never raises: a leftover transcript
-    is a disk-space nuisance, not a reason to blow up the
+    Deletes EVERY copy of the transcript, not just the one
+    ``find_session_file`` would resolve: one session id legitimately
+    exists under several project dirs (cwd-drift resume spawns leave
+    the source behind as a snapshot; adoption copies rather than
+    moves). Unlinking a single copy would leave the stale snapshots
+    discoverable — the "forgotten" conversation would still show up
+    in the adopt picker and be resumable at an older state.
+
+    Returns ``True`` when at least one file was removed, ``False``
+    when there was nothing to delete (no id, no matching transcript)
+    or every unlink failed. Best-effort + never raises: a leftover
+    transcript is a disk-space nuisance, not a reason to blow up the
     done-cleanup loop.
     """
-    path = find_session_file(agent_session_id, projects_root=projects_root)
-    if path is None:
+    agent_session_id = fix_session_id(agent_session_id)
+    if not agent_session_id:
         return False
-    try:
-        path.unlink()
-        return True
-    except OSError:
-        # FileNotFoundError is an OSError subclass — a transcript
-        # that vanished between find + unlink is fine, just report
-        # "nothing removed".
+    root = Path(projects_root) if projects_root else _default_projects_root()
+    if not root.is_dir():
         return False
+    removed = False
+    for match in glob.glob(str(root / '*' / f'{agent_session_id}.jsonl')):
+        try:
+            Path(match).unlink()
+            removed = True
+        except OSError:
+            # FileNotFoundError is an OSError subclass — a transcript
+            # that vanished between glob + unlink is fine; other copies
+            # are still attempted.
+            continue
+    return removed
 
 
 def find_session_id_for_cwd(

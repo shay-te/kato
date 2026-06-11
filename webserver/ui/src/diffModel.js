@@ -140,6 +140,11 @@ export function changedFileOpenTarget(repoDiff, file) {
     relativePath: path,
     repoId: repoDiff.repo_id,
     view: 'diff',
+    // Disambiguates a delete+add pair sharing one display path (a
+    // typechange diff): the tree's derived selection keys on
+    // ``<kind>:<path>``, so without the kind the clicked DELETE row
+    // would highlight as the surviving ADD entry.
+    kind: file.type || 'modify',
   };
 }
 

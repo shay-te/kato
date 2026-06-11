@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { fetchTaskChats, startTaskChat } from '../api.js';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import { useEscapeKey } from '../hooks/useEscapeKey.js';
@@ -28,6 +28,13 @@ export default function ChatsMenu({
     setConfirmTarget(null);
   }
   useEscapeKey(close, open);
+
+  // The warning's premise dies with the turn: once Claude is no longer
+  // mid-turn, the armed confirm would show a false "Claude is mid-turn"
+  // state (and the next click would act without the kill it warns about).
+  useEffect(() => {
+    if (!turnInFlight) { setConfirmTarget(null); }
+  }, [turnInFlight]);
 
   async function loadChats() {
     setState({ status: 'loading', chats: [], error: '' });
@@ -86,9 +93,12 @@ export default function ChatsMenu({
       setBusy(false);
       if (!succeeded) {
         // Failure / early return: the old chat is untouched, so re-enable
-        // the normal queued-message flush. (On success onChatChanged
-        // already cleared the flag while discarding the stale queue.)
+        // the normal queued-message flush and disarm the mid-turn confirm
+        // (a stale warning would mislead the next interaction). On
+        // success onChatChanged already cleared the pending flag while
+        // discarding the stale queue, and close() disarmed the confirm.
         notifySwitchPending(false);
+        setConfirmTarget(null);
       }
     }
   }

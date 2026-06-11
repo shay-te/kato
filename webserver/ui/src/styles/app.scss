@@ -1263,12 +1263,17 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 }
 
 /* Mid-turn guard: shown after the first click on a chat action while
- * Claude is working — the second click confirms the kill. */
+ * Claude is working — the second click confirms the kill. Longhand
+ * font properties: the ``font: … inherit`` shorthand is invalid CSS
+ * (``inherit`` can't appear as the family inside the shorthand) and
+ * browsers drop the whole declaration. */
 .chats-menu-confirm {
   padding: $SPACE-8 $SPACE-12;
   margin: 0;
   color: $C-ORANGE-50;
-  font: 600 12px/1.4 inherit;
+  font-size: $TEXT-12;
+  font-weight: 600;
+  line-height: 1.4;
   border-bottom: 1px solid $C-NEUTRAL-100-A10;
 }
 

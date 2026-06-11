@@ -57,6 +57,10 @@ vi.mock('./ChatSearch.jsx', () => ({ default: () => null }));
 vi.mock('../hooks/useToolMemory.js', () => ({
   useToolMemory: () => ({ recall: vi.fn(), remember: vi.fn() }),
 }));
+vi.mock('../stores/toastStore.js', () => ({
+  toast: { show: vi.fn(), errorFromResult: vi.fn() },
+  toastResult: vi.fn(),
+}));
 vi.mock('../api.js', () => ({
   fetchModels: vi.fn().mockResolvedValue({ models: [] }),
   fetchSessionModel: vi.fn().mockResolvedValue({ model: '' }),
@@ -90,7 +94,8 @@ import { postChatMessage } from '../api.js';
 import { ENTRY_SOURCE } from '../constants/entrySource.js';
 import { CLAUDE_EVENT, CLAUDE_SYSTEM_SUBTYPE } from '../constants/claudeEvent.js';
 import { BUBBLE_KIND } from '../constants/bubbleKind.js';
-import { _resetQueuedMessagesStore, forgetQueuedMessages } from '../utils/queuedMessagesStore.js';
+import { _resetQueuedMessagesStore, forgetQueuedMessages, readQueuedMessages } from '../utils/queuedMessagesStore.js';
+import { toast } from '../stores/toastStore.js';
 
 
 describe('lifecycleBanner', () => {
@@ -509,9 +514,16 @@ describe('SessionDetail — outgoing message queue', () => {
     expect(killed.resetChat).toHaveBeenCalled();
     expect(screen.queryByRole('list', { name: /queued messages/i }))
       .not.toBeInTheDocument();
-    expect(killed.appendLocalEvent).toHaveBeenCalledWith(expect.objectContaining({
-      text: expect.stringContaining('hello'),
+    // The dropped texts surface in a TOAST (always visible), not buried
+    // at the top of a replayed transcript.
+    expect(toast.show).toHaveBeenCalledWith(expect.objectContaining({
+      title: expect.stringContaining('Discarded 1 queued message'),
+      message: expect.stringContaining('hello'),
     }));
+    // The DURABLE copy is wiped imperatively too — a discard that only
+    // touched React state would resurrect the queue if the component had
+    // unmounted mid-POST (tab switch during the chat switch).
+    expect(readQueuedMessages('T1')).toEqual([]);
     // Later turn ends still flush nothing — the queue is gone.
     useSessionStream.mockReturnValue(_stream({ turnInFlight: true }));
     rerender(<SessionDetail session={{ task_id: 'T1' }} />);
