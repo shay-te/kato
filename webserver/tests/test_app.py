@@ -357,22 +357,49 @@ class WebserverAppTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 404)
 
-    def test_start_task_chat_refuses_during_an_in_progress_comment_run(self):
-        # Switching kills the live subprocess; mid comment-run that would
-        # requeue the comment and redispatch it INTO the operator's new
-        # chat. The endpoint refuses with 409 instead.
+    def _chat_switch_response_with_comment(self, kato_status):
         class _BusyAgentService:
             def list_task_comments(self, task_id):  # noqa: ARG002
-                return [{'id': 'c1', 'kato_status': 'in_progress'}]
+                return [{'id': 'c1', 'kato_status': kato_status}]
 
-        manager = _FakeManager(records=[_FakeRecord(
+        class _SwitchableManager(_FakeManager):
+            def start_new_chat(self, task_id, *, agent_session_id=''):
+                return _FakeRecord(
+                    task_id=task_id,
+                    agent_session_id=agent_session_id,
+                    previous_session_ids=['cur'],
+                )
+
+        manager = _SwitchableManager(records=[_FakeRecord(
             task_id='PROJ-1', agent_session_id='cur', previous_session_ids=[],
         )])
         app = create_app(session_manager=manager)
         app.config['AGENT_SERVICE'] = _BusyAgentService()
-        response = app.test_client().post('/api/sessions/PROJ-1/chats', json={})
+        return app.test_client().post('/api/sessions/PROJ-1/chats', json={})
+
+    def test_start_task_chat_refuses_during_an_in_progress_comment_run(self):
+        # Switching kills the live subprocess; mid comment-run that would
+        # requeue the comment and redispatch it INTO the operator's new
+        # chat. The endpoint refuses with 409 instead.
+        response = self._chat_switch_response_with_comment('in_progress')
         self.assertEqual(response.status_code, 409)
         self.assertIn('review comment', response.get_json()['error'])
+        # Stopping the session does NOT cancel a comment-run (the watcher
+        # respawns it), so the message must not suggest it as a way out.
+        self.assertNotIn('stop the session', response.get_json()['error'])
+
+    def test_start_task_chat_refuses_while_a_comment_is_queued(self):
+        # A QUEUED comment is dispatched by the next 2s watcher tick — on a
+        # just-detached blank record it would spawn a fresh session whose id
+        # becomes the operator's "new chat". Queued blocks the switch too.
+        response = self._chat_switch_response_with_comment('queued')
+        self.assertEqual(response.status_code, 409)
+
+    def test_start_task_chat_allows_switch_with_only_settled_comments(self):
+        # Done/failed/addressed comments don't occupy the session — they
+        # must not brick the chats menu.
+        response = self._chat_switch_response_with_comment('addressed')
+        self.assertEqual(response.status_code, 200)
 
     def test_adopt_claude_session_endpoint_rejects_pinned_id_change(self):
         class _PinnedManager(_FakeManager):
@@ -1135,6 +1162,29 @@ class ModelEndpointTests(unittest.TestCase):
         )
         body = self.client.get('/api/models').get_json()
         self.assertEqual([m['id'] for m in body['models'] if m.get('default')], ['sonnet'])
+
+    def test_unmatched_configured_model_is_surfaced_not_silently_misflagged(self):
+        # When the configured model matches NO offered id (e.g. an older
+        # pinned fable after the catalog self-upgraded), the picker must
+        # not keep the stale discovery flag (sonnet) — that would claim a
+        # model that will not run. The configured value itself is surfaced
+        # as the flagged entry, because spawn passes it verbatim.
+        from claude_core_lib.claude_core_lib.helpers.model_catalog import reset_models_cache
+        reset_models_cache()
+        self.addCleanup(reset_models_cache)
+        runner = SimpleNamespace(
+            _defaults=SimpleNamespace(binary='claude', model='claude-fable-99'),
+        )
+        self.app.config['PLANNING_SESSION_RUNNER'] = runner
+        body = self.client.get('/api/models').get_json()
+        flagged = [m for m in body['models'] if m.get('default')]
+        self.assertEqual(len(flagged), 1)
+        self.assertEqual(flagged[0]['id'], 'claude-fable-99')
+        self.assertIn('(configured)', flagged[0]['label'])
+        # The catalog's own entries lost their stale flag.
+        self.assertNotIn(
+            'sonnet', [m['id'] for m in flagged],
+        )
 
     def test_match_model_alias_handles_alias_full_id_and_miss(self):
         from kato_webserver.app import _match_model_alias

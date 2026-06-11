@@ -661,6 +661,25 @@ class DeleteSessionFileTests(unittest.TestCase):
         self.assertFalse(target.is_file())
         self.assertTrue(keep.is_file())
 
+    def test_deletes_EVERY_duplicate_copy_across_project_dirs(self) -> None:
+        # One session id legitimately exists under several project dirs
+        # (cwd-drift snapshots, adopt copies). Deleting only the copy
+        # find_session_file resolves (the newest) would leave the stale
+        # snapshots discoverable — the "forgotten" chat would still show
+        # up in the adopt picker and be resumable at an older state.
+        old_copy = self._seed('enc-old-cwd', 'sess-multi')
+        new_copy = self._seed('enc-new-cwd', 'sess-multi')
+        os.utime(old_copy, (1_000, 1_000))
+        os.utime(new_copy, (2_000, 2_000))
+
+        removed = delete_session_file(
+            'sess-multi', projects_root=self.projects_root,
+        )
+
+        self.assertTrue(removed)
+        self.assertFalse(old_copy.is_file())
+        self.assertFalse(new_copy.is_file())
+
     def test_false_when_no_match(self) -> None:
         self._seed('enc-a', 'sess-1')
         self.assertFalse(

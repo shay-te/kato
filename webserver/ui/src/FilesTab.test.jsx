@@ -604,6 +604,59 @@ describe('FilesTab — render shell', () => {
     expect(selectedRows).toHaveLength(1);
   });
 
+  test('a repo-LESS open file highlights at most ONE repo (chat comment-jump)', async () => {
+    // EventLog's comment-jump opens files with no repoId. When two repos
+    // changed the same relative path, the selection must resolve to the
+    // FIRST repo containing it (mirroring DiffPane's path-only fallback),
+    // never highlight both.
+    const samePathTwoRepos = {
+      trees: ['client', 'backend'].map((repo) => ({
+        repo_id: repo,
+        cwd: `/tmp/${repo}`,
+        tree: [{
+          name: 'src',
+          path: `/tmp/${repo}/src`,
+          children: [{ name: 'Changed.js', path: `/tmp/${repo}/src/Changed.js` }],
+        }],
+        changed_files: ['src/Changed.js'],
+        conflicted_files: [],
+      })),
+    };
+    const diffFor = (repo) => [
+      'diff --git a/src/Changed.js b/src/Changed.js',
+      'index 1111111..2222222 100644',
+      '--- a/src/Changed.js',
+      '+++ b/src/Changed.js',
+      '@@ -1 +1 @@',
+      `-old-${repo}`,
+      `+new-${repo}`,
+      '',
+    ].join('\n');
+    fetchFileTree.mockResolvedValue(samePathTwoRepos);
+    fetchDiff.mockResolvedValue({
+      diffs: [
+        { repo_id: 'client', cwd: '/tmp/client', diff: diffFor('client'), conflicted_files: [] },
+        { repo_id: 'backend', cwd: '/tmp/backend', diff: diffFor('backend'), conflicted_files: [] },
+      ],
+    });
+    render(
+      <FilesTab
+        taskId="T1"
+        onOpenFile={vi.fn()}
+        openFile={{
+          taskId: 'T1', repoId: '',
+          relativePath: 'src/Changed.js', view: 'diff',
+        }}
+      />,
+    );
+    const labels = await screen.findAllByText('Changed.js');
+    expect(labels).toHaveLength(2);
+    const selectedRows = labels
+      .map((label) => label.closest('button'))
+      .filter((row) => row.classList.contains('selected'));
+    expect(selectedRows).toHaveLength(1);
+  });
+
   test('ArrowDown / ArrowUp walk the changed files and open each in the diff', async () => {
     const twoFileTree = {
       trees: [{

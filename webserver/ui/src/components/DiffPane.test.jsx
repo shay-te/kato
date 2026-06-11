@@ -247,6 +247,41 @@ describe('DiffPane — renders ONLY the selected file', () => {
     expect(onViewStateChange).toHaveBeenCalledWith({ diffScrollTop: 0 });
   });
 
+  test('a focusComment file switch does NOT reset scroll (thread scroll owns position)', async () => {
+    // Regression: the reset-to-top effect fired after the thread-scroll
+    // effect and its instant scrollTop=0 ABORTED the in-flight smooth
+    // scroll — a comment-badge click on a same-repo file landed at the
+    // top of the file instead of on the thread.
+    fetchDiff.mockResolvedValue({ diffs: [] });
+    parseRepoDiffs.mockReturnValue(_repoDiffs());
+    fetchTaskComments.mockResolvedValue({
+      ok: true, body: { comments: [{ id: 'c1', file_path: 'src/new.js' }] },
+    });
+    const onViewStateChange = vi.fn();
+    const { rerender } = render(
+      <DiffPane openFile={_open()} onViewStateChange={onViewStateChange} />,
+    );
+    await screen.findByTestId('diff-file');
+
+    // Comment-badge click on a DIFFERENT file in the SAME repo.
+    rerender(
+      <DiffPane
+        openFile={_open({
+          relativePath: 'src/new.js', repoId: 'client',
+          focusComment: true, openRequestId: 5,
+        })}
+        onViewStateChange={onViewStateChange}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId('diff-file').getAttribute('data-path'))
+        .toBe('src/new.js');
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    // The reset effect must NOT have stomped the thread positioning.
+    expect(onViewStateChange).not.toHaveBeenCalledWith({ diffScrollTop: 0 });
+  });
+
   test('mount with a saved scroll offset is NOT reset (tab-return restore)', async () => {
     fetchDiff.mockResolvedValue({ diffs: [] });
     parseRepoDiffs.mockReturnValue(_repoDiffs());

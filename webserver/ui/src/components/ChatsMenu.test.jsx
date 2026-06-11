@@ -144,6 +144,33 @@ describe('ChatsMenu', () => {
     });
   });
 
+  test('the armed mid-turn warning clears when the turn ends', async () => {
+    // Once Claude is no longer mid-turn the warning's premise is gone —
+    // keeping it armed would show a false "Claude is mid-turn" state.
+    const { rerender } = render(<ChatsMenu taskId="T1" turnInFlight />);
+    fireEvent.click(screen.getByRole('button', { name: 'Chats' }));
+    fireEvent.click(await screen.findByRole('button', { name: /new chat/i }));
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+
+    rerender(<ChatsMenu taskId="T1" turnInFlight={false} />);
+    await waitFor(() => {
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+  });
+
+  test('a failed action disarms the warning too', async () => {
+    startTaskChat.mockResolvedValue({ ok: false, status: 409, body: { error: 'busy' } });
+    render(<ChatsMenu taskId="T1" turnInFlight />);
+    fireEvent.click(screen.getByRole('button', { name: 'Chats' }));
+    const newChat = await screen.findByRole('button', { name: /new chat/i });
+    fireEvent.click(newChat);                 // arm
+    fireEvent.click(newChat);                 // confirm → POST fails
+    await waitFor(() => {
+      expect(toast.errorFromResult).toHaveBeenCalled();
+    });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   test('idle: no confirmation step — first click acts immediately', async () => {
     render(<ChatsMenu taskId="T1" turnInFlight={false} />);
     fireEvent.click(screen.getByRole('button', { name: 'Chats' }));

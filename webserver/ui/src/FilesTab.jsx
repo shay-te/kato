@@ -496,6 +496,15 @@ export default function FilesTab({
   } else if (state.trees.length === 0) {
     body = <p className="files-tab-message">No tracked files in this task.</p>;
   } else {
+    // Which repo's tree shows the selection. With an explicit repoId the
+    // owner is that repo; a repo-LESS open file (e.g. the chat comment-jump
+    // passes only a path) resolves to the FIRST repo whose changed set
+    // contains the path — mirroring DiffPane's path-only fallback so the
+    // tree and the centre pane agree, and so only ONE repo ever highlights
+    // (the multi-repo double-highlight this derivation exists to prevent).
+    const selectionRepoKey = resolveSelectionRepoKey(
+      openFile, state.trees, state.diffMetaByRepo,
+    );
     body = state.trees.map((repoTree) => {
       const repoKey = repoTree.repo_id || repoTree.cwd;
       const diffMeta = state.diffMetaByRepo.get(repoKey) || EMPTY_DIFF_META;
@@ -522,7 +531,7 @@ export default function FilesTab({
           showAllFiles={showAllFiles}
           taskId={taskId}
           focusFileTarget={focusFileTarget}
-          openFile={openFile}
+          openFile={selectionRepoKey === repoKey ? openFile : null}
         />
       );
     });
@@ -1163,12 +1172,17 @@ function ChangedFilesTreeNode({
       />
     ));
     const chevron = isClosed ? 'chevron-right' : 'chevron-down';
+    // role=group around the child rows + aria-level on every row: child
+    // rows are DOM siblings of the folder button, so without these the
+    // accessibility tree flattens the hierarchy (every row reads as
+    // level 1 and aria-expanded has no associated children).
     return (
       <div className="diff-file-tree-group">
         <button
           type="button"
           role="treeitem"
           aria-expanded={!isClosed}
+          aria-level={depth + 1}
           className="diff-file-tree-row files-changed-tree-row is-folder"
           style={{ '--depth': depth }}
           onClick={() => onToggleFolder(node.key)}
@@ -1180,7 +1194,7 @@ function ChangedFilesTreeNode({
             {node.name}
           </span>
         </button>
-        {childRows}
+        {childRows && <div role="group">{childRows}</div>}
       </div>
     );
   }
@@ -1207,6 +1221,7 @@ function ChangedFilesTreeNode({
       type="button"
       role="treeitem"
       aria-selected={selected}
+      aria-level={depth + 1}
       className={className}
       style={{ '--depth': depth }}
       data-changed-file-path={path}
@@ -1425,14 +1440,39 @@ function changedFileSelectionKey(file) {
 // The selection key for THIS repo's changed tree, derived from the centre
 // pane's open file. Empty when the open file belongs to another repo (an
 // explicit repoId mismatch) or isn't one of this repo's changed files.
+// ``openFile.kind`` (carried by changed-tree clicks) wins over the
+// diffMeta lookup: the meta map is keyed by path only, so for a
+// delete+add pair sharing one path it holds just the surviving entry —
+// the clicked DELETE row would otherwise highlight as the ADD row.
 function changedSelectionKeyFor(openFile, repoId, diffMeta) {
   const path = String(openFile?.relativePath || '').trim();
   if (!path) { return ''; }
   const targetRepo = String(openFile?.repoId || '').trim();
   if (targetRepo && targetRepo !== repoId) { return ''; }
+  const kind = String(openFile?.kind || '').trim();
+  if (kind) { return `${kind}:${path}`; }
   const meta = diffMeta.get(path);
   if (!meta || !meta.file) { return ''; }
   return changedFileSelectionKey(meta.file);
+}
+
+// Which repo's tree owns the selection highlight (see the call site for
+// why repo-less open files must resolve to at most ONE repo). Returns
+// the repo KEY (repo_id || cwd) or '' when nothing should highlight.
+function resolveSelectionRepoKey(openFile, trees, diffMetaByRepo) {
+  const path = String(openFile?.relativePath || '').trim();
+  if (!path) { return ''; }
+  const targetRepo = String(openFile?.repoId || '').trim();
+  for (const tree of trees || []) {
+    const repoKey = tree.repo_id || tree.cwd;
+    if (targetRepo) {
+      if (targetRepo === String(tree.repo_id || '').trim()) { return repoKey; }
+      continue;
+    }
+    const meta = diffMetaByRepo?.get(repoKey);
+    if (meta && meta.get(path)) { return repoKey; }
+  }
+  return '';
 }
 
 // Files visible in the changed tree, in render order — folders whose key
