@@ -5998,11 +5998,21 @@ body.kato-resizing #left-pane-resizer::before {
 }
 
 /* Syntax highlighting for tokens produced by ``tokenizeHunks``
- * (refractor / Prism token classes). Palette tuned for the same
- * dark background we already use; matches the colours an operator
- * gets in the planning UI's Files tree and the code snippet block
- * in review-fix prompts. Only the most common token types are
- * styled — anything unrecognised renders as default text. */
+ * (refractor / Prism token classes). Tuned to match Bitbucket's dark
+ * diff palette so an operator reading code side-by-side in both
+ * surfaces doesn't have to retrain their eye:
+ *   - keywords / booleans / None / True / False  → salmon-pink
+ *   - functions / class names / types / numbers  → cyan-blue
+ *   - strings                                    → amber
+ *   - comments                                   → muted grey, italic
+ *   - operators / punctuation                    → default text
+ *
+ * Bitbucket's defining trait: functions, type hints, and numbers all
+ * share ONE cyan-blue (#93c5fd → $C-CYAN-78) so the "interesting
+ * identifier" column reads as one consistent colour. Kato used to
+ * paint functions bright green and numbers orange, which broke that
+ * gestalt — operators told us reading kato felt different from
+ * reading Bitbucket and they kept switching back. */
 .diff-file .token.comment,
 .diff-file .token.prolog,
 .diff-file .token.cdata {
@@ -6010,74 +6020,55 @@ body.kato-resizing #left-pane-resizer::before {
   font-style: italic;
 }
 
-.diff-file .token.keyword {
-  color: $C-RED-82;
-}
-
+.diff-file .token.keyword,
 .diff-file .token.boolean,
 .diff-file .token.constant,
 .diff-file .token.atrule {
+  // ``True`` / ``False`` / ``None`` (Prism emits as ``token.boolean``)
+  // ride with keywords in salmon-pink, matching Bitbucket.
   color: $C-RED-82;
 }
 
-.diff-file .token.tag {
-  color: $C-CYAN-52;
-}
-
-.diff-file .token.string {
-  color: $C-ORANGE-50;
-}
-
-.diff-file .token.attr-value {
-  color: $C-ORANGE-50;
-}
-
-.diff-file .token.template-string {
-  color: $C-ORANGE-50;
-}
-
+.diff-file .token.builtin,
+.diff-file .token.symbol,
+.diff-file .token.function,
+.diff-file .token.class-name,
+.diff-file .token.attr-name,
+.diff-file .token.property,
+.diff-file .token.property-access,
 .diff-file .token.number,
 .diff-file .token.unit {
-  color: $C-ORANGE-50;
+  // Cyan-blue cluster: function calls, class names, builtins (types),
+  // attribute names, numeric literals. The single repeated colour is
+  // what gives Bitbucket-style diffs their "scannable identifier
+  // column" feel.
+  color: $C-CYAN-78;
 }
 
-.diff-file .token.function,
-.diff-file .token.class-name {
-  color: $C-GREEN-71;
-}
-
-.diff-file .token.attr-name {
-  color: $C-GREEN-71;
-}
-
-.diff-file .token.property {
-  color: $C-GREEN-71;
-}
-
-.diff-file .token.property-access {
-  color: $C-GREEN-71;
-}
-
+.diff-file .token.tag,
 .diff-file .token.selector {
   color: $C-CYAN-52;
 }
 
+.diff-file .token.string,
+.diff-file .token.attr-value,
+.diff-file .token.template-string {
+  color: $C-ORANGE-50;
+}
+
 .diff-file .token.variable {
-  color: $C-CYAN-90;
+  color: $C-NEUTRAL-96;
 }
 
 .diff-file .token.operator,
 .diff-file .token.punctuation {
-  color: $C-CYAN-90;
+  // Default text colour, not a tint — matches Bitbucket where ``=``,
+  // ``:``, ``,`` etc. don't draw the eye away from the identifiers.
+  color: $C-NEUTRAL-96-A85;
 }
 
 .diff-file .token.regex {
   color: $C-PINK-70;
-}
-
-.diff-file .token.builtin,
-.diff-file .token.symbol {
-  color: $C-TEAL-69;
 }
 
 .diff-file .token.deleted {

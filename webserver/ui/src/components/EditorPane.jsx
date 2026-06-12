@@ -17,6 +17,7 @@ import {
   buildThreads,
   katoTriggeredMessage,
 } from './CommentWidgets.jsx';
+import Icon from './Icon.jsx';
 import { useChatComposer } from '../contexts/ChatComposerContext.jsx';
 import { toast } from '../stores/toastStore.js';
 import { apiErrorMessage } from '../utils/apiError.js';
@@ -46,6 +47,10 @@ export default function EditorPane({
   openFile,
   onCommentSpawned,
   onViewStateChange,
+  // Flip the centre column back to the diff view — mirror of the
+  // "view file" icon in the diff header. Wired by App.handleOpenFile
+  // (view: 'diff').
+  onOpenFile,
 }) {
   const [state, setState] = useState({
     loading: false,
@@ -253,7 +258,10 @@ export default function EditorPane({
   }
   async function onEdit(commentId, { body, katoStatus } = {}) {
     const result = await editTaskComment(taskId, commentId, { body, katoStatus });
-    if (!result.ok) {
+    // Check HTTP error AND envelope-level ``{ok: false}`` (validation
+    // rejects). See the matching handler in DiffFileWithComments for
+    // the rationale.
+    if (!result.ok || result.body?.ok === false) {
       toast.errorFromResult(result, {
         title: 'Edit failed', fallback: 'edit failed', durationMs: 5000,
       });
@@ -655,6 +663,22 @@ export default function EditorPane({
           {openFile.relativePath || openFile.absolutePath}
         </span>
         <span className="editor-pane-readonly-pill">read-only</span>
+        {typeof onOpenFile === 'function' && (
+          <button
+            type="button"
+            className="diff-file-open-as-file is-icon tooltip-below"
+            onClick={() => onOpenFile({
+              absolutePath: openFile.absolutePath,
+              relativePath: openFile.relativePath,
+              repoId: openFile.repoId,
+              view: 'diff',
+            })}
+            data-tooltip="View diff"
+            aria-label="View diff"
+          >
+            <Icon name="diff" />
+          </button>
+        )}
       </header>
       {pathMenu && (
         <div

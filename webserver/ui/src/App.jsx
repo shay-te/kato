@@ -466,6 +466,7 @@ export default function App() {
         openFile={activeOpenFile}
         onCommentSpawned={handleCommentSpawned}
         onViewStateChange={handleFileViewStateChange}
+        onOpenFile={handleOpenFile}
       />
     );
   }

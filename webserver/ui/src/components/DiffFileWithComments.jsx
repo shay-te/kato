@@ -383,7 +383,13 @@ function DiffFileWithComments({
 
   async function onEdit(commentId, { body, katoStatus } = {}) {
     const result = await editTaskComment(taskId, commentId, { body, katoStatus });
-    if (!result.ok) {
+    // Surface BOTH layers: HTTP failure (404 if the route isn't
+    // registered yet — i.e. kato hasn't been restarted since this
+    // feature landed) AND envelope-level ``{ok: false}`` (the service
+    // returns this on validation rejects: not-found / non-local /
+    // status not in queued+editing). Without the body.ok check, a
+    // validation refusal would silently look like success.
+    if (!result.ok || result.body?.ok === false) {
       toast.errorFromResult(result, { title: 'Edit failed', durationMs: 5000 });
       return false;
     }
