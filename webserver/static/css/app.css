@@ -5771,24 +5771,26 @@ body.kato-resizing #left-pane-resizer::before {
  *   - muted neutral grey (not the bright cyan kato used to paint — the
  *     numbers shouted for attention and competed with the syntax),
  *   - tabular-nums so columns line up at every magnitude,
- *   - shrink-fit width: react-diff-view ships a ``<col class="diff-
- *     gutter-col" width="7ch">`` element that pins the column to 7
- *     characters regardless of how many digits the file actually has.
- *     Override the ``<col>`` to ``width: auto`` AND the ``<td>`` to
- *     ``width: 1%; white-space: nowrap`` so the column collapses to
- *     the widest line number in the file. A 30-line file gets a narrow
- *     gutter; a 3000-line file gets a wider one. */
+ *   - shrink-fit per file: ``react-diff-view`` ships a ``<col
+ *     class="diff-gutter-col" width="7ch">`` element that fixes the
+ *     column at 7 characters regardless of file size. The table uses
+ *     ``table-layout: fixed`` so changing the ``<col>`` width to
+ *     ``auto`` ends up DISTRIBUTING (the columns split width equally,
+ *     blowing the gutter out to half the pane). Instead we read the
+ *     widest line number from the file in JS and set
+ *     ``--diff-gutter-col-width`` as an inline style on the ``.diff-
+ *     file`` section; the ``<col>`` then takes that exact width. A
+ *     30-line file gets ~3ch, a 3000-line file gets ~5ch. */
 .diff-file .diff-gutter-col {
-  width: auto;
+  width: var(--diff-gutter-col-width, 5ch);
 }
 
 .diff-file .diff-gutter {
   color: #a3a3a3;
   font-variant-numeric: tabular-nums;
-  width: 1%;
-  white-space: nowrap;
-  padding: 0 8px;
+  padding: 0 6px;
   text-align: right;
+  background: #2a2a2a;
 }
 
 /* Tighten row spacing to Bitbucket's metrics — react-diff-view's

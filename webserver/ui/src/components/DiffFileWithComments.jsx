@@ -205,6 +205,25 @@ function DiffFileWithComments({
     [renderedHunks, path, expanded],
   );
 
+  // Per-file gutter width: read the largest line number in either
+  // side from the rendered hunks and convert to ``<digits>+2ch``
+  // (one ch of breathing room on each side of the number). The CSS
+  // rule on ``.diff-file .diff-gutter-col`` picks this up via the
+  // ``--diff-gutter-col-width`` inline variable so the column shrink-
+  // fits per file like Bitbucket does — a 30-line file gets ~4ch, a
+  // 3000-line file gets ~6ch — instead of every file forcing the
+  // react-diff-view default of 7ch.
+  const gutterColWidth = useMemo(() => {
+    let maxLine = 1;
+    for (const hunk of renderedHunks || []) {
+      const oldEnd = (hunk.oldStart || 0) + (hunk.oldLines || 0);
+      const newEnd = (hunk.newStart || 0) + (hunk.newLines || 0);
+      if (oldEnd > maxLine) { maxLine = oldEnd; }
+      if (newEnd > maxLine) { maxLine = newEnd; }
+    }
+    return `${String(maxLine).length + 2}ch`;
+  }, [renderedHunks]);
+
   function notifyMutated() {
     if (typeof onMutated === 'function') { onMutated(); }
   }
@@ -846,6 +865,7 @@ function DiffFileWithComments({
   return (
     <section
       className={`diff-file ${expanded ? 'is-expanded' : 'is-collapsed'}`}
+      style={{ '--diff-gutter-col-width': gutterColWidth }}
       onContextMenu={openPathMenu}
       title="Click a line gutter to add an inline comment · right-click for file actions"
     >
