@@ -3620,93 +3620,6 @@ code {
   color: $C-NEUTRAL-96;
 }
 
-.editor-pane-chip-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: $SPACE-6;
-  padding: $SPACE-8 $SPACE-14;
-  border-bottom: 1px solid $C-NEUTRAL-16;
-  background: $C-NEUTRAL-00-A45;
-}
-
-.editor-pane-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: $SPACE-8;
-  padding: $SPACE-4 $SPACE-10;
-  border-radius: var(--radius-pill);
-  border: 1px solid $C-NEUTRAL-16;
-  background: $C-NEUTRAL-16;
-  color: $C-NEUTRAL-96;
-  font: 11px/1.2 ui-monospace, monospace;
-  cursor: pointer;
-  max-width: 320px;
-  transition: background 0.12s, border-color 0.12s;
-}
-
-.editor-pane-chip:hover {
-  background: $C-NEUTRAL-16;
-  border-color: $C-NEUTRAL-32;
-}
-
-.editor-pane-chip-line {
-  flex-shrink: 0;
-  color: $C-CYAN-78;
-  font-weight: 600;
-}
-
-.editor-pane-chip-status {
-  flex-shrink: 0;
-  font-size: $TEXT-10;
-  padding: $SPACE-2 $SPACE-6;
-  border-radius: var(--radius-pill);
-  background: $C-NEUTRAL-100-A06;
-}
-
-.editor-pane-chip-body {
-  flex: 1;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: $C-NEUTRAL-64;
-}
-
-.editor-pane-chip.kato-queued .editor-pane-chip-status {
-  background: $C-ORANGE-50-A10;
-  color: $C-ORANGE-50;
-}
-
-.editor-pane-chip.kato-waiting .editor-pane-chip-status,
-.editor-pane-chip.kato-open .editor-pane-chip-status {
-  background: $C-CYAN-52-A18;
-  color: $C-CYAN-78;
-}
-
-.editor-pane-chip.kato-in_progress .editor-pane-chip-status {
-  background: $C-CYAN-52-A18;
-  color: $C-CYAN-78;
-}
-
-.editor-pane-chip.kato-addressed .editor-pane-chip-status {
-  background: $C-GREEN-45-A10;
-  color: $C-GREEN-71;
-}
-
-.editor-pane-chip.kato-failed .editor-pane-chip-status {
-  background: $C-RED-60-A12;
-  color: $C-RED-82;
-}
-
-.editor-pane-chip.status-resolved {
-  opacity: 0.65;
-}
-
-.editor-pane-chip.status-resolved .editor-pane-chip-status {
-  background: $C-GREEN-45-A10;
-  color: $C-GREEN-71;
-}
-
 .editor-pane-composer-wrap {
   border-top: 1px solid $C-NEUTRAL-16;
   background: $C-NEUTRAL-00-A45;
@@ -3737,24 +3650,25 @@ code {
   background: transparent;
 }
 
-.editor-pane-comments-panel {
+/* Comments-at-end view zone, rendered after the last line of the file.
+ * Tighter than the old standalone bottom panel (which was its own
+ * scroll surface and ate ~40% of the editor height) so the discussion
+ * reads as a continuation of the code rather than a separate slab. */
+.editor-pane-comments-zone-host {
+  // Override the inline-composer zone's cyan left border — the
+  // comments zone is the file's discussion footer, not an interactive
+  // composer, and the bright bar made it shout for attention.
+  border-left: 0;
   border-top: 1px solid $C-NEUTRAL-16;
-  background: $C-NEUTRAL-00-A45;
-  max-height: 40%;
-  overflow-y: auto;
-  padding: $SPACE-8 $SPACE-14;
 }
 
-.editor-pane-comments-panel-head {
-  font: 11px/1.4 ui-monospace, monospace;
-  color: $C-NEUTRAL-64;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  margin-bottom: $SPACE-8;
+.editor-pane-comments-wrap {
+  padding: $SPACE-6 $SPACE-14 $SPACE-10;
+  background: $C-NEUTRAL-00-A45;
 }
 
 .editor-pane-comment-thread {
-  padding: $SPACE-8 0;
+  padding: $SPACE-4 0;
   border-bottom: 1px solid $C-NEUTRAL-16;
 }
 
@@ -3763,7 +3677,7 @@ code {
 }
 
 .editor-pane-comment-anchor {
-  margin-bottom: $SPACE-4;
+  margin-bottom: $SPACE-2;
 }
 
 .editor-pane-comment-jump {
@@ -5939,12 +5853,23 @@ body.kato-resizing #left-pane-resizer::before {
   --diff-code-selected-background-color: #{$C-NEUTRAL-16};
 }
 
-/* Bitbucket-style line numbers: muted but readable (the old #525252
- * was too dark to scan), monospace, right-aligned (react-diff-view
- * default). Subtle enough that the code stays the focal point. */
+/* Bitbucket-style line-number gutter:
+ *   - muted neutral grey (not the bright cyan kato used to paint — the
+ *     numbers shouted for attention and competed with the syntax),
+ *   - tabular-nums so columns line up at every magnitude,
+ *   - shrink-fit width via the ``width: 1%`` table-cell trick: react-
+ *     diff-view renders the gutter as a ``<td>``, so setting width to
+ *     1% with nowrap collapses the column to its widest content (the
+ *     largest line number in the file). A 30-line file gets a narrow
+ *     gutter; a 3000-line file gets a wider one. Padding is small so
+ *     the column doesn't carry extra fat. */
 .diff-file .diff-gutter {
-  color: $C-CYAN-53;
+  color: $C-NEUTRAL-64;
   font-variant-numeric: tabular-nums;
+  width: 1%;
+  white-space: nowrap;
+  padding: 0 $SPACE-8;
+  text-align: right;
 }
 
 .diff-file .diff {

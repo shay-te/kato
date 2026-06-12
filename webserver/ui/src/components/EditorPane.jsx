@@ -12,8 +12,8 @@ import {
   resolveTaskComment,
 } from '../api.js';
 import {
-  CommentBubble,
   CommentForm,
+  CommentThread,
   buildThreads,
   katoTriggeredMessage,
 } from './CommentWidgets.jsx';
@@ -24,6 +24,7 @@ import { apiErrorMessage } from '../utils/apiError.js';
 import { commentDraftKey } from '../utils/composerDraft.js';
 import { copyRepoRelativePath } from '../utils/clipboard.js';
 import { useDismissOnOutsidePointerOrEscape } from '../hooks/useDismissOnOutsidePointerOrEscape.js';
+import { useMonacoViewZone } from '../hooks/useMonacoViewZone.js';
 
 /**
  * Read-only Monaco editor that lives in the middle column.
@@ -116,15 +117,12 @@ export default function EditorPane({
   // holds the live IViewZone so its height can be reflowed as the
   // textarea grows. File-level comments (line === -1) have no
   // editor line to anchor to, so they fall back to a bottom block.
-  const [zoneNode, setZoneNode] = useState(null);
-  const zoneIdRef = useRef(null);
-  const zoneObjRef = useRef(null);
-  // Mirror of ``zoneNode`` for closures that outlive a single render —
-  // the onDidLayoutChange handler is registered once in
-  // ``handleEditorMount`` and needs the LIVE host node, not whichever
-  // value was captured the first time it ran.
-  const zoneNodeRef = useRef(null);
-  useEffect(() => { zoneNodeRef.current = zoneNode; }, [zoneNode]);
+  // Two Monaco view zones. The inline composer is anchored at the
+  // clicked line; the comments-at-end zone is anchored after the last
+  // line so the discussion reads as a footer to the code and Monaco's
+  // own scrollbar is the single scroll surface. Both share the
+  // useMonacoViewZone hook (sizing, sticky pinning, reflow on content
+  // change) — see the hook's docstring for the rationale.
 
   function reportEditorViewState() {
     const editor = editorRef.current;
@@ -143,17 +141,6 @@ export default function EditorPane({
     () => comments.filter((c) => String(c.file_path || '') === filePath),
     [comments, filePath],
   );
-  const commentsByLine = useMemo(() => {
-    const map = new Map();
-    for (const c of fileComments) {
-      const ln = Number(c.line);
-      if (Number.isFinite(ln) && ln >= 0) {
-        if (!map.has(ln)) { map.set(ln, []); }
-        map.get(ln).push(c);
-      }
-    }
-    return map;
-  }, [fileComments]);
   // Hooks must be top-of-component (no conditional returns above
   // them), so build the threads list here even though it's only
   // rendered in the happy-path body below.
@@ -308,10 +295,13 @@ export default function EditorPane({
     // panel — see the zone-creation effect for the matching logic.
     if (typeof editor.onDidLayoutChange === 'function') {
       editor.onDidLayoutChange((info) => {
-        const host = zoneNodeRef.current;
-        if (!host || !info?.contentWidth) { return; }
-        host.style.width = `${info.contentWidth}px`;
-        host.style.maxWidth = `${info.contentWidth}px`;
+        if (!info?.contentWidth) { return; }
+        const w = `${info.contentWidth}px`;
+        for (const host of [zoneNodeRef.current, commentsZoneNodeRef.current]) {
+          if (!host) { continue; }
+          host.style.width = w;
+          host.style.maxWidth = w;
+        }
       });
     }
 
@@ -437,120 +427,45 @@ export default function EditorPane({
     editor.restoreViewState(viewState);
   }, [openFile?.absolutePath, openFile?.editorViewState]);
 
-  // Add / move / remove the inline-composer view zone whenever the
-  // target line changes. Line < 0 (file-level) gets no zone — it
-  // renders in the bottom panel instead.
+  // Inline composer zone (anchored at the clicked line).
+  const { zoneNode, zoneNodeRef } = useMonacoViewZone({
+    editorRef,
+    enabled: activeLine !== null && activeLine >= 1,
+    afterLine: activeLine !== null && activeLine >= 1 ? activeLine : 0,
+    seedHeight: 200,
+    minHeight: 120,
+  });
   useEffect(() => {
-    const editor = editorRef.current;
-    if (!editor || typeof editor.changeViewZones !== 'function') {
-      return undefined;
-    }
-    function removeZone() {
-      if (zoneIdRef.current === null) { return; }
-      editor.changeViewZones((acc) => acc.removeZone(zoneIdRef.current));
-      zoneIdRef.current = null;
-      zoneObjRef.current = null;
-    }
-    removeZone();
-    if (activeLine === null || activeLine < 1) {
-      setZoneNode(null);
-      return undefined;
-    }
-    const dom = document.createElement('div');
-    dom.className = 'editor-pane-zone-host';
-    // Monaco view zones natively span the editor's FULL scroll-content
-    // width (long-line scroll range, not just the visible viewport), so
-    // the comment composer was extending off-screen and triggering a
-    // horizontal scrollbar. Pin the host to the left edge of the visible
-    // content area and cap its width at ``contentWidth`` — the layout-
-    // change handler in handleEditorMount keeps these in sync as the
-    // editor resizes.
-    const layoutInfo = typeof editor.getLayoutInfo === 'function'
-      ? editor.getLayoutInfo()
-      : null;
-    const viewportWidth = layoutInfo?.contentWidth;
-    if (viewportWidth) {
-      dom.style.width = `${viewportWidth}px`;
-      dom.style.maxWidth = `${viewportWidth}px`;
-    }
-    dom.style.position = 'sticky';
-    dom.style.left = '0';
-    dom.style.boxSizing = 'border-box';
-    const zone = {
-      afterLineNumber: activeLine,
-      // Seed height; the ResizeObserver effect below keeps it in
-      // sync with the actual composer height as the textarea grows.
-      heightInPx: 200,
-      domNode: dom,
-      // Stop Monaco from handling mouse events inside the zone —
-      // otherwise it steals focus back from the textarea every time
-      // the operator clicks into the comment box (the "I can't focus
-      // back on the textarea" report). React handlers on the wrap
-      // also stopPropagation to belt-and-braces against this.
-      suppressMouseDown: true,
-    };
-    editor.changeViewZones((acc) => {
-      zoneIdRef.current = acc.addZone(zone);
-    });
-    zoneObjRef.current = zone;
-    editor.revealLineInCenterIfOutsideViewport(activeLine);
-    setZoneNode(dom);
-    return removeZone;
+    if (activeLine === null || activeLine < 1) { return; }
+    editorRef.current?.revealLineInCenterIfOutsideViewport?.(activeLine);
   }, [activeLine]);
 
-  // Keep the Monaco view zone exactly as tall as the composer it
-  // hosts — Monaco zones don't auto-size to their DOM child, so we
-  // measure and reflow on every content/size change.
-  //
-  // We measure the portaled WRAP child (.editor-pane-composer-wrap),
-  // not zoneNode itself. Monaco enforces zoneNode's height from the
-  // outside, so observing zoneNode + reading its scrollHeight feeds
-  // back into itself: sync() sets zone height H+12, Monaco resizes
-  // zoneNode to H+12, scrollHeight reports H+12, next is H+24, … the
-  // composer "grows without anyone typing". The wrap's offsetHeight
-  // is purely content-driven, so the measurement is stable AND it
-  // tracks the textarea as the operator types.
-  useEffect(() => {
-    if (!zoneNode || typeof ResizeObserver === 'undefined') {
-      return undefined;
+  // Comments-at-end zone (anchored after the last line). The anchor
+  // line is derived from ``state.content`` — counting newlines is
+  // equivalent to ``editor.getModel().getLineCount()`` for the model
+  // we just handed Monaco, but doesn't depend on the editor instance
+  // being ready before this render.
+  const lastLine = useMemo(() => {
+    const text = state.content || '';
+    if (!text) { return 1; }
+    let count = 1;
+    for (let i = 0; i < text.length; i += 1) {
+      if (text.charCodeAt(i) === 10) { count += 1; }
     }
-    const editor = editorRef.current;
-    const sync = () => {
-      if (!editor || zoneIdRef.current === null || !zoneObjRef.current) {
-        return;
-      }
-      const child = zoneNode.firstElementChild;
-      const natural = child ? child.offsetHeight : zoneNode.scrollHeight;
-      const next = Math.max(120, natural + 12);
-      if (next !== zoneObjRef.current.heightInPx) {
-        zoneObjRef.current.heightInPx = next;
-        editor.changeViewZones((acc) => acc.layoutZone(zoneIdRef.current));
-      }
-    };
-    let observedChild = null;
-    const resizeObserver = new ResizeObserver(sync);
-    const attachChildObserver = () => {
-      const child = zoneNode.firstElementChild;
-      if (child === observedChild) { return; }
-      if (observedChild) { resizeObserver.unobserve(observedChild); }
-      observedChild = child;
-      if (child) {
-        resizeObserver.observe(child);
-        sync();
-      }
-    };
-    attachChildObserver();
-    const mutationObserver = typeof MutationObserver !== 'undefined'
-      ? new MutationObserver(attachChildObserver)
-      : null;
-    if (mutationObserver) {
-      mutationObserver.observe(zoneNode, { childList: true });
-    }
-    return () => {
-      resizeObserver.disconnect();
-      if (mutationObserver) { mutationObserver.disconnect(); }
-    };
-  }, [zoneNode]);
+    return count;
+  }, [state.content]);
+  const wantCommentsZone = threads.length > 0 || activeLine === -1;
+  const {
+    zoneNode: commentsZoneNode,
+    zoneNodeRef: commentsZoneNodeRef,
+  } = useMonacoViewZone({
+    editorRef,
+    enabled: wantCommentsZone,
+    afterLine: lastLine,
+    seedHeight: 80,
+    minHeight: 60,
+    extraClassName: 'editor-pane-comments-zone-host',
+  });
 
   // Scroll the editor to a line when the operator clicks a chip.
   function jumpToLine(line) {
@@ -698,13 +613,6 @@ export default function EditorPane({
           </button>
         </div>
       )}
-      {fileComments.length > 0 && (
-        <ChipStrip
-          comments={fileComments}
-          onJump={(line) => jumpToLine(line)}
-          onAddOnLine={(line) => setActiveLine(line)}
-        />
-      )}
       <div className="editor-pane-body">
         {body}
       </div>
@@ -735,26 +643,16 @@ export default function EditorPane({
         </div>,
         zoneNode,
       )}
-      {/* File-level comment (line -1) has no editor line to anchor
-          to, so it stays in a bottom block. */}
-      {activeLine === -1 && (
-        <div className="editor-pane-composer-wrap">
-          <header className="editor-pane-composer-head">
-            Add a file-level comment on {openFile.relativePath || openFile.absolutePath}
-          </header>
-          <CommentForm
-            placeholder="What should kato do about this file?"
-            onSubmit={(b) => onCommentSubmit(activeLine, b)}
-            onCancel={() => setActiveLine(null)}
-            draftKey={commentDraftKey(taskId, repoId, filePath, 'file')}
-          />
-        </div>
-      )}
-      {threads.length > 0 && (
-        <div className="editor-pane-comments-panel">
-          <header className="editor-pane-comments-panel-head">
-            Comments on this file ({threads.length})
-          </header>
+      {/* All file-level + per-line discussion lives in a single Monaco
+          view zone anchored AFTER the last line — Monaco's scrollbar
+          is the only scroller for the pane. Same ``CommentThread`` the
+          diff uses. */}
+      {commentsZoneNode && createPortal(
+        <div
+          className="editor-pane-comments-wrap"
+          onMouseDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
           {commentsError && (
             <p className="editor-pane-message editor-pane-message-error">
               {commentsError}
@@ -776,24 +674,15 @@ export default function EditorPane({
                   <span className="editor-pane-comment-jump is-file">file-level</span>
                 )}
               </div>
-              <CommentBubble
-                comment={root}
-                isRoot
-                onResolve={() => onResolve(root)}
-                onReopen={() => onReopen(root)}
-                onDelete={() => onDelete(root)}
-                onReply={() => setReplyTo(root.id)}
-                onMarkAddressed={() => onMarkAddressed(root)}
-                onEdit={(payload) => onEdit(root.id, payload)}
+              <CommentThread
+                thread={{ root, replies }}
+                onResolve={(id) => onResolve({ id })}
+                onReopen={(id) => onReopen({ id })}
+                onDelete={(id) => onDelete({ id })}
+                onMarkAddressed={(id) => onMarkAddressed({ id })}
+                onEdit={onEdit}
+                onReply={(rootId) => setReplyTo(rootId)}
               />
-              {replies.map((r) => (
-                <CommentBubble
-                  key={r.id}
-                  comment={r}
-                  isRoot={false}
-                  onDelete={() => onDelete(r)}
-                />
-              ))}
               {replyTo === root.id && (
                 <CommentForm
                   placeholder="Reply…"
@@ -805,51 +694,24 @@ export default function EditorPane({
               )}
             </div>
           ))}
-        </div>
+          {activeLine === -1 && (
+            <div className="editor-pane-comment-thread">
+              <div className="editor-pane-comment-anchor">
+                <span className="editor-pane-comment-jump is-file">file-level</span>
+              </div>
+              <CommentForm
+                placeholder="What should kato do about this file?"
+                onSubmit={(b) => onCommentSubmit(activeLine, b)}
+                onCancel={() => setActiveLine(null)}
+                draftKey={commentDraftKey(taskId, repoId, filePath, 'file')}
+              />
+            </div>
+          )}
+        </div>,
+        commentsZoneNode,
       )}
     </section>
   );
-}
-
-
-// Compact chip strip above the editor — one chip per comment on
-// the current file. Status colour mirrors the kato_status badge
-// CommentBubble shows ("waiting" / "queued" / "in_progress" /
-// "addressed" / "failed"); clicking a chip scrolls the editor to that line.
-function ChipStrip({ comments, onJump, onAddOnLine }) {
-  const chips = comments
-    .filter((c) => !c.parent_id) // only top-of-thread chips
-    .map((c) => {
-      const kStatus = (c.kato_status || 'idle').toLowerCase();
-      const label = c.line >= 0 ? `L${c.line}` : 'file';
-      const preview = String(c.body || '').slice(0, 80);
-      return (
-        <button
-          key={c.id}
-          type="button"
-          className={`editor-pane-chip kato-${kStatus} status-${c.status || 'open'}`}
-          onClick={() => (c.line >= 0 ? onJump(c.line) : onAddOnLine(-1))}
-          title={preview}
-        >
-          <span className="editor-pane-chip-line">{label}</span>
-          <span className="editor-pane-chip-status">{statusLabel(c)}</span>
-          <span className="editor-pane-chip-body">{preview}</span>
-        </button>
-      );
-    });
-  return <div className="editor-pane-chip-strip">{chips}</div>;
-}
-
-function statusLabel(c) {
-  if (c.status === 'resolved') { return '✓ resolved'; }
-  switch ((c.kato_status || 'idle').toLowerCase()) {
-    case 'waiting': return 'waiting';
-    case 'queued': return '⏳ queued';
-    case 'in_progress': return '⟳ working';
-    case 'addressed': return '✓ done';
-    case 'failed': return '✗ failed';
-    default: return 'open';
-  }
 }
 
 
