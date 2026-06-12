@@ -79,7 +79,10 @@ $C-PINK-70: #f472b6;
 $C-PINK-70-A10: rgba(244, 114, 182, 0.1);
 $C-PINK-90: #fbcfe8;
 $C-RED-10: #2a0a0a;
-$C-RED-15: #2d1f22;
+// Bitbucket-style deleted-line background. The old #2d1f22 was almost
+// brown — the operator couldn't tell at a glance which lines were
+// removed. #3a161b is the same hue Bitbucket uses (saturated dark red).
+$C-RED-15: #3a161b;
 $C-RED-31: #7f1d1d;
 $C-RED-31-A18: rgba(127, 29, 29, 0.18);
 $C-RED-31-A46: rgba(127, 29, 29, 0.46);

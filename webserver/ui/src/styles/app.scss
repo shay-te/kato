@@ -5924,9 +5924,14 @@ body.kato-resizing #left-pane-resizer::before {
   /* Gutter == code for changed lines: a brighter gutter shade made
    * the columns read as vertical stripes / a grid. Same colour on
    * both = each added/deleted line is ONE solid block, no grid. */
-  --diff-gutter-insert-background-color: #{$C-TEAL-14};
+  // Bitbucket palette: insert lines are clearly GREEN, not the old
+  // grayish-teal $C-TEAL-14 (#1d2b27) which barely read as a change.
+  // $C-GREEN-10 (#052e16) is the existing dark-green token; reusing
+  // it here keeps the palette tight. $C-RED-15 itself was bumped to a
+  // saturated Bitbucket-red in constants.scss.
+  --diff-gutter-insert-background-color: #{$C-GREEN-10};
   --diff-gutter-delete-background-color: #{$C-RED-15};
-  --diff-code-insert-background-color: #{$C-TEAL-14};
+  --diff-code-insert-background-color: #{$C-GREEN-10};
   --diff-code-delete-background-color: #{$C-RED-15};
   --diff-code-insert-edit-background-color: #{$C-GREEN-17};
   --diff-code-delete-edit-background-color: #{$C-RED-31};

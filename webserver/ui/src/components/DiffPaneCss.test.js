@@ -90,12 +90,12 @@ test('Collapsed diff file header rounds all corners', () => {
   assertDeclaration(body, 'border-radius', '10px');
 });
 
-test('DiffPane uses muted Bitbucket-style hunk colors', () => {
+test('DiffPane uses Bitbucket-style hunk colors (saturated red/green)', () => {
   const body = ruleBodyContaining('.diff-file', '--diff-code-insert-background-color');
-  assertDeclaration(body, '--diff-code-insert-background-color', '#1d2b27');
-  assertDeclaration(body, '--diff-gutter-insert-background-color', '#1d2b27');
-  assertDeclaration(body, '--diff-code-delete-background-color', '#2d1f22');
-  assertDeclaration(body, '--diff-gutter-delete-background-color', '#2d1f22');
+  assertDeclaration(body, '--diff-code-insert-background-color', '#052e16');
+  assertDeclaration(body, '--diff-gutter-insert-background-color', '#052e16');
+  assertDeclaration(body, '--diff-code-delete-background-color', '#3a161b');
+  assertDeclaration(body, '--diff-gutter-delete-background-color', '#3a161b');
 });
 
 test('Diff file comments panel rounds the bottom of the file card', () => {
@@ -172,24 +172,43 @@ test('Project tree row hover stays transparent without opacity changes', () => {
   assert.doesNotMatch(body, /opacity\s*:/);
 });
 
-test('Diff syntax colors JSX and stylesheet tokens like Bitbucket', () => {
-  const tagBody = ruleBody('.diff-file .token.tag');
-  const attrNameBody = ruleBody('.diff-file .token.attr-name');
-  const selectorBody = ruleBody('.diff-file .token.selector');
-  const propertyBody = ruleBody('.diff-file .token.property');
-  const propertyAccessBody = ruleBody('.diff-file .token.property-access');
-  const variableBody = ruleBody('.diff-file .token.variable');
-  const stringBody = ruleBodyContaining('.diff-file .token.string', '#f59e0b');
-  const keywordBody = ruleBodyContaining('.diff-file .token.keyword', '#fca5a5');
-
-  assertDeclaration(tagBody, 'color', '#0a84ff');
-  assertDeclaration(attrNameBody, 'color', '#79f2c0');
-  assertDeclaration(selectorBody, 'color', '#0a84ff');
-  assertDeclaration(propertyBody, 'color', '#79f2c0');
-  assertDeclaration(propertyAccessBody, 'color', '#79f2c0');
-  assertDeclaration(variableBody, 'color', '#cce0ff');
-  assertDeclaration(stringBody, 'color', '#f59e0b');
-  assertDeclaration(keywordBody, 'color', '#fca5a5');
+test('Diff syntax colors match the Bitbucket palette', () => {
+  // The Bitbucket-aligned palette consolidates tokens into three groups:
+  //   - pink salmon (#fca5a5) for keywords / booleans / None
+  //   - cyan-blue (#93c5fd) for the identifier cluster: function names,
+  //     class names, types (builtin), attr-name, property, numbers
+  //   - amber (#f59e0b) for strings
+  // Selectors are bundled with commas, so the single-selector matcher
+  // doesn't fit. Walk every rule block and find one whose selector list
+  // contains ``.diff-file .token.<class>`` AND whose body sets the
+  // expected colour.
+  function ruleListBodyFor(tokenClass) {
+    const re = /([^{}]+)\{([^}]*)\}/g;
+    const want = `.diff-file .token.${tokenClass}`;
+    let match;
+    while ((match = re.exec(css)) !== null) {
+      const selectors = match[1];
+      const body = match[2];
+      if (selectors.split(',').some((s) => s.trim() === want)) {
+        return body;
+      }
+    }
+    return null;
+  }
+  function assertTokenColor(tokenClass, hex) {
+    const body = ruleListBodyFor(tokenClass);
+    assert.ok(body, `expected rule for .diff-file .token.${tokenClass}`);
+    assertDeclaration(body, 'color', hex);
+  }
+  assertTokenColor('keyword', '#fca5a5');
+  assertTokenColor('boolean', '#fca5a5');
+  assertTokenColor('function', '#93c5fd');
+  assertTokenColor('class-name', '#93c5fd');
+  assertTokenColor('builtin', '#93c5fd');
+  assertTokenColor('number', '#93c5fd');
+  assertTokenColor('property', '#93c5fd');
+  assertTokenColor('attr-name', '#93c5fd');
+  assertTokenColor('string', '#f59e0b');
 });
 
 test('Bitbucket comment card: avatar, collapse chevron, dot actions', () => {
