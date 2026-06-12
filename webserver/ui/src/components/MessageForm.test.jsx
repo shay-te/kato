@@ -155,6 +155,27 @@ describe('MessageForm — draft persistence (operator scenario)', () => {
     expect(onSubmit).toHaveBeenCalledWith('just a normal message', []);
   });
 
+  test('ultracode chip survives tab switch and is isolated per task', () => {
+    // Arm ultracode on tab A.
+    const { unmount } = renderForm({ taskId: 'A' });
+    const toggleA = screen.getByRole('button', { name: /ultracode/i });
+    expect(toggleA).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(toggleA);
+    expect(toggleA).toHaveAttribute('aria-pressed', 'true');
+    unmount();
+
+    // Switch to tab B — must start off (per-task isolation).
+    const { unmount: unmountB } = renderForm({ taskId: 'B' });
+    const toggleB = screen.getByRole('button', { name: /ultracode/i });
+    expect(toggleB).toHaveAttribute('aria-pressed', 'false');
+    unmountB();
+
+    // Back to tab A — must still be armed.
+    renderForm({ taskId: 'A' });
+    const toggleAAgain = screen.getByRole('button', { name: /ultracode/i });
+    expect(toggleAAgain).toHaveAttribute('aria-pressed', 'true');
+  });
+
   test('Bug: draft + textarea survive when onSubmit returns false (send failed)', async () => {
     // Operator clicks Send → backend returns an error envelope →
     // SessionDetail's onSendMessage returns false. The draft must

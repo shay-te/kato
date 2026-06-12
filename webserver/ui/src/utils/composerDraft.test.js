@@ -3,10 +3,14 @@ import test from 'node:test';
 
 import {
   DRAFT_STORAGE_PREFIX,
+  ULTRACODE_STORAGE_PREFIX,
   clearDraft,
   draftStorageKey,
   readDraft,
+  readUltracode,
+  ultracodeStorageKey,
   writeDraft,
+  writeUltracode,
 } from './composerDraft.js';
 
 
@@ -275,4 +279,48 @@ test('very long drafts persist (operator pastes a long block)', function () {
   writeDraft('A', longText, store);
   assert.equal(readDraft('A', store), longText);
   assert.equal(readDraft('A', store).length, 50 * 1024);
+});
+
+
+// ── ultracode toggle persistence ──────────────────────────────────────
+// The composer's ultracode chip is per-task — turning it on for task A
+// must not turn it on for task B, and the choice must survive a tab
+// switch + a page reload (same idiom as the text draft).
+
+test('ultracodeStorageKey prefixes the task id and is empty for missing ids', function () {
+  assert.equal(ultracodeStorageKey('TASK-42'), `${ULTRACODE_STORAGE_PREFIX}TASK-42`);
+  assert.equal(ultracodeStorageKey(''), '');
+  assert.equal(ultracodeStorageKey(null), '');
+});
+
+test('readUltracode defaults to false when nothing has been stored', function () {
+  assert.equal(readUltracode('T1', fakeStorage()), false);
+});
+
+test('writeUltracode(true) round-trips through readUltracode', function () {
+  const store = fakeStorage();
+  writeUltracode('T1', true, store);
+  assert.equal(readUltracode('T1', store), true);
+});
+
+test('writeUltracode(false) removes the entry so the default is false again', function () {
+  const store = fakeStorage([[`${ULTRACODE_STORAGE_PREFIX}T1`, 'on']]);
+  writeUltracode('T1', false, store);
+  assert.equal(store.getItem(`${ULTRACODE_STORAGE_PREFIX}T1`), null);
+  assert.equal(readUltracode('T1', store), false);
+});
+
+test('ultracode is isolated per task — arming A does not arm B', function () {
+  const store = fakeStorage();
+  writeUltracode('A', true, store);
+  assert.equal(readUltracode('A', store), true);
+  assert.equal(readUltracode('B', store), false);
+});
+
+test('ultracode survives a simulated tab unmount/remount + reload', function () {
+  const store = fakeStorage();
+  writeUltracode('A', true, store);
+  // Tab switch + back: the lazy useState initializer calls readUltracode
+  // again. Page reload: same — the store is the durable backstop.
+  assert.equal(readUltracode('A', store), true);
 });

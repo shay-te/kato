@@ -16,7 +16,7 @@
     "task_id": "PROJ-SYNC"
   },
   "task_lookup_failed": {
-    "error": "could not load task from the ticket platform \u2014 no tags / description available to resolve repositories",
+    "error": "could not find PROJ-SYNC on the ticket platform \u2014 check that you are still the assignee and that the ticket is reachable from kato's configured queues",
     "synced": false,
     "task_id": "PROJ-SYNC"
   }

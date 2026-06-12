@@ -2237,12 +2237,32 @@ class FinalEdgeCaseTests(unittest.TestCase):
         task_service.add_tag.assert_called_once()
 
     def test_lookup_task_for_sync_returns_none_when_not_in_any_queue(self) -> None:
-        # Line 1832: loop completes without match → return None.
+        # Loop completes without match → return None. ``_lookup_task_for_sync``
+        # now spans the full lifecycle queue (assigned + review + done) via
+        # ``_lookup_assigned_or_review_task``, so every queue is empty here.
         task_service = MagicMock()
+        task_service.list_all_assigned_tasks.return_value = []
         task_service.get_assigned_tasks.return_value = []
         task_service.get_review_tasks.return_value = []
         service = AgentService(**_kwargs(task_service=task_service))
         self.assertIsNone(service._lookup_task_for_sync('T1'))
+
+    def test_lookup_task_for_sync_finds_task_past_active_queues(self) -> None:
+        # Regression: tickets that have moved past the assigned/review
+        # autonomous queue states (e.g. operator advanced status to
+        # "In Progress" or "Done") used to come back as None, which
+        # broke the sync-repositories button with a misleading
+        # "no tags / description" error. The lifecycle-wide lookup
+        # (``list_all_assigned_tasks``) MUST find them.
+        task_service = MagicMock()
+        live = SimpleNamespace(
+            id='UNA-2763', tags=['kato:repo:core-lib'], description=None,
+        )
+        task_service.list_all_assigned_tasks.return_value = [live]
+        task_service.get_assigned_tasks.return_value = []
+        task_service.get_review_tasks.return_value = []
+        service = AgentService(**_kwargs(task_service=task_service))
+        self.assertIs(service._lookup_task_for_sync('UNA-2763'), live)
 
     def test_kick_lesson_extraction_uses_task_summary_when_get_task_succeeds(
         self,

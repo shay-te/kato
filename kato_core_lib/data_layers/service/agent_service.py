@@ -28,10 +28,7 @@ from kato_core_lib.helpers.mission_logging_utils import MissionStepLoggerMixin
 from kato_core_lib.data_layers.data.task import Task
 from kato_core_lib.data_layers.service.implementation_service import ImplementationService
 from kato_core_lib.helpers.task_context_utils import PreparedTaskContext, session_suffix
-from kato_core_lib.helpers.task_lookup_utils import (
-    find_task_by_id,
-    task_id_matches,
-)
+from kato_core_lib.helpers.task_lookup_utils import find_task_by_id
 from kato_core_lib.data_layers.service.notification_service import NotificationService
 from kato_core_lib.data_layers.service.repository_service import (
     RepositoryHasNoChangesError,
@@ -3077,8 +3074,9 @@ class AgentService(MissionStepLoggerMixin, Service):
                 'synced': False,
                 'task_id': normalized,
                 'error': (
-                    'could not load task from the ticket platform — '
-                    'no tags / description available to resolve repositories'
+                    f'could not find {normalized} on the ticket platform — '
+                    f'check that you are still the assignee and that the '
+                    f'ticket is reachable from kato\'s configured queues'
                 ),
             }
         try:
@@ -3251,24 +3249,11 @@ class AgentService(MissionStepLoggerMixin, Service):
         ``resolve_task_repositories`` needs the real Task — the
         workspace's ``task_summary`` stub doesn't carry tags or
         description, which are what drive multi-repo resolution. We
-        look across both queues (assigned + review) so the sync icon
-        works while a task is in either lifecycle state.
+        scan the full lifecycle (assigned + review + done) so the
+        sync icon works whenever a workspace exists, even after the
+        ticket has moved past the autonomous queue states.
         """
-        try:
-            queues = (
-                self._task_service.get_assigned_tasks(),
-                self._task_service.get_review_tasks(),
-            )
-        except Exception:
-            self.logger.exception(
-                'failed to load tasks for repository sync (task %s)', task_id,
-            )
-            return None
-        for queue in queues:
-            for task in queue or []:
-                if task_id_matches(task, task_id):
-                    return task
-        return None
+        return self._lookup_assigned_or_review_task(task_id)
 
     def push_task(self, task_id: str) -> dict[str, object]:
         """Commit + push the task branch for every repo in its workspace.

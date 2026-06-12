@@ -359,7 +359,7 @@ class SyncTaskRepositoriesTests(unittest.TestCase):
         service = AgentService(**_kwargs(workspace_manager=workspace))
         with patch.object(service, '_lookup_task_for_sync', return_value=None):
             result = service.sync_task_repositories('T1')
-        self.assertIn('could not load task', result['error'])
+        self.assertIn('could not find', result['error'])
 
     def test_returns_error_when_resolve_fails(self) -> None:
         workspace = MagicMock()

@@ -126,7 +126,7 @@ class SyncRepositoriesContractTests(unittest.TestCase):
         self.assertIn(status, (200, 500))
         self.assertEqual(payload.get('synced'), False)
         self.assertIn('error', payload)
-        self.assertIn('could not load task', payload['error'])
+        self.assertIn('could not find', payload['error'])
 
     def test_resolve_returns_empty_repo_set_means_nothing_to_sync(self) -> None:
         """No repos resolved for the task → success path with empty result.

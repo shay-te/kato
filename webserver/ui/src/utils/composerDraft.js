@@ -60,3 +60,20 @@ export function writeDraft(taskId, value, storage) {
 export function clearDraft(taskId, storage) {
   writeDraft(taskId, '', storage);
 }
+
+// Per-task ultracode chip state. Same shape as the text draft: localStorage
+// keyed by taskId, so the toggle survives tab switches and page reloads and
+// each task keeps its own preference.
+export const ULTRACODE_STORAGE_PREFIX = 'kato.composer.ultracode.';
+
+export function ultracodeStorageKey(taskId) {
+  return taskId ? `${ULTRACODE_STORAGE_PREFIX}${taskId}` : '';
+}
+
+export function readUltracode(taskId, storage) {
+  return readDraftByKey(ultracodeStorageKey(taskId), storage) === 'on';
+}
+
+export function writeUltracode(taskId, on, storage) {
+  writeDraftByKey(ultracodeStorageKey(taskId), on ? 'on' : '', storage);
+}

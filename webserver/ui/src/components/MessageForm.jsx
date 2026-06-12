@@ -14,7 +14,12 @@ import { toast } from '../stores/toastStore.js';
 import { useAutoSizeTextarea } from '../hooks/useAutoSizeTextarea.js';
 import { usePublishedHeight } from '../hooks/usePublishedHeight.js';
 import { appendComposerFragment } from '../utils/chatComposerHelpers.js';
-import { readDraft, writeDraft } from '../utils/composerDraft.js';
+import {
+  readDraft,
+  writeDraft,
+  readUltracode,
+  writeUltracode,
+} from '../utils/composerDraft.js';
 import {
   readImageDraft,
   writeImageDraft,
@@ -96,7 +101,9 @@ const MessageForm = forwardRef(function MessageForm({
   // workflow-mode PROMPT KEYWORD. When on, we prepend it to the message so the
   // agent authors/runs multi-agent workflows (only takes effect if the spawned
   // Claude supports it). Off by default — it can trigger expensive fan-out.
-  const [ultracode, setUltracode] = useState(false);
+  // Persisted per-task in localStorage (same idiom as the text draft) so the
+  // toggle survives tab switches and page reloads.
+  const [ultracode, setUltracode] = useState(() => readUltracode(taskId));
   const fileInputRef = useRef(null);
   const textareaRef = useRef(null);
   const formRef = useRef(null);
@@ -148,6 +155,10 @@ const MessageForm = forwardRef(function MessageForm({
   useEffect(() => {
     writeDraft(taskId, value);
   }, [taskId, value]);
+
+  useEffect(() => {
+    writeUltracode(taskId, ultracode);
+  }, [taskId, ultracode]);
 
   // Restore the draft from the SERVER on mount — the durable backstop for when
   // the browser caches were wiped (private mode, cleared data, a different
