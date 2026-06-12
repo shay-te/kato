@@ -5753,7 +5753,7 @@ body.kato-resizing #left-pane-resizer::before {
 .diff-file {
   --diff-background-color: #0a0a0a;
   --diff-text-color: #f5f5f7;
-  --diff-font-family: ui-monospace, monospace;
+  --diff-font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   /* Gutter == code for changed lines: a brighter gutter shade made
    * the columns read as vertical stripes / a grid. Same colour on
    * both = each added/deleted line is ONE solid block, no grid. */
@@ -5771,12 +5771,17 @@ body.kato-resizing #left-pane-resizer::before {
  *   - muted neutral grey (not the bright cyan kato used to paint — the
  *     numbers shouted for attention and competed with the syntax),
  *   - tabular-nums so columns line up at every magnitude,
- *   - shrink-fit width via the ``width: 1%`` table-cell trick: react-
- *     diff-view renders the gutter as a ``<td>``, so setting width to
- *     1% with nowrap collapses the column to its widest content (the
- *     largest line number in the file). A 30-line file gets a narrow
- *     gutter; a 3000-line file gets a wider one. Padding is small so
- *     the column doesn't carry extra fat. */
+ *   - shrink-fit width: react-diff-view ships a ``<col class="diff-
+ *     gutter-col" width="7ch">`` element that pins the column to 7
+ *     characters regardless of how many digits the file actually has.
+ *     Override the ``<col>`` to ``width: auto`` AND the ``<td>`` to
+ *     ``width: 1%; white-space: nowrap`` so the column collapses to
+ *     the widest line number in the file. A 30-line file gets a narrow
+ *     gutter; a 3000-line file gets a wider one. */
+.diff-file .diff-gutter-col {
+  width: auto;
+}
+
 .diff-file .diff-gutter {
   color: #a3a3a3;
   font-variant-numeric: tabular-nums;
@@ -5786,8 +5791,16 @@ body.kato-resizing #left-pane-resizer::before {
   text-align: right;
 }
 
+/* Tighten row spacing to Bitbucket's metrics — react-diff-view's
+ * default ``line-height: 1.5`` on ``.diff-line`` gave kato visibly
+ * taller rows than Bitbucket. 1.4 lands at ~17px per row at 12px font
+ * (vs 18px), matching the comparison screenshot. */
 .diff-file .diff {
   font-size: 12px;
+}
+
+.diff-file .diff-line {
+  line-height: 1.4;
 }
 
 .diff-file .diff-context-expander {
