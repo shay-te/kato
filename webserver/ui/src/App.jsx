@@ -457,6 +457,7 @@ export default function App() {
         onFocusFileInTree={handleFocusFileInTree}
         onCommentsChanged={handleDiffCommentsChanged}
         onViewStateChange={handleFileViewStateChange}
+        onOpenFile={handleOpenFile}
       />
     );
   } else {

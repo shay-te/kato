@@ -273,6 +273,14 @@ class LocalCommentStore(object):
 
         return self._mutate_by_id(comment_id, _apply)
 
+    def update_body(self, comment_id: str, body: str) -> CommentRecord | None:
+        """Overwrite a comment's body text. Used by the operator-edit flow."""
+
+        def _apply(current: CommentRecord) -> None:
+            current.body = body
+
+        return self._mutate_by_id(comment_id, _apply)
+
     def start_kato_run(
         self,
         comment_id: str,

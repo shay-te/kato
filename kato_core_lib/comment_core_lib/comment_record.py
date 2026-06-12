@@ -54,6 +54,10 @@ class KatoCommentStatus(str, enum.Enum):
       ``QUEUED``      — kato will process when the live agent goes
                         idle. Set when the operator submits a local
                         comment while another turn is in flight.
+      ``EDITING``     — operator is actively editing the comment body
+                        in the UI; ``next_queued`` skips it so the
+                        agent can't pick up a half-written prompt.
+                        Flips back to ``QUEUED`` on save or cancel.
       ``IN_PROGRESS`` — agent is actively running against this
                         comment.
       ``ADDRESSED``   — agent finished; commit pushed; thread
@@ -67,6 +71,7 @@ class KatoCommentStatus(str, enum.Enum):
 
     IDLE = 'idle'
     QUEUED = 'queued'
+    EDITING = 'editing'
     IN_PROGRESS = 'in_progress'
     ADDRESSED = 'addressed'
     WAITING = 'waiting'

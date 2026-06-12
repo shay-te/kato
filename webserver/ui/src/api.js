@@ -252,6 +252,22 @@ export function deleteTaskComment(taskId, commentId) {
   );
 }
 
+// Edit a queued local comment. ``body`` and ``katoStatus`` are both
+// optional — the inline edit UI sends ``{katoStatus: 'editing'}`` when
+// the operator opens the editor (so the agent skips the comment), then
+// ``{body, katoStatus: 'queued'}`` on save or ``{katoStatus: 'queued'}``
+// on cancel.
+export function editTaskComment(taskId, commentId, { body, katoStatus } = {}) {
+  if (!taskId || !commentId) { return { ok: false, error: 'no ids' }; }
+  const payload = {};
+  if (typeof body === 'string') { payload.body = body; }
+  if (katoStatus) { payload.kato_status = katoStatus; }
+  return postEnvelope(
+    `/api/sessions/${encodeURIComponent(taskId)}/comments/${encodeURIComponent(commentId)}/edit`,
+    payload,
+  );
+}
+
 // Every task assigned to the configured kato user — open, in
 // progress, in review, done. Drives the left-panel "+ Add task"
 // picker.

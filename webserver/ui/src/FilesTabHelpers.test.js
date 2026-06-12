@@ -9,7 +9,9 @@ import {
   groupContentMatchesByFile,
   matchTreeNode,
   normalizeTrees,
+  repoCommentStatus,
 } from './FilesTabHelpers.js';
+import { moreUrgentCommentStatus } from './utils/commentStatus.js';
 
 
 test('countRepoComments sums the per-file counts', () => {
@@ -24,6 +26,35 @@ test('countRepoComments is 0 for empty / non-map input', () => {
   assert.equal(countRepoComments(new Map()), 0);
   assert.equal(countRepoComments(null), 0);
   assert.equal(countRepoComments(undefined), 0);
+});
+
+
+// Repo header chip must tint to the same status the file-row chips do,
+// so the header doesn't read as "different colour from the rows it
+// summarises" (the original operator report — two PENDING comments,
+// repo header was a static cyan).
+test('repoCommentStatus picks the most-urgent status across files', () => {
+  const meta = new Map([
+    ['a.py', { count: 1, status: 'queued' }],
+    ['b.py', { count: 1, status: 'in_progress' }],
+  ]);
+  // Precedence: failed > waiting > open > queued > in_progress > addressed.
+  // queued beats in_progress.
+  assert.equal(repoCommentStatus(meta, moreUrgentCommentStatus), 'queued');
+});
+
+test('repoCommentStatus returns the only present status when one is set', () => {
+  const meta = new Map([
+    ['a.py', { count: 2, status: 'queued' }],
+    ['b.py', { count: 1, status: 'queued' }],
+  ]);
+  assert.equal(repoCommentStatus(meta, moreUrgentCommentStatus), 'queued');
+});
+
+test('repoCommentStatus is empty for empty / non-map input', () => {
+  assert.equal(repoCommentStatus(new Map(), moreUrgentCommentStatus), '');
+  assert.equal(repoCommentStatus(null, moreUrgentCommentStatus), '');
+  assert.equal(repoCommentStatus(undefined, moreUrgentCommentStatus), '');
 });
 
 

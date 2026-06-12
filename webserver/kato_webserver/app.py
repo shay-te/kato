@@ -30,6 +30,7 @@ Endpoints:
     POST /api/sessions/<task_id>/comments/<id>/reopen   — re-open a resolved thread
     POST /api/sessions/<task_id>/comments/<id>/addressed — mark addressed + post on remote
     DEL  /api/sessions/<task_id>/comments/<id>          — delete comment + replies
+    POST /api/sessions/<task_id>/comments/<id>/edit     — edit queued local comment body / kato_status
     POST /api/sessions/<task_id>/comments/sync          — git pull + pull remote PR comments
     GET  /api/claude/sessions                           — list adoptable Claude Code sessions
     GET  /api/status/recent                             — recent kato-process log entries
@@ -2095,6 +2096,31 @@ def _register_http_routes(app: Flask) -> None:
         if err:
             return err
         return jsonify(delete(task_id, comment_id))
+
+    @app.post('/api/sessions/<task_id>/comments/<comment_id>/edit')
+    def edit_task_comment(task_id: str, comment_id: str):
+        """Edit a queued local comment's body and/or kato_status.
+
+        Body (JSON): ``{"body": "...", "kato_status": "editing"|"queued"}``
+        — both optional. Used by the inline-edit flow: the UI flips a
+        QUEUED comment to ``editing`` when the operator opens the
+        editor (so the agent skips it), then back to ``queued`` with
+        the new body on save (or just back to ``queued`` on cancel).
+        """
+        edit, err = _resolve_agent_method(
+            app, 'edit_task_comment',
+            not_callable_message='comments not supported',
+        )
+        if err:
+            return err
+        payload = request.get_json(silent=True) or {}
+        body = payload.get('body')
+        kato_status = payload.get('kato_status')
+        return jsonify(edit(
+            task_id, comment_id,
+            body=None if body is None else str(body),
+            kato_status=None if kato_status is None else str(kato_status),
+        ))
 
     @app.post('/api/sessions/<task_id>/comments/sync')
     def sync_task_comments(task_id: str):

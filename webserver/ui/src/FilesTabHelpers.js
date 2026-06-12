@@ -194,3 +194,20 @@ export function countRepoComments(commentMeta) {
   }
   return total;
 }
+
+// Most-urgent kato_status across the repo's open comment threads, so the
+// repo-header chip tints to the same colour as the per-file chips it is
+// summarising (otherwise it stayed a fixed cyan and disagreed with what
+// the operator saw on the rows underneath). Uses the same
+// ``moreUrgentCommentStatus`` precedence the per-file aggregator uses,
+// so the two stay in lockstep. Pure.
+export function repoCommentStatus(commentMeta, moreUrgentCommentStatus) {
+  if (!commentMeta || typeof commentMeta.values !== 'function') { return ''; }
+  let best = '';
+  for (const entry of commentMeta.values()) {
+    const status = String(entry?.status || '').trim();
+    if (!status) { continue; }
+    best = best ? moreUrgentCommentStatus(best, status) : status;
+  }
+  return best;
+}

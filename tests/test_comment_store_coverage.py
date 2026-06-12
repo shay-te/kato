@@ -190,6 +190,30 @@ class LocalCommentStoreDefensiveTests(unittest.TestCase):
         )
         self.assertEqual(result.kato_addressed_sha, 'abc123')
 
+    def test_update_body_overwrites_text(self) -> None:
+        # Edit flow: a queued local comment's body is overwritten via
+        # the same _mutate_by_id scaffold every other status mutator
+        # uses, so the operator's inline edit lands atomically and
+        # next_queued keeps seeing the same record id.
+        self.store.add(_record())
+        result = self.store.update_body('c1', 'edited body text')
+        self.assertEqual(result.body, 'edited body text')
+        self.assertEqual(self.store.list()[0].body, 'edited body text')
+
+    def test_update_body_returns_none_for_unknown_id(self) -> None:
+        self.assertIsNone(self.store.update_body('never', 'x'))
+
+    def test_update_kato_status_accepts_editing(self) -> None:
+        # New EDITING state must be valid. next_queued() filters to
+        # QUEUED only, so flipping to EDITING naturally hides a comment
+        # from the agent while the operator is mid-edit.
+        self.store.add(_record())
+        result = self.store.update_kato_status(
+            'c1', kato_status=KatoCommentStatus.EDITING.value,
+        )
+        self.assertEqual(result.kato_status, 'editing')
+        self.assertIsNone(self.store.next_queued())
+
     def test_delete_removes_record_and_reply_chain(self) -> None:
         # Lines 218-228: deletes parent AND its replies.
         self.store.add(_record('p1'))

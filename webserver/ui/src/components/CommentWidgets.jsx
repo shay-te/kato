@@ -71,6 +71,7 @@ function statusPill(comment) {
   switch (comment.kato_status) {
     case 'waiting': return { label: 'WAITING', cls: 'is-waiting' };
     case 'queued': return { label: 'PENDING', cls: 'is-queued' };
+    case 'editing': return { label: 'EDITING', cls: 'is-editing' };
     case 'in_progress': return { label: 'WORKING', cls: 'is-in_progress' };
     case 'addressed': return { label: 'ADDRESSED', cls: 'is-addressed' };
     case 'failed': return { label: 'FAILED', cls: 'is-failed' };
@@ -84,6 +85,13 @@ function statusPill(comment) {
 export function CommentBubble({
   comment, isRoot,
   onResolve, onReopen, onDelete, onReply, onMarkAddressed,
+  // Inline-edit hook for a queued local comment. Async; receives
+  // ``({body, katoStatus})`` and must return ``true`` on success.
+  // Called three ways during one edit cycle:
+  //   open editor → ``{katoStatus: 'editing'}``
+  //   save        → ``{body, katoStatus: 'queued'}``
+  //   cancel      → ``{katoStatus: 'queued'}``
+  onEdit,
   // When the thread parent owns the collapse state (so collapsing
   // the root also hides the replies — see ``CommentThread``), it
   // passes ``collapsed`` + ``onToggleCollapsed`` here and the
@@ -136,6 +144,35 @@ export function CommentBubble({
   );
   const collapsed = parentControlled ? !!collapsedProp : localCollapsed;
   const toggleCollapsed = parentControlled ? onToggleCollapsed : toggleLocalCollapsed;
+
+  // Inline-edit mode for queued local comments. Eligibility: local
+  // root comment that is QUEUED or already EDITING (the latter so a
+  // mid-edit page reload can re-enter the editor). Opening the editor
+  // flips kato_status → 'editing' so ``next_queued`` skips it and
+  // the agent can't pick up a half-written prompt.
+  const canEdit = (
+    isRoot
+    && typeof onEdit === 'function'
+    && comment.source === 'local'
+    && (katoStatus === 'queued' || katoStatus === 'editing')
+  );
+  const [editing, setEditing] = useState(katoStatus === 'editing');
+  async function startEditing() {
+    setEditing(true);
+    if (katoStatus !== 'editing') {
+      const ok = await onEdit({ katoStatus: 'editing' });
+      if (!ok) { setEditing(false); }
+    }
+  }
+  async function commitEdit(body) {
+    const ok = await onEdit({ body, katoStatus: 'queued' });
+    if (ok) { setEditing(false); }
+    return ok;
+  }
+  async function cancelEdit() {
+    setEditing(false);
+    await onEdit({ katoStatus: 'queued' });
+  }
 
   return (
     <div
@@ -211,49 +248,72 @@ export function CommentBubble({
             </div>
           )}
           {outdatedBanner}
-          <div className="diff-file-comment-body">
-            {renderCommentMarkdown(comment.body)}
-          </div>
-          <footer className="diff-file-comment-actions">
-            {typeof onReply === 'function' && (
-              <button type="button" onClick={onReply} className="diff-file-comment-action">
-                Reply
-              </button>
-            )}
-            {isRoot && !isResolved && typeof onResolve === 'function' && (
-              <button type="button" onClick={onResolve} className="diff-file-comment-action">
-                Resolve
-              </button>
-            )}
-            {isRoot && isResolved && typeof onReopen === 'function' && (
-              <button type="button" onClick={onReopen} className="diff-file-comment-action">
-                Reopen
-              </button>
-            )}
-            {showMarkAddressed && (
-              <button
-                type="button"
-                onClick={onMarkAddressed}
-                className="diff-file-comment-action"
-                title={
-                  comment.source === 'remote'
-                    ? 'Mark addressed locally + post the "Kato addressed" reply on the source git platform.'
-                    : 'Mark this comment as addressed by kato.'
-                }
-              >
-                Mark addressed
-              </button>
-            )}
-            {comment.source === 'local' && typeof onDelete === 'function' && (
-              <button
-                type="button"
-                onClick={onDelete}
-                className="diff-file-comment-action danger"
-              >
-                Delete
-              </button>
-            )}
-          </footer>
+          {editing ? (
+            <CommentForm
+              placeholder="Edit comment…"
+              initialDraft={comment.body || ''}
+              draftKey={`kato.comment.edit.${comment.id}`}
+              submitLabel="Save"
+              onSubmit={commitEdit}
+              onCancel={cancelEdit}
+            />
+          ) : (
+            <div className="diff-file-comment-body">
+              {renderCommentMarkdown(comment.body)}
+            </div>
+          )}
+          {!editing && (
+            <footer className="diff-file-comment-actions">
+              {typeof onReply === 'function' && (
+                <button type="button" onClick={onReply} className="diff-file-comment-action">
+                  Reply
+                </button>
+              )}
+              {canEdit && (
+                <button
+                  type="button"
+                  onClick={startEditing}
+                  className="diff-file-comment-action"
+                  title="Edit this pending comment. Kato will not pick it up while you are editing."
+                >
+                  Edit
+                </button>
+              )}
+              {isRoot && !isResolved && typeof onResolve === 'function' && (
+                <button type="button" onClick={onResolve} className="diff-file-comment-action">
+                  Resolve
+                </button>
+              )}
+              {isRoot && isResolved && typeof onReopen === 'function' && (
+                <button type="button" onClick={onReopen} className="diff-file-comment-action">
+                  Reopen
+                </button>
+              )}
+              {showMarkAddressed && (
+                <button
+                  type="button"
+                  onClick={onMarkAddressed}
+                  className="diff-file-comment-action"
+                  title={
+                    comment.source === 'remote'
+                      ? 'Mark addressed locally + post the "Kato addressed" reply on the source git platform.'
+                      : 'Mark this comment as addressed by kato.'
+                  }
+                >
+                  Mark addressed
+                </button>
+              )}
+              {comment.source === 'local' && typeof onDelete === 'function' && (
+                <button
+                  type="button"
+                  onClick={onDelete}
+                  className="diff-file-comment-action danger"
+                >
+                  Delete
+                </button>
+              )}
+            </footer>
+          )}
         </>
       )}
     </div>
@@ -274,6 +334,7 @@ export function CommentThread({
   onDelete,
   onReply,
   onMarkAddressed,
+  onEdit,
 }) {
   const isResolved = thread.root.status === 'resolved';
   // Collapse state lives here (not inside CommentBubble) so that
@@ -302,6 +363,11 @@ export function CommentThread({
         onDelete={() => onDelete(thread.root.id)}
         onReply={() => onReply(thread.root.id)}
         onMarkAddressed={() => onMarkAddressed(thread.root.id)}
+        onEdit={
+          typeof onEdit === 'function'
+            ? (payload) => onEdit(thread.root.id, payload)
+            : undefined
+        }
       />
       {!collapsed && thread.replies.map((reply) => (
         <CommentBubble
@@ -376,8 +442,15 @@ export function CommentForm({
   // forms and wipe the in-flight draft). Leave blank to opt out — the
   // form then behaves as a plain ephemeral textarea.
   draftKey = '',
+  // Seed the textarea when there is no persisted draft yet. Used by
+  // the inline edit flow to pre-fill the current comment body.
+  initialDraft = '',
+  // Override the action-button label (default: 'Add comment' / 'Reply').
+  submitLabel = '',
 }) {
-  const [draft, setDraft] = useState(() => readDraftByKey(draftKey));
+  const [draft, setDraft] = useState(
+    () => readDraftByKey(draftKey) || initialDraft,
+  );
   const [busy, setBusy] = useState(false);
   // Mirror the global lock into local render state so the button
   // shows ``Submitting…`` and disables when ANY comment form is
@@ -507,7 +580,9 @@ export function CommentForm({
           onClick={submit}
           disabled={busy || globallyLocked || !draft.trim()}
         >
-          {(busy || globallyLocked) ? 'Submitting…' : (replyMode ? 'Reply' : 'Add comment')}
+          {(busy || globallyLocked)
+            ? 'Submitting…'
+            : (submitLabel || (replyMode ? 'Reply' : 'Add comment'))}
         </button>
       </div>
     </div>

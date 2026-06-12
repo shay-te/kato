@@ -21,6 +21,7 @@ function isOldSideEncoded(n) { return n < -(OLD_LINE_OFFSET); }
 import {
   createTaskComment,
   deleteTaskComment,
+  editTaskComment,
   fetchBaseFileContent,
   markTaskCommentAddressed,
   reopenTaskComment,
@@ -134,6 +135,10 @@ function DiffFileWithComments({
   forceExpandToken = 0,
   onAddToChat,
   onFocusInTree,
+  // Swap the centre column from the diff view to a plain editor view of
+  // this file. Wired by DiffPane → App.handleOpenFile (view: 'file').
+  // Shown as a header icon when set.
+  onOpenAsFile,
   comments = [],
   commentsLoading = false,
   commentsError = '',
@@ -172,10 +177,21 @@ function DiffFileWithComments({
   });
   const [pathMenu, setPathMenu] = useState(null);
 
+  // Reset only when the FILE IDENTITY changes (operator switched files,
+  // or the workspace itself changed). ``file.hunks`` is a fresh array
+  // reference on every 5s poll, so depending on it here was wiping the
+  // operator's expanded ranges every poll — they hit "expand 20 more
+  // lines", read for a few seconds, and the view snapped back to the
+  // original hunks. The hunks-content path (a real diff change while
+  // viewing the same file) is rare and intentionally accepts a stale
+  // render until the operator switches files; the alternative would be
+  // to re-apply each expansion on top of fresh hunks, which is a much
+  // bigger change.
   useEffect(() => {
     setRenderedHunks(file.hunks || []);
     setBaseSource({ status: 'idle', lines: null, error: '' });
-  }, [file.hunks, path, repoId, repoCwd, taskId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path, repoId, repoCwd, taskId]);
 
   useEffect(() => {
     if (forceExpandToken) { setExpanded(true); }
@@ -365,6 +381,16 @@ function DiffFileWithComments({
     notifyMutated();
   }
 
+  async function onEdit(commentId, { body, katoStatus } = {}) {
+    const result = await editTaskComment(taskId, commentId, { body, katoStatus });
+    if (!result.ok) {
+      toast.errorFromResult(result, { title: 'Edit failed', durationMs: 5000 });
+      return false;
+    }
+    notifyMutated();
+    return true;
+  }
+
   async function onMarkAddressed(commentId, addressedSha = '') {
     const result = await markTaskCommentAddressed(taskId, commentId, addressedSha);
     if (!result.ok) {
@@ -419,6 +445,7 @@ function DiffFileWithComments({
               onReopen={onReopen}
               onDelete={onDelete}
               onMarkAddressed={onMarkAddressed}
+              onEdit={onEdit}
               onReply={(rootId) => {
                 setActiveLine(lineKey);
                 setReplyTo(rootId);
@@ -732,6 +759,7 @@ function DiffFileWithComments({
       onReopen={onReopen}
       onDelete={onDelete}
       onMarkAddressed={onMarkAddressed}
+      onEdit={onEdit}
       onReply={(rootId) => {
         setActiveLine(-1);
         setReplyTo(rootId);
@@ -820,6 +848,17 @@ function DiffFileWithComments({
         <DiffKindIcon kind={file.type} />
         {conflictedBadge}
         {focusPathButton}
+        {typeof onOpenAsFile === 'function' && (
+          <button
+            type="button"
+            className="diff-file-open-as-file is-icon tooltip-below"
+            onClick={onOpenAsFile}
+            data-tooltip="View file (no diff)"
+            aria-label="View file (no diff)"
+          >
+            <Icon name="file" />
+          </button>
+        )}
       </StickyHeader>
       {pathContextMenu}
       {bodyContent}

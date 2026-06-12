@@ -1315,6 +1315,136 @@ class DeleteTaskCommentTests(unittest.TestCase):
         self.assertFalse(result['ok'])
 
 
+class EditTaskCommentTests(unittest.TestCase):
+    """Edit flow for queued local comments.
+
+    The agent's pickup path is ``next_queued`` which filters strictly to
+    QUEUED. The edit flow flips a comment to EDITING so the agent
+    naturally skips it while the operator is mid-edit, then flips it
+    back to QUEUED on save/cancel — optionally with a new body.
+    """
+
+    def setUp(self) -> None:
+        from kato_core_lib.comment_core_lib import (
+            CommentRecord,
+            KatoCommentStatus,
+        )
+        self._CommentRecord = CommentRecord
+        self._Status = KatoCommentStatus
+
+    def _local_queued(self, comment_id: str = 'c1'):
+        return self._CommentRecord(
+            id=comment_id, body='original', repo_id='r1', author='a',
+            source='local', kato_status=self._Status.QUEUED.value,
+        )
+
+    def _remote_queued(self, comment_id: str = 'r1'):
+        return self._CommentRecord(
+            id=comment_id, body='r', repo_id='r1', author='a',
+            source='remote', kato_status=self._Status.QUEUED.value,
+        )
+
+    def test_returns_error_when_no_workspace(self) -> None:
+        service = AgentService(**_kwargs())
+        result = service.edit_task_comment('T1', 'c1', kato_status='editing')
+        self.assertFalse(result['ok'])
+
+    def test_returns_error_when_comment_missing(self) -> None:
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        store.list.return_value = []
+        with patch.object(service, '_comment_store_for', return_value=store):
+            result = service.edit_task_comment('T1', 'c1', kato_status='editing')
+        self.assertFalse(result['ok'])
+        self.assertIn('not found', result['error'])
+
+    def test_refuses_remote_comments(self) -> None:
+        # Remote comments live on the source git platform; we don't
+        # push edits there, so editing them locally would silently
+        # de-sync the two sides.
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        store.list.return_value = [self._remote_queued()]
+        with patch.object(service, '_comment_store_for', return_value=store):
+            result = service.edit_task_comment(
+                'T1', 'r1', kato_status='editing',
+            )
+        self.assertFalse(result['ok'])
+        self.assertIn('local', result['error'])
+
+    def test_refuses_comments_owned_by_the_agent(self) -> None:
+        # IN_PROGRESS / ADDRESSED / FAILED / WAITING / IDLE are the
+        # agent's domain — refuse to step on them.
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        record = self._local_queued()
+        record.kato_status = self._Status.IN_PROGRESS.value
+        store.list.return_value = [record]
+        with patch.object(service, '_comment_store_for', return_value=store):
+            result = service.edit_task_comment(
+                'T1', 'c1', kato_status='editing',
+            )
+        self.assertFalse(result['ok'])
+        self.assertIn('in_progress', result['error'])
+
+    def test_refuses_target_status_outside_queued_editing(self) -> None:
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        store.list.return_value = [self._local_queued()]
+        with patch.object(service, '_comment_store_for', return_value=store):
+            result = service.edit_task_comment(
+                'T1', 'c1', kato_status='in_progress',
+            )
+        self.assertFalse(result['ok'])
+        self.assertIn('queued / editing', result['error'])
+
+    def test_start_editing_flips_to_editing(self) -> None:
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        store.list.return_value = [self._local_queued()]
+        with patch.object(service, '_comment_store_for', return_value=store):
+            result = service.edit_task_comment(
+                'T1', 'c1', kato_status='editing',
+            )
+        self.assertTrue(result['ok'])
+        store.update_kato_status.assert_called_once_with(
+            'c1', kato_status='editing',
+        )
+        store.update_body.assert_not_called()
+
+    def test_save_writes_body_and_returns_to_queued(self) -> None:
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        editing = self._local_queued()
+        editing.kato_status = self._Status.EDITING.value
+        store.list.return_value = [editing]
+        with patch.object(service, '_comment_store_for', return_value=store):
+            result = service.edit_task_comment(
+                'T1', 'c1', body='new text', kato_status='queued',
+            )
+        self.assertTrue(result['ok'])
+        store.update_body.assert_called_once_with('c1', 'new text')
+        store.update_kato_status.assert_called_once_with(
+            'c1', kato_status='queued',
+        )
+
+    def test_cancel_returns_to_queued_without_body_change(self) -> None:
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        editing = self._local_queued()
+        editing.kato_status = self._Status.EDITING.value
+        store.list.return_value = [editing]
+        with patch.object(service, '_comment_store_for', return_value=store):
+            result = service.edit_task_comment(
+                'T1', 'c1', kato_status='queued',
+            )
+        self.assertTrue(result['ok'])
+        store.update_body.assert_not_called()
+        store.update_kato_status.assert_called_once_with(
+            'c1', kato_status='queued',
+        )
+
+
 class TaskHasBusyTurnTests(unittest.TestCase):
     def test_returns_false_when_no_session_manager(self) -> None:
         service = AgentService(**_kwargs())

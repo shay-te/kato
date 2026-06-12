@@ -4,6 +4,7 @@ import Editor from '@monaco-editor/react';
 import {
   createTaskComment,
   deleteTaskComment,
+  editTaskComment,
   fetchFileContent,
   fetchTaskComments,
   markTaskCommentAddressed,
@@ -113,6 +114,12 @@ export default function EditorPane({
   const [zoneNode, setZoneNode] = useState(null);
   const zoneIdRef = useRef(null);
   const zoneObjRef = useRef(null);
+  // Mirror of ``zoneNode`` for closures that outlive a single render —
+  // the onDidLayoutChange handler is registered once in
+  // ``handleEditorMount`` and needs the LIVE host node, not whichever
+  // value was captured the first time it ran.
+  const zoneNodeRef = useRef(null);
+  useEffect(() => { zoneNodeRef.current = zoneNode; }, [zoneNode]);
 
   function reportEditorViewState() {
     const editor = editorRef.current;
@@ -244,6 +251,17 @@ export default function EditorPane({
     }
     refreshComments();
   }
+  async function onEdit(commentId, { body, katoStatus } = {}) {
+    const result = await editTaskComment(taskId, commentId, { body, katoStatus });
+    if (!result.ok) {
+      toast.errorFromResult(result, {
+        title: 'Edit failed', fallback: 'edit failed', durationMs: 5000,
+      });
+      return false;
+    }
+    refreshComments();
+    return true;
+  }
   async function onMarkAddressed(comment) {
     const result = await markTaskCommentAddressed(taskId, comment.id, '');
     if (!result.ok) {
@@ -274,6 +292,19 @@ export default function EditorPane({
     }
     if (typeof editor.onDidChangeCursorPosition === 'function') {
       editor.onDidChangeCursorPosition(reportEditorViewState);
+    }
+    // Keep the inline-composer host the same width as the editor's
+    // visible content area whenever Monaco re-lays-out (panel resize,
+    // toggling the minimap, etc.). The view zone otherwise spans the
+    // full horizontal scroll range and the composer overflows the
+    // panel — see the zone-creation effect for the matching logic.
+    if (typeof editor.onDidLayoutChange === 'function') {
+      editor.onDidLayoutChange((info) => {
+        const host = zoneNodeRef.current;
+        if (!host || !info?.contentWidth) { return; }
+        host.style.width = `${info.contentWidth}px`;
+        host.style.maxWidth = `${info.contentWidth}px`;
+      });
     }
 
     // Right-click → "Add to chat" pushes the selected line range
@@ -419,12 +450,36 @@ export default function EditorPane({
     }
     const dom = document.createElement('div');
     dom.className = 'editor-pane-zone-host';
+    // Monaco view zones natively span the editor's FULL scroll-content
+    // width (long-line scroll range, not just the visible viewport), so
+    // the comment composer was extending off-screen and triggering a
+    // horizontal scrollbar. Pin the host to the left edge of the visible
+    // content area and cap its width at ``contentWidth`` — the layout-
+    // change handler in handleEditorMount keeps these in sync as the
+    // editor resizes.
+    const layoutInfo = typeof editor.getLayoutInfo === 'function'
+      ? editor.getLayoutInfo()
+      : null;
+    const viewportWidth = layoutInfo?.contentWidth;
+    if (viewportWidth) {
+      dom.style.width = `${viewportWidth}px`;
+      dom.style.maxWidth = `${viewportWidth}px`;
+    }
+    dom.style.position = 'sticky';
+    dom.style.left = '0';
+    dom.style.boxSizing = 'border-box';
     const zone = {
       afterLineNumber: activeLine,
       // Seed height; the ResizeObserver effect below keeps it in
       // sync with the actual composer height as the textarea grows.
       heightInPx: 200,
       domNode: dom,
+      // Stop Monaco from handling mouse events inside the zone —
+      // otherwise it steals focus back from the textarea every time
+      // the operator clicks into the comment box (the "I can't focus
+      // back on the textarea" report). React handlers on the wrap
+      // also stopPropagation to belt-and-braces against this.
+      suppressMouseDown: true,
     };
     editor.changeViewZones((acc) => {
       zoneIdRef.current = acc.addZone(zone);
@@ -438,6 +493,15 @@ export default function EditorPane({
   // Keep the Monaco view zone exactly as tall as the composer it
   // hosts — Monaco zones don't auto-size to their DOM child, so we
   // measure and reflow on every content/size change.
+  //
+  // We measure the portaled WRAP child (.editor-pane-composer-wrap),
+  // not zoneNode itself. Monaco enforces zoneNode's height from the
+  // outside, so observing zoneNode + reading its scrollHeight feeds
+  // back into itself: sync() sets zone height H+12, Monaco resizes
+  // zoneNode to H+12, scrollHeight reports H+12, next is H+24, … the
+  // composer "grows without anyone typing". The wrap's offsetHeight
+  // is purely content-driven, so the measurement is stable AND it
+  // tracks the textarea as the operator types.
   useEffect(() => {
     if (!zoneNode || typeof ResizeObserver === 'undefined') {
       return undefined;
@@ -447,16 +511,37 @@ export default function EditorPane({
       if (!editor || zoneIdRef.current === null || !zoneObjRef.current) {
         return;
       }
-      const next = Math.max(120, zoneNode.scrollHeight + 12);
+      const child = zoneNode.firstElementChild;
+      const natural = child ? child.offsetHeight : zoneNode.scrollHeight;
+      const next = Math.max(120, natural + 12);
       if (next !== zoneObjRef.current.heightInPx) {
         zoneObjRef.current.heightInPx = next;
         editor.changeViewZones((acc) => acc.layoutZone(zoneIdRef.current));
       }
     };
-    const observer = new ResizeObserver(sync);
-    observer.observe(zoneNode);
-    sync();
-    return () => observer.disconnect();
+    let observedChild = null;
+    const resizeObserver = new ResizeObserver(sync);
+    const attachChildObserver = () => {
+      const child = zoneNode.firstElementChild;
+      if (child === observedChild) { return; }
+      if (observedChild) { resizeObserver.unobserve(observedChild); }
+      observedChild = child;
+      if (child) {
+        resizeObserver.observe(child);
+        sync();
+      }
+    };
+    attachChildObserver();
+    const mutationObserver = typeof MutationObserver !== 'undefined'
+      ? new MutationObserver(attachChildObserver)
+      : null;
+    if (mutationObserver) {
+      mutationObserver.observe(zoneNode, { childList: true });
+    }
+    return () => {
+      resizeObserver.disconnect();
+      if (mutationObserver) { mutationObserver.disconnect(); }
+    };
   }, [zoneNode]);
 
   // Scroll the editor to a line when the operator clicks a chip.
@@ -603,7 +688,17 @@ export default function EditorPane({
           Monaco view zone (GitHub / VS Code style), portaled into
           the zone's DOM node. */}
       {activeLine !== null && activeLine >= 1 && zoneNode && createPortal(
-        <div className="editor-pane-composer-wrap editor-pane-composer-inline">
+        // ``stopPropagation`` on the pointer-down chain keeps Monaco
+        // from re-grabbing focus the instant the operator clicks back
+        // into the textarea. Monaco also sees ``suppressMouseDown`` on
+        // the zone itself (see the zone-creation effect), but the React
+        // synthetic-event bubble would still reach Monaco's host —
+        // hence the belt-and-braces stopPropagation here.
+        <div
+          className="editor-pane-composer-wrap editor-pane-composer-inline"
+          onMouseDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
           <header className="editor-pane-composer-head">
             Add comment on {openFile.relativePath || openFile.absolutePath}:{activeLine}
           </header>
@@ -665,6 +760,7 @@ export default function EditorPane({
                 onDelete={() => onDelete(root)}
                 onReply={() => setReplyTo(root.id)}
                 onMarkAddressed={() => onMarkAddressed(root)}
+                onEdit={(payload) => onEdit(root.id, payload)}
               />
               {replies.map((r) => (
                 <CommentBubble

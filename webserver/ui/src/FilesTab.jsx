@@ -34,6 +34,7 @@ import {
   folderContainsChange,
   matchTreeNode,
   normalizeTrees,
+  repoCommentStatus,
 } from './FilesTabHelpers.js';
 import { cssEscapeAttr } from './utils/dom.js';
 import { countNoun } from './utils/pluralize.js';
@@ -711,17 +712,21 @@ export function buildFilesDiffMeta(repoDiffs) {
 
 // Inline repo-header summary: ``+N −M`` git stats and a comment count.
 // Returns null when there's nothing to show (clean repo, no comments).
-function renderRepoHeaderStats(stats, commentCount) {
+function renderRepoHeaderStats(stats, commentCount, commentStatus = '') {
   const added = Number(stats?.added) || 0;
   const deleted = Number(stats?.deleted) || 0;
   if (!added && !deleted && !commentCount) { return null; }
+  const commentClass = [
+    'files-tab-repo-comments',
+    commentStatus ? `is-${commentStatus}` : '',
+  ].filter(Boolean).join(' ');
   return (
     <span className="files-tab-repo-stats">
       {added > 0 && <span className="files-tab-repo-added">+{added}</span>}
       {deleted > 0 && <span className="files-tab-repo-deleted">−{deleted}</span>}
       {commentCount > 0 && (
         <span
-          className="files-tab-repo-comments"
+          className={commentClass}
           title={`${commentCount} open comment(s)`}
         >
           <Icon name="comment" />
@@ -765,7 +770,9 @@ function RepoTree({
   // comment count, so the operator reads the repo's state without
   // expanding it. Built before the return to keep the JSX logic-free.
   const headerStats = renderRepoHeaderStats(
-    changedTree.stats, countRepoComments(commentMeta),
+    changedTree.stats,
+    countRepoComments(commentMeta),
+    repoCommentStatus(commentMeta, moreUrgentCommentStatus),
   );
   const filteredChangedNodes = useMemo(() => {
     return filterChangedFileTree(changedTree.nodes, searchTerm);
@@ -958,6 +965,11 @@ function RepoTree({
     body = changedTreeContent;
   } else if (!showAllForSearch && emptyChangedSearch) {
     body = emptyChangedSearch;
+  } else if (!showAllForSearch && !hasChangedFiles) {
+    // Repo has nothing changed yet AND the operator is not in All mode
+    // — show a placeholder instead of falling through to the full tree
+    // (which read as "All mode is on" even when it wasn't).
+    body = <p className="files-tab-message">Nothing changed yet.</p>;
   } else if (treeData.length === 0) {
     body = <p className="files-tab-message">No tracked files in this repo.</p>;
   } else {

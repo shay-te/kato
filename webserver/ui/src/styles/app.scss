@@ -4567,6 +4567,13 @@ body.kato-resizing #left-pane-resizer::before {
   color: $C-BLUE-85;
 }
 
+// Same hue as PENDING with a slightly lower-key tint — the comment is
+// still queued, the operator is just mid-edit.
+.diff-file-comment-pill.is-editing {
+  color: $C-BLUE-85;
+  opacity: 0.8;
+}
+
 .diff-file-comment-pill.is-waiting,
 .diff-file-comment-pill.is-open {
   color: $C-CYAN-78;
@@ -5036,12 +5043,14 @@ body.kato-resizing #left-pane-resizer::before {
  *   - .diff-repo-sync-comments        sync the comments-pull
  *   - .diff-file-collapse-toggle      hide/show file diff
  *   - .diff-file-add-file-comment     open the file-level form
+ *   - .diff-file-open-as-file         swap to plain editor view
  *
- * All three follow the same shape: rounded glass pill with a
+ * They all follow the same shape: rounded glass pill with a
  * leading icon + label, matching the rest of the iOS-styled UI. */
 .diff-repo-sync-comments,
 .diff-file-collapse-toggle,
-.diff-file-add-file-comment {
+.diff-file-add-file-comment,
+.diff-file-open-as-file {
   display: inline-flex;
   align-items: center;
   gap: $SPACE-6;
@@ -5058,7 +5067,8 @@ body.kato-resizing #left-pane-resizer::before {
 
 .diff-repo-sync-comments:hover:not(:disabled),
 .diff-file-collapse-toggle:hover:not(:disabled),
-.diff-file-add-file-comment:hover:not(:disabled) {
+.diff-file-add-file-comment:hover:not(:disabled),
+.diff-file-open-as-file:hover:not(:disabled) {
   background: $C-NEUTRAL-100-A06;
   border-color: $C-NEUTRAL-100-A06;
   color: $C-NEUTRAL-96;
@@ -5066,19 +5076,22 @@ body.kato-resizing #left-pane-resizer::before {
 
 .diff-repo-sync-comments:active:not(:disabled),
 .diff-file-collapse-toggle:active:not(:disabled),
-.diff-file-add-file-comment:active:not(:disabled) {
+.diff-file-add-file-comment:active:not(:disabled),
+.diff-file-open-as-file:active:not(:disabled) {
   transform: scale(0.96);
 }
 
 .diff-repo-sync-comments:disabled,
 .diff-file-collapse-toggle:disabled,
-.diff-file-add-file-comment:disabled {
+.diff-file-add-file-comment:disabled,
+.diff-file-open-as-file:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-/* Icon-only expand/collapse chevron in the file header. */
-.diff-file-collapse-toggle.is-icon {
+/* Icon-only expand/collapse chevron + view-file icon in the file header. */
+.diff-file-collapse-toggle.is-icon,
+.diff-file-open-as-file.is-icon {
   width: 26px;
   height: 26px;
   padding: 0;
@@ -5214,31 +5227,52 @@ body.kato-resizing #left-pane-resizer::before {
 
 /* Tint the badge by the most-urgent kato_status across the file's open
  * threads (see buildFilesCommentMeta), matching the .diff-file-comment-pill
- * colours so the file tree and the comment widgets read the same. */
-.tree-row-comments.is-queued {
+ * colours so the file tree and the comment widgets read the same.
+ *
+ * The repo-header chip (``.files-tab-repo-comments``) shares these tints
+ * via the same ``is-<status>`` modifier, so a header summarizing
+ * "2 pending" reads in the SAME colour as the per-file PENDING chips
+ * underneath — instead of staying a static cyan that doesn't agree with
+ * what the operator sees on the rows. */
+.tree-row-comments.is-queued,
+.files-tab-repo-comments.is-queued {
   color: $C-BLUE-85;
   border-color: $C-BLUE-85-A40;
 }
 
 .tree-row-comments.is-waiting,
-.tree-row-comments.is-open {
+.tree-row-comments.is-open,
+.files-tab-repo-comments.is-waiting,
+.files-tab-repo-comments.is-open {
   color: $C-CYAN-78;
   border-color: $C-CYAN-52-A18;
 }
 
-.tree-row-comments.is-in_progress {
+.tree-row-comments.is-in_progress,
+.files-tab-repo-comments.is-in_progress {
   color: $C-ORANGE-50;
   border-color: $C-ORANGE-50-A35;
 }
 
-.tree-row-comments.is-addressed {
+.tree-row-comments.is-addressed,
+.files-tab-repo-comments.is-addressed {
   color: $C-GREEN-71;
   border-color: $C-GREEN-67-A40;
 }
 
-.tree-row-comments.is-failed {
+.tree-row-comments.is-failed,
+.files-tab-repo-comments.is-failed {
   color: $C-RED-82;
   border-color: $C-RED-82-A40;
+}
+
+// Same hue as PENDING with a slightly lower-key tint — the operator is
+// editing one of the queued comments; the chip still reads as queued.
+.tree-row-comments.is-editing,
+.files-tab-repo-comments.is-editing {
+  color: $C-BLUE-85;
+  border-color: $C-BLUE-85-A40;
+  opacity: 0.8;
 }
 
 .tree-row-comments + .diff-line-stats,

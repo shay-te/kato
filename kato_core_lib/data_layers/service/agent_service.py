@@ -1770,6 +1770,79 @@ class AgentService(MissionStepLoggerMixin, Service):
         removed = store.delete(comment_id)
         return {'ok': bool(removed), 'comment_id': comment_id}
 
+    def edit_task_comment(
+        self,
+        task_id: str,
+        comment_id: str,
+        *,
+        body: str | None = None,
+        kato_status: str | None = None,
+    ) -> dict[str, object]:
+        """Update a queued local comment's body and/or its kato_status.
+
+        The operator-facing edit flow needs to (a) flip a QUEUED comment
+        to ``EDITING`` so ``next_queued`` can't dispatch it while the
+        textarea is open, then (b) on save / cancel flip it back to
+        ``QUEUED`` (optionally with a new body). One endpoint handles
+        both — the caller passes whichever fields apply.
+
+        Hard rules:
+          * Only LOCAL comments are editable (remote comments live on
+            the source git platform; we don't push edits there).
+          * Only the QUEUED ↔ EDITING transition is accepted here.
+            Anything else (IN_PROGRESS, ADDRESSED, FAILED, WAITING)
+            is the agent's domain — refuse to step on it.
+        """
+        from kato_core_lib.comment_core_lib import (
+            CommentSource,
+            KatoCommentStatus,
+        )
+
+        store = self._comment_store_for(task_id)
+        if store is None:
+            return {'ok': False, 'error': 'no workspace for task'}
+        current = next(
+            (record for record in store.list() if record.id == comment_id),
+            None,
+        )
+        if current is None:
+            return {'ok': False, 'error': 'comment not found'}
+        if current.source != CommentSource.LOCAL.value:
+            return {'ok': False, 'error': 'only local comments are editable'}
+        editable_statuses = {
+            KatoCommentStatus.QUEUED.value,
+            KatoCommentStatus.EDITING.value,
+        }
+        if current.kato_status not in editable_statuses:
+            return {
+                'ok': False,
+                'error': (
+                    f'comment is {current.kato_status!r} — only queued / '
+                    f'editing comments can be edited'
+                ),
+            }
+        if kato_status is not None and kato_status not in editable_statuses:
+            return {
+                'ok': False,
+                'error': (
+                    f'cannot transition to {kato_status!r} from the edit '
+                    f'flow — only queued / editing are allowed'
+                ),
+            }
+        if body is not None:
+            store.update_body(comment_id, str(body))
+        if kato_status is not None:
+            store.update_kato_status(comment_id, kato_status=kato_status)
+        updated = next(
+            (record for record in store.list() if record.id == comment_id),
+            None,
+        )
+        return {
+            'ok': True,
+            'comment_id': comment_id,
+            'comment': updated.to_dict() if updated is not None else None,
+        }
+
     def sync_remote_comments(
         self, task_id: str, repo_id: str,
     ) -> dict[str, object]:
