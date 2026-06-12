@@ -220,10 +220,11 @@ class ReviewCommentServiceTests(unittest.TestCase):
     def test_process_review_comment_publishes_when_head_moves(self) -> None:
         # The mirror of the regression: when the agent DID commit
         # something (HEAD moves between the pre-agent snapshot and
-        # the post-agent check), the publish + reply + resolve path
-        # runs as before. Locks the safe-default behaviour so a
-        # future tweak to the change-detection heuristic can't
-        # accidentally turn off real fixes.
+        # the post-agent check), the publish + reply path runs.
+        # The thread is intentionally NOT auto-resolved on the source
+        # platform — kato posts the "addressed" reply and lets the
+        # reviewer click resolve themselves (see
+        # ``_publish_review_comments_batch_fix``).
         self.service.logger = Mock()
         self.repository_service.current_head_sha = Mock(
             side_effect=['sha-before', 'sha-after'],
@@ -250,7 +251,8 @@ class ReviewCommentServiceTests(unittest.TestCase):
         self.service.process_review_comment(comment)
 
         self.repository_service.publish_review_fix.assert_called_once()
-        self.repository_service.resolve_review_comment.assert_called_once()
+        self.repository_service.reply_to_review_comment.assert_called_once()
+        self.repository_service.resolve_review_comment.assert_not_called()
 
     def test_process_review_comment_processes_fix_and_marks_comment_processed(self) -> None:
         call_order: list[str] = []
@@ -300,11 +302,10 @@ class ReviewCommentServiceTests(unittest.TestCase):
             'Address review comments',
         )
         self.repository_service.reply_to_review_comment.assert_called_once()
-        self.repository_service.resolve_review_comment.assert_called_once_with(
-            self.repository,
-            comment,
-        )
-        self.assertEqual(call_order, ['reply', 'resolve'])
+        # Kato never auto-resolves on the source platform — the reviewer
+        # closes the thread themselves after reading the reply.
+        self.repository_service.resolve_review_comment.assert_not_called()
+        self.assertEqual(call_order, ['reply'])
         reply_body = self.repository_service.reply_to_review_comment.call_args.args[2]
         self.assertIn('Kato addressed this review comment', reply_body)
         self.task_service.add_comment.assert_called_once_with(
@@ -508,79 +509,6 @@ class ReviewCommentServiceTests(unittest.TestCase):
         )
         self.assertEqual(result.id, 'admin-client')
         self.assertEqual(result.local_path, '/wks/PROJ-12/admin-client')
-
-    def test_process_review_comment_treats_resolution_conflict_as_non_fatal(self) -> None:
-        self.service.logger = Mock()
-        self.repository_service.resolve_review_comment.side_effect = HTTPError(
-            '409 Client Error: Conflict',
-            response=types.SimpleNamespace(status_code=409),
-        )
-        comment = ReviewComment(
-            pull_request_id='17',
-            comment_id='99',
-            author='reviewer',
-            body='Please rename this variable.',
-        )
-        self.state_registry.remember_pull_request_context(
-            {
-                PullRequestFields.REPOSITORY_ID: 'client',
-                PullRequestFields.ID: '17',
-                PullRequestFields.TITLE: 'PROJ-1 fix it already',
-            },
-            'feature/proj-1/client',
-            task_id='PROJ-1',
-            task_summary='fix it already',
-        )
-
-        result = self.service.process_review_comment(comment)
-
-        self.assertEqual(result['status'], 'updated')
-        self.repository_service.publish_review_fix.assert_called_once()
-        self.repository_service.reply_to_review_comment.assert_called_once()
-        self.repository_service.resolve_review_comment.assert_called_once_with(
-            self.repository,
-            comment,
-        )
-        self.repository_service.restore_task_repositories.assert_not_called()
-        self.service.logger.warning.assert_called_once()
-        self.assertIn(
-            'skipped resolving review comment %s on pull request %s',
-            [call.args[0] for call in self.service.logger.info.call_args_list],
-        )
-        self.assertTrue(
-            self.state_registry.is_review_comment_processed('client', '17', '99')
-        )
-
-    def test_process_review_comment_treats_already_resolved_runtime_error_as_non_fatal(self) -> None:
-        self.service.logger = Mock()
-        self.repository_service.resolve_review_comment.side_effect = RuntimeError(
-            'review thread is already resolved'
-        )
-        comment = ReviewComment(
-            pull_request_id='17',
-            comment_id='99',
-            author='reviewer',
-            body='Please rename this variable.',
-        )
-        self.state_registry.remember_pull_request_context(
-            {
-                PullRequestFields.REPOSITORY_ID: 'client',
-                PullRequestFields.ID: '17',
-                PullRequestFields.TITLE: 'PROJ-1 fix it already',
-            },
-            'feature/proj-1/client',
-            task_id='PROJ-1',
-            task_summary='fix it already',
-        )
-
-        result = self.service.process_review_comment(comment)
-
-        self.assertEqual(result['status'], 'updated')
-        self.repository_service.restore_task_repositories.assert_not_called()
-        self.service.logger.warning.assert_called_once()
-        self.assertTrue(
-            self.state_registry.is_review_comment_processed('client', '17', '99')
-        )
 
     def test_process_review_comment_restores_repository_when_publish_fails(self) -> None:
         self.repository_service.publish_review_fix.side_effect = RuntimeError('push failed')

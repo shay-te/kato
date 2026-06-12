@@ -5838,20 +5838,12 @@ body.kato-resizing #left-pane-resizer::before {
   // metrics (the bare ``ui-monospace, monospace`` picked SF Mono on
   // macOS but Courier on Linux, which read as a different layout).
   --diff-font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-  /* Gutter == code for changed lines: a brighter gutter shade made
-   * the columns read as vertical stripes / a grid. Same colour on
-   * both = each added/deleted line is ONE solid block, no grid. */
-  // Bitbucket palette: insert lines are clearly GREEN, not the old
-  // grayish-teal $C-TEAL-14 (#1d2b27) which barely read as a change.
-  // $C-GREEN-10 (#052e16) is the existing dark-green token; reusing
-  // it here keeps the palette tight. $C-RED-15 itself was bumped to a
-  // saturated Bitbucket-red in constants.scss.
-  --diff-gutter-insert-background-color: #{$C-GREEN-10};
-  --diff-gutter-delete-background-color: #{$C-RED-15};
-  --diff-code-insert-background-color: #{$C-GREEN-10};
-  --diff-code-delete-background-color: #{$C-RED-15};
-  --diff-code-insert-edit-background-color: #{$C-GREEN-17};
-  --diff-code-delete-edit-background-color: #{$C-RED-31};
+  --diff-gutter-insert-background-color: #{$C-DIFF-INSERT-GUTTER};
+  --diff-gutter-delete-background-color: #{$C-DIFF-DELETE-GUTTER};
+  --diff-code-insert-background-color: #{$C-DIFF-INSERT-BG};
+  --diff-code-delete-background-color: #{$C-DIFF-DELETE-BG};
+  --diff-code-insert-edit-background-color: #{$C-DIFF-INSERT-EDIT};
+  --diff-code-delete-edit-background-color: #{$C-DIFF-DELETE-EDIT};
   --diff-gutter-selected-background-color: #{$C-NEUTRAL-16};
   --diff-code-selected-background-color: #{$C-NEUTRAL-16};
 }
@@ -5875,22 +5867,32 @@ body.kato-resizing #left-pane-resizer::before {
 }
 
 .diff-file .diff-gutter {
-  color: $C-NEUTRAL-64;
+  color: $C-NEUTRAL-75;
   font-variant-numeric: tabular-nums;
   padding: 0 $SPACE-6;
   text-align: right;
   // Slate band on UNCHANGED rows so the gutter reads as its own
   // column even when the code body is the same near-black bg —
   // exactly the way Bitbucket separates the gutter from the code.
-  // The first pass used ``$C-NEUTRAL-100-A06`` (a 6%-white overlay)
-  // which only lifted the bg to ~#191919 — visible but the operator
-  // reported it still didn't match Bitbucket. ``$C-NEUTRAL-16``
-  // (#2a2a2a) is a clear opaque slate and matches Bitbucket's
-  // gutter shade closely. Insert/delete classes still win on
-  // changed rows: react-diff-view's ``.diff-gutter-insert /
-  // .diff-gutter-delete`` rules use the same single-class
-  // specificity but come later in source order.
-  background: $C-NEUTRAL-16;
+  // ``$C-NEUTRAL-19`` is Bitbucket's gutter shade. Insert/delete
+  // classes still win on changed rows: react-diff-view's
+  // ``.diff-gutter-insert / .diff-gutter-delete`` rules use the
+  // same single-class specificity but come later in source order.
+  background: $C-NEUTRAL-19;
+}
+
+// Keep changed-row line numbers the same muted Bitbucket grey.
+.diff-file .diff-gutter-insert,
+.diff-file .diff-gutter-delete {
+  color: $C-NEUTRAL-75;
+}
+
+.diff-file .diff-gutter-insert {
+  background: $C-DIFF-INSERT-GUTTER;
+}
+
+.diff-file .diff-gutter-delete {
+  background: $C-DIFF-DELETE-GUTTER;
 }
 
 /* Tighten row spacing to Bitbucket's metrics — react-diff-view's

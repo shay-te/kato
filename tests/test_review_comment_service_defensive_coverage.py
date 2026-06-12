@@ -582,15 +582,19 @@ class ReviewRepositoryLocalPathTests(unittest.TestCase):
 
 
 class PublishReviewCommentsBatchExceptionTests(unittest.TestCase):
-    def test_reply_failure_is_swallowed_and_does_not_block_resolve(self) -> None:
-        # Lines 905-906: reply_to_review_comment raises → log + continue.
+    def test_reply_failure_is_swallowed_and_never_calls_resolve(self) -> None:
+        # ``reply_to_review_comment`` raises → log + continue to the
+        # next comment. ``resolve_review_comment`` must NEVER be
+        # called: kato leaves the thread unresolved for the reviewer
+        # to close, even when its own reply attempt failed.
         service = _make_service()
         service.logger = MagicMock()
         service._repository_service.publish_review_fix = MagicMock()
         service._repository_service.reply_to_review_comment.side_effect = (
             RuntimeError('reply failed')
         )
-        service._repository_service.resolve_review_comment = MagicMock()
+        resolve = MagicMock()
+        service._repository_service.resolve_review_comment = resolve
         context = ReviewFixContext(
             repository_id='r', pull_request_title='',
             branch_name='b', task_id='T', task_summary='', agent_session_id='',
@@ -599,6 +603,7 @@ class PublishReviewCommentsBatchExceptionTests(unittest.TestCase):
             [_comment()], SimpleNamespace(id='r'), context, {'success': True},
         )
         service.logger.exception.assert_called_once()
+        resolve.assert_not_called()
 
 
 class ReviewFixProducedChangesTests(unittest.TestCase):
@@ -679,41 +684,6 @@ class PublishReviewCommentAnswersTests(unittest.TestCase):
             {'message': 'an answer'},
         )
         service.logger.exception.assert_called_once()
-
-
-class ResolveReviewCommentTests(unittest.TestCase):
-    def test_resolves_silently_on_404(self) -> None:
-        # Line 1099: HTTPError 404 is non-fatal → log + return False.
-        service = _make_service()
-        service.logger = MagicMock()
-        response = MagicMock(status_code=404)
-        http_error = HTTPError(response=response)
-        service._repository_service.resolve_review_comment.side_effect = http_error
-        result = service._resolve_review_comment(
-            SimpleNamespace(id='r'), _comment(),
-        )
-        self.assertFalse(result)
-        service.logger.warning.assert_called()
-
-    def test_re_raises_unexpected_http_error(self) -> None:
-        service = _make_service()
-        response = MagicMock(status_code=500)  # not in non-fatal set
-        http_error = HTTPError(response=response)
-        service._repository_service.resolve_review_comment.side_effect = http_error
-        with self.assertRaises(HTTPError):
-            service._resolve_review_comment(SimpleNamespace(id='r'), _comment())
-
-    def test_resolves_silently_on_non_fatal_runtime_error(self) -> None:
-        # Same path for RuntimeError.
-        service = _make_service()
-        service.logger = MagicMock()
-        service._repository_service.resolve_review_comment.side_effect = (
-            RuntimeError('comment is already resolved')
-        )
-        result = service._resolve_review_comment(
-            SimpleNamespace(id='r'), _comment(),
-        )
-        self.assertFalse(result)
 
 
 class RestoreReviewCommentRepositoryTests(unittest.TestCase):

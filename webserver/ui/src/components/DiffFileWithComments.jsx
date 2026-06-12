@@ -205,23 +205,17 @@ function DiffFileWithComments({
     [renderedHunks, path, expanded],
   );
 
-  // Per-file gutter width: read the largest line number in either
-  // side from the rendered hunks and convert to ``<digits>+2ch``
-  // (one ch of breathing room on each side of the number). The CSS
-  // rule on ``.diff-file .diff-gutter-col`` picks this up via the
-  // ``--diff-gutter-col-width`` inline variable so the column shrink-
-  // fits per file like Bitbucket does — a 30-line file gets ~4ch, a
-  // 3000-line file gets ~6ch — instead of every file forcing the
-  // react-diff-view default of 7ch.
+  // Per-file gutter width: largest actual old/new line plus 1ch.
+  // CSS padding supplies the rest, matching Bitbucket's tight columns.
   const gutterColWidth = useMemo(() => {
     let maxLine = 1;
     for (const hunk of renderedHunks || []) {
-      const oldEnd = (hunk.oldStart || 0) + (hunk.oldLines || 0);
-      const newEnd = (hunk.newStart || 0) + (hunk.newLines || 0);
+      const oldEnd = (hunk.oldStart || 0) + Math.max(0, hunk.oldLines || 0) - 1;
+      const newEnd = (hunk.newStart || 0) + Math.max(0, hunk.newLines || 0) - 1;
       if (oldEnd > maxLine) { maxLine = oldEnd; }
       if (newEnd > maxLine) { maxLine = newEnd; }
     }
-    return `${String(maxLine).length + 2}ch`;
+    return `${String(maxLine).length + 1}ch`;
   }, [renderedHunks]);
 
   function notifyMutated() {

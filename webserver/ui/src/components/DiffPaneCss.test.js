@@ -92,10 +92,28 @@ test('Collapsed diff file header rounds all corners', () => {
 
 test('DiffPane uses Bitbucket-style hunk colors (saturated red/green)', () => {
   const body = ruleBodyContaining('.diff-file', '--diff-code-insert-background-color');
-  assertDeclaration(body, '--diff-code-insert-background-color', '#052e16');
-  assertDeclaration(body, '--diff-gutter-insert-background-color', '#052e16');
-  assertDeclaration(body, '--diff-code-delete-background-color', '#3a161b');
-  assertDeclaration(body, '--diff-gutter-delete-background-color', '#3a161b');
+  assertDeclaration(body, '--diff-code-insert-background-color', '#1c3329');
+  assertDeclaration(body, '--diff-gutter-insert-background-color', '#164b35');
+  assertDeclaration(body, '--diff-code-insert-edit-background-color', '#216e4e');
+  assertDeclaration(body, '--diff-code-delete-background-color', '#42221f');
+  assertDeclaration(body, '--diff-gutter-delete-background-color', '#5d1f1a');
+  assertDeclaration(body, '--diff-code-delete-edit-background-color', '#ae2e24');
+});
+
+test('DiffPane gutter line numbers match Bitbucket dark metrics', () => {
+  const body = ruleBody('.diff-file .diff-gutter');
+  const insertBody = ruleBody('.diff-file .diff-gutter-insert,\n.diff-file .diff-gutter-delete');
+  const insertOnlyBody = ruleBodyContaining('.diff-file .diff-gutter-insert', 'background');
+  const deleteOnlyBody = ruleBodyContaining('.diff-file .diff-gutter-delete', 'background');
+
+  assertDeclaration(body, 'background', '#303134');
+  assertDeclaration(body, 'color', '#b6c2cf');
+  assertDeclaration(body, 'font-variant-numeric', 'tabular-nums');
+  assertDeclaration(body, 'padding', '0 6px');
+  assertDeclaration(body, 'text-align', 'right');
+  assertDeclaration(insertBody, 'color', '#b6c2cf');
+  assertDeclaration(insertOnlyBody, 'background', '#164b35');
+  assertDeclaration(deleteOnlyBody, 'background', '#5d1f1a');
 });
 
 test('Diff file comments panel rounds the bottom of the file card', () => {

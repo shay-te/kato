@@ -262,7 +262,7 @@ class ServiceBatchFlowTests(unittest.TestCase):
         called_comments = impl.fix_review_comments.call_args.args[0]
         self.assertEqual([c.comment_id for c in called_comments], ['1', '2'])
 
-    def test_batch_pushes_once_replies_and_resolves_each_comment(self) -> None:
+    def test_batch_pushes_once_replies_to_each_comment_and_never_resolves(self) -> None:
         service, _impl, repo = self._build_service()
         comments = [
             _build_comment(comment_id='1', body='a'),
@@ -272,9 +272,11 @@ class ServiceBatchFlowTests(unittest.TestCase):
         service.process_review_comment_batch(comments)
         # One push for the whole batch.
         self.assertEqual(repo.publish_review_fix.call_count, 1)
-        # One reply + one resolve per comment.
+        # One reply per comment — the reviewer reads it.
         self.assertEqual(repo.reply_to_review_comment.call_count, 3)
-        self.assertEqual(repo.resolve_review_comment.call_count, 3)
+        # Kato never auto-resolves on the source platform; the reviewer
+        # closes the thread themselves after reading the reply.
+        self.assertEqual(repo.resolve_review_comment.call_count, 0)
 
     def test_batch_returns_one_result_per_comment(self) -> None:
         service, _impl, _repo = self._build_service()

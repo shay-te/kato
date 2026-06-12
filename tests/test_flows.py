@@ -887,23 +887,18 @@ class ReviewCommentFixFlowTests(unittest.TestCase):
             'fix must be published before replying to the reviewer',
         )
 
-        # Step 10 before step 11: replied before resolving the thread
-        self.assertLess(
-            call_order.index('reply_to_review_comment'),
-            call_order.index('resolve_review_comment'),
-            'reply must be sent before the comment thread is resolved',
-        )
-
-        # Step 10: reply was posted to the correct PR comment
+        # Step 10: reply was posted to the correct PR comment.
+        # The thread is intentionally left UNRESOLVED — kato never
+        # auto-resolves on the source platform; the reviewer reads
+        # the reply and closes the thread themselves.
         repository_service.reply_to_review_comment.assert_called_once()
         reply_args = repository_service.reply_to_review_comment.call_args.args
         self.assertEqual(reply_args[0], repository)
         self.assertEqual(reply_args[1], new_comments[0])
 
-        # Step 11: thread resolved on the correct repository
-        repository_service.resolve_review_comment.assert_called_once_with(
-            repository, new_comments[0]
-        )
+        # Step 11: thread must NOT be auto-resolved.
+        repository_service.resolve_review_comment.assert_not_called()
+        self.assertNotIn('resolve_review_comment', call_order)
 
         # Step 10 (task comment): task updated with review-fix comment
         ticket_client.add_comment.assert_called_once()

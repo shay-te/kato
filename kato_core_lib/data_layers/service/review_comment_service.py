@@ -4,7 +4,6 @@ import re
 from urllib.parse import urlparse
 
 from core_lib.data_layers.service.service import Service
-from requests import HTTPError
 
 from kato_core_lib.data_layers.data.fields import (
     ImplementationFields,
@@ -44,15 +43,6 @@ from kato_core_lib.helpers.review_comment_utils import (
 )
 from kato_core_lib.helpers.task_lookup_utils import find_task_by_id
 from kato_core_lib.helpers.text_utils import normalized_text, text_from_attr
-
-NON_FATAL_REVIEW_RESOLUTION_STATUS_CODES = {404, 409}
-NON_FATAL_REVIEW_RESOLUTION_MESSAGES = (
-    'already resolved',
-    'could not resolve to a node',
-    'not found',
-    'was not found',
-)
-
 
 class ReviewCommentService(Service):
     """Handle review-comment polling, fix publication, and comment resolution."""
@@ -935,13 +925,21 @@ class ReviewCommentService(Service):
         review_context: ReviewFixContext,
         execution: dict[str, str | bool],
     ) -> None:
-        """Push once, then per-comment reply + resolve.
+        """Push once, then per-comment reply ONLY.
 
         Single push covers every comment in the batch — one commit
-        on the task branch addresses them all. After the push lands,
-        the platform-side bookkeeping (reply, resolve) is per-comment
-        and best-effort: a 4xx on one reply doesn't roll back the
-        actual code fix or affect the other comments.
+        on the task branch addresses them all. After the push lands
+        we post the "Kato addressed this" reply on each comment so
+        the reviewer sees the thread continuity, but we DO NOT
+        resolve the thread. Resolution is the human reviewer's call:
+        kato shouldn't auto-close someone else's review item just
+        because it shipped a candidate fix. The reviewer reads the
+        reply, inspects the commit, and clicks resolve themselves
+        (or asks for more if the fix is insufficient).
+
+        Per-comment reply is best-effort — one comment's failed
+        reply doesn't stop the next comment's reply from being
+        attempted. The fix is already on the remote either way.
         """
         self.logger.info(
             'publishing review fix for pull request %s (%d comment(s)) on branch %s',
@@ -954,10 +952,6 @@ class ReviewCommentService(Service):
             review_context.branch_name,
             self._review_fix_commit_message(),
         )
-        # Per-comment reply / resolve. Each call is best-effort —
-        # one comment's failed reply doesn't stop the next comment's
-        # reply from being attempted. The fix is already on the
-        # remote either way.
         for comment in comments:
             try:
                 self._repository_service.reply_to_review_comment(
@@ -966,7 +960,8 @@ class ReviewCommentService(Service):
                     review_comment_reply_body(execution),
                 )
                 self.logger.info(
-                    'replied to review comment %s on pull request %s',
+                    'replied to review comment %s on pull request %s '
+                    '(left UNRESOLVED — reviewer to close)',
                     comment.comment_id,
                     comment.pull_request_id,
                 )
@@ -974,18 +969,6 @@ class ReviewCommentService(Service):
                 self.logger.exception(
                     'failed to post reply to review comment %s on pull request %s; '
                     'fix has been pushed but the reply will need manual posting',
-                    comment.comment_id,
-                    comment.pull_request_id,
-                )
-            if self._resolve_review_comment(repository, comment):
-                self.logger.info(
-                    'resolved review comment %s on pull request %s',
-                    comment.comment_id,
-                    comment.pull_request_id,
-                )
-            else:
-                self.logger.info(
-                    'skipped resolving review comment %s on pull request %s',
                     comment.comment_id,
                     comment.pull_request_id,
                 )
@@ -1159,46 +1142,6 @@ class ReviewCommentService(Service):
     @staticmethod
     def _review_fix_commit_message() -> str:
         return 'Address review comments'
-
-    def _resolve_review_comment(self, repository, comment: ReviewComment) -> bool:
-        try:
-            self._repository_service.resolve_review_comment(repository, comment)
-        except HTTPError as exc:
-            if not self._is_non_fatal_review_resolution_http_error(exc):
-                raise
-            status_code = getattr(getattr(exc, 'response', None), 'status_code', '')
-            self.logger.warning(
-                'review comment %s on pull request %s could not be resolved because '
-                'the provider returned HTTP %s; continuing because the fix was already '
-                'published and replied',
-                comment.comment_id,
-                comment.pull_request_id,
-                status_code,
-            )
-            return False
-        except RuntimeError as exc:
-            if not self._is_non_fatal_review_resolution_runtime_error(exc):
-                raise
-            self.logger.warning(
-                'review comment %s on pull request %s could not be resolved because '
-                'the provider reported it is already resolved or unavailable; continuing '
-                'because the fix was already published and replied: %s',
-                comment.comment_id,
-                comment.pull_request_id,
-                exc,
-            )
-            return False
-        return True
-
-    @staticmethod
-    def _is_non_fatal_review_resolution_http_error(exc: HTTPError) -> bool:
-        response = getattr(exc, 'response', None)
-        return getattr(response, 'status_code', None) in NON_FATAL_REVIEW_RESOLUTION_STATUS_CODES
-
-    @staticmethod
-    def _is_non_fatal_review_resolution_runtime_error(exc: RuntimeError) -> bool:
-        message = normalized_text(str(exc)).lower()
-        return any(token in message for token in NON_FATAL_REVIEW_RESOLUTION_MESSAGES)
 
     def _restore_review_comment_repository(self, comment: ReviewComment, repository) -> None:
         try:

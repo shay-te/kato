@@ -399,6 +399,13 @@ describe('DiffFileWithComments — header rendering', () => {
     expect(body.querySelector('.diff')).toBeInTheDocument();
   });
 
+  test('line-number gutter width is based on the largest real line number', () => {
+    const { container } = renderDiff({ file: _file(99), initiallyExpanded: true });
+    const section = container.querySelector('.diff-file');
+
+    expect(section).toHaveStyle({ '--diff-gutter-col-width': '3ch' });
+  });
+
   test('renders the expand/collapse chevron on the left side of the header', () => {
     const { container } = renderDiff({ file: _file(10), initiallyExpanded: true });
     const header = container.querySelector('.diff-file-header');

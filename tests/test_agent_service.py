@@ -1327,7 +1327,9 @@ class AgentServiceTests(unittest.TestCase):
             'feature/proj-1/client',
             'Address review comments',
         )
-        self.repository_service.resolve_review_comment.assert_called_once()
+        # Kato never auto-resolves on the source platform — the
+        # reviewer reads the reply and closes the thread themselves.
+        self.repository_service.resolve_review_comment.assert_not_called()
         self.assertTrue(service._state_registry.is_review_comment_processed('client', '17', '99'))
 
     def test_process_review_comment_does_not_mark_processed_when_publish_fails(self) -> None:
@@ -1362,40 +1364,6 @@ class AgentServiceTests(unittest.TestCase):
             force=True,
         )
         self.repository_service.resolve_review_comment.assert_not_called()
-        self.assertFalse(service._state_registry.is_review_comment_processed('client', '17', '99'))
-
-    def test_process_review_comment_does_not_mark_processed_when_resolution_fails(self) -> None:
-        self.repository_service.resolve_review_comment.side_effect = RuntimeError('provider down')
-        service = AgentService(
-            self.task_data_access,
-            self.task_state_service,
-            self.implementation_service,
-            self.testing_service,
-            self.repository_service,
-            self.notification_service,
-        )
-        service._state_registry.pull_request_context_map['17'] = [
-            {
-                PullRequestFields.REPOSITORY_ID: 'client',
-                'branch_name': 'feature/proj-1/client',
-            }
-        ]
-
-        with self.assertRaisesRegex(RuntimeError, 'provider down'):
-            service.process_review_comment(
-                ReviewComment(
-                    pull_request_id='17',
-                    comment_id='99',
-                    author='reviewer',
-                    body='Please rename this variable.',
-                )
-        )
-
-        self.repository_service.restore_task_repositories.assert_called_once_with(
-            [self.client_repo],
-            force=True,
-        )
-        self.repository_service.publish_review_fix.assert_called_once()
         self.assertFalse(service._state_registry.is_review_comment_processed('client', '17', '99'))
 
     def test_handle_pull_request_comment_rejects_unknown_pull_request(self) -> None:

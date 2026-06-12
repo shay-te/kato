@@ -226,10 +226,9 @@ class TestAgentEndToEndIntegration(unittest.TestCase):
             'PROJ-1',
             'Address review comments',
         )
-        repository_service.resolve_review_comment.assert_called_once_with(
-            repository,
-            new_comments[0],
-        )
+        # Kato never auto-resolves on the source platform — the
+        # reviewer reads the reply and closes the thread themselves.
+        repository_service.resolve_review_comment.assert_not_called()
         self.assertTrue(
             agent_service._state_registry.is_review_comment_processed('test-repo', '17', '99')
         )
@@ -373,15 +372,13 @@ class TestAgentEndToEndIntegration(unittest.TestCase):
             'PROJ-1',
             'Address review comments',
         )
-        repository_service.resolve_review_comment.assert_called_once_with(
-            repository,
-            new_comments[0],
-        )
+        # Kato never auto-resolves on the source platform.
+        repository_service.resolve_review_comment.assert_not_called()
         self.assertEqual(
             ticket_client.comments[-1][TaskCommentFields.BODY],
             'Kato addressed review comment 99 on pull request 17.',
         )
-        
+
     def test_complete_workflow_with_valid_task(self):
         """Test complete workflow from task ingestion to PR creation."""
         # Create a representative task

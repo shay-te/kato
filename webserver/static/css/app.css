@@ -5754,15 +5754,12 @@ body.kato-resizing #left-pane-resizer::before {
   --diff-background-color: #0a0a0a;
   --diff-text-color: #f5f5f7;
   --diff-font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-  /* Gutter == code for changed lines: a brighter gutter shade made
-   * the columns read as vertical stripes / a grid. Same colour on
-   * both = each added/deleted line is ONE solid block, no grid. */
-  --diff-gutter-insert-background-color: #052e16;
-  --diff-gutter-delete-background-color: #3a161b;
-  --diff-code-insert-background-color: #052e16;
-  --diff-code-delete-background-color: #3a161b;
-  --diff-code-insert-edit-background-color: #0a4d2e;
-  --diff-code-delete-edit-background-color: #7f1d1d;
+  --diff-gutter-insert-background-color: #164b35;
+  --diff-gutter-delete-background-color: #5d1f1a;
+  --diff-code-insert-background-color: #1c3329;
+  --diff-code-delete-background-color: #42221f;
+  --diff-code-insert-edit-background-color: #216e4e;
+  --diff-code-delete-edit-background-color: #ae2e24;
   --diff-gutter-selected-background-color: #2a2a2a;
   --diff-code-selected-background-color: #2a2a2a;
 }
@@ -5786,11 +5783,24 @@ body.kato-resizing #left-pane-resizer::before {
 }
 
 .diff-file .diff-gutter {
-  color: #a3a3a3;
+  color: #b6c2cf;
   font-variant-numeric: tabular-nums;
   padding: 0 6px;
   text-align: right;
-  background: #2a2a2a;
+  background: #303134;
+}
+
+.diff-file .diff-gutter-insert,
+.diff-file .diff-gutter-delete {
+  color: #b6c2cf;
+}
+
+.diff-file .diff-gutter-insert {
+  background: #164b35;
+}
+
+.diff-file .diff-gutter-delete {
+  background: #5d1f1a;
 }
 
 /* Tighten row spacing to Bitbucket's metrics — react-diff-view's
