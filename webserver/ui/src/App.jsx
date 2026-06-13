@@ -18,6 +18,10 @@ import { toast } from './stores/toastStore.js';
 import { ChatComposerContext } from './contexts/ChatComposerContext.jsx';
 import { useNotifications } from './hooks/useNotifications.js';
 import { useNotificationRouting } from './hooks/useNotificationRouting.js';
+import {
+  decisionCommandFor,
+  unpackPermissionEnvelope,
+} from './utils/permissionEnvelope.js';
 import { useResizable } from './hooks/useResizable.js';
 import { useSafetyState } from './hooks/useSafetyState.js';
 import { useSessions } from './hooks/useSessions.js';
@@ -250,7 +254,9 @@ export default function App() {
     onTaskClick: onTaskClickFromNotification,
   });
 
-  const routing = useNotificationRouting(notifications.notify);
+  const routing = useNotificationRouting(notifications.notify, {
+    recallToolDecision: toolMemory.recall,
+  });
 
   const handleStatusEntry = useCallback((entry) => {
     routing.onStatusEntry(entry);
@@ -276,11 +282,19 @@ export default function App() {
       // tab-orange flash would be misleading. Without this gate,
       // rapid-fire Bash requests (the screenshotted symptom) make
       // the tab strobe orange even though no UI prompt is needed.
-      const toolName = String(
-        raw.tool_name || raw.tool
-        || raw.request?.tool_name || raw.request?.tool || '',
-      ).trim();
-      const decision = toolName ? toolMemory.recall(toolName) : null;
+      // Command-keyed tools (Bash) remember by program signature, so
+      // we MUST compute ``decisionCommandFor`` and pass it to recall
+      // — without the second arg ``recall('Bash')`` looks up a tool-
+      // level key only and misses every ``(Bash, mvn)`` decision the
+      // auto-handler will honour. Matches the same unpack +
+      // decisionCommandFor pair PermissionDecisionContainer uses.
+      const envelope = unpackPermissionEnvelope(raw);
+      const decision = envelope.toolName
+        ? toolMemory.recall(
+          envelope.toolName,
+          decisionCommandFor(envelope.toolName, envelope.toolInput),
+        )
+        : null;
       if (decision !== 'allow' && decision !== 'deny') {
         attention.mark(taskId);
       }
