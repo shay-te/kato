@@ -137,7 +137,17 @@ export default function App() {
     userPickedTabRef.current = true;
     setActiveTaskIdState(taskId);
     attention.clear(taskId);
-  }, [attention]);
+    // Force a polled /api/sessions fetch on every tab switch. The
+    // OUTGOING tab's SessionDetail unmounts immediately and clears its
+    // live ``agentStatusStore`` entry, so its dot falls back to the
+    // polled ``session.working`` field — which is otherwise refreshed
+    // only every 5s. Without an on-switch refresh the dot transiently
+    // reads "idle" for the working background tab even though Claude
+    // is still mid-turn there (operator report: "moving to the task
+    // tab shows it's working; switching to another tab shows it idle
+    // again"). The poll is cheap and only runs on an actual click.
+    refresh();
+  }, [attention, refresh]);
 
   // Tab / Shift+Tab step through the task strip at the top (guards
   // against text fields + open dialogs so normal focus tabbing still
