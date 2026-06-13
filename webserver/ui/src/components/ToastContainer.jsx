@@ -23,6 +23,13 @@ export default function ToastContainer() {
 
 function ToastCard({ entry, onDismiss }) {
   const className = `toast toast-${entry.kind || 'info'}`;
+  // Task chip ABOVE the title for global popups that originate from a
+  // task-specific action — the operator can tell at a glance which task
+  // the toast belongs to even when the popup floats over a different
+  // tab or the orchestrator view. Falls back to just the id when the
+  // caller didn't pass a summary.
+  const taskId = String(entry.taskId || '').trim();
+  const taskSummary = String(entry.taskSummary || '').trim();
   return (
     <div
       className={className}
@@ -33,6 +40,14 @@ function ToastCard({ entry, onDismiss }) {
     >
       <span className="toast-glyph" aria-hidden="true">{_glyph(entry.kind)}</span>
       <div className="toast-body">
+        {taskId && (
+          <div className="toast-task" title={taskSummary ? `${taskId} — ${taskSummary}` : taskId}>
+            <span className="toast-task-id">{taskId}</span>
+            {taskSummary && (
+              <span className="toast-task-summary">{taskSummary}</span>
+            )}
+          </div>
+        )}
         {entry.title && <strong className="toast-title">{entry.title}</strong>}
         {entry.message && <pre className="toast-message">{entry.message}</pre>}
       </div>

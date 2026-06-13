@@ -35,3 +35,15 @@ test('SessionHeader title row clips long summaries to one line', () => {
   assertDeclaration(summaryBody, 'text-overflow', 'ellipsis');
   assertDeclaration(summaryBody, 'white-space', 'nowrap');
 });
+
+test('Chats menu rows override the global header icon-button skin', () => {
+  const body = ruleBody('header .chats-menu button:not(.header-status)');
+
+  assertDeclaration(body, 'width', '100%');
+  assertDeclaration(body, 'height', 'auto');
+  assertDeclaration(body, 'min-height', '40px');
+  assertDeclaration(body, 'justify-content', 'flex-start');
+  assertDeclaration(body, 'border', '0');
+  assertDeclaration(body, 'border-radius', '0');
+  assertDeclaration(body, 'padding', '8px 12px');
+});

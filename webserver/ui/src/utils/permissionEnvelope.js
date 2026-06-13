@@ -13,6 +13,10 @@ export function unpackPermissionEnvelope(raw) {
     // feed so a cross-task modal can name it in the title. '' for the focused
     // task's own SSE envelope (the operator already knows which tab they're on).
     taskId: String(raw?.task_id || nested.task_id || ''),
+    // Free-text task summary stamped alongside ``task_id`` on the global
+    // feed; the focused-task path supplies it via prop. Title shows it
+    // beside the id ("<UNA-2763> — <library add collaborators>").
+    taskSummary: String(raw?.task_summary || nested.task_summary || ''),
     requestId: String(raw?.request_id || raw?.id || nested.request_id || nested.id || ''),
     toolName: String(
       raw?.tool_name || raw?.tool

@@ -4,6 +4,7 @@ import PaneResizer from './PaneResizer.jsx';
 
 export default function RightPane({
   activeTaskId,
+  activeTaskSummary = '',
   workspaceVersion = 0,
   focusFileTarget = null,
   openFile = null,
@@ -44,6 +45,7 @@ export default function RightPane({
       <div className="right-pane-body">
         <FilesTab
           taskId={activeTaskId}
+          taskSummary={activeTaskSummary}
           workspaceVersion={workspaceVersion}
           focusFilterSignal={focusFilterSignal}
           focusFileTarget={focusFileTarget}

@@ -502,6 +502,7 @@ export default function App() {
       left={
         <RightPane
           activeTaskId={activeTaskId}
+          activeTaskSummary={activeSession?.task_summary || ''}
           workspaceVersion={activeWorkspaceVersion}
           focusFileTarget={fileTreeFocusTarget}
           openFile={activeOpenFile}

@@ -77,6 +77,7 @@ export default function GlobalPermissionContainer({ activeTaskId, toolMemory }) 
       recallToolDecision={toolMemory.recall}
       rememberToolDecision={toolMemory.remember}
       taskCode={current.task_id}
+      taskSummary={current.task_summary || ''}
     />
   );
 }

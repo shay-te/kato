@@ -49,7 +49,7 @@ describe('PermissionModal — rendering', () => {
 
   test('titles with the task code for a cross-task ask (task_id stamped)', () => {
     render(<PermissionModal raw={_raw({ task_id: 'POJ-2' })} onDecide={vi.fn()} />);
-    expect(screen.getByRole('heading')).toHaveTextContent('POJ-2 wants permission');
+    expect(screen.getByRole('heading')).toHaveTextContent(/POJ-2.*wants permission/);
     // The task code is its own bold element.
     expect(screen.getByText('POJ-2')).toHaveClass('permission-modal-task');
     expect(screen.queryByText('Approval requested')).toBeNull();
@@ -57,8 +57,25 @@ describe('PermissionModal — rendering', () => {
 
   test('taskCode prop titles the focused-task modal (SSE envelope has no task_id)', () => {
     render(<PermissionModal raw={_raw()} onDecide={vi.fn()} taskCode="POJ-1" />);
-    expect(screen.getByRole('heading')).toHaveTextContent('POJ-1 wants permission');
+    expect(screen.getByRole('heading')).toHaveTextContent(/POJ-1.*wants permission/);
     expect(screen.getByText('POJ-1')).toHaveClass('permission-modal-task');
+  });
+
+  test('title shows the task summary on the same line as the code', () => {
+    render(
+      <PermissionModal
+        raw={_raw()}
+        onDecide={vi.fn()}
+        taskCode="POJ-1"
+        taskSummary="add library collaborators"
+      />,
+    );
+    const heading = screen.getByRole('heading');
+    expect(heading).toHaveTextContent(/POJ-1.*add library collaborators/);
+    expect(heading).toHaveTextContent(/wants permission/);
+    expect(screen.getByText('add library collaborators')).toHaveClass(
+      'permission-modal-title-summary',
+    );
   });
 
   test('renders all three action buttons', () => {

@@ -5,9 +5,12 @@ import {
 } from '../utils/permissionEnvelope.js';
 import DialogShell from './DialogShell.jsx';
 
-export default function PermissionModal({ raw, onDecide, taskCode = '' }) {
+export default function PermissionModal({
+  raw, onDecide, taskCode = '', taskSummary = '',
+}) {
   const {
-    taskId, requestId, toolName, toolInput, outsideSandbox, outsidePath,
+    taskId, taskSummary: envelopeSummary,
+    requestId, toolName, toolInput, outsideSandbox, outsidePath,
   } = unpackPermissionEnvelope(raw);
   const [rationale, setRationale] = useState('');
 
@@ -51,19 +54,44 @@ export default function PermissionModal({ raw, onDecide, taskCode = '' }) {
   // Always name the task in the title so the operator knows WHICH task is
   // waiting — not just "approval requested". ``taskCode`` comes straight from
   // the rendering surface (the focused task's SSE envelope has no task_id);
-  // the cross-task feed also stamps ``task_id`` on the envelope itself.
+  // the cross-task feed also stamps ``task_id`` + ``task_summary`` on the
+  // envelope itself. The summary prop wins over the envelope's copy (the
+  // focused-task path has the freshest value).
   const code = taskCode || taskId;
-  const title = code
-    ? <><strong className="permission-modal-task">{code}</strong> wants permission</>
-    : 'Approval requested';
+  const summary = String(taskSummary || envelopeSummary || '').trim();
+  // Two-line title — both lines styled identically (same font / size /
+  // colour / weight). Line 1: "<TASK-CODE> — <summary>" (or "Approval
+  // requested" when the task is unknown — the old fallback). Line 2:
+  // "wants permission <ToolName>". The tool line ALWAYS renders so the
+  // operator never loses the tool name on the no-task-code path.
+  const title = (
+    <span className="permission-modal-title-stack">
+      <span className="permission-modal-title-line">
+        {code ? (
+          <>
+            <span className="permission-modal-task">{code}</span>
+            {summary && (
+              <>
+                <span className="permission-modal-title-sep"> — </span>
+                <span className="permission-modal-title-summary">{summary}</span>
+              </>
+            )}
+          </>
+        ) : (
+          'Approval requested'
+        )}
+      </span>
+      <span className="permission-modal-title-line">
+        wants permission <span className="permission-modal-tool">{toolName}</span>
+      </span>
+    </span>
+  );
 
   return (
     <DialogShell
       id="permission-modal"
       ariaLabelledBy="permission-modal-title"
       title={title}
-      subtitle={toolName}
-      subtitleId="permission-tool-name"
     >
       {sandboxWarning}
       <div id="permission-fields">{fields}</div>

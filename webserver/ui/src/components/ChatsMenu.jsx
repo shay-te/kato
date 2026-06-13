@@ -3,6 +3,7 @@ import { fetchTaskChats, startTaskChat } from '../api.js';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import { useEscapeKey } from '../hooks/useEscapeKey.js';
 import { toast } from '../stores/toastStore.js';
+import { chatMeta, chatTitle } from './ChatsMenuHelpers.js';
 import Icon from './Icon.jsx';
 
 // Header dropdown for navigating a task's chats. "New chat" detaches the
@@ -142,8 +143,8 @@ export default function ChatsMenu({
   } else if (state.status === 'ready') {
     listContent = state.chats.map((chat) => {
       const sid = String(chat[AGENT_SESSION_ID] || '');
-      const preview = chat.first_user_message || '(no messages yet)';
-      const turns = Number(chat.turn_count) || 0;
+      const title = chatTitle(chat);
+      const meta = chatMeta(chat);
       return (
         <button
           key={sid}
@@ -155,11 +156,8 @@ export default function ChatsMenu({
             ? 'This is the current chat.'
             : 'Switch back to this chat — the next message resumes it.'}
         >
-          <span className="chats-menu-row-sid">{sid.slice(0, 8)}…</span>
-          <span className="chats-menu-row-preview">{preview}</span>
-          <span className="chats-menu-row-meta">
-            {chat.active ? 'current' : `${turns} turn${turns === 1 ? '' : 's'}`}
-          </span>
+          <span className="chats-menu-row-title">{title}</span>
+          <span className="chats-menu-row-meta">{meta}</span>
         </button>
       );
     });
@@ -186,7 +184,7 @@ export default function ChatsMenu({
           onClick={onNewChat}
           disabled={busy}
         >
-          <Icon name="plus" /> New chat
+          New chat
         </button>
         {confirmWarning}
         {listContent}

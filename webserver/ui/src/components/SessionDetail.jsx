@@ -623,6 +623,7 @@ export default function SessionDetail({
         recallToolDecision={memory.recall}
         rememberToolDecision={memory.remember}
         taskCode={taskId}
+        taskSummary={session?.task_summary || ''}
       />
     </main>
   );

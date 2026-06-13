@@ -30,9 +30,21 @@ export const toastStore = {
     title = '',
     message = '',
     durationMs = 5000,
+    // Optional task identity for GLOBAL toasts that originate from a
+    // task-specific action (sync repositories, push, finish, etc.).
+    // When set, ToastContainer renders a "<id> — <summary>" chip
+    // above the title so the operator can tell at a glance which
+    // task the popup belongs to. Free-floating toasts (settings,
+    // network errors) leave both fields blank and render the same
+    // way as before.
+    taskId = '',
+    taskSummary = '',
   } = {}) {
     const id = _nextId++;
-    _toasts = [..._toasts, { id, kind, title, message, createdAt: Date.now() }];
+    _toasts = [
+      ..._toasts,
+      { id, kind, title, message, taskId, taskSummary, createdAt: Date.now() },
+    ];
     _emit();
     if (durationMs > 0) {
       setTimeout(() => toastStore.dismiss(id), durationMs);
@@ -87,13 +99,15 @@ export const toast = {
 // builders stay distinct per payload; only this trailing dispatch is
 // shared.
 export function toastResult(
-  { kind = 'info', title, message } = {},
+  { kind = 'info', title, message, taskId = '', taskSummary = '' } = {},
   { errorMs = 12000, defaultMs = 7000 } = {},
 ) {
   return toastStore.push({
     kind,
     title,
     message,
+    taskId,
+    taskSummary,
     durationMs: kind === 'error' ? errorMs : defaultMs,
   });
 }

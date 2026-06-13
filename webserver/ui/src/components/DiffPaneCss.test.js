@@ -92,10 +92,11 @@ test('Collapsed diff file header rounds all corners', () => {
 
 test('DiffPane uses Bitbucket-style hunk colors (saturated red/green)', () => {
   const body = ruleBodyContaining('.diff-file', '--diff-code-insert-background-color');
-  assertDeclaration(body, '--diff-code-insert-background-color', '#1c3329');
+  assertDeclaration(body, '--diff-text-color', '#b6c2cf');
+  assertDeclaration(body, '--diff-code-insert-background-color', '#1d2b27');
   assertDeclaration(body, '--diff-gutter-insert-background-color', '#164b35');
   assertDeclaration(body, '--diff-code-insert-edit-background-color', '#216e4e');
-  assertDeclaration(body, '--diff-code-delete-background-color', '#42221f');
+  assertDeclaration(body, '--diff-code-delete-background-color', '#3a2423');
   assertDeclaration(body, '--diff-gutter-delete-background-color', '#5d1f1a');
   assertDeclaration(body, '--diff-code-delete-edit-background-color', '#ae2e24');
 });
@@ -226,7 +227,7 @@ test('Diff syntax colors match the Bitbucket palette', () => {
   assertTokenColor('number', '#93c5fd');
   assertTokenColor('property', '#93c5fd');
   assertTokenColor('attr-name', '#93c5fd');
-  assertTokenColor('string', '#f59e0b');
+  assertTokenColor('string', '#ffd43b');
 });
 
 test('Bitbucket comment card: avatar, collapse chevron, dot actions', () => {

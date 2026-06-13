@@ -42,7 +42,7 @@ describe('GlobalPermissionContainer', () => {
     fetchPendingPermissions.mockResolvedValue({ pending: [_ask('POJ-2')] });
     render(<GlobalPermissionContainer activeTaskId="POJ-1" toolMemory={_memory} />);
     const heading = await screen.findByRole('heading');
-    expect(heading).toHaveTextContent('POJ-2 wants permission');
+    expect(heading).toHaveTextContent(/POJ-2.*wants permission/);
   });
 
   test('does NOT duplicate the focused task\'s own ask (SSE owns it)', async () => {

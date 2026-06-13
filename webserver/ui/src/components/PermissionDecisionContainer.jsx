@@ -13,6 +13,7 @@ export default function PermissionDecisionContainer({
   recallToolDecision,
   rememberToolDecision,
   taskCode = '',
+  taskSummary = '',
 }) {
   const [submittingRequestId, setSubmittingRequestId] = useState('');
   const [autoFailedRequestId, setAutoFailedRequestId] = useState('');
@@ -104,7 +105,12 @@ export default function PermissionDecisionContainer({
   }
 
   return (
-    <PermissionModal raw={pending} onDecide={handleDecide} taskCode={taskCode} />
+    <PermissionModal
+      raw={pending}
+      onDecide={handleDecide}
+      taskCode={taskCode}
+      taskSummary={taskSummary}
+    />
   );
 }
 

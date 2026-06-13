@@ -2803,6 +2803,14 @@ def _register_get_pending_permissions_route(app: Flask) -> None:
                     continue
                 envelope = dict(envelope)
                 envelope['task_id'] = record.task_id
+                # Stamp the task summary alongside the id so the
+                # cross-task permission modal can render the full
+                # "<TASK-ID> — <summary>" title without a second
+                # round-trip; the focused-task path gets the same
+                # value from its SessionDetail prop.
+                envelope['task_summary'] = str(
+                    getattr(record, 'task_summary', '') or '',
+                )
                 pending.append(envelope)
         return jsonify({'pending': pending})
 

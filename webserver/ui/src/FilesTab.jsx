@@ -89,6 +89,7 @@ export function buildFilesCommentMeta(comments) {
 }
 export default function FilesTab({
   taskId,
+  taskSummary = '',
   workspaceVersion = 0,
   focusFilterSignal = 0,
   focusFileTarget = null,
@@ -391,7 +392,11 @@ export default function FilesTab({
     setSyncing(true);
     const result = await syncTaskRepositories(taskId);
     setSyncing(false);
-    toastResult(formatSyncResult(result));
+    toastResult({
+      ...formatSyncResult(result),
+      taskId,
+      taskSummary,
+    });
     // Bump the local sync-tick so the file tree refetches and any
     // newly-cloned repos render. Even on a no-op sync the refetch
     // is harmless and keeps the tree in sync with disk.

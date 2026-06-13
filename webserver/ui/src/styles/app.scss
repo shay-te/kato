@@ -1225,7 +1225,8 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   border-radius: $RADIUS-4;
   max-height: 360px;
   overflow-y: auto;
-  min-width: 320px;
+  min-width: 420px;
+  max-width: min(640px, calc(100vw - #{$SPACE-24}));
   box-shadow: $SHADOW-24;
 }
 
@@ -1234,14 +1235,20 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   align-items: center;
   gap: $SPACE-8;
   width: 100%;
+  height: auto;
+  min-height: 40px;
+  justify-content: flex-start;
   text-align: left;
   background: transparent;
   border: 0;
+  border-radius: 0;
   border-bottom: 1px solid $C-NEUTRAL-16;
   padding: $SPACE-8 $SPACE-12;
   cursor: pointer;
   color: $C-NEUTRAL-96;
-  font: 600 12px/1.3 inherit;
+  font-size: $TEXT-16;
+  font-weight: 650;
+  line-height: 1.35;
 }
 
 .chats-menu-new:hover {
@@ -1278,18 +1285,22 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 }
 
 .chats-menu-row {
-  display: grid;
-  grid-template-columns: 72px 1fr auto;
+  display: flex;
   gap: $SPACE-8;
   align-items: center;
+  justify-content: space-between;
   width: 100%;
+  height: auto;
+  min-height: 40px;
   text-align: left;
   background: transparent;
   border: 0;
-  padding: $SPACE-6 $SPACE-12;
+  border-radius: 0;
+  padding: $SPACE-8 $SPACE-12;
   cursor: pointer;
   color: $C-NEUTRAL-96;
-  font: 12px/1.3 inherit;
+  font-size: $TEXT-16;
+  line-height: 1.35;
 }
 
 .chats-menu-row:hover {
@@ -1297,15 +1308,12 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 }
 
 .chats-menu-row.is-active {
-  color: $C-CYAN-53;
+  color: $C-NEUTRAL-96;
 }
 
-.chats-menu-row-sid {
-  color: $C-ORANGE-50;
-  font-family: ui-monospace, monospace;
-}
-
-.chats-menu-row-preview {
+.chats-menu-row-title {
+  min-width: 0;
+  flex: 1;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1313,7 +1321,20 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 
 .chats-menu-row-meta {
   color: $C-NEUTRAL-45;
-  font-size: $TEXT-11;
+  flex-shrink: 0;
+  font-size: $TEXT-14;
+  font-weight: 650;
+}
+
+header .chats-menu button:not(.header-status) {
+  width: 100%;
+  height: auto;
+  min-height: 40px;
+  justify-content: flex-start;
+  border: 0;
+  border-radius: 0;
+  padding: $SPACE-8 $SPACE-12;
+  line-height: 1.35;
 }
 
 #session-task-summary {
@@ -3093,13 +3114,17 @@ code {
 
 .modal-card h2 {
   margin: 0;
-  font-size: $TEXT-14;
-  color: $C-NEUTRAL-64;
-  font-weight: 500;
+  font-size: $TEXT-15;
+  color: $C-NEUTRAL-96;
+  font-weight: 600;
+  line-height: 1.35;
 }
 
-// The task code inside the permission modal title ("UNA-2742 wants
-// permission") — bold + brighter so the operator sees WHICH task at a glance.
+// The task code inside the permission modal title ("UNA-2742 — library
+// add collaborators") — bold + brighter so the operator sees WHICH task
+// at a glance. Same font-size / colour / weight as the rest of the
+// title so the heading reads as one consistent block (no mixed-style
+// shouting).
 .permission-modal-task {
   font-weight: 700;
   color: $C-NEUTRAL-96;
@@ -3113,8 +3138,45 @@ code {
   padding-bottom: $SPACE-10;
 }
 
-#permission-tool-name {
-  font: 600 18px ui-monospace, monospace;
+// Two-line permission-modal title. Both lines share the same font-size /
+// colour / weight (whatever ``.modal-card h2`` declares) so the heading
+// stays a single visual unit; the first line stacks task identity, the
+// second line is the action ("wants permission Bash"). The tool name
+// gets monospace + the bright cream so the operator can spot which tool
+// is asking without it screaming louder than the rest.
+.permission-modal-title-stack {
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-2;
+  min-width: 0;
+}
+
+.permission-modal-title-line {
+  display: inline;
+  color: $C-NEUTRAL-96;
+}
+
+.permission-modal-title-sep {
+  color: $C-NEUTRAL-96;
+}
+
+.permission-modal-title-summary {
+  font-weight: 600;
+  color: $C-NEUTRAL-96;
+  // Sentence-case the task title — YouTrack/Jira summaries usually
+  // arrive lowercased ("library add collaborators"), and the modal
+  // title reads as a proper sentence once the first letter is
+  // uppercase. ``::first-letter`` only touches the leading character
+  // so multi-word titles aren't title-cased ("Library Add
+  // Collaborators And Permissions" would be too much).
+  &::first-letter {
+    text-transform: uppercase;
+  }
+}
+
+.permission-modal-tool {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 700;
   color: $C-NEUTRAL-96;
 }
 
@@ -3549,7 +3611,18 @@ code {
  * the historically-accepted content clip.) */
 .diff-pane .diff-file-body {
   border-radius: $RADIUS-0-0-10-10;
-  overflow: hidden;
+  // Long source lines used to wrap inside the code cell (react-diff-view's
+  // default ``white-space: pre-wrap`` + ``word-break: break-all`` on
+  // ``.diff-code``), turning a 1-line statement into 3-4 visual rows and
+  // making the diff feel jumbled — the operator's "the diff is not
+  // readable" report. Switch to horizontal scrolling: the file body
+  // owns ``overflow-x: auto`` and the ``.diff-code`` rule below pins
+  // ``white-space: pre`` so each source line stays exactly one row, the
+  // table grows to fit the longest line, and a scrollbar appears under
+  // it. ``overflow-y: hidden`` keeps the vertical scroll on the
+  // ``.diff-pane-body`` parent (one scroller per axis).
+  overflow-x: auto;
+  overflow-y: hidden;
   content-visibility: auto;
   contain-intrinsic-size: auto $SPACE-720;
 }
@@ -3566,6 +3639,18 @@ code {
 .diff-pane .diff-file-body table.diff {
   border-collapse: separate;
   border-spacing: 0;
+  // ``table-layout: fixed; width: 100%`` (react-diff-view default) caps
+  // the table at the wrapper width, so long lines have nowhere to go
+  // even with ``white-space: pre`` on ``.diff-code`` — they overflow
+  // the CELL but the table doesn't grow, so no horizontal scrollbar
+  // appears on the wrapper. ``auto`` lets the code column size to its
+  // widest line; the table grows past the wrapper and the wrapper's
+  // ``overflow-x: auto`` (above) renders the scrollbar the operator
+  // expects. ``<col class="diff-gutter-col">`` widths still apply as
+  // minimums so the gutter stays the same narrow size set per file.
+  table-layout: auto;
+  width: max-content;
+  min-width: 100%;
 }
 
 /* Safari ignores border-radius with ``overflow: clip`` AND won't clip
@@ -5833,7 +5918,7 @@ body.kato-resizing #left-pane-resizer::before {
  * gutters and edited spans carry the stronger add/delete color. */
 .diff-file {
   --diff-background-color: #{$C-NEUTRAL-04};
-  --diff-text-color: #{$C-NEUTRAL-96};
+  --diff-text-color: #{$C-DIFF-TEXT};
   // Bitbucket stack — explicit fallbacks so every OS renders the same
   // metrics (the bare ``ui-monospace, monospace`` picked SF Mono on
   // macOS but Courier on Linux, which read as a different layout).
@@ -5867,7 +5952,7 @@ body.kato-resizing #left-pane-resizer::before {
 }
 
 .diff-file .diff-gutter {
-  color: $C-NEUTRAL-75;
+  color: $C-DIFF-TEXT;
   font-variant-numeric: tabular-nums;
   padding: 0 $SPACE-6;
   text-align: right;
@@ -5884,7 +5969,7 @@ body.kato-resizing #left-pane-resizer::before {
 // Keep changed-row line numbers the same muted Bitbucket grey.
 .diff-file .diff-gutter-insert,
 .diff-file .diff-gutter-delete {
-  color: $C-NEUTRAL-75;
+  color: $C-DIFF-TEXT;
 }
 
 .diff-file .diff-gutter-insert {
@@ -5905,6 +5990,21 @@ body.kato-resizing #left-pane-resizer::before {
 
 .diff-file .diff-line {
   line-height: 1.4;
+}
+
+// Keep each source line on EXACTLY one row. The react-diff-view default
+// (``white-space: pre-wrap; word-break: break-all``) wraps long lines
+// into multiple visual rows, which the operator reported as "the diff
+// is not readable — lines wrap and break". ``white-space: pre`` keeps
+// formatting but never wraps; ``word-break: normal`` undoes the default
+// break-anywhere; and the wrapper's ``overflow-x: auto`` (see
+// ``.diff-pane .diff-file-body`` above) gives the operator the
+// horizontal scrollbar the diff now needs to read the tail of long
+// lines.
+.diff-file .diff-code {
+  white-space: pre;
+  word-break: normal;
+  word-wrap: normal;
 }
 
 .diff-file .diff-context-expander {
@@ -6014,18 +6114,18 @@ body.kato-resizing #left-pane-resizer::before {
 .diff-file .token.string,
 .diff-file .token.attr-value,
 .diff-file .token.template-string {
-  color: $C-ORANGE-50;
+  color: $C-DIFF-STRING;
 }
 
 .diff-file .token.variable {
-  color: $C-NEUTRAL-96;
+  color: $C-DIFF-TEXT;
 }
 
 .diff-file .token.operator,
 .diff-file .token.punctuation {
   // Default text colour, not a tint — matches Bitbucket where ``=``,
   // ``:``, ``,`` etc. don't draw the eye away from the identifiers.
-  color: $C-NEUTRAL-96-A85;
+  color: $C-DIFF-TEXT;
 }
 
 .diff-file .token.regex {
@@ -6440,6 +6540,32 @@ body.kato-resizing #left-pane-resizer::before {
   font-weight: 600;
   font-size: $TEXT-13;
   letter-spacing: 0.01em;
+}
+
+// Task chip above the title for global toasts that originated from a
+// task-specific action (sync repos / push / finish / etc.). Keeps the
+// operator oriented when a popup floats over a different tab or the
+// orchestrator view.
+.toast-task {
+  display: flex;
+  align-items: baseline;
+  gap: $SPACE-6;
+  font-size: $TEXT-11;
+  color: $C-NEUTRAL-64;
+  min-width: 0;
+}
+
+.toast-task-id {
+  font: 600 11px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: $C-CYAN-78;
+  flex-shrink: 0;
+}
+
+.toast-task-summary {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .toast-message {

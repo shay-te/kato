@@ -52,6 +52,8 @@ describe('ChatsMenu', () => {
     expect(screen.getByText('fix the bug')).toBeInTheDocument();
     expect(screen.getByText('current')).toBeInTheDocument();   // active marker
     expect(screen.getByText('12 turns')).toBeInTheDocument();  // previous chat meta
+    expect(screen.queryByText(/current-session-id/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/older-session-id/)).not.toBeInTheDocument();
   });
 
   test('"New chat" detaches with an empty id and notifies the parent', async () => {
