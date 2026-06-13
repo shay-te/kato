@@ -517,6 +517,20 @@ class StreamingClaudeSession(object):
         return self._effort
 
     @property
+    def model(self) -> str:
+        """The ``--model`` value this subprocess was spawned with ('' = none).
+
+        Same shape as ``effort`` — the CLI bakes ``--model`` at spawn
+        time, so an operator-changed model only takes effect when the
+        subprocess respawns. The chat send route reads this to decide
+        whether the new picker value differs from the live session and
+        therefore requires a respawn (instead of forwarding the message
+        into a subprocess that's already wired to a model the operator
+        no longer wants).
+        """
+        return self._model
+
+    @property
     def last_user_message_sent_epoch(self) -> float:
         """Wall-clock of the most recent ``send_user_message``.
 

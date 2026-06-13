@@ -2654,17 +2654,25 @@ def _register_post_message_route(app: Flask) -> None:
             return jsonify({'error': 'text or images is required'}), 400
         _capture_prompt_lesson_candidate(app, task_id, text)
         manager = app.config['SESSION_MANAGER']
-        # The CLI bakes ``--effort`` at spawn, so a changed effort only
-        # takes hold on a fresh subprocess. If the operator switched to a
-        # new explicit level and the live session is idle, respawn it (via
-        # ``--resume``, conversation preserved) at the new effort instead
-        # of sending into the old one.
-        if _effort_change_needs_respawn(app, manager, task_id, images):
+        # The CLI bakes ``--model`` and ``--effort`` at spawn, so a
+        # changed model / effort only takes hold on a fresh subprocess.
+        # If the operator switched to a new explicit value and the live
+        # session is idle, respawn it (via ``--resume``, conversation
+        # preserved) at the new value instead of forwarding the message
+        # into a subprocess that's still on the OLD value. The model
+        # check is critical: without it, an operator who changes the
+        # picker after a session was spawned with a model they can't
+        # access (or that's broken) hits an immediate error on every
+        # message until kato restarts.
+        if (
+            _model_change_needs_respawn(app, manager, task_id, images)
+            or _effort_change_needs_respawn(app, manager, task_id, images)
+        ):
             try:
                 manager.terminate_session(task_id, remove_record=False)
             except Exception:
                 app.logger.exception(
-                    'failed to terminate session for effort respawn (task %s)',
+                    'failed to terminate session for model/effort respawn (task %s)',
                     task_id,
                 )
             return _spawn_or_reject_chat_session(app, task_id, text)
@@ -2874,6 +2882,36 @@ def _effort_change_needs_respawn(app: Flask, manager, task_id: str, images) -> b
     if bool(getattr(session, 'is_working', False)):
         return False  # don't interrupt a turn
     return str(getattr(session, 'effort', '') or '') != requested
+
+
+def _model_change_needs_respawn(app: Flask, manager, task_id: str, images) -> bool:
+    """True when a live, idle session must respawn to apply a new model.
+
+    Same shape as ``_effort_change_needs_respawn``: the Claude CLI bakes
+    ``--model`` at spawn time, so the operator changing the picker only
+    takes effect on a fresh subprocess. Without this check the chat send
+    route forwards the message into a subprocess still wired to the OLD
+    model — and if that old model is no longer available to the
+    operator's credentials the CLI errors out with "model X may not
+    exist or you may not have access" (operator report: "I changed
+    model to opus, why shutting").
+
+    Only fires when an explicit override is set, differs from what the
+    live session was spawned with, the session is idle, and there are no
+    images (the respawn path can't carry them).
+    """
+    if images:
+        return False
+    overrides = app.config.get('TASK_MODEL_OVERRIDES') or {}
+    requested = str(overrides.get(task_id, '') or '')
+    if not requested:
+        return False  # no override — never force a respawn
+    session = manager.get_session(task_id) if manager is not None else None
+    if session is None or not getattr(session, 'is_alive', False):
+        return False  # no live session — the spawn path applies the model
+    if bool(getattr(session, 'is_working', False)):
+        return False  # don't interrupt a turn
+    return str(getattr(session, 'model', '') or '') != requested
 
 
 def _deliver_to_live_session(

@@ -1388,6 +1388,73 @@ class EffortRespawnDecisionTests(unittest.TestCase):
         ))
 
 
+class ModelRespawnDecisionTests(unittest.TestCase):
+    """``_model_change_needs_respawn``: only an idle, image-less session
+    whose ``--model`` differs from an explicit operator override should
+    respawn. Mirrors the effort decision exactly — the operator-reported
+    bug was that an explicit model change ("I changed model to opus")
+    was forwarded into a live session still spawned with the OLD model,
+    and the CLI errored on every message because the old model was
+    inaccessible.
+    """
+
+    def _app(self, override=''):
+        return SimpleNamespace(
+            config={'TASK_MODEL_OVERRIDES': ({'T1': override} if override else {})},
+        )
+
+    def _mgr(self, session):
+        manager = MagicMock()
+        manager.get_session.return_value = session
+        return manager
+
+    def _session(self, **kw):
+        base = dict(is_alive=True, is_working=False, model='claude-fable-5')
+        base.update(kw)
+        return SimpleNamespace(**base)
+
+    def test_images_never_respawn(self):
+        from kato_webserver.app import _model_change_needs_respawn
+        self.assertFalse(_model_change_needs_respawn(
+            self._app('claude-opus-4-8'),
+            self._mgr(self._session()), 'T1', [{'data': 'x'}],
+        ))
+
+    def test_no_override_never_respawn(self):
+        from kato_webserver.app import _model_change_needs_respawn
+        self.assertFalse(_model_change_needs_respawn(
+            self._app(''), self._mgr(self._session()), 'T1', [],
+        ))
+
+    def test_no_live_session_no_respawn(self):
+        from kato_webserver.app import _model_change_needs_respawn
+        dead = SimpleNamespace(is_alive=False, is_working=False, model='')
+        self.assertFalse(_model_change_needs_respawn(
+            self._app('claude-opus-4-8'), self._mgr(dead), 'T1', [],
+        ))
+
+    def test_busy_session_not_interrupted(self):
+        from kato_webserver.app import _model_change_needs_respawn
+        self.assertFalse(_model_change_needs_respawn(
+            self._app('claude-opus-4-8'),
+            self._mgr(self._session(is_working=True)), 'T1', [],
+        ))
+
+    def test_same_model_no_respawn(self):
+        from kato_webserver.app import _model_change_needs_respawn
+        self.assertFalse(_model_change_needs_respawn(
+            self._app('claude-opus-4-8'),
+            self._mgr(self._session(model='claude-opus-4-8')), 'T1', [],
+        ))
+
+    def test_idle_different_model_respawns(self):
+        from kato_webserver.app import _model_change_needs_respawn
+        self.assertTrue(_model_change_needs_respawn(
+            self._app('claude-opus-4-8'),
+            self._mgr(self._session(model='claude-fable-5')), 'T1', [],
+        ))
+
+
 class LessonsTabsExcludedTests(unittest.TestCase):
     """kato's lessons-state dirs (``lessons/`` · ``lesson-candidates/``) live
     inside KATO_WORKSPACES_ROOT next to the task clones, so the workspace walk
