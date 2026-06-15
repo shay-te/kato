@@ -25,7 +25,74 @@ from __future__ import annotations
 
 import math
 
+from agent_core_lib.agent_core_lib.helpers.command_policy import (
+    CONFIGURABLE_CATEGORIES,
+    CommandPolicy,
+)
+
 LOG_LEVELS = ['debug', 'info', 'warning', 'error', 'critical']
+
+# Action Guard posture — the per-category decision selects in the Settings UI.
+# Defaults are DERIVED from the engine's secure default so the schema, the
+# resolver, and the boot banner can never drift from the enforcement code.
+# Env key is ``KATO_ACTION_GUARD_<CATEGORY>`` (value: block | ask | allow);
+# the master switch is ``KATO_ACTION_GUARD_ENABLED`` (true | false).
+ACTION_GUARD_DECISION_OPTIONS = ['block', 'ask', 'allow']
+ACTION_GUARD_ENV_PREFIX = 'KATO_ACTION_GUARD_'
+_ACTION_GUARD_DEFAULT_POLICY = CommandPolicy.secure_default()
+ACTION_GUARD_SECURE_DEFAULTS: dict[str, str] = {
+    'KATO_ACTION_GUARD_ENABLED': 'true',
+}
+for _category in CONFIGURABLE_CATEGORIES:
+    ACTION_GUARD_SECURE_DEFAULTS[f'{ACTION_GUARD_ENV_PREFIX}{_category.value.upper()}'] = (
+        _ACTION_GUARD_DEFAULT_POLICY.decide(_category).value
+    )
+
+# Operator-facing label + one-line risk description per category.
+_ACTION_GUARD_FIELD_META: dict[str, tuple[str, str]] = {
+    'destructive_fs': (
+        'Destructive filesystem',
+        'rm -rf, find -delete, recursive chmod. Catastrophic forms '
+        '(rm -rf /, mkfs, dd to a device, fork bombs) always block.'),
+    'credential_read': (
+        'Credential / secret reads',
+        'Access to ~/.ssh, ~/.aws, private keys, /etc/shadow, the macOS '
+        'Keychain. The classic antivirus-triggering pattern.'),
+    'network_exfil': (
+        'Network exfiltration',
+        'Reverse shells and uploading local files to a remote host '
+        '(curl -d @, scp, nc). Reverse shells always block.'),
+    'remote_exec': (
+        'Remote code execution',
+        'curl … | sh, bash -c "$(curl …)" and friends. No legitimate '
+        'use — always blocks.'),
+    'persistence': (
+        'Persistence / startup edits',
+        'Writes to ~/.bashrc, crontab, ~/.ssh/authorized_keys, '
+        'LaunchAgents, systemd units.'),
+    'priv_esc': (
+        'Privilege escalation',
+        'sudo, doas, docker, kubectl — runs with host/elevated rights.'),
+    'sandbox_escape': (
+        'Sandbox escape',
+        'nsenter, unshare, chroot — step around the workspace sandbox. '
+        'No legitimate use — always blocks.'),
+    'out_of_scope': (
+        'Out-of-workspace paths',
+        'Reads/writes that resolve outside the task workspace clone.'),
+}
+_ACTION_GUARD_FIELDS: list[tuple] = [
+    ('KATO_ACTION_GUARD_ENABLED', 'bool', 'Action Guard enabled',
+     'Master switch for content-aware action blocking (the permission-path '
+     'guard). The non-overridable CLI denylist floor stays on regardless. '
+     'Takes effect on the next agent action — no restart needed.', {}),
+]
+for _category in CONFIGURABLE_CATEGORIES:
+    _label, _help = _ACTION_GUARD_FIELD_META[_category.value]
+    _ACTION_GUARD_FIELDS.append((
+        f'{ACTION_GUARD_ENV_PREFIX}{_category.value.upper()}', 'select',
+        _label, _help, {'options': ACTION_GUARD_DECISION_OPTIONS},
+    ))
 
 # Keys whose value must be a valid http/https URL when non-empty.
 # Covers both schema fields and provider/git-host fields that live
@@ -197,6 +264,19 @@ SETTINGS_SCHEMA: list[dict] = [
                         'kato writes an unmissable banner. Only enable '
                         'if you understand BYPASS_PROTECTIONS.md.'}),
         ],
+    },
+    {
+        'id': 'action_guard',
+        'label': 'Action Guard',
+        'title': 'Action Guard — block harmful agent actions',
+        'description': 'Per-category posture for what the agent is allowed to '
+                       'do. BLOCK refuses the action and tells the agent why; '
+                       'ASK pops an approval prompt; ALLOW passes through. '
+                       'No-legitimate-use actions (reverse shells, fork bombs, '
+                       'mkfs, dd-to-device, sandbox escape) always block and '
+                       'cannot be loosened. Changes take effect on the next '
+                       'agent action — no restart needed.',
+        'fields': _ACTION_GUARD_FIELDS,
     },
     {
         'id': 'security_scanner',

@@ -139,6 +139,34 @@ describe('PermissionModal — rendering', () => {
     expect(screen.getByRole('button', { name: /allow always/i })).toBeInTheDocument();
   });
 
+  test('Action Guard ask shows the risk banner (category + reason)', () => {
+    const { container } = render(<PermissionModal raw={_raw({
+      action_guard: {
+        category: 'credential_read', decision: 'block',
+        reason: 'accesses a credential / secret file',
+      },
+    })} onDecide={vi.fn()} />);
+    const banner = container.querySelector('#permission-action-guard');
+    expect(banner).toBeInTheDocument();
+    expect(banner).toHaveTextContent(/CREDENTIAL READ/i);
+    expect(banner).toHaveTextContent(/credential . secret file/i);
+  });
+
+  test('high-risk Action Guard category withholds "Allow always"', () => {
+    render(<PermissionModal raw={_raw({
+      action_guard: { category: 'credential_read', decision: 'block' },
+    })} onDecide={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /allow always/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /allow once/i })).toBeInTheDocument();
+  });
+
+  test('dual-use Action Guard category (ask) keeps "Allow always"', () => {
+    render(<PermissionModal raw={_raw({
+      action_guard: { category: 'destructive_fs', decision: 'ask' },
+    })} onDecide={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /allow always/i })).toBeInTheDocument();
+  });
+
   test('object-valued tool input is rendered as JSON string', () => {
     render(<PermissionModal raw={_raw({
       request: {

@@ -15,6 +15,7 @@ import {
   unpackPermissionEnvelope,
   commandSignatureOf,
   decisionCommandFor,
+  isHighRiskActionGuard,
 } from './permissionEnvelope.js';
 
 
@@ -218,6 +219,41 @@ test('decisionCommandFor: Bash keys on the signature, non-Bash stays tool-level'
   );
   assert.equal(decisionCommandFor('Edit', { file_path: '/x' }), '');
   assert.equal(decisionCommandFor('Bash', {}), '');
+});
+
+test('unpack: surfaces action_guard from the top level', function () {
+  const result = unpackPermissionEnvelope({
+    type: 'control_request', request_id: 'r', tool: 'Bash',
+    input: { command: 'cat ~/.ssh/id_rsa' },
+    action_guard: { category: 'credential_read', decision: 'block', reason: 'x' },
+  });
+  assert.equal(result.actionGuard.category, 'credential_read');
+});
+
+test('unpack: surfaces action_guard nested under request', function () {
+  const result = unpackPermissionEnvelope({
+    type: 'control_request', request_id: 'r',
+    request: {
+      tool_name: 'Bash', input: { command: 'x' },
+      action_guard: { category: 'network_exfil', decision: 'block' },
+    },
+  });
+  assert.equal(result.actionGuard.category, 'network_exfil');
+});
+
+test('unpack: actionGuard is null when absent (old envelopes unchanged)', function () {
+  const result = unpackPermissionEnvelope({
+    request_id: 'r', tool: 'Bash', input: { command: 'ls' },
+  });
+  assert.equal(result.actionGuard, null);
+});
+
+test('isHighRiskActionGuard: true for credential/exfil/rce/escape, false otherwise', function () {
+  assert.equal(isHighRiskActionGuard({ category: 'credential_read' }), true);
+  assert.equal(isHighRiskActionGuard({ category: 'network_exfil' }), true);
+  assert.equal(isHighRiskActionGuard({ category: 'destructive_fs' }), false);
+  assert.equal(isHighRiskActionGuard({ category: 'out_of_scope' }), false);
+  assert.equal(isHighRiskActionGuard(null), false);
 });
 
 test('unpack: preserves rich input objects', function () {

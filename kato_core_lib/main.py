@@ -26,6 +26,7 @@ from sandbox_core_lib.sandbox_core_lib.tls_pin import (
 from agent_core_lib.agent_core_lib.helpers.session_id_utils import (
     read_session_id_from,
 )
+from kato_core_lib.helpers.action_guard_config import print_action_guard_posture
 from kato_core_lib.validate_env import validate_environment
 from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (
     BypassPermissionsRefused,
@@ -159,6 +160,7 @@ def main(cfg: DictConfig) -> int:
                 'rootless Docker: https://docs.docker.com/engine/security/rootless/',
             )
     print_security_posture()
+    print_action_guard_posture()
     try:
         KatoInstance.init(cfg)
     except RuntimeError as exc:

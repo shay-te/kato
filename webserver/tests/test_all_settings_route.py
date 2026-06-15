@@ -76,6 +76,32 @@ class AllSettingsGetTests(_Base):
         for k in ('key', 'type', 'label', 'value', 'source'):
             self.assertIn(k, sample)
 
+    def test_action_guard_section_present_with_concrete_defaults(self) -> None:
+        # No settings.json / .env values → every Action Guard picker must
+        # still resolve to a CONCRETE block/ask/allow (never blank/"Auto").
+        with patch.dict(os.environ, self._env(), clear=False):
+            for key in list(os.environ):
+                if key.startswith('KATO_ACTION_GUARD_'):
+                    del os.environ[key]
+            resp = self._client().get('/api/all-settings')
+        section = next(
+            s for s in resp.get_json()['sections'] if s['id'] == 'action_guard'
+        )
+        selects = [f for f in section['fields'] if f['type'] == 'select']
+        self.assertTrue(selects)
+        for field in selects:
+            self.assertIn(field['value'], ('block', 'ask', 'allow'))
+            self.assertEqual(field['source'], 'action_guard_secure_default')
+        cred = next(
+            f for f in selects if f['key'] == 'KATO_ACTION_GUARD_CREDENTIAL_READ'
+        )
+        self.assertEqual(cred['value'], 'block')
+
+    def test_action_guard_keys_are_in_the_write_whitelist(self) -> None:
+        keys = all_settings_keys()
+        self.assertIn('KATO_ACTION_GUARD_ENABLED', keys)
+        self.assertIn('KATO_ACTION_GUARD_CREDENTIAL_READ', keys)
+
     def test_sandbox_section_carries_danger_metadata(self) -> None:
         with patch.dict(os.environ, self._env()):
             resp = self._client().get('/api/all-settings')

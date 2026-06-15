@@ -22,6 +22,10 @@ import os
 import re
 from typing import Any
 
+from agent_core_lib.agent_core_lib.helpers.command_introspection import (
+    deobfuscate_command,
+)
+
 # Tool-input keys that name a filesystem path the agent intends to
 # touch. Covers Read/Edit/Write/MultiEdit (``file_path``), generic
 # ``path``, and NotebookEdit (``notebook_path``). A bare Bash
@@ -150,23 +154,6 @@ _COMMAND_REL_DOTDOT = re.compile(r'(?<![\w/~])(?:[\w.~+=*-]+/)*\.\.(?:/[\w.~+=*-
 # false alarms. (Relative ``..`` escapes are flagged regardless of destination:
 # climbing out of the workspace is itself the signal.)
 _USER_SPACE_PREFIXES = ('/Users/', '/home/')
-# Shell ``$HOME`` / ``${HOME}`` → ``~`` so home-relative escapes resolve.
-_HOME_VAR = re.compile(r'\$\{?HOME\}?')
-
-
-def _deobfuscate_command(command: str) -> str:
-    """Strip shell quoting/escaping so a path can't hide from the scanner.
-
-    ``/Use"rs"/dev`` (quote-split), ``cat\\ /Users/x`` (backslash-escaped), and
-    ``'...'``/``\"...\"``/backtick wrappers around a buried path are all flattened
-    so the raw path text is visible. ``$HOME``/``${HOME}`` collapse to ``~``.
-    NOTE: this defeats *static* obfuscation only — a path built at RUNTIME from
-    an arbitrary ``$VAR``, base64, or fetched data cannot be seen here; that is
-    what KATO_CLAUDE_DOCKER (real OS confinement) is for."""
-    text = str(command or '')
-    text = text.replace('\\', '')
-    text = text.replace('"', '').replace("'", '').replace('`', '')
-    return _HOME_VAR.sub('~', text)
 
 
 def _command_path_args(command: str) -> list[str]:
@@ -177,7 +164,7 @@ def _command_path_args(command: str) -> list[str]:
     whole. System paths, URLs, and glob fragments are left out of the absolute
     set on purpose (low-noise); relative ``..`` paths are included and the
     caller decides if they actually escape."""
-    text = _deobfuscate_command(command)
+    text = deobfuscate_command(command)
     args: list[str] = []
     for match in _COMMAND_ABS_PATH.finditer(text):
         raw = match.group(0)
@@ -221,70 +208,4 @@ def classify_command_sandbox(
             continue
         if not any(_is_within(resolved, root) for root in norm_roots):
             return True, raw
-    return False, ''
-
-
-# Commands that operate OUTSIDE the task sandbox by nature, regardless of which
-# paths they name: container runtimes can bind-mount any host path into a
-# container kato never sees (``docker run -v /:/host``), and privilege /
-# namespace tools step around the workspace entirely. A remembered "Allow
-# always" on one of these would silently green-light every future escape, so
-# they get the loud warning + no remembered grant — Allow ONCE only.
-_COMMAND_SEGMENT_SPLIT = re.compile(r'&&|\|\||[;|]')
-_ENV_ASSIGNMENT = re.compile(r'^[A-Za-z_]\w*=')
-_ESCAPE_PROGRAMS = frozenset({
-    'docker', 'docker-compose', 'podman', 'nerdctl', 'kubectl', 'ctr',
-    'sudo', 'doas', 'chroot', 'nsenter', 'unshare',
-})
-# Benign wrapper programs that RUN another program (their last/inner argument);
-# we step transparently through them so ``env docker``, ``xargs docker``,
-# ``time docker``, ``timeout 10 docker`` don't hide an escape behind the
-# wrapper. NOT in _ESCAPE_PROGRAMS — sudo/doas are escapes in their own right,
-# so they stay there and are flagged directly.
-_WRAPPER_PROGRAMS = frozenset({
-    'env', 'xargs', 'command', 'nohup', 'time', 'nice', 'timeout',
-    'stdbuf', 'setsid', 'ionice',
-})
-
-
-def _segment_program(segment: str) -> str:
-    """The basename of the program a command segment actually invokes — stepping
-    over leading ``VAR=val`` env assignments AND benign wrapper programs
-    (``env``/``xargs``/``time``/``nice``/``timeout``…) plus their own flags/
-    numeric args, so ``env docker`` resolves to ``docker``. '' when none."""
-    tokens = [t for t in segment.strip().split() if t]
-    index = 0
-    while index < len(tokens):
-        if _ENV_ASSIGNMENT.match(tokens[index]):
-            index += 1
-            continue
-        program = tokens[index].rsplit('/', 1)[-1]
-        if program not in _WRAPPER_PROGRAMS:
-            return program
-        # Step over the wrapper and any of ITS option flags / numeric args
-        # (``nice -n 5 docker``, ``timeout 10 docker``) to reach the inner cmd.
-        index += 1
-        while index < len(tokens) and (
-            tokens[index].startswith('-')
-            or tokens[index].isdigit()
-            or _ENV_ASSIGNMENT.match(tokens[index])
-        ):
-            index += 1
-    return ''
-
-
-def classify_command_escape(command: str) -> tuple[bool, str]:
-    """Return ``(escapes, program)`` when a command invokes a container-runtime
-    / privilege / namespace primitive (``docker``, ``sudo``, ``chroot``, …).
-
-    These reach the host *around* any path sandbox, so they are treated like an
-    out-of-sandbox ask: red warning, no remembered grant. Checks the effective
-    program of every ``&&``/``;``/``|`` segment (so ``cd /x && docker run``,
-    ``sudo docker …`` and ``env/xargs/time docker`` are all caught),
-    de-obfuscated first so quotes/$HOME can't hide the program name."""
-    text = _deobfuscate_command(command)
-    for segment in _COMMAND_SEGMENT_SPLIT.split(text):
-        program = _segment_program(segment)
-        if program and program in _ESCAPE_PROGRAMS:
-            return True, program
     return False, ''

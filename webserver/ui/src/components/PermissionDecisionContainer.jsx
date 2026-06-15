@@ -3,6 +3,7 @@ import PermissionModal from './PermissionModal.jsx';
 import {
   unpackPermissionEnvelope,
   decisionCommandFor,
+  isHighRiskActionGuard,
 } from '../utils/permissionEnvelope.js';
 
 export default function PermissionDecisionContainer({
@@ -21,12 +22,14 @@ export default function PermissionDecisionContainer({
   useEffect(() => {
     if (!pending) { return; }
     const {
-      toolName, toolInput, requestId, outsideSandbox,
+      toolName, toolInput, requestId, outsideSandbox, actionGuard,
     } = unpackPermissionEnvelope(pending);
     if (!requestId || requestId === autoFailedRequestId) { return; }
-    // Out-of-task asks never auto-resolve from a remembered decision — force
-    // the modal so the operator decides each one explicitly.
-    if (outsideSandbox) { return; }
+    // Out-of-task asks AND high-risk Action Guard categories never
+    // auto-resolve from a remembered decision — force the modal so the
+    // operator decides each one explicitly (a remembered bare `Bash` grant
+    // must never silently approve a credential read).
+    if (outsideSandbox || isHighRiskActionGuard(actionGuard)) { return; }
     // Command-keyed tools (Bash) recall by the command's PROGRAM, so a
     // remembered `mvn` auto-resolves any future `mvn …` but never a `docker` ask.
     const remembered = recallToolDecision(
@@ -70,14 +73,17 @@ export default function PermissionDecisionContainer({
   const {
     toolName: pendingTool, toolInput: pendingInput,
     requestId: pendingRequestId, outsideSandbox: pendingOutside,
+    actionGuard: pendingActionGuard,
   } = unpackPermissionEnvelope(pending);
   const autoSubmitting = submittingRequestId && submittingRequestId === pendingRequestId;
   const remembered = recallToolDecision(
     pendingTool, decisionCommandFor(pendingTool, pendingInput),
   );
-  // Out-of-task asks are never hidden behind a remembered decision — they
-  // always surface the modal (see the auto-resolve guard above).
+  // Out-of-task asks and high-risk Action Guard categories are never hidden
+  // behind a remembered decision — they always surface the modal (see the
+  // auto-resolve guard above).
   const hideRemembered = remembered && !pendingOutside
+    && !isHighRiskActionGuard(pendingActionGuard)
     && pendingRequestId !== autoFailedRequestId;
   if (autoSubmitting || hideRemembered) { return null; }
 

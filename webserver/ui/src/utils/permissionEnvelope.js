@@ -25,7 +25,25 @@ export function unpackPermissionEnvelope(raw) {
     toolInput: raw?.input || nested.input || {},
     outsideSandbox: !!(raw?.outside_sandbox || nested.outside_sandbox),
     outsidePath: String(raw?.outside_path || nested.outside_path || ''),
+    // Action Guard risk classification stamped by the webserver on a
+    // control_request (category / decision / reason / rule_id), or null.
+    // Purely additive — old envelopes without it behave exactly as before.
+    actionGuard: (raw?.action_guard || nested.action_guard || null),
   };
+}
+
+// Action Guard categories whose remembered "allow always" must never be one
+// click away — a persisted grant for reading credentials / exfiltrating /
+// remote-exec / sandbox-escape is exactly what the guard exists to stop.
+const HIGH_RISK_ACTION_GUARD = new Set([
+  'credential_read', 'network_exfil', 'remote_exec', 'sandbox_escape',
+]);
+
+export function isHighRiskActionGuard(actionGuard) {
+  return !!(
+    actionGuard
+    && HIGH_RISK_ACTION_GUARD.has(String(actionGuard.category || ''))
+  );
 }
 
 // Tools whose remembered decision is keyed by the COMMAND, not the tool

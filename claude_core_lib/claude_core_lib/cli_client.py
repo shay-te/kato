@@ -73,6 +73,30 @@ class ClaudeCliClient(object):
         for sub in _GIT_MUTATING_SUBCOMMANDS
         for pattern in (f'Bash(git {sub}:*)', f'Bash(git {sub} *)')
     )
+    # Action Guard "Layer A" floor: programs with NO legitimate use in a task
+    # workspace, blocked at the CLI level so they are refused in EVERY mode —
+    # including ``bypassPermissions`` where no per-tool prompt fires (the only
+    # other backstop there is Docker containment). Deliberately TINY and
+    # program-token-anchored: ``--disallowedTools`` matches by program prefix,
+    # not full argument strings, so dual-use programs (``rm``, ``chmod``,
+    # ``dd``) and pipelines (``curl … | sh``) CANNOT go here without
+    # over-blocking — those are handled precisely by Layer B (the content-aware
+    # guard in the permission path, see agent_core_lib.command_policy). Listed
+    # in both colon-form and bare-form for Claude-CLI version skew, like git.
+    _ACTION_GUARD_DENY_PROGRAMS = (
+        # Filesystem formatters / swap — never legitimate on a workspace clone.
+        'mkfs', 'mkfs.ext2', 'mkfs.ext3', 'mkfs.ext4', 'mkfs.xfs',
+        'mkfs.btrfs', 'mkfs.vfat', 'mkfs.fat', 'mkfs.ntfs', 'mkswap',
+        # Sandbox / namespace escape primitives.
+        'nsenter', 'unshare', 'chroot',
+        # Host power control — an agent fixing code never reboots the machine.
+        'shutdown', 'reboot', 'halt', 'poweroff',
+    )
+    ACTION_GUARD_DENY_PATTERNS = tuple(
+        pattern
+        for program in _ACTION_GUARD_DENY_PROGRAMS
+        for pattern in (f'Bash({program}:*)', f'Bash({program} *)')
+    )
     SMOKE_TEST_PROMPT = 'Reply with exactly: ok. Do not call any tools.'
     SMOKE_TEST_TIMEOUT_SECONDS = 120
     VERSION_PROBE_TIMEOUT_SECONDS = 30
@@ -904,7 +928,7 @@ class ClaudeCliClient(object):
         merged_allowed = self._merge_allowed_with_read_only_allowlist(self._allowed_tools)
         if merged_allowed:
             command.extend(['--allowedTools', merged_allowed])
-        merged_disallowed = self._merge_disallowed_with_git_deny(self._disallowed_tools)
+        merged_disallowed = self._merge_disallowed_with_floor(self._disallowed_tools)
         command.extend(['--disallowedTools', merged_disallowed])
         # ``include_system_prompt=False`` is for boot smoke-tests that
         # only need to confirm model reachability ("Reply with: ok").
@@ -971,6 +995,22 @@ class ClaudeCliClient(object):
                 seen[pattern] = True
         return ','.join(existing)
 
+    @staticmethod
+    def _union_disallowed(operator_disallowed: str, patterns) -> str:
+        """Union ``patterns`` into a CSV disallowed-tools string without
+        duplicating entries and preserving the operator's order first."""
+        existing = [
+            entry.strip()
+            for entry in (operator_disallowed or '').split(',')
+            if entry.strip()
+        ]
+        seen = {entry: True for entry in existing}
+        for pattern in patterns:
+            if pattern not in seen:
+                existing.append(pattern)
+                seen[pattern] = True
+        return ','.join(existing)
+
     @classmethod
     def _merge_disallowed_with_git_deny(cls, operator_disallowed: str) -> str:
         """Always include the git denylist, regardless of operator config.
@@ -979,17 +1019,18 @@ class ClaudeCliClient(object):
         but cannot remove the git patterns. Kato is the sole component that
         runs git operations.
         """
-        existing = [
-            entry.strip()
-            for entry in (operator_disallowed or '').split(',')
-            if entry.strip()
-        ]
-        seen = {entry: True for entry in existing}
-        for pattern in cls.GIT_DENY_PATTERNS:
-            if pattern not in seen:
-                existing.append(pattern)
-                seen[pattern] = True
-        return ','.join(existing)
+        return cls._union_disallowed(operator_disallowed, cls.GIT_DENY_PATTERNS)
+
+    @classmethod
+    def _merge_disallowed_with_floor(cls, operator_disallowed: str) -> str:
+        """Apply BOTH non-overridable floors — git mutations and the Action
+        Guard no-legit-use programs — to the operator's disallowed list.
+
+        This is the single floor every spawn ships (one-shot AND streaming),
+        so the CLI refuses these tools in every permission mode.
+        """
+        merged = cls._merge_disallowed_with_git_deny(operator_disallowed)
+        return cls._union_disallowed(merged, cls.ACTION_GUARD_DENY_PATTERNS)
 
     def _build_subprocess_env(self) -> dict[str, str]:
         # Force JSON output to stdout and prevent any TTY-dependent

@@ -69,6 +69,7 @@ from claude_core_lib.claude_core_lib.session.wire_protocol import (
     CLAUDE_EVENT_PERMISSION_REQUEST,
     CLAUDE_EVENT_PERMISSION_RESPONSE,
     CLAUDE_EVENT_RESULT,
+    CLAUDE_SYSTEM_SUBTYPE_ACTION_GUARD_BLOCK,
     SSE_EVENT_SESSION_CLOSED,
     SSE_EVENT_SESSION_EVENT,
     SSE_EVENT_SESSION_HISTORY_EVENT,
@@ -1312,6 +1313,7 @@ def _register_http_routes(app: Flask) -> None:
         absent — they have dedicated tabs with custom logic.
         """
         from kato_core_lib.helpers.kato_settings_schema_utils import (
+            ACTION_GUARD_SECURE_DEFAULTS,
             schema_for_api,
         )
         from kato_core_lib.helpers.kato_settings_store_utils import (
@@ -1324,6 +1326,14 @@ def _register_http_routes(app: Flask) -> None:
                 resolved = _resolve_setting(field['key'])
                 field['value'] = resolved['value']
                 field['source'] = resolved['source']
+                # Action Guard pickers must always show a CONCRETE posture
+                # (never blank / "Auto") — fill the secure default when the
+                # operator has not set one. The picker then reflects exactly
+                # what the guard will enforce.
+                if (not str(field['value']).strip()
+                        and field['key'] in ACTION_GUARD_SECURE_DEFAULTS):
+                    field['value'] = ACTION_GUARD_SECURE_DEFAULTS[field['key']]
+                    field['source'] = 'action_guard_secure_default'
         return jsonify({
             'sections': schema,
             'settings_file_path': str(kato_settings_path()),
@@ -2755,10 +2765,21 @@ def _register_post_permission_route(app: Flask) -> None:
             return jsonify({'error': 'request_id is required'}), 400
         allow = bool(payload.get('allow', False))
         rationale = str(payload.get('rationale', '') or '')
-        # ``pre_tool_use`` only matters when the operator is letting
-        # the tool run — a deny short-circuits before any guard the
-        # hook would impose. Hook may force-flip allow → deny.
-        if allow:
+        # Re-derive the tool SERVER-SIDE (never trust the client body for the
+        # command) and classify it. The Action Guard + the operator's
+        # pre_tool_use hook only matter when the operator is letting the tool
+        # RUN — a deny already stops it. A guard BLOCK force-flips allow→deny.
+        tool_name, tool_input = _pending_tool(session, request_id)
+        guard_command = str(tool_input.get('command') or '')
+        verdict = _classify_action_for(session, tool_name, tool_input)
+        guard_blocked = (
+            verdict is not None
+            and _action_guard_enum_value(verdict.decision) == 'block'
+        )
+        if allow and guard_blocked:
+            allow = False
+            rationale = verdict.reason or rationale or 'blocked by Action Guard'
+        elif allow:
             blocked, hook_rationale = _run_pre_tool_use_hook(app, task_id, payload)
             if blocked:
                 allow = False
@@ -2771,6 +2792,11 @@ def _register_post_permission_route(app: Flask) -> None:
             )
         except Exception as exc:
             return jsonify({'error': str(exc)}), 500
+        # A hard BLOCK becomes a loud bubble in the feed; every risky decision
+        # (block / approved-ask / denied-ask) is recorded to the audit log.
+        if guard_blocked:
+            _publish_action_guard_block(session, verdict)
+        _audit_action_guard(app, task_id, request_id, verdict, guard_command, allow)
         # ``post_tool_use`` sees the final, post-hook decision so the
         # audit log reflects what actually got delivered to Claude.
         _fire_webserver_hook(app, 'post_tool_use', {
@@ -2779,6 +2805,9 @@ def _register_post_permission_route(app: Flask) -> None:
             'allow': bool(allow),
             'rationale': rationale,
             'tool': str(payload.get('tool', '') or ''),
+            'action_guard_category': (
+                _action_guard_enum_value(verdict.category) if verdict else ''
+            ),
         })
         return jsonify({'status': 'delivered', 'allow': allow})
 
@@ -2810,6 +2839,7 @@ def _register_get_pending_permissions_route(app: Flask) -> None:
                 if not isinstance(envelope, dict):
                     continue
                 envelope = dict(envelope)
+                _annotate_action_guard(envelope, session)
                 envelope['task_id'] = record.task_id
                 # Stamp the task summary alongside the id so the
                 # cross-task permission modal can render the full
@@ -2860,6 +2890,144 @@ def _run_pre_tool_use_hook(app: Flask, task_id: str, payload: dict):
                     break
         return True, rationale
     return False, ''
+
+
+# --------------------------------------------------------------------------
+# Action Guard (Layer B) — content-aware enforcement in the permission path.
+#
+# Resolved LIVE per decision (no kato restart) and kept entirely on the
+# kato/webserver side so claude_core_lib carries zero action-guard logic.
+# Everything below is best-effort and FAILS OPEN: a classifier/import error
+# never breaks the permission pipeline — Layer A (the CLI denylist floor)
+# and Docker containment remain the structural backstop.
+# --------------------------------------------------------------------------
+def _action_guard_enum_value(value) -> str:
+    return str(getattr(value, 'value', value) or '')
+
+
+def _session_additional_dirs(session) -> tuple:
+    getter = getattr(session, 'allowed_additional_dirs', None)
+    if not callable(getter):
+        return ()
+    try:
+        return tuple(getter() or ())
+    except Exception:
+        return ()
+
+
+def _pending_tool(session, request_id: str):
+    """``(tool_name, tool_input)`` for a pending request, server-side only."""
+    getter = getattr(session, 'pending_request_input', None)
+    if not callable(getter):
+        return '', {}
+    try:
+        tool_name, tool_input = getter(request_id)
+        return tool_name, (tool_input if isinstance(tool_input, dict) else {})
+    except Exception:
+        return '', {}
+
+
+def _classify_action_for(session, tool_name: str, tool_input: dict):
+    """Run the Action Guard engine for one tool call. Returns a GuardVerdict
+    or ``None`` (guard unavailable / disabled / error → fail open)."""
+    if not tool_name and not tool_input:
+        return None
+    try:
+        from kato_core_lib.helpers.action_guard_config import (
+            resolve_action_guard_policy,
+        )
+        from agent_core_lib.agent_core_lib.helpers.command_policy import (
+            classify_action,
+        )
+        from claude_core_lib.claude_core_lib.helpers.sandbox_scope import (
+            classify_command_sandbox,
+            classify_tool_input_sandbox,
+        )
+        return classify_action(
+            tool_name, tool_input,
+            cwd=str(getattr(session, 'cwd', '') or ''),
+            additional_dirs=_session_additional_dirs(session),
+            allowed_paths=tuple(getattr(session, 'sandbox_allowed_paths', ()) or ()),
+            policy=resolve_action_guard_policy(),
+            command_sandbox_classifier=classify_command_sandbox,
+            tool_input_sandbox_classifier=classify_tool_input_sandbox,
+        )
+    except Exception:
+        return None
+
+
+def _annotate_action_guard(raw: dict, session) -> None:
+    """Annotate a ``control_request`` raw dict in place with an
+    ``action_guard`` block so the permission modal can show the risk. Only
+    BLOCK/ASK verdicts annotate; ALLOW/NONE leave the dict untouched."""
+    try:
+        if not isinstance(raw, dict) or raw.get('type') != CLAUDE_EVENT_CONTROL_REQUEST:
+            return
+        request = raw.get('request') if isinstance(raw.get('request'), dict) else {}
+        tool_name = str(request.get('tool_name') or request.get('tool') or '')
+        tool_input = request.get('input') if isinstance(request.get('input'), dict) else {}
+        verdict = _classify_action_for(session, tool_name, tool_input)
+        if verdict is None:
+            return
+        decision = _action_guard_enum_value(verdict.decision)
+        if decision == 'allow' or _action_guard_enum_value(verdict.category) == 'none':
+            return
+        raw['action_guard'] = {
+            'category': _action_guard_enum_value(verdict.category),
+            'decision': decision,
+            'reason': verdict.reason,
+            'rule_id': verdict.rule_id,
+        }
+    except Exception:
+        pass
+
+
+def _publish_action_guard_block(session, verdict) -> None:
+    """Surface a hard BLOCK as a loud system bubble in the session feed."""
+    publisher = getattr(session, 'publish_system_notice', None)
+    if not callable(publisher):
+        return
+    category = _action_guard_enum_value(verdict.category)
+    reason = verdict.reason or 'blocked by Action Guard'
+    try:
+        publisher(
+            CLAUDE_SYSTEM_SUBTYPE_ACTION_GUARD_BLOCK,
+            f'BLOCKED by Action Guard ({category}): {reason}. The agent was '
+            'refused this action and told why.',
+            {'action_guard': {
+                'category': category,
+                'decision': 'block',
+                'reason': reason,
+                'rule_id': verdict.rule_id,
+            }},
+        )
+    except Exception:
+        pass
+
+
+def _audit_action_guard(app, task_id, request_id, verdict, command, allow) -> None:
+    """Record the decision to the hash-chained audit log (best-effort)."""
+    if verdict is None or _action_guard_enum_value(verdict.category) == 'none':
+        return
+    if _action_guard_enum_value(verdict.decision) == 'block':
+        decision_label = 'block'
+    else:
+        decision_label = 'ask_approved' if allow else 'ask_denied'
+    try:
+        from kato_core_lib.helpers.action_guard_audit import (
+            record_action_guard_decision,
+        )
+        record_action_guard_decision(
+            task_id=task_id,
+            category=_action_guard_enum_value(verdict.category),
+            decision=decision_label,
+            command=command,
+            rule_id=verdict.rule_id,
+            request_id=request_id,
+            answered_by=os.environ.get('KATO_OPERATOR_EMAIL', ''),
+        )
+    except Exception:
+        app.logger.exception('action guard audit failed')
 
 
 def _effort_change_needs_respawn(app: Flask, manager, task_id: str, images) -> bool:
@@ -3291,6 +3459,20 @@ def _epoch_from_iso(value) -> float:
         return 0.0
 
 
+def _session_event_frame(event, session) -> str:
+    """Serialise a session event for SSE, annotating ``control_request``
+    events with the Action Guard risk so the permission modal can render the
+    category/reason. Annotates a COPY of the raw dict so the shared stored
+    event is never mutated from the SSE thread."""
+    payload = event.to_dict()
+    raw = payload.get('raw') if isinstance(payload, dict) else None
+    if isinstance(raw, dict) and raw.get('type') == CLAUDE_EVENT_CONTROL_REQUEST:
+        raw = dict(raw)
+        _annotate_action_guard(raw, session)
+        payload = {**payload, 'raw': raw}
+    return _sse_message(SSE_EVENT_SESSION_EVENT, {'event': payload})
+
+
 def _replay_session_backlog(session, agent_service=None, task_id=''):
     """Catch a freshly-connecting browser up on everything seen so far.
 
@@ -3307,7 +3489,7 @@ def _replay_session_backlog(session, agent_service=None, task_id=''):
     """
     backlog = session.recent_events()
     for event in backlog:
-        yield _sse_message(SSE_EVENT_SESSION_EVENT, {'event': event.to_dict()})
+        yield _session_event_frame(event, session)
     return len(backlog)
 
 
@@ -3328,7 +3510,7 @@ def _follow_live_session(
     while True:
         new_events, last_index = session.events_after(last_index)
         for event in new_events:
-            yield _sse_message(SSE_EVENT_SESSION_EVENT, {'event': event.to_dict()})
+            yield _session_event_frame(event, session)
             _advance_task_comments_after_result(event, agent_service, task_id)
 
         if not session.is_alive:
@@ -3336,7 +3518,7 @@ def _follow_live_session(
             # and ``is_alive`` flipping, then close.
             tail, last_index = session.events_after(last_index)
             for event in tail:
-                yield _sse_message(SSE_EVENT_SESSION_EVENT, {'event': event.to_dict()})
+                yield _session_event_frame(event, session)
                 _advance_task_comments_after_result(event, agent_service, task_id)
             yield _sse_message(SSE_EVENT_SESSION_CLOSED, {})
             return

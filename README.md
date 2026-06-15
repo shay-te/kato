@@ -43,6 +43,7 @@ That's it. To make kato work a ticket: open it in your tracker, **assign it to y
 - 📬 **Open pull requests** — one PR per repo, summary auto-posted back on the ticket
 - 💬 **Handle reviewer feedback** — fix the comment OR reply in the thread, kato decides
 - 🔐 **Block bad work before it starts** — `.env` / secret / CVE scanner runs before the agent sees the code
+- 🛡 **Block harmful actions while it runs** — Action Guard refuses credential theft, network exfiltration, and destructive commands; you set Block / Ask / Allow per category
 - 🖥 **Watch it work live** — Planning UI (Flask + React) with chat, file tree, diffs, status bar
 - ⏸ **Pause before push** — tag `kato:wait-before-git-push` and approve PR creation from the UI
 - 📂 **Multi-repo tickets** — one ticket → one PR per `kato:repo:<name>` tag
@@ -75,9 +76,32 @@ Pick the page that matches what you're trying to do:
 
 ---
 
-## Safety in one paragraph
+## How Kato protects you
 
-Kato runs three gates before any agent touches your code: a hard **repository denylist**, a **pre-execution security scanner** (`detect-secrets`, `bandit`, `safety`, `npm audit`, committed `.env` checker), and the **Restricted Execution Protocol** — kato refuses to act on any repo you haven't explicitly approved with `./kato approve-repo`. The agent's tool calls go through a per-tool **Approve / Deny** modal in the Planning UI by default. If you flip that off (`KATO_CLAUDE_BYPASS_PERMISSIONS=true`), kato refuses to start under root, under CI/Docker/cron, and double-prompts you on every interactive boot — see [readmeSecurity.md](readmeSecurity.md) and [BYPASS_PROTECTIONS.md](BYPASS_PROTECTIONS.md). Even with all of this, the real safety net is the same one you use for humans: **review every diff before merging.**
+Kato runs an autonomous agent on your code, your repos, and your credentials — so it's built **defense-in-depth**: independent layers, each of which would have to fail for the agent to do real harm. Most are on by default; none of them replace the final human review.
+
+**Before the agent runs**
+
+- 🚫 **Repository approval (Restricted Execution Protocol)** — kato refuses to act on any repo you haven't explicitly approved with `kato approve-repo`, and never touches one on the **repository denylist**.
+- 🔍 **Pre-execution security scanner** — `detect-secrets`, `bandit`, `safety`, `npm audit`, and a committed-`.env` checker run against the fresh clone; CRITICAL/HIGH findings block the task *before the agent sees the code*.
+- 🌿 **Isolated workspace per task** — a fresh clone under `~/.kato/workspaces/<ticket-id>/`; one task can't reach another's files.
+
+**While the agent runs — Action Guard**
+
+- 🛡 **Blocks harmful actions** — every tool call is classified for risk: destructive filesystem ops, **credential reads** (`~/.ssh`, `~/.aws`, private keys), **network exfiltration**, `curl … | sh`, persistence/backdoors (cron, `authorized_keys`), privilege escalation, sandbox escape, and out-of-workspace paths. No-legitimate-use actions (reverse shells, fork bombs, `mkfs`, `dd`-to-device) are refused at the Claude CLI itself — in **every** mode.
+- 🎛 **You set the posture** — per-category **Block / Ask / Allow** in *Settings → Action Guard* (live, no restart). Secure defaults: credential reads, exfiltration, and remote-exec **block** outright; dual-use ops **ask** you first. The catastrophic floor can't be loosened.
+- 🧾 **Tamper-evident audit** — every block and approval is hash-chained to `~/.kato/action-guard-audit.log` (records a command digest, never your secrets). Boot and `kato doctor` print the active posture.
+
+**Always on**
+
+- ✋ **Per-tool Approve / Deny** — the agent's tool calls go through a permission modal in the Planning UI by default; high-risk ones can never be "allowed always".
+- 🔒 **Hard git denylist** — the agent can never `push`, `commit`, `reset`, or otherwise mutate git. Kato owns the branch and the PR; nothing leaves your machine until you click **Done – Push**.
+
+**Optional hardening (one env var)**
+
+- 🐳 **Docker sandbox** (`KATO_CLAUDE_DOCKER=true`) — runs every agent in a hardened container: gVisor isolation, all Linux capabilities dropped, read-only root filesystem, and a default-DROP egress firewall that allows only `api.anthropic.com`. Turning prompts off (`KATO_CLAUDE_BYPASS_PERMISSIONS=true`) **requires** this sandbox and refuses to start under root, under CI/cron, or without an interactive double-confirm — see [BYPASS_PROTECTIONS.md](BYPASS_PROTECTIONS.md).
+
+**The real safety net:** all of the above buys you time and stops the obvious attacks, but the guarantee is the same one you use for human contributors — **review every diff before you merge.** Kato never pushes or merges on its own. Full model in [readmeSecurity.md](readmeSecurity.md) and [SECURITY.md](SECURITY.md).
 
 ---
 

@@ -1576,6 +1576,32 @@ class BuildCommandPartialBranchTests(unittest.TestCase):
         # Operator entry order is preserved; git patterns are appended.
         self.assertEqual(entries[:2], ['Write', already])
 
+    def test_action_guard_floor_includes_mkfs_and_escape_programs(self) -> None:
+        patterns = ClaudeCliClient.ACTION_GUARD_DENY_PATTERNS
+        for program in ('mkfs', 'nsenter', 'unshare', 'chroot', 'shutdown'):
+            self.assertIn(f'Bash({program}:*)', patterns, program)
+            self.assertIn(f'Bash({program} *)', patterns, program)
+
+    def test_floor_merge_includes_both_git_and_action_guard(self) -> None:
+        merged = ClaudeCliClient._merge_disallowed_with_floor('Write')
+        entries = merged.split(',')
+        self.assertIn('Write', entries)
+        self.assertIn(ClaudeCliClient.GIT_DENY_PATTERNS[0], entries)
+        self.assertIn(ClaudeCliClient.ACTION_GUARD_DENY_PATTERNS[0], entries)
+
+    def test_floor_merge_does_not_duplicate_action_guard_pattern(self) -> None:
+        already = ClaudeCliClient.ACTION_GUARD_DENY_PATTERNS[0]
+        merged = ClaudeCliClient._merge_disallowed_with_floor(f'Write, {already}')
+        self.assertEqual(merged.split(',').count(already), 1)
+
+    def test_build_command_ships_action_guard_floor(self) -> None:
+        client = ClaudeCliClient(binary='claude')
+        cmd = client._build_command(additional_dirs=[], agent_session_id='')
+        idx = cmd.index('--disallowedTools')
+        disallowed = cmd[idx + 1].split(',')
+        self.assertIn('Bash(mkfs:*)', disallowed)
+        self.assertIn('Bash(nsenter:*)', disallowed)
+
 
 class ParseCompletedProcessBlankResultTests(unittest.TestCase):
     """Branch 1048->1050: ``if result_text:`` falsy — Claude returned a

@@ -427,6 +427,16 @@ def main() -> int:
         return 1
 
     logger.info('%s environment validation passed', args.mode)
+    # Surface the resolved Action Guard posture so `kato doctor` shows what
+    # the agent is allowed to do, the same way boot does.
+    try:
+        from kato_core_lib.helpers.action_guard_config import (
+            action_guard_posture_lines,
+        )
+        for line in action_guard_posture_lines(env):
+            logger.info(line)
+    except Exception:
+        pass
     return 0
 
 

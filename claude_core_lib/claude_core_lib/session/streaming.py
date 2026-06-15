@@ -49,8 +49,10 @@ from claude_core_lib.claude_core_lib.helpers.spawn_utils import (
     build_claude_subprocess_env,
     wrap_spawn_for_docker,
 )
-from claude_core_lib.claude_core_lib.helpers.sandbox_scope import (
+from agent_core_lib.agent_core_lib.helpers.command_introspection import (
     classify_command_escape,
+)
+from claude_core_lib.claude_core_lib.helpers.sandbox_scope import (
     classify_command_sandbox,
     classify_tool_input_sandbox,
 )
@@ -385,6 +387,31 @@ class StreamingClaudeSession(object):
         ``requires_session_restart`` signal in the sync response.
         """
         return tuple(self._additional_dirs)
+
+    @property
+    def sandbox_allowed_paths(self) -> tuple[str, ...]:
+        """Specific files the agent may touch even outside the task folder
+        (e.g. kato's lessons / architecture docs). Exposed so a caller that
+        re-classifies a tool input (the webserver Action Guard) applies the
+        same allow-list the live sandbox annotation does."""
+        return tuple(self._sandbox_allowed_paths)
+
+    def pending_request_input(self, request_id: str) -> tuple[str, dict]:
+        """Return ``(tool_name, tool_input)`` for a still-pending control
+        request, read from the SERVER-SIDE captured dict — so a caller never
+        has to trust a (tamperable) client-supplied command. ``('', {})``
+        when the id is unknown / already answered."""
+        with self._pending_control_requests_lock:
+            request = self._pending_control_requests.get(
+                str(request_id or '').strip(), {},
+            )
+        if not isinstance(request, dict):
+            return '', {}
+        tool_name = str(
+            request.get('tool_name') or request.get('tool') or '',
+        ).strip()
+        tool_input = request.get('input')
+        return tool_name, (tool_input if isinstance(tool_input, dict) else {})
 
     @property
     def is_alive(self) -> bool:
@@ -752,6 +779,24 @@ class StreamingClaudeSession(object):
         )
         self._publish_event(synthetic_event)
 
+    def publish_system_notice(
+        self, subtype: str, message: str, extra: dict | None = None,
+    ) -> None:
+        """Inject a synthetic ``system`` event into the live + replayable
+        feed. Generic on purpose — the caller (e.g. the webserver Action
+        Guard) supplies the wire-protocol ``subtype`` and any structured
+        ``extra`` payload, so this transport stays free of product-specific
+        notice types. Mirrors how ``_maybe_warn_out_of_sandbox_write``
+        surfaces an out-of-folder write."""
+        raw: dict[str, Any] = {
+            'type': CLAUDE_EVENT_SYSTEM,
+            'subtype': str(subtype or ''),
+            'message': str(message or ''),
+        }
+        if isinstance(extra, dict):
+            raw.update(extra)
+        self._publish_event(SessionEvent(raw=raw))
+
     def terminate(self, grace_seconds: float = 5.0) -> None:
         """Close stdin, wait briefly, then SIGTERM / kill as needed.
 
@@ -922,11 +967,13 @@ class StreamingClaudeSession(object):
         )
         if self._allowed_tools:
             command.extend(['--allowedTools', self._allowed_tools])
-        # Hard, non-overridable git denylist. Kato is the only component
-        # that ever runs git operations; Claude must NEVER invoke `git`
-        # directly. See ClaudeCliClient.GIT_DENY_PATTERNS for rationale.
+        # Hard, non-overridable floor: the git denylist (Kato is the only
+        # component that ever runs git) PLUS the Action Guard no-legit-use
+        # programs (mkfs / namespace-escape / host-power). Refused by the CLI
+        # in every permission mode. See ClaudeCliClient.GIT_DENY_PATTERNS /
+        # ACTION_GUARD_DENY_PATTERNS for rationale.
         from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient as _CliClient
-        merged_disallowed = _CliClient._merge_disallowed_with_git_deny(
+        merged_disallowed = _CliClient._merge_disallowed_with_floor(
             self._disallowed_tools
         )
         command.extend(['--disallowedTools', merged_disallowed])

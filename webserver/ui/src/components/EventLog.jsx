@@ -428,6 +428,17 @@ function serverBubblesFor(
           </Bubble>,
         ];
       }
+      if (raw.subtype === CLAUDE_SYSTEM_SUBTYPE.ACTION_GUARD_BLOCK) {
+        // Kato-synthetic: the Action Guard refused a tool call. Loud
+        // ERROR-kind bubble so the operator sees exactly what was blocked.
+        const message = String(raw.message || '').trim();
+        if (!message) { return []; }
+        return [
+          <Bubble key={keyOf(raw, index, 'action-guard-block')} kind={BUBBLE_KIND.ERROR}>
+            <strong>🛡 {message}</strong>
+          </Bubble>,
+        ];
+      }
       return [];
     case CLAUDE_EVENT.ASSISTANT:
       return assistantBubbles(raw, index, onOpenFile);

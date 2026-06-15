@@ -36,6 +36,12 @@ CLAUDE_SYSTEM_SUBTYPE_INIT = 'init'
 # never fires for them). Surfaces a loud chat bubble so an out-of-folder
 # write is never silent.
 CLAUDE_SYSTEM_SUBTYPE_SANDBOX_WARNING = 'kato_sandbox_warning'
+# Kato-synthetic: injected when the Action Guard BLOCKS a tool call — the
+# agent was told "no" and adapts, but the operator must SEE the refusal.
+# Carries an ``action_guard`` payload (category/reason/rule_id) so the UI
+# renders a loud bubble and lights the tab. Emitted by the webserver via
+# the generic ``publish_system_notice`` hook.
+CLAUDE_SYSTEM_SUBTYPE_ACTION_GUARD_BLOCK = 'kato_action_guard_block'
 
 PERMISSION_REQUEST_EVENT_TYPES = frozenset({
     CLAUDE_EVENT_PERMISSION_REQUEST,

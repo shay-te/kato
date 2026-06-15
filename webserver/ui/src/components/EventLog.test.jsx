@@ -248,6 +248,27 @@ describe('EventLog — server event rendering', () => {
     expect(container.querySelectorAll('.bubble').length).toBe(0);
   });
 
+  test('SYSTEM action-guard block renders a loud message', () => {
+    render(<EventLog entries={[_server({
+      type: CLAUDE_EVENT.SYSTEM,
+      subtype: CLAUDE_SYSTEM_SUBTYPE.ACTION_GUARD_BLOCK,
+      message: 'BLOCKED by Action Guard (credential_read): reads a key.',
+      action_guard: { category: 'credential_read' },
+    })]} />);
+    expect(
+      screen.getByText(/BLOCKED by Action Guard \(credential_read\)/),
+    ).toBeInTheDocument();
+  });
+
+  test('SYSTEM action-guard block with empty message renders nothing', () => {
+    const { container } = render(<EventLog entries={[_server({
+      type: CLAUDE_EVENT.SYSTEM,
+      subtype: CLAUDE_SYSTEM_SUBTYPE.ACTION_GUARD_BLOCK,
+      message: '',
+    })]} />);
+    expect(container.querySelectorAll('.bubble').length).toBe(0);
+  });
+
   test('ASSISTANT with text content renders the text', () => {
     render(<EventLog entries={[_server({
       type: CLAUDE_EVENT.ASSISTANT,

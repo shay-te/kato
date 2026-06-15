@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   unpackPermissionEnvelope,
   decisionCommandFor,
+  isHighRiskActionGuard,
 } from '../utils/permissionEnvelope.js';
 import DialogShell from './DialogShell.jsx';
 
@@ -10,7 +11,7 @@ export default function PermissionModal({
 }) {
   const {
     taskId, taskSummary: envelopeSummary,
-    requestId, toolName, toolInput, outsideSandbox, outsidePath,
+    requestId, toolName, toolInput, outsideSandbox, outsidePath, actionGuard,
   } = unpackPermissionEnvelope(raw);
   const [rationale, setRationale] = useState('');
 
@@ -30,6 +31,7 @@ export default function PermissionModal({
   // commands use the normal flow.
   const fields = renderFields(toolInput);
   const sandboxWarning = renderSandboxWarning(outsideSandbox, outsidePath, toolName);
+  const actionGuardBanner = renderActionGuardBanner(actionGuard);
   const denyTooltip = `Deny this ${toolName} request. Claude will see your rationale (if any) and decide what to do next.`;
   const allowOnceTitle = `Approve this ${toolName} request only — kato will ask again next time.`;
   const allowAlwaysTitle = `Approve and remember ${toolName} — kato won't ask again, even after a kato or browser restart, until you clear it from settings.`;
@@ -45,10 +47,13 @@ export default function PermissionModal({
   function handleAllowAlways() {
     onDecide({ allow: true, rationale, remember: true, requestId, toolName, command });
   }
-  // Out-of-task asks never offer the remembered ("Allow always") scope —
-  // built here, before the return, so the JSX stays logic-free.
+  // Out-of-task asks AND high-risk Action Guard categories (credential read,
+  // exfil, remote-exec, sandbox escape) never offer the remembered ("Allow
+  // always") scope — a persisted grant for those is exactly what must never
+  // be one click away. Built here so the JSX stays logic-free.
+  const withholdAllowAlways = outsideSandbox || isHighRiskActionGuard(actionGuard);
   const allowAlwaysButton = renderAllowAlwaysButton(
-    outsideSandbox, allowAlwaysTitle, handleAllowAlways,
+    withholdAllowAlways, allowAlwaysTitle, handleAllowAlways,
   );
 
   // Always name the task in the title so the operator knows WHICH task is
@@ -94,6 +99,7 @@ export default function PermissionModal({
       title={title}
     >
       {sandboxWarning}
+      {actionGuardBanner}
       <div id="permission-fields">{fields}</div>
       <details id="permission-raw" className="modal-raw">
         <summary>raw envelope</summary>
@@ -154,9 +160,27 @@ function renderSandboxWarning(outsideSandbox, outsidePath, toolName) {
   );
 }
 
-// The remembered-scope button — withheld (null) for out-of-task asks.
-function renderAllowAlwaysButton(outsideSandbox, allowAlwaysTitle, onAllowAlways) {
-  if (outsideSandbox) { return null; }
+// The Action Guard risk banner — names the risk category + reason so the
+// operator decides with context. Reuses the sandbox-warning styling (no new
+// CSS). Null when the ask carries no classification. Built outside JSX.
+function renderActionGuardBanner(actionGuard) {
+  if (!actionGuard || !actionGuard.category) { return null; }
+  const category = String(actionGuard.category || '').replace(/_/g, ' ').toUpperCase();
+  const reason = String(actionGuard.reason || '');
+  return (
+    <div id="permission-action-guard" className="permission-sandbox-warning" role="alert">
+      <h1 className="permission-sandbox-warning-title">
+        ⚠ ACTION GUARD — {category}
+      </h1>
+      {reason && <p className="permission-sandbox-warning-body">{reason}</p>}
+    </div>
+  );
+}
+
+// The remembered-scope button — withheld (null) for out-of-task asks and
+// high-risk Action Guard categories.
+function renderAllowAlwaysButton(withhold, allowAlwaysTitle, onAllowAlways) {
+  if (withhold) { return null; }
   return (
     <button
       id="permission-allow-always"

@@ -186,6 +186,30 @@ describe('PermissionDecisionContainer — out-of-sandbox never auto-resolves', (
     // …and no remembered scope offered.
     expect(screen.queryByRole('button', { name: /allow always/i })).toBeNull();
   });
+
+  test('a high-risk Action Guard ask shows the modal even when remembered', async () => {
+    // A remembered bare `Bash` allow must NOT silently approve a credential
+    // read flagged by the Action Guard — the modal must surface.
+    const onSubmit = vi.fn().mockResolvedValue(true);
+
+    render(
+      <PermissionDecisionContainer
+        pending={_pending({
+          request: { request_id: 'req-1', tool_name: 'Bash', input: { command: 'cat ~/.ssh/id_rsa' } },
+          action_guard: { category: 'credential_read', decision: 'block' },
+        })}
+        onDismiss={vi.fn()}
+        onSubmit={onSubmit}
+        onAuditBubble={vi.fn()}
+        recallToolDecision={() => 'allow'}
+        rememberToolDecision={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeInTheDocument());
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: /allow always/i })).toBeNull();
+  });
 });
 
 

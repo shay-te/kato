@@ -1451,6 +1451,45 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         self.assertIn('high', cmd)
         self.assertIn('--allowedTools', cmd)
         self.assertIn('Bash,Edit', cmd)
+        # The streaming builder ships the same non-overridable floor as the
+        # one-shot path: git mutations AND the Action Guard programs.
+        disallowed = cmd[cmd.index('--disallowedTools') + 1].split(',')
+        self.assertIn('Bash(git push:*)', disallowed)
+        self.assertIn('Bash(mkfs:*)', disallowed)
+        self.assertIn('Bash(nsenter:*)', disallowed)
+
+    def test_pending_request_input_reads_server_side(self) -> None:
+        session = StreamingClaudeSession(task_id='PROJ-1')
+        with session._pending_control_requests_lock:
+            session._pending_control_requests['req-1'] = {
+                'tool_name': 'Bash', 'input': {'command': 'rm -rf /'},
+            }
+        tool_name, tool_input = session.pending_request_input('req-1')
+        self.assertEqual(tool_name, 'Bash')
+        self.assertEqual(tool_input, {'command': 'rm -rf /'})
+
+    def test_pending_request_input_unknown_id_is_empty(self) -> None:
+        session = StreamingClaudeSession(task_id='PROJ-1')
+        self.assertEqual(session.pending_request_input('nope'), ('', {}))
+
+    def test_sandbox_allowed_paths_accessor(self) -> None:
+        session = StreamingClaudeSession(task_id='PROJ-1')
+        self.assertEqual(
+            session.sandbox_allowed_paths, tuple(session._sandbox_allowed_paths),
+        )
+
+    def test_publish_system_notice_lands_in_feed(self) -> None:
+        session = StreamingClaudeSession(task_id='PROJ-1')
+        session.publish_system_notice(
+            'kato_action_guard_block', 'BLOCKED: cat ~/.ssh/id_rsa',
+            {'action_guard': {'category': 'credential_read'}},
+        )
+        events = session.recent_events()
+        self.assertTrue(any(
+            e.raw.get('subtype') == 'kato_action_guard_block'
+            and e.raw.get('action_guard', {}).get('category') == 'credential_read'
+            for e in events
+        ))
 
     def test_start_raises_when_sandbox_image_prep_fails(self) -> None:
         # Lines 353-354: ensure_image raises SandboxError → wrapped as RuntimeError.
