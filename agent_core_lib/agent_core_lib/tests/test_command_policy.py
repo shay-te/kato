@@ -298,7 +298,7 @@ class ToolCapabilityTests(unittest.TestCase):
             classify_action('Read', {'file_path': 'src/app.py'}, policy=_DEFAULT).decision,
             Decision.ALLOW,
         )
-        for tool in ('Glob', 'Grep', 'TodoWrite', 'NotebookRead'):
+        for tool in ('Glob', 'Grep', 'TodoWrite', 'NotebookRead', 'Agent', 'Task'):
             v = classify_action(tool, {}, policy=_DEFAULT)
             self.assertEqual(v.decision, Decision.ALLOW, tool)
 

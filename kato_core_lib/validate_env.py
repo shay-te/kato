@@ -437,6 +437,17 @@ def main() -> int:
             logger.info(line)
     except Exception:
         pass
+    # Surface what's preserved across an agent-CLI upgrade (chats, sessions,
+    # credentials) so the operator can verify nothing was lost — run `kato
+    # doctor` before AND after upgrading and compare the counts.
+    try:
+        from kato_core_lib.helpers.upgrade_safety_utils import (
+            persistence_health_lines,
+        )
+        for line in persistence_health_lines(env):
+            logger.info(line)
+    except Exception:
+        pass
     return 0
 
 

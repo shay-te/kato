@@ -60,6 +60,15 @@ class ClaudeBackendTests(unittest.TestCase):
         info = _info({'KATO_AGENT_BACKEND': 'claude-code'}, '2.1.142')
         self.assertEqual(info['backend'], 'claude')
 
+    def test_download_url_default_and_override(self):
+        info = _info({'KATO_AGENT_BACKEND': 'claude'}, '2.1.142')
+        self.assertIn('claude.com', info['download_url'])
+        info2 = _info(
+            {'KATO_AGENT_BACKEND': 'claude', 'KATO_CLAUDE_DOWNLOAD_URL': 'https://x/y'},
+            '2.1.142',
+        )
+        self.assertEqual(info2['download_url'], 'https://x/y')
+
 
 class CodexBackendTests(unittest.TestCase):
     def test_no_min_means_not_flagged_but_workflows_off(self):
@@ -68,6 +77,7 @@ class CodexBackendTests(unittest.TestCase):
         self.assertEqual(info['version'], '0.40.0')
         self.assertTrue(info['up_to_date'])           # no default gate for codex
         self.assertFalse(info['supports_workflows'])  # ultracode is claude-only
+        self.assertIn('openai.com', info['download_url'])  # codex download page
 
     def test_min_override_flags_out_of_date(self):
         info = _info(
@@ -97,6 +107,62 @@ class OpenHandsBackendTests(unittest.TestCase):
         self.assertEqual(
             avu.agent_version_info(env={})['backend'], 'openhands',
         )
+
+
+class UpgradeTests(unittest.TestCase):
+    ENABLED = {'KATO_AGENT_BACKEND': 'claude', 'KATO_ALLOW_CLI_UPGRADE': 'true'}
+
+    def test_gating(self):
+        self.assertFalse(avu.upgrade_allowed({'KATO_AGENT_BACKEND': 'claude'})[0])
+        self.assertTrue(avu.upgrade_allowed(self.ENABLED)[0])
+        self.assertFalse(avu.upgrade_allowed(
+            {'KATO_AGENT_BACKEND': 'codex', 'KATO_ALLOW_CLI_UPGRADE': 'true'})[0])
+        self.assertFalse(avu.upgrade_allowed(
+            {**self.ENABLED, 'KATO_CLAUDE_DOCKER': 'true'})[0])
+
+    def test_can_upgrade_flag_in_info(self):
+        info = _info(self.ENABLED, '2.1.142')
+        self.assertTrue(info['can_upgrade'])
+        self.assertEqual(
+            info['upgrade_command'], 'npm install -g @anthropic-ai/claude-code@latest',
+        )
+
+    def test_can_upgrade_false_when_up_to_date_or_disabled(self):
+        self.assertFalse(_info(self.ENABLED, '2.1.170')['can_upgrade'])
+        self.assertFalse(_info({'KATO_AGENT_BACKEND': 'claude'}, '2.1.142')['can_upgrade'])
+
+    def test_runs_fixed_command_when_enabled(self):
+        captured = {}
+
+        def runner(cmd):
+            captured['cmd'] = cmd
+            return 0, 'changed 1 package'
+
+        with mock.patch.object(avu.shutil, 'which', return_value='/usr/bin/npm'):
+            result = avu.upgrade_agent_cli(env=self.ENABLED, runner=runner)
+        self.assertTrue(result['ok'])
+        self.assertEqual(
+            captured['cmd'],
+            ['/usr/bin/npm', 'install', '-g', '@anthropic-ai/claude-code@latest'],
+        )
+
+    def test_refused_when_disabled(self):
+        result = avu.upgrade_agent_cli(
+            env={'KATO_AGENT_BACKEND': 'claude'}, runner=lambda c: (0, ''),
+        )
+        self.assertFalse(result['ok'])
+        self.assertIn('disabled', result['message'])
+
+    def test_reports_npm_missing(self):
+        with mock.patch.object(avu.shutil, 'which', return_value=None):
+            result = avu.upgrade_agent_cli(env=self.ENABLED, runner=lambda c: (0, ''))
+        self.assertFalse(result['ok'])
+        self.assertIn('npm not found', result['message'])
+
+    def test_reports_nonzero_exit(self):
+        with mock.patch.object(avu.shutil, 'which', return_value='/usr/bin/npm'):
+            result = avu.upgrade_agent_cli(env=self.ENABLED, runner=lambda c: (1, 'EACCES'))
+        self.assertFalse(result['ok'])
 
 
 if __name__ == '__main__':

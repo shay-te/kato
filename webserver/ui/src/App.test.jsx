@@ -55,6 +55,9 @@ vi.mock('./hooks/useToolMemory.js', () => ({
 vi.mock('./hooks/useSafetyState.js', () => ({
   useSafetyState: vi.fn(() => null),
 }));
+vi.mock('./hooks/useAgentVersion.js', () => ({
+  useAgentVersion: vi.fn(() => null),
+}));
 vi.mock('./hooks/useStatusFeed.js', () => ({
   useStatusFeed: vi.fn(() => ({
     latest: null, history: [], stale: false, connected: false,

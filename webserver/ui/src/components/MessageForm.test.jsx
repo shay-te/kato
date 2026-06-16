@@ -50,8 +50,16 @@ vi.mock('../api.js', () => ({
   },
 }));
 
+// Mutable so a test can flip whether the installed CLI supports workflows
+// (gates the ultracode toggle). Default: supported, so the toggle renders.
+const { _agentVer } = vi.hoisted(() => ({ _agentVer: { value: { supports_workflows: true } } }));
+vi.mock('../hooks/useAgentVersion.js', () => ({
+  useAgentVersion: () => _agentVer.value,
+  resetAgentVersionCacheForTests: () => {},
+}));
+
 import MessageForm from './MessageForm.jsx';
-import { DRAFT_STORAGE_PREFIX } from '../utils/composerDraft.js';
+import { DRAFT_STORAGE_PREFIX, ULTRACODE_STORAGE_PREFIX } from '../utils/composerDraft.js';
 import { IMAGE_DRAFT_PREFIX, clearImageDraft } from '../utils/composerImageDraft.js';
 
 
@@ -144,6 +152,34 @@ describe('MessageForm — draft persistence (operator scenario)', () => {
     expect(toggle).toHaveAttribute('aria-pressed', 'true');
     fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
     expect(onSubmit).toHaveBeenCalledWith('ultracode\n\naudit the cascade', []);
+  });
+
+  test('ultracode toggle is hidden when the CLI does not support workflows', () => {
+    _agentVer.value = { supports_workflows: false };
+    try {
+      renderForm({ taskId: 'T1' });
+      expect(screen.queryByRole('button', { name: /ultracode/i })).toBeNull();
+    } finally {
+      _agentVer.value = { supports_workflows: true };
+    }
+  });
+
+  test('a stale ultracode toggle does not inject the keyword on an unsupported CLI', async () => {
+    // localStorage says ultracode was armed, but the CLI now lacks support →
+    // the keyword must NOT be prepended.
+    window.localStorage.setItem(`${ULTRACODE_STORAGE_PREFIX}T1`, 'on');
+    _agentVer.value = { supports_workflows: false };
+    try {
+      const onSubmit = vi.fn().mockResolvedValue(true);
+      renderForm({ taskId: 'T1', onSubmit });
+      const textarea = screen.getByRole('textbox');
+      fireEvent.change(textarea, { target: { value: 'audit the cascade' } });
+      fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
+      expect(onSubmit).toHaveBeenCalledWith('audit the cascade', []);
+    } finally {
+      _agentVer.value = { supports_workflows: true };
+      window.localStorage.removeItem(`${ULTRACODE_STORAGE_PREFIX}T1`);
+    }
   });
 
   test('ultracode OFF sends the message unchanged', async () => {

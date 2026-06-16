@@ -2464,6 +2464,7 @@ def _register_streaming_routes(app: Flask) -> None:
     _register_get_pending_permissions_route(app)
     _register_action_guard_audit_route(app)
     _register_agent_version_route(app)
+    _register_agent_version_upgrade_route(app)
 
 
 def _register_session_events_route(app: Flask) -> None:
@@ -2870,6 +2871,29 @@ def _register_agent_version_route(app: Flask) -> None:
                 }
             app.config['AGENT_VERSION_INFO'] = cached
         return jsonify(cached)
+
+
+def _register_agent_version_upgrade_route(app: Flask) -> None:
+    @app.post('/api/agent-version/upgrade')
+    def post_agent_version_upgrade():
+        """Run the gated, FIXED CLI-upgrade command (claude+npm only).
+
+        The operator's per-use approval happens in the UI (confirm); the
+        server-side gate (opt-in setting + claude + non-docker) is enforced in
+        ``upgrade_agent_cli``. Busts the cached version so the next GET
+        re-probes. Reports failure in the body (not an HTTP error) so the UI
+        can show the message.
+        """
+        try:
+            from kato_core_lib.helpers.agent_version_utils import (
+                upgrade_agent_cli,
+            )
+        except Exception:
+            app.logger.exception('agent upgrade helper unavailable')
+            return jsonify({'ok': False, 'message': 'upgrade helper unavailable'})
+        result = upgrade_agent_cli()
+        app.config.pop('AGENT_VERSION_INFO', None)
+        return jsonify(result)
 
 
 def _register_get_pending_permissions_route(app: Flask) -> None:

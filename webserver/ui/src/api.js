@@ -79,6 +79,12 @@ export function fetchAgentVersion() {
   return fetchJson('/api/agent-version');
 }
 
+export function upgradeAgentCli() {
+  // Returns the standard envelope; the upgrade result is in ``body``
+  // ({ ok, message, version_before, version_after }).
+  return postEnvelope('/api/agent-version/upgrade', {});
+}
+
 // Settings drawer — currently exposes ``repository_root_path`` only.
 // The shape ``{ ok, body }`` matches what fetchTaskComments returns
 // so the drawer doesn't need a special-cased fetch wrapper.

@@ -306,8 +306,13 @@ class ClaudeCliClientTests(unittest.TestCase):
         self.assertIn('--permission-mode', cmd)
         self.assertIn('acceptEdits', cmd)
         self.assertIn('--allowedTools', cmd)
-        self.assertIn('Edit,Write,Read,Bash,Glob,Grep', cmd)
+        self.assertIn('Agent,Task,Edit,Write,Read,Bash,Glob,Grep', cmd)
         self.assertNotIn('bypassPermissions', cmd)
+
+    def test_default_allowlist_includes_subagent_tool(self) -> None:
+        # The Agent (subagent) tool must be pre-approved so the agent can fan
+        # out headlessly — `-p` has no prompt to grant a non-allowlisted tool.
+        self.assertIn('Agent', ClaudeCliClient.DEFAULT_ALLOWED_TOOLS.split(','))
 
     def test_bypass_permissions_opts_into_dangerous_mode(self) -> None:
         client = ClaudeCliClient(binary='claude', bypass_permissions=True)
