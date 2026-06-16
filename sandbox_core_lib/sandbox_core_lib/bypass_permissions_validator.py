@@ -425,7 +425,9 @@ def validate_read_only_tools_requires_docker(*, env: dict | None = None) -> None
     )
 
 
-_SAFE_DEFAULT_ALLOWED_TOOLS = frozenset({'Edit', 'Write', 'Read', 'Bash', 'Glob', 'Grep'})
+_SAFE_DEFAULT_ALLOWED_TOOLS = frozenset({
+    'Agent', 'Task', 'Edit', 'Write', 'Read', 'Bash', 'Glob', 'Grep',
+})
 
 
 def print_security_posture(*, env: dict | None = None, stderr=None) -> None:

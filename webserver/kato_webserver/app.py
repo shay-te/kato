@@ -2462,6 +2462,8 @@ def _register_streaming_routes(app: Flask) -> None:
     _register_stop_session_route(app)
     _register_post_permission_route(app)
     _register_get_pending_permissions_route(app)
+    _register_action_guard_audit_route(app)
+    _register_agent_version_route(app)
 
 
 def _register_session_events_route(app: Flask) -> None:
@@ -2810,6 +2812,64 @@ def _register_post_permission_route(app: Flask) -> None:
             ),
         })
         return jsonify({'status': 'delivered', 'allow': allow})
+
+
+def _register_action_guard_audit_route(app: Flask) -> None:
+    @app.get('/api/action-guard/audit')
+    def get_action_guard_audit():
+        """Recent Action Guard decisions (newest first) + chain-verify status.
+
+        Read-only history for the Action Guard settings tab. Best-effort: if
+        the audit package is unavailable, return an empty (valid) feed rather
+        than error. ``ok=false`` + ``first_bad_index`` flags a tampered log.
+        """
+        try:
+            from kato_core_lib.helpers.action_guard_audit import (
+                read_action_guard_audit,
+                verify_action_guard_audit,
+            )
+        except Exception:
+            return jsonify({'entries': [], 'ok': True, 'first_bad_index': -1})
+        try:
+            limit = int(request.args.get('limit', 200))
+        except (TypeError, ValueError):
+            limit = 200
+        limit = max(1, min(limit, 1000))
+        entries = list(reversed(read_action_guard_audit(limit=limit)))
+        ok, first_bad = verify_action_guard_audit()
+        return jsonify({
+            'entries': entries,
+            'ok': bool(ok),
+            'first_bad_index': int(first_bad),
+        })
+
+
+def _register_agent_version_route(app: Flask) -> None:
+    @app.get('/api/agent-version')
+    def get_agent_version():
+        """Configured agent CLI version + capability flags (cached).
+
+        Powers the "agent CLI out of date" banner and hides features the
+        installed CLI can't run (e.g. the ultracode/workflow toggle). The
+        version doesn't change while kato runs, so it's probed once and cached
+        — operators restart kato after upgrading the CLI.
+        """
+        cached = app.config.get('AGENT_VERSION_INFO')
+        if cached is None:
+            try:
+                from kato_core_lib.helpers.agent_version_utils import (
+                    agent_version_info,
+                )
+                cached = agent_version_info()
+            except Exception:
+                app.logger.exception('agent version probe failed')
+                cached = {
+                    'backend': 'unknown', 'binary': '', 'found': True,
+                    'version': None, 'version_raw': '', 'recommended_min': '',
+                    'up_to_date': True, 'supports_workflows': False, 'detail': '',
+                }
+            app.config['AGENT_VERSION_INFO'] = cached
+        return jsonify(cached)
 
 
 def _register_get_pending_permissions_route(app: Flask) -> None:

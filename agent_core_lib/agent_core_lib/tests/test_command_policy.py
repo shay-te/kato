@@ -271,6 +271,53 @@ class PersistenceTests(unittest.TestCase):
         self.assertEqual(_verdict('echo x >> ~/.zshrc', policy=policy).decision, Decision.BLOCK)
 
 
+class ToolCapabilityTests(unittest.TestCase):
+    """Default-deny new/unknown tools so every new Claude capability needs
+    approval, and block network/connector tools (off-machine data flow)."""
+
+    def test_network_tools_block_by_default(self):
+        for tool in ('WebFetch', 'WebSearch', 'mcp__slack__send_message'):
+            v = classify_action(tool, {'url': 'https://x'}, policy=_DEFAULT)
+            self.assertEqual(v.decision, Decision.BLOCK, tool)
+            self.assertEqual(v.category, RiskCategory.NETWORK_TOOL, tool)
+
+    def test_network_tool_matching_is_case_insensitive(self):
+        v = classify_action('webfetch', {'url': 'https://x'}, policy=_DEFAULT)
+        self.assertEqual(v.category, RiskCategory.NETWORK_TOOL)
+
+    def test_unknown_tool_asks_by_default(self):
+        v = classify_action('SomeBrandNewTool', {'foo': 'bar'}, policy=_DEFAULT)
+        self.assertEqual(v.decision, Decision.ASK)
+        self.assertEqual(v.category, RiskCategory.EXTERNAL_CAPABILITY)
+
+    def test_known_local_tools_are_not_flagged_as_external(self):
+        # Bash/Read/Edit/etc. are known-safe-local → no capability flag
+        # (their content is judged by the other detectors instead).
+        self.assertEqual(_verdict('git status').decision, Decision.ALLOW)
+        self.assertEqual(
+            classify_action('Read', {'file_path': 'src/app.py'}, policy=_DEFAULT).decision,
+            Decision.ALLOW,
+        )
+        for tool in ('Glob', 'Grep', 'TodoWrite', 'NotebookRead'):
+            v = classify_action(tool, {}, policy=_DEFAULT)
+            self.assertEqual(v.decision, Decision.ALLOW, tool)
+
+    def test_operator_can_opt_in_to_network_tools(self):
+        policy = CommandPolicy.from_mapping({'network_tool': 'allow'})
+        v = classify_action('WebFetch', {'url': 'https://x'}, policy=policy)
+        self.assertEqual(v.decision, Decision.ALLOW)
+
+    def test_operator_can_tighten_unknown_to_block(self):
+        policy = CommandPolicy.from_mapping({'external_capability': 'block'})
+        v = classify_action('SomeNewTool', {}, policy=policy)
+        self.assertEqual(v.decision, Decision.BLOCK)
+
+    def test_network_tool_outranks_unknown_when_both_could_apply(self):
+        # An mcp__ tool is network (block), not merely unknown (ask).
+        v = classify_action('mcp__github__create_pr', {}, policy=_DEFAULT)
+        self.assertEqual(v.category, RiskCategory.NETWORK_TOOL)
+
+
 class OutOfScopeInjectionTests(unittest.TestCase):
     def test_command_sandbox_classifier_flags_out_of_scope(self):
         def fake(command, cwd, add, allowed):

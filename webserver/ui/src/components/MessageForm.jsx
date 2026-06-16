@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { useAgentVersion } from '../hooks/useAgentVersion.js';
 import {
   collectImageParts,
   IMAGE_REJECT_REASON,
@@ -104,6 +105,11 @@ const MessageForm = forwardRef(function MessageForm({
   // Persisted per-task in localStorage (same idiom as the text draft) so the
   // toggle survives tab switches and page reloads.
   const [ultracode, setUltracode] = useState(() => readUltracode(taskId));
+  // Only offer ultracode when the installed agent CLI actually supports
+  // multi-agent workflows — otherwise the keyword is inert and the toggle
+  // misleads. ``null`` (still loading) keeps it hidden until confirmed.
+  const agentVersion = useAgentVersion();
+  const supportsWorkflows = !!(agentVersion && agentVersion.supports_workflows);
   const fileInputRef = useRef(null);
   const textareaRef = useRef(null);
   const formRef = useRef(null);
@@ -254,8 +260,12 @@ const MessageForm = forwardRef(function MessageForm({
     // but never throw). If the send failed, KEEP the draft so the
     // operator can retry — losing the text on a network failure
     // was a real operator pain point.
-    // Prepend the ultracode keyword when the toggle is on (and there's text).
-    const outgoing = ultracode && trimmed ? `ultracode\n\n${trimmed}` : trimmed;
+    // Prepend the ultracode keyword only when the toggle is on, the CLI
+    // actually supports workflows, and there's text — so a stale localStorage
+    // toggle never injects an inert keyword on an unsupported CLI.
+    const outgoing = ultracode && supportsWorkflows && trimmed
+      ? `ultracode\n\n${trimmed}`
+      : trimmed;
     let result;
     try {
       result = await onSubmit(outgoing, attachments.map((a) => a.part));
@@ -446,16 +456,18 @@ const MessageForm = forwardRef(function MessageForm({
             style={{ display: 'none' }}
             onChange={handleFilePickerChange}
           />
-          <button
-            type="button"
-            className={`composer-ultracode tooltip-above ${ultracode ? 'is-on' : ''}`}
-            data-tooltip="ultracode: have the agent run multi-agent workflows for this message (prepends the keyword). Off by default — it can fan out into many subagents. Only works if your installed Claude supports it."
-            aria-pressed={ultracode}
-            aria-label="Toggle ultracode"
-            onClick={() => setUltracode((on) => !on)}
-          >
-            ultracode
-          </button>
+          {supportsWorkflows && (
+            <button
+              type="button"
+              className={`composer-ultracode tooltip-above ${ultracode ? 'is-on' : ''}`}
+              data-tooltip="ultracode: have the agent run multi-agent workflows for this message (prepends the keyword). Off by default — it can fan out into many subagents."
+              aria-pressed={ultracode}
+              aria-label="Toggle ultracode"
+              onClick={() => setUltracode((on) => !on)}
+            >
+              ultracode
+            </button>
+          )}
         </div>
         <div className="composer-toolbar-right">
           {availableModels.length > 0 && (

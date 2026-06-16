@@ -9,6 +9,7 @@ import Layout from './components/Layout.jsx';
 import OrchestratorActivityFeed from './components/OrchestratorActivityFeed.jsx';
 import RightPane from './components/RightPane.jsx';
 import SafetyBanner from './components/SafetyBanner.jsx';
+import AgentVersionBanner from './components/AgentVersionBanner.jsx';
 import SessionDetail from './components/SessionDetail.jsx';
 import SettingsDrawer from './components/SettingsDrawer.jsx';
 import TabList from './components/TabList.jsx';
@@ -556,6 +557,7 @@ export default function App() {
     <>
       <ToastContainer />
       <SafetyBanner state={safetyState} />
+      <AgentVersionBanner />
       <Header
         onRefresh={refresh}
         statusLatest={status.latest}

@@ -28,8 +28,8 @@ from kato_core_lib.helpers.kato_settings_schema_utils import (
 from kato_core_lib.helpers.kato_settings_store_utils import read_kato_settings
 
 # Categories where an ``allow`` posture is worth shouting about at boot —
-# these are the antivirus-triggering exfiltration paths.
-_HIGH_RISK_CATEGORIES = ('credential_read', 'network_exfil')
+# the antivirus-triggering exfiltration paths + off-machine data flow.
+_HIGH_RISK_CATEGORIES = ('credential_read', 'network_exfil', 'network_tool')
 
 
 def _resolved_value(env_key: str, settings: dict, env: dict) -> str:

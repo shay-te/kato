@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import ActionGuardSettingsPanel from './ActionGuardSettingsPanel.jsx';
 import ClaudePermissionsSettingsPanel from './ClaudePermissionsSettingsPanel.jsx';
 import PromptsSettingsPanel from './PromptsSettingsPanel.jsx';
 import GitProvidersSettingsPanel from './GitProvidersSettingsPanel.jsx';
@@ -23,16 +24,22 @@ import { buildSettingsIndex, filterSettingsIndex } from '../utils/settingsSearch
 const TAB_REPOS = 'repositories';
 const TAB_APPROVALS = 'approvals';
 const TAB_PERMISSIONS = 'claude-permissions';
+const TAB_ACTION_GUARD = 'action-guard';
 const TAB_PROMPTS = 'prompts';
 const TAB_TASK_PROVIDER = 'task-provider';
 const TAB_GIT_PROVIDER = 'git-provider';
 const TAB_NOTIFICATIONS = 'notifications';
+
+// The action_guard schema section is rendered by its OWN bespoke tab below,
+// so it's excluded from the auto-generated schema tabs to avoid a duplicate.
+const ACTION_GUARD_SECTION_ID = 'action_guard';
 
 // Bespoke (non-schema) tabs, in display order.
 const BESPOKE_TABS = [
   { id: TAB_REPOS, label: 'Repositories' },
   { id: TAB_APPROVALS, label: 'Approvals' },
   { id: TAB_PERMISSIONS, label: 'Permissions' },
+  { id: TAB_ACTION_GUARD, label: 'Action Guard' },
   { id: TAB_PROMPTS, label: 'Prompts' },
   { id: TAB_TASK_PROVIDER, label: 'Task provider' },
   { id: TAB_GIT_PROVIDER, label: 'Git provider' },
@@ -67,11 +74,16 @@ export default function SettingsDrawer({
     return () => { cancelled = true; };
   }, [open, schemaLoaded]);
 
-  const schemaTabs = schemaSections.map((s) => ({
+  // Exclude the Action Guard section from the generic schema tabs + search
+  // index — it has its own bespoke tab (findable by the "Action Guard" label).
+  const genericSchemaSections = schemaSections.filter(
+    (s) => s.id !== ACTION_GUARD_SECTION_ID,
+  );
+  const schemaTabs = genericSchemaSections.map((s) => ({
     id: `schema:${s.id}`, sectionId: s.id, label: s.label,
   }));
   const searchResults = filterSettingsIndex(
-    buildSettingsIndex(schemaSections, BESPOKE_TABS), query,
+    buildSettingsIndex(genericSchemaSections, BESPOKE_TABS), query,
   );
 
   function jumpToSetting(result) {
@@ -94,6 +106,8 @@ export default function SettingsDrawer({
     panel = <RepositoryApprovalsSettingsPanel />;
   } else if (tab === TAB_PERMISSIONS) {
     panel = <ClaudePermissionsSettingsPanel />;
+  } else if (tab === TAB_ACTION_GUARD) {
+    panel = <ActionGuardSettingsPanel />;
   } else if (tab === TAB_PROMPTS) {
     panel = <PromptsSettingsPanel />;
   } else if (tab === TAB_TASK_PROVIDER) {

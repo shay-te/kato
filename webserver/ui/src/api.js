@@ -75,6 +75,10 @@ export function fetchSafetyState() {
   return fetchJson('/api/safety');
 }
 
+export function fetchAgentVersion() {
+  return fetchJson('/api/agent-version');
+}
+
 // Settings drawer — currently exposes ``repository_root_path`` only.
 // The shape ``{ ok, body }`` matches what fetchTaskComments returns
 // so the drawer doesn't need a special-cased fetch wrapper.
@@ -125,6 +129,10 @@ export function fetchAllSettings() {
 
 export function updateAllSettings(updates) {
   return postEnvelope('/api/all-settings', { updates: updates || {} });
+}
+
+export function fetchActionGuardAudit(limit = 200) {
+  return requestEnvelope(`/api/action-guard/audit?limit=${limit}`);
 }
 
 export function fetchAwaitingPushApproval(taskId) {

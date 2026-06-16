@@ -80,6 +80,14 @@ _ACTION_GUARD_FIELD_META: dict[str, tuple[str, str]] = {
     'out_of_scope': (
         'Out-of-workspace paths',
         'Reads/writes that resolve outside the task workspace clone.'),
+    'network_tool': (
+        'Network / connector tools',
+        'Tools that reach the network or a third-party service — WebFetch, '
+        'web search, any MCP connector. Off-machine data flow.'),
+    'external_capability': (
+        'New / unrecognized capabilities',
+        'Any tool Kato does not know as a safe local tool — e.g. a NEW Claude '
+        'capability. Defaults to Ask so you approve every new one.'),
 }
 _ACTION_GUARD_FIELDS: list[tuple] = [
     ('KATO_ACTION_GUARD_ENABLED', 'bool', 'Action Guard enabled',

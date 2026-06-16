@@ -49,7 +49,13 @@ class ClaudeCliClient(object):
     DEFAULT_TIMEOUT_SECONDS = 1800
     SAFE_PERMISSION_MODE = 'acceptEdits'
     BYPASS_PERMISSION_MODE = 'bypassPermissions'
-    DEFAULT_ALLOWED_TOOLS = 'Edit,Write,Read,Bash,Glob,Grep'
+    # Safe pre-approved tools. ``Agent`` (the subagent/fan-out tool, renamed
+    # from ``Task`` in CLI 2.1.63) is included so the agent can spawn subagents
+    # headlessly — in ``-p`` there's no prompt to grant a non-allowlisted tool,
+    # so without this the agent silently can't fan out. Both names are listed
+    # for version skew (``Task`` is an alias on newer CLIs). Operators can still
+    # override the whole list via ``KATO_CLAUDE_ALLOWED_TOOLS``.
+    DEFAULT_ALLOWED_TOOLS = 'Agent,Task,Edit,Write,Read,Bash,Glob,Grep'
     # Hard, non-overridable denylist for MUTATING git only. Kato owns the
     # branch state machine + publish/push path, so Claude must never commit,
     # push, reset, branch, fetch, rebase, etc. — those would race kato and

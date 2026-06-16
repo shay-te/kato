@@ -7,6 +7,7 @@ honours the master switch, and writes the tamper-evident audit line.
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
@@ -142,6 +143,55 @@ class ActionGuardRouteTests(unittest.TestCase):
             self.assertEqual(rows[-1]['category'], 'destructive_fs')
             # The raw destructive command is never stored verbatim.
             self.assertTrue(rows[-1]['command_digest'].startswith('sha256:'))
+
+
+class ActionGuardAuditRouteTests(unittest.TestCase):
+    def _app(self):
+        return create_app(session_manager=_Manager(records=[_Record('T-1')]))
+
+    def _write(self, path, **kw):
+        from kato_core_lib.helpers.action_guard_audit import (
+            record_action_guard_decision,
+        )
+        record_action_guard_decision(audit_log_path=path, **kw)
+
+    def test_returns_recent_decisions_newest_first(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, 'audit.log')
+            self._write(path, task_id='T-1', category='credential_read',
+                        decision='block', command='cat ~/.ssh/id_rsa')
+            self._write(path, task_id='T-1', category='destructive_fs',
+                        decision='ask_approved', command='rm -rf build')
+            with mock.patch.dict(os.environ, {'KATO_ACTION_GUARD_AUDIT_PATH': path}):
+                resp = self._app().test_client().get('/api/action-guard/audit')
+            body = resp.get_json()
+            self.assertTrue(body['ok'])
+            self.assertEqual(len(body['entries']), 2)
+            self.assertEqual(body['entries'][0]['category'], 'destructive_fs')  # newest first
+
+    def test_flags_a_tampered_log(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, 'audit.log')
+            self._write(path, task_id='T-1', category='a', decision='block')
+            self._write(path, task_id='T-1', category='b', decision='block')
+            lines = open(path, encoding='utf-8').read().splitlines()
+            first = json.loads(lines[0])
+            first['category'] = 'EDITED'
+            lines[0] = json.dumps(first, sort_keys=True)
+            with open(path, 'w', encoding='utf-8') as fh:
+                fh.write('\n'.join(lines) + '\n')
+            with mock.patch.dict(os.environ, {'KATO_ACTION_GUARD_AUDIT_PATH': path}):
+                resp = self._app().test_client().get('/api/action-guard/audit')
+            self.assertFalse(resp.get_json()['ok'])
+
+    def test_empty_feed_when_no_log_yet(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, 'none.log')
+            with mock.patch.dict(os.environ, {'KATO_ACTION_GUARD_AUDIT_PATH': path}):
+                resp = self._app().test_client().get('/api/action-guard/audit')
+            body = resp.get_json()
+            self.assertEqual(body['entries'], [])
+            self.assertTrue(body['ok'])
 
 
 if __name__ == '__main__':

@@ -37,6 +37,7 @@ export function unpackPermissionEnvelope(raw) {
 // remote-exec / sandbox-escape is exactly what the guard exists to stop.
 const HIGH_RISK_ACTION_GUARD = new Set([
   'credential_read', 'network_exfil', 'remote_exec', 'sandbox_escape',
+  'network_tool',
 ]);
 
 export function isHighRiskActionGuard(actionGuard) {

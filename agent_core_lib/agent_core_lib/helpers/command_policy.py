@@ -54,7 +54,7 @@ from agent_core_lib.agent_core_lib.helpers.credential_patterns import (
 
 
 class RiskCategory(str, Enum):
-    """The kind of risk a tool call presents. The first eight are
+    """The kind of risk a tool call presents. All but ``NONE`` are
     operator-configurable; ``NONE`` means no detector fired."""
 
     DESTRUCTIVE_FS = 'destructive_fs'
@@ -65,6 +65,13 @@ class RiskCategory(str, Enum):
     PRIV_ESC = 'priv_esc'
     SANDBOX_ESCAPE = 'sandbox_escape'
     OUT_OF_SCOPE = 'out_of_scope'
+    # A tool that reaches the network / a third-party service (WebFetch,
+    # WebSearch, any MCP connector). Off-machine data flow → BLOCK by default.
+    NETWORK_TOOL = 'network_tool'
+    # A tool Kato does not recognize as a known-safe local tool — e.g. a NEW
+    # Claude capability. Default-deny-by-asking so every new capability needs
+    # explicit operator approval.
+    EXTERNAL_CAPABILITY = 'external_capability'
     NONE = 'none'
 
 
@@ -74,7 +81,7 @@ class Decision(str, Enum):
     ALLOW = 'allow'
 
 
-# The eight categories the operator can tune, in the order shown in the UI.
+# The categories the operator can tune, in the order shown in the UI.
 CONFIGURABLE_CATEGORIES: tuple[RiskCategory, ...] = (
     RiskCategory.DESTRUCTIVE_FS,
     RiskCategory.CREDENTIAL_READ,
@@ -84,6 +91,8 @@ CONFIGURABLE_CATEGORIES: tuple[RiskCategory, ...] = (
     RiskCategory.PRIV_ESC,
     RiskCategory.SANDBOX_ESCAPE,
     RiskCategory.OUT_OF_SCOPE,
+    RiskCategory.NETWORK_TOOL,
+    RiskCategory.EXTERNAL_CAPABILITY,
 )
 
 # Whole categories with NO legitimate use in a coding agent: an operator
@@ -104,6 +113,8 @@ _SECURE_DEFAULTS: dict[RiskCategory, Decision] = {
     RiskCategory.PRIV_ESC: Decision.ASK,
     RiskCategory.SANDBOX_ESCAPE: Decision.BLOCK,
     RiskCategory.OUT_OF_SCOPE: Decision.ASK,
+    RiskCategory.NETWORK_TOOL: Decision.BLOCK,       # off-machine data flow
+    RiskCategory.EXTERNAL_CAPABILITY: Decision.ASK,  # new/unknown capability
 }
 
 _DECISION_SEVERITY: dict[Decision, int] = {
@@ -463,6 +474,44 @@ def _detect_escape(command: str) -> list:
 # A read-only tool (Read/Grep/Glob) touching ``~/.zshrc`` is not persistence.
 _WRITE_TOOLS = frozenset({'write', 'edit', 'multiedit', 'notebookedit'})
 
+# Known-safe LOCAL tools — operate on the workspace/filesystem, no network.
+# Anything NOT here is treated as new/unknown (default-deny-by-asking) so a
+# NEW Claude capability can never run silently. Lower-cased for matching.
+_KNOWN_LOCAL_TOOLS = frozenset({
+    'bash', 'edit', 'write', 'read', 'glob', 'grep',
+    'multiedit', 'notebookedit', 'notebookread', 'todowrite',
+    # Subagent fan-out (``Task`` renamed to ``Agent`` in CLI 2.1.63) — a
+    # bounded local capability, not a new/external one.
+    'agent', 'task',
+})
+# Tools that reach the network / a third-party service. ``mcp__*`` (any MCP
+# connector) is matched by prefix. Off-machine data flow → BLOCK by default.
+_NETWORK_TOOLS = frozenset({'webfetch', 'websearch'})
+
+
+def _detect_tool_capability(tool_name: str) -> list:
+    """Classify the TOOL ITSELF (independent of its arguments): a known-safe
+    local tool is fine; a network/connector tool is off-machine data flow; an
+    unrecognized tool is a new capability that must be approved."""
+    name = str(tool_name or '').strip()
+    if not name:
+        return []
+    lower = name.lower()
+    if lower in _KNOWN_LOCAL_TOOLS:
+        return []
+    if lower.startswith('mcp__') or lower in _NETWORK_TOOLS:
+        return [_Candidate(
+            RiskCategory.NETWORK_TOOL, False,
+            f'{name} reaches the network / a third-party service',
+            f'tool.network.{lower}',
+        )]
+    return [_Candidate(
+        RiskCategory.EXTERNAL_CAPABILITY, False,
+        f'{name} is a new capability Kato does not recognize — approve it '
+        'explicitly',
+        f'tool.unknown.{lower}',
+    )]
+
 
 def _candidate_path_args(tool_input: dict) -> list:
     paths = []
@@ -567,13 +616,16 @@ def classify_action(
 
     tool_input = tool_input if isinstance(tool_input, dict) else {}
     command = str(tool_input.get('command') or '')
+    # The tool itself first — a network/connector or unrecognized tool is
+    # flagged no matter what arguments it carries (catches NEW capabilities).
+    candidates = _detect_tool_capability(tool_name)
     if command.strip():
-        candidates = _detect_in_command(
+        candidates += _detect_in_command(
             command, cwd, additional_dirs, allowed_paths,
             command_sandbox_classifier,
         )
     else:
-        candidates = _detect_in_paths(
+        candidates += _detect_in_paths(
             tool_name, tool_input, cwd, additional_dirs, allowed_paths,
             tool_input_sandbox_classifier,
         )

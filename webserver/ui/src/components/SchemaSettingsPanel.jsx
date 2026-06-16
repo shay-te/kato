@@ -1,10 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { fetchAllSettings, updateAllSettings, fetchOpenRouterModels } from '../api.js';
-import { useRestartingSave } from '../hooks/useRestartingSave.js';
-import { useSettingsResource } from '../hooks/useSettingsResource.js';
+import { fetchOpenRouterModels } from '../api.js';
+import { useSchemaSectionDraft } from '../hooks/useSchemaSectionDraft.js';
 import { sourceLabel } from '../utils/settingsSource.js';
-import { countNoun } from '../utils/pluralize.js';
 import PanelMessage from './settings/PanelMessage.jsx';
 import SettingsPanelHead from './settings/SettingsPanelHead.jsx';
 import SettingsActions from './settings/SettingsActions.jsx';
@@ -22,9 +20,11 @@ import RestartBanner from './settings/RestartBanner.jsx';
 // touched. Restart required — banner shown after a save.
 
 export default function SchemaSettingsPanel({ sectionId, highlightKey = '' }) {
-  const [meta, setMeta] = useState({ sections: [], settingsFilePath: '' });
-  const [draft, setDraft] = useState({});
   const fieldsRef = useRef(null);
+  const {
+    loading, error, section, settingsFilePath,
+    draft, setField, savedAt, saveBarProps,
+  } = useSchemaSectionDraft(sectionId);
 
   // When the operator jumps here from the settings search, scroll the matched
   // field into view and flash it so they spot the one they searched for.
@@ -40,55 +40,7 @@ export default function SchemaSettingsPanel({ sectionId, highlightKey = '' }) {
       () => row.classList.remove('is-search-highlight'), 1800,
     );
     return () => window.clearTimeout(handle);
-  }, [highlightKey, sectionId, meta.sections]);
-
-  const { loading, error, refresh } = useSettingsResource(fetchAllSettings, (body) => {
-    const sections = Array.isArray(body.sections) ? body.sections : [];
-    setMeta({ sections, settingsFilePath: String(body.settings_file_path || '') });
-    // Seed the draft from server values for THIS section's fields.
-    const section = sections.find((s) => s.id === sectionId);
-    const seed = {};
-    for (const f of (section?.fields || [])) {
-      seed[f.key] = f.value ?? '';
-    }
-    setDraft(seed);
-  });
-
-  const section = useMemo(
-    () => meta.sections.find((s) => s.id === sectionId) || null,
-    [meta.sections, sectionId],
-  );
-
-  const dirtyKeys = useMemo(() => {
-    if (!section) { return []; }
-    const out = [];
-    for (const f of section.fields) {
-      const server = f.value ?? '';
-      const current = draft[f.key] ?? '';
-      if (String(current) !== String(server)) { out.push(f.key); }
-    }
-    return out;
-  }, [section, draft]);
-
-  function setField(key, value) {
-    setDraft((cur) => ({ ...cur, [key]: value }));
-  }
-
-  const { saving, savedAt, save } = useRestartingSave(
-    () => {
-      const updates = {};
-      for (const k of dirtyKeys) { updates[k] = draft[k]; }
-      return updateAllSettings(updates);
-    },
-    { onSaved: refresh },
-  );
-
-  function revert() {
-    if (!section) { return; }
-    const seed = {};
-    for (const f of section.fields) { seed[f.key] = f.value ?? ''; }
-    setDraft(seed);
-  }
+  }, [highlightKey, sectionId, section]);
 
   if (loading) {
     return (
@@ -118,7 +70,7 @@ export default function SchemaSettingsPanel({ sectionId, highlightKey = '' }) {
         <p>
           {section.description}
           {' '}Saved to
-          {' '}<code>{meta.settingsFilePath || '~/.kato/settings.json'}</code>
+          {' '}<code>{settingsFilePath || '~/.kato/settings.json'}</code>
           {' '}— your <code>.env</code> is left untouched (read as a
           fallback).
         </p>
@@ -141,16 +93,7 @@ export default function SchemaSettingsPanel({ sectionId, highlightKey = '' }) {
         ))}
       </div>
 
-      <SettingsActions
-        onSecondary={revert}
-        secondaryDisabled={saving || dirtyKeys.length === 0}
-        onSave={save}
-        saving={saving}
-        canSave={dirtyKeys.length > 0}
-        primaryLabel={dirtyKeys.length
-          ? `Save ${countNoun(dirtyKeys.length, 'change')}`
-          : 'Save'}
-      />
+      <SettingsActions {...saveBarProps} />
 
       <RestartBanner show={savedAt} />
     </div>
