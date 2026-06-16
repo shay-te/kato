@@ -20,6 +20,10 @@ from provider_client_base.provider_client_base.data.issue_record import (
     ISSUE_COMMENT_BODY,
     IssueRecord,
 )
+from provider_client_base.provider_client_base.helpers.mention_utils import (
+    extract_mention_logins,
+    is_addressed_elsewhere_from_mentions,
+)
 from provider_client_base.provider_client_base.helpers.retry_utils import run_with_retry
 from provider_client_base.provider_client_base.helpers.text_utils import normalized_text
 from provider_client_base.provider_client_base.retrying_client_base import RetryingClientBase
@@ -212,6 +216,82 @@ class IssueClientBase(RetryingClientBase):
         instance via ``self._is_operational_comment = ...``.
         """
         return False
+
+    # ----- @-mention bot-identity filter -----
+    #
+    # A comment that ``@mentions`` a human other than the bot is work
+    # directed at that person, not kato — including it in the task context
+    # makes the agent act on someone else's instruction. The rule lives in
+    # ``mention_utils``; this scaffold supplies the bot identity to compare
+    # against. The key correctness fix: when the host configures the bot's
+    # ``assignee`` as an alias ("me", "currentUser()") or leaves it unset,
+    # the configured value can never match a literal mention, so the real
+    # identity is resolved lazily from the platform's current-user endpoint
+    # instead of silently disabling the filter.
+
+    # Configured ``bot_login`` values that are NOT real mention handles —
+    # treated as "unset" so the real identity is resolved from the API
+    # instead. Subclasses extend (youtrack ``"me"``, jira ``"currentuser()"``).
+    _BOT_LOGIN_ALIASES: frozenset = frozenset()
+
+    def _configure_bot_login(self, bot_login: object) -> None:
+        """Initialise @-mention-filter state. Call from the subclass __init__.
+
+        Stores the configured bot login (an alias like ``"me"`` is treated as
+        unset) and primes the lazy resolver used when no real login was given.
+        """
+        normalized = str(bot_login or '').strip().lower()
+        self._bot_login = '' if normalized in self._BOT_LOGIN_ALIASES else normalized
+        self._resolved_bot_logins: tuple = ()
+        self._bot_login_resolved = False
+
+    def _effective_bot_logins(self) -> tuple:
+        """The bot identities a mention must match to count as "for the bot".
+
+        The configured login when one was given; otherwise the platform's
+        real identities resolved lazily from its current-user endpoint and
+        cached (resolved at most once, even when it comes back empty, so a
+        genuinely unresolvable bot never re-hits the API per comment).
+        """
+        if self._bot_login:
+            return (self._bot_login,)
+        if not self._bot_login_resolved:
+            self._bot_login_resolved = True
+            self._resolved_bot_logins = tuple(self._fetch_current_user_logins())
+        return self._resolved_bot_logins
+
+    def _fetch_current_user_logins(self) -> tuple:
+        """Resolve the bot's real mention identities from the platform API.
+
+        Default: no resolution (filter stays a no-op when unconfigured).
+        Provider subclasses override with their authenticated-user endpoint
+        (e.g. GitHub ``/user`` → login, Jira ``/myself`` → accountId). MUST be
+        best-effort: return ``()`` on any error rather than raising.
+        """
+        return ()
+
+    def _extract_comment_mentions(self, body: object) -> list:
+        """Mention identities found in a comment body.
+
+        Default: plain ``@login`` text extraction. Providers whose comment
+        bodies encode mentions differently (jira ADF nodes, bitbucket
+        ``@{account_id}``) override this.
+        """
+        return extract_mention_logins(body)
+
+    def _comment_addressed_elsewhere(self, body: object) -> bool:
+        """Whether a comment @-mentions humans OTHER than the bot.
+
+        Short-circuits before resolving the bot identity when the comment
+        carries no mention at all — that keeps the current-user round-trip
+        off the hot path for the overwhelmingly common mention-free comment.
+        """
+        mentions = self._extract_comment_mentions(body)
+        if not mentions:
+            return False
+        return is_addressed_elsewhere_from_mentions(
+            mentions, self._effective_bot_logins()
+        )
 
     # ----- text-attachment downloading (jira + youtrack) -----
 

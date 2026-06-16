@@ -565,32 +565,94 @@ class GitHubIssuesClientCommentEntriesTests(unittest.TestCase):
 
         self.assertEqual(entries, [])
 
-    def test_default_bot_login_disables_filter(self) -> None:
-        # Backward-compat: hosts that don't pass ``bot_login`` keep
-        # the pre-filter behavior.
+    @staticmethod
+    def _comment(body: str, author: str = 'op') -> dict:
+        return {
+            GitHubCommentFields.BODY: body,
+            GitHubCommentFields.USER: {GitHubCommentFields.LOGIN: author},
+        }
+
+    def test_unset_bot_login_attribute_is_empty(self) -> None:
+        # The *configured* login is empty when no ``assignee`` is passed;
+        # the effective login is then resolved lazily from ``GET /user``.
         client = _make_client()
         self.assertEqual(client._bot_login, '')
-        comments = [
-            {GitHubCommentFields.BODY: '@alice please look',
-             GitHubCommentFields.USER: {GitHubCommentFields.LOGIN: 'op'}},
-        ]
-        self.assertEqual(len(client._task_comment_entries(comments)), 1)
 
     def test_mention_filter_drops_addressed_to_other_humans(self) -> None:
-        # The reported bug, GitHub edition.
+        # The reported bug, GitHub edition (explicit login configured).
         client = _make_client(bot_login='kato_bot')
         comments = [
-            {GitHubCommentFields.BODY: '@alice can you handle this',
-             GitHubCommentFields.USER: {GitHubCommentFields.LOGIN: 'op'}},
-            {GitHubCommentFields.BODY: 'this also needs a unit test',
-             GitHubCommentFields.USER: {GitHubCommentFields.LOGIN: 'op'}},
-            {GitHubCommentFields.BODY: '@kato_bot fix the typo',
-             GitHubCommentFields.USER: {GitHubCommentFields.LOGIN: 'op'}},
+            self._comment('@alice can you handle this'),
+            self._comment('this also needs a unit test'),
+            self._comment('@kato_bot fix the typo'),
         ]
         bodies = [e[ISSUE_COMMENT_BODY] for e in client._task_comment_entries(comments)]
         self.assertIn('this also needs a unit test', bodies)
         self.assertIn('@kato_bot fix the typo', bodies)
         self.assertNotIn('@alice can you handle this', bodies)
+
+    def test_mid_sentence_mention_is_dropped(self) -> None:
+        client = _make_client(bot_login='kato_bot')
+        entries = client._task_comment_entries([
+            self._comment('he look yada yda @Alice yes ..'),
+        ])
+        self.assertEqual(entries, [])
+
+    def test_explicit_login_does_not_resolve_via_user_endpoint(self) -> None:
+        client = _make_client(bot_login='kato_bot')
+        with patch.object(
+            client, '_fetch_current_user_logins',
+            side_effect=AssertionError('should not resolve'),
+        ):
+            entries = client._task_comment_entries([self._comment('@alice ping')])
+        self.assertEqual(entries, [])
+
+    def test_unset_login_resolved_via_user_endpoint_drops_human_mentions(self) -> None:
+        # The fix: with no configured login, resolve the bot's real login
+        # from GET /user so a comment @-mentioning a human is still dropped.
+        client = _make_client()
+        with patch.object(
+            client, '_fetch_current_user_logins', return_value=('kato_bot',),
+        ) as fetch:
+            entries = client._task_comment_entries([
+                self._comment('@alice can you handle this'),  # dropped
+                self._comment('a general note'),              # kept (no mention)
+                self._comment('@kato_bot fix the typo'),      # kept (bot)
+            ])
+        bodies = [e[ISSUE_COMMENT_BODY] for e in entries]
+        self.assertEqual(bodies, ['a general note', '@kato_bot fix the typo'])
+        fetch.assert_called_once()  # resolved once, cached across comments
+
+    def test_filter_noop_when_login_unresolvable_keeps_all(self) -> None:
+        client = _make_client()
+        with patch.object(
+            client, '_fetch_current_user_logins', return_value=(),
+        ):
+            entries = client._task_comment_entries([self._comment('@alice ping')])
+        self.assertEqual(len(entries), 1)
+
+    def test_fetch_current_user_logins_success(self) -> None:
+        client = _make_client()
+        with patch.object(
+            client, '_get_with_retry',
+            return_value=mock_response(json_data={'login': 'Kato_Bot'}),
+        ) as get:
+            self.assertEqual(client._fetch_current_user_logins(), ('kato_bot',))
+        get.assert_called_once_with('/user')
+
+    def test_fetch_current_user_logins_missing_login(self) -> None:
+        client = _make_client()
+        with patch.object(
+            client, '_get_with_retry', return_value=mock_response(json_data={}),
+        ):
+            self.assertEqual(client._fetch_current_user_logins(), ())
+
+    def test_fetch_current_user_logins_error(self) -> None:
+        client = _make_client()
+        with patch.object(
+            client, '_get_with_retry', side_effect=RuntimeError('401'),
+        ):
+            self.assertEqual(client._fetch_current_user_logins(), ())
 
 
 class GitHubIssuesClientStaticHelpersTests(unittest.TestCase):

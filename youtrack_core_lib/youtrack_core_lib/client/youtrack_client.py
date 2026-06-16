@@ -4,7 +4,6 @@ from typing import Any
 
 from youtrack_core_lib.youtrack_core_lib.client.youtrack_client_base import YouTrackClientBase
 from youtrack_core_lib.youtrack_core_lib.data.fields import (
-    TaskCommentFields,
     YouTrackAttachmentFields,
     YouTrackCommentFields,
     YouTrackCustomFieldFields,
@@ -445,10 +444,9 @@ class YouTrackClient(YouTrackClientBase):
             # Drop comments that @-mention humans other than the kato
             # bot — those are operator-to-employee discussions, not
             # requests the agent should act on. Comments with no
-            # @-mention are kept (general project context). When
-            # ``bot_login`` is unset the predicate returns False on
-            # every input, preserving the pre-filter behavior.
-            skip=lambda c: self._comment_is_addressed_elsewhere(
+            # @-mention are kept (general project context). See
+            # IssueClientBase._comment_addressed_elsewhere.
+            skip=lambda c: self._comment_addressed_elsewhere(
                 text_from_mapping(c, YouTrackCommentFields.TEXT),
             ),
         )

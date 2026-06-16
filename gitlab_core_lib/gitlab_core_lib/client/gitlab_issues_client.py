@@ -7,9 +7,6 @@ from provider_client_base.provider_client_base.client.issue_client_base import (
     IssueClientBase,
 )
 from provider_client_base.provider_client_base.data.issue_record import IssueRecord
-from provider_client_base.provider_client_base.helpers.mention_utils import (
-    is_comment_addressed_elsewhere,
-)
 
 from gitlab_core_lib.gitlab_core_lib.data.fields import (
     GitLabCommentFields,
@@ -35,10 +32,26 @@ class GitLabIssuesClient(IssueClientBase):
         self._is_operational_comment: Callable[[str], bool] = (
             is_operational_comment or (lambda _: False)
         )
-        # See provider_client_base.helpers.mention_utils for the rule;
-        # empty value disables the @-mention filter.
-        self._bot_login = str(bot_login or '').strip()
+        # @-mention filter (see IssueClientBase). When ``assignee`` isn't a
+        # real username, the bot's actual username is resolved from GET /user.
+        self._configure_bot_login(bot_login)
         self.set_headers({'PRIVATE-TOKEN': token})
+
+    def _fetch_current_user_logins(self) -> tuple:
+        """Resolve the bot's GitLab username from ``GET /user`` (best-effort).
+
+        Used only when no real ``assignee`` username was configured, so a
+        comment @-mentioning a human is still recognized and skipped.
+        """
+        try:
+            response = self._get_with_retry('/user')
+            response.raise_for_status()
+            username = str(
+                (response.json() or {}).get(GitLabCommentFields.USERNAME, '') or ''
+            ).strip().lower()
+            return (username,) if username else ()
+        except Exception:
+            return ()
 
     def validate_connection(self, project: str, assignee: str, states: list[str]) -> None:
         response = self._get_with_retry(
@@ -154,9 +167,8 @@ class GitLabIssuesClient(IssueClientBase):
         def skip(c: dict) -> bool:
             if c.get(GitLabCommentFields.SYSTEM):
                 return True
-            return is_comment_addressed_elsewhere(
+            return self._comment_addressed_elsewhere(
                 c.get(GitLabCommentFields.BODY, ''),
-                self._bot_login,
             )
 
         return self._build_comment_entries(

@@ -41,9 +41,11 @@ class YouTrackClientConstructionTests(unittest.TestCase):
         client = YouTrackClient('https://youtrack.example', 'yt-token')
         self.assertEqual(client._operational_comment_prefixes, ())
 
-    def test_default_bot_login_is_empty_so_filter_is_disabled(self) -> None:
-        # Backward-compat: hosts that haven't opted in get the
-        # pre-filter behavior (no comments dropped).
+    def test_default_bot_login_attribute_is_empty(self) -> None:
+        # The *configured* login is empty when the host doesn't pass one.
+        # The effective login used for filtering is then resolved lazily
+        # from ``/api/users/me`` (covered in YouTrackClientBase tests), so
+        # an empty ``_bot_login`` no longer means "filter off".
         client = YouTrackClient('https://youtrack.example', 'yt-token')
         self.assertEqual(client._bot_login, '')
 
@@ -53,9 +55,11 @@ class YouTrackClientConstructionTests(unittest.TestCase):
         )
         self.assertEqual(client._bot_login, 'kato_bot')
 
-    def test_bot_login_me_alias_treated_as_disabled(self) -> None:
-        # YouTrack's ``"me"`` is a query alias, not a real login —
-        # never matches a literal ``@mention``. Treat as filter off.
+    def test_bot_login_me_alias_stored_as_empty(self) -> None:
+        # YouTrack's ``"me"`` is a query alias, not a real login — it can
+        # never match a literal ``@mention``, so it is NOT stored as the
+        # configured login. The real login is instead resolved lazily from
+        # ``/api/users/me`` when filtering (see YouTrackClientBase tests).
         client = YouTrackClient(
             'https://youtrack.example', 'yt-token', bot_login='me',
         )
@@ -1092,15 +1096,6 @@ class YouTrackTaskCommentEntriesMentionFilterTests(unittest.TestCase):
             },
         }
 
-    def test_filter_disabled_when_bot_login_empty_keeps_all_comments(self) -> None:
-        client = YouTrackClient('https://x.example', 'tk')
-        entries = client._task_comment_entries([
-            self._raw('@alice please review'),
-            self._raw('general note'),
-            self._raw('@kato_bot fix typo'),
-        ])
-        self.assertEqual(len(entries), 3)
-
     def test_filter_drops_comments_addressed_to_other_humans(self) -> None:
         client = YouTrackClient(
             'https://x.example', 'tk', bot_login='kato_bot',
@@ -1120,15 +1115,64 @@ class YouTrackTaskCommentEntriesMentionFilterTests(unittest.TestCase):
         self.assertNotIn('@bob.smith handle this please', bodies)
         self.assertEqual(len(entries), 3)
 
-    def test_me_alias_disables_filter_even_with_at_mentions(self) -> None:
+    def test_explicit_bot_login_does_not_call_users_me(self) -> None:
+        # When a real login is configured, no resolution round-trip happens.
         client = YouTrackClient(
-            'https://x.example', 'tk', bot_login='me',
+            'https://x.example', 'tk', bot_login='kato_bot',
         )
-        entries = client._task_comment_entries([
-            self._raw('@alice please review'),
-        ])
-        # ``"me"`` is treated as filter-disabled, so the comment is kept.
-        self.assertEqual(len(entries), 1)
+        with patch.object(
+            client, '_fetch_current_user_logins',
+            side_effect=AssertionError('should not resolve'),
+        ):
+            entries = client._task_comment_entries([
+                self._raw('@alice can you take a look'),
+            ])
+        self.assertEqual(len(entries), 0)
+
+    def test_unset_login_resolved_via_users_me_drops_human_mentions(self) -> None:
+        # The reported bug: ``assignee: me`` left the filter off, so a
+        # comment @-mentioning a HUMAN was worked by the agent. Now the
+        # real login is resolved from ``/api/users/me`` and the mention is
+        # dropped, while a comment @-mentioning the bot is kept.
+        client = YouTrackClient('https://x.example', 'tk')  # unset login
+        with patch.object(
+            client, '_fetch_current_user_logins', return_value=('kato_bot',),
+        ) as fetch:
+            entries = client._task_comment_entries([
+                self._raw('@alice please review'),           # dropped (human)
+                self._raw('he look yada yda @Alice yes ..'),  # dropped (mid-text)
+                self._raw('general note'),                   # kept (no mention)
+                self._raw('@kato_bot fix the typo'),         # kept (bot)
+            ])
+        bodies = [e[TaskCommentFields.BODY] for e in entries]
+        self.assertEqual(bodies, ['general note', '@kato_bot fix the typo'])
+        # Resolved once and cached across all comments.
+        fetch.assert_called_once()
+
+    def test_me_alias_resolved_via_users_me_drops_human_mentions(self) -> None:
+        # ``bot_login='me'`` behaves the same as unset: resolve, then filter.
+        client = YouTrackClient('https://x.example', 'tk', bot_login='me')
+        with patch.object(
+            client, '_fetch_current_user_logins', return_value=('kato_bot',),
+        ):
+            entries = client._task_comment_entries([
+                self._raw('@alice please review'),
+            ])
+        self.assertEqual(len(entries), 0)
+
+    def test_filter_noop_when_login_unresolvable_keeps_all_comments(self) -> None:
+        # Best-effort: if ``/api/users/me`` can't be resolved the filter
+        # stays a no-op rather than dropping everything (or raising).
+        client = YouTrackClient('https://x.example', 'tk')  # unset login
+        with patch.object(
+            client, '_fetch_current_user_logins', return_value=(),
+        ):
+            entries = client._task_comment_entries([
+                self._raw('@alice please review'),
+                self._raw('general note'),
+                self._raw('@kato_bot fix typo'),
+            ])
+        self.assertEqual(len(entries), 3)
 
 
 if __name__ == '__main__':

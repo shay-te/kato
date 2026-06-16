@@ -11,6 +11,7 @@ import unittest
 
 from provider_client_base.provider_client_base.helpers.mention_utils import (
     extract_mention_logins,
+    is_addressed_elsewhere_from_mentions,
     is_comment_addressed_elsewhere,
     is_comment_addressed_elsewhere_any,
 )
@@ -225,6 +226,61 @@ class IsCommentAddressedElsewhereAnyTests(unittest.TestCase):
     def test_non_string_body_is_handled(self) -> None:
         self.assertFalse(is_comment_addressed_elsewhere_any(42, self.BOT))
         self.assertFalse(is_comment_addressed_elsewhere_any(None, self.BOT))
+
+
+class MentionMidSentenceTests(unittest.TestCase):
+    """A mention embedded in prose (not at the start) must still count."""
+
+    SENTENCE = 'he look yada yda @Alice yes ..'
+
+    def test_extract_finds_mid_sentence_mention(self) -> None:
+        self.assertEqual(extract_mention_logins(self.SENTENCE), ['alice'])
+
+    def test_addressed_elsewhere_when_bot_is_someone_else(self) -> None:
+        self.assertTrue(is_comment_addressed_elsewhere(self.SENTENCE, 'kato_bot'))
+
+    def test_kept_when_bot_is_the_one_mentioned(self) -> None:
+        self.assertFalse(is_comment_addressed_elsewhere(self.SENTENCE, 'alice'))
+
+
+class IsAddressedElsewhereFromMentionsTests(unittest.TestCase):
+    """Direct contract for the already-extracted-identities entry point."""
+
+    def test_human_only_mentions_are_elsewhere(self) -> None:
+        self.assertTrue(
+            is_addressed_elsewhere_from_mentions(['alice'], 'kato_bot'))
+
+    def test_bot_among_mentions_is_kept(self) -> None:
+        self.assertFalse(
+            is_addressed_elsewhere_from_mentions(['alice', 'kato_bot'], 'kato_bot'))
+
+    def test_no_mentions_is_kept(self) -> None:
+        self.assertFalse(is_addressed_elsewhere_from_mentions([], 'kato_bot'))
+        self.assertFalse(is_addressed_elsewhere_from_mentions(None, 'kato_bot'))
+
+    def test_empty_or_me_bot_disables(self) -> None:
+        self.assertFalse(is_addressed_elsewhere_from_mentions(['alice'], ''))
+        self.assertFalse(is_addressed_elsewhere_from_mentions(['alice'], 'me'))
+
+    def test_normalizes_case_and_whitespace_on_both_sides(self) -> None:
+        # Account ids / handles compared case-insensitively, stripped.
+        self.assertFalse(
+            is_addressed_elsewhere_from_mentions(['  Kato_Bot '], ' kato_bot '))
+        self.assertTrue(
+            is_addressed_elsewhere_from_mentions(['Alice'], 'Kato_Bot'))
+
+    def test_accepts_multiple_bot_logins(self) -> None:
+        # A bot known under several ids — match on ANY of them is "for bot".
+        self.assertFalse(
+            is_addressed_elsewhere_from_mentions(
+                ['557058:abc'], ['kato_handle', '557058:abc']))
+        self.assertTrue(
+            is_addressed_elsewhere_from_mentions(
+                ['alice-id'], ['kato_handle', '557058:abc']))
+
+    def test_blank_only_mentions_are_kept(self) -> None:
+        self.assertFalse(
+            is_addressed_elsewhere_from_mentions(['', '   '], 'kato_bot'))
 
 
 if __name__ == '__main__':

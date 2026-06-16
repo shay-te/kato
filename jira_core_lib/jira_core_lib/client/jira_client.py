@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Callable
 
 from provider_client_base.provider_client_base.client.issue_client_base import (
@@ -7,12 +8,17 @@ from provider_client_base.provider_client_base.client.issue_client_base import (
 )
 from provider_client_base.provider_client_base.data.issue_record import IssueRecord
 from provider_client_base.provider_client_base.helpers.mention_utils import (
-    is_comment_addressed_elsewhere,
+    extract_mention_logins,
 )
 from provider_client_base.provider_client_base.helpers.text_utils import (
     normalized_text,
     text_from_mapping,
 )
+
+# Jira wiki-markup mention, e.g. ``[~jsmith]`` (Server) or
+# ``[~accountid:557058:abc-…]`` (Cloud raw). Captures the identity,
+# dropping the optional ``accountid:`` prefix.
+_JIRA_WIKI_MENTION = re.compile(r'\[~(?:accountid:)?([^\]]+)\]')
 
 from jira_core_lib.jira_core_lib.data.fields import (
     JiraAttachmentFields,
@@ -37,6 +43,9 @@ from provider_client_base.provider_client_base.client.issue_client_base import (
 class JiraClient(IssueClientBase):
     provider_name = 'jira'
     MAX_TEXT_ATTACHMENT_CHARS = 5000
+    # ``assignee: currentUser()`` is a JQL function, not a real mention
+    # handle — treat it as unset so the bot's real identity is resolved.
+    _BOT_LOGIN_ALIASES = frozenset({'currentuser()'})
 
     def __init__(
         self,
@@ -52,12 +61,87 @@ class JiraClient(IssueClientBase):
         self._is_operational_comment: Callable[[str], bool] = (
             is_operational_comment or (lambda _: False)
         )
-        # See provider_client_base.helpers.mention_utils for the rule;
-        # empty value disables the @-mention filter.
-        self._bot_login = str(bot_login or '').strip()
+        # @-mention filter (see IssueClientBase). When ``assignee`` is unset
+        # or ``currentUser()``, the bot's real identities are resolved from
+        # ``/rest/api/3/myself``.
+        self._configure_bot_login(bot_login)
         if str(user_email or '').strip():
             self.headers = None
             self.set_auth((str(user_email).strip(), token))
+
+    def _fetch_current_user_logins(self) -> tuple:
+        """Resolve the bot's Jira identities from ``/rest/api/3/myself``.
+
+        Returns the lowercased accountId / name / displayName (whichever are
+        present) so a mention encoded under any of those forms matches.
+        Best-effort: returns ``()`` on any error.
+        """
+        try:
+            response = self._get_with_retry('/rest/api/3/myself')
+            response.raise_for_status()
+            payload = response.json() or {}
+            # ``accountId`` (Cloud) + ``name`` (Server username) +
+            # ``displayName`` cover both deployment styles.
+            identities = [
+                str(payload.get(field, '') or '').strip().lower()
+                for field in ('accountId', 'name', JiraCommentFields.DISPLAY_NAME)
+            ]
+            return tuple(identity for identity in identities if identity)
+        except Exception:
+            return ()
+
+    @staticmethod
+    def _mention_node_ids(node: dict) -> list[str]:
+        """accountId + (``@``-stripped) display text from one mention node."""
+        attrs = node.get('attrs')
+        if not isinstance(attrs, dict):
+            return []
+        ids = []
+        account_id = str(attrs.get('id', '') or '').strip()
+        if account_id:
+            ids.append(account_id)
+        text = str(attrs.get('text', '') or '').strip().lstrip('@').strip()
+        if text:
+            ids.append(text)
+        return ids
+
+    @classmethod
+    def _adf_mention_ids(cls, value: Any) -> list[str]:
+        """Account ids + display handles from ADF ``mention`` nodes.
+
+        Jira Cloud stores a mention as ``{"type": "mention", "attrs":
+        {"id": "<accountId>", "text": "@Display Name"}}`` — which the
+        plain-text flattening drops entirely — so we walk the raw ADF and
+        collect both the accountId and the (``@``-stripped) display text.
+        """
+        if isinstance(value, list):
+            return [mid for item in value for mid in cls._adf_mention_ids(item)]
+        if not isinstance(value, dict):
+            return []
+        ids: list[str] = []
+        if value.get('type') == 'mention':
+            ids.extend(cls._mention_node_ids(value))
+        content = value.get('content')
+        if isinstance(content, list):
+            for item in content:
+                ids.extend(cls._adf_mention_ids(item))
+        return ids
+
+    def _extract_comment_mentions(self, body: object) -> list[str]:
+        """Mention identities in a Jira comment, across encodings.
+
+        Combines ADF mention nodes (accountId + display text), plain
+        ``@login`` text, and wiki-markup ``[~user]`` / ``[~accountid:…]``
+        so a human mention is recognized whether the body is ADF (Cloud)
+        or wiki markup (Server).
+        """
+        mentions = list(self._adf_mention_ids(body))
+        flattened = self._adf_to_text(body)
+        mentions.extend(extract_mention_logins(flattened))
+        mentions.extend(
+            match.group(1) for match in _JIRA_WIKI_MENTION.finditer(flattened)
+        )
+        return mentions
 
     def validate_connection(self, project: str, assignee: str, states: list[str]) -> None:
         response = self._get_with_retry(
@@ -221,11 +305,11 @@ class JiraClient(IssueClientBase):
             extract_author=lambda c: self._safe_dict(c, JiraCommentFields.AUTHOR).get(
                 JiraCommentFields.DISPLAY_NAME
             ),
-            # Drop comments addressed to humans other than the kato
-            # bot — see provider_client_base.helpers.mention_utils.
-            skip=lambda c: is_comment_addressed_elsewhere(
-                self._adf_to_text(c.get(JiraCommentFields.BODY)),
-                self._bot_login,
+            # Drop comments addressed to humans other than the kato bot.
+            # Pass the RAW body so ADF mention nodes (which the plain-text
+            # flattening drops) are seen — see _extract_comment_mentions.
+            skip=lambda c: self._comment_addressed_elsewhere(
+                c.get(JiraCommentFields.BODY),
             ),
         )
 

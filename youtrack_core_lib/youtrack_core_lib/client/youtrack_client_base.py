@@ -7,9 +7,6 @@ from typing import Any
 from provider_client_base.provider_client_base.client.issue_client_base import (
     IssueClientBase,
 )
-from provider_client_base.provider_client_base.helpers.mention_utils import (
-    is_comment_addressed_elsewhere,
-)
 
 from youtrack_core_lib.youtrack_core_lib.data.fields import TaskCommentFields
 from youtrack_core_lib.youtrack_core_lib.data.task import Task
@@ -47,11 +44,19 @@ class YouTrackClientBase(IssueClientBase):
     ``assignee``). When set, comments that contain @-mentions but none
     of those mentions match this login are treated as "addressed to a
     human, not the bot" and dropped from the task description / context.
-    Comments with no @-mention at all are unaffected. Empty string (or
-    the YouTrack pseudo-login ``"me"``, which is an alias, not a real
-    user) disables the filter so the host opts in by configuring a real
-    login.
+    Comments with no @-mention at all are unaffected. When ``bot_login``
+    is empty or the YouTrack pseudo-login ``"me"`` (an alias, not a real
+    user that could ever match a literal ``@mention``), the bot's real
+    login is resolved lazily from ``/api/users/me`` on first use so the
+    filter still works for the common ``assignee: me`` setup — see
+    ``IssueClientBase._effective_bot_logins`` and the
+    ``_fetch_current_user_logins`` override below. The filter only no-ops
+    if that resolution itself fails.
     """
+
+    # ``"me"`` is a YouTrack query alias, not a real login — treat it as
+    # unset so the real identity is resolved from ``/api/users/me``.
+    _BOT_LOGIN_ALIASES = frozenset({'me'})
 
     def __init__(
         self,
@@ -64,12 +69,13 @@ class YouTrackClientBase(IssueClientBase):
     ) -> None:
         super().__init__(base_url, token, timeout=timeout, max_retries=max_retries)
         self._operational_comment_prefixes = tuple(operational_comment_prefixes or ())
-        normalized_login = normalized_text(str(bot_login or '')).lower()
-        # ``"me"`` is a YouTrack alias for "the calling user", not a
-        # real login — it works for issue queries but can never match
-        # a comment's literal ``@mention`` text, so treat it as
-        # "filter disabled" rather than emitting it as the bot id.
-        self._bot_login = '' if normalized_login == 'me' else normalized_login
+        # @-mention filter (see IssueClientBase). ``"me"`` is a YouTrack alias
+        # for "the calling user" — it works for issue queries but can never
+        # match a comment's literal ``@mention``, so it's treated as unset and
+        # the bot's real login is resolved from ``/api/users/me`` instead of
+        # leaving the filter disabled (which let comments @-mentioning a HUMAN
+        # slip through and get worked by the agent).
+        self._configure_bot_login(bot_login)
 
     # ----- abstract interface -----
 
@@ -252,16 +258,24 @@ class YouTrackClientBase(IssueClientBase):
             TaskCommentFields.BODY: normalized_body,
         }
 
-    def _comment_is_addressed_elsewhere(self, body_text: object) -> bool:
-        """Thin wrapper around the shared mention filter.
+    def _fetch_current_user_logins(self) -> tuple:
+        """Resolve the bot's YouTrack login via ``/api/users/me``.
 
-        Kept as an instance method so callers can pass the predicate
-        without having to thread ``self._bot_login`` through every
-        callsite. See
-        :func:`provider_client_base.helpers.mention_utils.is_comment_addressed_elsewhere`
-        for the rule.
+        Used only when no real ``assignee`` login was configured (the common
+        ``assignee: me`` setup), so a comment @-mentioning a human is still
+        recognized and skipped. Best-effort: returns ``()`` on any error or
+        when YouTrack echoes back the ``me`` alias.
         """
-        return is_comment_addressed_elsewhere(body_text, self._bot_login)
+        try:
+            response = self._get_with_retry(
+                '/api/users/me', params={'fields': 'login'},
+            )
+            response.raise_for_status()
+            payload = response.json() or {}
+            login = normalized_lower_text(str(payload.get('login', '') or ''))
+            return (login,) if login and login != 'me' else ()
+        except Exception:
+            return ()
 
     # ----- attachments -----
 

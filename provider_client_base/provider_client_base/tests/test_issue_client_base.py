@@ -423,5 +423,124 @@ class GetAttachmentWithRetryTests(unittest.TestCase):
         mock_get.assert_called_once()
 
 
+# ---------------------------------------------------------------------------
+# @-mention bot-identity scaffold
+# ---------------------------------------------------------------------------
+
+class _AliasClient(IssueClientBase):
+    """Concrete client with a bot-login alias (like youtrack's ``me``)."""
+    provider_name = 'test'
+    _BOT_LOGIN_ALIASES = frozenset({'me'})
+
+
+def _alias_client(**kwargs) -> _AliasClient:
+    return _AliasClient('https://api.example.com', 'token', timeout=30, **kwargs)
+
+
+class ConfigureBotLoginTests(unittest.TestCase):
+    def test_real_login_stored_lowercased(self) -> None:
+        client = _make_client()
+        client._configure_bot_login('Kato_Bot')
+        self.assertEqual(client._bot_login, 'kato_bot')
+
+    def test_empty_and_whitespace_stored_as_unset(self) -> None:
+        client = _make_client()
+        client._configure_bot_login('   ')
+        self.assertEqual(client._bot_login, '')
+        client._configure_bot_login(None)
+        self.assertEqual(client._bot_login, '')
+
+    def test_alias_treated_as_unset(self) -> None:
+        client = _alias_client()
+        client._configure_bot_login('ME')  # case-insensitive alias match
+        self.assertEqual(client._bot_login, '')
+
+
+class EffectiveBotLoginsTests(unittest.TestCase):
+    def test_configured_login_returned_without_resolving(self) -> None:
+        client = _make_client()
+        client._configure_bot_login('kato_bot')
+        with patch.object(
+            client, '_fetch_current_user_logins',
+            side_effect=AssertionError('should not resolve'),
+        ):
+            self.assertEqual(client._effective_bot_logins(), ('kato_bot',))
+
+    def test_unset_resolves_once_and_caches(self) -> None:
+        client = _make_client()
+        client._configure_bot_login('')
+        with patch.object(
+            client, '_fetch_current_user_logins', return_value=('resolved',),
+        ) as fetch:
+            self.assertEqual(client._effective_bot_logins(), ('resolved',))
+            self.assertEqual(client._effective_bot_logins(), ('resolved',))
+        fetch.assert_called_once()
+
+    def test_unresolvable_caches_empty_without_refetch(self) -> None:
+        client = _make_client()
+        client._configure_bot_login('')
+        with patch.object(
+            client, '_fetch_current_user_logins', return_value=(),
+        ) as fetch:
+            self.assertEqual(client._effective_bot_logins(), ())
+            self.assertEqual(client._effective_bot_logins(), ())
+        fetch.assert_called_once()
+
+    def test_default_fetch_returns_empty(self) -> None:
+        # Base default does no resolution (subclasses override).
+        self.assertEqual(_make_client()._fetch_current_user_logins(), ())
+
+
+class DefaultExtractMentionsTests(unittest.TestCase):
+    def test_default_extractor_is_at_login(self) -> None:
+        client = _make_client()
+        self.assertEqual(
+            client._extract_comment_mentions('hi @alice and @bob_jr'),
+            ['alice', 'bob_jr'],
+        )
+
+    def test_default_extractor_handles_mid_sentence(self) -> None:
+        client = _make_client()
+        self.assertEqual(
+            client._extract_comment_mentions('he look yada yda @Alice yes ..'),
+            ['alice'],
+        )
+
+
+class CommentAddressedElsewhereTests(unittest.TestCase):
+    def test_no_mention_short_circuits_without_resolving(self) -> None:
+        client = _make_client()
+        client._configure_bot_login('')
+        with patch.object(
+            client, '_fetch_current_user_logins',
+            side_effect=AssertionError('should not resolve'),
+        ):
+            self.assertFalse(client._comment_addressed_elsewhere('plain note'))
+
+    def test_human_mention_is_elsewhere(self) -> None:
+        client = _make_client()
+        client._configure_bot_login('kato_bot')
+        self.assertTrue(client._comment_addressed_elsewhere('@alice ping'))
+
+    def test_mid_sentence_human_mention_is_elsewhere(self) -> None:
+        client = _make_client()
+        client._configure_bot_login('kato_bot')
+        self.assertTrue(
+            client._comment_addressed_elsewhere('he look yada yda @Alice yes ..'))
+
+    def test_bot_mention_is_kept(self) -> None:
+        client = _make_client()
+        client._configure_bot_login('kato_bot')
+        self.assertFalse(client._comment_addressed_elsewhere('@kato_bot ping'))
+
+    def test_unresolvable_identity_keeps_comment(self) -> None:
+        client = _make_client()
+        client._configure_bot_login('')
+        with patch.object(
+            client, '_fetch_current_user_logins', return_value=(),
+        ):
+            self.assertFalse(client._comment_addressed_elsewhere('@alice ping'))
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -587,8 +587,6 @@ class BitbucketIssuesClientFlowTests(unittest.TestCase):
         move_resp = mock_response()
 
         get_calls = [validate_resp, issues_resp, comments_resp]
-        post_calls = [add_comment_resp]
-        put_calls = [move_resp]
 
         with patch.object(client, '_get', side_effect=get_calls), \
              patch.object(client, '_post', return_value=add_comment_resp), \
@@ -715,16 +713,12 @@ class BitbucketMentionFilterWiringTests(unittest.TestCase):
             },
         }
 
-    def test_default_bot_login_disables_filter(self) -> None:
+    def test_unset_bot_login_attribute_is_empty(self) -> None:
         client = self._make_client()
         self.assertEqual(client._bot_login, '')
-        entries = client._task_comment_entries([
-            self._raw('@alice please look'),
-        ])
-        self.assertEqual(len(entries), 1)
 
     def test_mention_filter_drops_addressed_to_other_humans(self) -> None:
-        # The reported bug, Bitbucket edition.
+        # Plain @login text (explicit login configured).
         client = self._make_client(bot_login='kato_bot')
         entries = client._task_comment_entries([
             self._raw('@alice can you handle this'),       # dropped
@@ -735,3 +729,112 @@ class BitbucketMentionFilterWiringTests(unittest.TestCase):
         self.assertIn('this also needs a unit test', bodies)
         self.assertIn('@kato_bot fix the typo', bodies)
         self.assertNotIn('@alice can you handle this', bodies)
+
+    def test_mid_sentence_mention_is_dropped(self) -> None:
+        client = self._make_client(bot_login='kato_bot')
+        entries = client._task_comment_entries([
+            self._raw('he look yada yda @Alice yes ..'),
+        ])
+        self.assertEqual(entries, [])
+
+    def test_brace_account_id_mention_for_human_is_dropped(self) -> None:
+        # The real Bitbucket bug: Cloud encodes mentions as ``@{account_id}``
+        # which the plain @login regex can't see — so a comment tagging a
+        # human slipped through. Resolve the bot's account_id and drop it.
+        client = self._make_client()
+        with patch.object(
+            client, '_fetch_current_user_logins', return_value=('kato-account',),
+        ):
+            entries = client._task_comment_entries([
+                self._raw('@{alice-account} please take a look'),
+            ])
+        self.assertEqual(entries, [])
+
+    def test_brace_account_id_mention_for_bot_is_kept(self) -> None:
+        client = self._make_client()
+        with patch.object(
+            client, '_fetch_current_user_logins', return_value=('kato-account',),
+        ):
+            entries = client._task_comment_entries([
+                self._raw('@{kato-account} please fix'),
+            ])
+        self.assertEqual(len(entries), 1)
+
+    def test_unset_login_resolved_drops_human_keeps_bot_and_plain(self) -> None:
+        client = self._make_client()
+        with patch.object(
+            client, '_fetch_current_user_logins', return_value=('kato-account',),
+        ) as fetch:
+            entries = client._task_comment_entries([
+                self._raw('@{alice-account} can you handle this'),  # dropped
+                self._raw('a general note'),                        # kept
+                self._raw('@{kato-account} fix the typo'),          # kept
+            ])
+        bodies = [e[ISSUE_COMMENT_BODY] for e in entries]
+        self.assertEqual(
+            bodies, ['a general note', '@{kato-account} fix the typo'])
+        fetch.assert_called_once()
+
+    def test_filter_noop_when_identity_unresolvable_keeps_all(self) -> None:
+        client = self._make_client()
+        with patch.object(
+            client, '_fetch_current_user_logins', return_value=(),
+        ):
+            entries = client._task_comment_entries([
+                self._raw('@{alice-account} ping')])
+        self.assertEqual(len(entries), 1)
+
+    def test_explicit_login_does_not_resolve(self) -> None:
+        client = self._make_client(bot_login='kato_bot')
+        with patch.object(
+            client, '_fetch_current_user_logins',
+            side_effect=AssertionError('should not resolve'),
+        ):
+            entries = client._task_comment_entries([self._raw('@alice ping')])
+        self.assertEqual(entries, [])
+
+    # ----- _fetch_current_user_logins -----
+
+    def test_fetch_current_user_logins_all_fields(self) -> None:
+        client = self._make_client()
+        with patch.object(
+            client, '_get_with_retry',
+            return_value=mock_response(json_data={
+                'account_id': '557058:ABC', 'nickname': 'KatoBot',
+                'uuid': '{9133-DEF}',
+            }),
+        ) as get:
+            self.assertEqual(
+                client._fetch_current_user_logins(),
+                ('557058:abc', 'katobot', '9133-def'),  # uuid braces stripped
+            )
+        get.assert_called_once_with('/2.0/user')
+
+    def test_fetch_current_user_logins_subset(self) -> None:
+        client = self._make_client()
+        with patch.object(
+            client, '_get_with_retry',
+            return_value=mock_response(json_data={'account_id': '557058:abc'}),
+        ):
+            self.assertEqual(
+                client._fetch_current_user_logins(), ('557058:abc',))
+
+    def test_fetch_current_user_logins_error(self) -> None:
+        client = self._make_client()
+        with patch.object(
+            client, '_get_with_retry', side_effect=RuntimeError('401'),
+        ):
+            self.assertEqual(client._fetch_current_user_logins(), ())
+
+    # ----- _extract_comment_mentions -----
+
+    def test_extract_mentions_combines_brace_and_plain(self) -> None:
+        client = self._make_client()
+        self.assertEqual(
+            client._extract_comment_mentions('hi @{alice-id} and @bob_jr'),
+            ['alice-id', 'bob_jr'],
+        )
+
+    def test_extract_mentions_empty_body(self) -> None:
+        client = self._make_client()
+        self.assertEqual(client._extract_comment_mentions(None), [])

@@ -524,18 +524,13 @@ class GitLabIssuesClientCommentEntriesTests(unittest.TestCase):
 
         self.assertEqual(entries, [])
 
-    def test_default_bot_login_disables_filter(self) -> None:
-        # Backward-compat path: filter stays off when host hasn't
-        # configured ``bot_login``.
+    def test_unset_bot_login_attribute_is_empty(self) -> None:
+        # Configured login empty; effective login resolved from GET /user.
         client = _make_client()
         self.assertEqual(client._bot_login, '')
-        entries = client._task_comment_entries([
-            _note('@alice please look', 'op'),
-        ])
-        self.assertEqual(len(entries), 1)
 
     def test_mention_filter_drops_addressed_to_other_humans(self) -> None:
-        # The reported bug, GitLab edition.
+        # The reported bug, GitLab edition (explicit username configured).
         client = _make_client(bot_login='kato_bot')
         entries = client._task_comment_entries([
             _note('@alice can you handle this', 'op'),     # dropped
@@ -550,6 +545,69 @@ class GitLabIssuesClientCommentEntriesTests(unittest.TestCase):
         # system note also dropped — the @-mention filter composes
         # with the existing system-notes skip.
         self.assertNotIn('assigned to @alice', bodies)
+
+    def test_mid_sentence_mention_is_dropped(self) -> None:
+        client = _make_client(bot_login='kato_bot')
+        entries = client._task_comment_entries([
+            _note('he look yada yda @Alice yes ..', 'op'),
+        ])
+        self.assertEqual(entries, [])
+
+    def test_explicit_login_does_not_resolve_via_user_endpoint(self) -> None:
+        client = _make_client(bot_login='kato_bot')
+        with patch.object(
+            client, '_fetch_current_user_logins',
+            side_effect=AssertionError('should not resolve'),
+        ):
+            entries = client._task_comment_entries([_note('@alice ping', 'op')])
+        self.assertEqual(entries, [])
+
+    def test_unset_login_resolved_via_user_endpoint_drops_human_mentions(self) -> None:
+        # The fix: resolve the bot's real username from GET /user so a
+        # comment @-mentioning a human is still dropped.
+        client = _make_client()
+        with patch.object(
+            client, '_fetch_current_user_logins', return_value=('kato_bot',),
+        ) as fetch:
+            entries = client._task_comment_entries([
+                _note('@alice can you handle this', 'op'),  # dropped
+                _note('a general note', 'op'),              # kept (no mention)
+                _note('@kato_bot fix the typo', 'op'),      # kept (bot)
+            ])
+        bodies = [e[ISSUE_COMMENT_BODY] for e in entries]
+        self.assertEqual(bodies, ['a general note', '@kato_bot fix the typo'])
+        fetch.assert_called_once()
+
+    def test_filter_noop_when_login_unresolvable_keeps_all(self) -> None:
+        client = _make_client()
+        with patch.object(
+            client, '_fetch_current_user_logins', return_value=(),
+        ):
+            entries = client._task_comment_entries([_note('@alice ping', 'op')])
+        self.assertEqual(len(entries), 1)
+
+    def test_fetch_current_user_logins_success(self) -> None:
+        client = _make_client()
+        with patch.object(
+            client, '_get_with_retry',
+            return_value=mock_response(json_data={'username': 'Kato_Bot'}),
+        ) as get:
+            self.assertEqual(client._fetch_current_user_logins(), ('kato_bot',))
+        get.assert_called_once_with('/user')
+
+    def test_fetch_current_user_logins_missing_username(self) -> None:
+        client = _make_client()
+        with patch.object(
+            client, '_get_with_retry', return_value=mock_response(json_data={}),
+        ):
+            self.assertEqual(client._fetch_current_user_logins(), ())
+
+    def test_fetch_current_user_logins_error(self) -> None:
+        client = _make_client()
+        with patch.object(
+            client, '_get_with_retry', side_effect=RuntimeError('401'),
+        ):
+            self.assertEqual(client._fetch_current_user_logins(), ())
 
 
 class GitLabIssuesClientStaticHelpersTests(unittest.TestCase):

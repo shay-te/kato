@@ -1086,18 +1086,36 @@ class JiraMentionFilterWiringTests(unittest.TestCase):
             JiraCommentFields.BODY: self._adf(text),
         }
 
-    def test_default_bot_login_is_empty_so_filter_is_disabled(self) -> None:
-        client = JiraClient('https://jira.example', 'jira-token')
+    @staticmethod
+    def _mention_node(account_id: str, text: str) -> dict:
+        return {'type': 'mention', 'attrs': {'id': account_id, 'text': text}}
+
+    def _raw_nodes(self, *nodes: dict) -> dict:
+        return {
+            JiraCommentFields.AUTHOR: {JiraCommentFields.DISPLAY_NAME: 'Operator'},
+            JiraCommentFields.BODY: {
+                'type': 'doc', 'version': 1, 'content': [
+                    {'type': 'paragraph', 'content': list(nodes)},
+                ],
+            },
+        }
+
+    @staticmethod
+    def _client(**kwargs) -> JiraClient:
+        return JiraClient('https://jira.example', 'jira-token', **kwargs)
+
+    def test_unset_bot_login_attribute_is_empty(self) -> None:
+        client = self._client()
         self.assertEqual(client._bot_login, '')
-        entries = client._task_comment_entries([
-            self._raw('@alice please review'),
-        ])
-        self.assertEqual(len(entries), 1)
+
+    def test_currentuser_jql_alias_treated_as_unset(self) -> None:
+        # ``assignee: currentUser()`` is a JQL function, never a mention.
+        client = self._client(bot_login='currentUser()')
+        self.assertEqual(client._bot_login, '')
 
     def test_filter_drops_addressed_to_humans_other_than_bot(self) -> None:
-        client = JiraClient(
-            'https://jira.example', 'jira-token', bot_login='kato_bot',
-        )
+        # Plain @login text (explicit login configured).
+        client = self._client(bot_login='kato_bot')
         entries = client._task_comment_entries([
             self._raw('@alice can you take a look'),       # dropped
             self._raw('this also needs a unit test'),      # kept
@@ -1107,3 +1125,149 @@ class JiraMentionFilterWiringTests(unittest.TestCase):
         self.assertIn('this also needs a unit test', bodies)
         self.assertIn('@kato_bot please fix the typo', bodies)
         self.assertNotIn('@alice can you take a look', bodies)
+
+    def test_mid_sentence_mention_is_dropped(self) -> None:
+        client = self._client(bot_login='kato_bot')
+        entries = client._task_comment_entries([
+            self._raw('he look yada yda @Alice yes ..'),
+        ])
+        self.assertEqual(entries, [])
+
+    def test_adf_mention_node_for_human_is_dropped(self) -> None:
+        # The real Jira bug: a Cloud mention is an ADF node (not @text),
+        # which the plain-text flattening dropped — so a comment tagging a
+        # human used to slip through. Resolve the bot's accountId and drop.
+        client = self._client()
+        with patch.object(
+            client, '_fetch_current_user_logins', return_value=('kato-account',),
+        ):
+            entries = client._task_comment_entries([
+                self._raw_nodes(
+                    self._mention_node('alice-account', '@Alice'),
+                    {'type': 'text', 'text': ' please take a look'},
+                ),
+            ])
+        self.assertEqual(entries, [])
+
+    def test_adf_mention_node_for_bot_is_kept(self) -> None:
+        client = self._client()
+        with patch.object(
+            client, '_fetch_current_user_logins', return_value=('kato-account',),
+        ):
+            entries = client._task_comment_entries([
+                self._raw_nodes(
+                    self._mention_node('kato-account', '@Kato Bot'),
+                    {'type': 'text', 'text': ' please fix'},
+                ),
+            ])
+        self.assertEqual(len(entries), 1)
+
+    def test_wiki_markup_mention_for_human_is_dropped(self) -> None:
+        # Jira Server stores mentions as wiki markup ``[~username]`` in a
+        # plain-string body.
+        client = self._client()
+        with patch.object(
+            client, '_fetch_current_user_logins', return_value=('kato_bot',),
+        ):
+            entries = client._task_comment_entries([
+                {
+                    JiraCommentFields.AUTHOR: {
+                        JiraCommentFields.DISPLAY_NAME: 'Operator'},
+                    JiraCommentFields.BODY: '[~jsmith] please take this',
+                },
+            ])
+        self.assertEqual(entries, [])
+
+    def test_unset_login_resolved_drops_human_keeps_bot_and_plain(self) -> None:
+        client = self._client()
+        with patch.object(
+            client, '_fetch_current_user_logins', return_value=('kato_bot',),
+        ) as fetch:
+            entries = client._task_comment_entries([
+                self._raw('@alice please review'),          # dropped
+                self._raw('a general note'),                # kept (no mention)
+                self._raw('@kato_bot fix the typo'),        # kept (bot)
+            ])
+        bodies = [e[ISSUE_COMMENT_BODY] for e in entries]
+        self.assertEqual(bodies, ['a general note', '@kato_bot fix the typo'])
+        fetch.assert_called_once()
+
+    def test_filter_noop_when_identity_unresolvable_keeps_all(self) -> None:
+        client = self._client()
+        with patch.object(
+            client, '_fetch_current_user_logins', return_value=(),
+        ):
+            entries = client._task_comment_entries([self._raw('@alice ping')])
+        self.assertEqual(len(entries), 1)
+
+    def test_explicit_login_does_not_resolve(self) -> None:
+        client = self._client(bot_login='kato_bot')
+        with patch.object(
+            client, '_fetch_current_user_logins',
+            side_effect=AssertionError('should not resolve'),
+        ):
+            entries = client._task_comment_entries([self._raw('@alice ping')])
+        self.assertEqual(entries, [])
+
+    # ----- _fetch_current_user_logins -----
+
+    def test_fetch_current_user_logins_all_fields(self) -> None:
+        client = self._client()
+        with patch.object(
+            client, '_get_with_retry',
+            return_value=mock_response(json_data={
+                'accountId': '557058:ABC', 'name': 'KatoUser',
+                'displayName': 'Kato Bot',
+            }),
+        ) as get:
+            self.assertEqual(
+                client._fetch_current_user_logins(),
+                ('557058:abc', 'katouser', 'kato bot'),
+            )
+        get.assert_called_once_with('/rest/api/3/myself')
+
+    def test_fetch_current_user_logins_subset_of_fields(self) -> None:
+        client = self._client()
+        with patch.object(
+            client, '_get_with_retry',
+            return_value=mock_response(json_data={'accountId': '557058:abc'}),
+        ):
+            self.assertEqual(
+                client._fetch_current_user_logins(), ('557058:abc',))
+
+    def test_fetch_current_user_logins_error(self) -> None:
+        client = self._client()
+        with patch.object(
+            client, '_get_with_retry', side_effect=RuntimeError('401'),
+        ):
+            self.assertEqual(client._fetch_current_user_logins(), ())
+
+    # ----- _adf_mention_ids / _mention_node_ids units -----
+
+    def test_adf_mention_ids_collects_id_and_text(self) -> None:
+        ids = JiraClient._adf_mention_ids(
+            self._mention_node('acct-1', '@Display Name'))
+        self.assertEqual(ids, ['acct-1', 'Display Name'])
+
+    def test_adf_mention_ids_walks_nested_content_and_lists(self) -> None:
+        node = {'type': 'doc', 'content': [
+            {'type': 'paragraph', 'content': [
+                self._mention_node('acct-1', '@A'),
+            ]},
+            [self._mention_node('acct-2', '@B')],
+        ]}
+        self.assertEqual(JiraClient._adf_mention_ids(node), ['acct-1', 'A', 'acct-2', 'B'])
+
+    def test_adf_mention_ids_ignores_non_dict_and_bad_attrs(self) -> None:
+        self.assertEqual(JiraClient._adf_mention_ids('plain string'), [])
+        self.assertEqual(JiraClient._adf_mention_ids(42), [])
+        # mention node with no/invalid attrs yields nothing
+        self.assertEqual(
+            JiraClient._adf_mention_ids({'type': 'mention'}), [])
+        self.assertEqual(
+            JiraClient._adf_mention_ids(
+                {'type': 'mention', 'attrs': 'nope'}), [])
+        # mention node with empty id/text yields nothing
+        self.assertEqual(
+            JiraClient._adf_mention_ids(
+                {'type': 'mention', 'attrs': {'id': '', 'text': '@'}}), [])

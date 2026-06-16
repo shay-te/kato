@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from youtrack_core_lib.youtrack_core_lib.client.youtrack_client_base import (
     UNTRUSTED_ISSUE_COMMENTS_SECTION_TITLE,
@@ -431,6 +431,112 @@ class SectionTitleConstantsTests(unittest.TestCase):
             UNTRUSTED_SCREENSHOT_ATTACHMENTS_SECTION_TITLE,
         }
         self.assertEqual(len(titles), 3)
+
+
+def _make_base_with_login(bot_login=''):
+    return YouTrackClientBase(
+        BASE_URL, TOKEN, timeout=5, max_retries=1, bot_login=bot_login,
+    )
+
+
+class YouTrackFetchCurrentUserLoginsTests(unittest.TestCase):
+    """``_fetch_current_user_logins`` — best-effort ``/api/users/me`` read."""
+
+    def test_success_returns_lowercased_login_tuple(self):
+        client = _make_base_with_login('')
+        with patch.object(
+            client, '_get_with_retry',
+            return_value=mock_response(json_data={'login': 'Kato_Bot'}),
+        ) as get:
+            self.assertEqual(client._fetch_current_user_logins(), ('kato_bot',))
+        get.assert_called_once_with('/api/users/me', params={'fields': 'login'})
+
+    def test_echoed_me_alias_returns_empty(self):
+        client = _make_base_with_login('')
+        with patch.object(
+            client, '_get_with_retry',
+            return_value=mock_response(json_data={'login': 'me'}),
+        ):
+            self.assertEqual(client._fetch_current_user_logins(), ())
+
+    def test_missing_login_key_returns_empty(self):
+        client = _make_base_with_login('')
+        with patch.object(
+            client, '_get_with_retry',
+            return_value=mock_response(json_data={'name': 'Kato'}),
+        ):
+            self.assertEqual(client._fetch_current_user_logins(), ())
+
+    def test_null_payload_returns_empty(self):
+        client = _make_base_with_login('')
+        with patch.object(
+            client, '_get_with_retry',
+            return_value=mock_response(json_data=None),
+        ):
+            self.assertEqual(client._fetch_current_user_logins(), ())
+
+    def test_raise_for_status_error_returns_empty(self):
+        client = _make_base_with_login('')
+        bad = mock_response(json_data={'login': 'kato_bot'})
+        bad.raise_for_status.side_effect = RuntimeError('401')
+        with patch.object(client, '_get_with_retry', return_value=bad):
+            self.assertEqual(client._fetch_current_user_logins(), ())
+
+    def test_request_exception_returns_empty(self):
+        client = _make_base_with_login('')
+        with patch.object(
+            client, '_get_with_retry', side_effect=RuntimeError('boom'),
+        ):
+            self.assertEqual(client._fetch_current_user_logins(), ())
+
+
+class YouTrackBotIdentityWiringTests(unittest.TestCase):
+    """The ``me`` alias + scaffold wiring on the YouTrack client."""
+
+    def test_me_alias_stored_as_unset(self):
+        self.assertEqual(_make_base_with_login('me')._bot_login, '')
+
+    def test_configured_login_used_without_resolving(self):
+        client = _make_base_with_login('kato_bot')
+        with patch.object(
+            client, '_fetch_current_user_logins',
+            side_effect=AssertionError('should not resolve'),
+        ):
+            self.assertEqual(client._effective_bot_logins(), ('kato_bot',))
+
+    def test_unset_login_resolved_via_users_me_once(self):
+        client = _make_base_with_login('me')
+        with patch.object(
+            client, '_fetch_current_user_logins', return_value=('kato_bot',),
+        ) as fetch:
+            self.assertEqual(client._effective_bot_logins(), ('kato_bot',))
+            self.assertEqual(client._effective_bot_logins(), ('kato_bot',))
+        fetch.assert_called_once()
+
+
+class YouTrackCommentAddressedElsewhereTests(unittest.TestCase):
+    """``_comment_addressed_elsewhere`` with a resolved bot login."""
+
+    def setUp(self):
+        self.client = _make_base_with_login('kato_bot')
+
+    def test_mention_of_other_human_is_addressed_elsewhere(self):
+        self.assertTrue(
+            self.client._comment_addressed_elsewhere('@alice please review'))
+
+    def test_mention_mid_sentence_is_addressed_elsewhere(self):
+        # A mention embedded in prose, not at the start, must still count.
+        self.assertTrue(
+            self.client._comment_addressed_elsewhere(
+                'he look yada yda @Alice yes ..'))
+
+    def test_mention_of_bot_is_not_addressed_elsewhere(self):
+        self.assertFalse(
+            self.client._comment_addressed_elsewhere('@kato_bot fix it'))
+
+    def test_no_mention_is_not_addressed_elsewhere(self):
+        self.assertFalse(
+            self.client._comment_addressed_elsewhere('just a note'))
 
 
 if __name__ == '__main__':

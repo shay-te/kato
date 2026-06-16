@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Callable
 
 from bitbucket_core_lib.bitbucket_core_lib.client.auth import bitbucket_basic_auth_header
@@ -12,9 +13,14 @@ from provider_client_base.provider_client_base.client.issue_client_base import (
 )
 from provider_client_base.provider_client_base.data.issue_record import IssueRecord
 from provider_client_base.provider_client_base.helpers.mention_utils import (
-    is_comment_addressed_elsewhere,
+    extract_mention_logins,
 )
 from provider_client_base.provider_client_base.helpers.text_utils import normalized_text
+
+# Bitbucket Cloud raw-markup mention, e.g. ``@{557058:f58131cb-…}`` or
+# ``@{uuid}``. The braces are the mention delimiter, so the captured
+# group is the bare account_id / uuid.
+_BITBUCKET_BRACE_MENTION = re.compile(r'@\{([^}]+)\}')
 
 
 class BitbucketIssuesClient(IssueClientBase):
@@ -38,12 +44,51 @@ class BitbucketIssuesClient(IssueClientBase):
         self._is_operational_comment: Callable[[str], bool] = (
             is_operational_comment or (lambda _: False)
         )
-        # See provider_client_base.helpers.mention_utils for the rule;
-        # empty value disables the @-mention filter.
-        self._bot_login = str(bot_login or '').strip()
+        # @-mention filter (see IssueClientBase). Bitbucket comments encode
+        # mentions as ``@{account_id}``, and the configured ``assignee`` is
+        # usually a display_name/nickname — so when no usable login is set
+        # the bot's real account_id/uuid/nickname is resolved from /2.0/user.
+        self._configure_bot_login(bot_login)
         auth_username = normalized_text(username)
         if auth_username:
             self.set_headers({'Authorization': bitbucket_basic_auth_header(auth_username, token)})
+
+    def _fetch_current_user_logins(self) -> tuple:
+        """Resolve the bot's Bitbucket identities from ``GET /2.0/user``.
+
+        Returns the lowercased account_id / nickname / uuid (braces
+        stripped) so a mention by any of those forms matches. Best-effort:
+        returns ``()`` on any error.
+        """
+        try:
+            response = self._get_with_retry('/2.0/user')
+            response.raise_for_status()
+            payload = response.json() or {}
+            identities = []
+            # ``account_id`` is what ``@{…}`` mentions carry; ``uuid`` is an
+            # alternative key; ``nickname`` covers plain ``@nickname`` text.
+            for field in ('account_id', 'nickname', 'uuid'):
+                value = str(payload.get(field, '') or '').strip().strip('{}').lower()
+                if value:
+                    identities.append(value)
+            return tuple(identities)
+        except Exception:
+            return ()
+
+    def _extract_comment_mentions(self, body: object) -> list:
+        """Mention identities from a Bitbucket raw comment body.
+
+        Bitbucket Cloud writes mentions as ``@{account_id}`` (which the
+        plain ``@login`` regex can't see because of the brace), so extract
+        those explicitly and also fall back to plain ``@nickname`` text.
+        """
+        text = str(body or '')
+        mentions = [
+            match.group(1).strip().strip('{}')
+            for match in _BITBUCKET_BRACE_MENTION.finditer(text)
+        ]
+        mentions.extend(extract_mention_logins(text))
+        return mentions
 
     def validate_connection(self, project: str, assignee: str, states: list[str]) -> None:
         response = self._get_with_retry(
@@ -179,11 +224,10 @@ class BitbucketIssuesClient(IssueClientBase):
             comments,
             extract_body=extract_body,
             extract_author=extract_author,
-            # Drop comments addressed to humans other than the kato
-            # bot — see provider_client_base.helpers.mention_utils.
-            skip=lambda c: is_comment_addressed_elsewhere(
-                extract_body(c), self._bot_login,
-            ),
+            # Drop comments addressed to humans other than the kato bot —
+            # see IssueClientBase._comment_addressed_elsewhere and the
+            # Bitbucket ``@{account_id}`` extractor above.
+            skip=lambda c: self._comment_addressed_elsewhere(extract_body(c)),
         )
 
     # ----- provider-specific filtering -----

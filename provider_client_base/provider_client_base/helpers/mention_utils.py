@@ -66,6 +66,49 @@ def _normalize_bot_login(bot_login: object) -> str:
     return '' if text == 'me' else text
 
 
+def _as_login_candidates(bot_logins: object) -> tuple:
+    """Normalize the ``bot_logins`` argument to a tuple of candidates.
+
+    A bare string (or ``None``) is treated as a single login; any other
+    iterable is taken as-is.
+    """
+    if bot_logins is None or isinstance(bot_logins, str):
+        return (bot_logins,)
+    return tuple(bot_logins)
+
+
+def is_addressed_elsewhere_from_mentions(
+    mention_ids: object, bot_logins: object
+) -> bool:
+    """Apply the single rule to ALREADY-EXTRACTED mention identities.
+
+    The ``@login`` text form is only one way a platform encodes a
+    mention. Jira embeds mentions as ADF nodes keyed by ``accountId``;
+    Bitbucket writes ``@{account_id}``. Those clients extract their own
+    mention identities and call this directly, so the "mentions humans
+    other than the bot" rule and its normalization live in exactly one
+    place rather than being re-implemented per platform.
+
+    ``mention_ids`` is any iterable of strings (account ids, usernames,
+    display handles). ``bot_logins`` is one login or an iterable of the
+    bot's known logins/ids. Empty / ``"me"`` bot logins are ignored, so a
+    bot with no usable identity disables the filter (returns False).
+    """
+    mentions = {
+        str(mention).strip().lower()
+        for mention in (mention_ids or ())
+        if str(mention).strip()
+    }
+    if not mentions:
+        return False
+    logins = {_normalize_bot_login(candidate)
+              for candidate in _as_login_candidates(bot_logins)}
+    logins.discard('')
+    if not logins:
+        return False
+    return logins.isdisjoint(mentions)
+
+
 def is_comment_addressed_elsewhere_any(body: object, bot_logins: object) -> bool:
     """Same rule as :func:`is_comment_addressed_elsewhere`, but for a bot
     known under SEVERAL logins at once.
@@ -78,19 +121,14 @@ def is_comment_addressed_elsewhere_any(body: object, bot_logins: object) -> bool
     ignored, so a bot with no usable login disables the filter (returns
     False), exactly like the single-login form. A bare string is accepted as
     a single login.
+
+    For the plain ``@login`` text encoding; platforms with a different
+    mention encoding extract identities themselves and call
+    :func:`is_addressed_elsewhere_from_mentions`.
     """
-    if bot_logins is None or isinstance(bot_logins, str):
-        candidates: tuple = (bot_logins,)
-    else:
-        candidates = tuple(bot_logins)
-    logins = {_normalize_bot_login(candidate) for candidate in candidates}
-    logins.discard('')
-    if not logins:
-        return False
-    mentions = set(extract_mention_logins(body))
-    if not mentions:
-        return False
-    return logins.isdisjoint(mentions)
+    return is_addressed_elsewhere_from_mentions(
+        extract_mention_logins(body), bot_logins
+    )
 
 
 def is_comment_addressed_elsewhere(body: object, bot_login: object) -> bool:
