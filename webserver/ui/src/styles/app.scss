@@ -1098,6 +1098,22 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
     transform: rotate(360deg);
   }
 }
+
+/* Thick rotating progress ring shown on an action button while its action is
+ * in flight (``BusyIcon busy``). Chunky border + one transparent quadrant make
+ * the spin obvious; ``currentColor`` matches whatever button it sits on. */
+.kato-btn-spinner {
+  display: inline-block;
+  box-sizing: border-box;
+  width: 1.05em;
+  height: 1.05em;
+  vertical-align: -0.15em;
+  border: 0.2em solid currentColor;
+  border-top-color: transparent;
+  border-radius: $RADIUS-CIRCLE;
+  animation: kato-status-spin 0.7s linear infinite;
+}
+
 .tab.needs-attention {
   border-left-color: $C-ORANGE-50;
   background: $C-ORANGE-50-A35;

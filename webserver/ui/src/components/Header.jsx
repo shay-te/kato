@@ -1,4 +1,5 @@
-import Icon from './Icon.jsx';
+import Icon, { BusyIcon } from './Icon.jsx';
+import { useBusyAction } from '../hooks/useBusyAction.js';
 import { cx } from '../utils/cx.js';
 
 /**
@@ -25,6 +26,11 @@ export default function Header({
   statusActive = false,
   onOpenSettings,
 }) {
+  // Refresh re-scans tickets + reloads workspace state — show the thick
+  // spinner on the button while that's in flight (and block a double-tap).
+  const [refreshing, runRefresh] = useBusyAction(onRefresh, {
+    enabled: typeof onRefresh === 'function',
+  });
   const level = String(statusLatest?.level || 'INFO').toUpperCase();
   const statusKind = level === 'ERROR'
     ? 'is-error'
@@ -85,10 +91,12 @@ export default function Header({
       <button
         type="button"
         data-tooltip="Refresh the task list — re-scans tickets and reloads workspace state."
-        aria-label="Refresh sessions"
-        onClick={onRefresh}
+        aria-label={refreshing ? 'Refreshing…' : 'Refresh sessions'}
+        aria-busy={refreshing}
+        disabled={refreshing || typeof onRefresh !== 'function'}
+        onClick={runRefresh}
       >
-        <Icon name="refresh" />
+        <BusyIcon busy={refreshing} idle="refresh" />
       </button>
     </header>
   );

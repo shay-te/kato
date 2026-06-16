@@ -103,11 +103,20 @@ export default function Icon({ name, className = '', spin = false }) {
   );
 }
 
-// Busy-state icon swap: show a spinning ``spinner`` while ``busy``,
-// otherwise the ``idle`` action glyph. Collapses the repeated
-// ``<Icon name={busy ? 'spinner' : X} spin={busy} />`` idiom (used by
-// every action button in SessionHeader + the Scan-now button in
-// TabList) so the busy flag is named once instead of twice per call.
-export function BusyIcon({ busy, idle, ...rest }) {
-  return <Icon name={busy ? 'spinner' : idle} spin={busy} {...rest} />;
+// Busy-state icon swap: while ``busy`` show a THICK rotating progress ring
+// (``.kato-btn-spinner`` — a clear, chunky spinner that inherits the button's
+// colour), otherwise the ``idle`` action glyph. Used by every action button in
+// SessionHeader, the Scan-now button in TabList, and the Header refresh button,
+// so they all show the same thick spinner while their action is in flight.
+export function BusyIcon({ busy, idle, className = '', ...rest }) {
+  if (busy) {
+    return (
+      <span
+        className={`kato-btn-spinner ${className}`.trim()}
+        aria-hidden="true"
+        {...rest}
+      />
+    );
+  }
+  return <Icon name={idle} className={className} {...rest} />;
 }

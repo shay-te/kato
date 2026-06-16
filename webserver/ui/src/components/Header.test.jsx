@@ -49,6 +49,19 @@ describe('Header', () => {
     expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 
+  test('refresh shows the thick spinner and disables the button while in flight', async () => {
+    let resolve;
+    const onRefresh = vi.fn(() => new Promise((r) => { resolve = r; }));
+    const { container } = render(<Header {..._baseProps({ onRefresh })} />);
+    fireEvent.click(screen.getByLabelText('Refresh sessions'));
+    // In flight: thick spinner shown, label flips, button disabled.
+    expect(container.querySelector('.kato-btn-spinner')).toBeInTheDocument();
+    expect(screen.getByLabelText('Refreshing…')).toBeDisabled();
+    resolve();
+    // Settles back to idle (label returns) — no act() warning.
+    await screen.findByLabelText('Refresh sessions');
+  });
+
   test('status pill is clickable when onStatusClick is wired', () => {
     const onStatusClick = vi.fn();
     render(<Header {..._baseProps({ onStatusClick })} />);

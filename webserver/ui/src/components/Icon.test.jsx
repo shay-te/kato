@@ -67,11 +67,17 @@ describe('Icon', () => {
 
 describe('BusyIcon', () => {
 
-  test('busy=true renders the spinning spinner glyph', () => {
+  test('busy=true renders the thick rotating progress ring (not a glyph)', () => {
     const { container } = render(<BusyIcon busy idle="check" />);
-    const svg = container.querySelector('svg');
-    expect(svg.getAttribute('data-icon')).toBe('circle-notch'); // spinner
-    expect(svg.getAttribute('class')).toContain('fa-spin');
+    expect(container.querySelector('.kato-btn-spinner')).toBeInTheDocument();
+    // While busy it's the CSS ring, not a FontAwesome svg.
+    expect(container.querySelector('svg')).toBeNull();
+  });
+
+  test('busy=true forwards className onto the spinner ring', () => {
+    const { container } = render(<BusyIcon busy idle="check" className="my-cls" />);
+    expect(container.querySelector('.kato-btn-spinner').getAttribute('class'))
+      .toContain('my-cls');
   });
 
   test('busy=false renders the idle glyph, not spinning', () => {
