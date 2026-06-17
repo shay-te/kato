@@ -6123,6 +6123,26 @@ body.kato-resizing #left-pane-resizer::before {
   font-style: italic;
 }
 
+/* Agent-CLI upgrade confirm popup (AgentUpgradeModal) — body bits; the
+ * .modal / .modal-card / .modal-actions chrome comes from DialogShell. */
+.agent-upgrade-lead {
+  margin: 0 0 12px;
+  color: #c8c8cd;
+  line-height: 1.5;
+}
+
+.agent-upgrade-command {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #f5f5f7;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-x: auto;
+}
+
 /* Orchestrator activity feed — fills the right pane when no task is selected */
 .orchestrator-feed {
   display: flex;
