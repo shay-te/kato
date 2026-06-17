@@ -160,7 +160,7 @@ class GitLabIssuesClient(IssueClientBase):
             return author.get(GitLabCommentFields.NAME) or author.get(GitLabCommentFields.USERNAME)
 
         # Skip system notes AND comments addressed to humans other
-        # than the kato bot. The former is GitLab-specific machinery
+        # than the bot user. The former is GitLab-specific machinery
         # noise ("changed status to closed"); the latter is the
         # cross-platform @-mention filter — see
         # provider_client_base.helpers.mention_utils.

@@ -275,10 +275,11 @@ class ToolCapabilityTests(unittest.TestCase):
     """Default-deny new/unknown tools so every new Claude capability needs
     approval, and block network/connector tools (off-machine data flow)."""
 
-    def test_network_tools_block_by_default(self):
+    def test_network_tools_ask_by_default(self):
+        # Dual-use research tools — ASK (operator approves), not BLOCK.
         for tool in ('WebFetch', 'WebSearch', 'mcp__slack__send_message'):
             v = classify_action(tool, {'url': 'https://x'}, policy=_DEFAULT)
-            self.assertEqual(v.decision, Decision.BLOCK, tool)
+            self.assertEqual(v.decision, Decision.ASK, tool)
             self.assertEqual(v.category, RiskCategory.NETWORK_TOOL, tool)
 
     def test_network_tool_matching_is_case_insensitive(self):
@@ -313,7 +314,8 @@ class ToolCapabilityTests(unittest.TestCase):
         self.assertEqual(v.decision, Decision.BLOCK)
 
     def test_network_tool_outranks_unknown_when_both_could_apply(self):
-        # An mcp__ tool is network (block), not merely unknown (ask).
+        # An mcp__ tool is categorized as network, not merely unknown — the
+        # category drives the reason/banner even when both would ASK.
         v = classify_action('mcp__github__create_pr', {}, policy=_DEFAULT)
         self.assertEqual(v.category, RiskCategory.NETWORK_TOOL)
 

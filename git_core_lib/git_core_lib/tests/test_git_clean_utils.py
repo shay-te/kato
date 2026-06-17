@@ -41,9 +41,9 @@ class StatusPathsTests(unittest.TestCase):
 
 class ValidationReportPathsTests(unittest.TestCase):
     def test_picks_validation_report_files_only(self) -> None:
-        out = ' M src/a.py\n?? .kato/validation_report.md\n'
+        out = ' M src/a.py\n?? reports/validation_report.md\n'
         result = validation_report_paths_from_status(out)
-        self.assertEqual(result, ['.kato/validation_report.md'])
+        self.assertEqual(result, ['reports/validation_report.md'])
 
 
 class GeneratedArtifactPathsTests(unittest.TestCase):
@@ -54,7 +54,7 @@ class GeneratedArtifactPathsTests(unittest.TestCase):
 
     def test_excludes_validation_reports(self) -> None:
         # validation_report.md isn't treated as a generic artifact root.
-        out = '?? build/foo\n?? .kato/validation_report.md\n'
+        out = '?? build/foo\n?? reports/validation_report.md\n'
         result = generated_artifact_paths_from_status(out)
         self.assertEqual(result, ['build'])
 
@@ -92,10 +92,10 @@ class GeneratedArtifactPathsTests(unittest.TestCase):
 
 class StatusContainsOnlyRemovableTests(unittest.TestCase):
     def test_true_when_all_paths_are_removable(self) -> None:
-        out = '?? build/a\n?? .kato/validation_report.md\n'
+        out = '?? build/a\n?? reports/validation_report.md\n'
         self.assertTrue(
             status_contains_only_removable_artifacts(
-                out, ['build'], ['.kato/validation_report.md'],
+                out, ['build'], ['reports/validation_report.md'],
             )
         )
 

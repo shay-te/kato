@@ -168,8 +168,8 @@ class GitHubIssuesClient(IssueClientBase):
             extract_author=lambda c: self._safe_dict(c, GitHubCommentFields.USER).get(
                 GitHubCommentFields.LOGIN
             ),
-            # Drop comments addressed to humans other than the kato
-            # bot — see IssueClientBase._comment_addressed_elsewhere.
+            # Drop comments addressed to humans other than the bot
+            # user — see IssueClientBase._comment_addressed_elsewhere.
             skip=lambda c: self._comment_addressed_elsewhere(
                 c.get(GitHubCommentFields.BODY, ''),
             ),

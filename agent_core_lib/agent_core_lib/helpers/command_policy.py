@@ -66,7 +66,10 @@ class RiskCategory(str, Enum):
     SANDBOX_ESCAPE = 'sandbox_escape'
     OUT_OF_SCOPE = 'out_of_scope'
     # A tool that reaches the network / a third-party service (WebFetch,
-    # WebSearch, any MCP connector). Off-machine data flow → BLOCK by default.
+    # WebSearch, any MCP connector). Dual-use: legitimate research, but an
+    # exfil vector — so ASK by default (operator approves; approval can be
+    # remembered). The dangerous upload/reverse-shell patterns are
+    # NETWORK_EXFIL, which stays BLOCK.
     NETWORK_TOOL = 'network_tool'
     # A tool Kato does not recognize as a known-safe local tool — e.g. a NEW
     # Claude capability. Default-deny-by-asking so every new capability needs
@@ -113,7 +116,7 @@ _SECURE_DEFAULTS: dict[RiskCategory, Decision] = {
     RiskCategory.PRIV_ESC: Decision.ASK,
     RiskCategory.SANDBOX_ESCAPE: Decision.BLOCK,
     RiskCategory.OUT_OF_SCOPE: Decision.ASK,
-    RiskCategory.NETWORK_TOOL: Decision.BLOCK,       # off-machine data flow
+    RiskCategory.NETWORK_TOOL: Decision.ASK,         # WebFetch/WebSearch — dual-use research tool
     RiskCategory.EXTERNAL_CAPABILITY: Decision.ASK,  # new/unknown capability
 }
 

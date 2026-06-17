@@ -219,8 +219,8 @@ class JiraClient(IssueClientBase):
         # return 200/204 with the field unchanged when the value is
         # read-only, the workflow forbids it, or the field name is
         # wrong (Jira reports success but silently ignores the
-        # update). Without this re-fetch, "moved to In Review" in
-        # kato's UI doesn't match the actual ticket state.
+        # update). Without this re-fetch, the host's reported
+        # "moved to In Review" doesn't match the actual ticket state.
         verified_value = self._fetch_issue_field(issue_id, field_name)
         if verified_value != state_name:
             raise RuntimeError(
@@ -305,7 +305,7 @@ class JiraClient(IssueClientBase):
             extract_author=lambda c: self._safe_dict(c, JiraCommentFields.AUTHOR).get(
                 JiraCommentFields.DISPLAY_NAME
             ),
-            # Drop comments addressed to humans other than the kato bot.
+            # Drop comments addressed to humans other than the bot user.
             # Pass the RAW body so ADF mention nodes (which the plain-text
             # flattening drops) are seen — see _extract_comment_mentions.
             skip=lambda c: self._comment_addressed_elsewhere(

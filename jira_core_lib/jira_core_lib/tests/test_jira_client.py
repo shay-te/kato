@@ -430,8 +430,8 @@ class JiraClientMoveIssueToStateTests(unittest.TestCase):
         # The bug this verification catches: Jira accepts the PUT
         # with 200 OK but the field isn't actually updated (read-only
         # field, wrong custom field id, workflow validation). Without
-        # the verify, kato would believe the state changed when it
-        # hadn't, leaving the operator's UI out of sync with Jira.
+        # the verify, the caller would believe the state changed when it
+        # hadn't, leaving the operator's view out of sync with Jira.
         client = _make_client()
         put_response = mock_response()
         verify_response = mock_response(
@@ -1065,7 +1065,7 @@ class JiraMentionFilterWiringTests(unittest.TestCase):
     The rule itself is exhaustively tested in
     ``provider_client_base.tests.test_mention_utils`` — these tests
     only verify the wiring exists for Jira so the user-reported bug
-    (operator tags an employee, kato acts on it anyway) is blocked
+    (operator tags an employee, the agent acts on it anyway) is blocked
     on this platform too.
     """
 
@@ -1115,19 +1115,19 @@ class JiraMentionFilterWiringTests(unittest.TestCase):
 
     def test_filter_drops_addressed_to_humans_other_than_bot(self) -> None:
         # Plain @login text (explicit login configured).
-        client = self._client(bot_login='kato_bot')
+        client = self._client(bot_login='botuser')
         entries = client._task_comment_entries([
             self._raw('@alice can you take a look'),       # dropped
             self._raw('this also needs a unit test'),      # kept
-            self._raw('@kato_bot please fix the typo'),    # kept
+            self._raw('@botuser please fix the typo'),    # kept
         ])
         bodies = [e[ISSUE_COMMENT_BODY] for e in entries]
         self.assertIn('this also needs a unit test', bodies)
-        self.assertIn('@kato_bot please fix the typo', bodies)
+        self.assertIn('@botuser please fix the typo', bodies)
         self.assertNotIn('@alice can you take a look', bodies)
 
     def test_mid_sentence_mention_is_dropped(self) -> None:
-        client = self._client(bot_login='kato_bot')
+        client = self._client(bot_login='botuser')
         entries = client._task_comment_entries([
             self._raw('he look yada yda @Alice yes ..'),
         ])
@@ -1139,7 +1139,7 @@ class JiraMentionFilterWiringTests(unittest.TestCase):
         # human used to slip through. Resolve the bot's accountId and drop.
         client = self._client()
         with patch.object(
-            client, '_fetch_current_user_logins', return_value=('kato-account',),
+            client, '_fetch_current_user_logins', return_value=('bot-account',),
         ):
             entries = client._task_comment_entries([
                 self._raw_nodes(
@@ -1152,11 +1152,11 @@ class JiraMentionFilterWiringTests(unittest.TestCase):
     def test_adf_mention_node_for_bot_is_kept(self) -> None:
         client = self._client()
         with patch.object(
-            client, '_fetch_current_user_logins', return_value=('kato-account',),
+            client, '_fetch_current_user_logins', return_value=('bot-account',),
         ):
             entries = client._task_comment_entries([
                 self._raw_nodes(
-                    self._mention_node('kato-account', '@Kato Bot'),
+                    self._mention_node('bot-account', '@Bot User'),
                     {'type': 'text', 'text': ' please fix'},
                 ),
             ])
@@ -1167,7 +1167,7 @@ class JiraMentionFilterWiringTests(unittest.TestCase):
         # plain-string body.
         client = self._client()
         with patch.object(
-            client, '_fetch_current_user_logins', return_value=('kato_bot',),
+            client, '_fetch_current_user_logins', return_value=('botuser',),
         ):
             entries = client._task_comment_entries([
                 {
@@ -1181,15 +1181,15 @@ class JiraMentionFilterWiringTests(unittest.TestCase):
     def test_unset_login_resolved_drops_human_keeps_bot_and_plain(self) -> None:
         client = self._client()
         with patch.object(
-            client, '_fetch_current_user_logins', return_value=('kato_bot',),
+            client, '_fetch_current_user_logins', return_value=('botuser',),
         ) as fetch:
             entries = client._task_comment_entries([
                 self._raw('@alice please review'),          # dropped
                 self._raw('a general note'),                # kept (no mention)
-                self._raw('@kato_bot fix the typo'),        # kept (bot)
+                self._raw('@botuser fix the typo'),        # kept (bot)
             ])
         bodies = [e[ISSUE_COMMENT_BODY] for e in entries]
-        self.assertEqual(bodies, ['a general note', '@kato_bot fix the typo'])
+        self.assertEqual(bodies, ['a general note', '@botuser fix the typo'])
         fetch.assert_called_once()
 
     def test_filter_noop_when_identity_unresolvable_keeps_all(self) -> None:
@@ -1201,7 +1201,7 @@ class JiraMentionFilterWiringTests(unittest.TestCase):
         self.assertEqual(len(entries), 1)
 
     def test_explicit_login_does_not_resolve(self) -> None:
-        client = self._client(bot_login='kato_bot')
+        client = self._client(bot_login='botuser')
         with patch.object(
             client, '_fetch_current_user_logins',
             side_effect=AssertionError('should not resolve'),
@@ -1216,13 +1216,13 @@ class JiraMentionFilterWiringTests(unittest.TestCase):
         with patch.object(
             client, '_get_with_retry',
             return_value=mock_response(json_data={
-                'accountId': '557058:ABC', 'name': 'KatoUser',
-                'displayName': 'Kato Bot',
+                'accountId': '557058:ABC', 'name': 'Botuser',
+                'displayName': 'Bot User',
             }),
         ) as get:
             self.assertEqual(
                 client._fetch_current_user_logins(),
-                ('557058:abc', 'katouser', 'kato bot'),
+                ('557058:abc', 'botuser', 'bot user'),
             )
         get.assert_called_once_with('/rest/api/3/myself')
 

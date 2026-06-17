@@ -531,30 +531,30 @@ class GitLabIssuesClientCommentEntriesTests(unittest.TestCase):
 
     def test_mention_filter_drops_addressed_to_other_humans(self) -> None:
         # The reported bug, GitLab edition (explicit username configured).
-        client = _make_client(bot_login='kato_bot')
+        client = _make_client(bot_login='botuser')
         entries = client._task_comment_entries([
             _note('@alice can you handle this', 'op'),     # dropped
             _note('this also needs a unit test', 'op'),    # kept
-            _note('@kato_bot fix the typo', 'op'),         # kept
+            _note('@botuser fix the typo', 'op'),         # kept
             _note('assigned to @alice', 'op', system=True),  # dropped (system)
         ])
         bodies = [e[ISSUE_COMMENT_BODY] for e in entries]
         self.assertIn('this also needs a unit test', bodies)
-        self.assertIn('@kato_bot fix the typo', bodies)
+        self.assertIn('@botuser fix the typo', bodies)
         self.assertNotIn('@alice can you handle this', bodies)
         # system note also dropped — the @-mention filter composes
         # with the existing system-notes skip.
         self.assertNotIn('assigned to @alice', bodies)
 
     def test_mid_sentence_mention_is_dropped(self) -> None:
-        client = _make_client(bot_login='kato_bot')
+        client = _make_client(bot_login='botuser')
         entries = client._task_comment_entries([
             _note('he look yada yda @Alice yes ..', 'op'),
         ])
         self.assertEqual(entries, [])
 
     def test_explicit_login_does_not_resolve_via_user_endpoint(self) -> None:
-        client = _make_client(bot_login='kato_bot')
+        client = _make_client(bot_login='botuser')
         with patch.object(
             client, '_fetch_current_user_logins',
             side_effect=AssertionError('should not resolve'),
@@ -567,15 +567,15 @@ class GitLabIssuesClientCommentEntriesTests(unittest.TestCase):
         # comment @-mentioning a human is still dropped.
         client = _make_client()
         with patch.object(
-            client, '_fetch_current_user_logins', return_value=('kato_bot',),
+            client, '_fetch_current_user_logins', return_value=('botuser',),
         ) as fetch:
             entries = client._task_comment_entries([
                 _note('@alice can you handle this', 'op'),  # dropped
                 _note('a general note', 'op'),              # kept (no mention)
-                _note('@kato_bot fix the typo', 'op'),      # kept (bot)
+                _note('@botuser fix the typo', 'op'),      # kept (bot)
             ])
         bodies = [e[ISSUE_COMMENT_BODY] for e in entries]
-        self.assertEqual(bodies, ['a general note', '@kato_bot fix the typo'])
+        self.assertEqual(bodies, ['a general note', '@botuser fix the typo'])
         fetch.assert_called_once()
 
     def test_filter_noop_when_login_unresolvable_keeps_all(self) -> None:
@@ -590,9 +590,9 @@ class GitLabIssuesClientCommentEntriesTests(unittest.TestCase):
         client = _make_client()
         with patch.object(
             client, '_get_with_retry',
-            return_value=mock_response(json_data={'username': 'Kato_Bot'}),
+            return_value=mock_response(json_data={'username': 'Botuser'}),
         ) as get:
-            self.assertEqual(client._fetch_current_user_logins(), ('kato_bot',))
+            self.assertEqual(client._fetch_current_user_logins(), ('botuser',))
         get.assert_called_once_with('/user')
 
     def test_fetch_current_user_logins_missing_username(self) -> None:

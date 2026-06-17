@@ -62,7 +62,7 @@ class GitClientMixin:
 
     @classmethod
     def _git_command(cls, local_path: str, args: list[str]) -> list[str]:
-        # ``core.hooksPath=/dev/null`` disables every git hook for kato's own
+        # ``core.hooksPath=/dev/null`` disables every git hook for our own
         # invocations — guards against a sandboxed agent dropping a malicious
         # hook that would fire with operator privileges on the next push.
         return [

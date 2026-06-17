@@ -35,9 +35,11 @@ export function unpackPermissionEnvelope(raw) {
 // Action Guard categories whose remembered "allow always" must never be one
 // click away — a persisted grant for reading credentials / exfiltrating /
 // remote-exec / sandbox-escape is exactly what the guard exists to stop.
+// NOTE: ``network_tool`` (WebFetch/WebSearch) is intentionally NOT here —
+// it's a dual-use research tool, so approving it once may be remembered.
+// The dangerous upload/reverse-shell patterns are ``network_exfil``.
 const HIGH_RISK_ACTION_GUARD = new Set([
   'credential_read', 'network_exfil', 'remote_exec', 'sandbox_escape',
-  'network_tool',
 ]);
 
 export function isHighRiskActionGuard(actionGuard) {

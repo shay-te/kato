@@ -43,7 +43,7 @@ class JiraCoreLibInitTests(unittest.TestCase):
             token='token',
             email='me@example.com',
             max_retries=3,
-            assignee='kato_bot',
+            assignee='botuser',
         )
         cfg = SimpleNamespace(core_lib=SimpleNamespace(
             jira_core_lib=jira_cfg,
@@ -55,7 +55,7 @@ class JiraCoreLibInitTests(unittest.TestCase):
         client_cls.assert_called_once_with(
             'https://example.atlassian.net', 'token',
             'me@example.com', 3,
-            bot_login='kato_bot',
+            bot_login='botuser',
         )
 
 

@@ -13,7 +13,7 @@ class JiraCoreLib(CoreLib):
         super().__init__()
         jira_cfg = cfg.core_lib.jira_core_lib
         # ``assignee`` is the Jira account-id / username the host scans
-        # tasks under — i.e. the kato bot user. Re-used as ``bot_login``
+        # tasks under — i.e. the bot user. Re-used as ``bot_login``
         # so the client can filter @-mentioned-elsewhere comments from
         # the agent context. Defaults to empty (filter disabled) when
         # an older config yaml omits the key.

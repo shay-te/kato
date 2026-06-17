@@ -1,7 +1,7 @@
 """Regression: GitLab discussions paginate via X-Next-Page header.
 
 Before the fix, MRs with >100 discussions silently truncated at
-the first page. Kato never saw comments 101+.
+the first page. The client never saw comments 101+.
 """
 
 from __future__ import annotations
