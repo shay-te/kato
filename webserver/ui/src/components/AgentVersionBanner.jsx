@@ -41,41 +41,69 @@ export default function AgentVersionBanner() {
     }
   }
 
+  // "not found" is genuinely blocking (the backend can't run) → assertive
+  // warning. "out of date" is advisory → calm, polite status (not a red alarm).
+  const severity = info?.found === false ? 'warn' : 'info';
+  const role = severity === 'warn' ? 'alert' : 'status';
+
   return (
-    <div className="kato-safety-banner" role="alert" aria-live="polite">
-      <span className="kato-safety-banner__icon" aria-hidden="true">!</span>
+    <div
+      className={`kato-version-banner kato-version-banner--${severity}`}
+      role={role}
+      aria-live="polite"
+    >
+      <span className="kato-version-banner__icon" aria-hidden="true">
+        {severity === 'warn' ? '!' : '↑'}
+      </span>
       {renderText(message, url)}
-      {info?.can_upgrade && renderUpgrade(phase, command, setPhase, runUpgrade)}
+      {info?.can_upgrade
+        ? renderUpgrade(phase, command, setPhase, runUpgrade)
+        : renderBlockedReason(info)}
     </div>
   );
 }
 
-// The message, as a link to the official install/upgrade page when known.
+// Plain message text followed by a SINGLE link to the install/upgrade page.
+// (The whole sentence used to be one <a>, whose underline split around the
+// `claude` code chip and read as two links — keep the link to one phrase.)
 function renderText(message, url) {
-  if (url) {
-    return (
-      <a
-        className="kato-safety-banner__text kato-safety-banner__link"
-        href={url}
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        {message} <span aria-hidden="true">→ open the download page</span>
-      </a>
-    );
-  }
-  return <span className="kato-safety-banner__text">{message}</span>;
+  return (
+    <span className="kato-version-banner__text">
+      {message}
+      {url ? (
+        <>
+          {' '}
+          <a
+            className="kato-version-banner__link"
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            open the download page →
+          </a>
+        </>
+      ) : null}
+    </span>
+  );
+}
+
+// When there IS an update but one-click upgrade isn't available (Docker image,
+// codex backend, or hard-disabled), say why instead of going silent.
+function renderBlockedReason(info) {
+  const reason = String(info?.upgrade_blocked_reason || '').trim();
+  if (!reason) { return null; }
+  return <span className="kato-version-banner__note">{reason}</span>;
 }
 
 // The in-app upgrade action: "Upgrade now" → an explicit confirm showing the
 // exact command (the operator's approval) → run. Built outside JSX.
 function renderUpgrade(phase, command, setPhase, runUpgrade) {
   if (phase === 'running') {
-    return <span className="kato-safety-banner__upgrade">Upgrading…</span>;
+    return <span className="kato-version-banner__upgrade">Upgrading…</span>;
   }
   if (phase === 'confirming') {
     return (
-      <span className="kato-safety-banner__upgrade">
+      <span className="kato-version-banner__upgrade">
         Run <code>{command}</code> on the host?{' '}
         <button type="button" className="primary" onClick={runUpgrade}>
           Confirm upgrade
@@ -89,7 +117,7 @@ function renderUpgrade(phase, command, setPhase, runUpgrade) {
   return (
     <button
       type="button"
-      className="primary kato-safety-banner__upgrade"
+      className="primary kato-version-banner__upgrade"
       onClick={() => setPhase('confirming')}
     >
       Upgrade now
@@ -118,7 +146,7 @@ function bannerMessage(info) {
     const min = info.recommended_min ? ` (recommended ≥ ${info.recommended_min})` : '';
     return (
       <>
-        <strong>{name} CLI {ver} is out of date{min}.</strong>
+        <strong>{name} CLI update available</strong> — you're on {ver}{min}.
         {' '}Upgrade the <code>{info.binary}</code> CLI on the kato host for the
         latest fixes{info.backend === 'claude' ? ', subagents, and workflows/ultracode' : ''}.
       </>

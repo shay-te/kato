@@ -119,6 +119,7 @@ def agent_version_info(env: dict | None = None, runner=None) -> dict:
         'version_raw': '', 'recommended_min': '', 'up_to_date': True,
         'supports_workflows': False, 'download_url': '',
         'can_upgrade': False, 'upgrade_command': '', 'detail': '',
+        'upgrade_blocked_reason': '',
     }
     if backend == 'openhands':
         info['detail'] = 'OpenHands runs as a server — no local CLI to version-check.'
@@ -158,6 +159,10 @@ def _is_truthy(value) -> bool:
     return str(value or '').strip().lower() in ('1', 'true', 'yes', 'on')
 
 
+def _is_falsy(value) -> bool:
+    return str(value or '').strip().lower() in ('0', 'false', 'no', 'off', 'disabled')
+
+
 def upgrade_command_str() -> str:
     """The exact command an in-app upgrade runs (shown to the operator for
     approval). Fixed — never built from user input."""
@@ -165,12 +170,14 @@ def upgrade_command_str() -> str:
 
 
 def upgrade_allowed(env: dict | None = None) -> tuple[bool, str]:
-    """``(allowed, reason)`` for an in-app CLI upgrade. Off unless the operator
-    opted in, and only for the claude CLI on the host (not Docker, where the
-    CLI lives in the image — rebuild it with ``kato sandbox build``)."""
+    """``(allowed, reason)`` for an in-app CLI upgrade. Available by default for
+    the claude CLI on the host; an operator can hard-disable it with
+    ``KATO_ALLOW_CLI_UPGRADE=false``. Not offered in Docker (the CLI lives in
+    the image — rebuild it with ``kato sandbox build``). The per-use confirm in
+    the UI (showing the exact command) is the approval gate."""
     env = os.environ if env is None else env
-    if not _is_truthy(env.get('KATO_ALLOW_CLI_UPGRADE')):
-        return False, 'in-app upgrade is disabled (enable KATO_ALLOW_CLI_UPGRADE)'
+    if _is_falsy(env.get('KATO_ALLOW_CLI_UPGRADE')):
+        return False, 'in-app upgrade is disabled (KATO_ALLOW_CLI_UPGRADE=false)'
     backend = _resolve_backend(env)
     if backend != 'claude':
         return False, (
@@ -186,9 +193,15 @@ def upgrade_allowed(env: dict | None = None) -> tuple[bool, str]:
 
 
 def _apply_upgrade_flags(info: dict, env: dict) -> None:
-    allowed, _reason = upgrade_allowed(env)
+    allowed, reason = upgrade_allowed(env)
     info['can_upgrade'] = bool(allowed and not info['up_to_date'])
     info['upgrade_command'] = upgrade_command_str() if info['can_upgrade'] else ''
+    # Why one-click upgrade isn't offered — only when there IS an update we
+    # can't apply in-app (Docker image, codex backend, or hard-disabled), so
+    # the banner can tell the operator what to do instead of going silent.
+    info['upgrade_blocked_reason'] = (
+        reason if (not info['up_to_date'] and not allowed) else ''
+    )
 
 
 def _default_upgrade_runner(cmd: list) -> tuple[int, str]:

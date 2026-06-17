@@ -1334,6 +1334,13 @@ def _register_http_routes(app: Flask) -> None:
                         and field['key'] in ACTION_GUARD_SECURE_DEFAULTS):
                     field['value'] = ACTION_GUARD_SECURE_DEFAULTS[field['key']]
                     field['source'] = 'action_guard_secure_default'
+                # In-app CLI upgrade is ON unless explicitly disabled — show the
+                # toggle checked when unset so it reflects the real default
+                # (no ambiguous "off-looking but actually on" picker).
+                if (field['key'] == 'KATO_ALLOW_CLI_UPGRADE'
+                        and not str(field['value']).strip()):
+                    field['value'] = 'true'
+                    field['source'] = 'default'
         return jsonify({
             'sections': schema,
             'settings_file_path': str(kato_settings_path()),

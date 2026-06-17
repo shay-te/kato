@@ -51,14 +51,19 @@ describe('AgentVersionBanner', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  test('warns when the configured CLI is out of date', () => {
-    renderWith({
+  test('flags an available update calmly (status role, not a red alarm)', () => {
+    const { container } = renderWith({
       backend: 'claude', binary: 'claude', found: true, up_to_date: false,
       version: '2.1.142', recommended_min: '2.1.160',
       download_url: 'https://code.claude.com/docs/en/setup',
     });
-    expect(screen.getByRole('alert')).toHaveTextContent(/CLAUDE CLI 2\.1\.142 is out of date/i);
-    expect(screen.getByRole('alert')).toHaveTextContent(/2\.1\.160/);
+    const banner = screen.getByRole('status');
+    expect(banner).toHaveTextContent(/CLAUDE CLI update available/i);
+    expect(banner).toHaveTextContent(/2\.1\.142/);
+    expect(banner).toHaveTextContent(/2\.1\.160/);
+    // Calm advisory styling — NOT the red security-alert banner.
+    expect(banner).toHaveClass('kato-version-banner', 'kato-version-banner--info');
+    expect(container.querySelector('.kato-safety-banner')).toBeNull();
   });
 
   test('the out-of-date banner links to the download page (opens in a new tab)', () => {
@@ -73,27 +78,53 @@ describe('AgentVersionBanner', () => {
     expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'));
   });
 
-  test('warns when the configured CLI is missing from PATH', () => {
+  test('renders exactly ONE link — only "open the download page", not the whole sentence', () => {
+    renderWith({
+      backend: 'claude', binary: 'claude', found: true, up_to_date: false,
+      version: '2.1.142', recommended_min: '2.1.160',
+      download_url: 'https://code.claude.com/docs/en/setup',
+    });
+    const links = screen.getAllByRole('link');
+    expect(links).toHaveLength(1);
+    expect(links[0]).toHaveTextContent(/open the download page/i);
+    // The message itself is plain text, not wrapped in the anchor.
+    expect(links[0]).not.toHaveTextContent(/update available/i);
+  });
+
+  test('explains why one-click upgrade is unavailable when there is no button', () => {
+    renderWith({
+      ..._UPGRADABLE, can_upgrade: false,
+      upgrade_blocked_reason:
+        'Docker sandbox mode — the CLI is in the image; rebuild with `kato sandbox build`',
+    });
+    expect(screen.queryByRole('button', { name: /upgrade now/i })).toBeNull();
+    expect(screen.getByText(/Docker sandbox mode/i)).toBeInTheDocument();
+  });
+
+  test('CLI missing from PATH is a firmer warning (alert role)', () => {
     renderWith({
       backend: 'codex', binary: 'codex', found: false, up_to_date: false,
       download_url: 'https://developers.openai.com/codex/',
     });
-    expect(screen.getByRole('alert')).toHaveTextContent(/CODEX CLI not found on PATH/i);
+    // "not found" genuinely blocks the backend → assertive alert + warn style.
+    const banner = screen.getByRole('alert');
+    expect(banner).toHaveTextContent(/CODEX CLI not found on PATH/i);
+    expect(banner).toHaveClass('kato-version-banner--warn');
     expect(screen.getByRole('link')).toHaveAttribute('href', 'https://developers.openai.com/codex/');
   });
 
-  test('claude out-of-date message mentions workflows/ultracode; codex does not', () => {
+  test('claude update message mentions workflows/ultracode; codex does not', () => {
     const { unmount } = renderWith({
       backend: 'claude', binary: 'claude', found: true, up_to_date: false,
       version: '2.1.142', recommended_min: '2.1.160',
     });
-    expect(screen.getByRole('alert')).toHaveTextContent(/workflows\/ultracode/i);
+    expect(screen.getByRole('status')).toHaveTextContent(/workflows\/ultracode/i);
     unmount();
     renderWith({
       backend: 'codex', binary: 'codex', found: true, up_to_date: false,
       version: '0.1.0', recommended_min: '0.5.0',
     });
-    expect(screen.getByRole('alert')).not.toHaveTextContent(/workflows\/ultracode/i);
+    expect(screen.getByRole('status')).not.toHaveTextContent(/workflows\/ultracode/i);
   });
 
   test('no upgrade button unless can_upgrade', () => {

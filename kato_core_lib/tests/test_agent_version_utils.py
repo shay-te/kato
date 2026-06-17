@@ -113,10 +113,14 @@ class UpgradeTests(unittest.TestCase):
     ENABLED = {'KATO_AGENT_BACKEND': 'claude', 'KATO_ALLOW_CLI_UPGRADE': 'true'}
 
     def test_gating(self):
-        self.assertFalse(avu.upgrade_allowed({'KATO_AGENT_BACKEND': 'claude'})[0])
+        # On by default for the claude CLI on the host — no flag needed.
+        self.assertTrue(avu.upgrade_allowed({'KATO_AGENT_BACKEND': 'claude'})[0])
         self.assertTrue(avu.upgrade_allowed(self.ENABLED)[0])
+        # Hard off-switch: explicit falsy disables.
         self.assertFalse(avu.upgrade_allowed(
-            {'KATO_AGENT_BACKEND': 'codex', 'KATO_ALLOW_CLI_UPGRADE': 'true'})[0])
+            {'KATO_AGENT_BACKEND': 'claude', 'KATO_ALLOW_CLI_UPGRADE': 'false'})[0])
+        # Only the claude CLI; never in Docker (CLI lives in the image).
+        self.assertFalse(avu.upgrade_allowed({'KATO_AGENT_BACKEND': 'codex'})[0])
         self.assertFalse(avu.upgrade_allowed(
             {**self.ENABLED, 'KATO_CLAUDE_DOCKER': 'true'})[0])
 
@@ -127,9 +131,31 @@ class UpgradeTests(unittest.TestCase):
             info['upgrade_command'], 'npm install -g @anthropic-ai/claude-code@latest',
         )
 
-    def test_can_upgrade_false_when_up_to_date_or_disabled(self):
+    def test_can_upgrade_on_by_default_for_claude(self):
+        # No KATO_ALLOW_CLI_UPGRADE set → still offered (claude + outdated).
+        self.assertTrue(
+            _info({'KATO_AGENT_BACKEND': 'claude'}, '2.1.142')['can_upgrade'])
+
+    def test_can_upgrade_false_when_up_to_date_or_hard_disabled(self):
         self.assertFalse(_info(self.ENABLED, '2.1.170')['can_upgrade'])
-        self.assertFalse(_info({'KATO_AGENT_BACKEND': 'claude'}, '2.1.142')['can_upgrade'])
+        self.assertFalse(_info(
+            {'KATO_AGENT_BACKEND': 'claude', 'KATO_ALLOW_CLI_UPGRADE': 'false'},
+            '2.1.142')['can_upgrade'])
+
+    def test_blocked_reason_explains_why_no_button(self):
+        # Outdated but can't upgrade in-app (Docker) → reason is surfaced.
+        info = _info({**self.ENABLED, 'KATO_CLAUDE_DOCKER': 'true'}, '2.1.142')
+        self.assertFalse(info['can_upgrade'])
+        self.assertIn('Docker', info['upgrade_blocked_reason'])
+        # Hard-disabled also explains itself.
+        disabled = _info(
+            {'KATO_AGENT_BACKEND': 'claude', 'KATO_ALLOW_CLI_UPGRADE': 'false'},
+            '2.1.142')
+        self.assertIn('disabled', disabled['upgrade_blocked_reason'])
+
+    def test_blocked_reason_empty_when_upgradable_or_current(self):
+        self.assertEqual(_info(self.ENABLED, '2.1.142')['upgrade_blocked_reason'], '')
+        self.assertEqual(_info(self.ENABLED, '2.1.170')['upgrade_blocked_reason'], '')
 
     def test_runs_fixed_command_when_enabled(self):
         captured = {}
@@ -146,9 +172,10 @@ class UpgradeTests(unittest.TestCase):
             ['/usr/bin/npm', 'install', '-g', '@anthropic-ai/claude-code@latest'],
         )
 
-    def test_refused_when_disabled(self):
+    def test_refused_when_hard_disabled(self):
         result = avu.upgrade_agent_cli(
-            env={'KATO_AGENT_BACKEND': 'claude'}, runner=lambda c: (0, ''),
+            env={'KATO_AGENT_BACKEND': 'claude', 'KATO_ALLOW_CLI_UPGRADE': 'false'},
+            runner=lambda c: (0, ''),
         )
         self.assertFalse(result['ok'])
         self.assertIn('disabled', result['message'])

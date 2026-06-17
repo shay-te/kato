@@ -224,13 +224,14 @@ SETTINGS_SCHEMA: list[dict] = [
              'Model smoke test',
              'Boot-time model-access check. Off by default (spend).',
              {}),
-            ('KATO_ALLOW_CLI_UPGRADE', 'bool', 'Allow in-app CLI upgrade',
-             'Show an "Upgrade" button on the out-of-date banner that runs '
+            ('KATO_ALLOW_CLI_UPGRADE', 'bool', 'In-app CLI upgrade',
+             'Show an "Upgrade" button on the update banner that runs '
              '`npm install -g @anthropic-ai/claude-code@latest` on the host '
-             '(claude backend, non-Docker). Off by default; each upgrade '
-             'still needs your in-app confirmation.',
-             {'warning': 'Runs a package install on the kato host. Keep off '
-                         'if the planning UI is reachable beyond localhost.'}),
+             '(claude backend, non-Docker). On by default; each upgrade still '
+             'needs your in-app confirmation. Uncheck to hard-disable.',
+             {'warning': 'Runs a package install on the kato host. Uncheck '
+                         'this if the planning UI is reachable beyond '
+                         'localhost.'}),
             ('ANTHROPIC_API_KEY', 'secret', 'Anthropic API key',
              'Pay-per-token auth. Use this OR the OAuth token.', {}),
             ('CLAUDE_CODE_OAUTH_TOKEN', 'secret',

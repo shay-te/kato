@@ -6205,6 +6205,68 @@ body.kato-resizing #left-pane-resizer::before {
   letter-spacing: 0.02em;
 }
 
+/* Agent-CLI update notice — ADVISORY, not a security alert. A calm amber
+ * accent (subtle tint + left rule) so "a newer CLI is available" reads as a
+ * notice, not the full-bleed red alarm the safety banner uses. Not sticky, so
+ * it scrolls away instead of following the operator down the page. */
+.kato-version-banner {
+  display: flex;
+  align-items: center;
+  gap: $SPACE-10;
+  padding: $SPACE-8 $SPACE-16;
+  font-size: $TEXT-13;
+  line-height: 1.4;
+  color: $C-NEUTRAL-79;
+  background: $C-ORANGE-50-A10;
+  border-bottom: 1px solid $C-ORANGE-50-A35;
+  border-left: 3px solid $C-ORANGE-50-A65;
+}
+
+/* "CLI not found" genuinely blocks the backend — a slightly firmer accent,
+ * still amber (never red). */
+.kato-version-banner--warn {
+  border-left-color: $C-ORANGE-50;
+}
+
+.kato-version-banner__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: $SPACE-18;
+  height: $SPACE-18;
+  border-radius: $RADIUS-CIRCLE;
+  background: $C-ORANGE-50-A10;
+  color: $C-ORANGE-50;
+  border: 1px solid $C-ORANGE-50-A35;
+  font-weight: 700;
+  font-size: $TEXT-12;
+  flex-shrink: 0;
+}
+
+.kato-version-banner__text {
+  flex: 1;
+}
+
+.kato-version-banner__link {
+  color: $C-NEUTRAL-96;
+}
+
+.kato-version-banner strong {
+  color: $C-NEUTRAL-96;
+  font-weight: 600;
+}
+
+.kato-version-banner__upgrade {
+  flex-shrink: 0;
+}
+
+/* Why one-click upgrade isn't available (Docker / codex / hard-disabled). */
+.kato-version-banner__note {
+  flex-shrink: 0;
+  color: $C-NEUTRAL-64;
+  font-style: italic;
+}
+
 /* Orchestrator activity feed — fills the right pane when no task is selected */
 .orchestrator-feed {
   display: flex;
