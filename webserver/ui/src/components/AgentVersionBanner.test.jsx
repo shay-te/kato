@@ -132,6 +132,18 @@ describe('AgentVersionBanner', () => {
     expect(screen.queryByRole('button', { name: /upgrade now/i })).toBeNull();
   });
 
+  test('the confirm is a popup dialog, not inline in the banner', () => {
+    renderWith(_UPGRADABLE);
+    // No dialog until the operator asks to upgrade.
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /upgrade now/i }));
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toBeInTheDocument();
+    // The exact command lives in the popup (the approval), not the banner row.
+    expect(dialog).toHaveTextContent('npm install -g @anthropic-ai/claude-code@latest');
+    expect(screen.getByRole('status')).not.toHaveTextContent(/npm install/i);
+  });
+
   test('upgrade requires explicit confirm (does not run on the first click)', () => {
     renderWith(_UPGRADABLE);
     fireEvent.click(screen.getByRole('button', { name: /upgrade now/i }));

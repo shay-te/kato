@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useAgentVersion, refreshAgentVersion } from '../hooks/useAgentVersion.js';
 import { upgradeAgentCli } from '../api.js';
 import { toast } from '../stores/toastStore.js';
+import AgentUpgradeModal from './AgentUpgradeModal.jsx';
 
 // Always-visible banner warning that the CONFIGURED agent CLI is out of date
 // (or missing). Mirrors SafetyBanner: self-contained, renders nothing in the
@@ -47,19 +48,36 @@ export default function AgentVersionBanner() {
   const role = severity === 'warn' ? 'alert' : 'status';
 
   return (
-    <div
-      className={`kato-version-banner kato-version-banner--${severity}`}
-      role={role}
-      aria-live="polite"
-    >
-      <span className="kato-version-banner__icon" aria-hidden="true">
-        {severity === 'warn' ? '!' : '↑'}
-      </span>
-      {renderText(message, url)}
-      {info?.can_upgrade
-        ? renderUpgrade(phase, command, setPhase, runUpgrade)
-        : renderBlockedReason(info)}
-    </div>
+    <>
+      <div
+        className={`kato-version-banner kato-version-banner--${severity}`}
+        role={role}
+        aria-live="polite"
+      >
+        <span className="kato-version-banner__icon" aria-hidden="true">
+          {severity === 'warn' ? '!' : '↑'}
+        </span>
+        {renderText(message, url)}
+        {info?.can_upgrade ? (
+          <button
+            type="button"
+            className="primary kato-version-banner__upgrade"
+            onClick={() => setPhase('confirming')}
+          >
+            Upgrade now
+          </button>
+        ) : renderBlockedReason(info)}
+      </div>
+      {/* The confirm is a popup (not crammed into the banner row). */}
+      {info?.can_upgrade && (phase === 'confirming' || phase === 'running') && (
+        <AgentUpgradeModal
+          command={command}
+          running={phase === 'running'}
+          onConfirm={runUpgrade}
+          onCancel={() => setPhase('idle')}
+        />
+      )}
+    </>
   );
 }
 
@@ -93,36 +111,6 @@ function renderBlockedReason(info) {
   const reason = String(info?.upgrade_blocked_reason || '').trim();
   if (!reason) { return null; }
   return <span className="kato-version-banner__note">{reason}</span>;
-}
-
-// The in-app upgrade action: "Upgrade now" → an explicit confirm showing the
-// exact command (the operator's approval) → run. Built outside JSX.
-function renderUpgrade(phase, command, setPhase, runUpgrade) {
-  if (phase === 'running') {
-    return <span className="kato-version-banner__upgrade">Upgrading…</span>;
-  }
-  if (phase === 'confirming') {
-    return (
-      <span className="kato-version-banner__upgrade">
-        Run <code>{command}</code> on the host?{' '}
-        <button type="button" className="primary" onClick={runUpgrade}>
-          Confirm upgrade
-        </button>{' '}
-        <button type="button" className="secondary" onClick={() => setPhase('idle')}>
-          Cancel
-        </button>
-      </span>
-    );
-  }
-  return (
-    <button
-      type="button"
-      className="primary kato-version-banner__upgrade"
-      onClick={() => setPhase('confirming')}
-    >
-      Upgrade now
-    </button>
-  );
 }
 
 // Returns the banner text, or null when nothing's wrong (loading, OpenHands,
