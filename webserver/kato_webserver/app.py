@@ -814,8 +814,12 @@ def _register_http_routes(app: Flask) -> None:
         # Discovered, not hardcoded: Claude serves the stable CLI aliases
         # (opus/sonnet/haiku) with live version labels when a credential is
         # available; Codex reads its own model cache. The picker can no longer
-        # show a stale version (it used to hardcode "Opus 4.7").
-        return jsonify({'models': _discover_chat_models(app)})
+        # show a stale version (it used to hardcode "Opus 4.7"). ``?refresh=1``
+        # bypasses the discovery cache so the UI refresh updates labels live.
+        return jsonify({
+            'models': _discover_chat_models(
+                app, force=_truthy_arg(request.args.get('refresh'))),
+        })
 
     @app.get('/api/openrouter/models')
     def list_openrouter_models():
@@ -2526,14 +2530,21 @@ def _discover_chat_effort_levels(app: Flask) -> list:
         return list(FALLBACK_EFFORT_LEVELS)
 
 
-def _discover_chat_models(app: Flask) -> list:
+def _truthy_arg(value: object) -> bool:
+    """Whether a query-string flag (e.g. ``?refresh=1``) is set/affirmative."""
+    return str(value or '').strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _discover_chat_models(app: Flask, force: bool = False) -> list:
     """Models the chat backend offers (discovered, with fallback).
 
     Never hardcodes a version. Claude serves the stable CLI aliases
     (opus/sonnet/haiku) — which always resolve to the latest — with labels
     enriched by the live Anthropic models API when a credential is configured;
     Codex reads the codex CLI's own model cache. Any failure falls back to a
-    sane static set so the picker always renders.
+    sane static set so the picker always renders. ``force`` bypasses the
+    discovery TTL cache so a refresh picks up a just-installed CLI's labels
+    without waiting out the cache (or restarting kato).
     """
     defaults = _chat_runner_defaults(app)
     binary = str(getattr(defaults, 'binary', '') or 'claude') if defaults else 'claude'
@@ -2547,7 +2558,7 @@ def _discover_chat_models(app: Flask) -> list:
             from claude_core_lib.claude_core_lib.helpers.model_catalog import (
                 discover_models,
             )
-            models = discover_models()
+            models = discover_models(force=force)
     except Exception:
         app.logger.exception('model discovery failed; using fallback')
         from claude_core_lib.claude_core_lib.helpers.model_catalog import (
@@ -2858,10 +2869,13 @@ def _register_agent_version_route(app: Flask) -> None:
         """Configured agent CLI version + capability flags (cached).
 
         Powers the "agent CLI out of date" banner and hides features the
-        installed CLI can't run (e.g. the ultracode/workflow toggle). The
-        version doesn't change while kato runs, so it's probed once and cached
-        — operators restart kato after upgrading the CLI.
+        installed CLI can't run (e.g. the ultracode/workflow toggle). Probed
+        once and cached; ``?refresh=1`` re-probes in place so the banner +
+        upgrade button reflect a host-side CLI change (or a settings change)
+        WITHOUT a kato restart — the UI's refresh control passes it.
         """
+        if _truthy_arg(request.args.get('refresh')):
+            app.config.pop('AGENT_VERSION_INFO', None)
         cached = app.config.get('AGENT_VERSION_INFO')
         if cached is None:
             try:

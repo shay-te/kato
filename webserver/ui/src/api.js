@@ -75,8 +75,10 @@ export function fetchSafetyState() {
   return fetchJson('/api/safety');
 }
 
-export function fetchAgentVersion() {
-  return fetchJson('/api/agent-version');
+export function fetchAgentVersion(force = false) {
+  // ``force`` re-probes the host CLI server-side (banner/upgrade button reflect
+  // a CLI or settings change with no kato restart).
+  return fetchJson(force ? '/api/agent-version?refresh=1' : '/api/agent-version');
 }
 
 export function upgradeAgentCli() {
@@ -403,8 +405,10 @@ export function createTaskPullRequest(taskId) {
   );
 }
 
-export function fetchModels() {
-  return fetchJson('/api/models');
+export function fetchModels(force = false) {
+  // ``force`` bypasses the server-side discovery cache so a refresh updates the
+  // model labels (e.g. after a CLI upgrade) without a kato restart.
+  return fetchJson(force ? '/api/models?refresh=1' : '/api/models');
 }
 
 // Live OpenRouter catalogue for the settings model-field autocomplete. Parallels

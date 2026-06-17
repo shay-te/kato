@@ -18,7 +18,7 @@ function _emit() {
 function _load(force) {
   if (_cache && !force) { return Promise.resolve(_cache); }
   if (_inflight && !force) { return _inflight; }
-  _inflight = fetchAgentVersion()
+  _inflight = fetchAgentVersion(force)
     .then((body) => { _cache = body || {}; _emit(); return _cache; })
     .catch(() => { _cache = _cache || {}; _emit(); return _cache; })
     .finally(() => { _inflight = null; });

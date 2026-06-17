@@ -25,6 +25,8 @@ import {
 } from './utils/permissionEnvelope.js';
 import { useResizable } from './hooks/useResizable.js';
 import { useSafetyState } from './hooks/useSafetyState.js';
+import { refreshAgentVersion } from './hooks/useAgentVersion.js';
+import { refreshCatalogs } from './hooks/useCatalogRefresh.js';
 import { useSessions } from './hooks/useSessions.js';
 import { clearTaskStreamCache } from './hooks/useSessionStream.js';
 import { forgetQueuedMessages } from './utils/queuedMessagesStore.js';
@@ -245,6 +247,15 @@ export default function App() {
     await triggerScan();
     await refresh();
     setScanPending(false);
+  }, [refresh]);
+
+  // Header Refresh: re-scan tickets + reload sessions AND re-probe the agent
+  // CLI version + picker catalogues, so a CLI upgrade or settings change shows
+  // in the banner / model picker with no kato restart.
+  const handleHeaderRefresh = useCallback(async () => {
+    refreshAgentVersion(true);
+    refreshCatalogs();
+    await refresh();
   }, [refresh]);
 
   const onTaskClickFromNotification = useCallback((taskId) => {
@@ -559,7 +570,7 @@ export default function App() {
       <SafetyBanner state={safetyState} />
       <AgentVersionBanner />
       <Header
-        onRefresh={refresh}
+        onRefresh={handleHeaderRefresh}
         statusLatest={status.latest}
         statusStale={status.stale}
         statusConnected={status.connected}

@@ -83,18 +83,20 @@ _cache_stamp: float = 0.0
 _cache_lock = threading.Lock()
 
 
-def discover_models() -> list[dict]:
+def discover_models(force: bool = False) -> list[dict]:
     """Return ``[{id, label[, default]}]`` for the composer's model picker.
 
     IDs are the stable aliases; labels carry the live version when the Anthropic
     models API is reachable with the host's configured credential, else from the
     most recent CLI session log, else version-less. Cached with a short TTL so a
-    newly-released version surfaces without a restart. Always non-empty, never raises.
+    newly-released version surfaces without a restart. ``force`` bypasses the
+    TTL (the UI's explicit refresh) so a just-installed CLI's labels show
+    immediately. Always non-empty, never raises.
     """
     global _cache, _cache_stamp
     now = time.monotonic()
     with _cache_lock:
-        if _cache is not None and (now - _cache_stamp) < _CACHE_TTL_SECONDS:
+        if not force and _cache is not None and (now - _cache_stamp) < _CACHE_TTL_SECONDS:
             return [dict(m) for m in _cache]
     models = _aliases_with_live_labels()
     with _cache_lock:

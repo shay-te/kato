@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { subscribeCatalogRefresh } from './useCatalogRefresh.js';
 
 // Per-session option selector state, shared by the model picker and
 // the effort picker in SessionDetail. Both pickers follow the exact
@@ -35,12 +36,11 @@ export function useSessionOption(taskId, {
   const [defaultValue, setDefaultValue] = useState('');
   const loadedRef = useRef(false);
 
-  // Fetch the option catalogue once. Guarded so tab switches don't
-  // re-hit the endpoint — the list is the same for every task.
-  useEffect(() => {
-    if (loadedRef.current) { return; }
-    loadedRef.current = true;
-    fetchOptions().then((result) => {
+  // Fetch + apply the option catalogue. ``force`` re-discovers server-side
+  // (bypassing the version-label cache) — used by the on-demand refresh so a
+  // just-upgraded CLI's labels show without a reload.
+  const loadOptions = useCallback((force) => {
+    fetchOptions(force).then((result) => {
       if (result && Array.isArray(result[optionsKey])) {
         setOptions(result[optionsKey]);
       }
@@ -48,8 +48,20 @@ export function useSessionOption(taskId, {
         setDefaultValue(String(result[defaultKey]));
       }
     }).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [fetchOptions, optionsKey, defaultKey]);
+
+  // Fetch the option catalogue once. Guarded so tab switches don't
+  // re-hit the endpoint — the list is the same for every task.
+  useEffect(() => {
+    if (loadedRef.current) { return; }
+    loadedRef.current = true;
+    loadOptions(false);
+  }, [loadOptions]);
+
+  // Re-fetch (forced) when a global catalogue refresh is broadcast — e.g. the
+  // header Refresh after a CLI upgrade — so stale labels (the model version)
+  // update live, no restart.
+  useEffect(() => subscribeCatalogRefresh(() => loadOptions(true)), [loadOptions]);
 
   // Load the current value for the bound task; reset to '' with no task.
   useEffect(() => {
