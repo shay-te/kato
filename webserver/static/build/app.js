@@ -737,6 +737,8 @@ SYSTEM INVARIANTS. Before reviewing, name the system's core invariants that this
 
 PROJECT RULES. This change MUST comply with the repo's standing docs — \`AGENTS.md\` (engineering rules / no-redundancy), \`architecture.md\` (layering, package map, what lives where), and \`lessons.md\` (mistakes not to repeat). Read all three first, then verify the diff against them; any change that violates one is a BLOCKER (cite the doc + the rule).
 
+FEATURE WIRED END-TO-END. Verify the change is a COMPLETE, REACHABLE feature — not a half-wired stub. Trace it through every layer it claims to touch (UI control → api call → route → service → store → response → render) and confirm each new piece is actually invoked by the next: a new endpoint has a caller, a button calls its handler, a new field/setting is written AND read AND surfaced, a flag actually gates behavior. A change that compiles and tests green but isn't connected end to end (dead-end endpoint, button that calls nothing, setting nothing reads) is a BLOCKER. Distinct from the "delete orphan code" rule below: decide by INTENT — if the piece belongs to this feature, WIRE it; if it's truly superseded, delete it.
+
 Produce a structured report (markdown). For each finding give file:line, severity (BLOCKER / MAJOR / MINOR / NIT), and a one-line fix. Then FIX every BLOCKER and MAJOR in the code (leave MINOR/NIT as a checklist for me).
 
 EVIDENCE, NOT SPECULATION. Every BLOCKER and MAJOR must show: the exact code path, the exact triggering scenario (concrete input/sequence), why the existing tests did not catch it, and a caller/callee trace that proves it. If you cannot demonstrate a concrete failure, DOWNGRADE the finding — no "this might/could break" without proof.
