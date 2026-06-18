@@ -3210,6 +3210,20 @@ code {
   color: #f5f5f7;
 }
 
+.permission-action-guard-banner {
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.1);
+  border-radius: 4px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.permission-action-guard-banner .permission-sandbox-warning-title {
+  color: #f59e0b;
+}
+
 .modal-raw {
   font-size: 11px;
   color: #525252;
@@ -4592,13 +4606,18 @@ body.kato-resizing #left-pane-resizer::before {
   width: 26px;
   height: 26px;
   padding: 0;
+  line-height: 0;
   border: none;
   background: transparent;
   color: #a3a3a3;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 13px;
   transition: background 120ms ease, color 120ms ease, transform 90ms ease;
+}
+
+.diff-file-comment-act svg {
+  display: block;
 }
 
 .diff-file-comment-act:hover {

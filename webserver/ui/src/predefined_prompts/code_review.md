@@ -10,6 +10,8 @@ ASSUME THE TESTS ARE WRONG. Passing tests prove only that the tests passed — N
 
 SYSTEM INVARIANTS. Before reviewing, name the system's core invariants that this change touches (e.g. no data loss, exactly-once / no-duplicate processing, task/tenant isolation, cache consistency, authorization boundaries, "a forgotten task stays forgotten", "no out-of-sandbox writes"). For every change, verify each still holds. A violated invariant is a BLOCKER.
 
+PROJECT RULES. This change MUST comply with the repo's standing docs — `AGENTS.md` (engineering rules / no-redundancy), `architecture.md` (layering, package map, what lives where), and `lessons.md` (mistakes not to repeat). Read all three first, then verify the diff against them; any change that violates one is a BLOCKER (cite the doc + the rule).
+
 Produce a structured report (markdown). For each finding give file:line, severity (BLOCKER / MAJOR / MINOR / NIT), and a one-line fix. Then FIX every BLOCKER and MAJOR in the code (leave MINOR/NIT as a checklist for me).
 
 EVIDENCE, NOT SPECULATION. Every BLOCKER and MAJOR must show: the exact code path, the exact triggering scenario (concrete input/sequence), why the existing tests did not catch it, and a caller/callee trace that proves it. If you cannot demonstrate a concrete failure, DOWNGRADE the finding — no "this might/could break" without proof.

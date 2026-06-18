@@ -161,14 +161,18 @@ function renderSandboxWarning(outsideSandbox, outsidePath, toolName) {
 }
 
 // The Action Guard risk banner — names the risk category + reason so the
-// operator decides with context. Reuses the sandbox-warning styling (no new
-// CSS). Null when the ask carries no classification. Built outside JSX.
+// operator decides with context. This modal only ever appears for an ASK (a
+// BLOCK is auto-denied and shown as a feed bubble, never here), so it's an
+// amber "please confirm" — NOT the red the refusal/sandbox warning uses. A red
+// "DESTRUCTIVE FS" on an in-scope `rm -rf tests/test_data` read as a
+// catastrophe when it's just a dual-use action the operator is approving.
+// Null when the ask carries no classification. Built outside JSX.
 function renderActionGuardBanner(actionGuard) {
   if (!actionGuard || !actionGuard.category) { return null; }
   const category = String(actionGuard.category || '').replace(/_/g, ' ').toUpperCase();
   const reason = String(actionGuard.reason || '');
   return (
-    <div id="permission-action-guard" className="permission-sandbox-warning" role="alert">
+    <div id="permission-action-guard" className="permission-action-guard-banner" role="alert">
       <h1 className="permission-sandbox-warning-title">
         ⚠ ACTION GUARD — {category}
       </h1>

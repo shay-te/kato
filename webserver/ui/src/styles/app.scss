@@ -3272,6 +3272,25 @@ code {
   color: $C-NEUTRAL-96;
 }
 
+// Action Guard banner: this modal is shown only for an ASK ("please confirm"),
+// so it's amber/caution — not the red the refusal/sandbox warning uses. (A red
+// "DESTRUCTIVE FS" on an in-scope `rm -rf tests/test_data` read as a
+// catastrophe; the operator is just approving a dual-use action.) Same layout
+// as .permission-sandbox-warning; only the palette differs.
+.permission-action-guard-banner {
+  border: 1px solid $C-ORANGE-50-A35;
+  background: $C-ORANGE-50-A10;
+  border-radius: $RADIUS-4;
+  padding: $SPACE-10;
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-8;
+}
+
+.permission-action-guard-banner .permission-sandbox-warning-title {
+  color: $C-ORANGE-50;
+}
+
 .modal-raw {
   font-size: $TEXT-11;
   color: $C-NEUTRAL-32;
@@ -4701,13 +4720,20 @@ body.kato-resizing #left-pane-resizer::before {
   width: 26px;
   height: 26px;
   padding: 0;
+  line-height: 0;          // no text-line box to drift the icon off-center
   border: none;
   background: transparent;
   color: $C-NEUTRAL-64;
   border-radius: $RADIUS-4;
   cursor: pointer;
-  font-size: $TEXT-12;
+  font-size: $TEXT-13;
   transition: background 120ms ease, color 120ms ease, transform 90ms ease;
+}
+
+// Force the FA glyph to a centered block so it can't sit high on its
+// inline baseline (the "icons aren't vertically centered" report).
+.diff-file-comment-act svg {
+  display: block;
 }
 
 .diff-file-comment-act:hover {
