@@ -47,24 +47,39 @@ class ModelCatalogTests(unittest.TestCase):
         return path
 
     def test_ids_are_stable_aliases_with_sonnet_default(self) -> None:
+        # Fable is gated (offered only when discovery confirms access — see
+        # below), so the baseline catalog is the always-resolvable CLI aliases.
         models = model_catalog.discover_models()
         self.assertEqual(
-            [m['id'] for m in models], ['claude-fable-5', 'opus', 'sonnet', 'haiku'],
+            [m['id'] for m in models], ['opus', 'sonnet', 'haiku'],
         )
         self.assertEqual([m['id'] for m in models if m.get('default')], ['sonnet'])
 
-    def test_fable_is_offered_as_a_pinned_full_id(self) -> None:
+    def test_fable_is_offered_as_a_pinned_full_id_when_available(self) -> None:
         # The CLI has no `fable` alias, so the picker must offer a real model id
-        # the CLI accepts via --model, with a label that matches that exact pin.
-        models = {m['id']: m for m in model_catalog.discover_models()}
+        # the CLI accepts via --model — but ONLY when discovery confirms the
+        # account can run it (Fable needs Mythos access).
+        rows = [{'id': 'claude-fable-5', 'display_name': 'Claude Fable 5'}]
+        with patch.dict(os.environ, {'ANTHROPIC_API_KEY': 'sk-test'}), \
+                patch('urllib.request.urlopen', return_value=_urlopen_returning(rows)):
+            model_catalog.reset_models_cache()
+            models = {m['id']: m for m in model_catalog.discover_models()}
         self.assertEqual(models['claude-fable-5']['label'], 'Fable 5')
+
+    def test_fable_is_hidden_when_discovery_cannot_confirm_it(self) -> None:
+        # No credential + no session log mentioning fable → fable is NOT offered;
+        # picking an unavailable model errors ("Fable 5 is currently unavailable").
+        ids = [m['id'] for m in model_catalog.discover_models()]
+        self.assertNotIn('claude-fable-5', ids)
+        self.assertEqual(ids, ['opus', 'sonnet', 'haiku'])
 
     def test_no_credential_yields_versionless_labels_and_no_network(self) -> None:
         with patch('urllib.request.urlopen') as urlopen:
             models = model_catalog.discover_models()
             urlopen.assert_not_called()  # no creds → never hit the API
+        # Fable gated out (no discovery to confirm it); stable aliases remain.
         self.assertEqual(
-            [m['label'] for m in models], ['Fable 5', 'Opus', 'Sonnet', 'Haiku'],
+            [m['label'] for m in models], ['Opus', 'Sonnet', 'Haiku'],
         )
 
     def test_api_key_enriches_labels_with_latest_version(self) -> None:
@@ -113,8 +128,9 @@ class ModelCatalogTests(unittest.TestCase):
                 patch('urllib.request.urlopen', side_effect=OSError('boom')):
             model_catalog.reset_models_cache()
             models = model_catalog.discover_models()
+        # API failed + no session logs → fable can't be confirmed → gated out.
         self.assertEqual(
-            [m['label'] for m in models], ['Fable 5', 'Opus', 'Sonnet', 'Haiku'],
+            [m['label'] for m in models], ['Opus', 'Sonnet', 'Haiku'],
         )
 
     def test_result_is_cached(self) -> None:
@@ -131,7 +147,7 @@ class ModelCatalogTests(unittest.TestCase):
         # Mutating the result must not corrupt the cache.
         models = model_catalog.discover_models()
         models[0]['label'] = 'mutated'
-        self.assertEqual(model_catalog.discover_models()[0]['label'], 'Fable 5')
+        self.assertEqual(model_catalog.discover_models()[0]['label'], 'Opus')
 
     def test_cache_refreshes_after_ttl(self) -> None:
         # A new version released mid-process must surface without a restart: once

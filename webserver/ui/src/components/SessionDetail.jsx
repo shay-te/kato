@@ -25,6 +25,12 @@ import { useToolMemory } from '../hooks/useToolMemory.js';
 import { toast } from '../stores/toastStore.js';
 import { fetchEffortLevels, fetchModels, fetchSessionEffort, fetchSessionModel, postChatMessage, postSession, setSessionEffort, setSessionModel } from '../api.js';
 
+// Grace before we reconnect a still-"live" stream that the server says has a
+// pending permission we haven't received. Long enough for a normal live event
+// to arrive (no needless reset on the common race), short enough that a
+// silently-dropped EventSource self-heals without a manual page refresh.
+const PERMISSION_RECONNECT_GRACE_MS = 2000;
+
 export default function SessionDetail({
   session,
   onActivity,
@@ -210,17 +216,29 @@ export default function SessionDetail({
   useEffect(() => {
     if (!needsAttention || stream.pendingPermission) {
       permissionReconnectAttemptedRef.current = false;
-      return;
+      return undefined;
     }
+    if (permissionReconnectAttemptedRef.current) { return undefined; }
     const sleeping = (
       stream.lifecycle === SESSION_LIFECYCLE.IDLE
       || stream.lifecycle === SESSION_LIFECYCLE.CLOSED
       || stream.lifecycle === SESSION_LIFECYCLE.MISSING
     );
-    if (sleeping && !permissionReconnectAttemptedRef.current) {
+    if (sleeping) {
+      // Stream was closed on idle — reopen now to replay the pending ask.
       permissionReconnectAttemptedRef.current = true;
       stream.reconnect();
+      return undefined;
     }
+    // Stream still marked live, but the server says a permission is pending and
+    // we never received it — the EventSource likely dropped silently. Give the
+    // live event a short grace, then reconnect once to replay the backlog (what
+    // a manual page refresh used to do — the "dialog feels stuck" report).
+    const handle = window.setTimeout(() => {
+      permissionReconnectAttemptedRef.current = true;
+      stream.reconnect();
+    }, PERMISSION_RECONNECT_GRACE_MS);
+    return () => window.clearTimeout(handle);
     // stream.reconnect is a fresh closure each render; intentionally
     // excluded so this fires on the attention/lifecycle change only.
     // eslint-disable-next-line react-hooks/exhaustive-deps

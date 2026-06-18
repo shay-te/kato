@@ -253,6 +253,9 @@ test('isHighRiskActionGuard: true for credential/exfil/rce/escape, false otherwi
   assert.equal(isHighRiskActionGuard({ category: 'network_exfil' }), true);
   assert.equal(isHighRiskActionGuard({ category: 'destructive_fs' }), false);
   assert.equal(isHighRiskActionGuard({ category: 'out_of_scope' }), false);
+  // network_tool (WebFetch/WebSearch) is dual-use → NOT high-risk, so an
+  // operator approval can be remembered (it used to re-block every call).
+  assert.equal(isHighRiskActionGuard({ category: 'network_tool' }), false);
   assert.equal(isHighRiskActionGuard(null), false);
 });
 

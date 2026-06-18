@@ -273,7 +273,7 @@ class PersistenceTests(unittest.TestCase):
 
 class ToolCapabilityTests(unittest.TestCase):
     """Default-deny new/unknown tools so every new Claude capability needs
-    approval, and block network/connector tools (off-machine data flow)."""
+    approval, and ASK before network/connector tools (dual-use research)."""
 
     def test_network_tools_ask_by_default(self):
         # Dual-use research tools — ASK (operator approves), not BLOCK.

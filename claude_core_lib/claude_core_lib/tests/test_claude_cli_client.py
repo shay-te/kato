@@ -309,6 +309,16 @@ class ClaudeCliClientTests(unittest.TestCase):
         self.assertIn('Agent,Task,Edit,Write,Read,Bash,Glob,Grep', cmd)
         self.assertNotIn('bypassPermissions', cmd)
 
+    def test_forces_approval_for_out_of_workspace_writes(self) -> None:
+        # acceptEdits auto-accepts /tmp scratch writes with no approval; the
+        # injected --settings ask-rules force them back through the prompt.
+        client = ClaudeCliClient(binary='claude')
+        cmd = client._build_command(additional_dirs=[], agent_session_id='')
+        self.assertIn('--settings', cmd)
+        settings = cmd[cmd.index('--settings') + 1]
+        self.assertIn('Write(/tmp/**)', settings)
+        self.assertIn('"ask"', settings)
+
     def test_default_allowlist_includes_subagent_tool(self) -> None:
         # The Agent (subagent) tool must be pre-approved so the agent can fan
         # out headlessly — `-p` has no prompt to grant a non-allowlisted tool.

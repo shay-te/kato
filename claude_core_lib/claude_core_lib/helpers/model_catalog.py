@@ -76,7 +76,14 @@ def _public_model(alias: dict) -> dict:
     return {k: v for k, v in alias.items() if k != 'family'}
 
 
-FALLBACK_MODELS = tuple(_public_model(a) for a in _ALIASES)
+# Fallback when discovery fails entirely (no credential AND no session logs):
+# only the stable CLI aliases, which always resolve. Pinned/gated entries
+# (fable) are omitted — offering a model we can't confirm is available is what
+# produced the "Fable 5 unavailable" error; it reappears the moment discovery
+# can vouch for it.
+FALLBACK_MODELS = tuple(
+    _public_model(a) for a in _ALIASES if a['id'] == a['family']
+)
 
 _cache: list[dict] | None = None
 _cache_stamp: float = 0.0
@@ -117,13 +124,21 @@ def _aliases_with_live_labels() -> list[dict]:
     live_by_family = _latest_by_family()
     out: list[dict] = []
     for alias in _ALIASES:
-        model = _public_model(alias)
+        pinned = alias['id'] != alias['family']  # fable: a pinned full id, gated
         live = live_by_family.get(alias['family'])
+        if pinned and not live:
+            # Gated/pinned model (Fable needs Mythos access) — only OFFER it
+            # when discovery (models API or this host's session logs) positively
+            # confirms the account can run it. Otherwise selecting it errors
+            # ("Claude Fable 5 is currently unavailable"). The CLI aliases
+            # (opus/sonnet/haiku) are always resolvable, so they always show.
+            continue
+        model = _public_model(alias)
         if live:
             model['label'] = live['label']
-            if alias['id'] != alias['family']:
-                # Pinned-full-id entry (fable): track the newest discovered id so
-                # the pin self-heals when a newer model of that family ships.
+            if pinned:
+                # Track the newest discovered id so the pin self-heals when a
+                # newer model of that family ships.
                 model['id'] = live['model_id']
         out.append(model)
     return out

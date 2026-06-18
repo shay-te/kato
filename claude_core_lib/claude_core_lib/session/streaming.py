@@ -957,6 +957,14 @@ class StreamingClaudeSession(object):
             # renderer to accumulate deltas into a live bubble.
             '--permission-mode', self._permission_mode,
         ]
+        # Force out-of-workspace file writes (e.g. /tmp scratch) back through
+        # the permission path — acceptEdits otherwise auto-accepts them with no
+        # approval. See write_scope_settings; the post-hoc warning backstops
+        # any path the rules don't enumerate.
+        from claude_core_lib.claude_core_lib.helpers.write_scope_settings import (
+            out_of_workspace_write_settings_json,
+        )
+        command.extend(['--settings', out_of_workspace_write_settings_json()])
         if self._permission_prompt_tool:
             command.extend(['--permission-prompt-tool', self._permission_prompt_tool])
         append_model_effort_flags(

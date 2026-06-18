@@ -4269,7 +4269,10 @@ body.kato-resizing #left-pane-resizer::before {
 }
 
 .files-tab-repo-header:hover {
-  background: $C-NEUTRAL-100-A06;
+  // OPAQUE hover shade (not a translucent white overlay): this header is
+  // sticky, so a see-through hover background let the scrolled tree show
+  // through it. $C-NEUTRAL-19 reads as the same subtle lighten, but solid.
+  background: $C-NEUTRAL-19;
 }
 
 .files-tab-repo-chevron {

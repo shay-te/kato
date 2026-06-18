@@ -727,9 +727,9 @@ describe('SessionDetail — permission dialog auto-reconnect', () => {
     expect(stream.reconnect).toHaveBeenCalledTimes(1);
   });
 
-  test('does NOT reconnect when the stream stays live (STREAMING)', () => {
-    // A live SSE already delivers the request; reconnecting would be
-    // a needless reset.
+  test('does not reconnect IMMEDIATELY when STREAMING (lets the live event arrive)', () => {
+    // A live SSE should deliver the request; reconnecting at once would be
+    // a needless reset on the common poll-wins-the-race case.
     const stream = _stream({ lifecycle: SESSION_LIFECYCLE.STREAMING });
     const { rerender } = _render(stream, { needsAttention: false });
     rerender(
@@ -739,6 +739,23 @@ describe('SessionDetail — permission dialog auto-reconnect', () => {
       <SessionDetail session={{ task_id: 'T1' }} needsAttention />,
     );
     expect(stream.reconnect).not.toHaveBeenCalled();
+  });
+
+  test('reconnects after a grace when STREAMING but the pending ask never arrives', () => {
+    // The "dialog feels stuck" bug: the EventSource dropped silently (still
+    // marked STREAMING), the server says a permission is pending, but we never
+    // got it. After a grace we reconnect to replay it — no manual refresh.
+    vi.useFakeTimers();
+    try {
+      const stream = _stream({ lifecycle: SESSION_LIFECYCLE.STREAMING });
+      const { rerender } = _render(stream, { needsAttention: false });
+      rerender(<SessionDetail session={{ task_id: 'T1' }} needsAttention />);
+      expect(stream.reconnect).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(2000);
+      expect(stream.reconnect).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test('does NOT reconnect when a permission is already pending', () => {

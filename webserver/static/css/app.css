@@ -4179,7 +4179,7 @@ body.kato-resizing #left-pane-resizer::before {
 }
 
 .files-tab-repo-header:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: #303134;
 }
 
 .files-tab-repo-chevron {

@@ -250,45 +250,53 @@ const MessageForm = forwardRef(function MessageForm({
     getValue() { return value; },
   }), [taskId, value]);
 
+  // Put the composer text + images back after a FAILED send so the operator
+  // can retry — the optimistic clear in submit() wiped them the instant we
+  // sent. (Losing text on a network failure was a real operator pain point.)
+  function restoreComposer(text, atts) {
+    setValue(text);
+    setAttachments(atts);
+    writeDraft(taskId, text);
+    writeImageDraft(taskId, atts.map((a) => a.part));
+    saveDraft(taskId, { text, images: atts.map((a) => a.part) });
+  }
+
   async function submit(event) {
     event.preventDefault();
     if (disabled) { return; }
     const trimmed = (value || '').trim();
     if (!trimmed && attachments.length === 0) { return; }
-    // AWAIT onSubmit and only clear local state on a truthy result
-    // (or undefined — back-compat with callers that return nothing
-    // but never throw). If the send failed, KEEP the draft so the
-    // operator can retry — losing the text on a network failure
-    // was a real operator pain point.
     // Prepend the ultracode keyword only when the toggle is on, the CLI
     // actually supports workflows, and there's text — so a stale localStorage
     // toggle never injects an inert keyword on an unsupported CLI.
     const outgoing = ultracode && supportsWorkflows && trimmed
       ? `ultracode\n\n${trimmed}`
       : trimmed;
-    let result;
-    try {
-      result = await onSubmit(outgoing, attachments.map((a) => a.part));
-    } catch (_err) {
-      // Send threw — caller will have surfaced an error bubble.
-      // Preserve the draft + textarea so the operator can retry.
-      return;
-    }
-    // Explicit ``false`` return signals "send failed" without throw;
-    // keep the draft. Anything else (including undefined / true) is
-    // treated as success.
-    if (result === false) { return; }
-    // The live state now owns the draft: this blocks an in-flight hydrate read
-    // (issued at mount, slow to resolve) from re-applying the just-sent images.
+    // Clear the composer IMMEDIATELY: the message is already shown in the
+    // chat, so it shouldn't linger in the input for the send round-trip.
+    // Capture first so a failed send can restore it for retry.
+    // markDraftSettled() blocks an in-flight mount hydrate (slow to resolve)
+    // from re-applying the just-sent images.
+    const sentText = value;
+    const sentAttachments = attachments;
     markDraftSettled();
     setValue('');
     setAttachments([]);
     writeDraft(taskId, '');
-    // Clear the persisted draft immediately (not via the debounced effect) so an
-    // unmount right after sending can't leave already-sent text/images to be
-    // re-hydrated on return — browser caches AND the server file.
     clearImageDraft(taskId);
     saveDraft(taskId, { text: '', images: [] });
+
+    let result;
+    try {
+      result = await onSubmit(outgoing, sentAttachments.map((a) => a.part));
+    } catch (_err) {
+      // Send threw — caller surfaced an error bubble. Bring the draft back.
+      restoreComposer(sentText, sentAttachments);
+      return;
+    }
+    // Explicit ``false`` = "send failed" without throw → restore for retry.
+    // Anything else (undefined / true) is success; the composer stays cleared.
+    if (result === false) { restoreComposer(sentText, sentAttachments); }
   }
 
   // While Claude is working the composer is in QUEUE mode: the
