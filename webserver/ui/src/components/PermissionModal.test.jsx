@@ -259,3 +259,48 @@ describe('PermissionModal — onDecide dispatch', () => {
     expect(screen.getByPlaceholderText(/rationale/i)).toHaveValue('');
   });
 });
+
+
+describe('PermissionModal — AskUserQuestion', () => {
+  function _askRaw() {
+    return _raw({
+      request_id: 'q1',
+      request: {
+        request_id: 'q1',
+        tool_name: 'AskUserQuestion',
+        input: {
+          questions: [{
+            question: 'How should the columns appear?',
+            header: 'Column layout',
+            multiSelect: false,
+            options: [
+              { label: 'Single Matchmaker column', description: 'Cleanest.' },
+              { label: 'Separate Promiser + Executer', description: 'Two cols.' },
+            ],
+          }],
+        },
+      },
+    });
+  }
+
+  test('renders the answer form (options + Send answer), not the allow/deny buttons', () => {
+    render(<PermissionModal raw={_askRaw()} onDecide={vi.fn()} />);
+    expect(screen.getByText('Single Matchmaker column')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /send answer/i })).toBeInTheDocument();
+    // The normal permission affordances are NOT shown for a question.
+    expect(screen.queryByRole('button', { name: /allow once/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /allow always/i })).toBeNull();
+  });
+
+  test('sending an answer replies with the selection as the message (deny channel)', () => {
+    const onDecide = vi.fn();
+    render(<PermissionModal raw={_askRaw()} onDecide={onDecide} />);
+    fireEvent.click(screen.getByText('Separate Promiser + Executer'));
+    fireEvent.click(screen.getByRole('button', { name: /send answer/i }));
+    expect(onDecide).toHaveBeenCalledTimes(1);
+    const arg = onDecide.mock.calls[0][0];
+    expect(arg.allow).toBe(false);
+    expect(arg.requestId).toBe('q1');
+    expect(arg.rationale).toContain('Separate Promiser + Executer');
+  });
+});

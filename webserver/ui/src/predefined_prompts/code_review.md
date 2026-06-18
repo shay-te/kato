@@ -48,6 +48,11 @@ EVIDENCE, NOT SPECULATION. Every BLOCKER and MAJOR must show: the exact code pat
      now (in the repo's existing test style/location), then run it.
    - A change with no test, or a test that doesn't exercise the change, is a BLOCKER until you've
      written one.
+   - 100% COVERAGE of new/changed code (measured, not eyeballed). Every line AND branch you added
+     or changed must be exercised by a test that FAILS without the change. Where the repo supports
+     it, RUN coverage (the project's coverage command) and report the % for the changed files;
+     anything under 100% on new/changed lines is a BLOCKER — list each uncovered file:line/branch.
+     (Core-lib standard: 100% per AGENTS.md.)
    - REVIEW THE TESTS AS PRODUCTION CODE: a test that can't fail when the feature breaks is no
      test. Hunt for assertions that don't verify the actual behavior, mocks that hide the bug,
      tests coupled to implementation details, and tests that pass for the wrong reason — flip the

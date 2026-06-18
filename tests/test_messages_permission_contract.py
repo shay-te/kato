@@ -43,6 +43,10 @@ class _RecordingSession(object):
         self.is_alive = alive
         self.messages_sent: list[dict] = []
         self.permissions_sent: list[dict] = []
+        self.pending: list[dict] = []
+
+    def pending_control_requests(self) -> list[dict]:
+        return list(self.pending)
 
     def send_user_message(self, text: str, images: list | None = None) -> None:
         self.messages_sent.append({
@@ -166,6 +170,27 @@ class MessagesAndPermissionContractTests(unittest.TestCase):
         )
         self.assertIn(status, (409, 500, 503))
         self.assertIsInstance(payload, dict)
+
+    # ----- /permissions/pending -----
+
+    def test_pending_permissions_skips_dead_sessions(self) -> None:
+        # A live session's pending ask is surfaced; once the session is dead
+        # (e.g. the operator Stopped it) it must NOT keep showing approval
+        # popups — the "still see requests after Stop" bug.
+        self.session.pending = [{
+            'type': 'control_request', 'request_id': 'r1',
+            'request': {
+                'request_id': 'r1', 'tool_name': 'Bash',
+                'input': {'command': 'ls'},
+            },
+        }]
+        status = self.client.get('/api/permissions/pending')
+        self.assertEqual(status.status_code, 200)
+        self.assertEqual(len(status.get_json()['pending']), 1)
+
+        self.session.is_alive = False
+        after = self.client.get('/api/permissions/pending').get_json()
+        self.assertEqual(after['pending'], [])
 
     # ----- /permission -----
 

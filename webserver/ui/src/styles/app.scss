@@ -3291,6 +3291,92 @@ code {
   color: $C-ORANGE-50;
 }
 
+/* AskUserQuestion answer form — the agent's question rendered as a real
+   radio/checkbox picker (+ a free-text "Other"), not a permission to grant. */
+.ask-question {
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-12;
+}
+
+.ask-question-block {
+  margin: 0;
+  padding: $SPACE-12;
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-6;
+}
+
+.ask-question-legend {
+  display: block;
+  padding: 0;
+  margin-bottom: $SPACE-8;
+}
+
+.ask-question-header {
+  margin-right: $SPACE-8;
+  font-size: $TEXT-12;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: $C-ORANGE-50;
+}
+
+.ask-question-text {
+  color: $C-NEUTRAL-96;
+  font-weight: 600;
+}
+
+.ask-question-multi {
+  margin-left: $SPACE-8;
+  font-size: $TEXT-12;
+  color: $C-NEUTRAL-64;
+}
+
+.ask-question-option {
+  display: flex;
+  align-items: flex-start;
+  gap: $SPACE-8;
+  padding: $SPACE-8;
+  border-radius: $RADIUS-4;
+  cursor: pointer;
+}
+
+.ask-question-option:hover {
+  background: $C-NEUTRAL-100-A06;
+}
+
+.ask-question-option input {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+.ask-question-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ask-question-option-label {
+  color: $C-NEUTRAL-96;
+  font-weight: 600;
+}
+
+.ask-question-option-desc {
+  color: $C-NEUTRAL-64;
+  font-size: $TEXT-12;
+  line-height: 1.45;
+}
+
+.ask-question-other-input {
+  margin: $SPACE-4 0 0 $SPACE-22;
+  padding: $SPACE-8 $SPACE-10;
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-4;
+  background: $C-NEUTRAL-04;
+  color: $C-NEUTRAL-96;
+  font-size: $TEXT-13;
+}
+
 .modal-raw {
   font-size: $TEXT-11;
   color: $C-NEUTRAL-32;

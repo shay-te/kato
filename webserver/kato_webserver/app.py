@@ -2944,6 +2944,11 @@ def _register_get_pending_permissions_route(app: Flask) -> None:
         manager = app.config['SESSION_MANAGER']
         pending: list[dict] = []
         for record, session in _iter_live_sessions(manager):
+            # A stopped/dead subprocess can't act on a permission, so never
+            # surface its (now-stale) asks — otherwise the operator keeps
+            # seeing approval popups for a session they already stopped.
+            if getattr(session, 'is_alive', None) is False:
+                continue
             probe = getattr(session, 'pending_control_requests', None)
             if not callable(probe):
                 continue

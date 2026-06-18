@@ -303,6 +303,18 @@ class ToolCapabilityTests(unittest.TestCase):
             v = classify_action(tool, {}, policy=_DEFAULT)
             self.assertEqual(v.decision, Decision.ALLOW, tool)
 
+    def test_ask_user_question_is_recognized_not_external(self):
+        # The agent asking the operator a question is a known local tool — it
+        # must NOT trip the red "external capability" gate (Kato renders it as
+        # an answer UI instead).
+        v = classify_action(
+            'AskUserQuestion',
+            {'questions': [{'question': 'A?', 'options': [{'label': 'x'}]}]},
+            policy=_DEFAULT,
+        )
+        self.assertEqual(v.decision, Decision.ALLOW)
+        self.assertNotEqual(v.category, RiskCategory.EXTERNAL_CAPABILITY)
+
     def test_operator_can_opt_in_to_network_tools(self):
         policy = CommandPolicy.from_mapping({'network_tool': 'allow'})
         v = classify_action('WebFetch', {'url': 'https://x'}, policy=policy)

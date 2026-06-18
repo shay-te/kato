@@ -1,0 +1,47 @@
+/* Kato docs theme — warm amber accent on a calm dark base. */
+:root {
+  --ifm-color-primary: #d97706;
+  --ifm-color-primary-dark: #c26a05;
+  --ifm-color-primary-darker: #b76405;
+  --ifm-color-primary-darkest: #975304;
+  --ifm-color-primary-light: #f0850a;
+  --ifm-color-primary-lighter: #f58f1c;
+  --ifm-color-primary-lightest: #f7a544;
+  --ifm-code-font-size: 95%;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #f59e0b;
+  --ifm-color-primary-dark: #e08f08;
+  --ifm-color-primary-darker: #d48708;
+  --ifm-color-primary-darkest: #ae6f06;
+  --ifm-color-primary-light: #f7ac2f;
+  --ifm-color-primary-lighter: #f8b342;
+  --ifm-color-primary-lightest: #fac76f;
+  --ifm-background-color: #0a0a0a;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+}
+
+/* Marketing hero (src/pages/index.js). */
+.hero--kato {
+  background: radial-gradient(
+      1200px 400px at 50% -10%,
+      rgba(245, 158, 11, 0.18),
+      transparent 60%
+    ),
+    var(--ifm-background-color);
+  padding: 5rem 0 4rem;
+}
+
+.hero--kato .hero__title {
+  font-size: 3rem;
+  letter-spacing: -0.02em;
+}
+
+.hero--kato .hero__subtitle {
+  max-width: 720px;
+  margin: 1rem auto 0;
+  color: var(--ifm-color-emphasis-700);
+  font-size: 1.25rem;
+}

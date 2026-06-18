@@ -3224,6 +3224,92 @@ code {
   color: #f59e0b;
 }
 
+/* AskUserQuestion answer form — the agent's question rendered as a real
+   radio/checkbox picker (+ a free-text "Other"), not a permission to grant. */
+.ask-question {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ask-question-block {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+}
+
+.ask-question-legend {
+  display: block;
+  padding: 0;
+  margin-bottom: 8px;
+}
+
+.ask-question-header {
+  margin-right: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #f59e0b;
+}
+
+.ask-question-text {
+  color: #f5f5f7;
+  font-weight: 600;
+}
+
+.ask-question-multi {
+  margin-left: 8px;
+  font-size: 12px;
+  color: #a3a3a3;
+}
+
+.ask-question-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.ask-question-option:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.ask-question-option input {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+.ask-question-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ask-question-option-label {
+  color: #f5f5f7;
+  font-weight: 600;
+}
+
+.ask-question-option-desc {
+  color: #a3a3a3;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ask-question-other-input {
+  margin: 4px 0 0 22px;
+  padding: 8px 10px;
+  border: 1px solid #2a2a2a;
+  border-radius: 4px;
+  background: #0a0a0a;
+  color: #f5f5f7;
+  font-size: 13px;
+}
+
 .modal-raw {
   font-size: 11px;
   color: #525252;

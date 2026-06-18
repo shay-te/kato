@@ -486,6 +486,10 @@ _KNOWN_LOCAL_TOOLS = frozenset({
     # Subagent fan-out (``Task`` renamed to ``Agent`` in CLI 2.1.63) — a
     # bounded local capability, not a new/external one.
     'agent', 'task',
+    # The agent asking the OPERATOR a question (not a network/external action).
+    # Kato renders it as an answer UI; it must not look like a scary new
+    # "external capability".
+    'askuserquestion',
 })
 # Tools that reach the network / a third-party service. ``mcp__*`` (any MCP
 # connector) is matched by prefix. Off-machine data flow → BLOCK by default.

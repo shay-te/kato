@@ -505,6 +505,17 @@ class StreamingClaudeSessionTests(unittest.TestCase):
         # SIGTERM is the first escalation after the grace window.
         self.assertIn(15, fake_proc.signals_sent)
 
+    def test_terminate_clears_pending_control_requests(self) -> None:
+        # A stopped session must stop surfacing approval popups — terminate
+        # drops any unanswered permission asks. (Runs even with no subprocess.)
+        session = StreamingClaudeSession(task_id='PROJ-1')
+        with session._pending_control_requests_lock:
+            session._pending_control_requests['req-1'] = {
+                'input': {'command': 'rm -rf x'},
+            }
+        session.terminate(grace_seconds=0.1)
+        self.assertEqual(session.pending_control_requests(), [])
+
 
 class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
     """Methods that can be tested without a live subprocess.

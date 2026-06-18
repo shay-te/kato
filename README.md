@@ -16,6 +16,39 @@ You stay in control: review every diff before merging, chat with the agent live 
 
 ---
 
+## Why Use Kato
+
+> **Ship more tickets with an AI agent you can actually trust — from one screen, with one approval popup, behind security you control.**
+
+Coding agents are powerful but scary: they run shell commands, touch credentials, and sprawl across terminals and tabs. Kato turns that chaos into a **single, governed cockpit** — so a team can put an agent on real tickets without losing sleep over what it might do.
+
+### Do more, in one place
+- **All your tasks in a single pane.** Every ticket the agent is working — across every repo — lives in one tabbed UI. Stop hopping between terminals, IDEs, and browser tabs.
+- **One agent for every tracker & git host.** YouTrack, Jira, GitHub, GitLab, Bitbucket — kato picks up assigned tickets and opens PRs wherever they belong.
+- **Run on the agent you like.** Claude, Codex, or OpenHands behind the same UI; pick the model and effort per task.
+- **It handles the busywork end to end** — clone, branch, code, test, open the PR, post a summary, and fix or answer review comments in-thread.
+
+### Approve everything from one popup — never window-hop again
+- **Central approval popup.** Every permission request — even from a backgrounded task — surfaces in one modal. No more hunting across windows for the prompt that's blocking work.
+- **Full control on every prompt.** See the exact command/tool and choose Allow, Allow-always, or Deny (with a reason the agent reads and adapts to).
+- **One screen to approve repositories** kato may touch — instead of trusting a config file you can't see.
+- **Nothing ships without you.** No auto-commit, no auto-push, no auto-resolve. Kato makes the change, runs the tests, and stops — you click **Done — Push** when it's ready.
+
+### Security that's visible, not hand-wavy
+- **Action Guard.** A 3-layer guard blocks the antivirus-tripping patterns — credential reads, network exfiltration, remote-exec, sandbox escape — and asks before dual-use actions (`rm`, `chmod`, writes outside the task folder). Tune Block / Ask / Allow per category from the UI; a no-legit-use floor can never be loosened.
+- **Out-of-folder writes always ask.** Even scratch paths like `/tmp` are routed back through your approval instead of being silently auto-accepted.
+- **Isolated per-task workspaces.** Each task runs in its own sandboxed clone; in-review clones are never auto-deleted, and kato never deletes a task or workspace on its own.
+- **Tamper-evident audit log.** Every guarded decision is recorded (hash-chained, with redacted command digests) so you can prove exactly what ran.
+
+### See and steer the work
+- **Live diff viewer + inline comments.** Read every change as it lands and drop a comment on any line — kato treats it as a new instruction and re-runs.
+- **Smart PR-comment handling.** Reviewer comments get fixed or answered in-thread; comments that @-mention a *human* (not the bot) are ignored, so kato never acts on a side conversation.
+- **Gets better over time.** Lessons from past tasks are fed back into future runs.
+
+**The bottom line:** Kato gives a team the throughput of an autonomous agent with the oversight of a senior reviewer — one cockpit, one approval flow, security you can see. **[Get started in 5 minutes ↓](#5-minute-start)**
+
+---
+
 ## 5-minute start
 
 ```bash

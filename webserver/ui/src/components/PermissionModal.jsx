@@ -5,6 +5,7 @@ import {
   isHighRiskActionGuard,
 } from '../utils/permissionEnvelope.js';
 import DialogShell from './DialogShell.jsx';
+import AskUserQuestionForm from './AskUserQuestionForm.jsx';
 
 export default function PermissionModal({
   raw, onDecide, taskCode = '', taskSummary = '',
@@ -91,6 +92,37 @@ export default function PermissionModal({
       </span>
     </span>
   );
+
+  // AskUserQuestion isn't a permission to grant — it's a question to answer.
+  // Render the options as a real answer form; the selection goes back as the
+  // response message (a "deny" carrying the answer, since an "allow" would make
+  // the headless CLI try to open a TTY picker that doesn't exist).
+  const askQuestions = toolName === 'AskUserQuestion'
+    && Array.isArray(toolInput?.questions) && toolInput.questions.length > 0
+    ? toolInput.questions
+    : null;
+  if (askQuestions) {
+    return (
+      <DialogShell
+        id="permission-modal"
+        ariaLabelledBy="permission-modal-title"
+        title={title}
+      >
+        <AskUserQuestionForm
+          questions={askQuestions}
+          onAnswer={(answerText) => onDecide({
+            allow: false, rationale: answerText, remember: false,
+            requestId, toolName, command,
+          })}
+          onDismiss={() => onDecide({
+            allow: false,
+            rationale: 'The user dismissed the question without answering.',
+            remember: false, requestId, toolName, command,
+          })}
+        />
+      </DialogShell>
+    );
+  }
 
   return (
     <DialogShell

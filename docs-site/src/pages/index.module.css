@@ -1,0 +1,78 @@
+.heroLogo {
+  width: 132px;
+  height: auto;
+  margin: 0 auto 1.25rem;
+  display: block;
+  filter: drop-shadow(0 8px 28px rgba(245, 158, 11, 0.28));
+}
+
+.buttons {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  margin-top: 2rem;
+  flex-wrap: wrap;
+}
+
+.props {
+  padding: 4.5rem 0 5rem;
+}
+
+.propsHeading {
+  text-align: center;
+  font-size: 2rem;
+  letter-spacing: -0.01em;
+  margin-bottom: 2.5rem;
+}
+
+/* Responsive card grid — the advantages as real blocks. */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.5rem;
+  max-width: 1040px;
+  margin: 0 auto;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  padding: 1.75rem;
+  border-radius: 16px;
+  background: var(--ifm-card-background-color, var(--ifm-background-surface-color));
+  border: 1px solid var(--ifm-color-emphasis-200);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.card:hover {
+  transform: translateY(-4px);
+  border-color: var(--ifm-color-primary);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.28);
+}
+
+.cardIcon {
+  font-size: 2rem;
+  line-height: 1;
+  width: 56px;
+  height: 56px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  margin-bottom: 1rem;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.cardTitle {
+  font-size: 1.2rem;
+  margin: 0 0 0.5rem;
+}
+
+.cardBody {
+  color: var(--ifm-color-emphasis-700);
+  margin: 0;
+  font-size: 0.97rem;
+  line-height: 1.55;
+}

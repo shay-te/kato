@@ -806,12 +806,11 @@ class StreamingClaudeSession(object):
         """
         with self._proc_lock:
             proc = self._proc
-            if proc is None:
-                return
-            self._close_stdin_locked()
-            if not _wait_for_exit(proc, max(0.1, float(grace_seconds))):
-                self._escalate_to_sigterm(proc)
-            self._proc = None
+            if proc is not None:
+                self._close_stdin_locked()
+                if not _wait_for_exit(proc, max(0.1, float(grace_seconds))):
+                    self._escalate_to_sigterm(proc)
+                self._proc = None
         for thread in self._reader_threads:
             thread.join(timeout=1.0)
         self._reader_threads = []
@@ -821,6 +820,11 @@ class StreamingClaudeSession(object):
         # heartbeat interval.
         with self._events_changed:
             self._events_changed.notify_all()
+        # The subprocess is gone, so any unanswered permission asks are dead —
+        # drop them so a stopped session stops surfacing approval popups in the
+        # operator's pending-permissions poll ("still see requests after Stop").
+        with self._pending_control_requests_lock:
+            self._pending_control_requests.clear()
 
     def _escalate_to_sigterm(self, proc: subprocess.Popen) -> None:
         self.logger.info(
