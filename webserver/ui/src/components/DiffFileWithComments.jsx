@@ -26,6 +26,7 @@ import {
   markTaskCommentAddressed,
   reopenTaskComment,
   resolveTaskComment,
+  retryTaskComment,
 } from '../api.js';
 import { toast } from '../stores/toastStore.js';
 import { diffDisplayPath } from '../diffModel.js';
@@ -382,6 +383,25 @@ function DiffFileWithComments({
     }
   }
 
+  async function onRetry(commentId) {
+    const result = await retryTaskComment(taskId, commentId);
+    if (!result.ok) {
+      toast.errorFromResult(result, { title: 'Retry failed', durationMs: 5000 });
+      return;
+    }
+    const triggered = result.body?.triggered_immediately;
+    toast.show({
+      kind: 'success',
+      title: 'Comment re-queued',
+      message: katoTriggeredMessage(triggered),
+      durationMs: 5000,
+    });
+    notifyMutated();
+    if (triggered && typeof onCommentSpawned === 'function') {
+      onCommentSpawned();
+    }
+  }
+
   async function onDelete(commentId) {
     if (!window.confirm('Delete this comment? Replies will be removed too.')) {
       return;
@@ -464,6 +484,7 @@ function DiffFileWithComments({
               onReopen={onReopen}
               onDelete={onDelete}
               onMarkAddressed={onMarkAddressed}
+              onRetry={onRetry}
               onEdit={onEdit}
               onReply={(rootId) => {
                 setActiveLine(lineKey);
@@ -778,6 +799,7 @@ function DiffFileWithComments({
       onReopen={onReopen}
       onDelete={onDelete}
       onMarkAddressed={onMarkAddressed}
+      onRetry={onRetry}
       onEdit={onEdit}
       onReply={(rootId) => {
         setActiveLine(-1);

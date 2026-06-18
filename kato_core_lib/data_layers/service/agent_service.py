@@ -1761,6 +1761,49 @@ class AgentService(MissionStepLoggerMixin, Service):
             'triggered_immediately': triggered,
         }
 
+    def retry_task_comment(
+        self, task_id: str, comment_id: str,
+    ) -> dict[str, object]:
+        """Re-run a comment whose agent turn FAILED.
+
+        Resets it to QUEUED and dispatches immediately when the agent is idle
+        (mirrors ``reopen_task_comment``'s re-queue). Only a FAILED comment may
+        retry — re-queueing an addressed / in-progress one would double-dispatch
+        a turn that already ran. Reopens the operator-facing thread so the retry
+        result has somewhere to land.
+        """
+        from kato_core_lib.comment_core_lib import (
+            CommentStatus,
+            KatoCommentStatus,
+        )
+
+        store = self._comment_store_for(task_id)
+        if store is None:
+            return {'ok': False, 'error': 'no workspace for task'}
+        current = store.get(comment_id)
+        if current is None:
+            return {'ok': False, 'error': f'comment {comment_id!r} not found'}
+        if current.kato_status != KatoCommentStatus.FAILED.value:
+            return {
+                'ok': False,
+                'error': (
+                    f'comment {comment_id!r} is not failed '
+                    f'(kato_status={current.kato_status!r}) — only a failed '
+                    'comment-run can be retried'
+                ),
+            }
+        store.update_status(comment_id, status=CommentStatus.OPEN.value)
+        store.update_kato_status(
+            comment_id, kato_status=KatoCommentStatus.QUEUED.value,
+        )
+        triggered = self._maybe_trigger_comment_run(str(task_id), comment_id)
+        updated = store.get(comment_id) or current
+        return {
+            'ok': True,
+            'comment': updated.to_dict(),
+            'triggered_immediately': triggered,
+        }
+
     def delete_task_comment(
         self, task_id: str, comment_id: str,
     ) -> dict[str, object]:

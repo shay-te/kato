@@ -1292,6 +1292,67 @@ class ReopenTaskCommentTests(unittest.TestCase):
         trigger.assert_not_called()
 
 
+class RetryTaskCommentTests(unittest.TestCase):
+    def test_returns_error_when_no_workspace(self) -> None:
+        service = AgentService(**_kwargs())
+        result = service.retry_task_comment('T1', 'c1')
+        self.assertFalse(result['ok'])
+
+    def test_returns_error_when_comment_not_found(self) -> None:
+        service = AgentService(**_kwargs())
+        store = MagicMock()
+        store.get.return_value = None
+        with patch.object(service, '_comment_store_for', return_value=store):
+            result = service.retry_task_comment('T1', 'c1')
+        self.assertFalse(result['ok'])
+
+    def test_refuses_to_retry_a_non_failed_comment(self) -> None:
+        from kato_core_lib.comment_core_lib import (
+            CommentRecord,
+            KatoCommentStatus,
+        )
+        service = AgentService(**_kwargs())
+        record = CommentRecord(
+            id='c1', body='b', repo_id='r1', author='a', source='local',
+            kato_status=KatoCommentStatus.ADDRESSED.value,
+        )
+        store = MagicMock()
+        store.get.return_value = record
+        with patch.object(service, '_comment_store_for', return_value=store), \
+             patch.object(service, '_maybe_trigger_comment_run') as trigger:
+            result = service.retry_task_comment('T1', 'c1')
+        self.assertFalse(result['ok'])
+        store.update_kato_status.assert_not_called()
+        trigger.assert_not_called()
+
+    def test_retries_a_failed_comment_by_requeueing_and_triggering(self) -> None:
+        from kato_core_lib.comment_core_lib import (
+            CommentRecord,
+            CommentStatus,
+            KatoCommentStatus,
+        )
+        service = AgentService(**_kwargs())
+        record = CommentRecord(
+            id='c1', body='b', repo_id='r1', author='a', source='local',
+            kato_status=KatoCommentStatus.FAILED.value,
+        )
+        store = MagicMock()
+        store.get.return_value = record
+        with patch.object(service, '_comment_store_for', return_value=store), \
+             patch.object(service, '_maybe_trigger_comment_run',
+                          return_value=True) as trigger:
+            result = service.retry_task_comment('T1', 'c1')
+        self.assertTrue(result['ok'])
+        self.assertTrue(result['triggered_immediately'])
+        store.update_status.assert_called_once_with(
+            'c1', status=CommentStatus.OPEN.value,
+        )
+        store.update_kato_status.assert_called_once_with(
+            'c1', kato_status=KatoCommentStatus.QUEUED.value,
+        )
+        trigger.assert_called_once_with('T1', 'c1')
+
+
 class DeleteTaskCommentTests(unittest.TestCase):
     def test_returns_error_when_no_workspace(self) -> None:
         service = AgentService(**_kwargs())

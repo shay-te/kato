@@ -260,6 +260,16 @@ export function reopenTaskComment(taskId, commentId) {
   );
 }
 
+export function retryTaskComment(taskId, commentId) {
+  // Re-run a FAILED comment-run: the backend re-queues it and dispatches
+  // immediately when the agent is idle.
+  if (!taskId || !commentId) { return { ok: false, error: 'no ids' }; }
+  return requestEnvelope(
+    `/api/sessions/${encodeURIComponent(taskId)}/comments/${encodeURIComponent(commentId)}/retry`,
+    { method: 'POST' },
+  );
+}
+
 export function deleteTaskComment(taskId, commentId) {
   if (!taskId || !commentId) { return { ok: false, error: 'no ids' }; }
   return requestEnvelope(

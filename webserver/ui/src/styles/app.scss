@@ -4678,6 +4678,55 @@ body.kato-resizing #left-pane-resizer::before {
   margin-left: 0;
 }
 
+/* Always-visible icon action cluster in the comment header (Reply / Edit /
+   Retry / Resolve / Reopen / Mark addressed / Delete). Carries the
+   margin-left:auto that pushes the cluster (and the chevron right after it) to
+   the right edge — so the chevron must drop ITS own auto or a gap opens. */
+.diff-file-comment-head-actions {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: $SPACE-2;
+}
+
+.diff-file-comment-head-actions + .diff-file-comment-collapse {
+  margin-left: $SPACE-4;
+}
+
+.diff-file-comment-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: $C-NEUTRAL-64;
+  border-radius: $RADIUS-4;
+  cursor: pointer;
+  font-size: $TEXT-12;
+  transition: background 120ms ease, color 120ms ease, transform 90ms ease;
+}
+
+.diff-file-comment-act:hover {
+  background: $C-NEUTRAL-100-A06;
+  color: $C-NEUTRAL-96;
+}
+
+.diff-file-comment-act.danger:hover {
+  color: $C-RED-89;
+}
+
+.diff-file-comment-act:active {
+  transform: scale(0.94);
+}
+
+.diff-file-comment-act:focus {
+  outline: none;
+}
+
 .diff-file-comment-body {
   color: $C-NEUTRAL-96;
   font-size: $TEXT-13;

@@ -186,7 +186,7 @@ describe('CommentBubble — rendering', () => {
     expect(container).toBeInTheDocument();
   });
 
-  test('collapsed local comment shows a trash button that deletes without expanding', () => {
+  test('local comment shows an ALWAYS-visible Delete icon (even collapsed)', () => {
     const onDelete = vi.fn();
     render(
       <CommentBubble
@@ -197,14 +197,12 @@ describe('CommentBubble — rendering', () => {
         onDelete={onDelete}
       />,
     );
-    const trash = screen.getByRole('button', { name: /delete comment/i });
-    fireEvent.click(trash);
+    const del = screen.getByRole('button', { name: 'Delete' });
+    fireEvent.click(del);
     expect(onDelete).toHaveBeenCalled();
-    // Collapsed: the body (and its "Delete" text action) is not rendered.
-    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
   });
 
-  test('collapsed REMOTE comment shows no trash (delete lives on the git host)', () => {
+  test('REMOTE comment shows no Delete (delete lives on the git host)', () => {
     render(
       <CommentBubble
         comment={_comment({ source: 'remote', author: 'reviewer-bot' })}
@@ -214,11 +212,11 @@ describe('CommentBubble — rendering', () => {
         onDelete={vi.fn()}
       />,
     );
-    expect(screen.queryByRole('button', { name: /delete comment/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
   });
 
-  test('expanded comment has no collapsed-header trash — it uses the body Delete', () => {
-    render(
+  test('Delete is one always-visible icon — present whether collapsed or expanded', () => {
+    const { rerender } = render(
       <CommentBubble
         comment={_comment({ source: 'local' })}
         isRoot={true}
@@ -227,8 +225,45 @@ describe('CommentBubble — rendering', () => {
         onDelete={vi.fn()}
       />,
     );
-    expect(screen.queryByRole('button', { name: 'Delete comment' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+    rerender(
+      <CommentBubble
+        comment={_comment({ source: 'local' })}
+        isRoot={true}
+        collapsed={true}
+        onToggleCollapsed={() => {}}
+        onDelete={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+  });
+
+  test('a FAILED root comment shows a Retry icon; clicking fires onRetry', () => {
+    const onRetry = vi.fn();
+    render(
+      <CommentBubble
+        comment={_comment({ source: 'local', kato_status: 'failed' })}
+        isRoot={true}
+        collapsed={false}
+        onToggleCollapsed={() => {}}
+        onRetry={onRetry}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(onRetry).toHaveBeenCalled();
+  });
+
+  test('a non-failed comment shows no Retry icon', () => {
+    render(
+      <CommentBubble
+        comment={_comment({ source: 'local', kato_status: 'addressed' })}
+        isRoot={true}
+        collapsed={false}
+        onToggleCollapsed={() => {}}
+        onRetry={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
   });
 });
 

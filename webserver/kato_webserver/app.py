@@ -29,6 +29,7 @@ Endpoints:
     POST /api/sessions/<task_id>/comments/<id>/resolve  — mark thread resolved
     POST /api/sessions/<task_id>/comments/<id>/reopen   — re-open a resolved thread
     POST /api/sessions/<task_id>/comments/<id>/addressed — mark addressed + post on remote
+    POST /api/sessions/<task_id>/comments/<id>/retry    — re-run a FAILED comment
     DEL  /api/sessions/<task_id>/comments/<id>          — delete comment + replies
     POST /api/sessions/<task_id>/comments/<id>/edit     — edit queued local comment body / kato_status
     POST /api/sessions/<task_id>/comments/sync          — git pull + pull remote PR comments
@@ -2107,6 +2108,16 @@ def _register_http_routes(app: Flask) -> None:
         if err:
             return err
         return jsonify(reopen(task_id, comment_id))
+
+    @app.post('/api/sessions/<task_id>/comments/<comment_id>/retry')
+    def retry_task_comment(task_id: str, comment_id: str):
+        retry, err = _resolve_agent_method(
+            app, 'retry_task_comment',
+            not_callable_message='comments not supported',
+        )
+        if err:
+            return err
+        return jsonify(retry(task_id, comment_id))
 
     @app.delete('/api/sessions/<task_id>/comments/<comment_id>')
     def delete_task_comment(task_id: str, comment_id: str):

@@ -37,6 +37,8 @@ import {
   faCopy,
   faThumbtack,
   faTrash,
+  faCheckDouble,
+  faReply,
 } from '@fortawesome/free-solid-svg-icons';
 
 const ICONS = {
@@ -76,6 +78,8 @@ const ICONS = {
   // changed file-tree rows.
   'diff': faCodeCompare,
   'check': faCheck,
+  'check-double': faCheckDouble,
+  'reply': faReply,
   'link': faLink,
   'stop': faStop,
   'play': faPlay,

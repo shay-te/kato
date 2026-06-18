@@ -84,7 +84,7 @@ function statusPill(comment) {
 
 export function CommentBubble({
   comment, isRoot,
-  onResolve, onReopen, onDelete, onReply, onMarkAddressed,
+  onResolve, onReopen, onDelete, onReply, onMarkAddressed, onRetry,
   // Inline-edit hook for a queued local comment. Async; receives
   // ``({body, katoStatus})`` and must return ``true`` on success.
   // Called three ways during one edit cycle:
@@ -158,6 +158,9 @@ export function CommentBubble({
   );
   const [editing, setEditing] = useState(katoStatus === 'editing');
   async function startEditing() {
+    // The editor lives in the (collapse-gated) body — expand first so the
+    // always-visible Edit icon works even on a collapsed comment.
+    if (collapsed) { toggleCollapsed(); }
     setEditing(true);
     if (katoStatus !== 'editing') {
       const ok = await onEdit({ katoStatus: 'editing' });
@@ -173,6 +176,86 @@ export function CommentBubble({
     setEditing(false);
     await onEdit({ katoStatus: 'queued' });
   }
+
+  // All actions live in the header as ALWAYS-VISIBLE icon buttons (operator
+  // asked for them at the top, as icons, never hover-gated — Delete included).
+  // ``aria-label`` carries the action name so it's the button's accessible
+  // name (keeps existing name-based queries/tests + screen readers working).
+  const showResolve = isRoot && !isResolved && typeof onResolve === 'function';
+  const showReopen = isRoot && isResolved && typeof onReopen === 'function';
+  const showRetry = (
+    isRoot && katoStatus === 'failed' && typeof onRetry === 'function'
+  );
+  const showDelete = comment.source === 'local' && typeof onDelete === 'function';
+  const actionBar = (
+    <span
+      className="diff-file-comment-head-actions"
+      role="group"
+      aria-label="Comment actions"
+    >
+      {typeof onReply === 'function' && (
+        <button
+          type="button" className="diff-file-comment-act"
+          onClick={onReply} aria-label="Reply" title="Reply"
+        >
+          <Icon name="reply" />
+        </button>
+      )}
+      {canEdit && !editing && (
+        <button
+          type="button" className="diff-file-comment-act"
+          onClick={startEditing} aria-label="Edit"
+          title="Edit this pending comment. Kato will not pick it up while you are editing."
+        >
+          <Icon name="edit" />
+        </button>
+      )}
+      {showRetry && (
+        <button
+          type="button" className="diff-file-comment-act"
+          onClick={onRetry} aria-label="Retry"
+          title="Re-run this failed comment — kato will pick it up again."
+        >
+          <Icon name="refresh" />
+        </button>
+      )}
+      {showResolve && (
+        <button
+          type="button" className="diff-file-comment-act"
+          onClick={onResolve} aria-label="Resolve" title="Resolve this thread"
+        >
+          <Icon name="check" />
+        </button>
+      )}
+      {showReopen && (
+        <button
+          type="button" className="diff-file-comment-act"
+          onClick={onReopen} aria-label="Reopen" title="Re-open this resolved thread"
+        >
+          <Icon name="refresh" />
+        </button>
+      )}
+      {showMarkAddressed && (
+        <button
+          type="button" className="diff-file-comment-act"
+          onClick={onMarkAddressed} aria-label="Mark addressed"
+          title={comment.source === 'remote'
+            ? 'Mark addressed locally + post the "Kato addressed" reply on the source git platform.'
+            : 'Mark this comment as addressed by kato.'}
+        >
+          <Icon name="check-double" />
+        </button>
+      )}
+      {showDelete && (
+        <button
+          type="button" className="diff-file-comment-act danger"
+          onClick={onDelete} aria-label="Delete" title="Delete comment"
+        >
+          <Icon name="trash" />
+        </button>
+      )}
+    </span>
+  );
 
   return (
     <div
@@ -212,20 +295,10 @@ export function CommentBubble({
             {replyCount === 1 ? '1 reply' : `${replyCount} replies`}
           </span>
         )}
-        {/* Delete a comment WITHOUT expanding it first — same confirm + handler
-            as the body's Delete button. Local comments only (remote ones live
-            on the git host). */}
-        {collapsed && comment.source === 'local' && typeof onDelete === 'function' && (
-          <button
-            type="button"
-            className="diff-file-comment-collapse diff-file-comment-trash"
-            onClick={onDelete}
-            aria-label="Delete comment"
-            title="Delete comment"
-          >
-            <Icon name="trash" />
-          </button>
-        )}
+        {/* All actions, as always-visible icons, at the top (operator request).
+            Always rendered — even when collapsed — so Reply/Resolve/Retry/Delete
+            are one click away without expanding first. */}
+        {actionBar}
         <button
           type="button"
           className="diff-file-comment-collapse"
@@ -262,58 +335,6 @@ export function CommentBubble({
               {renderCommentMarkdown(comment.body)}
             </div>
           )}
-          {!editing && (
-            <footer className="diff-file-comment-actions">
-              {typeof onReply === 'function' && (
-                <button type="button" onClick={onReply} className="diff-file-comment-action">
-                  Reply
-                </button>
-              )}
-              {canEdit && (
-                <button
-                  type="button"
-                  onClick={startEditing}
-                  className="diff-file-comment-action"
-                  title="Edit this pending comment. Kato will not pick it up while you are editing."
-                >
-                  Edit
-                </button>
-              )}
-              {isRoot && !isResolved && typeof onResolve === 'function' && (
-                <button type="button" onClick={onResolve} className="diff-file-comment-action">
-                  Resolve
-                </button>
-              )}
-              {isRoot && isResolved && typeof onReopen === 'function' && (
-                <button type="button" onClick={onReopen} className="diff-file-comment-action">
-                  Reopen
-                </button>
-              )}
-              {showMarkAddressed && (
-                <button
-                  type="button"
-                  onClick={onMarkAddressed}
-                  className="diff-file-comment-action"
-                  title={
-                    comment.source === 'remote'
-                      ? 'Mark addressed locally + post the "Kato addressed" reply on the source git platform.'
-                      : 'Mark this comment as addressed by kato.'
-                  }
-                >
-                  Mark addressed
-                </button>
-              )}
-              {comment.source === 'local' && typeof onDelete === 'function' && (
-                <button
-                  type="button"
-                  onClick={onDelete}
-                  className="diff-file-comment-action danger"
-                >
-                  Delete
-                </button>
-              )}
-            </footer>
-          )}
         </>
       )}
     </div>
@@ -334,6 +355,7 @@ export function CommentThread({
   onDelete,
   onReply,
   onMarkAddressed,
+  onRetry,
   onEdit,
 }) {
   const isResolved = thread.root.status === 'resolved';
@@ -363,6 +385,11 @@ export function CommentThread({
         onDelete={() => onDelete(thread.root.id)}
         onReply={() => onReply(thread.root.id)}
         onMarkAddressed={() => onMarkAddressed(thread.root.id)}
+        onRetry={
+          typeof onRetry === 'function'
+            ? () => onRetry(thread.root.id)
+            : undefined
+        }
         onEdit={
           typeof onEdit === 'function'
             ? (payload) => onEdit(thread.root.id, payload)
