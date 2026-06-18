@@ -4,6 +4,7 @@ import {
   decisionCommandFor,
   isHighRiskActionGuard,
 } from '../utils/permissionEnvelope.js';
+import { extractAnswerableQuestions } from '../utils/answerableQuestion.js';
 import DialogShell from './DialogShell.jsx';
 import AskUserQuestionForm from './AskUserQuestionForm.jsx';
 
@@ -93,14 +94,13 @@ export default function PermissionModal({
     </span>
   );
 
-  // AskUserQuestion isn't a permission to grant — it's a question to answer.
-  // Render the options as a real answer form; the selection goes back as the
+  // A "question to answer" tool call (Claude's AskUserQuestion, or any backend
+  // emitting the same questions shape) isn't a permission to grant — it's a
+  // question to answer. Detect it by SHAPE so the form is backend-agnostic, and
+  // render the options as a real answer form; the selection goes back as the
   // response message (a "deny" carrying the answer, since an "allow" would make
   // the headless CLI try to open a TTY picker that doesn't exist).
-  const askQuestions = toolName === 'AskUserQuestion'
-    && Array.isArray(toolInput?.questions) && toolInput.questions.length > 0
-    ? toolInput.questions
-    : null;
+  const askQuestions = extractAnswerableQuestions(toolInput);
   if (askQuestions) {
     return (
       <DialogShell

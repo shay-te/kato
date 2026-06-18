@@ -268,6 +268,7 @@ export default function App() {
 
   const routing = useNotificationRouting(notifications.notify, {
     recallToolDecision: toolMemory.recall,
+    activeTaskId,
   });
 
   const handleStatusEntry = useCallback((entry) => {

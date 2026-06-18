@@ -303,4 +303,29 @@ describe('PermissionModal — AskUserQuestion', () => {
     expect(arg.requestId).toBe('q1');
     expect(arg.rationale).toContain('Separate Promiser + Executer');
   });
+
+  test('is backend-agnostic: a non-AskUserQuestion tool with the questions shape still renders the form', () => {
+    // Detection is by SHAPE, not name — so a different backend emitting the
+    // same questions payload renders the answer form, not an allow/deny grant.
+    const raw = _raw({
+      request_id: 'q2',
+      request: {
+        request_id: 'q2',
+        tool_name: 'SomeOtherBackendQuestionTool',
+        input: {
+          questions: [{
+            question: 'Pick a region',
+            options: [
+              { label: 'us-east', description: 'Virginia' },
+              { label: 'eu-west', description: 'Ireland' },
+            ],
+          }],
+        },
+      },
+    });
+    render(<PermissionModal raw={raw} onDecide={vi.fn()} />);
+    expect(screen.getByText('us-east')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /send answer/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /allow once/i })).toBeNull();
+  });
 });

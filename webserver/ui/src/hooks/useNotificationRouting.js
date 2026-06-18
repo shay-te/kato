@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { CLAUDE_EVENT } from '../constants/claudeEvent.js';
 import { NOTIFICATION_KIND } from '../constants/notificationKind.js';
 import { classifyStatusEntry } from '../utils/classifyStatusEntry.js';
@@ -15,11 +15,46 @@ import {
 // reported "I get browser notification approval needed even when claude is
 // approving automatically from saved rules" bug). Mirrors the tab-orange
 // gate already in App.jsx, so the two surfaces stay aligned.
-export function useNotificationRouting(notify, { recallToolDecision } = {}) {
+//
+// ``activeTaskId`` (optional): the focused task. Its permission ask is
+// already notified — with full command-level recall — by ``onSessionEvent``
+// off the live SSE stream. The orchestrator status feed emits a duplicate
+// "asking permission to run X" line for that SAME ask, and that line carries
+// only the tool name, so it can't see a remembered ``(Bash, mvn)`` grant and
+// would re-ping even when the SSE path correctly stayed silent. So the
+// status-feed permission notification is suppressed for the focused task
+// (owned by onSessionEvent) and, for background tasks, best-effort suppressed
+// when a saved decision exists.
+export function useNotificationRouting(
+  notify,
+  { recallToolDecision, activeTaskId } = {},
+) {
+  // Hold the focused task in a ref so switching tabs does NOT change the
+  // callback identity (which would re-subscribe the status feed).
+  const activeTaskIdRef = useRef(activeTaskId || '');
+  useEffect(() => {
+    activeTaskIdRef.current = activeTaskId || '';
+  }, [activeTaskId]);
+
   const onStatusEntry = useCallback((entry) => {
     const classification = classifyStatusEntry(entry);
-    if (classification) { notify(classification); }
-  }, [notify]);
+    if (!classification) { return; }
+    if (classification.permissionTool) {
+      // onSessionEvent already owns the focused task's permission ping.
+      if (classification.taskId
+          && classification.taskId === activeTaskIdRef.current) {
+        return;
+      }
+      // Background task: the status line lacks the command, so this only
+      // catches non-command-keyed tools and bare-tool grants — but that is
+      // exactly the "saved before" case the operator reported.
+      const decision = typeof recallToolDecision === 'function'
+        ? recallToolDecision(classification.permissionTool, '')
+        : null;
+      if (decision === 'allow' || decision === 'deny') { return; }
+    }
+    notify(classification);
+  }, [notify, recallToolDecision]);
 
   const onSessionEvent = useCallback((raw, taskId) => {
     if (!raw?.type) { return; }

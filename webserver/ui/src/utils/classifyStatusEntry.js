@@ -75,6 +75,10 @@ const PATTERNS = [
         title: 'Approval needed',
         body: `${m[1]} → ${m[2]}`,
         taskId: m[1],
+        // The tool name (e.g. ``Bash``/``WebFetch``) so the notification
+        // router can recall a saved decision and stay silent for an ask
+        // that auto-resolves. Only the permission pattern sets this.
+        permissionTool: m[2],
         kind: NOTIFICATION_KIND.ATTENTION,
       };
     },

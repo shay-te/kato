@@ -4822,37 +4822,6 @@ body.kato-resizing #left-pane-resizer::before {
   color: #93c5fd;
 }
 
-.diff-file-comment-actions {
-  margin: 4px 0 0 0;
-  display: flex;
-  align-items: center;
-  font-size: 12px;
-}
-
-.diff-file-comment-action {
-  background: transparent;
-  border: 0;
-  color: #93c5fd;
-  cursor: pointer;
-  padding: 0;
-  font: inherit;
-}
-
-/* Bitbucket-style middot separators between actions. */
-.diff-file-comment-action + .diff-file-comment-action::before {
-  content: "·";
-  color: #525252;
-  margin: 0 8px;
-}
-
-.diff-file-comment-action:hover {
-  text-decoration: underline;
-}
-
-.diff-file-comment-action.danger {
-  color: #fca5a5;
-}
-
 /* ----- formatting toolbar (markdown-source, no WYSIWYG) ----- */
 .diff-file-comments-toolbar {
   display: flex;

@@ -246,13 +246,6 @@ test('Bitbucket comment card: avatar, collapse chevron, dot actions', () => {
 
   // Collapsed bubble state rule must exist.
   ruleBody('.diff-file-comment.is-collapsed');
-
-  // Actions are middot-separated Bitbucket-style.
-  const sep = ruleBody(
-    '.diff-file-comment-action + .diff-file-comment-action::before',
-  );
-  // Sass emits string values with double quotes (content: '·' -> "·").
-  assertDeclaration(sep, 'content', '"·"');
 });
 
 test('Comment editor has a formatting toolbar', () => {

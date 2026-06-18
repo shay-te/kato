@@ -127,6 +127,16 @@ test('classifyStatusEntry: claude asking permission → ATTENTION + tool name in
   assert.equal(result.kind, NOTIFICATION_KIND.ATTENTION);
   assert.equal(result.taskId, 'PROJ-8');
   assert.ok(result.body.includes('Bash'));
+  // The tool name is exposed separately so the notification router can
+  // recall a saved decision and stay silent for an auto-resolved ask.
+  assert.equal(result.permissionTool, 'Bash');
+});
+
+test('classifyStatusEntry: non-permission entries carry no permissionTool', function () {
+  const result = classifyStatusEntry(_entry(
+    'task PROJ-8 implementation complete; awaiting push approval',
+  ));
+  assert.equal(result.permissionTool, undefined);
 });
 
 test('classifyStatusEntry: claude turn ended with error → ERROR', function () {

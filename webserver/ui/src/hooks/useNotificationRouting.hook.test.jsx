@@ -41,6 +41,75 @@ describe('useNotificationRouting — onStatusEntry', () => {
     result.current.onStatusEntry(undefined);
     expect(notify).not.toHaveBeenCalled();
   });
+
+  test('status-feed permission ask for the FOCUSED task is SUPPRESSED', () => {
+    // onSessionEvent already pings the focused task off the live SSE
+    // stream (with command-level recall). The orchestrator status feed
+    // emits a duplicate "asking permission" line for the same ask; firing
+    // off it too would double-ping — and worse, it carries only the tool
+    // name so it can't see a remembered (Bash, mvn) grant.
+    const notify = vi.fn();
+    const { result } = renderHook(() => useNotificationRouting(notify, {
+      activeTaskId: 'PROJ-8',
+    }));
+
+    result.current.onStatusEntry({
+      message: 'task PROJ-8: claude is asking permission to run Bash',
+    });
+
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  test('status-feed permission ask for a BACKGROUND task with a saved decision is SUPPRESSED', () => {
+    // The operator-reported leak: a remembered tool still pinged via the
+    // status feed even though the decision auto-resolves silently.
+    const notify = vi.fn();
+    const recallToolDecision = vi.fn().mockReturnValue('allow');
+    const { result } = renderHook(() => useNotificationRouting(notify, {
+      recallToolDecision,
+      activeTaskId: 'OTHER',
+    }));
+
+    result.current.onStatusEntry({
+      message: 'task PROJ-8: claude is asking permission to run WebFetch',
+    });
+
+    expect(notify).not.toHaveBeenCalled();
+    // Recalled by bare tool name — the status line has no command.
+    expect(recallToolDecision).toHaveBeenCalledWith('WebFetch', '');
+  });
+
+  test('status-feed permission ask for a BACKGROUND task with NO saved decision still notifies', () => {
+    const notify = vi.fn();
+    const recallToolDecision = vi.fn().mockReturnValue(null);
+    const { result } = renderHook(() => useNotificationRouting(notify, {
+      recallToolDecision,
+      activeTaskId: 'OTHER',
+    }));
+
+    result.current.onStatusEntry({
+      message: 'task PROJ-8: claude is asking permission to run WebFetch',
+    });
+
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify.mock.calls[0][0].taskId).toBe('PROJ-8');
+  });
+
+  test('non-permission status entries are NEVER suppressed by the focused-task gate', () => {
+    // The suppression is permission-only; a "task started" line for the
+    // focused task must still notify.
+    const notify = vi.fn();
+    const { result } = renderHook(() => useNotificationRouting(notify, {
+      activeTaskId: 'PROJ-1',
+    }));
+
+    result.current.onStatusEntry({
+      message: 'Mission PROJ-1: starting mission: fix the login bug',
+    });
+
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify.mock.calls[0][0].kind).toBe(NOTIFICATION_KIND.STARTED);
+  });
 });
 
 

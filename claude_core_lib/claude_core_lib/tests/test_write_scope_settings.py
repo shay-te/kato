@@ -22,6 +22,14 @@ class OutOfWorkspaceWriteSettingsTests(unittest.TestCase):
         for root in ('/etc', '/usr', '/var', '/bin', '/root'):
             self.assertIn(f'Write({root}/**)', rules)
 
+    def test_covers_mounted_volume_roots(self) -> None:
+        # Mounted/external/network drives are classic exfil targets and are
+        # never the task workspace, so writes there must be approved too.
+        rules = out_of_workspace_write_ask_rules()
+        for root in ('/Volumes', '/Network', '/mnt', '/media', '/srv'):
+            for tool in ('Write', 'Edit', 'MultiEdit', 'NotebookEdit'):
+                self.assertIn(f'{tool}({root}/**)', rules)
+
     def test_never_targets_home_or_workspace(self) -> None:
         # The task workspace lives under ~/.kato/workspaces — a home rule would
         # prompt on every in-workspace edit and defeat acceptEdits.
