@@ -854,7 +854,7 @@ class DockerSandboxSpawnTests(unittest.TestCase):
         with patch('sandbox_core_lib.sandbox_core_lib.manager.ensure_image'), \
              patch('sandbox_core_lib.sandbox_core_lib.manager.check_spawn_rate'), \
              patch('sandbox_core_lib.sandbox_core_lib.manager.make_container_name',
-                   return_value='kato-codex-x'), \
+                   return_value='codex-x'), \
              patch('sandbox_core_lib.sandbox_core_lib.manager.enforce_no_workspace_secrets',
                    side_effect=SandboxError('found .env')):
             with self.assertRaises(RuntimeError) as ctx:
@@ -867,7 +867,7 @@ class DockerSandboxSpawnTests(unittest.TestCase):
         with patch('sandbox_core_lib.sandbox_core_lib.manager.ensure_image'), \
              patch('sandbox_core_lib.sandbox_core_lib.manager.check_spawn_rate'), \
              patch('sandbox_core_lib.sandbox_core_lib.manager.make_container_name',
-                   return_value='kato-codex-x'), \
+                   return_value='codex-x'), \
              patch('sandbox_core_lib.sandbox_core_lib.manager.enforce_no_workspace_secrets'), \
              patch('sandbox_core_lib.sandbox_core_lib.manager.wrap_command',
                    side_effect=lambda c, **kw: c), \
@@ -896,7 +896,7 @@ class DockerSandboxSpawnTests(unittest.TestCase):
         with patch('sandbox_core_lib.sandbox_core_lib.manager.ensure_image'), \
              patch('sandbox_core_lib.sandbox_core_lib.manager.check_spawn_rate'), \
              patch('sandbox_core_lib.sandbox_core_lib.manager.make_container_name',
-                   return_value='kato-codex-x'), \
+                   return_value='codex-x'), \
              patch('sandbox_core_lib.sandbox_core_lib.manager.enforce_no_workspace_secrets'), \
              patch('sandbox_core_lib.sandbox_core_lib.manager.wrap_command',
                    side_effect=lambda c, **kw: c), \

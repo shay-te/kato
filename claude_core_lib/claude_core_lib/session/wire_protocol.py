@@ -1,6 +1,6 @@
-"""Wire-protocol constants shared by kato and the planning UI.
+"""Wire-protocol constants shared by the host orchestrator and its UI.
 
-Kato consumes Claude CLI's stream-json output (`claude -p
+The host consumes Claude CLI's stream-json output (`claude -p
 --output-format stream-json`) and re-emits it to browsers as
 Server-Sent Events. The strings on both ends of those wires are
 duplicated naturally — a typo on one side silently breaks reconnect
@@ -25,23 +25,23 @@ CLAUDE_EVENT_PERMISSION_REQUEST = 'permission_request'
 CLAUDE_EVENT_CONTROL_REQUEST = 'control_request'
 CLAUDE_EVENT_CONTROL_RESPONSE = 'control_response'
 
-# Synthetic events kato injects into the event log so reconnecting
+# Synthetic events the host injects into the event log so reconnecting
 # browsers can clear stale UI state from the backlog.
 CLAUDE_EVENT_PERMISSION_RESPONSE = 'permission_response'
 
 CLAUDE_SYSTEM_SUBTYPE_INIT = 'init'
-# Kato-synthetic: injected when the agent WRITES to a path outside the
+# Host-synthetic: injected when the agent WRITES to a path outside the
 # task folder without a permission request (the CLI auto-accepts scratch
-# paths like /tmp under acceptEdits, so kato's permission-time warning
+# paths like /tmp under acceptEdits, so the host's permission-time warning
 # never fires for them). Surfaces a loud chat bubble so an out-of-folder
 # write is never silent.
-CLAUDE_SYSTEM_SUBTYPE_SANDBOX_WARNING = 'kato_sandbox_warning'
-# Kato-synthetic: injected when the Action Guard BLOCKS a tool call — the
+CLAUDE_SYSTEM_SUBTYPE_SANDBOX_WARNING = 'sandbox_warning'
+# Host-synthetic: injected when the Action Guard BLOCKS a tool call — the
 # agent was told "no" and adapts, but the operator must SEE the refusal.
 # Carries an ``action_guard`` payload (category/reason/rule_id) so the UI
-# renders a loud bubble and lights the tab. Emitted by the webserver via
-# the generic ``publish_system_notice`` hook.
-CLAUDE_SYSTEM_SUBTYPE_ACTION_GUARD_BLOCK = 'kato_action_guard_block'
+# renders a loud bubble and lights the tab. Emitted by the host webserver
+# via the generic ``publish_system_notice`` hook.
+CLAUDE_SYSTEM_SUBTYPE_ACTION_GUARD_BLOCK = 'action_guard_block'
 
 PERMISSION_REQUEST_EVENT_TYPES = frozenset({
     CLAUDE_EVENT_PERMISSION_REQUEST,
@@ -49,11 +49,11 @@ PERMISSION_REQUEST_EVENT_TYPES = frozenset({
 })
 
 
-# ----- kato → browser SSE event names -----
+# ----- host → browser SSE event names -----
 #
 # Mirrors the addEventListener('<name>') calls in
 # webserver/ui/src/hooks/useSessionStream.js (per-task chat) and
-# webserver/ui/src/hooks/useStatusFeed.js (global kato status feed).
+# webserver/ui/src/hooks/useStatusFeed.js (global host status feed).
 
 SSE_EVENT_SESSION_EVENT = 'session_event'
 SSE_EVENT_SESSION_HISTORY_EVENT = 'session_history_event'

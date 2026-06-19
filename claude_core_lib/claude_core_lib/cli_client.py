@@ -190,10 +190,10 @@ class ClaudeCliClient(object):
         self.logger = configure_logger(self.__class__.__name__)
         if self._bypass_permissions:
             self.logger.warning(
-                'KATO_CLAUDE_BYPASS_PERMISSIONS=true: Claude will run with '
+                'Bypass-permissions mode is enabled: Claude will run with '
                 '--permission-mode bypassPermissions. Per-tool prompts are '
                 'disabled — the agent can run Bash, Edit, Write, and any '
-                'other tool without asking. The operator who set this flag '
+                'other tool without asking. The operator who enabled this '
                 'accepts responsibility for any harm caused by the agent. '
                 'See SECURITY.md.'
             )
@@ -206,7 +206,7 @@ class ClaudeCliClient(object):
             else self.SAFE_PERMISSION_MODE
         )
 
-    # ----- public API parity with KatoClient -----
+    # ----- public agent-client API (parity with the other transports) -----
 
     @staticmethod
     def _running_inside_docker() -> bool:
@@ -220,18 +220,17 @@ class ClaudeCliClient(object):
     def validate_connection(self) -> None:
         if self._running_inside_docker():
             raise RuntimeError(
-                'KATO_AGENT_BACKEND=claude is not supported inside Docker. '
+                'The Claude backend is not supported inside Docker. '
                 'The Claude Code CLI authenticates against your host '
                 '`claude login` credentials (macOS Keychain, Linux config '
                 'file, or Windows Credential Manager), and the container '
                 'cannot reach those. '
-                'Run kato locally instead — `make compose-up` or `make run`. '
-                'If you genuinely need Docker, switch to KATO_AGENT_BACKEND=openhands '
-                'and use `make compose-up-docker`.'
+                'Run the agent on the host instead, or select a backend that '
+                'supports containerized execution (e.g. OpenHands).'
             )
         binary_path = shutil.which(self._binary)
         if not binary_path:
-            # Multi-line message printed by kato startup. Lead with
+            # Multi-line message printed at host startup. Lead with
             # the one-line install command (works on macOS / Linux /
             # Windows) so the operator can fix this in 30 seconds
             # without reading the docs page.
@@ -249,8 +248,8 @@ class ClaudeCliClient(object):
                 f'    claude --version\n'
                 f'\n'
                 f'After install, the ``claude`` binary must be on PATH (npm puts it\n'
-                f'there automatically). If you installed it somewhere else, set\n'
-                f'KATO_CLAUDE_BINARY to the full path. Full setup docs:\n'
+                f'there automatically). If you installed it somewhere else,\n'
+                f'configure the Claude binary path. Full setup docs:\n'
                 f'    https://docs.claude.com/en/docs/claude-code/setup\n'
             )
         self._binary_path = binary_path
@@ -808,16 +807,16 @@ class ClaudeCliClient(object):
             '- ask the operator for permission to commit\n'
             '- mention git, commits, PRs, or branches in your reply except to say you are done editing\n'
             '\n'
-            'KATO handles everything after you finish:\n'
-            '- Kato is the orchestrator that spawned you.\n'
-            '- Kato sees your file edits on disk and commits them.\n'
-            '- Kato pushes the branch.\n'
-            '- Kato opens the pull request.\n'
+            'The orchestrator handles everything after you finish:\n'
+            '- The orchestrator that spawned you owns the git lifecycle.\n'
+            '- It sees your file edits on disk and commits them.\n'
+            '- It pushes the branch.\n'
+            '- It opens the pull request.\n'
             '- This is automatic. The operator does NOT need to allow anything, run anything, or click anything for git to happen.\n'
             '\n'
-            'When you finish editing, your reply must be exactly one short sentence: "Done — edits written, kato will publish."  If you genuinely have nothing more to say, that one line is the entire reply.\n'
+            'When you finish editing, your reply must be exactly one short sentence: "Done — edits written, the orchestrator will publish."  If you genuinely have nothing more to say, that one line is the entire reply.\n'
             '\n'
-            'Do NOT say things like "I am ready to commit when you allow git access" or "let me know when I can push" or any variation. Those are wrong because there is nothing for the operator to allow — kato runs git automatically the moment your turn ends.'
+            'Do NOT say things like "I am ready to commit when you allow git access" or "let me know when I can push" or any variation. Those are wrong because there is nothing for the operator to allow — the orchestrator runs git automatically the moment your turn ends.'
         )
 
     # ----- subprocess execution -----

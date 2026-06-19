@@ -51,7 +51,7 @@ class ClaudeCliClientTests(unittest.TestCase):
         with patch.object(ClaudeCliClient, '_running_inside_docker', return_value=True):
             with self.assertRaisesRegex(
                 RuntimeError,
-                'KATO_AGENT_BACKEND=claude is not supported inside Docker',
+                'Claude backend is not supported inside Docker',
             ):
                 client.validate_connection()
 

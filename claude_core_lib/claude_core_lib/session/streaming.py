@@ -211,6 +211,7 @@ class StreamingClaudeSession(object):
         docker_mode_on: bool = False,
         additional_dirs: list[str] | None = None,
         done_callback=None,
+        done_sentinel: str = '',
     ) -> None:
         if not str(task_id or '').strip():
             raise ValueError('task_id is required for a streaming session')
@@ -280,12 +281,14 @@ class StreamingClaudeSession(object):
         self._docker_mode_on = bool(docker_mode_on)
         self._env_overrides = dict(env or {})
         # Callback fired once when an assistant message arrives that
-        # contains the ``KATO_TASK_DONE_SENTINEL`` token. Wired by the
-        # session manager to ``AgentService.finish_task_planning_session``
-        # so Claude can end the chat by emitting the magic string.
+        # contains the done-sentinel token. Wired by the session manager to
+        # the host's done-callback so the agent can end the chat by emitting
+        # the magic string. The sentinel string is supplied by the host (the
+        # lib ships a generic default) so this stays product-agnostic.
         # ``_done_sentinel_fired`` guards against re-firing on later
         # messages that quote the sentinel back.
         self._done_callback = done_callback
+        self._done_sentinel = normalized_text(done_sentinel) or '<AGENT_TASK_DONE>'
         self._done_sentinel_fired = False
 
         self._proc: subprocess.Popen[bytes] | None = None
@@ -1129,9 +1132,9 @@ class StreamingClaudeSession(object):
         return tool_name, request_id
 
     def _maybe_fire_done_sentinel(self, event: SessionEvent) -> None:
-        """Detect ``<KATO_TASK_DONE>`` in an assistant text block and fire once.
+        """Detect the done-sentinel in an assistant text block and fire once.
 
-        The wait-planning prompt instructs Claude to end its final
+        The host's wait-planning prompt instructs the agent to end its final
         message with this exact token when work is complete. We scan
         every assistant text block, but fire the callback at most
         once per session — if Claude later quotes the sentinel back
@@ -1149,17 +1152,17 @@ class StreamingClaudeSession(object):
         content = message.get('content')
         if not isinstance(content, list):
             return
-        KATO_TASK_DONE_SENTINEL = '<KATO_TASK_DONE>'
+        sentinel = self._done_sentinel
         for block in content:
             if not isinstance(block, dict) or block.get('type') != 'text':
                 continue
             text = str(block.get('text', '') or '')
-            if KATO_TASK_DONE_SENTINEL in text:
+            if sentinel in text:
                 self._done_sentinel_fired = True
                 self.logger.info(
                     'task %s: detected %s in assistant message — '
                     'firing done callback',
-                    self._task_id, KATO_TASK_DONE_SENTINEL,
+                    self._task_id, sentinel,
                 )
                 try:
                     self._done_callback(self._task_id)

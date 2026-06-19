@@ -110,14 +110,19 @@ class KatoCoreLib(CoreLib):
         # always installed — empty config produces a silent no-op.
         self.hooks_config, self.hook_runner = self._load_hooks(self.logger)
         self.service = self._build_agent_service(cfg.kato)
-        # Wire the ``<KATO_TASK_DONE>`` sentinel callback after both
-        # AgentService and SessionManager exist. Every Claude session
-        # spawned from now on (planning chats, autonomous turns, the
-        # boot-time resumes) carries the callback automatically; when
-        # Claude prints the sentinel, kato runs the publish flow.
+        # Wire the done-sentinel callback after both AgentService and
+        # SessionManager exist. Every Claude session spawned from now on
+        # (planning chats, autonomous turns, the boot-time resumes) carries
+        # the callback automatically; when Claude prints the sentinel, kato
+        # runs the publish flow. The sentinel string is kato's — the
+        # transport lib takes it as a parameter so it stays product-agnostic.
         if self.session_manager is not None:
+            from kato_core_lib.data_layers.data.sentinels import (
+                KATO_TASK_DONE_SENTINEL,
+            )
             self.session_manager.set_done_callback(
                 self.service.finish_task_planning_session,
+                KATO_TASK_DONE_SENTINEL,
             )
         self.service.validate_connections()
 

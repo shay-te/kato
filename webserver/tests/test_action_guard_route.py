@@ -88,7 +88,7 @@ class ActionGuardRouteTests(unittest.TestCase):
         self.assertFalse(session.permission_calls[-1]['allow'])
         # A BLOCK bubble was published to the feed.
         self.assertTrue(session.notices)
-        self.assertEqual(session.notices[-1][0], 'kato_action_guard_block')
+        self.assertEqual(session.notices[-1][0], 'action_guard_block')
 
     def test_server_side_derivation_ignores_client_supplied_command(self):
         # The body lies (benign tool/command); the PENDING request is the

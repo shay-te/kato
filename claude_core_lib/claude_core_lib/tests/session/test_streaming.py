@@ -635,7 +635,7 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         warnings = [
             e for e in session._recent_events
             if e.event_type == 'system'
-            and e.subtype == 'kato_sandbox_warning'
+            and e.subtype == 'sandbox_warning'
         ]
         self.assertEqual(len(warnings), 1)
         self.assertEqual(warnings[0].raw.get('outside_path'), '/tmp/UNA-2727-prs.md')
@@ -817,7 +817,7 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
             'type': 'assistant',
             'message': {
                 'content': [
-                    {'type': 'text', 'text': 'all set <KATO_TASK_DONE>'},
+                    {'type': 'text', 'text': 'all set <AGENT_TASK_DONE>'},
                 ],
             },
         })
@@ -830,7 +830,7 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         session._done_callback = None
         session._maybe_fire_done_sentinel(SessionEvent(raw={
             'type': 'assistant',
-            'message': {'content': [{'type': 'text', 'text': '<KATO_TASK_DONE>'}]},
+            'message': {'content': [{'type': 'text', 'text': '<AGENT_TASK_DONE>'}]},
         }))
         # Must not raise — already covered by the early return.
 
@@ -840,7 +840,7 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         session._done_callback = callback_calls.append
         session._maybe_fire_done_sentinel(SessionEvent(raw={
             'type': 'user',
-            'message': {'content': [{'type': 'text', 'text': '<KATO_TASK_DONE>'}]},
+            'message': {'content': [{'type': 'text', 'text': '<AGENT_TASK_DONE>'}]},
         }))
         self.assertEqual(callback_calls, [])
 
@@ -861,7 +861,7 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         # Must not propagate — reader thread can't crash on a bad callback.
         session._maybe_fire_done_sentinel(SessionEvent(raw={
             'type': 'assistant',
-            'message': {'content': [{'type': 'text', 'text': '<KATO_TASK_DONE>'}]},
+            'message': {'content': [{'type': 'text', 'text': '<AGENT_TASK_DONE>'}]},
         }))
         session.logger.exception.assert_called_once()
 
@@ -1496,12 +1496,12 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
     def test_publish_system_notice_lands_in_feed(self) -> None:
         session = StreamingClaudeSession(task_id='PROJ-1')
         session.publish_system_notice(
-            'kato_action_guard_block', 'BLOCKED: cat ~/.ssh/id_rsa',
+            'action_guard_block', 'BLOCKED: cat ~/.ssh/id_rsa',
             {'action_guard': {'category': 'credential_read'}},
         )
         events = session.recent_events()
         self.assertTrue(any(
-            e.raw.get('subtype') == 'kato_action_guard_block'
+            e.raw.get('subtype') == 'action_guard_block'
             and e.raw.get('action_guard', {}).get('category') == 'credential_read'
             for e in events
         ))
@@ -1714,7 +1714,7 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
             'type': 'assistant',
             'message': {'content': [
                 {'type': 'tool_use', 'name': 'Edit'},
-                {'type': 'text', 'text': '<KATO_TASK_DONE>'},
+                {'type': 'text', 'text': '<AGENT_TASK_DONE>'},
             ]},
         }))
         # Sentinel found in the text block (after non-text skip).

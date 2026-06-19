@@ -43,7 +43,7 @@ def codex_one_shot(
     ``model`` is optional; empty leaves Codex on whatever the
     operator's ``~/.codex/config.toml`` declares as the default.
     """
-    fd, last_message_file = tempfile.mkstemp(prefix='kato-codex-oneshot-', suffix='.txt')
+    fd, last_message_file = tempfile.mkstemp(prefix='codex-oneshot-', suffix='.txt')
     os.close(fd)
     try:
         command: list[str] = [

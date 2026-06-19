@@ -161,21 +161,26 @@ class ClaudeSessionManager(object):
         self._sessions: dict[str, StreamingClaudeSession] = {}
         self._records: dict[str, PlanningSessionRecord] = {}
         self._workspace_manager = None
-        # Default ``done_callback`` injected into every spawned session.
-        # ``AgentService`` sets this via ``set_done_callback`` so Claude
-        # printing ``<KATO_TASK_DONE>`` triggers the publish flow.
+        # Default ``done_callback`` + done-sentinel injected into every
+        # spawned session. The host sets both via ``set_done_callback`` so the
+        # agent printing the host's sentinel triggers the publish flow. The
+        # sentinel string stays host-supplied so this lib is product-agnostic.
         self._done_callback = None
+        self._done_sentinel = ''
         self.logger = configure_logger(self.__class__.__name__)
         self._load_persisted_records()
 
-    def set_done_callback(self, callback) -> None:
-        """Register the function to fire when a session detects ``<KATO_TASK_DONE>``.
+    def set_done_callback(self, callback, done_sentinel: str = '') -> None:
+        """Register the done-callback + the sentinel that triggers it.
 
-        Called once during kato startup wiring with
-        ``AgentService.finish_task_planning_session``. Every session
-        spawned after this picks up the callback automatically.
+        Called once during host startup wiring with the host's
+        finish-session callback and the host's done-sentinel token (the
+        agent prints that token to end the chat). Every session spawned
+        after this picks up both automatically. The sentinel is supplied by
+        the caller so the lib carries no product-specific token.
         """
         self._done_callback = callback
+        self._done_sentinel = str(done_sentinel or '')
 
     def attach_workspace_manager(self, workspace_manager) -> None:
         """Mirror agent_session_id + cwd into workspace metadata as we capture them.
@@ -277,6 +282,7 @@ class ClaudeSessionManager(object):
             'docker_mode_on': docker_mode_on,
             'additional_dirs': list(additional_dirs or []),
             'done_callback': self._done_callback,
+            'done_sentinel': self._done_sentinel,
         }
         # Per-task spawn lock: get-or-create under the global lock, then
         # hold the per-task lock (NOT the global lock) for the actual

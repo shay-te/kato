@@ -155,12 +155,12 @@ class CodexCliClient(object):
         self.logger = configure_logger(self.__class__.__name__)
         if self._bypass_permissions:
             self.logger.warning(
-                'KATO_CODEX_BYPASS_PERMISSIONS=true: Codex will run with '
+                'Bypass-permissions mode is enabled: Codex will run with '
                 '--dangerously-bypass-approvals-and-sandbox. Per-tool '
                 'prompts and sandbox containment are BOTH disabled — the '
                 'agent can run shell, edit, write, and any other tool '
-                'against any path it can reach. The operator who set this '
-                'flag accepts responsibility for any harm caused by the '
+                'against any path it can reach. The operator who enabled '
+                'this accepts responsibility for any harm caused by the '
                 'agent. See SECURITY.md.'
             )
         if (
@@ -175,11 +175,11 @@ class CodexCliClient(object):
                 'Codex backend ignores allowed_tools / disallowed_tools / '
                 'max_turns / effort / read_only_tools_on — those are '
                 'Claude Code concepts with no Codex CLI 0.132.x equivalent. '
-                'Use --sandbox mode (auto-set by kato) and ~/.codex/config.toml '
-                'for similar controls.'
+                'Use --sandbox mode (auto-set by the host) and '
+                '~/.codex/config.toml for similar controls.'
             )
 
-    # ----- public API parity with ClaudeCliClient / KatoClient -----
+    # ----- public agent-client API (parity with the other transports) -----
 
     @staticmethod
     def _running_inside_docker() -> bool:
@@ -190,12 +190,12 @@ class CodexCliClient(object):
     def validate_connection(self) -> None:
         if self._running_inside_docker():
             raise RuntimeError(
-                'KATO_AGENT_BACKEND=codex is not supported inside Docker. '
+                'The Codex backend is not supported inside Docker. '
                 'The Codex CLI authenticates against your host credentials '
                 '(``codex login`` writes to ``$CODEX_HOME`` on the host), '
-                'and the container cannot reach those. Run kato locally '
-                'instead. If you genuinely need Docker, switch to '
-                'KATO_AGENT_BACKEND=openhands.'
+                'and the container cannot reach those. Run the agent on the '
+                'host instead, or select a backend that supports '
+                'containerized execution (e.g. OpenHands).'
             )
         binary_path = shutil.which(self._binary)
         if not binary_path:
@@ -213,8 +213,8 @@ class CodexCliClient(object):
                 f'    codex --version\n'
                 f'\n'
                 f'After install, the ``codex`` binary must be on PATH (npm puts it\n'
-                f'there automatically). If you installed it somewhere else, set\n'
-                f'KATO_CODEX_BINARY to the full path. Authenticate once with\n'
+                f'there automatically). If you installed it somewhere else,\n'
+                f'configure the Codex binary path. Authenticate once with\n'
                 f'``codex login``.\n'
             )
         self._binary_path = binary_path
@@ -739,16 +739,16 @@ class CodexCliClient(object):
             '- ask the operator for permission to commit\n'
             '- mention git, commits, PRs, or branches in your reply except to say you are done editing\n'
             '\n'
-            'KATO handles everything after you finish:\n'
-            '- Kato is the orchestrator that spawned you.\n'
-            '- Kato sees your file edits on disk and commits them.\n'
-            '- Kato pushes the branch.\n'
-            '- Kato opens the pull request.\n'
+            'The orchestrator handles everything after you finish:\n'
+            '- The orchestrator that spawned you owns the git lifecycle.\n'
+            '- It sees your file edits on disk and commits them.\n'
+            '- It pushes the branch.\n'
+            '- It opens the pull request.\n'
             '- This is automatic. The operator does NOT need to allow anything, run anything, or click anything for git to happen.\n'
             '\n'
-            'When you finish editing, your reply must be exactly one short sentence: "Done — edits written, kato will publish."  If you genuinely have nothing more to say, that one line is the entire reply.\n'
+            'When you finish editing, your reply must be exactly one short sentence: "Done — edits written, the orchestrator will publish."  If you genuinely have nothing more to say, that one line is the entire reply.\n'
             '\n'
-            'Do NOT say things like "I am ready to commit when you allow git access" or "let me know when I can push" or any variation. Those are wrong because there is nothing for the operator to allow — kato runs git automatically the moment your turn ends.'
+            'Do NOT say things like "I am ready to commit when you allow git access" or "let me know when I can push" or any variation. Those are wrong because there is nothing for the operator to allow — the orchestrator runs git automatically the moment your turn ends.'
         )
 
     # ----- subprocess execution -----
@@ -795,7 +795,7 @@ class CodexCliClient(object):
         # the alternative is parsing the JSONL event stream for the
         # last ``agent_message`` event, whose exact event-name we'd
         # be guessing at across codex versions.
-        fd, last_message_file = tempfile.mkstemp(prefix='kato-codex-last-', suffix='.txt')
+        fd, last_message_file = tempfile.mkstemp(prefix='codex-last-', suffix='.txt')
         os.close(fd)
         try:
             command = self._build_command(

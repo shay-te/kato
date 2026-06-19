@@ -30,8 +30,8 @@ export const CLAUDE_SYSTEM_SUBTYPE = Object.freeze({
   // Kato-synthetic: the agent wrote outside the task folder without a
   // permission request (e.g. a /tmp scratch file the CLI auto-accepted).
   // Rendered as a loud warning bubble so it's never silent.
-  SANDBOX_WARNING: 'kato_sandbox_warning',
+  SANDBOX_WARNING: 'sandbox_warning',
   // Kato-synthetic: the Action Guard BLOCKED a tool call. The agent was
   // refused and adapts; the operator sees a loud red bubble + tab signal.
-  ACTION_GUARD_BLOCK: 'kato_action_guard_block',
+  ACTION_GUARD_BLOCK: 'action_guard_block',
 });
