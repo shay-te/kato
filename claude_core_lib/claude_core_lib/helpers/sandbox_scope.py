@@ -1,6 +1,6 @@
 """Classify whether an agent tool call reaches outside its sandbox.
 
-A kato Claude session is spawned with a containment sandbox: the
+A the orchestrator Claude session is spawned with a containment sandbox: the
 per-task workspace clone (the ``cwd``) plus an explicit ``--add-dir``
 set. When the agent asks permission to touch a filesystem path that
 escapes ALL of those roots, the planning UI must (a) shout a warning
@@ -66,7 +66,7 @@ def _is_within(path: str, root: str) -> bool:
 def _effective_roots(cwd: str, additional_dirs) -> list[str]:
     """Sandbox roots, widened to the whole task folder.
 
-    kato clones every repo of a task as a SIBLING under one task
+    the orchestrator clones every repo of a task as a SIBLING under one task
     workspace dir (``<workspaces>/<task_id>/<repo>``); the live session's
     ``cwd`` is one such repo. The "task folder" the operator means is its
     PARENT. We add that parent as a root so a file in ANY repo of the
@@ -111,7 +111,7 @@ def classify_tool_input_sandbox(
     can name it.
 
     ``allowed_paths`` are SPECIFIC files the product intentionally lets the
-    agent touch even though they live outside the task folder — e.g. kato's
+    agent touch even though they live outside the task folder — e.g. the orchestrator's
     configured ``lessons_path`` / ``architecture_doc_path``. The agent is
     SUPPOSED to read/write those, so an exact match is never flagged. They
     are passed in (not hard-coded) to keep this lib product-agnostic.
@@ -197,7 +197,7 @@ def classify_command_sandbox(
     allow-list are exempt, so ordinary ``git``/``ls``/``mvn`` never trips it.
 
     Static-only by nature: a path computed at runtime ($VAR, base64, fetched)
-    is invisible here — KATO_CLAUDE_DOCKER is the OS-level guarantee."""
+    is invisible here — the docker setting is the OS-level guarantee."""
     norm_roots = _effective_roots(cwd, additional_dirs)
     if not norm_roots:
         return False, ''

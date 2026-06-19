@@ -40,9 +40,9 @@ from sandbox_core_lib.sandbox_core_lib.workspace_delimiter import (
 class ClaudeCliClient(object):
     """Drive Anthropic's Claude Code CLI (`claude -p`) as the implementation/testing backend.
 
-    Provides the same public interface as :class:`KatoClient` so the rest of the
+    Provides the same public interface as :class:`the agent client` so the rest of the
     orchestration layer can use either backend interchangeably. Selection is
-    driven by the ``KATO_AGENT_BACKEND`` environment variable.
+    driven by the ``the agent-backend setting`` environment variable.
     """
 
     DEFAULT_BINARY = 'claude'
@@ -54,11 +54,11 @@ class ClaudeCliClient(object):
     # headlessly — in ``-p`` there's no prompt to grant a non-allowlisted tool,
     # so without this the agent silently can't fan out. Both names are listed
     # for version skew (``Task`` is an alias on newer CLIs). Operators can still
-    # override the whole list via ``KATO_CLAUDE_ALLOWED_TOOLS``.
+    # override the whole list via ``the allowed-tools setting``.
     DEFAULT_ALLOWED_TOOLS = 'Agent,Task,Edit,Write,Read,Bash,Glob,Grep'
-    # Hard, non-overridable denylist for MUTATING git only. Kato owns the
+    # Hard, non-overridable denylist for MUTATING git only. the orchestrator owns the
     # branch state machine + publish/push path, so Claude must never commit,
-    # push, reset, branch, fetch, rebase, etc. — those would race kato and
+    # push, reset, branch, fetch, rebase, etc. — those would race the orchestrator and
     # could push unvalidated work. But READ-ONLY git (status/log/diff/show/
     # blame…) is safe and essential: the self-review workflow literally needs
     # `git diff master...branch` to see what changed. Read-only git is NOT
@@ -141,7 +141,7 @@ class ClaudeCliClient(object):
         self._max_turns = self._coerce_max_turns(max_turns)
         self._effort = self._coerce_effort(effort)
         self._bypass_permissions = bool(bypass_permissions)
-        # Set from ``KATO_CLAUDE_DOCKER`` at boot. When True, the
+        # Set from ``the docker setting`` at boot. When True, the
         # per-task spawns (test_task → _run_prompt, investigate →
         # _run_prompt) wrap the Claude subprocess in the hardened
         # sandbox. Boot-time validators (validate_connection,
@@ -150,7 +150,7 @@ class ClaudeCliClient(object):
         # of ``bypass_permissions``: docker is containment, bypass is
         # the prompt layer.
         self._docker_mode_on = bool(docker_mode_on)
-        # Set from ``KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS`` at boot.
+        # Set from ``the read-only-tools setting`` at boot.
         # When True (and only valid alongside docker mode — the
         # ``validate_read_only_tools_requires_docker`` startup gate
         # refuses the flag without docker), every spawn appends the
@@ -164,7 +164,7 @@ class ClaudeCliClient(object):
         self._read_only_tools_on = bool(read_only_tools_on)
         # When not bypassing, pre-approve a safe default tool list so the
         # agent does not stall asking for permission in headless `-p` mode.
-        # Users can override or extend via KATO_CLAUDE_ALLOWED_TOOLS.
+        # Users can override or extend via the allowed-tools setting.
         normalized_allowed = normalized_text(allowed_tools)
         self._allowed_tools = (
             normalized_allowed
@@ -180,7 +180,7 @@ class ClaudeCliClient(object):
         self._architecture_doc_path = normalized_text(architecture_doc_path)
         self._lessons_path = normalized_text(lessons_path)
         # Product-specific actionable refusal guidance appended to the
-        # generic workspace scope block. Supplied by the spawner (kato)
+        # generic workspace scope block. Supplied by the spawner (the orchestrator)
         # so agent_core_lib/claude_core_lib stay product-agnostic; '' for
         # any consumer that doesn't set it.
         self._workspace_refusal_guidance = workspace_refusal_guidance or ''
@@ -255,7 +255,7 @@ class ClaudeCliClient(object):
         self._binary_path = binary_path
         # Boot-time validator: no workspace, no untrusted prompt — runs
         # ``claude --version`` only. Sandbox-wrap is intentionally
-        # skipped even when ``KATO_CLAUDE_DOCKER=true``: nothing here for
+        # skipped even when ``the docker setting=true``: nothing here for
         # the sandbox to bound, and a container spin would add ~1-2s to
         # every startup with zero security benefit.
         try:
@@ -348,7 +348,7 @@ class ClaudeCliClient(object):
     def investigate(self, prompt: str, *, cwd: str = '') -> str:
         """Run a single read-only Claude turn and return the raw text.
 
-        Used by the triage flow: kato hands Claude a task description
+        Used by the triage flow: the orchestrator hands Claude a task description
         and a list of valid triage outcome tags, asks Claude to pick
         one. No file edits, no PR work — disallowedTools blocks all
         write paths (Edit, Write, Bash, etc.) so even a confused turn
@@ -417,7 +417,7 @@ class ClaudeCliClient(object):
           commits, returns success when the workspace has the change.
         - ``'answer'`` — the question-answering flow. Agent reads the
           code to understand context but does NOT modify any files;
-          the returned ``message`` text is what kato posts back to
+          the returned ``message`` text is what the orchestrator posts back to
           each commenter as a reply. The caller (service) skips
           ``publish_review_fix`` for this mode.
 
@@ -466,7 +466,7 @@ class ClaudeCliClient(object):
         )
         return result
 
-    # ----- prompt builders (Claude-specific, share core helpers with KatoClient) -----
+    # ----- prompt builders (Claude-specific, share core helpers with the agent client) -----
 
     def _build_implementation_prompt(
         self,
@@ -482,9 +482,9 @@ class ClaudeCliClient(object):
         # OG9a: ``task.summary`` and ``task.description`` come from
         # the issue tracker (YouTrack / Bitbucket / etc.) and may
         # contain text written by anyone with comment access. Wrap
-        # them so the model can tell trusted scaffolding (kato's own
+        # them so the model can tell trusted scaffolding (the orchestrator's own
         # prompt) from untrusted issue text. ``task.id`` is
-        # kato-controlled; do not wrap it.
+        # the orchestrator-controlled; do not wrap it.
         untrusted_task_body = wrap_untrusted_workspace_content(
             f'{task.summary}\n\n{task.description}',
             source_path=f'task:{task.id}',
@@ -563,7 +563,7 @@ class ClaudeCliClient(object):
           history) drawn from the first comment's ``ALL_COMMENTS``
           since every comment in the batch lives on the same PR.
         - Same execution guardrails + completion contract as the
-          singular prompt — kato just changes "address one comment"
+          singular prompt — the orchestrator just changes "address one comment"
           to "address all the listed comments in one change-set."
         """
         first = comments[0]
@@ -865,7 +865,7 @@ class ClaudeCliClient(object):
         env = self._build_subprocess_env()
         log_label = log_label or 'Claude CLI'
         # Docker mode wraps the spawn in the hardened sandbox — see
-        # ``kato.sandbox.manager``. Mirrors the streaming-session path
+        # ``the orchestrator.sandbox.manager``. Mirrors the streaming-session path
         # in ``StreamingClaudeSession.start`` via the shared
         # ``wrap_spawn_for_docker`` helper so test_task and investigate
         # get the same containment as the interactive planning sessions.
@@ -969,14 +969,14 @@ class ClaudeCliClient(object):
     def _merge_allowed_with_read_only_allowlist(self, operator_allowed: str) -> str:
         """Append the hardcoded read-only allowlist when the flag is on.
 
-        When ``KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS=true`` (and docker
+        When ``the read-only-tools setting=true`` (and docker
         is on — the startup gate refuses the flag without docker),
         every spawn pre-approves the entries in
         ``READ_ONLY_TOOLS_ALLOWLIST`` so the operator is not prompted
         for grep / rg / ls / cat / find / head / tail / wc / file /
         stat / Read.
 
-        Operator extensions via ``KATO_CLAUDE_ALLOWED_TOOLS`` are
+        Operator extensions via ``the allowed-tools setting`` are
         preserved; the read-only allowlist is unioned in (no
         duplicates). When the flag is off, returns the operator
         value unchanged.
@@ -1027,8 +1027,8 @@ class ClaudeCliClient(object):
     def _merge_disallowed_with_git_deny(cls, operator_disallowed: str) -> str:
         """Always include the git denylist, regardless of operator config.
 
-        The operator can extend the denylist via ``KATO_CLAUDE_DISALLOWED_TOOLS``
-        but cannot remove the git patterns. Kato is the sole component that
+        The operator can extend the denylist via ``the disallowed-tools setting``
+        but cannot remove the git patterns. the orchestrator is the sole component that
         runs git operations.
         """
         return cls._union_disallowed(operator_disallowed, cls.GIT_DENY_PATTERNS)
@@ -1065,7 +1065,7 @@ class ClaudeCliClient(object):
         success = completed.returncode == 0 and not is_error
         result_text = normalized_text(payload.get('result', ''))
         # ``payload`` is Claude CLI's terminal ``result`` event (wire
-        # format) — Claude emits ``session_id``, kato normalizes
+        # format) — Claude emits ``session_id``, the orchestrator normalizes
         # to ``AGENT_SESSION_ID`` downstream.
         session_id_value = fix_session_id(payload.get('session_id', ''))
 
@@ -1224,7 +1224,7 @@ class ClaudeCliClient(object):
         env = self._build_subprocess_env()
         # Boot-time validator: fixed ``SMOKE_TEST_PROMPT`` ("Reply with
         # exactly: ok"), no tools, no untrusted input. Sandbox-wrap is
-        # intentionally skipped even when ``KATO_CLAUDE_DOCKER=true`` —
+        # intentionally skipped even when ``the docker setting=true`` —
         # there is no workspace to leak from, the only egress is the
         # api.anthropic.com call that has to happen, and the operator
         # would pay container-spin cost on every startup with zero
@@ -1265,7 +1265,7 @@ class ClaudeCliClient(object):
         On most platforms this is ``[claude_path]``. On Windows it
         may be ``[node.exe, cli.js]`` instead — the npm-installed
         ``claude.cmd`` is a cmd.exe shim, and cmd.exe caps command
-        lines at ~8192 chars. Kato's ``--append-system-prompt``
+        lines at ~8192 chars. the orchestrator's ``--append-system-prompt``
         carries the entire architecture doc inline, which overflows
         that limit and raises ``[WinError 206] The filename or
         extension is too long``. Invoking ``node.exe`` directly with

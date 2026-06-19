@@ -4,8 +4,8 @@ Out-of-folder writes are stopped by THREE layers; this module is the middle one:
 
 1. **acceptEdits scope boundary (primary, comprehensive).** Claude Code only
    auto-accepts edits/filesystem commands for paths inside the working directory
-   or ``--add-dir`` ``additionalDirectories`` (kato keeps that scope tight — just
-   the task's repo clones under ``~/.kato/workspaces/<task>/``). Any write
+   or ``--add-dir`` ``additionalDirectories`` (the orchestrator keeps that scope tight — just
+   the task's repo clones under ``~/.the orchestrator/workspaces/<task>/``). Any write
    OUTSIDE that scope is routed to the permission prompt regardless of path, so
    the Action Guard + the operator decide. This already covers every absolute
    path, including the home directory.
@@ -19,7 +19,7 @@ Out-of-folder writes are stopped by THREE layers; this module is the middle one:
 
 The roots are ABSOLUTE and identical on the host and inside the Docker sandbox.
 We deliberately do NOT enumerate the home directory here: the task workspace
-lives under ``~/.kato/workspaces/…``, so a ``~/**`` rule would prompt on every
+lives under ``~/.the orchestrator/workspaces/…``, so a ``~/**`` rule would prompt on every
 in-workspace edit and defeat ``acceptEdits``' whole purpose — and home writes
 are already covered comprehensively by layer 1.
 """
@@ -29,7 +29,7 @@ import json
 
 # File-mutating tools that ``acceptEdits`` auto-accepts. Bash is NOT here: it
 # already routes through the permission callback under ``acceptEdits``, so an
-# out-of-folder ``bash`` write is already gated by kato.
+# out-of-folder ``bash`` write is already gated by the orchestrator.
 _WRITE_TOOLS: tuple[str, ...] = ('Write', 'Edit', 'MultiEdit', 'NotebookEdit')
 
 # Absolute roots that are NEVER the task workspace — a write here is always

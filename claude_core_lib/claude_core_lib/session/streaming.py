@@ -1,10 +1,10 @@
 """Long-lived `claude -p` stream-json subprocess wrapper.
 
-Unlike :class:`kato.client.claude.cli_client.ClaudeCliClient` (one-shot,
+Unlike :class:`the orchestrator.client.claude.cli_client.ClaudeCliClient` (one-shot,
 single prompt → single result), this wrapper keeps the Claude CLI process
 alive for the duration of a planning conversation: events stream out as
 NDJSON, follow-up user messages stream in. :class:`ClaudeSessionManager`
-maps each session 1-to-1 with a Kato task so a human can chat with Claude
+maps each session 1-to-1 with an orchestrator task so a human can chat with Claude
 via the planning UI and approve permission asks mid-task.
 
 This module is transport only — no agent_service / orchestration coupling.
@@ -82,7 +82,7 @@ def _wait_for_exit(proc: subprocess.Popen, timeout: float) -> bool:
 # ``is_working``) reads "idle" while the FOCUSED tab (live ``turnInFlight``,
 # set on send) reads "working" — the focus-dependent status-dot bug.
 #
-# This is the SAME budget kato's comment dispatch uses to age out a stalled
+# This is the SAME budget the orchestrator's comment dispatch uses to age out a stalled
 # session (``_COMMENT_SEND_ACK_GRACE_SECONDS`` imports this very value), and
 # they MUST stay equal: ``_task_session_is_stalled`` requires ``is_working``
 # to have already flipped False by the time it ages a stall out, so the
@@ -91,7 +91,7 @@ TURN_ACK_GRACE_SECONDS = 60.0
 
 
 # Hard caps on attached images. Anthropic's API allows up to 20 images
-# per request and ~5MB per image; kato is more conservative because a
+# per request and ~5MB per image; the orchestrator is more conservative because a
 # misclick on a 4K screenshot can blow up the prompt and the per-task
 # token bill. Operator can paste up to 10 screenshots per message.
 _MAX_IMAGES_PER_MESSAGE = 10
@@ -243,19 +243,19 @@ class StreamingClaudeSession(object):
         # One-shot guards so the session-id verification lines (see
         # ``_maybe_capture_session_id``) print exactly once per spawn:
         # one INFO confirming the id Claude actually ran with, or one
-        # WARNING if it differs from the id kato pinned / asked to
+        # WARNING if it differs from the id the orchestrator pinned / asked to
         # resume (which is what "the conversation restarted fresh"
         # looks like from the operator's side).
         self._session_id_confirmed = False
         self._session_id_mismatch_logged = False
         # Optional callback: ``fn(actual_session_id)`` fired when Claude
         # announces its actual session id via the init event and it differs
-        # from what kato expected. The manager registers this to keep its
+        # from what the orchestrator expected. The manager registers this to keep its
         # persisted record in sync so the next ``--resume`` uses the right id.
         self._session_id_correction_callback = None
         self._architecture_doc_path = normalized_text(architecture_doc_path)
         self._lessons_path = normalized_text(lessons_path)
-        # Configured product files the agent is MEANT to touch (kato writes
+        # Configured product files the agent is MEANT to touch (the orchestrator writes
         # learned lessons here and reads the architecture doc), even though
         # they live outside the task folder. Allow-listed so the
         # out-of-sandbox warning never fires on them. See sandbox_scope.
@@ -265,16 +265,16 @@ class StreamingClaudeSession(object):
         # Extra directories Claude is allowed to read/edit beyond
         # ``cwd``. For multi-repo tasks the chat path uses this to
         # surface sibling repo clones (e.g. all task repos under
-        # ``~/.kato/workspaces/<task>/``); without it Claude only
+        # ``~/.the orchestrator/workspaces/<task>/``); without it Claude only
         # sees the cwd and refuses cross-repo questions like
         # "verify the front end" with a "forbidden repository"
         # response when the only frontend-named entry it knows about
-        # came from ``KATO_IGNORED_REPOSITORY_FOLDERS``.
+        # came from ``the ignored-folders setting``.
         self._additional_dirs = [
             normalized_text(str(d)) for d in (additional_dirs or [])
             if d is not None and normalized_text(str(d))
         ]
-        # Set from ``KATO_CLAUDE_DOCKER`` at boot, threaded down through
+        # Set from ``the docker setting`` at boot, threaded down through
         # the session manager. Independent of ``permission_mode``: docker
         # is the *containment* layer (sandbox), permission_mode is the
         # *prompt* layer (acceptEdits vs bypassPermissions).
@@ -355,7 +355,7 @@ class StreamingClaudeSession(object):
         self.logger = configure_logger(self.__class__.__name__)
         if self._permission_mode == 'bypassPermissions':
             self.logger.warning(
-                'KATO_CLAUDE_BYPASS_PERMISSIONS=true: streaming Claude session '
+                'the bypass-permissions setting=true: streaming Claude session '
                 'for task %s will run with --permission-mode bypassPermissions. '
                 'The planning UI will not intercept tool calls — the agent can '
                 'run Bash, Edit, Write, and any other tool without asking. '
@@ -394,7 +394,7 @@ class StreamingClaudeSession(object):
     @property
     def sandbox_allowed_paths(self) -> tuple[str, ...]:
         """Specific files the agent may touch even outside the task folder
-        (e.g. kato's lessons / architecture docs). Exposed so a caller that
+        (e.g. the orchestrator's lessons / architecture docs). Exposed so a caller that
         re-classifies a tool input (the webserver Action Guard) applies the
         same allow-list the live sandbox annotation does."""
         return tuple(self._sandbox_allowed_paths)
@@ -482,7 +482,7 @@ class StreamingClaudeSession(object):
         This is the inverse of the stalled-session condition: a fresh
         unacked turn is "working" (it just hasn't reached the wire); an
         aged unacked turn is a stall, so this returns False and lets the
-        caller fall back to idle (kato's dispatch path then requeues it)."""
+        caller fall back to idle (the orchestrator's dispatch path then requeues it)."""
         if self.user_messages_sent <= self.result_events_received:
             return False
         last_sent = self.last_user_message_sent_epoch
@@ -607,7 +607,7 @@ class StreamingClaudeSession(object):
             command = self._build_command()
             env = self._build_env()
             # Docker mode wraps the spawn in the hardened sandbox —
-            # see ``kato.sandbox.manager``. The container bind-mounts
+            # see ``the orchestrator.sandbox.manager``. The container bind-mounts
             # the workspace, blocks egress to anything but
             # api.anthropic.com, and runs Claude as a non-root user
             # with no capabilities. The stdin/stdout NDJSON contract
@@ -650,7 +650,7 @@ class StreamingClaudeSession(object):
                 ) from exc
             # Always print the session id + whether this is a fresh
             # spawn or a ``--resume``. This single line fires on every
-            # spawn, so the operator can grep one task across a kato
+            # spawn, so the operator can grep one task across an orchestrator
             # restart and confirm the id is the SAME before and after
             # (resume worked) vs. a new id (history was lost). Pinned
             # synchronously in ``_build_command`` so it's already set.
@@ -982,7 +982,7 @@ class StreamingClaudeSession(object):
         )
         if self._allowed_tools:
             command.extend(['--allowedTools', self._allowed_tools])
-        # Hard, non-overridable floor: the git denylist (Kato is the only
+        # Hard, non-overridable floor: the git denylist (the orchestrator is the only
         # component that ever runs git) PLUS the Action Guard no-legit-use
         # programs (mkfs / namespace-escape / host-power). Refused by the CLI
         # in every permission mode. See ClaudeCliClient.GIT_DENY_PATTERNS /
@@ -992,7 +992,7 @@ class StreamingClaudeSession(object):
             self._disallowed_tools
         )
         command.extend(['--disallowedTools', merged_disallowed])
-        # When ``KATO_CLAUDE_DOCKER=true`` the agent gets a short
+        # When ``the docker setting=true`` the agent gets a short
         # description of the sandboxed environment appended to its
         # system prompt. The composer joins the architecture doc,
         # learned lessons, and the addendum into one value because the
@@ -1244,14 +1244,14 @@ class StreamingClaudeSession(object):
     def _maybe_warn_out_of_sandbox_write(self, event: SessionEvent) -> None:
         """Inject a loud chat warning when the agent WRITES outside the task.
 
-        kato's permission-time warning only fires on tool calls Claude
+        the orchestrator's permission-time warning only fires on tool calls Claude
         routes to it as a ``control_request``. Under ``acceptEdits`` the
         CLI auto-accepts writes to scratch paths (e.g. ``/tmp``) WITHOUT
         asking, so those never reached the permission path and slipped by
         unnoticed. This scans the live ``assistant`` tool-use stream
         directly and emits a synthetic ``system``/sandbox-warning event
         for each NEW out-of-folder write path — so an out-of-task write is
-        always visible, even when kato couldn't gate it. Best-effort: any
+        always visible, even when the orchestrator couldn't gate it. Best-effort: any
         parse error leaves the stream untouched.
         """
         if event.event_type != 'assistant':
@@ -1374,9 +1374,9 @@ class StreamingClaudeSession(object):
         return envelopes
 
     def _log_event_for_operator(self, event: SessionEvent) -> None:
-        """Surface high-signal events to the kato terminal log.
+        """Surface high-signal events to the orchestrator terminal log.
 
-        The planning UI shows everything; the operator running kato wants
+        The planning UI shows everything; the operator running the orchestrator wants
         only the moments that need their attention. Today that's
         permission requests (the agent has paused waiting for an Allow /
         Deny click) and result events (turn completed).
@@ -1495,7 +1495,7 @@ class StreamingClaudeSession(object):
                 else 'adopting claude\'s actual id'
             )
             self.logger.warning(
-                'task %s: claude reported session id %s but kato '
+                'task %s: claude reported session id %s but the orchestrator '
                 'expected %s (%s) — %s',
                 self._task_id,
                 candidate,

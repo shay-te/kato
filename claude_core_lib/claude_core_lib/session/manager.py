@@ -1,11 +1,11 @@
-"""Registry of live Claude planning sessions, one per Kato task.
+"""Registry of live Claude planning sessions, one per the orchestrator task.
 
 Owns the lifecycle of :class:`StreamingClaudeSession` instances:
 
 * Creates a session when the orchestrator (or webserver) declares a task is
   ready for planning.
 * Persists session metadata (task id, claude session id, status, timestamps)
-  to disk so a kato restart can rehydrate tabs in the planning UI.
+  to disk so a the orchestrator restart can rehydrate tabs in the planning UI.
 * Tears sessions down when the ticket leaves a "live" state or when the
   process is shutting down.
 
@@ -68,16 +68,16 @@ class PlanningSessionRecord(object):
     task_id: str
     task_summary: str = ''
     # The agent's session id for this task. ``agent_session_id`` is
-    # the canonical name across every kato agent backend (Claude,
+    # the canonical name across every the orchestrator agent backend (Claude,
     # Codex, OpenHands, ...).
     agent_session_id: str = ''
     status: str = SESSION_STATUS_ACTIVE
     created_at_epoch: float = field(default_factory=time.time)
     updated_at_epoch: float = field(default_factory=time.time)
     cwd: str = ''
-    # The branch kato prepared for this task. The webserver compares this
+    # The branch the orchestrator prepared for this task. The webserver compares this
     # against the repo's HEAD before forwarding any message to the live
-    # subprocess; if they diverge (kato has moved on to a different task)
+    # subprocess; if they diverge (the orchestrator has moved on to a different task)
     # the send is rejected. Empty string disables the check (wait-planning
     # tabs that aren't owned by the orchestrator).
     expected_branch: str = ''
@@ -114,7 +114,7 @@ def session_id_list(value) -> list:
 
 
 class ClaudeSessionManager(object):
-    """Owns every active streaming Claude session for the running Kato.
+    """Owns every active streaming Claude session for the running the orchestrator.
 
     Thread-safe by design: the orchestrator may register / terminate sessions
     while the webserver simultaneously reads them.
@@ -128,7 +128,7 @@ class ClaudeSessionManager(object):
         open_cfg,
         agent_backend: str,
     ) -> 'ClaudeSessionManager | None':
-        """Build the manager (or return None) from the kato config block.
+        """Build the manager (or return None) from the orchestrator config block.
 
         Only the Claude backend exposes live in-process sessions for the UI
         to talk to; everything else returns None and the planning webserver
@@ -186,7 +186,7 @@ class ClaudeSessionManager(object):
         """Mirror agent_session_id + cwd into workspace metadata as we capture them.
 
         Optional wiring: when the orchestrator boots both managers it calls
-        this so kato has a single source of truth for "which Claude session
+        this so the orchestrator has a single source of truth for "which Claude session
         belongs to this task" living next to the workspace folder.
         """
         self._workspace_manager = workspace_manager
@@ -195,9 +195,9 @@ class ClaudeSessionManager(object):
     def _seed_records_from_workspaces(self) -> None:
         """Recover Claude session ids from workspace metadata on boot.
 
-        If kato's own state dir was wiped (or is on a different host than
+        If the orchestrator's own state dir was wiped (or is on a different host than
         the previous run), the per-task PlanningSessionRecord is missing
-        but the workspace folder still has ``.kato-meta.json`` with the
+        but the workspace folder still has ``.the orchestrator-meta.json`` with the
         Claude session id. Fold those into the in-memory records so the
         next spawn can ``--resume`` cleanly.
         """
@@ -319,7 +319,7 @@ class ClaudeSessionManager(object):
             # at the spawn cwd's project dir before passing ``--resume``.
             # ``claude --resume <id>`` is cwd-keyed — it looks at
             # ``~/.claude/projects/<encoded-cwd>/<id>.jsonl`` only — so
-            # when kato switches cwds across spawns (workspace clone vs
+            # when the orchestrator switches cwds across spawns (workspace clone vs
             # source repo, sibling repos in a multi-repo task) the
             # resume previously failed with "No conversation found" and
             # stale-resume handling blanked the id, ending the conversation. The
@@ -377,7 +377,7 @@ class ClaudeSessionManager(object):
 
         Defends the one-session-per-task invariant against cwd drift.
         ``claude --resume`` only finds a transcript under the spawn
-        cwd's encoded project dir; kato's cwd legitimately changes
+        cwd's encoded project dir; the orchestrator's cwd legitimately changes
         across operations on the same task (review-fix in a sibling
         repo, retargeted workspace clone, etc.), so we copy the JSONL
         to wherever Claude will look for it. No-op when there's no
@@ -427,9 +427,9 @@ class ClaudeSessionManager(object):
         except OSError:
             pass
         # The source JSONL is left in place as a historical snapshot
-        # of the conversation at the moment the cwd switched. Kato's
+        # of the conversation at the moment the cwd switched. the orchestrator's
         # "one session per task" invariant lives at the session-id
-        # level — kato's record points at exactly one id, and Claude
+        # level — the orchestrator's record points at exactly one id, and Claude
         # writes new turns only to the canonical copy at the spawn
         # cwd's project dir. The old file is harmless and useful for
         # forensics; orphan cleanup, if ever wanted, is a separate
@@ -454,7 +454,7 @@ class ClaudeSessionManager(object):
             self.logger.warning(
                 'task transcript migration returned None; resume id %s '
                 'expected at %s — Claude will likely reject --resume '
-                'and Kato will refuse a fresh fallback',
+                'and the orchestrator will refuse a fresh fallback',
                 resume_session_id,
                 target_dir,
             )
@@ -466,7 +466,7 @@ class ClaudeSessionManager(object):
         if not Path(copied).is_file():
             self.logger.warning(
                 'migrated JSONL not present at %s after copy; --resume '
-                'will reject and Kato will refuse a fresh fallback',
+                'will reject and the orchestrator will refuse a fresh fallback',
                 copied,
             )
 
@@ -518,7 +518,7 @@ class ClaudeSessionManager(object):
         """Return the resume id to pass to the next spawn (or '' for fresh).
 
         Even when a previous live process rejected the id, keep returning
-        it. Kato must fail loud rather than silently drift to a fresh
+        it. the orchestrator must fail loud rather than silently drift to a fresh
         Claude session id.
         """
         raw_resume_id = previous_record.agent_session_id if previous_record else ''
@@ -645,7 +645,7 @@ class ClaudeSessionManager(object):
         from the session reader thread when the init event arrives).  Thread-safe
         via ``_lock``.  Updates both the in-memory record and its on-disk
         counterpart so the next ``start_session`` for this task resumes from
-        Claude's actual JSONL rather than kato's expected UUID.
+        Claude's actual JSONL rather than the orchestrator's expected UUID.
         """
         actual_id = fix_session_id(actual_id)
         if not has_session_id(actual_id):
@@ -780,23 +780,23 @@ class ClaudeSessionManager(object):
 
         Used by the planning UI when an operator picks an existing
         Claude Code session (e.g. a VS Code extension chat) to hand
-        off to kato. The next ``start_session`` for ``task_id`` will
+        off to the orchestrator. The next ``start_session`` for ``task_id`` will
         ``--resume <agent_session_id>`` instead of starting a fresh
         conversation.
 
-        Adoption does NOT change the spawn cwd — kato continues to
+        Adoption does NOT change the spawn cwd — the orchestrator continues to
         run Claude at its per-task workspace clone, with a SNAPSHOT
         copy of the source JSONL placed under that clone's projects
-        dir. This keeps kato edits isolated from the operator's live
+        dir. This keeps the orchestrator edits isolated from the operator's live
         VS Code checkout (a hard-won property: the operator wants
-        kato's git state separate from their working copy). The
+        the orchestrator's git state separate from their working copy). The
         snapshot does mean the resumed conversation diverges from
         the source instance the moment either side takes another
         turn — see ``docs/adopting-existing-claude-sessions.md`` for
         the full lifecycle.
 
         The adopted id is mirrored to the workspace metadata so it
-        survives a kato restart, and persisted to the per-task record
+        survives a the orchestrator restart, and persisted to the per-task record
         so an in-process reader sees it immediately. If a live session
         is already running for ``task_id`` the caller is expected to
         terminate it first — adoption doesn't tear down a running
@@ -916,7 +916,7 @@ class ClaudeSessionManager(object):
                 record.previous_session_ids = history
                 record.agent_session_id = target_id
                 record.updated_at_epoch = time.time()
-                # Clear the workspace mirror BEFORE persisting: if kato dies
+                # Clear the workspace mirror BEFORE persisting: if the orchestrator dies
                 # between the two steps, the record still holds the old id
                 # (chat unchanged, mirror re-syncs on the next persist) —
                 # whereas persist-then-clear could leave a blank record with
@@ -1110,7 +1110,7 @@ class ClaudeSessionManager(object):
         """Delete the Claude CLI transcripts for a forgotten task.
 
         Called only on the ``remove_record=True`` path (task done /
-        closed / operator forget). The workspace clones + kato
+        closed / operator forget). The workspace clones + the orchestrator
         session record are already gone by here; the Claude
         transcripts under ``~/.claude/projects/`` would otherwise
         accumulate forever. Covers the ACTIVE chat and every detached

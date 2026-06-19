@@ -51,7 +51,7 @@ _FAMILIES = ('fable', 'opus', 'sonnet', 'haiku')
 
 # The catalog changes only when Anthropic ships a model, so we cache — but with a
 # TTL, not forever. A permanent process cache meant a freshly released version
-# (or a newly-run one picked up from the session logs) wouldn't show until kato
+# (or a newly-run one picked up from the session logs) wouldn't show until the orchestrator
 # was restarted; the TTL lets the label self-heal within minutes instead.
 _CACHE_TTL_SECONDS = 600.0
 

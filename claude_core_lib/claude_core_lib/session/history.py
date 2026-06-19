@@ -1,11 +1,11 @@
 """Replay archived Claude CLI sessions as raw stream-json events.
 
 Claude Code persists every conversation it runs as a JSONL file under
-``~/.claude/projects/<encoded-cwd>/<agent_session_id>.jsonl``. After a kato
+``~/.claude/projects/<encoded-cwd>/<agent_session_id>.jsonl``. After an orchestrator
 restart the in-memory ``_recent_events`` buffer is empty, so the only
 way to repopulate the chat is to read those JSONL files and feed them
 back into the SSE backlog. This module is the read side of that
-pipeline — pure I/O, no kato types — so it stays trivially testable.
+pipeline — pure I/O, no the orchestrator types — so it stays trivially testable.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ def _default_projects_root() -> Path:
 
     Delegates to :func:`...session.index.default_sessions_root` so the
     two modules walk the exact same directory (and the same
-    ``KATO_CLAUDE_SESSIONS_ROOT`` override) — previously
+    sessions-root override) — previously
     ``find_session_id_for_cwd`` ignored the override by reading
     ``_DEFAULT_PROJECTS_ROOT`` directly, so tests that redirected the
     store missed it.
@@ -64,7 +64,7 @@ def find_session_file(
     matches = glob.glob(pattern)
     if not matches:
         return None
-    # One session id can exist under multiple project dirs — kato's
+    # One session id can exist under multiple project dirs — the orchestrator's
     # cwd-drift handling deliberately leaves the source JSONL behind as a
     # historical snapshot, and adoption copies rather than moves. Pick the
     # NEWEST copy (the live conversation), not glob's arbitrary readdir
@@ -91,7 +91,7 @@ def delete_session_file(
 
     Used when a task is permanently forgotten (reviewer marked it
     done / closed, or the operator hit "Forget task"): the workspace
-    clones and the kato session record are removed, so the Claude
+    clones and the orchestrator session record are removed, so the Claude
     CLI transcript — which would otherwise accumulate forever under
     ``~/.claude/projects/`` — should go too.
 
@@ -136,7 +136,7 @@ def find_session_id_for_cwd(
     """Return the most-recent Claude session id whose ``cwd`` matches.
 
     Used by the workspace-recovery flow: when an orphan task folder has
-    no ``.kato-meta.json`` we still want to attach Claude's existing
+    no ``.the orchestrator-meta.json`` we still want to attach Claude's existing
     transcript. Claude records each turn's ``cwd`` inside the JSONL, so
     we walk every transcript under ``~/.claude/projects/*`` and pick
     the freshest one whose first datum points at ``cwd``. Returns ''
@@ -209,7 +209,7 @@ def load_history_events(
 
     Filters out Claude-internal noise (queue ops, attachment metadata,
     summary records) so the chat shows just the conversation. Each
-    returned dict has the same shape kato emits over the live stream:
+    returned dict has the same shape the orchestrator emits over the live stream:
     ``{'type': 'user'|'assistant'|'system'|..., 'message': {...}, ...}``.
     """
     path = find_session_file(agent_session_id, projects_root=projects_root)
@@ -315,7 +315,7 @@ def resolve_agent_session_id(manager, workspace_manager, task_id: str) -> str:
     """Return the agent session id bound to ``task_id``, or ``''``.
 
     Tries the live session manager's record first (its ``agent_session_id``
-    field is set when kato spawned the agent in-process), then falls back
+    field is set when the orchestrator spawned the agent in-process), then falls back
     to the workspace metadata's ``agent_session_id``. The fallback chain
     lets a freshly-booted webserver attach to an orphan workspace on
     disk even before the scan loop re-establishes the live record.

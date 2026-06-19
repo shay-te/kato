@@ -1,7 +1,7 @@
 """Claude Code CLI backend.
 
 Implements ``agent_provider_contracts.AgentProvider`` (via
-``ClaudeCliClient``) so kato (and any other orchestrator) can call
+``ClaudeCliClient``) so the orchestrator (and any other orchestrator) can call
 into Claude through the same contract every other backend
 satisfies.
 

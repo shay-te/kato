@@ -7,15 +7,15 @@ identify which session belongs to which task, and returns a list the
 planning UI can render.
 
 Why this exists: when a developer is mid-conversation in the VS Code
-Claude extension and wants to hand the work off to kato, kato should
-let them adopt that exact session id. Without adoption, kato spawns a
+Claude extension and wants to hand the work off to the orchestrator, the orchestrator should
+let them adopt that exact session id. Without adoption, the orchestrator spawns a
 fresh session and the developer feels the prior context is lost,
 which has been an actual adoption blocker.
 
 Design notes:
 
 - **Read-only.** This module never writes to Claude's session store.
-  The transcript belongs to Claude Code; kato just reads metadata.
+  The transcript belongs to Claude Code; the orchestrator just reads metadata.
 - **Best-effort parsing.** A malformed JSONL line is skipped, never
   raises. Truncated transcripts (Claude writing while we read) are
   treated as "everything we got is what's there." A corrupt store
@@ -258,7 +258,7 @@ def _clip_preview(text: str) -> str:
     return cleaned[: _PREVIEW_LENGTH - 1] + '…'
 
 
-# ----- session migration (adopt → kato workspace) -----
+# ----- session migration (adopt → the orchestrator workspace) -----
 
 
 _logger = logging.getLogger(__name__)
@@ -269,11 +269,11 @@ _logger = logging.getLogger(__name__)
 # separators (``\``, ``/``) and the Windows drive colon are obvious.
 # Less obvious — and the cause of a real review-fix crash loop —
 # Claude ALSO flattens ``_`` and ``.``. For example a workspace at
-# ``/Users/me/dev_kato/PROJ-1/repo`` lands under
-# ``-Users-me-dev-kato-PROJ-1-repo`` (underscore → dash). If kato's
+# ``/Users/me/dev_the orchestrator/PROJ-1/repo`` lands under
+# ``-Users-me-dev-the orchestrator-PROJ-1-repo`` (underscore → dash). If the orchestrator's
 # encoder skips ``_``/``.`` it migrates the adopted JSONL into a
 # differently-named directory than Claude will look in, and the
-# next ``claude --resume`` fails with "No conversation found." Kato
+# next ``claude --resume`` fails with "No conversation found." the orchestrator
 # then refuses the fresh fallback (resume preservation), so the
 # task retries the same failure on every scan tick.
 _PROJECT_DIR_ENCODE_CHARS = ('\\', '/', ':', '_', '.')
@@ -285,9 +285,9 @@ def claude_project_dir_for_cwd(cwd: str) -> Path:
     Claude Code stores every session as
     ``~/.claude/projects/<encoded-cwd>/<session-id>.jsonl``. The
     encoded form flattens every path separator, the Windows drive
-    colon, AND ``_`` / ``.`` to ``-``: ``/Users/me/dev_kato`` becomes
-    ``-Users-me-dev-kato`` (note the underscore lost). The encoding
-    is lossy by design on Claude's side; kato must use the same
+    colon, AND ``_`` / ``.`` to ``-``: ``/Users/me/dev_the orchestrator`` becomes
+    ``-Users-me-dev-the orchestrator`` (note the underscore lost). The encoding
+    is lossy by design on Claude's side; the orchestrator must use the same
     flattening or the migrated JSONL lands in a directory Claude
     never reads.
 
@@ -297,7 +297,7 @@ def claude_project_dir_for_cwd(cwd: str) -> Path:
 
     This helper is the canonical "where does Claude Code expect this
     session to live?" function — used by ``migrate_session_to_workspace``
-    to copy an adopted JSONL into kato's per-task workspace cwd, and
+    to copy an adopted JSONL into the orchestrator's per-task workspace cwd, and
     available to operator-facing tooling that needs the same answer.
     """
     abs_cwd = os.path.abspath(os.path.expanduser(str(cwd or '')))
@@ -305,7 +305,7 @@ def claude_project_dir_for_cwd(cwd: str) -> Path:
     for ch in _PROJECT_DIR_ENCODE_CHARS:
         encoded = encoded.replace(ch, '-')
     # Empty overrides must not collapse to Path('.') and reroute
-    # Claude transcript migrations under kato's current cwd.
+    # Claude transcript migrations under the orchestrator's current cwd.
     override = os.environ.get(CLAUDE_SESSIONS_ROOT_ENV_KEY, '').strip()
     if override:
         root = Path(override).expanduser()
