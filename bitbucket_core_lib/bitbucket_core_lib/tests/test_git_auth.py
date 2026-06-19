@@ -1,6 +1,6 @@
 """Coverage for ``bitbucket_core_lib/helpers/git_auth.py``.
 
-These helpers were extracted from kato's ``RepositoryService`` so any
+These helpers were extracted from the orchestrator's ``RepositoryService`` so any
 provider core-lib could reuse them. Both functions are pure (no I/O),
 so the tests just verify the dispatch matrix: bitbucket vs other
 providers, URL-embedded usernames vs config, and the no-token /

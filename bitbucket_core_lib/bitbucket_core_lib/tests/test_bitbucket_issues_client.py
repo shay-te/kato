@@ -36,7 +36,7 @@ class BitbucketIssuesClientInitTests(unittest.TestCase):
     def test_default_is_operational_comment_never_filters(self) -> None:
         client = BitbucketIssuesClient('https://api.bitbucket.org/2.0', 'tok', 'ws', 'repo')
         # Default: nothing is an operational comment
-        self.assertFalse(client._is_operational_comment('Kato agent started working'))
+        self.assertFalse(client._is_operational_comment('Review agent started working'))
         self.assertFalse(client._is_operational_comment('any text'))
 
     def test_custom_is_operational_comment_is_stored(self) -> None:
@@ -249,7 +249,7 @@ class BitbucketIssuesClientGetTasksTests(unittest.TestCase):
 
     def test_filters_operational_comments_from_description_when_configured(self) -> None:
         client = self._make_client(
-            is_operational_comment=lambda text: text.startswith('Kato agent'),
+            is_operational_comment=lambda text: text.startswith('Review agent'),
         )
         issues_resp = mock_response(json_data={
             'values': [{
@@ -259,7 +259,7 @@ class BitbucketIssuesClientGetTasksTests(unittest.TestCase):
         })
         comments_resp = mock_response(json_data={
             'values': [
-                {'content': {'raw': 'Kato agent could not safely process this task: timeout'},
+                {'content': {'raw': 'Review agent could not safely process this task: timeout'},
                  'user': {'display_name': 'shay'}},
                 {'content': {'raw': 'Please add tests.'},
                  'user': {'display_name': 'Reviewer'}},
@@ -274,7 +274,7 @@ class BitbucketIssuesClientGetTasksTests(unittest.TestCase):
 
     def test_operational_comments_still_appear_in_all_comments(self) -> None:
         client = self._make_client(
-            is_operational_comment=lambda text: text.startswith('Kato agent'),
+            is_operational_comment=lambda text: text.startswith('Review agent'),
         )
         issues_resp = mock_response(json_data={
             'values': [{
@@ -284,7 +284,7 @@ class BitbucketIssuesClientGetTasksTests(unittest.TestCase):
         })
         comments_resp = mock_response(json_data={
             'values': [
-                {'content': {'raw': 'Kato agent started working'},
+                {'content': {'raw': 'Review agent started working'},
                  'user': {'display_name': 'bot'}},
                 {'content': {'raw': 'Please add tests.'},
                  'user': {'display_name': 'Reviewer'}},
@@ -415,11 +415,11 @@ class BitbucketIssuesClientAddRemoveTagTests(unittest.TestCase):
     def test_add_tag_puts_component_name(self) -> None:
         response = mock_response()
         with patch.object(self.client, '_put', return_value=response) as mock_put:
-            self.client.add_tag('42', 'kato:triage:investigate')
+            self.client.add_tag('42', 'bot:triage:investigate')
 
         mock_put.assert_called_once_with(
             '/repositories/workspace/repo/issues/42',
-            json={'component': {'name': 'kato:triage:investigate'}},
+            json={'component': {'name': 'bot:triage:investigate'}},
         )
 
     def test_add_tag_strips_whitespace_from_label(self) -> None:
@@ -452,12 +452,12 @@ class BitbucketIssuesClientAddRemoveTagTests(unittest.TestCase):
 
     def test_remove_tag_clears_component_when_name_matches(self) -> None:
         get_response = mock_response(
-            json_data={'component': {'name': 'kato:triage:investigate'}}
+            json_data={'component': {'name': 'bot:triage:investigate'}}
         )
         put_response = mock_response()
         with patch.object(self.client, '_get', return_value=get_response), \
              patch.object(self.client, '_put', return_value=put_response) as mock_put:
-            self.client.remove_tag('42', 'kato:triage:investigate')
+            self.client.remove_tag('42', 'bot:triage:investigate')
 
         mock_put.assert_called_once_with(
             '/repositories/workspace/repo/issues/42',
@@ -468,7 +468,7 @@ class BitbucketIssuesClientAddRemoveTagTests(unittest.TestCase):
         get_response = mock_response(json_data={'component': {'name': 'other-tag'}})
         with patch.object(self.client, '_get', return_value=get_response), \
              patch.object(self.client, '_put') as mock_put:
-            self.client.remove_tag('42', 'kato:triage:investigate')
+            self.client.remove_tag('42', 'bot:triage:investigate')
 
         mock_put.assert_not_called()
 
@@ -719,19 +719,19 @@ class BitbucketMentionFilterWiringTests(unittest.TestCase):
 
     def test_mention_filter_drops_addressed_to_other_humans(self) -> None:
         # Plain @login text (explicit login configured).
-        client = self._make_client(bot_login='kato_bot')
+        client = self._make_client(bot_login='review_bot')
         entries = client._task_comment_entries([
             self._raw('@alice can you handle this'),       # dropped
             self._raw('this also needs a unit test'),      # kept
-            self._raw('@kato_bot fix the typo'),           # kept
+            self._raw('@review_bot fix the typo'),           # kept
         ])
         bodies = [e[ISSUE_COMMENT_BODY] for e in entries]
         self.assertIn('this also needs a unit test', bodies)
-        self.assertIn('@kato_bot fix the typo', bodies)
+        self.assertIn('@review_bot fix the typo', bodies)
         self.assertNotIn('@alice can you handle this', bodies)
 
     def test_mid_sentence_mention_is_dropped(self) -> None:
-        client = self._make_client(bot_login='kato_bot')
+        client = self._make_client(bot_login='review_bot')
         entries = client._task_comment_entries([
             self._raw('he look yada yda @Alice yes ..'),
         ])
@@ -743,7 +743,7 @@ class BitbucketMentionFilterWiringTests(unittest.TestCase):
         # human slipped through. Resolve the bot's account_id and drop it.
         client = self._make_client()
         with patch.object(
-            client, '_fetch_current_user_logins', return_value=('kato-account',),
+            client, '_fetch_current_user_logins', return_value=('review-account',),
         ):
             entries = client._task_comment_entries([
                 self._raw('@{alice-account} please take a look'),
@@ -753,26 +753,26 @@ class BitbucketMentionFilterWiringTests(unittest.TestCase):
     def test_brace_account_id_mention_for_bot_is_kept(self) -> None:
         client = self._make_client()
         with patch.object(
-            client, '_fetch_current_user_logins', return_value=('kato-account',),
+            client, '_fetch_current_user_logins', return_value=('review-account',),
         ):
             entries = client._task_comment_entries([
-                self._raw('@{kato-account} please fix'),
+                self._raw('@{review-account} please fix'),
             ])
         self.assertEqual(len(entries), 1)
 
     def test_unset_login_resolved_drops_human_keeps_bot_and_plain(self) -> None:
         client = self._make_client()
         with patch.object(
-            client, '_fetch_current_user_logins', return_value=('kato-account',),
+            client, '_fetch_current_user_logins', return_value=('review-account',),
         ) as fetch:
             entries = client._task_comment_entries([
                 self._raw('@{alice-account} can you handle this'),  # dropped
                 self._raw('a general note'),                        # kept
-                self._raw('@{kato-account} fix the typo'),          # kept
+                self._raw('@{review-account} fix the typo'),          # kept
             ])
         bodies = [e[ISSUE_COMMENT_BODY] for e in entries]
         self.assertEqual(
-            bodies, ['a general note', '@{kato-account} fix the typo'])
+            bodies, ['a general note', '@{review-account} fix the typo'])
         fetch.assert_called_once()
 
     def test_filter_noop_when_identity_unresolvable_keeps_all(self) -> None:
@@ -785,7 +785,7 @@ class BitbucketMentionFilterWiringTests(unittest.TestCase):
         self.assertEqual(len(entries), 1)
 
     def test_explicit_login_does_not_resolve(self) -> None:
-        client = self._make_client(bot_login='kato_bot')
+        client = self._make_client(bot_login='review_bot')
         with patch.object(
             client, '_fetch_current_user_logins',
             side_effect=AssertionError('should not resolve'),
@@ -800,13 +800,13 @@ class BitbucketMentionFilterWiringTests(unittest.TestCase):
         with patch.object(
             client, '_get_with_retry',
             return_value=mock_response(json_data={
-                'account_id': '557058:ABC', 'nickname': 'KatoBot',
+                'account_id': '557058:ABC', 'nickname': 'ReviewBot',
                 'uuid': '{9133-DEF}',
             }),
         ) as get:
             self.assertEqual(
                 client._fetch_current_user_logins(),
-                ('557058:abc', 'katobot', '9133-def'),  # uuid braces stripped
+                ('557058:abc', 'reviewbot', '9133-def'),  # uuid braces stripped
             )
         get.assert_called_once_with('/2.0/user')
 

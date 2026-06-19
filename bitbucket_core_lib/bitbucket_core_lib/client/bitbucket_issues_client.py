@@ -224,8 +224,8 @@ class BitbucketIssuesClient(IssueClientBase):
             comments,
             extract_body=extract_body,
             extract_author=extract_author,
-            # Drop comments addressed to humans other than the kato bot —
-            # see IssueClientBase._comment_addressed_elsewhere and the
+            # Drop comments addressed to humans other than the configured bot
+            # account — see IssueClientBase._comment_addressed_elsewhere and the
             # Bitbucket ``@{account_id}`` extractor above.
             skip=lambda c: self._comment_addressed_elsewhere(extract_body(c)),
         )

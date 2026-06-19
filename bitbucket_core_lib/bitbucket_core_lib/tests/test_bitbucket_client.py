@@ -296,7 +296,7 @@ class BitbucketClientTests(unittest.TestCase):
     def test_list_pull_request_comments_includes_new_comment_on_resolved_thread(self) -> None:
         # A reviewer re-comments on a previously-resolved thread. The parent has
         # resolution set (it was resolved) but the new comment itself does not —
-        # kato should pick it up so it can be re-addressed.
+        # the bot should pick it up so it can be re-addressed.
         client = BitbucketClient('https://bitbucket.example', 'bb-token')
         response = mock_response(
             json_data={
