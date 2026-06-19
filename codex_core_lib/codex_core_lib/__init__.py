@@ -1,4 +1,4 @@
-"""Codex Code CLI backend for kato.
+"""Codex Code CLI backend for the orchestrator.
 
 Mirrors the structure of ``claude_core_lib`` so a reader who has
 learned one backend recognises the other. Shared helpers

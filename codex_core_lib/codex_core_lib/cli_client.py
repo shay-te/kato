@@ -1,12 +1,12 @@
-"""Drive OpenAI's Codex CLI (``codex exec``) as a kato agent backend.
+"""Drive OpenAI's Codex CLI (``codex exec``) as an orchestrator agent backend.
 
 Same public surface as ``ClaudeCliClient`` so the orchestration
 layer can use either backend interchangeably — selection is driven
-by ``KATO_AGENT_BACKEND``. The Codex CLI is shaped quite differently
+by ``the agent-backend setting``. The Codex CLI is shaped quite differently
 from Claude Code under the hood (sandbox modes instead of an
 allow/deny tool list, a ``resume <id>`` subcommand instead of a
 ``--resume`` flag, JSONL events instead of one JSON object), but
-the methods kato calls + the result shape kato receives are
+the methods the orchestrator calls + the result shape the orchestrator receives are
 identical.
 
 This is a one-shot implementation (no streaming-session machinery
@@ -83,7 +83,7 @@ class CodexCliClient(object):
     #
     # Codex's sandbox policy values (--sandbox). ``workspace-write``
     # lets the agent edit files inside the workspace directory tree
-    # but blocks writes elsewhere — the right default for kato's
+    # but blocks writes elsewhere — the right default for the orchestrator's
     # per-task clone model. ``danger-full-access`` removes the
     # filesystem boundary; we never set that automatically.
     SAFE_SANDBOX_MODE = 'workspace-write'
@@ -918,7 +918,7 @@ class CodexCliClient(object):
         * ``--ask-for-approval`` is **not** on ``codex exec`` at all —
           it's a top-level interactive-mode option. Approval policy
           for non-interactive runs comes from ``~/.codex/config.toml``
-          (or ``-c approval_policy=<value>`` override). Kato leaves
+          (or ``-c approval_policy=<value>`` override). the orchestrator leaves
           it to the operator's config and relies on ``--sandbox`` as
           the real safety boundary.
         * The ``include_system_prompt`` param is accepted for parity
@@ -1057,14 +1057,14 @@ class CodexCliClient(object):
         )
 
     def _parse_jsonl_payload(self, stdout: str) -> dict[str, object]:
-        """Parse the ``--json`` JSONL event stream into a kato-shaped dict.
+        """Parse the ``--json`` JSONL event stream into an orchestrator-shaped dict.
 
         Verified against a real ``codex exec --json`` run on
         codex-cli 0.132.0. Observed event shapes:
 
         * ``{"type": "thread.started", "thread_id": "<uuid>"}`` —
           this is where the session-id-equivalent comes from. Codex
-          calls it ``thread_id``; kato's contract calls it
+          calls it ``thread_id``; the orchestrator's contract calls it
           ``agent_session_id``, so we translate. ``codex exec resume <id>``
           accepts the thread_id as its positional argument.
         * ``{"type": "turn.started"}`` — informational.
@@ -1255,13 +1255,13 @@ def _parse_json_event(raw_line: str) -> dict | None:
 
 
 def _absorb_thread_id(event: dict, payload: dict[str, object]) -> None:
-    """Codex calls it ``thread_id`` (translated to ``AGENT_SESSION_ID`` for kato).
+    """Codex calls it ``thread_id`` (translated to ``AGENT_SESSION_ID`` for the orchestrator).
 
     Falls back to a top-level ``session_id`` key on any event for
     forward-compat with future codex versions. ``event`` is the raw
     codex CLI JSON envelope — its keys are codex's wire format, not
-    kato's internal names — so the literal ``'session_id'`` is what
-    codex would emit if it ever surfaced one. ``payload`` is kato's
+    the orchestrator's internal names — so the literal ``'session_id'`` is what
+    codex would emit if it ever surfaced one. ``payload`` is the orchestrator's
     internal dict, so its key is ``AGENT_SESSION_ID``.
     """
     if payload.get(ImplementationFields.AGENT_SESSION_ID):
