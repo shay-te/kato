@@ -934,7 +934,7 @@ def _register_http_routes(app: Flask) -> None:
     def list_claude_sessions():
         """List Claude Code sessions available for adoption.
 
-        Reads ``~/.claude/projects/`` (or ``KATO_CLAUDE_SESSIONS_ROOT``
+        Reads ``~/.claude/projects/`` (or ``CLAUDE_SESSIONS_ROOT``
         for tests) and returns every transcript with metadata: cwd,
         last-modified epoch, turn count, and first/last user-message
         previews. The UI dropdown sorts by recency and lets the

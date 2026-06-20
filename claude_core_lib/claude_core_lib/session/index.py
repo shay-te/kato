@@ -24,7 +24,7 @@ Design notes:
   (filesystem stat) and the JSONL parse is bounded — we read only
   enough lines to find the first/last user message, not the whole
   transcript. A session with 1000 turns parses in milliseconds.
-- **Override path for tests.** ``KATO_CLAUDE_SESSIONS_ROOT`` points
+- **Override path for tests.** ``CLAUDE_SESSIONS_ROOT`` points
   ``default_sessions_root()`` at a temp dir; production deployments
   leave it unset.
 """
@@ -40,7 +40,7 @@ from pathlib import Path
 
 from agent_core_lib.agent_core_lib.helpers.session_id_utils import fix_session_id
 from agent_core_lib.agent_core_lib.helpers.text_utils import text_from_mapping
-CLAUDE_SESSIONS_ROOT_ENV_KEY = 'KATO_CLAUDE_SESSIONS_ROOT'
+CLAUDE_SESSIONS_ROOT_ENV_KEY = 'CLAUDE_SESSIONS_ROOT'
 # Cap on per-transcript bytes scanned for first/last user message
 # previews. Claude transcripts grow without bound; reading the whole
 # file just to render a dropdown is wasteful. 256 KB is enough to
@@ -78,7 +78,7 @@ class ClaudeSessionMetadata:
 def default_sessions_root() -> Path:
     """Resolve Claude Code's ``projects/`` directory.
 
-    Honours ``KATO_CLAUDE_SESSIONS_ROOT`` first (for tests). Falls
+    Honours ``CLAUDE_SESSIONS_ROOT`` first (for tests). Falls
     back to ``~/.claude/projects`` which is Claude Code's default on
     macOS / Linux. We don't try to detect alternate Claude Code
     installations — if an operator has moved their store, they set

@@ -141,10 +141,10 @@ class ClassifyToolInputSandboxTests(unittest.TestCase):
         self.assertFalse(outside)
 
     def test_allowed_path_outside_sandbox_is_not_flagged(self) -> None:
-        # kato's configured lessons.md / architecture.md live outside the task
+        # orchestrator's configured lessons.md / architecture.md live outside the task
         # folder but the agent is MEANT to touch them — an exact allow-list
         # match must NOT trip the out-of-sandbox warning.
-        lessons = os.path.normpath('/Users/x/Desktop/dev_kato/lessons.md')
+        lessons = os.path.normpath('/Users/x/Desktop/dev_orchestrator/lessons.md')
         outside, _ = classify_tool_input_sandbox(
             {'file_path': lessons}, CWD, ADD, (lessons,),
         )
@@ -152,7 +152,7 @@ class ClassifyToolInputSandboxTests(unittest.TestCase):
 
     def test_other_outside_path_still_flagged_with_allowlist(self) -> None:
         # The allow-list is exact: a DIFFERENT outside file still warns.
-        lessons = os.path.normpath('/Users/x/Desktop/dev_kato/lessons.md')
+        lessons = os.path.normpath('/Users/x/Desktop/dev_orchestrator/lessons.md')
         outside, offending = classify_tool_input_sandbox(
             {'file_path': '/etc/passwd'}, CWD, ADD, (lessons,),
         )
@@ -162,8 +162,8 @@ class ClassifyToolInputSandboxTests(unittest.TestCase):
 
 class ClassifyCommandSandboxTests(unittest.TestCase):
     # User-space task folder so the within-roots check is exercised the same
-    # way it runs in production (kato workspaces live under the home tree).
-    UCWD = '/Users/dev/.kato/workspaces/UNA-1/repo'
+    # way it runs in production (orchestrator workspaces live under the home tree).
+    UCWD = '/Users/dev/.agent/workspaces/UNA-1/repo'
 
     def test_grep_into_another_repo_is_flagged(self) -> None:
         outside, offending = classify_command_sandbox(
@@ -196,7 +196,7 @@ class ClassifyCommandSandboxTests(unittest.TestCase):
         self.assertEqual(offending, '~/.ssh/id_rsa')
 
     def test_cd_into_task_folder_then_relative_args_is_inside(self) -> None:
-        cmd = 'cd /Users/dev/.kato/workspaces/UNA-1/repo && grep -rn x src/main'
+        cmd = 'cd /Users/dev/.agent/workspaces/UNA-1/repo && grep -rn x src/main'
         outside, _ = classify_command_sandbox(cmd, self.UCWD)
         self.assertFalse(outside)
 
@@ -217,7 +217,7 @@ class ClassifyCommandSandboxTests(unittest.TestCase):
             self.assertFalse(outside, cmd)
 
     def test_allowed_path_in_command_is_exempt(self) -> None:
-        lessons = os.path.normpath('/Users/dev/.kato/lessons.md')
+        lessons = os.path.normpath('/Users/dev/.agent/lessons.md')
         outside, _ = classify_command_sandbox(
             f'cat {lessons}', self.UCWD, (), (lessons,),
         )
@@ -233,12 +233,12 @@ class ClassifyCommandSandboxAdversarialTests(unittest.TestCase):
     the allow-list, system paths, URLs and glob/regex fragments MUST NOT
     false-alarm."""
 
-    TASK = '/Users/dev/.kato/workspaces/UNA-1'
+    TASK = '/Users/dev/.agent/workspaces/UNA-1'
     CWD = TASK + '/admin-backend'
     ADD = (TASK + '/admin-client',)  # sibling repo of the SAME task
     ALLOWED = (
-        '/Users/dev/.kato/lessons.md',
-        '/Users/dev/.kato/architecture.md',
+        '/Users/dev/.agent/lessons.md',
+        '/Users/dev/.agent/architecture.md',
     )
 
     def _run(self, cmd):
@@ -303,21 +303,21 @@ class ClassifyCommandSandboxAdversarialTests(unittest.TestCase):
     def test_sibling_task_workspace_is_outside(self):
         # A DIFFERENT task's clone under the same workspaces root is still out.
         self.assertFlagged(
-            'cat /Users/dev/.kato/workspaces/UNA-2/repo/.env',
-            '/Users/dev/.kato/workspaces/UNA-2/repo/.env',
+            'cat /Users/dev/.agent/workspaces/UNA-2/repo/.env',
+            '/Users/dev/.agent/workspaces/UNA-2/repo/.env',
         )
 
     def test_prefix_similar_task_is_outside(self):
         # ``UNA-12`` string-prefixes ``UNA-1`` but is a different dir — the
         # separator guard must keep it OUT (no naive startswith false-inside).
         self.assertFlagged(
-            'grep token /Users/dev/.kato/workspaces/UNA-12/repo/secrets.txt',
-            '/Users/dev/.kato/workspaces/UNA-12/repo/secrets.txt',
+            'grep token /Users/dev/.agent/workspaces/UNA-12/repo/secrets.txt',
+            '/Users/dev/.agent/workspaces/UNA-12/repo/secrets.txt',
         )
 
     def test_dotdot_traversal_into_a_sibling_task(self):
         outside, _ = self._run(
-            'cat /Users/dev/.kato/workspaces/UNA-1/../UNA-2/secret',
+            'cat /Users/dev/.agent/workspaces/UNA-1/../UNA-2/secret',
         )
         self.assertTrue(outside)
 
@@ -335,8 +335,8 @@ class ClassifyCommandSandboxAdversarialTests(unittest.TestCase):
         # AND a forbidden path — the forbidden one must be the offender.
         cmd = (
             'python3 merge.py '
-            '/Users/dev/.kato/workspaces/UNA-1/admin-backend/in.json '
-            '/Users/dev/.kato/lessons.md '
+            '/Users/dev/.agent/workspaces/UNA-1/admin-backend/in.json '
+            '/Users/dev/.agent/lessons.md '
             '/Users/dev/Desktop/other/leak.json'
         )
         self.assertFlagged(cmd, '/Users/dev/Desktop/other/leak.json')
@@ -345,24 +345,24 @@ class ClassifyCommandSandboxAdversarialTests(unittest.TestCase):
 
     def test_in_task_path_buried_in_python_open_is_clean(self):
         self.assertClean(
-            "python3 -c \"open('/Users/dev/.kato/workspaces/UNA-1/"
+            "python3 -c \"open('/Users/dev/.agent/workspaces/UNA-1/"
             "admin-backend/app/config.py').read()\"",
         )
 
     def test_sibling_repo_of_same_task_is_clean(self):
         self.assertClean(
-            'cat /Users/dev/.kato/workspaces/UNA-1/admin-client/pom.xml',
+            'cat /Users/dev/.agent/workspaces/UNA-1/admin-client/pom.xml',
         )
 
     def test_dotdot_staying_inside_the_task_is_clean(self):
         self.assertClean(
-            'cat /Users/dev/.kato/workspaces/UNA-1/admin-backend/../'
+            'cat /Users/dev/.agent/workspaces/UNA-1/admin-backend/../'
             'admin-client/src/Main.java',
         )
 
     def test_allowlisted_lessons_buried_is_clean(self):
         self.assertClean(
-            "python3 -c \"print(open('/Users/dev/.kato/lessons.md').read())\"",
+            "python3 -c \"print(open('/Users/dev/.agent/lessons.md').read())\"",
         )
 
     def test_system_path_buried_is_clean(self):

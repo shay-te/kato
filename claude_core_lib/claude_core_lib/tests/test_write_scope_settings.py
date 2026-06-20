@@ -31,11 +31,13 @@ class OutOfWorkspaceWriteSettingsTests(unittest.TestCase):
                 self.assertIn(f'{tool}({root}/**)', rules)
 
     def test_never_targets_home_or_workspace(self) -> None:
-        # The task workspace lives under ~/.kato/workspaces — a home rule would
-        # prompt on every in-workspace edit and defeat acceptEdits.
+        # The task workspace lives under the host's home dir — a home rule
+        # would prompt on every in-workspace edit and defeat acceptEdits, so
+        # the rules must only ever target absolute system/scratch roots.
         for rule in out_of_workspace_write_ask_rules():
             self.assertNotIn('~', rule)
-            self.assertNotIn('.kato', rule)
+            self.assertNotIn('/Users/', rule)
+            self.assertNotIn('/home/', rule)
 
     def test_settings_shape_is_permissions_ask(self) -> None:
         settings = out_of_workspace_write_settings()

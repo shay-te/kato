@@ -1,3 +1,6 @@
+import os
+from pathlib import Path
+
 from omegaconf import DictConfig
 
 from core_lib.core_lib import CoreLib
@@ -165,8 +168,14 @@ class KatoCoreLib(CoreLib):
         # this reads, an enabled read-only flag implies docker is on
         # too. Threaded through the same fan-out as ``docker_mode_on``.
         read_only_tools_on = is_read_only_tools_enabled()
+        # kato owns where session metadata lives; the transport lib takes it
+        # as a parameter (so the lib reads no KATO_ env / no ~/.kato default).
         self.session_manager = ClaudeSessionManager.from_config(
             open_cfg, agent_backend,
+            state_dir=(
+                os.environ.get('KATO_SESSION_STATE_DIR', '').strip()
+                or str(Path.home() / '.kato' / 'sessions')
+            ),
         )
         # Per-task workspace folders (one clone-set per ticket id) are
         # backend-agnostic. Both Claude and OpenHands flows use them for

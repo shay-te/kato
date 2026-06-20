@@ -86,7 +86,7 @@ class StreamingClaudeSessionTests(unittest.TestCase):
         self.assertIn('--session-id', cmd)
         # After the init event arrives, agent_session_id adopts the id
         # Claude actually confirmed in its init event (not necessarily the
-        # pinned UUID kato passed via --session-id; if Claude reports a
+        # pinned UUID the orchestrator passed via --session-id; if Claude reports a
         # different id the session corrects to that actual id so the next
         # --resume targets the right JSONL).
         self.assertEqual(session.agent_session_id, 'live-123')
@@ -152,7 +152,7 @@ class StreamingClaudeSessionTests(unittest.TestCase):
         # cwd and refuses cross-repo questions ("verify the front
         # end" → "frontend repo is forbidden") because the only
         # frontend-named entry it knows about came from
-        # ``KATO_IGNORED_REPOSITORY_FOLDERS``. ``--add-dir`` per
+        # ``AGENT_IGNORED_REPOSITORY_FOLDERS``. ``--add-dir`` per
         # sibling repo path is what fixes that.
         fake_proc = _FakeProc()
         with patch(
@@ -216,7 +216,7 @@ class StreamingClaudeSessionTests(unittest.TestCase):
     def test_spawn_log_prints_fresh_session_id(self) -> None:
         # The "sustain the print" line: every spawn must log the id +
         # whether it is fresh, so an operator can diff one task across
-        # a kato restart.
+        # an orchestrator restart.
         fake_proc = _FakeProc()
         with patch(
             'claude_core_lib.claude_core_lib.session.streaming.subprocess.Popen',
@@ -1144,7 +1144,7 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         self.assertEqual(envelope.get('outside_path'), '/Users/x/other-repo/secret.py')
 
     def test_pending_control_requests_flags_docker_escape_command(self) -> None:
-        # docker mounts host paths into a container kato never sees — flagged
+        # docker mounts host paths into a container the orchestrator never sees — flagged
         # outside_sandbox so the modal warns + withholds "Allow always", even
         # though the bind path itself is scratch (/tmp).
         session = StreamingClaudeSession(task_id='T', cwd='/work/UNA-1/repo')
@@ -1185,7 +1185,7 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         # Same counters, but the send is older than the ack grace → the
         # subprocess is STALLED, not warming up. ``is_working`` must flip
         # back to False so ``_task_session_is_stalled`` can age it out and
-        # kato can requeue; otherwise a stuck session reads "working" forever.
+        # the orchestrator can requeue; otherwise a stuck session reads "working" forever.
         session = self._build_session()
         session._proc = SimpleNamespace(poll=lambda: None)  # alive
         session._recent_events.append(SessionEvent(raw={'type': 'result'}))
@@ -1808,7 +1808,7 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
 
 
 class StreamingClaudeSessionDockerModeTests(unittest.TestCase):
-    """``KATO_CLAUDE_DOCKER`` plumbing for the streaming spawn path.
+    """``docker_mode_on`` plumbing for the streaming spawn path.
 
     Sandbox-wrap on streaming sessions now gates on the new
     ``docker_mode_on`` attribute, not on ``permission_mode ==
@@ -1859,10 +1859,10 @@ class StreamingClaudeSessionDockerModeTests(unittest.TestCase):
             'sandbox_core_lib.sandbox_core_lib.manager.record_spawn',
         ) as mock_record, patch(
             'sandbox_core_lib.sandbox_core_lib.manager.wrap_command',
-            return_value=['docker', 'run', '--rm', 'kato-sandbox', 'claude'],
+            return_value=['docker', 'run', '--rm', 'the orchestrator-sandbox', 'claude'],
         ) as mock_wrap, patch(
             'sandbox_core_lib.sandbox_core_lib.manager.make_container_name',
-            return_value='kato-sandbox-PROJ-1-abcd1234',
+            return_value='the orchestrator-sandbox-PROJ-1-abcd1234',
         ):
             session = StreamingClaudeSession(
                 task_id='PROJ-1',

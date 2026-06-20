@@ -4,7 +4,7 @@ from unittest.mock import patch
 from provider_client_base.provider_client_base.data.fields import PullRequestFields, ReviewCommentFields
 
 from gitlab_core_lib.gitlab_core_lib.client.gitlab_client import GitLabClient
-from tests.utils import (
+from provider_client_base.provider_client_base.testing import (
     ClientTimeout,
     assert_client_headers_and_timeout,
     build_review_comment,

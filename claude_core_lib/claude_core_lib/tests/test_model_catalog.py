@@ -29,7 +29,7 @@ class ModelCatalogTests(unittest.TestCase):
         # Isolate from the host's real ~/.claude logs so the session-log fallback
         # finds nothing by default — these tests assert the no-version baseline.
         # Individual session-log tests point CLAUDE_CONFIG_DIR at their own fixture.
-        self._config_dir = tempfile.mkdtemp(prefix='kato-claude-cfg-')
+        self._config_dir = tempfile.mkdtemp(prefix='the orchestrator-claude-cfg-')
         self.addCleanup(lambda: __import__('shutil').rmtree(self._config_dir, ignore_errors=True))
         creds = dict(_NO_CREDS, CLAUDE_CONFIG_DIR=self._config_dir)
         ctx = patch.dict(os.environ, creds, clear=False)

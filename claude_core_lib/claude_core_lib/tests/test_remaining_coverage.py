@@ -210,19 +210,16 @@ class SessionManagerFromConfigTests(unittest.TestCase):
         )
         self.assertIsNone(result)
 
-    def test_from_config_uses_env_state_dir_when_set(self) -> None:
-        # Line 112: env var override.
-        import os
+    def test_from_config_uses_passed_state_dir(self) -> None:
+        # The caller (host) supplies the state dir; the lib reads no env var.
         from claude_core_lib.claude_core_lib.session.manager import (
             ClaudeSessionManager,
         )
         with tempfile.TemporaryDirectory() as td:
-            with patch.dict(
-                os.environ, {'KATO_SESSION_STATE_DIR': td}, clear=False,
-            ):
-                result = ClaudeSessionManager.from_config(
-                    open_cfg=SimpleNamespace(), agent_backend='claude',
-                )
+            result = ClaudeSessionManager.from_config(
+                open_cfg=SimpleNamespace(), agent_backend='claude',
+                state_dir=td,
+            )
         self.assertIsNotNone(result)
         self.assertEqual(str(result._state_dir), td)
 

@@ -120,27 +120,34 @@ class ClaudeSessionManager(object):
     while the webserver simultaneously reads them.
     """
 
-    DEFAULT_STATE_DIR_NAME = '.kato/sessions'
+    # Generic standalone default. In production the host (orchestrator) passes
+    # an explicit ``state_dir`` to ``from_config`` — it owns where session
+    # metadata lives — so this per-user fallback only applies to standalone
+    # use of the lib.
+    DEFAULT_STATE_DIR_NAME = '.claude-agent/sessions'
 
     @classmethod
     def from_config(
         cls,
         open_cfg,
         agent_backend: str,
+        *,
+        state_dir: str = '',
     ) -> 'ClaudeSessionManager | None':
-        """Build the manager (or return None) from the orchestrator config block.
+        """Build the manager (or return None) for the Claude backend.
 
         Only the Claude backend exposes live in-process sessions for the UI
         to talk to; everything else returns None and the planning webserver
-        gracefully shows an empty tab list.
+        gracefully shows an empty tab list. ``state_dir`` is supplied by the
+        caller (the host decides where session metadata lives); when omitted
+        the lib falls back to a generic per-user default.
         """
         if str(agent_backend or '').strip().lower() != 'claude':
             return None
-        state_dir = (
-            os.environ.get('KATO_SESSION_STATE_DIR', '').strip()
-            or str(Path.home() / cls.DEFAULT_STATE_DIR_NAME)
+        resolved = str(state_dir or '').strip() or str(
+            Path.home() / cls.DEFAULT_STATE_DIR_NAME
         )
-        return cls(state_dir=state_dir)
+        return cls(state_dir=resolved)
 
     def __init__(
         self,

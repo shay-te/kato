@@ -224,7 +224,7 @@ class BuildCommandTests(unittest.TestCase):
 
     def test_bypass_uses_single_dangerous_flag(self) -> None:
         # ``--dangerously-bypass-approvals-and-sandbox`` is a single
-        # flag (no value) and conflicts with --sandbox, so kato must
+        # flag (no value) and conflicts with --sandbox, so the orchestrator must
         # NOT also emit --sandbox alongside it.
         client = CodexCliClient(binary='codex', bypass_permissions=True)
         cmd = client._build_command(
@@ -434,7 +434,7 @@ class ImplementTaskTests(unittest.TestCase):
 
     def test_empty_last_message_and_empty_jsonl_still_succeeds(self) -> None:
         # When the CLI exits 0 but produced no message at all (e.g.
-        # agent had nothing to say after editing), kato treats it as
+        # agent had nothing to say after editing), the orchestrator treats it as
         # a successful spawn — the orchestration layer's
         # ``current_head_sha`` / dirty-tree check catches the "agent
         # really did nothing" case downstream.
@@ -501,7 +501,7 @@ class JsonlParsingTests(unittest.TestCase):
             '{"type":"turn.completed","usage":{"input_tokens":13201,"output_tokens":5}}\n'
         )
         payload = CodexCliClient(binary='codex')._parse_jsonl_payload(stream)
-        # Translated: codex's ``thread_id`` → kato's ``agent_session_id``.
+        # Translated: codex's ``thread_id`` → the orchestrator's ``agent_session_id``.
         self.assertEqual(payload['agent_session_id'], '019e4620-dc9f-70d3-a1d5-72363469167f')
         self.assertEqual(payload['result'], 'ok')
         self.assertFalse(payload['is_error'])
@@ -516,7 +516,7 @@ class JsonlParsingTests(unittest.TestCase):
 
     def test_forward_compat_session_id_key_also_recognised(self) -> None:
         # If a future codex version starts emitting ``session_id``
-        # directly (its wire-format key — kato normalizes to
+        # directly (its wire-format key — the orchestrator normalizes to
         # ``agent_session_id`` internally), the parser should still
         # pick it up.
         stream = '{"type":"thread.started","session_id":"fwd-compat-id"}\n'
@@ -824,7 +824,7 @@ class DockerSandboxSpawnTests(unittest.TestCase):
     """The docker_mode_on=True branch in _run_prompt wraps every spawn
     in the hardened sandbox. Each guard inside (ensure_image,
     check_spawn_rate, enforce_no_workspace_secrets, record_spawn) can
-    raise SandboxError; kato must surface those as clean RuntimeError."""
+    raise SandboxError; the orchestrator must surface those as clean RuntimeError."""
 
     def _make_client(self) -> CodexCliClient:
         return CodexCliClient(binary='codex', docker_mode_on=True)

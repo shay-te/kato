@@ -237,11 +237,11 @@ class TextFromMappingTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class ConfigureLoggerTests(unittest.TestCase):
-    def test_returns_kato_workflow_logger_with_suffix(self) -> None:
+    def test_returns_orchestrator_workflow_logger_with_suffix(self) -> None:
         logger = configure_logger('MyClass')
         self.assertEqual(logger.name, 'agent.workflow.MyClass')
 
-    def test_returns_kato_workflow_logger_without_suffix(self) -> None:
+    def test_returns_orchestrator_workflow_logger_without_suffix(self) -> None:
         logger = configure_logger('')
         self.assertEqual(logger.name, 'agent.workflow')
 
@@ -455,12 +455,12 @@ class ReadArchitectureDocTests(unittest.TestCase):
         with _arch_cache_lock:
             self.assertIn(str(path), _arch_cache)
 
-    def test_orchestration_layer_not_kato_in_directive(self) -> None:
+    def test_orchestration_layer_not_orchestrator_in_directive(self) -> None:
         path = Path(self._tmp.name) / 'arch3.md'
         path.write_text('# A\n', encoding='utf-8')
         result = read_architecture_doc(str(path))
         self.assertIn('orchestration layer', result)
-        self.assertNotIn('Kato commits', result)
+        self.assertNotIn('orchestrator commits', result)
 
     def test_directory_path_returns_empty(self) -> None:
         # Line 44: stat() succeeds for a directory but ``is_file()`` is
@@ -520,11 +520,11 @@ class ReadLessonsFileTests(unittest.TestCase):
         # The content in the result should be truncated
         self.assertIn('BEGIN LEARNED LESSONS', result)
 
-    def test_directive_does_not_mention_kato(self) -> None:
+    def test_directive_does_not_mention_orchestrator(self) -> None:
         path = Path(self._tmp.name) / 'lessons2.md'
         path.write_text('- Lesson\n', encoding='utf-8')
         result = read_lessons_file(str(path))
-        self.assertNotIn('by Kato', result)
+        self.assertNotIn('by orchestrator', result)
 
     def test_cache_returns_same_result_on_second_call(self) -> None:
         path = Path(self._tmp.name) / 'cached_lessons.md'
@@ -616,11 +616,11 @@ class AgentsInstructionUtilsTests(unittest.TestCase):
         result = agents_instructions_for_path(str(self.root))
         self.assertIn('Nested rule.', result)
 
-    def test_orchestration_layer_not_kato_in_output(self) -> None:
+    def test_orchestration_layer_not_orchestrator_in_output(self) -> None:
         self._write_agents('AGENTS.md', 'rule')
         result = agents_instructions_for_path(str(self.root))
         self.assertIn('Orchestration layer safety', result)
-        self.assertNotIn('Kato safety', result)
+        self.assertNotIn('orchestrator safety', result)
 
     def test_repository_agents_instructions_empty_list(self) -> None:
         self.assertEqual(repository_agents_instructions_text([]), '')
@@ -816,12 +816,11 @@ class WorkspaceScopeBlockTests(unittest.TestCase):
         result = workspace_scope_block(['', '/valid/path', ''])
         self.assertIn('/valid/path', result)
 
-    def test_generic_not_kato_specific(self) -> None:
+    def test_uses_generic_env_naming(self) -> None:
         result = workspace_scope_block(['/workspace/x'])
-        # Generic env wording, no product-specific names or paths.
+        # Uses the generic AGENT_* env convention, not a product-specific
+        # name — a non-generic name would replace this token.
         self.assertIn('AGENT_WORKSPACES_ROOT', result)
-        self.assertNotIn('KATO_WORKSPACES_ROOT', result)
-        self.assertNotIn('~/.kato/workspaces/', result)
 
 
 class RepositoryScopeTextTests(unittest.TestCase):
@@ -900,9 +899,9 @@ class TaskConversationTitleTests(unittest.TestCase):
     def test_falls_back_to_generic_when_neither(self) -> None:
         task = SimpleNamespace(id='', summary='')
         result = task_conversation_title(task)
-        # Must not be empty and must not contain "Kato"
+        # Must not be empty and must not contain "orchestrator"
         self.assertTrue(result)
-        self.assertNotIn('Kato', result)
+        self.assertNotIn('orchestrator', result)
 
     def test_suffix_appended_to_task_id(self) -> None:
         task = _task(task_id='PROJ-1')
@@ -944,14 +943,14 @@ class ReviewCommentContextTextTests(unittest.TestCase):
 
     def test_self_reply_bodies_excluded(self) -> None:
         comment = _comment(all_comments=[
-            {'author': 'kato', 'body': 'Kato addressed review comment PR-1'},
+            {'author': 'orchestrator', 'body': 'orchestrator addressed review comment PR-1'},
             {'author': 'reviewer', 'body': 'actual comment'},
         ])
         result = review_comment_context_text(
             comment,
-            ('Kato addressed review comment ', 'Kato addressed this review comment'),
+            ('orchestrator addressed review comment ', 'orchestrator addressed this review comment'),
         )
-        self.assertNotIn('Kato addressed review comment ', result)
+        self.assertNotIn('orchestrator addressed review comment ', result)
         self.assertIn('actual comment', result)
 
     def test_empty_body_skipped(self) -> None:
@@ -970,18 +969,18 @@ class ReviewCommentContextTextTests(unittest.TestCase):
 
     def test_returns_empty_when_all_entries_filtered_out(self) -> None:
         # Hits line 282: ``if not lines: return ''`` — len > 1 passes the gate,
-        # but every entry is either blank or a kato self-reply, so the result
+        # but every entry is either blank or an orchestrator self-reply, so the result
         # is an empty list and the early-return fires.
         comment = _comment(
             all_comments=[
-                {'author': 'kato', 'body': 'Kato addressed review comment X'},
-                {'author': 'kato', 'body': 'Kato addressed this review comment'},
+                {'author': 'orchestrator', 'body': 'orchestrator addressed review comment X'},
+                {'author': 'orchestrator', 'body': 'orchestrator addressed this review comment'},
             ],
         )
         self.assertEqual(
             review_comment_context_text(
                 comment,
-                ('Kato addressed review comment ', 'Kato addressed this review comment'),
+                ('orchestrator addressed review comment ', 'orchestrator addressed this review comment'),
             ),
             '',
         )

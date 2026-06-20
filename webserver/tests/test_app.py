@@ -184,7 +184,7 @@ class WebserverAppTests(unittest.TestCase):
             )
             with _mock.patch.dict(
                 os.environ,
-                {'KATO_CLAUDE_SESSIONS_ROOT': str(root)},
+                {'CLAUDE_SESSIONS_ROOT': str(root)},
                 clear=False,
             ):
                 response = self.client.get('/api/claude/sessions')
@@ -220,7 +220,7 @@ class WebserverAppTests(unittest.TestCase):
             )
             with _mock.patch.dict(
                 os.environ,
-                {'KATO_CLAUDE_SESSIONS_ROOT': str(root)},
+                {'CLAUDE_SESSIONS_ROOT': str(root)},
                 clear=False,
             ):
                 response = self.client.get('/api/claude/sessions')
@@ -267,7 +267,7 @@ class WebserverAppTests(unittest.TestCase):
         )])
         app = create_app(session_manager=manager)
         with unittest.mock.patch.dict(
-            'os.environ', {'KATO_CLAUDE_SESSIONS_ROOT': tempfile.mkdtemp()},
+            'os.environ', {'CLAUDE_SESSIONS_ROOT': tempfile.mkdtemp()},
         ):
             response = app.test_client().get('/api/sessions/PROJ-1/chats')
         self.assertEqual(response.status_code, 200)
@@ -460,7 +460,7 @@ class WebserverAppTests(unittest.TestCase):
             manager = _AdoptingManager()
             with _mock.patch.dict(
                 os.environ,
-                {'KATO_CLAUDE_SESSIONS_ROOT': str(sessions_root)},
+                {'CLAUDE_SESSIONS_ROOT': str(sessions_root)},
                 clear=False,
             ):
                 app = create_app(session_manager=manager)

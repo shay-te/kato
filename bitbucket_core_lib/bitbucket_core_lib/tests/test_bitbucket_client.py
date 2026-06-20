@@ -7,7 +7,7 @@ from bitbucket_core_lib.bitbucket_core_lib.client.bitbucket_client import (
     BitbucketClient,
 )
 from provider_client_base.provider_client_base.data.fields import PullRequestFields, ReviewCommentFields
-from tests.utils import (
+from provider_client_base.provider_client_base.testing import (
     ClientTimeout,
     assert_client_headers_and_timeout,
     assert_client_basic_auth_and_timeout,

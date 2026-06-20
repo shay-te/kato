@@ -26,9 +26,9 @@ _CLAUDE_LOGIN_FILES = ('.claude.json', '.claude/.credentials.json')
 
 
 def _projects_root(env: dict) -> Path:
-    """Claude transcript root — honours ``KATO_CLAUDE_SESSIONS_ROOT`` from the
+    """Claude transcript root — honours ``CLAUDE_SESSIONS_ROOT`` from the
     passed env (matching where --resume reads), else the canonical resolver."""
-    override = str(env.get('KATO_CLAUDE_SESSIONS_ROOT') or '').strip()
+    override = str(env.get('CLAUDE_SESSIONS_ROOT') or '').strip()
     if override:
         return Path(override).expanduser()
     try:

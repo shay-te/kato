@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
 from agent_core_lib.agent_core_lib.data.fields import ImplementationFields
-from tests.utils import build_review_comment, build_task
+from provider_client_base.provider_client_base.testing import build_review_comment, build_task
 
 
 @dataclass
@@ -156,7 +156,7 @@ class ClaudeCliClientTests(unittest.TestCase):
         completed = _completed(json.dumps({'is_error': False, 'result': 'done'}))
         with patch.dict(
             'os.environ',
-            {'KATO_IGNORED_REPOSITORY_FOLDERS': 'secret-client'},
+            {'AGENT_IGNORED_REPOSITORY_FOLDERS': 'secret-client'},
         ), patch(
             'claude_core_lib.claude_core_lib.cli_client.subprocess.run',
             return_value=completed,
@@ -335,7 +335,7 @@ class ClaudeCliClientTests(unittest.TestCase):
 
 
 class ClaudeCliClientReadOnlyToolsTests(unittest.TestCase):
-    """``KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS=true`` plumbing.
+    """``read_only_tools_on`` plumbing.
 
     When the operator sets the env var (and docker is on — the
     startup gate refuses the flag without docker), every spawn
@@ -380,7 +380,7 @@ class ClaudeCliClientReadOnlyToolsTests(unittest.TestCase):
 
     def test_read_only_allowlist_unions_with_operator_allowed_tools(self) -> None:
         # When the operator extends the safe default via
-        # KATO_CLAUDE_ALLOWED_TOOLS, the read-only allowlist is
+        # the allowed_tools param, the read-only allowlist is
         # unioned in (no duplicates, operator extension preserved).
         client = ClaudeCliClient(
             binary='claude',
@@ -432,7 +432,7 @@ class ClaudeCliClientReadOnlyToolsTests(unittest.TestCase):
 
 
 class ClaudeCliClientDockerModeTests(unittest.TestCase):
-    """``KATO_CLAUDE_DOCKER`` plumbing for the per-task spawn paths.
+    """``docker_mode_on`` plumbing for the per-task spawn paths.
 
     Docker mode wraps ``test_task`` and ``investigate`` spawns in the
     sandbox; boot-time validators (``validate_connection``,
@@ -479,17 +479,17 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
             'sandbox_core_lib.sandbox_core_lib.manager.record_spawn',
         ) as mock_record, patch(
             'sandbox_core_lib.sandbox_core_lib.manager.wrap_command',
-            return_value=['docker', 'run', '--rm', 'kato-sandbox', 'claude'],
+            return_value=['docker', 'run', '--rm', 'the orchestrator-sandbox', 'claude'],
         ) as mock_wrap, patch(
             'sandbox_core_lib.sandbox_core_lib.manager.make_container_name',
-            return_value='kato-sandbox-PROJ-1-abcd1234',
+            return_value='the orchestrator-sandbox-PROJ-1-abcd1234',
         ):
             client.test_task(build_task())
 
         mock_wrap.assert_called_once()
         wrap_kwargs = mock_wrap.call_args.kwargs
         self.assertEqual(wrap_kwargs['task_id'], 'PROJ-1')
-        self.assertEqual(wrap_kwargs['container_name'], 'kato-sandbox-PROJ-1-abcd1234')
+        self.assertEqual(wrap_kwargs['container_name'], 'the orchestrator-sandbox-PROJ-1-abcd1234')
         # Audit log fires before the subprocess runs.
         mock_record.assert_called_once()
         # Spawn argv is the docker-wrapped command.
@@ -528,10 +528,10 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
             'sandbox_core_lib.sandbox_core_lib.manager.record_spawn',
         ), patch(
             'sandbox_core_lib.sandbox_core_lib.manager.wrap_command',
-            return_value=['docker', 'run', '--rm', 'kato-sandbox', 'claude'],
+            return_value=['docker', 'run', '--rm', 'the orchestrator-sandbox', 'claude'],
         ) as mock_wrap, patch(
             'sandbox_core_lib.sandbox_core_lib.manager.make_container_name',
-            return_value='kato-sandbox-PROJ-1-abcd1234',
+            return_value='the orchestrator-sandbox-PROJ-1-abcd1234',
         ):
             client.test_task(build_task())
 
@@ -560,15 +560,15 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
             'sandbox_core_lib.sandbox_core_lib.manager.record_spawn',
         ) as mock_record, patch(
             'sandbox_core_lib.sandbox_core_lib.manager.wrap_command',
-            return_value=['docker', 'run', '--rm', 'kato-sandbox', 'claude'],
+            return_value=['docker', 'run', '--rm', 'the orchestrator-sandbox', 'claude'],
         ) as mock_wrap, patch(
             'sandbox_core_lib.sandbox_core_lib.manager.make_container_name',
-            return_value='kato-sandbox-triage-abcd1234',
+            return_value='the orchestrator-sandbox-triage-abcd1234',
         ) as mock_name:
             client.investigate('classify this task', cwd='/tmp/repo')
 
         mock_wrap.assert_called_once()
-        # Triage carries no real task id — kato passes a synthetic
+        # Triage carries no real task id — the orchestrator passes a synthetic
         # ``triage`` so the container name and audit row are still
         # grep-able rather than ``unknown``.
         mock_name.assert_called_once_with('triage')
@@ -728,7 +728,7 @@ class ClaudeCliClientCredentialOutputScanTests(unittest.TestCase):
     """Output-side credential scan on the agent's response.
 
     Closes residual #18 on the detective side: when the agent's
-    response text contains a named credential pattern, kato logs a
+    response text contains a named credential pattern, the orchestrator logs a
     WARNING with the pattern name + redacted preview so the operator
     knows to rotate. Cannot undo the leak to Anthropic — names the
     fact that the leak happened so it doesn't go silent.
@@ -770,7 +770,7 @@ class ClaudeCliClientCredentialOutputScanTests(unittest.TestCase):
         completed = _completed(
             json.dumps({
                 'is_error': False,
-                'result': 'Done — edits written, kato will publish.',
+                'result': 'Done — edits written, the orchestrator will publish.',
                 'session_id': 's',
             })
         )

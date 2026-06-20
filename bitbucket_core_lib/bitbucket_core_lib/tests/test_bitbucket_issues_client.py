@@ -12,7 +12,7 @@ from bitbucket_core_lib.bitbucket_core_lib.data.fields import (
     BitbucketIssueFields,
 )
 from provider_client_base.provider_client_base.data.issue_record import IssueRecord
-from tests.utils import assert_client_basic_auth_and_timeout, mock_response
+from provider_client_base.provider_client_base.testing import assert_client_basic_auth_and_timeout, mock_response
 
 
 class BitbucketIssuesClientInitTests(unittest.TestCase):
@@ -441,7 +441,7 @@ class BitbucketIssuesClientAddRemoveTagTests(unittest.TestCase):
         mock_put.assert_not_called()
 
     def test_add_tag_propagates_http_error(self) -> None:
-        from tests.utils import mock_response as _mr
+        from provider_client_base.provider_client_base.testing import mock_response as _mr
         bad_response = _mr(status_code=400)
         bad_response.raise_for_status.side_effect = Exception('bad request')
         with patch.object(self.client, '_put', return_value=bad_response):

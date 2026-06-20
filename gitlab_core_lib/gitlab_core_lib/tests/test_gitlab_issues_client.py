@@ -10,7 +10,7 @@ from gitlab_core_lib.gitlab_core_lib.data.fields import (
     GitLabIssueFields,
 )
 from provider_client_base.provider_client_base.data.issue_record import IssueRecord
-from tests.utils import mock_response
+from provider_client_base.provider_client_base.testing import mock_response
 
 
 def _make_client(**kwargs) -> GitLabIssuesClient:

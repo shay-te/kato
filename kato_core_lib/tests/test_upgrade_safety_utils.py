@@ -11,14 +11,14 @@ class PersistenceHealthTests(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.home = Path(self._tmp.name)
         # Claude transcripts live under a projects root the resolver honours
-        # via KATO_CLAUDE_SESSIONS_ROOT.
+        # via CLAUDE_SESSIONS_ROOT.
         self.projects = self.home / 'claude-projects'
         (self.projects / 'enc-cwd').mkdir(parents=True)
         self.sessions = self.home / '.kato' / 'sessions'
         self.sessions.mkdir(parents=True)
 
     def _health(self, env_extra=None):
-        env = {'KATO_CLAUDE_SESSIONS_ROOT': str(self.projects)}
+        env = {'CLAUDE_SESSIONS_ROOT': str(self.projects)}
         env.update(env_extra or {})
         return usu.persistence_health(env=env, home=self.home)
 
@@ -54,7 +54,7 @@ class PersistenceHealthTests(unittest.TestCase):
     def test_lines_render_counts_and_the_do_not_delete_note(self):
         (self.projects / 'enc-cwd' / 's1.jsonl').write_text('{}\n')
         lines = usu.persistence_health_lines(
-            env={'KATO_CLAUDE_SESSIONS_ROOT': str(self.projects)}, home=self.home,
+            env={'CLAUDE_SESSIONS_ROOT': str(self.projects)}, home=self.home,
         )
         text = '\n'.join(lines)
         self.assertIn('chats (transcripts)', text)
@@ -65,7 +65,7 @@ class PersistenceHealthTests(unittest.TestCase):
     def test_never_raises_on_missing_dirs(self):
         # No projects dir, no ~/.kato — must still return a valid shape.
         health = usu.persistence_health(
-            env={'KATO_CLAUDE_SESSIONS_ROOT': str(self.home / 'nope')},
+            env={'CLAUDE_SESSIONS_ROOT': str(self.home / 'nope')},
             home=self.home / 'also-nope',
         )
         self.assertEqual(health['chats']['count'], 0)

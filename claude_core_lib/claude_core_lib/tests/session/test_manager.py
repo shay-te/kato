@@ -238,7 +238,7 @@ class ClaudeSessionManagerTests(unittest.TestCase):
 
     def test_legacy_record_does_not_resurrect_after_delete(self) -> None:
         # The end-to-end guarantee: delete the legacy file, rebuild a
-        # manager against the same state dir (≈ a kato restart), and
+        # manager against the same state dir (≈ an orchestrator restart), and
         # the task must NOT come back.
         legacy = self.state_dir / 'UNA-1201.json'
         legacy.write_text(json.dumps({
@@ -262,7 +262,7 @@ class ClaudeSessionManagerTests(unittest.TestCase):
         return path
 
     def test_remove_record_also_deletes_the_claude_transcript(self) -> None:
-        # Task done → workspace + kato record gone → the Claude CLI
+        # Task done → workspace + the orchestrator record gone → the Claude CLI
         # transcript under ~/.claude/projects/ must go too, not
         # accumulate forever.
         self.manager.start_session(task_id='PROJ-1')
@@ -271,7 +271,7 @@ class ClaudeSessionManagerTests(unittest.TestCase):
             transcript = self._seed_claude_transcript(proj_root, sid)
             self.assertTrue(transcript.is_file())
             with patch.dict(
-                os.environ, {'KATO_CLAUDE_SESSIONS_ROOT': proj_root},
+                os.environ, {'CLAUDE_SESSIONS_ROOT': proj_root},
             ):
                 self.manager.terminate_session('PROJ-1', remove_record=True)
             self.assertFalse(
@@ -288,7 +288,7 @@ class ClaudeSessionManagerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as proj_root:
             transcript = self._seed_claude_transcript(proj_root, sid)
             with patch.dict(
-                os.environ, {'KATO_CLAUDE_SESSIONS_ROOT': proj_root},
+                os.environ, {'CLAUDE_SESSIONS_ROOT': proj_root},
             ):
                 self.manager.terminate_session('PROJ-1')
             self.assertTrue(transcript.is_file())
@@ -299,7 +299,7 @@ class ClaudeSessionManagerTests(unittest.TestCase):
         self.manager.start_session(task_id='PROJ-1')
         with tempfile.TemporaryDirectory() as proj_root:
             with patch.dict(
-                os.environ, {'KATO_CLAUDE_SESSIONS_ROOT': proj_root},
+                os.environ, {'CLAUDE_SESSIONS_ROOT': proj_root},
             ):
                 self.manager.terminate_session('PROJ-1', remove_record=True)
         self.assertIsNone(self.manager.get_record('PROJ-1'))
@@ -358,12 +358,12 @@ class ClaudeSessionManagerTests(unittest.TestCase):
         self.assertIs(captured['docker_mode_on'], False)
 
     def test_resume_copies_jsonl_into_target_cwd_project_dir(self) -> None:
-        # One-session-per-task invariant: when kato spawns at a cwd
+        # One-session-per-task invariant: when the orchestrator spawns at a cwd
         # different from where the session's JSONL currently lives,
         # the manager copies the JSONL into the new cwd's project dir
         # so ``claude --resume`` finds it. Without this the resume
         # fails silently and a new session id is created — that's the
-        # "kato keeps switching sessions" bug.
+        # "the orchestrator keeps switching sessions" bug.
         import os
         sessions_root = self.state_dir / 'claude-sessions'
         old_cwd_project_dir = sessions_root / '-tmp-old-repo'
@@ -381,9 +381,9 @@ class ClaudeSessionManagerTests(unittest.TestCase):
         self.manager._records[self.manager._lookup_key('PROJ-77')] = record
         self.manager._persist_record(record)
 
-        os.environ['KATO_CLAUDE_SESSIONS_ROOT'] = str(sessions_root)
+        os.environ['CLAUDE_SESSIONS_ROOT'] = str(sessions_root)
         self.addCleanup(
-            os.environ.pop, 'KATO_CLAUDE_SESSIONS_ROOT', None,
+            os.environ.pop, 'CLAUDE_SESSIONS_ROOT', None,
         )
         try:
             self.manager.start_session(
@@ -402,7 +402,7 @@ class ClaudeSessionManagerTests(unittest.TestCase):
     def test_resume_warns_when_transcript_missing_on_disk(self) -> None:
         # The real-world "he forgot everything after restart" symptom:
         # a resume id is on file but no JSONL exists anywhere under
-        # ~/.claude/projects (cleaned, never flushed, etc). kato still
+        # ~/.claude/projects (cleaned, never flushed, etc). the orchestrator still
         # passes --resume <id>, so Claude spawns a memoryless session
         # that LOOKS resumed. The manager must warn loudly so the
         # operator sees WHY continuity was lost — not silently no-op.
@@ -418,8 +418,8 @@ class ClaudeSessionManagerTests(unittest.TestCase):
         self.manager._records[self.manager._lookup_key('PROJ-88')] = record
         self.manager._persist_record(record)
 
-        os.environ['KATO_CLAUDE_SESSIONS_ROOT'] = str(sessions_root)
-        self.addCleanup(os.environ.pop, 'KATO_CLAUDE_SESSIONS_ROOT', None)
+        os.environ['CLAUDE_SESSIONS_ROOT'] = str(sessions_root)
+        self.addCleanup(os.environ.pop, 'CLAUDE_SESSIONS_ROOT', None)
         with self.assertLogs(self.manager.logger, level='WARNING') as cm:
             self.manager.start_session(task_id='PROJ-88', cwd='/tmp/new/repo')
         self.assertTrue(

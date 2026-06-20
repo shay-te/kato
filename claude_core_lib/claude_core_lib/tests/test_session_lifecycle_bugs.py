@@ -2,14 +2,14 @@
 
 These tests live alongside the broader claude_core_lib suite but in a
 named-bug file so a future regression surfaces with a self-explanatory
-failure name. The kato-side mirror lives at
+failure name. The the orchestrator-side mirror lives at
 ``tests/test_session_lifecycle_bugs.py``.
 
-Bug 1 (history lost on kato restart):
-    The operator reported that after restarting kato the chat tab said
+Bug 1 (history lost on the orchestrator restart):
+    The operator reported that after restarting the orchestrator the chat tab said
     "reattached" but showed no scroll-back history. The history IS
     persisted on disk by Claude Code (one JSONL per session under
-    ``~/.claude/projects/<encoded-cwd>/<id>.jsonl``); kato's job is to
+    ``~/.claude/projects/<encoded-cwd>/<id>.jsonl``); the orchestrator's job is to
     read it back and replay it into the UI.
 
     Lock that ``load_history_events`` correctly extracts user + assistant
@@ -21,8 +21,8 @@ Bug 2 (every follow-up message spawns a session that re-does work):
     triggered Claude to re-explore the workspace from scratch. Root
     cause split across both libs: claude_core_lib must pass
     ``--resume <id>`` to the CLI on respawn so Claude reads the prior
-    JSONL; kato_core_lib's planning runner must not double-wrap the
-    user message in workspace context (that's the kato-side test).
+    JSONL; the orchestrator_core_lib's planning runner must not double-wrap the
+    user message in workspace context (that's the orchestrator-side test).
 
     Lock that ``StreamingClaudeSession`` puts ``--resume <id>`` in the
     spawn argv when ``resume_session_id`` is set AND that the live
@@ -53,7 +53,7 @@ from unittest.mock import MagicMock, patch
 class Bug1HistoryReplayFromDiskTests(unittest.TestCase):
     """``load_history_events`` is the on-restart history pipe.
 
-    When the operator opens a chat tab after kato restart, the webserver
+    When the operator opens a chat tab after the orchestrator restart, the webserver
     SSE endpoint calls ``load_history_events(agent_session_id)`` and
     pushes every returned event to the browser as a
     ``session_history_event``. That's what populates the scroll-back.
@@ -162,7 +162,7 @@ class Bug1HistoryReplayFromDiskTests(unittest.TestCase):
         self.assertEqual(result, [])
 
     def test_replays_orchestration_user_prompts(self) -> None:
-        # Kato's autonomous-flow user prompts must still be visible
+        # the orchestrator's autonomous-flow user prompts must still be visible
         # after restart so the operator can see what Claude was asked.
         from claude_core_lib.claude_core_lib.session.history import (
             load_history_events,
@@ -236,7 +236,7 @@ class Bug2ResumePassesSameSessionIdTests(unittest.TestCase):
        the first stream-json event arrives.
 
     Without (1), Claude starts a brand-new conversation and the JSONL
-    chain breaks. Without (2), kato's webserver SSE handler can't
+    chain breaks. Without (2), the orchestrator's webserver SSE handler can't
     look up the history (it resolves the id from the live session
     record). Both together are what makes follow-up turns continue
     seamlessly instead of re-exploring the workspace.
@@ -329,7 +329,7 @@ class Bug2ResumePassesSameSessionIdTests(unittest.TestCase):
             persisted_id = manager.get_record('T1').agent_session_id
             self.assertEqual(persisted_id, 'fresh-id')
 
-            # Second spawn: kato now has a record with a persisted id.
+            # Second spawn: the orchestrator now has a record with a persisted id.
             recorded.clear()
             manager.start_session(
                 task_id='T1',
@@ -413,7 +413,7 @@ class Bug2ResumePassesSameSessionIdTests(unittest.TestCase):
             self.assertEqual(first_kwargs.get('resume_session_id', ''), '')
 
             # The manager's get_record() path is what refreshes the
-            # record with the live session's id. Real kato code calls
+            # record with the live session's id. Real the orchestrator code calls
             # this on every UI poll + before the next start_session.
             record = manager.get_record('T1')
             self.assertEqual(record.agent_session_id, 'fresh-id')
@@ -441,12 +441,12 @@ class Bug2ResumePassesSameSessionIdTests(unittest.TestCase):
             )
 
     def test_cross_restart_persistence_survives_a_fresh_manager(self) -> None:
-        # The operator's complaint: "if I stop kato and restart it he
+        # The operator's complaint: "if I stop the orchestrator and restart it he
         # forgets the entire session." That happens iff the manager
-        # built by the new kato process doesn't re-read the on-disk
+        # built by the new the orchestrator process doesn't re-read the on-disk
         # record from the previous process.
         #
-        # This test simulates kato restart by discarding manager #1
+        # This test simulates the orchestrator restart by discarding manager #1
         # and building manager #2 against the SAME ``state_dir``. The
         # second manager must hydrate the record from disk so the
         # first message after restart respawns with ``--resume <id>``,
@@ -455,7 +455,7 @@ class Bug2ResumePassesSameSessionIdTests(unittest.TestCase):
             ClaudeSessionManager,
         )
         with tempfile.TemporaryDirectory() as td:
-            # ---- kato run #1 ----
+            # ---- the orchestrator run #1 ----
             recorded_run1 = {}
             stub1 = self._stub_session_class(recorded_run1)
             manager_run1 = ClaudeSessionManager(
@@ -470,9 +470,9 @@ class Bug2ResumePassesSameSessionIdTests(unittest.TestCase):
             manager_run1.terminate_session('T1')
             persisted_id = manager_run1.get_record('T1').agent_session_id
             self.assertEqual(persisted_id, 'fresh-id')
-            del manager_run1  # operator stops kato
+            del manager_run1  # operator stops the orchestrator
 
-            # ---- kato run #2 ----
+            # ---- the orchestrator run #2 ----
             # Fresh process: build a new manager pointed at the same
             # state_dir. _load_persisted_records runs in __init__ and
             # rehydrates the record off disk.
@@ -502,7 +502,7 @@ class Bug2ResumePassesSameSessionIdTests(unittest.TestCase):
                 recorded_run2['kwargs'].get('resume_session_id'),
                 persisted_id,
                 'fresh manager did not pass --resume to the spawn — '
-                'kato restart will start a brand-new Claude session',
+                'the orchestrator restart will start a brand-new Claude session',
             )
 
     def test_agent_session_id_adopted_before_first_event_arrives(self) -> None:
@@ -555,7 +555,7 @@ class Bug3LayerHasNoSurfaceNoteTests(unittest.TestCase):
                 continue
             content = path.read_text(encoding='utf-8', errors='replace')
             self.assertNotIn(
-                'kato.composer.draft', content,
+                'composer.draft', content,
                 f'composer draft logic leaked into {path}',
             )
 

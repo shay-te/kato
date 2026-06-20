@@ -184,7 +184,7 @@ class _RestartPreservesIdTests(unittest.TestCase):
                 ClaudeSessionManager._RESUME_JSONL_SIZE_LIMIT_BYTES + 1
             ))
 
-            with _env_override('KATO_CLAUDE_SESSIONS_ROOT', str(projects_root)):
+            with _env_override('CLAUDE_SESSIONS_ROOT', str(projects_root)):
                 manager = ClaudeSessionManager(
                     state_dir=root / 'state',
                     session_factory=_FakeStreamingSession,

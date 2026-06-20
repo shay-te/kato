@@ -2,14 +2,14 @@
 
 Two surfaces are pinned down here:
 
-1. ``ClaudeSessionMetadata`` discovery — kato walks
-   ``~/.claude/projects/`` (or ``KATO_CLAUDE_SESSIONS_ROOT`` for
+1. ``ClaudeSessionMetadata`` discovery — orchestrator walks
+   ``~/.claude/projects/`` (or ``CLAUDE_SESSIONS_ROOT`` for
    tests), parses the JSONL transcripts, and returns metadata the
    planning UI dropdown can render. Search filtering, recency
    ordering, malformed-line tolerance, and bounded read are all
    nailed down.
 2. ``ClaudeSessionManager.adopt_session_id`` — when the operator
-   picks a session, kato writes the session id into the per-task
+   picks a session, orchestrator writes the session id into the per-task
    record so the next agent spawn ``--resume``s that conversation
    instead of starting fresh. Idempotent, refuses empty ids,
    creates a record from scratch when none existed before.
@@ -307,14 +307,14 @@ class SessionManagerAdoptionTests(unittest.TestCase):
         )
         self.assertEqual(record.agent_session_id, 'abc-def')
 
-    def test_adopt_does_not_change_cwd_so_kato_keeps_workspace_isolation(self) -> None:
-        # Adoption MUST NOT repoint kato's spawn cwd at the source
-        # session's directory. The operator wants kato to run
+    def test_adopt_does_not_change_cwd_so_orchestrator_keeps_workspace_isolation(self) -> None:
+        # Adoption MUST NOT repoint orchestrator's spawn cwd at the source
+        # session's directory. The operator wants orchestrator to run
         # against its per-task workspace clone (an isolated copy)
         # so it can review changes against a clean worktree, not
         # against their live editor checkout. A short-lived
         # experiment with the opposite behaviour broke that
-        # invariant — kato edited the dev's checkout in-place and
+        # invariant — orchestrator edited the dev's checkout in-place and
         # mixed git state. This test locks the safe default down.
         # Pre-set a cwd as if a previous spawn populated it.
         first = self.manager.adopt_session_id('PROJ-1', agent_session_id='abc-def')
@@ -386,18 +386,18 @@ class ProjectDirEncodingTests(unittest.TestCase):
 
     def test_flattens_underscore_to_dash(self) -> None:
         # UNA-2669 regression: Claude Code flattens ``_`` to ``-`` too.
-        # When a workspace lives under ``dev_kato/`` and kato's encoder
+        # When a workspace lives under ``dev_orchestrator/`` and orchestrator's encoder
         # kept the underscore, the migrated JSONL landed in
-        # ``-Users-...-dev_kato-...`` while ``claude --resume`` looked
-        # in ``-Users-...-dev-kato-...``. The session was therefore
+        # ``-Users-...-dev_orchestrator-...`` while ``claude --resume`` looked
+        # in ``-Users-...-dev-orchestrator-...``. The session was therefore
         # never found and review-comment fixes crashed on every scan
         # tick (refusing the fresh fallback by design).
         result = claude_project_dir_for_cwd(
-            '/Users/me/dev_kato/UNA-2669/ob-love-admin-client',
+            '/Users/me/dev_orchestrator/UNA-2669/ob-love-admin-client',
         )
         self.assertEqual(
             result.name,
-            '-Users-me-dev-kato-UNA-2669-ob-love-admin-client',
+            '-Users-me-dev-orchestrator-UNA-2669-ob-love-admin-client',
         )
 
     def test_flattens_dot_to_dash(self) -> None:
@@ -415,12 +415,12 @@ class ProjectDirEncodingTests(unittest.TestCase):
 class ClaudeProjectDirAbsolutePathTests(unittest.TestCase):
     """``claude_project_dir_for_cwd`` must always return an absolute path.
 
-    UNA-2669 regression: when ``KATO_CLAUDE_SESSIONS_ROOT`` was unset,
+    UNA-2669 regression: when ``CLAUDE_SESSIONS_ROOT`` was unset,
     ``Path('').expanduser()`` evaluated to ``Path('.')`` — truthy and
     ``is_dir()`` for the current working directory — silently rerouting
-    the project dir to a RELATIVE path under wherever kato was running.
+    the project dir to a RELATIVE path under wherever orchestrator was running.
     The adoption-flow JSONL migration then wrote to
-    ``<kato_cwd>/<encoded>/<id>.jsonl`` instead of
+    ``<orchestrator_cwd>/<encoded>/<id>.jsonl`` instead of
     ``~/.claude/projects/<encoded>/<id>.jsonl``, Claude never found it,
     and every ``--resume`` failed.
     """
@@ -475,17 +475,17 @@ class MigrateSessionToWorkspaceTests(unittest.TestCase):
         )
 
     def test_copies_jsonl_into_target_cwd_project_dir(self) -> None:
-        target_cwd = '/Users/dev/.kato/workspaces/PROJ-1/myproj'
+        target_cwd = '/Users/dev/.orchestrator/workspaces/PROJ-1/myproj'
         result = migrate_session_to_workspace(
             transcript_path=str(self.source_path),
             target_cwd=target_cwd,
         )
         self.assertIsNotNone(result)
-        # File now also exists at the kato cwd's project dir.
+        # File now also exists at orchestrator cwd's project dir.
         # Claude Code's encoding flattens ``/``, ``_`` and ``.`` to ``-`` —
-        # ``.kato`` becomes ``-kato`` (leading dot stripped to dash).
-        kato_dir = self.root / '-Users-dev--kato-workspaces-PROJ-1-myproj'
-        self.assertTrue((kato_dir / 'sess-abc.jsonl').is_file())
+        # ``.orchestrator`` becomes ``-orchestrator`` (leading dot stripped to dash).
+        orchestrator_dir = self.root / '-Users-dev--orchestrator-workspaces-PROJ-1-myproj'
+        self.assertTrue((orchestrator_dir / 'sess-abc.jsonl').is_file())
 
     def test_returns_none_when_source_missing(self) -> None:
         result = migrate_session_to_workspace(
@@ -502,7 +502,7 @@ class MigrateSessionToWorkspaceTests(unittest.TestCase):
         self.assertIsNone(result)
 
     def test_idempotent_when_destination_already_exists(self) -> None:
-        target_cwd = '/Users/dev/.kato/workspaces/PROJ-1/myproj'
+        target_cwd = '/Users/dev/.orchestrator/workspaces/PROJ-1/myproj'
         # First call copies.
         first = migrate_session_to_workspace(
             transcript_path=str(self.source_path),
@@ -522,7 +522,7 @@ class MigrateSessionToWorkspaceTests(unittest.TestCase):
         # holds a NEWER transcript than the source, copying would rewind the
         # conversation — the migration must be a no-op that keeps the
         # destination's contents.
-        target_cwd = '/Users/dev/.kato/workspaces/PROJ-1/myproj'
+        target_cwd = '/Users/dev/.orchestrator/workspaces/PROJ-1/myproj'
         first = migrate_session_to_workspace(
             transcript_path=str(self.source_path),
             target_cwd=target_cwd,
@@ -544,7 +544,7 @@ class MigrateSessionToWorkspaceTests(unittest.TestCase):
     def test_still_copies_when_the_source_is_newer(self) -> None:
         # The adopt flow's whole point: the operator's checkout transcript
         # (newer) must replace the workspace's stale copy.
-        target_cwd = '/Users/dev/.kato/workspaces/PROJ-1/myproj'
+        target_cwd = '/Users/dev/.orchestrator/workspaces/PROJ-1/myproj'
         first = migrate_session_to_workspace(
             transcript_path=str(self.source_path),
             target_cwd=target_cwd,
@@ -576,7 +576,7 @@ class MigrateSessionToWorkspaceTests(unittest.TestCase):
     def test_preserves_jsonl_content(self) -> None:
         result = migrate_session_to_workspace(
             transcript_path=str(self.source_path),
-            target_cwd='/Users/dev/.kato/workspaces/PROJ-1/myproj',
+            target_cwd='/Users/dev/.orchestrator/workspaces/PROJ-1/myproj',
         )
         self.assertEqual(
             result.read_text(encoding='utf-8'),
@@ -595,7 +595,7 @@ class MigrateSessionToWorkspaceTests(unittest.TestCase):
         # If the target directory creation fails (e.g. permission error),
         # migration must return None and log — not propagate the error.
         from unittest.mock import patch as patch_obj
-        target_cwd = '/Users/dev/.kato/workspaces/PROJ-7/myproj'
+        target_cwd = '/Users/dev/.orchestrator/workspaces/PROJ-7/myproj'
         with patch_obj.object(Path, 'mkdir', side_effect=PermissionError('locked')):
             result = migrate_session_to_workspace(
                 transcript_path=str(self.source_path),
@@ -897,8 +897,8 @@ class MigrateSessionToWorkspaceIdempotent(unittest.TestCase):
     def test_returns_target_when_source_already_at_destination(self) -> None:
         # Place the source JSONL exactly where claude_project_dir_for_cwd
         # would route it, then migrate — should detect same path and no-op.
-        target_cwd = '/Users/me/.kato/workspaces/PROJ-1/c'
-        target_dir = self.root / '-Users-me--kato-workspaces-PROJ-1-c'
+        target_cwd = '/Users/me/.orchestrator/workspaces/PROJ-1/c'
+        target_dir = self.root / '-Users-me--orchestrator-workspaces-PROJ-1-c'
         target_dir.mkdir()
         source = target_dir / 'sess-A.jsonl'
         source.write_text(
@@ -914,8 +914,8 @@ class MigrateSessionToWorkspaceIdempotent(unittest.TestCase):
         # Lines 326-330: ``resolve()`` raises OSError → swallowed, fall
         # through to the copy. Pre-3.6 behaviour locked here so a future
         # change doesn't accidentally start crashing on the old path.
-        target_cwd = '/Users/me/.kato/workspaces/PROJ-2/c'
-        target_dir_name = '-Users-me--kato-workspaces-PROJ-2-c'
+        target_cwd = '/Users/me/.orchestrator/workspaces/PROJ-2/c'
+        target_dir_name = '-Users-me--orchestrator-workspaces-PROJ-2-c'
         # Source lives in a separate dir (so the copy is meaningful).
         source_dir = self.root / 'src'
         source_dir.mkdir()

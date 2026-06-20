@@ -17,7 +17,7 @@ from jira_core_lib.jira_core_lib.data.fields import (
     JiraTransitionFields,
 )
 from provider_client_base.provider_client_base.data.issue_record import IssueRecord
-from tests.utils import assert_client_headers_and_timeout, mock_response
+from provider_client_base.provider_client_base.testing import assert_client_headers_and_timeout, mock_response
 
 
 def _make_client(**kwargs) -> JiraClient:

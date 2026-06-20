@@ -1,8 +1,8 @@
-"""Coverage for kato.client.claude.session_history.
+"""Coverage for the orchestrator.client.claude.session_history.
 
 The module is tiny but load-bearing: it's how the workspace-recovery
 service reattaches an orphan task folder to its existing Claude
-conversation, and how the planning UI replays history after kato
+conversation, and how the planning UI replays history after the orchestrator
 restarts. A regression here turns into a silent context loss for the
 user, so cover every branch explicitly.
 """
@@ -128,7 +128,7 @@ class FindSessionIdForCwdTests(unittest.TestCase):
 
     def test_honours_env_override_when_no_projects_root_passed(self) -> None:
         # Regression: previously find_session_id_for_cwd read the raw
-        # module default and ignored KATO_CLAUDE_SESSIONS_ROOT. With the
+        # module default and ignored CLAUDE_SESSIONS_ROOT. With the
         # resolver consolidated onto default_sessions_root(), an unset
         # ``projects_root`` arg must fall through to the env override.
         target_cwd = self.projects_root / 'workspaces' / 'PROJ-1' / 'repo'
@@ -248,7 +248,7 @@ class LoadHistoryEventsTests(unittest.TestCase):
 
     def test_keeps_orchestration_prompts(self) -> None:
         # Restart replay must keep every prompt that was sent to Claude,
-        # including Kato's initial orchestration prompt.
+        # including the orchestrator's initial orchestration prompt.
         path = self.projects_root / 'enc-x' / 'sess-orch.jsonl'
         path.parent.mkdir(parents=True)
         _write_jsonl(path, [
