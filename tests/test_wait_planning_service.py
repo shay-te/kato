@@ -9,7 +9,7 @@ class WaitPlanningServicePromptTests(unittest.TestCase):
     def test_planning_prompt_marks_ignored_repositories_out_of_bounds(self) -> None:
         with patch.dict(
             'os.environ',
-            {'KATO_IGNORED_REPOSITORY_FOLDERS': 'secret-client'},
+            {'AGENT_IGNORED_REPOSITORY_FOLDERS': 'secret-client'},
         ):
             prompt = WaitPlanningService._build_planning_prompt(build_task())
 

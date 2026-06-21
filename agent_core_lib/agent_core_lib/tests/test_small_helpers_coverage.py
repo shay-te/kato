@@ -1,6 +1,6 @@
 """Coverage tests for four small agent_core_lib helper modules.
 
-Product-agnostic: no kato imports, fake fixtures only. Asserts the
+Product-agnostic: no product imports, fake fixtures only. Asserts the
 structural behavior of each helper, exercising both sides of every
 branch and the documented edge cases.
 """
@@ -172,7 +172,7 @@ class AtomicWriteJsonTests(unittest.TestCase):
 
 class ConfigureLoggerTests(unittest.TestCase):
     # The root namespace is generic + product-agnostic by default; a host
-    # overrides it via set_workflow_root (e.g. kato → 'kato.workflow').
+    # overrides it via set_workflow_root (e.g. a host → 'myapp.workflow').
     def setUp(self):
         # Restore the default after any test that overrides the root, so the
         # module-global _root can't leak into sibling tests.
@@ -184,9 +184,9 @@ class ConfigureLoggerTests(unittest.TestCase):
         self.assertEqual(configure_logger('Svc').name, 'agent.workflow.Svc')
 
     def test_set_workflow_root_overrides_and_resets(self):
-        set_workflow_root('kato.workflow')
-        self.assertEqual(get_workflow_root(), 'kato.workflow')
-        self.assertEqual(configure_logger('Svc').name, 'kato.workflow.Svc')
+        set_workflow_root('myapp.workflow')
+        self.assertEqual(get_workflow_root(), 'myapp.workflow')
+        self.assertEqual(configure_logger('Svc').name, 'myapp.workflow.Svc')
         # Blank resets to the generic default.
         set_workflow_root('')
         self.assertEqual(get_workflow_root(), 'agent.workflow')

@@ -154,7 +154,7 @@ class PlanningSessionRunnerTests(unittest.TestCase):
 
         with patch.dict(
             'os.environ',
-            {'KATO_IGNORED_REPOSITORY_FOLDERS': 'secret-client'},
+            {'AGENT_IGNORED_REPOSITORY_FOLDERS': 'secret-client'},
         ):
             runner.implement_task(build_task(), prepared_task=prepared)
 
@@ -170,7 +170,7 @@ class PlanningSessionRunnerTests(unittest.TestCase):
 
         with patch.dict(
             'os.environ',
-            {'KATO_IGNORED_REPOSITORY_FOLDERS': 'secret-client'},
+            {'AGENT_IGNORED_REPOSITORY_FOLDERS': 'secret-client'},
         ):
             runner.resume_session_for_chat(
                 task_id='PROJ-1',

@@ -305,7 +305,7 @@ class ToolCapabilityTests(unittest.TestCase):
 
     def test_ask_user_question_is_recognized_not_external(self):
         # The agent asking the operator a question is a known local tool — it
-        # must NOT trip the red "external capability" gate (Kato renders it as
+        # must NOT trip the red "external capability" gate (the host renders it as
         # an answer UI instead).
         v = classify_action(
             'AskUserQuestion',

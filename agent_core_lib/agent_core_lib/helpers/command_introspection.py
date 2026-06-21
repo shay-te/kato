@@ -18,7 +18,7 @@ They all need the same primitives:
 These are deliberately filesystem-free and deterministic. They defeat
 *static* obfuscation only — a token built at RUNTIME from an arbitrary
 ``$VAR``, base64, or fetched data is invisible here; OS-level confinement
-(``KATO_CLAUDE_DOCKER``) is the structural backstop for those.
+(the host Docker sandbox) is the structural backstop for those.
 
 Lives in ``agent_core_lib`` (the shared agent-behavior base) so the
 Claude sandbox classifier and the risk engine reuse one implementation
@@ -43,7 +43,7 @@ def deobfuscate_command(command: str) -> str:
 
     NOTE: this defeats *static* obfuscation only — a token built at RUNTIME
     from an arbitrary ``$VAR``, base64, or fetched data cannot be seen here;
-    that is what OS-level confinement (KATO_CLAUDE_DOCKER) is for.
+    that is what OS-level confinement (the host Docker sandbox) is for.
     """
     text = str(command or '')
     text = text.replace('\\', '')
@@ -102,7 +102,7 @@ def segment_program(segment: str) -> str:
 
 # Commands that operate OUTSIDE the task sandbox by nature, regardless of which
 # paths they name: container runtimes can bind-mount any host path into a
-# container kato never sees (``docker run -v /:/host``), and privilege /
+# container the host never sees (``docker run -v /:/host``), and privilege /
 # namespace tools step around the workspace entirely.
 _ESCAPE_PROGRAMS = frozenset({
     'docker', 'docker-compose', 'podman', 'nerdctl', 'kubectl', 'ctr',

@@ -6,7 +6,7 @@ end-to-end the way a host agent client does when building (A) an
 implementation prompt and (B) a review-fix prompt, then asserts the
 composed text is coherent. It is deliberately product-agnostic — every
 fixture is fake (fake ticket ids like ``PROJ-42``, tmp dirs, fake authors)
-and assertions target structural behavior, not kato product wording.
+and assertions target structural behavior, not any product's wording.
 """
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ class ImplementationPromptFlowTests(unittest.TestCase):
         self.task = SimpleNamespace(
             id='PROJ-42',
             summary='Fix the thing',
-            branch_name='kato/PROJ-42',
+            branch_name='agent/PROJ-42',
         )
         self.prepared = SimpleNamespace(
             repositories=[
@@ -204,7 +204,7 @@ class ReviewFixPromptFlowTests(unittest.TestCase):
             body='Please rename this',
             all_comments=[
                 {'author': 'alice', 'body': 'Please rename this'},
-                {'author': 'kato', 'body': 'Kato addressed review comment c-1 — done.'},
+                {'author': 'bot', 'body': 'Bot addressed review comment c-1 — done.'},
             ],
         )
         # A PR-level comment: no file_path / no line, so it renders as the
@@ -271,16 +271,15 @@ class ReviewFixPromptFlowTests(unittest.TestCase):
         context = review_comment_context_text(
             self.file_comment,
             self_reply_prefixes=(
-                'Kato addressed review comment ',
-                'Kato addressed this review comment',
+                'Bot addressed review comment ',
+                'Bot addressed this review comment',
             ),
         )
         self.assertIn('Review comment context:', context)
         # alice's reviewer comment is kept...
         self.assertIn('- alice: Please rename this', context)
-        # ...the bot's own "Kato addressed ..." self-reply is dropped.
-        self.assertNotIn('Kato addressed', context)
-        self.assertNotIn('kato:', context)
+        # ...the bot's own "Bot addressed ..." self-reply is dropped.
+        self.assertNotIn('Bot addressed', context)
 
     def test_context_text_empty_for_single_comment_thread(self) -> None:
         # A thread with one comment has no extra context to render.
@@ -300,8 +299,8 @@ class ReviewFixPromptFlowTests(unittest.TestCase):
         context = review_comment_context_text(
             self.file_comment,
             self_reply_prefixes=(
-                'Kato addressed review comment ',
-                'Kato addressed this review comment',
+                'Bot addressed review comment ',
+                'Bot addressed this review comment',
             ),
         )
         prompt = '\n\n'.join([title, location, snippet, batch, context])
@@ -314,7 +313,7 @@ class ReviewFixPromptFlowTests(unittest.TestCase):
         self.assertIn('→', prompt)
         self.assertIn('(no file/line — PR-level comment)', prompt)
         self.assertIn('- alice: Please rename this', prompt)
-        self.assertNotIn('Kato addressed', prompt)
+        self.assertNotIn('Bot addressed', prompt)
 
 
 if __name__ == '__main__':

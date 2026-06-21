@@ -34,7 +34,7 @@ Design rules (mirrors ``sandbox_scope`` / ``credential_patterns``):
 
 Static analysis only: a path/command built at RUNTIME from ``$VAR``,
 base64, or fetched data is invisible here — OS-level confinement
-(KATO_CLAUDE_DOCKER) is the structural guarantee for those.
+(the host Docker sandbox) is the structural guarantee for those.
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ class RiskCategory(str, Enum):
     # remembered). The dangerous upload/reverse-shell patterns are
     # NETWORK_EXFIL, which stays BLOCK.
     NETWORK_TOOL = 'network_tool'
-    # A tool Kato does not recognize as a known-safe local tool — e.g. a NEW
+    # A tool the host does not recognize as a known-safe local tool — e.g. a NEW
     # Claude capability. Default-deny-by-asking so every new capability needs
     # explicit operator approval.
     EXTERNAL_CAPABILITY = 'external_capability'
@@ -487,7 +487,7 @@ _KNOWN_LOCAL_TOOLS = frozenset({
     # bounded local capability, not a new/external one.
     'agent', 'task',
     # The agent asking the OPERATOR a question (not a network/external action).
-    # Kato renders it as an answer UI; it must not look like a scary new
+    # the host renders it as an answer UI; it must not look like a scary new
     # "external capability".
     'askuserquestion',
 })
@@ -514,7 +514,7 @@ def _detect_tool_capability(tool_name: str) -> list:
         )]
     return [_Candidate(
         RiskCategory.EXTERNAL_CAPABILITY, False,
-        f'{name} is a new capability Kato does not recognize — approve it '
+        f'{name} is a new capability the host does not recognize — approve it '
         'explicitly',
         f'tool.unknown.{lower}',
     )]

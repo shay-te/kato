@@ -101,10 +101,26 @@ class _EmailCoreLibProxy:
 EmailCoreLib = _EmailCoreLibProxy()
 
 
+def _export_agent_env_from_kato_config() -> None:
+    """Mirror kato's ``KATO_*`` agent-facing config onto the generic ``AGENT_*``
+    env names the agnostic agent libs read.
+
+    All ``KATO_*`` variables live ONLY in kato_core_lib; the shared
+    ``agent_core_lib`` (and the transports built on it) read product-agnostic
+    ``AGENT_*`` names. This bridges the two so an operator keeps setting the
+    documented ``KATO_*`` vars. Runs before any sub-service builds an agent
+    prompt. ``setdefault`` so an explicitly-set ``AGENT_*`` value still wins.
+    """
+    ignored = os.environ.get('KATO_IGNORED_REPOSITORY_FOLDERS', '').strip()
+    if ignored:
+        os.environ.setdefault('AGENT_IGNORED_REPOSITORY_FOLDERS', ignored)
+
+
 class KatoCoreLib(CoreLib):
     def __init__(self, cfg: DictConfig) -> None:
         CoreLib.__init__(self)
         self.config = cfg
+        _export_agent_env_from_kato_config()
         self.logger = configure_logger(cfg.core_lib.app.name)
         self._validate_runtime_source_fingerprint(cfg.kato)
         # Operator hooks must exist before sub-services are built so

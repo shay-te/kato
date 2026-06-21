@@ -4,12 +4,12 @@ import logging
 
 # Root namespace for the loggers this shared base hands out. Generic by default
 # so agent_core_lib carries no product brand when used standalone. A host can
-# override it via ``set_workflow_root`` — e.g. kato sets it to ``kato.workflow``
-# at import so its transport loggers parent under kato's namespace (preserving
-# kato's operator log levels, its status-broadcaster target, and its log
-# namespace). The override must run before any logger is created; transports
-# create their loggers instance-level (at client construction), well after the
-# host's import, so the ordering holds.
+# override it via ``set_workflow_root`` — e.g. it sets the root to its own
+# ``<host>.workflow`` namespace at import so its transport loggers parent under
+# the host namespace (preserving the host's operator log levels, its
+# status-broadcaster target, and its log namespace). The override must run
+# before any logger is created; transports create their loggers instance-level
+# (at client construction), well after the host's import, so the ordering holds.
 _DEFAULT_ROOT = 'agent.workflow'
 _root = _DEFAULT_ROOT
 

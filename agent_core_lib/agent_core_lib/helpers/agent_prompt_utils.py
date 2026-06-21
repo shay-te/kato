@@ -8,11 +8,10 @@ from agent_core_lib.agent_core_lib.helpers.text_utils import (
     text_from_attr,
     text_from_mapping,
 )
-# Env var naming the repository folders the agent must NOT touch. The
-# canonical name is generic; the legacy ``KATO_*`` name is read ONLY as a
-# backward-compatibility fallback for hosts that set the old variable.
+# Env var naming the repository folders the agent must NOT touch. The host
+# resolves the folders from its own config and either passes them in
+# (``raw_value``) or exports them under this generic name.
 IGNORED_REPOSITORY_FOLDERS_ENV = 'AGENT_IGNORED_REPOSITORY_FOLDERS'
-_LEGACY_IGNORED_REPOSITORY_FOLDERS_ENV = 'KATO_IGNORED_REPOSITORY_FOLDERS'
 
 # Env names referenced as GUIDANCE TEXT ONLY in the workspace scope block.
 # agent_core_lib never reads these — the host resolves the real paths and
@@ -23,13 +22,7 @@ REPOSITORY_ROOT_ENV = 'AGENT_REPOSITORY_ROOT_PATH'
 
 def ignored_repository_folder_names(raw_value: object = None) -> list[str]:
     if raw_value is None:
-        # Prefer the generic env; fall back to the legacy KATO_* name so a
-        # host that hasn't migrated keeps working (compatibility only).
-        value = (
-            os.environ.get(IGNORED_REPOSITORY_FOLDERS_ENV)
-            or os.environ.get(_LEGACY_IGNORED_REPOSITORY_FOLDERS_ENV)
-            or ''
-        )
+        value = os.environ.get(IGNORED_REPOSITORY_FOLDERS_ENV) or ''
     else:
         value = raw_value
     if isinstance(value, str):
@@ -324,9 +317,9 @@ def review_comment_context_text(comment, self_reply_prefixes=()) -> str:
 
     ``self_reply_prefixes`` is a product-agnostic injection point: the host
     passes the body prefixes its OWN bot uses for the replies it posts (e.g.
-    kato's "Kato addressed review comment …"), so those self-replies are dropped
-    from the context instead of being fed back to the agent. Empty (the default)
-    means no filtering — this base hardcodes no product's bot name.
+    a "<bot> addressed review comment …" prefix), so those self-replies are
+    dropped from the context instead of being fed back to the agent. Empty
+    (the default) means no filtering — this base hardcodes no product's bot name.
     """
     all_comments = getattr(comment, 'all_comments', [])
     if not isinstance(all_comments, list) or len(all_comments) <= 1:

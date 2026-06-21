@@ -1131,11 +1131,14 @@ class ModelEndpointTests(unittest.TestCase):
         self.assertIn('models', body)
         ids = [m['id'] for m in body['models']]
         # Stable CLI aliases (always resolve to the latest version), NOT a
-        # hardcoded pinned id like 'claude-opus-4-7' that goes stale.
+        # hardcoded pinned id like 'claude-opus-4-7' that goes stale. These are
+        # guaranteed by FALLBACK_MODELS even when live discovery is unavailable
+        # (e.g. CI with no claude binary). Fable is intentionally NOT asserted
+        # here: it has no CLI alias and is gated to appear ONLY when discovery
+        # confirms it's available — see model_catalog (offering an unconfirmed
+        # pinned model is what produced the "Fable 5 unavailable" error).
         self.assertIn('sonnet', ids)
         self.assertIn('opus', ids)
-        # Fable has no CLI alias — it's offered as a pinned full model id.
-        self.assertTrue(any(i.startswith('claude-fable-') for i in ids))
         defaults = [m['id'] for m in body['models'] if m.get('default')]
         self.assertEqual(defaults, ['sonnet'])
 

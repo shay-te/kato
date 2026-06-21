@@ -352,20 +352,20 @@ class BatchReviewCommentPromptTests(unittest.TestCase):
 class ResumePromptTests(unittest.TestCase):
 
     def test_resume_prompt_with_forbidden_repos_includes_guardrails(self) -> None:
-        # When the operator has KATO_IGNORED_REPOSITORY_FOLDERS set,
+        # When the operator has AGENT_IGNORED_REPOSITORY_FOLDERS set,
         # every spawn (including resume) MUST front-load the forbidden
         # block so the AI doesn't wander into a sibling repo.
-        original = os.environ.get('KATO_IGNORED_REPOSITORY_FOLDERS', '')
-        os.environ['KATO_IGNORED_REPOSITORY_FOLDERS'] = 'secret-api'
+        original = os.environ.get('AGENT_IGNORED_REPOSITORY_FOLDERS', '')
+        os.environ['AGENT_IGNORED_REPOSITORY_FOLDERS'] = 'secret-api'
         try:
             wrapped = prepend_forbidden_repository_guardrails(
                 'Please continue from where you left off.',
             )
         finally:
             if original:
-                os.environ['KATO_IGNORED_REPOSITORY_FOLDERS'] = original
+                os.environ['AGENT_IGNORED_REPOSITORY_FOLDERS'] = original
             else:
-                os.environ.pop('KATO_IGNORED_REPOSITORY_FOLDERS', None)
+                os.environ.pop('AGENT_IGNORED_REPOSITORY_FOLDERS', None)
         _assert_message_in_prompt(
             self, wrapped, 'Please continue from where you left off',
         )
@@ -376,15 +376,15 @@ class ResumePromptTests(unittest.TestCase):
         # No env var → no wrapper → operator's prompt is sent as-is.
         # Defensive: even without a forbidden list, kato has other
         # boot guardrails (from the implementation/review builders).
-        original = os.environ.get('KATO_IGNORED_REPOSITORY_FOLDERS', '')
-        os.environ.pop('KATO_IGNORED_REPOSITORY_FOLDERS', None)
+        original = os.environ.get('AGENT_IGNORED_REPOSITORY_FOLDERS', '')
+        os.environ.pop('AGENT_IGNORED_REPOSITORY_FOLDERS', None)
         try:
             wrapped = prepend_forbidden_repository_guardrails(
                 'Please continue.',
             )
         finally:
             if original:
-                os.environ['KATO_IGNORED_REPOSITORY_FOLDERS'] = original
+                os.environ['AGENT_IGNORED_REPOSITORY_FOLDERS'] = original
         self.assertEqual(wrapped, 'Please continue.')
 
 

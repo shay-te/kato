@@ -29,7 +29,7 @@ class MainTests(unittest.TestCase):
         self._env_patch = patch.dict(
             'os.environ',
             {
-                'KATO_IGNORED_REPOSITORY_FOLDERS': '',
+                'AGENT_IGNORED_REPOSITORY_FOLDERS': '',
                 # OG4 — TLS pin validator is now strict-by-default in
                 # main(). Existing tests don't exercise pinning, so
                 # they opt out at the test-env level. The dedicated
@@ -177,7 +177,7 @@ class MainTests(unittest.TestCase):
 
         with patch.dict(
             'os.environ',
-            {'KATO_IGNORED_REPOSITORY_FOLDERS': 'secret-client'},
+            {'AGENT_IGNORED_REPOSITORY_FOLDERS': 'secret-client'},
         ):
             prompt = _resume_prompt_for_workspace(record)
 
@@ -547,7 +547,7 @@ class MainTlsPinIntegrationTests(unittest.TestCase):
         # env explicitly. ``main()`` reads the live ``os.environ``.
         self._env_patch = patch.dict(
             'os.environ',
-            {'KATO_IGNORED_REPOSITORY_FOLDERS': ''},
+            {'AGENT_IGNORED_REPOSITORY_FOLDERS': ''},
             clear=False,
         )
         self._env_patch.start()
@@ -645,7 +645,7 @@ class MainReadOnlyToolsIntegrationTests(unittest.TestCase):
         self._env_patch = patch.dict(
             'os.environ',
             {
-                'KATO_IGNORED_REPOSITORY_FOLDERS': '',
+                'AGENT_IGNORED_REPOSITORY_FOLDERS': '',
                 # Opt out of TLS pin so this class focuses on the
                 # read-only gate, not the OG4 gate.
                 'KATO_SANDBOX_ALLOW_NO_TLS_PIN': 'true',

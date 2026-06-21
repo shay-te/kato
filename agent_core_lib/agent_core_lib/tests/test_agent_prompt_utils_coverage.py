@@ -11,7 +11,7 @@ scope helpers, and the review-comment context/snippet/batch/location
 renderers including byte-budget truncation.
 
 All fixtures are fake (``PROJ-1`` ids, tempfile paths, ``reviewer``
-authors). No kato import, no network, no DB.
+authors). No product import, no network, no DB.
 """
 from __future__ import annotations
 
@@ -384,19 +384,19 @@ class ReviewCommentContextTextTests(unittest.TestCase):
             all_comments=[
                 'not-a-dict',                                  # line 323-324 skip
                 {'author': 'bob', 'body': ''},                # line 327-328 skip
-                {'author': 'bot', 'body': 'Kato addressed review comment 5'},
+                {'author': 'bot', 'body': 'Bot addressed review comment 5'},
                 {'author': 'carol', 'body': 'keep me'},
             ],
         )
         out = review_comment_context_text(
             comment,
             self_reply_prefixes=(
-                'Kato addressed review comment ',
-                'Kato addressed this review comment',
+                'Bot addressed review comment ',
+                'Bot addressed this review comment',
             ),
         )
         self.assertIn('- carol: keep me', out)
-        self.assertNotIn('Kato addressed', out)
+        self.assertNotIn('Bot addressed', out)
         self.assertNotIn('bob', out)
 
     def test_everything_filtered_returns_empty(self) -> None:
@@ -404,7 +404,7 @@ class ReviewCommentContextTextTests(unittest.TestCase):
         # Both entries drop only because the caller supplies the prefixes.
         comment = SimpleNamespace(
             all_comments=[
-                {'author': 'bot', 'body': 'Kato addressed this review comment'},
+                {'author': 'bot', 'body': 'Bot addressed this review comment'},
                 {'author': 'bot2', 'body': ''},
             ],
         )
@@ -412,8 +412,8 @@ class ReviewCommentContextTextTests(unittest.TestCase):
             review_comment_context_text(
                 comment,
                 self_reply_prefixes=(
-                    'Kato addressed review comment ',
-                    'Kato addressed this review comment',
+                    'Bot addressed review comment ',
+                    'Bot addressed this review comment',
                 ),
             ),
             '',
