@@ -16,6 +16,35 @@ do not do any git commit or push. let me inspect the changes
 - **Orphan code:** a function, class, constant, or file with zero non-test callers is dead — delete it together with its dedicated test, unless it is an entry point (CLI subcommand, Flask route, `main`) or a documented intentional stub.
 - **No shim / barrel files:** after extracting shared code, repoint importers to the canonical path and delete the re-export. A package `__init__.py` exposing its own package's API is the only allowed re-export.
 
+### Core-libs stay kato-free — ENFORCED, do not regress
+
+This keeps regressing during feature work, so it is now a build gate. **The rule:**
+every `KATO_*` variable and the `kato` brand live ONLY in `kato_core_lib`. **No
+other core-lib** (`agent_core_lib`, `claude_core_lib`, `codex_core_lib`, the
+provider/git/ticket libs, `provider_client_base`, …) may contain the string
+`kato` ANYWHERE — not in source, not in tests, not in comments, not in env-var
+names. A lib's tests test only that lib; only `kato_core_lib`'s own tests may say
+`kato`.
+
+- **When a feature needs kato config inside a lib, do NOT read `KATO_*` there.**
+  The lib reads a GENERIC name (`AGENT_IGNORED_REPOSITORY_FOLDERS`,
+  `CLAUDE_SESSIONS_ROOT`, `AGENT_WORKSPACES_ROOT`, …) or takes the value via a
+  constructor/param. `kato_core_lib` OWNS the `KATO_*` operator config and
+  **bridges** it — e.g. `kato_core_lib._export_agent_env_from_kato_config()`
+  (called in `KatoCoreLib.__init__`) exports `AGENT_IGNORED_REPOSITORY_FOLDERS`
+  from `KATO_IGNORED_REPOSITORY_FOLDERS`, and the session dir is passed in via
+  `ClaudeSessionManager.from_config(..., state_dir=...)`. Add new bridges the
+  same way; never reach back into `KATO_*` from a lib.
+- **The gate:** `python -m unittest tests.test_corelib_agnostic_gate` (runs in
+  `kato test`). It is a ratchet — clean libs are LOCKED at 0 kato lines; libs
+  with known debt have a ceiling that may only go DOWN. Adding a `kato` ref to a
+  clean lib, or increasing a dirty lib's count, FAILS the build. **Fix the code,
+  never raise the ceiling.** Lower a ceiling whenever you clean a lib.
+- When de-katoing TEST files, do not blanket `sed s/kato/.../` — it corrupts
+  identifiers (method names → spaces = SyntaxError) and agnosticism-guard string
+  literals. Replace fixture values + comments individually; turn
+  `assertNotIn('KATO_…')` guards into positive `assertIn('AGENT_…')` assertions.
+
 ### Reuse these before writing your own
 
 - **Frontend (`webserver/ui/src/`):** `hooks/` (data-load + save state machines — `useSettingsResource`, `useRestartingSave`, `useSessionOption`, `usePolling`, `useBusyAction`; plus `useAutoSizeTextarea`, `useEscapeKey`, `useDismissOnOutsidePointerOrEscape`), `utils/` (`apiErrorMessage`, `cx`, `storage`, `pluralize`/`countNoun`, `clipboard`, `basenameOf`, `settingsSource`, `katoTags` for `kato:` tag prefixes/builders), `stores/toastStore.js` — use `toast.errorFromResult(result, {...})` / `toastResult(...)` for API-result toasts instead of hand-rolling the `{ kind: 'error', message: apiErrorMessage(...) }` envelope — and `components/settings/` panel scaffolding (`SettingsPanelBody`, `SettingsActions`, `RestartBanner`).
