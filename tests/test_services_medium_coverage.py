@@ -1195,6 +1195,10 @@ class MediumServicesRemainingEdgeTests(unittest.TestCase):
         session = MagicMock()
         session.poll_event.side_effect = [non_terminal, terminal]
         session.is_alive = True
+        # Ordinary turn — no background wait outstanding, so the terminal
+        # result really ends the run (a truthy ``is_working`` would instead
+        # keep polling, the background-Workflow path covered elsewhere).
+        session.is_working = False
         result = runner._wait_for_terminal_event(session, task_id='T')
         self.assertIs(result, terminal)
 

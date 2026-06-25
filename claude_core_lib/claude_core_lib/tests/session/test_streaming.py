@@ -1056,6 +1056,23 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         session._recent_events.append(SessionEvent(raw={'type': 'result'}))
         self.assertTrue(session.is_working)
 
+    def test_is_working_true_while_a_background_workflow_runs(self) -> None:
+        # Turn closed (result) but it launched a Workflow, which runs in the
+        # background and notifies back later. The session must read "working"
+        # so the host keeps it alive instead of tearing it down before the
+        # workflow can notify into the chat.
+        session = self._build_session()
+        session._proc = SimpleNamespace(poll=lambda: None)  # alive
+        session._recent_events.append(SessionEvent(raw={
+            'type': 'assistant',
+            'message': {'content': [
+                {'type': 'tool_use', 'name': 'Workflow',
+                 'input': {'script': 'export const meta = {}'}},
+            ]},
+        }))
+        session._recent_events.append(SessionEvent(raw={'type': 'result'}))
+        self.assertTrue(session.is_working)
+
     def test_is_working_true_while_waiting_on_run_in_background_tool(self) -> None:
         session = self._build_session()
         session._proc = SimpleNamespace(poll=lambda: None)

@@ -494,7 +494,13 @@ class StreamingClaudeSession(object):
     # work and is blocked on its result). Treated as "still working" even
     # after the turn closes, so a 10-minute test/build wait doesn't read
     # as idle. ``run_in_background`` on any tool counts too.
-    _BACKGROUND_WAIT_TOOLS = frozenset({'Monitor'})
+    #
+    # ``Workflow`` returns immediately but runs in the BACKGROUND and emits a
+    # ``<task-notification>`` (a fresh turn) when it completes — so the turn
+    # that launched it has not really finished. Without it here the launching
+    # turn's ``result`` reads "idle", the session looks done, and the host
+    # tears it down before the workflow can notify back into the chat.
+    _BACKGROUND_WAIT_TOOLS = frozenset({'Monitor', 'Workflow'})
 
     def _turn_scheduled_background_wait(self, events, result_index: int) -> bool:
         """True if the turn ending at ``result_index`` left a background

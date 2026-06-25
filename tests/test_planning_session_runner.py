@@ -308,6 +308,70 @@ class PlanningSessionRunnerTests(unittest.TestCase):
         # alive=False (line 536 break).
         self.assertEqual(manager._session._poll_count, 2)
 
+    def test_implement_task_waits_past_a_background_workflow_result(self) -> None:
+        # A turn that launches a background Workflow ends with a ``result``,
+        # but the run is NOT done — the workflow notifies back and a later
+        # ``result`` is the real terminal. While ``is_working`` is True the
+        # wait must keep polling (NOT finalize on the first result and tear
+        # the session down), then settle on the workflow's follow-up result.
+        first = _terminal(result='workflow launched')
+        real = _terminal(result='workflow done')
+
+        class _WorkflowSession:
+            def __init__(self) -> None:
+                self.agent_session_id = 'fake-session-id'
+                self.terminal_event = real
+                self._events = [first, real]
+                self._polls = 0
+
+            def poll_event(self, timeout: float = 0.0):  # noqa: ARG002
+                self._polls += 1
+                return self._events.pop(0) if self._events else None
+
+            @property
+            def is_alive(self) -> bool:
+                return True
+
+            @property
+            def is_working(self) -> bool:
+                # Background workflow still in flight until the follow-up
+                # result has been emitted (both events drained).
+                return bool(self._events)
+
+        class _WorkflowManager:
+            def __init__(self) -> None:
+                self.statuses: list[str] = []
+                self.start_kwargs: dict | None = None
+                self._session = _WorkflowSession()
+
+            def start_session(self, **kwargs):
+                self.start_kwargs = kwargs
+                return self._session
+
+            def update_status(self, task_id, status):  # noqa: ARG002
+                self.statuses.append(status)
+
+            def get_session(self, task_id):  # noqa: ARG002
+                return None
+
+            def get_record(self, task_id):  # noqa: ARG002
+                return None
+
+        manager = _WorkflowManager()
+        runner = PlanningSessionRunner(
+            session_manager=manager,
+            defaults=self.defaults,
+            max_wait_seconds=10_000.0,
+            clock=lambda: 0.0,
+        )
+        prepared = _FakePrepared([_FakeRepo('client', '/tmp/client')])
+
+        result = runner.implement_task(build_task(), prepared_task=prepared)
+        self.assertTrue(result[ImplementationFields.SUCCESS])
+        # The first (workflow-launch) result was skipped; the runner settled
+        # on the workflow's follow-up result, having polled both events.
+        self.assertEqual(manager._session._polls, 2)
+
     def test_implement_task_raises_session_stopped_when_record_is_terminated(self) -> None:
         # When the user clicks Stop, terminate_session() already sets the
         # record status to TERMINATED before the planning thread wakes up.

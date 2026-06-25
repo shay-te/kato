@@ -303,6 +303,16 @@ class ToolCapabilityTests(unittest.TestCase):
             v = classify_action(tool, {}, policy=_DEFAULT)
             self.assertEqual(v.decision, Decision.ALLOW, tool)
 
+    def test_local_orchestration_tools_are_recognized_not_external(self):
+        # Workflow/Monitor/TaskOutput/TaskStop are local agent-orchestration —
+        # the same bounded-local class as Agent/Task. They must NOT trip the
+        # red "external capability" gate, and a background Workflow must run
+        # without re-prompting when it notifies back into the session.
+        for tool in ('Workflow', 'Monitor', 'TaskOutput', 'TaskStop', 'workflow'):
+            v = classify_action(tool, {}, policy=_DEFAULT)
+            self.assertEqual(v.decision, Decision.ALLOW, tool)
+            self.assertNotEqual(v.category, RiskCategory.EXTERNAL_CAPABILITY, tool)
+
     def test_ask_user_question_is_recognized_not_external(self):
         # The agent asking the operator a question is a known local tool — it
         # must NOT trip the red "external capability" gate (the host renders it as

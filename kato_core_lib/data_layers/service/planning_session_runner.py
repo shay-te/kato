@@ -542,6 +542,13 @@ class PlanningSessionRunner(object):
             if event is not None:
                 if event.is_terminal:
                     terminal = event
+                    # A turn that parked on a background task (a Workflow /
+                    # Monitor) is not actually done — it resumes and emits a
+                    # later ``result`` when the background work notifies back.
+                    # Keep waiting for that real terminal instead of
+                    # finalizing (and tearing the session down) now.
+                    if getattr(session, 'is_working', False):
+                        continue
                     break
                 continue
             if not session.is_alive:

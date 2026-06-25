@@ -486,6 +486,13 @@ _KNOWN_LOCAL_TOOLS = frozenset({
     # Subagent fan-out (``Task`` renamed to ``Agent`` in CLI 2.1.63) — a
     # bounded local capability, not a new/external one.
     'agent', 'task',
+    # Local agent/task orchestration — the same bounded-local class as
+    # ``agent``/``task``: ``workflow`` fans out subagents on the host,
+    # ``monitor`` waits on a local condition, ``taskoutput``/``taskstop``
+    # read/stop a background task. None reach off-machine, so they must not
+    # trip the red "external capability" gate (and a background ``workflow``
+    # must run without re-prompting every time it notifies back).
+    'workflow', 'monitor', 'taskoutput', 'taskstop',
     # The agent asking the OPERATOR a question (not a network/external action).
     # the host renders it as an answer UI; it must not look like a scary new
     # "external capability".
