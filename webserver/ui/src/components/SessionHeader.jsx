@@ -40,6 +40,7 @@ export default function SessionHeader({
   awaitingBackground = false,
   searchSlot = null,
   onSendPrompt = null,
+  onWorkspaceMutated = null,
 }) {
   const [resuming, setResuming] = useState(false);
   const [adoptModalOpen, setAdoptModalOpen] = useState(false);
@@ -97,6 +98,13 @@ export default function SessionHeader({
             title: 'Merge failed', fallback: 'merge failed', durationMs: 12000,
           });
           return;
+        }
+        // The merge mutated the workspace clone on disk — a clean merge
+        // brought origin/<default> in, a conflicted one left markers in
+        // the tree. Bump the workspace version so the Changes tab / Files
+        // tree / open editor refetch instead of showing pre-merge content.
+        if (typeof onWorkspaceMutated === 'function') {
+          onWorkspaceMutated(session.task_id);
         }
         const conflicted = Array.isArray(body.conflicted_repositories)
           ? body.conflicted_repositories : [];
@@ -257,6 +265,12 @@ export default function SessionHeader({
     const result = await taskPublish.pull();
     if (typeof taskPublish.refresh === 'function') {
       taskPublish.refresh();
+    }
+    // A fast-forward pull advances the workspace clone on disk — bump
+    // the workspace version so the Changes tab / Files tree / open
+    // editor refetch the new content instead of staying stale.
+    if (typeof onWorkspaceMutated === 'function') {
+      onWorkspaceMutated(session.task_id);
     }
     toastResult(formatPullResult(result));
   }

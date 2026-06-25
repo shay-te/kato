@@ -52,7 +52,10 @@ from kato_core_lib.data_layers.data_access.lessons_data_access import (
     LessonsDataAccess,
 )
 from kato_core_lib.data_layers.service.lessons_service import LessonsService
-from kato_core_lib.helpers.lessons_path_utils import resolve_and_sync_lessons_path
+from kato_core_lib.helpers.lessons_path_utils import (
+    lesson_extraction_cwd,
+    resolve_and_sync_lessons_path,
+)
 from claude_core_lib.claude_core_lib.helpers.one_shot_utils import make_claude_one_shot
 from kato_core_lib.helpers.runtime_identity_utils import runtime_source_fingerprint
 from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (
@@ -586,7 +589,18 @@ class KatoCoreLib(CoreLib):
             model = str(getattr(claude_cfg, 'model', '') or '').strip()
         else:
             binary = 'claude'
-        llm_one_shot = make_claude_one_shot(binary=binary, model=model)
+        # Run the lessons one-shot in an isolated scratch dir so its
+        # throwaway ``claude -p`` transcripts don't pollute the cwd kato's
+        # own process runs in (the operator's interactive Claude history).
+        lesson_cwd = lesson_extraction_cwd()
+        try:
+            lesson_cwd.mkdir(parents=True, exist_ok=True)
+            cwd = str(lesson_cwd)
+        except OSError:
+            # Best-effort: an uncreatable scratch dir degrades to kato's own
+            # cwd (the one-shot still runs; its transcript just lands there).
+            cwd = ''
+        llm_one_shot = make_claude_one_shot(binary=binary, model=model, cwd=cwd)
         service = LessonsService(data_access, llm_one_shot)
         self._kick_startup_compact(service)
         return service

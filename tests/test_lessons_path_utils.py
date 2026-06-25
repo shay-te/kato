@@ -18,6 +18,7 @@ from kato_core_lib.data_layers.data_access.lessons_data_access import (
 from kato_core_lib.helpers.lessons_path_utils import (
     DEFAULT_LESSONS_PATH,
     default_lessons_path,
+    lesson_extraction_cwd,
     resolve_and_sync_lessons_path,
     resolve_lessons_path,
 )
@@ -53,6 +54,30 @@ class ResolveLessonsPathTests(unittest.TestCase):
 
     def test_legacy_default_constant_matches_current_process_default(self):
         self.assertEqual(DEFAULT_LESSONS_PATH, default_lessons_path())
+
+
+class LessonExtractionCwdTests(unittest.TestCase):
+    """The lessons one-shot runs in a dedicated dir so its throwaway
+    ``claude -p`` transcripts don't pollute the operator's interactive
+    Claude history for whatever repo kato runs in."""
+
+    def test_default_is_under_kato_home(self):
+        # Empty override -> default ~/.kato/lesson-extraction.
+        with patch.dict('os.environ', {'KATO_LESSON_EXTRACTION_CWD': ''}, clear=False):
+            self.assertEqual(
+                lesson_extraction_cwd(),
+                Path.home() / '.kato' / 'lesson-extraction',
+            )
+
+    def test_env_override_is_honored(self):
+        with patch.dict('os.environ', {'KATO_LESSON_EXTRACTION_CWD': '/srv/lcwd'}):
+            self.assertEqual(lesson_extraction_cwd(), Path('/srv/lcwd'))
+
+    def test_default_dir_basename_is_dedicated(self):
+        # A dedicated, clearly-named dir (not the workspaces root) so its
+        # ~/.claude/projects transcript folder is obviously kato-internal.
+        with patch.dict('os.environ', {'KATO_LESSON_EXTRACTION_CWD': ''}, clear=False):
+            self.assertEqual(lesson_extraction_cwd().name, 'lesson-extraction')
 
 
 class ResolveAndSyncTests(unittest.TestCase):

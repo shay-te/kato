@@ -337,6 +337,18 @@ class ClaudeSessionManager(object):
                 resume_session_id=resume_session_id,
                 target_cwd=cwd,
             )
+            # A session still HELD by a live CLI process cannot be
+            # resumed — ``claude --resume`` silently starts a blank,
+            # memoryless conversation under a new id. On Windows kato
+            # itself used to create such holders: ``claude`` resolves
+            # to the npm ``claude.cmd`` shim, so kills hit the cmd.exe
+            # wrapper and orphaned the real CLI (fixed in
+            # ``StreamingClaudeSession`` with a tree kill, but leftovers
+            # from crashes / closed consoles still happen). Wait for /
+            # kill any leftover holder before passing ``--resume``.
+            self._terminate_stale_resume_holders(
+                normalized_task_id, resume_session_id,
+            )
             # Spawn happens with NO global lock held — concurrent spawns
             # for different task ids run in parallel.
             session = self._spawn_with_resume_self_heal(
@@ -477,6 +489,46 @@ class ClaudeSessionManager(object):
                 copied,
             )
 
+    def _terminate_stale_resume_holders(
+        self,
+        task_id: str,
+        resume_session_id: str,
+    ) -> None:
+        """Wait out / kill live CLI processes still holding the resume session.
+
+        Claude Code registers every running CLI in
+        ``~/.claude/sessions/<pid>.json``; resuming a session a live
+        process still holds makes ``--resume`` silently start a fresh
+        blank conversation (the "Claude forgot everything" bug).
+        Best-effort: any failure here degrades to the spawn-side
+        ``resume_was_ignored`` guard, it must never block the spawn.
+        """
+        if not resume_session_id:
+            return
+        try:
+            from claude_core_lib.claude_core_lib.session.registry import (
+                release_session_holders,
+            )
+        except ImportError:
+            return
+        try:
+            released = release_session_holders(
+                resume_session_id, logger=self.logger,
+            )
+        except Exception:
+            self.logger.exception(
+                'task %s: failed to check for live holders of session %s',
+                task_id, resume_session_id,
+            )
+            return
+        if not released:
+            self.logger.warning(
+                'task %s: session %s is STILL held by a live claude '
+                'process; --resume will likely start a blank session '
+                '(kato will detect and refuse the memoryless impostor)',
+                task_id, resume_session_id,
+            )
+
     # Sessions whose JSONL transcript exceeds this byte count are NOT
     # resumed — the full history would exceed (or strain) the model's
     # context window, causing 10–15 minute startup delays before the
@@ -535,6 +587,23 @@ class ClaudeSessionManager(object):
             self._persist_record(previous_record)
         if not resume_session_id or existing_session is None:
             return resume_session_id
+        # Poisoned transcript (model switch mid-chat / a failed prior turn
+        # left an invalid ``previous_message_id``) — the API rejects every
+        # resume of this id with a 400. This corruption is PERMANENT, so
+        # unlike a stale id we don't keep it pinned and retry; we abandon
+        # it and start fresh so the chat recovers. Returning '' routes
+        # through the normal fresh-spawn path, which re-pins the new id.
+        if self._died_with_poisoned_resume(existing_session):
+            self.logger.warning(
+                'task %s: the resumed conversation for session id %s can no '
+                'longer be continued (model switch mid-chat or a failed '
+                'prior turn left an invalid previous_message_id; the API '
+                'rejects every resume). Abandoning it and starting a fresh '
+                'session — prior chat context is not carried over.',
+                normalized_task_id,
+                resume_session_id,
+            )
+            return ''
         if not self._died_with_stale_resume_id(existing_session, resume_session_id):
             return resume_session_id
         self.logger.warning(
@@ -570,6 +639,10 @@ class ClaudeSessionManager(object):
         if not resume_session_id:
             return session
         if not self._wait_for_stale_resume_failure(session, resume_session_id):
+            if getattr(session, 'resume_was_ignored', False):
+                return self._refuse_ignored_resume(
+                    normalized_task_id, session, resume_session_id,
+                )
             return session
         self.logger.warning(
             'task %s: claude rejected resume id %s on first spawn; '
@@ -585,6 +658,42 @@ class ClaudeSessionManager(object):
         raise RuntimeError(
             f'Claude rejected resume id {resume_session_id} for task '
             f'{normalized_task_id}; refusing to start a fresh session.'
+        )
+
+    def _refuse_ignored_resume(
+        self,
+        normalized_task_id: str,
+        session: StreamingClaudeSession,
+        resume_session_id: str,
+    ):
+        """Terminate a spawn whose ``--resume`` was silently ignored, then raise.
+
+        The CLI announced a session id DIFFERENT from the requested
+        resume id — it started a fresh, memoryless conversation that
+        only LOOKS resumed. Letting it live is exactly the "Claude
+        forgot what he was doing" bug: the user chats with a blank
+        impostor while kato's record still pins the real id. Kill it
+        and fail loud; the pinned id stays intact so the next spawn
+        (with the leftover holder now gone) resumes the real history.
+        """
+        self.logger.warning(
+            'task %s: claude IGNORED --resume %s and started a fresh '
+            'session with no conversation history; terminating the '
+            'memoryless session and keeping the pinned id (a previous '
+            'claude process was likely still holding the transcript — '
+            'retry in a few seconds)',
+            normalized_task_id,
+            resume_session_id,
+        )
+        try:
+            session.terminate()
+        except Exception:
+            pass
+        raise RuntimeError(
+            f'Claude ignored resume id {resume_session_id} for task '
+            f'{normalized_task_id} and started a memoryless session; '
+            f'refusing it. Retry in a few seconds — kato keeps the '
+            f'original session id pinned.'
         )
 
     def _log_resume_jsonl_state(
@@ -1014,6 +1123,15 @@ class ClaudeSessionManager(object):
         """
         deadline = time.monotonic() + max(0.0, float(max_wait_seconds))
         while time.monotonic() < deadline:
+            # Resume verdict already known from the init event — stop
+            # polling. A confirmed resume is healthy; an IGNORED resume
+            # is not "stale-id death" (the subprocess is alive) but the
+            # caller checks ``resume_was_ignored`` right after this
+            # returns and refuses the memoryless session.
+            if getattr(session, 'resume_confirmed', False):
+                return False
+            if getattr(session, 'resume_was_ignored', False):
+                return False
             if not session.is_alive:
                 return cls._died_with_stale_resume_id(session, resume_session_id)
             if cls._died_with_stale_resume_id(session, resume_session_id):
@@ -1057,6 +1175,42 @@ class ClaudeSessionManager(object):
             return False
         result_text = str(raw.get('result', '') or '')
         return marker in result_text
+
+    @staticmethod
+    def _died_with_poisoned_resume(session) -> bool:
+        """Did ``session`` exit because its resumed transcript can't be continued?
+
+        The Anthropic API rejects the next request of a resumed conversation
+        whose stored continuation is broken — the operator switched models
+        mid-chat, or a prior turn failed before a valid assistant message was
+        written, so the CLI sends an invalid ``previous_message_id`` and the
+        API returns ``400 ... previous_message_id: must be the id from a prior
+        /v1/messages response``. Unlike a stale id (a live holder still owns
+        the transcript — transient, so kato keeps it pinned and retries) this
+        corruption is PERMANENT: every resume re-hits the same 400. The only
+        recovery is a fresh session, so the caller heals instead of refusing.
+
+        Conservative — REQUIRES the subprocess to have EXITED (an alive
+        session that merely echoes the marker in a tool output can't trip
+        it) AND the distinctive ``previous_message_id`` token to appear in
+        the terminal error result or the captured stderr.
+        """
+        # Only an exited subprocess can have "died" — a live session that
+        # surfaces the marker some other way is not this failure mode.
+        if bool(getattr(session, 'is_alive', False)):
+            return False
+        marker = 'previous_message_id'
+        terminal = getattr(session, 'terminal_event', None)
+        if terminal is not None:
+            raw = getattr(terminal, 'raw', {}) or {}
+            if bool(raw.get('is_error', False)) \
+                    and marker in str(raw.get('result', '') or ''):
+                return True
+        try:
+            stderr_lines = session.stderr_snapshot()
+        except Exception:
+            stderr_lines = []
+        return any(marker in line for line in stderr_lines)
 
     @staticmethod
     def _normalize_task_id(task_id: str) -> str:
@@ -1253,6 +1407,28 @@ class ClaudeSessionManager(object):
         normalized_task_id: str,
         session: StreamingClaudeSession,
     ) -> bool:
+        if getattr(session, 'resume_was_ignored', False):
+            # The init event (possibly arriving AFTER the spawn-time
+            # verdict window) revealed that --resume was silently
+            # ignored: this live process is a fresh, memoryless
+            # conversation masquerading as the resumed one. Drop and
+            # terminate it; the pinned id stays so the next spawn
+            # resumes the real history.
+            self._sessions.pop(lookup_key, None)
+            self.logger.warning(
+                'task %s: live claude session ignored --resume and is '
+                'running a fresh blank conversation; terminating it so '
+                'the next spawn can resume the pinned id',
+                normalized_task_id,
+            )
+            try:
+                session.terminate()
+            except Exception:
+                self.logger.exception(
+                    'failed to terminate memoryless session for task %s',
+                    normalized_task_id,
+                )
+            return True
         record = self._records.get(lookup_key)
         pinned_id = read_session_id_from(record)
         if not pinned_id:

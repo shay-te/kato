@@ -85,6 +85,26 @@ class ClaudeOneShotTests(unittest.TestCase):
         cmd = mock_run.call_args.args[0]
         self.assertEqual(cmd[0], '/usr/local/bin/claude')
 
+    def test_cwd_forwarded_when_set(self) -> None:
+        # Isolated scratch cwd so the throwaway transcript doesn't pollute the
+        # caller's repo history.
+        with patch(
+            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
+            return_value=_CompletedProcess(0, ''),
+        ) as mock_run:
+            claude_one_shot('x', cwd='/tmp/lesson-cwd')
+        self.assertEqual(mock_run.call_args.kwargs['cwd'], '/tmp/lesson-cwd')
+
+    def test_cwd_none_when_empty(self) -> None:
+        # Empty cwd -> None, so the subprocess inherits the caller's cwd
+        # (unchanged legacy behaviour).
+        with patch(
+            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
+            return_value=_CompletedProcess(0, ''),
+        ) as mock_run:
+            claude_one_shot('x')
+        self.assertIsNone(mock_run.call_args.kwargs['cwd'])
+
     def test_nonzero_exit_raises(self) -> None:
         with patch(
             'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
@@ -138,6 +158,15 @@ class MakeClaudeOneShotTests(unittest.TestCase):
         self.assertEqual(cmd[0], 'claude-bin')
         self.assertIn('claude-x', cmd)
         self.assertEqual(mock_run.call_args.kwargs['timeout'], 42)
+
+    def test_closure_forwards_cwd(self) -> None:
+        with patch(
+            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
+            return_value=_CompletedProcess(0, 'response'),
+        ) as mock_run:
+            fn = make_claude_one_shot(binary='claude-bin', cwd='/srv/lessons-cwd')
+            fn('prompt-text')
+        self.assertEqual(mock_run.call_args.kwargs['cwd'], '/srv/lessons-cwd')
 
 
 if __name__ == '__main__':

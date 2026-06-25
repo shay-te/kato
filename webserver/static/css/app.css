@@ -464,8 +464,12 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
     gap: 6px;
   }
   .tabs-pane-top .tab {
-    padding: 5px 10px 5px 8px;
-    max-width: 160px;
+    /* Tighter padding on narrow viewports, but NO width cap — tabs keep
+     * their full content (id + icons) and the strip scrolls rather than
+     * compressing segments (flex-shrink:0 is inherited from the base
+     * rule). */
+    padding: 5px 12px 5px 8px;
+    max-width: none;
   }
   .tabs-pane-top .tab p {
     display: none;
@@ -542,8 +546,16 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   color: rgba(245, 245, 247, 0.85);
   cursor: pointer;
   white-space: nowrap;
-  max-width: 220px;
-  min-width: 0;
+  /* Tabs keep their FULL width (status dot + task id + the two action
+   * discs) and never compress — the strip scrolls horizontally when
+   * there are too many to fit (chevrons + wheel handle the overflow).
+   * ``flex-shrink: 0`` is the fix for the "every chip squeezed until
+   * only the dot showed" regression: the default flex-shrink:1 let a
+   * crowded #tab-list shrink each segment to nothing. No max-width cap
+   * either, so the chip always grows to contain its content and the
+   * pin/× icons can never be pushed past the right edge. */
+  flex-shrink: 0;
+  max-width: none;
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease, transform 90ms ease;
 }
 
@@ -578,6 +590,9 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   font-weight: 600;
   font-size: 12px;
   letter-spacing: 0.01em;
+  /* Always show the full task id. The tab never shrinks (.tab has
+   * flex-shrink:0) so the id is never squeezed — no ellipsis needed. */
+  flex-shrink: 0;
 }
 
 .tabs-pane-top .tab p {
