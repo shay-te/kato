@@ -10,7 +10,7 @@ the Anthropic API rejects EVERY resume of that session id with::
     prior /v1/messages response (starts with msg_)
 
 Unlike a *stale* id (a live holder still owns the transcript — transient,
-so kato keeps it pinned and retries), this corruption is PERMANENT: each
+so the caller keeps it pinned and retries), this corruption is PERMANENT: each
 resume re-hits the same 400 and the chat is stuck forever. The only
 recovery is a fresh session, so ``_resume_id_for_spawn`` ABANDONS the
 poisoned id and spawns fresh.

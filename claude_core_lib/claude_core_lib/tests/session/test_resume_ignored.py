@@ -3,7 +3,7 @@
 Field bug (Windows): ``claude --resume <id>`` sometimes starts a FRESH
 session under a NEW id instead of resuming — no error, no "No
 conversation found" on stderr — when another live CLI process still
-holds the transcript (kato's old wrapper-only kill orphaned the real
+holds the transcript (the caller's old wrapper-only kill orphaned the real
 CLI behind the npm ``claude.cmd`` shim). The user then chats with a
 blank conversation that LOOKS resumed: the "Claude forgot what he was
 doing" bug.
@@ -259,7 +259,7 @@ class StreamingResumeFlagTests(unittest.TestCase):
         session._maybe_capture_session_id(self._init_event('other-id-2'))
         self.assertTrue(session.resume_was_ignored)
         self.assertFalse(session.resume_confirmed)
-        # The pinned id is kept — kato never adopts the impostor's id.
+        # The pinned id is kept — the caller never adopts the impostor's id.
         self.assertEqual(session.agent_session_id, 'resume-id-1')
 
     def test_fresh_spawn_mismatch_does_not_flag_ignored(self) -> None:
@@ -286,7 +286,7 @@ class WindowsShimBypassTests(unittest.TestCase):
     """The spawn must bypass the npm ``claude.cmd`` batch shim.
 
     cmd.exe silently cuts its command line at the first raw newline
-    (and caps it at ~8K chars). Kato's ``--append-system-prompt``
+    (and caps it at ~8K chars). The caller's ``--append-system-prompt``
     value is multiline, so spawning through the shim dropped every
     later argument — ``--resume``, ``--session-id``, ``--add-dir`` —
     and the CLI started a fresh, memoryless session on every respawn:

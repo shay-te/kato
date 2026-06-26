@@ -877,7 +877,7 @@ class StreamingClaudeSession(object):
             # cmd.exe wrapper and the real CLI (node) SURVIVES the
             # kill. The orphan keeps the session transcript open and
             # the next ``--resume`` silently starts a blank,
-            # memoryless session (the "kato forgot everything after
+            # memoryless session (the "forgot everything after
             # stop/restart" bug) — which is why the tree kill is
             # always attempted first on Windows.
             self._send_signal_locked(signal.SIGTERM)
@@ -1024,7 +1024,7 @@ class StreamingClaudeSession(object):
         # below is multiline, so spawning through ``claude.cmd``
         # dropped every later argument — including ``--resume`` /
         # ``--session-id`` / ``--add-dir`` — and Claude started a
-        # fresh, memoryless session under a new id on every kato
+        # fresh, memoryless session under a new id on every
         # respawn (the Windows resume-amnesia bug). Shared with the
         # one-shot client so both spawn paths bypass the shim the same
         # way.

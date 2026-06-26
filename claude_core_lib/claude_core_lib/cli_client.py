@@ -1306,7 +1306,7 @@ class ClaudeCliClient(object):
         chars), so a multiline ``--append-system-prompt`` value made it
         drop every later argument — including ``--resume`` /
         ``--session-id`` / ``--add-dir`` — and Claude started a fresh,
-        memoryless session under a new id on every kato spawn (the
+        memoryless session under a new id on every spawn (the
         Windows resume-amnesia bug).
         """
         if os.name != 'nt':

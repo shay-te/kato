@@ -5,11 +5,11 @@ Every running Claude CLI writes ``<pid>.json`` there at startup —
 removes it on clean exit. A registry entry whose pid is still alive
 means that session id is actively held by a running CLI process.
 
-Why kato cares: resuming a session that another live CLI process still
+Why this matters: resuming a session that another live CLI process still
 holds makes ``claude --resume <id>`` silently start a FRESH session
 under a NEW id — a conversation that looks resumed but remembers
 nothing. On Windows this happened constantly: ``claude`` resolves to
-the npm ``claude.cmd`` shim, so kato's subprocess handle was a cmd.exe
+the npm ``claude.cmd`` shim, so the caller's subprocess handle was a cmd.exe
 wrapper and ``TerminateProcess`` (what ``Popen.kill``/``SIGTERM`` mean
 on Windows) killed only the wrapper. The real node-based CLI survived
 as an orphan, kept appending to the transcript, and every subsequent
@@ -68,7 +68,7 @@ def live_session_holders(
 
     Dead pids are filtered out (a crashed CLI leaves its ``<pid>.json``
     behind; that's stale bookkeeping, not a holder). Malformed entries
-    are skipped — the registry belongs to the CLI and kato must not
+    are skipped — the registry belongs to the CLI and the caller must not
     crash on whatever it finds there.
     """
     session_id = fix_session_id(agent_session_id)
@@ -114,7 +114,7 @@ def release_session_holders(
     """Make sure no live CLI process holds ``agent_session_id`` anymore.
 
     Strategy: wait up to ``wait_seconds`` for the holder to exit on its
-    own (the common case — kato just closed its stdin and the CLI is
+    own (the common case — the caller just closed its stdin and the CLI is
     finishing its in-flight turn), then force-kill whatever is left,
     provided its image name proves it is a CLI process and not a
     recycled pid. Returns ``True`` when the session is free, ``False``
@@ -201,7 +201,7 @@ def kill_process_tree(pid: int, *, logger=None) -> bool:
     Windows needs the tree semantics explicitly: ``TerminateProcess``
     (which is all ``Popen.kill``/``send_signal(SIGTERM)`` can do there)
     kills exactly one process, and the npm ``claude.cmd`` shim makes
-    the real CLI a *child* of the process kato holds — killing the
+    the real CLI a *child* of the process the caller holds — killing the
     wrapper orphans it. ``taskkill /T`` walks the child tree.
 
     POSIX has no wrapper problem (the shim is a shebang script, so the

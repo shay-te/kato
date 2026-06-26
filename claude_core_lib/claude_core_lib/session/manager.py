@@ -339,7 +339,7 @@ class ClaudeSessionManager(object):
             )
             # A session still HELD by a live CLI process cannot be
             # resumed — ``claude --resume`` silently starts a blank,
-            # memoryless conversation under a new id. On Windows kato
+            # memoryless conversation under a new id. On Windows the caller
             # itself used to create such holders: ``claude`` resolves
             # to the npm ``claude.cmd`` shim, so kills hit the cmd.exe
             # wrapper and orphaned the real CLI (fixed in
@@ -525,7 +525,7 @@ class ClaudeSessionManager(object):
             self.logger.warning(
                 'task %s: session %s is STILL held by a live claude '
                 'process; --resume will likely start a blank session '
-                '(kato will detect and refuse the memoryless impostor)',
+                '(the caller will detect and refuse the memoryless impostor)',
                 task_id, resume_session_id,
             )
 
@@ -672,7 +672,7 @@ class ClaudeSessionManager(object):
         resume id — it started a fresh, memoryless conversation that
         only LOOKS resumed. Letting it live is exactly the "Claude
         forgot what he was doing" bug: the user chats with a blank
-        impostor while kato's record still pins the real id. Kill it
+        impostor while the caller's record still pins the real id. Kill it
         and fail loud; the pinned id stays intact so the next spawn
         (with the leftover holder now gone) resumes the real history.
         """
@@ -692,7 +692,7 @@ class ClaudeSessionManager(object):
         raise RuntimeError(
             f'Claude ignored resume id {resume_session_id} for task '
             f'{normalized_task_id} and started a memoryless session; '
-            f'refusing it. Retry in a few seconds — kato keeps the '
+            f'refusing it. Retry in a few seconds — the caller keeps the '
             f'original session id pinned.'
         )
 
@@ -1186,7 +1186,7 @@ class ClaudeSessionManager(object):
         written, so the CLI sends an invalid ``previous_message_id`` and the
         API returns ``400 ... previous_message_id: must be the id from a prior
         /v1/messages response``. Unlike a stale id (a live holder still owns
-        the transcript — transient, so kato keeps it pinned and retries) this
+        the transcript — transient, so the caller keeps it pinned and retries) this
         corruption is PERMANENT: every resume re-hits the same 400. The only
         recovery is a fresh session, so the caller heals instead of refusing.
 
