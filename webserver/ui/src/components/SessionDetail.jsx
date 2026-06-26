@@ -23,7 +23,7 @@ import {
 import { useSessionOption } from '../hooks/useSessionOption.js';
 import { useToolMemory } from '../hooks/useToolMemory.js';
 import { toast } from '../stores/toastStore.js';
-import { fetchEffortLevels, fetchModels, fetchSessionEffort, fetchSessionModel, postChatMessage, postSession, setSessionEffort, setSessionModel } from '../api.js';
+import { fetchEffortLevels, fetchModels, fetchSessionEffort, fetchSessionModel, fetchSessionPlanMode, postChatMessage, postSession, setSessionEffort, setSessionModel, setSessionPlanMode } from '../api.js';
 
 // Grace before we reconnect a still-"live" stream that the server says has a
 // pending permission we haven't received. Long enough for a normal live event
@@ -184,6 +184,21 @@ export default function SessionDetail({
       defaultKey: 'default',
     },
   );
+  // Plan-mode lock — a per-task boolean (not a catalogue), so it doesn't
+  // fit useSessionOption's list shape. Fetch the current value when the
+  // bound task changes; reset to off with no task. Optimistically reflect
+  // the toggle, then persist it; takes effect on the next session spawn.
+  const [planMode, setPlanMode] = useState(false);
+  useEffect(() => {
+    if (!taskId) { setPlanMode(false); return; }
+    fetchSessionPlanMode(taskId)
+      .then((result) => setPlanMode(!!(result && result.plan_mode)))
+      .catch(() => {});
+  }, [taskId]);
+  const handlePlanModeChange = useCallback((on) => {
+    setPlanMode(on);
+    setSessionPlanMode(taskId, on);
+  }, [taskId]);
   // Prefer the App-level toolMemory when passed (so the same recall
   // function powers both this modal AND the tab-attention filter);
   // fall back to a local instance for tests / standalone usage.
@@ -633,6 +648,8 @@ export default function SessionDetail({
           selectedEffort={selectedEffort}
           effortDefault={effortDefault}
           onEffortChange={handleEffortChange}
+          planMode={planMode}
+          onPlanModeChange={handlePlanModeChange}
         />
       </section>
       <PermissionDecisionContainer

@@ -2193,6 +2193,14 @@ class StreamingClaudeSessionCounterPropertyTests(unittest.TestCase):
         # Default (no effort passed) coerces to empty.
         self.assertEqual(self._session().effort, '')
 
+    def test_permission_mode_property_returns_spawn_value(self) -> None:
+        session = StreamingClaudeSession(
+            task_id='PROJ-C', cwd='/tmp', permission_mode='plan',
+        )
+        self.assertEqual(session.permission_mode, 'plan')
+        # Default (none passed) falls back to the safe edit-prompting mode.
+        self.assertEqual(self._session().permission_mode, 'acceptEdits')
+
     def test_result_events_received_counts_result_events_in_log(self) -> None:
         session = self._session()
         self.assertEqual(session.result_events_received, 0)

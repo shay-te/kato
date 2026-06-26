@@ -180,6 +180,7 @@ class PlanningSessionRunner(object):
         additional_dirs: list[str] | None = None,
         model: str = '',
         effort: str = '',
+        permission_mode: str = '',
     ):
         """Spawn a fresh Claude subprocess for ``task_id`` and queue ``message``.
 
@@ -238,6 +239,7 @@ class PlanningSessionRunner(object):
             cwd=normalized_text(cwd),
             model=model,
             effort=normalized_text(effort),
+            permission_mode=normalized_text(permission_mode),
             additional_dirs=additional_dirs,
         )
         sid = read_session_id_from(session)
@@ -496,6 +498,7 @@ class PlanningSessionRunner(object):
         branch_name: str = '',
         model: str = '',
         effort: str = '',
+        permission_mode: str = '',
         additional_dirs: list[str] | None = None,
     ):
         return self._session_manager.start_session(
@@ -505,7 +508,7 @@ class PlanningSessionRunner(object):
             cwd=cwd,
             binary=self._defaults.binary,
             model=model or self._defaults.model,
-            permission_mode=self._defaults.permission_mode,
+            permission_mode=permission_mode or self._defaults.permission_mode,
             permission_prompt_tool=self._defaults.permission_prompt_tool,
             allowed_tools=self._defaults.allowed_tools,
             disallowed_tools=self._defaults.disallowed_tools,

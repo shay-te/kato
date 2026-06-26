@@ -478,6 +478,23 @@ export function setSessionEffort(taskId, effort) {
   );
 }
 
+// Plan-mode lock: when on, the chat session spawns with Claude's
+// ``--permission-mode plan`` so the agent only plans and never edits.
+// Persisted per task server-side (survives reload / browser switch) and,
+// like model/effort, applied on the next session (re)spawn.
+export function fetchSessionPlanMode(taskId) {
+  if (!taskId) { return Promise.resolve({ plan_mode: false }); }
+  return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/plan-mode`);
+}
+
+export function setSessionPlanMode(taskId, on) {
+  if (!taskId) { return { ok: false, error: 'no task id' }; }
+  return postEnvelope(
+    `/api/sessions/${encodeURIComponent(taskId)}/plan-mode`,
+    { plan_mode: !!on },
+  );
+}
+
 export function triggerScan() {
   return requestEnvelope('/api/scan/trigger', { method: 'POST' });
 }

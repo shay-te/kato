@@ -3012,8 +3012,11 @@ header .chats-menu button:not(.header-status) {
   border-color: $C-NEUTRAL-100-A06;
 }
 
-/* ultracode opt-in pill — off (muted) by default; cyan when armed. */
-.composer-ultracode {
+/* Composer opt-in pills — off (muted) by default; an accent fill when
+ * armed. ultracode (cyan) and the plan-mode lock (amber) share the base
+ * shape and hover; only the armed accent differs. */
+.composer-ultracode,
+.composer-plan-mode {
   flex-shrink: 0;
   height: 26px;
   padding: 0 $SPACE-10;
@@ -3027,7 +3030,8 @@ header .chats-menu button:not(.header-status) {
   transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
 }
 
-.composer-ultracode:hover {
+.composer-ultracode:hover,
+.composer-plan-mode:hover {
   color: $C-NEUTRAL-96;
   border-color: $C-NEUTRAL-45;
 }
@@ -3036,6 +3040,14 @@ header .chats-menu button:not(.header-status) {
   background: $C-CYAN-52-A18;
   border-color: $C-CYAN-52-A40;
   color: $C-CYAN-78;
+}
+
+/* Plan-mode armed — amber, reading as a "locked / restricted" state
+ * distinct from ultracode's cyan. */
+.composer-plan-mode.is-on {
+  background: $C-ORANGE-50-A10;
+  border-color: $C-ORANGE-50-A35;
+  color: $C-AMBER-77;
 }
 
 /* Round send button — iOS-blue accent when armed, dimmed when

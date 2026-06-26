@@ -595,6 +595,21 @@ class StreamingClaudeSession(object):
         return self._model
 
     @property
+    def permission_mode(self) -> str:
+        """The ``--permission-mode`` this subprocess was spawned with.
+
+        Same shape as ``effort`` / ``model`` — the CLI bakes
+        ``--permission-mode`` at spawn time, so an operator toggling the
+        composer's plan-mode lock only takes effect on a fresh
+        subprocess. The chat send route reads this to decide whether the
+        requested mode differs from the live session and therefore needs
+        a respawn (instead of forwarding a message into a subprocess that
+        is still wired to the old mode — e.g. one that can still edit
+        when the operator has since locked it to planning-only).
+        """
+        return self._permission_mode
+
+    @property
     def last_user_message_sent_epoch(self) -> float:
         """Wall-clock of the most recent ``send_user_message``.
 

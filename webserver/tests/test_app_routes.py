@@ -1350,5 +1350,101 @@ class EffortRoutesTests(unittest.TestCase):
         self.assertIn('turbo', response.get_json()['error'])
 
 
+class PlanModeRoutesTests(unittest.TestCase):
+    """Per-task plan-mode lock: get/set the boolean + respawn helper."""
+
+    def _client(self):
+        return create_app(session_manager=_FakeManager()).test_client()
+
+    def test_defaults_off(self):
+        self.assertFalse(
+            self._client().get('/api/sessions/T-1/plan-mode').get_json()['plan_mode'],
+        )
+
+    def test_set_and_clear_plan_mode(self):
+        client = self._client()
+        on = client.post('/api/sessions/T-1/plan-mode', json={'plan_mode': True})
+        self.assertEqual(on.status_code, 200)
+        self.assertTrue(on.get_json()['plan_mode'])
+        self.assertTrue(
+            client.get('/api/sessions/T-1/plan-mode').get_json()['plan_mode'],
+        )
+        off = client.post('/api/sessions/T-1/plan-mode', json={'plan_mode': False})
+        self.assertFalse(off.get_json()['plan_mode'])
+        self.assertFalse(
+            client.get('/api/sessions/T-1/plan-mode').get_json()['plan_mode'],
+        )
+
+    def test_stores_literal_plan_value(self):
+        # The override stored for the spawn path is the raw CLI value, not
+        # the boolean — so it can flow straight into ``--permission-mode``.
+        app = create_app(session_manager=_FakeManager())
+        app.test_client().post('/api/sessions/T-1/plan-mode', json={'plan_mode': True})
+        self.assertEqual(app.config['TASK_PLAN_MODE_OVERRIDES']['T-1'], 'plan')
+
+    def test_set_returns_503_when_store_unwired(self):
+        app = create_app(session_manager=_FakeManager())
+        app.config['TASK_PLAN_MODE_OVERRIDES'] = None
+        response = app.test_client().post(
+            '/api/sessions/T-1/plan-mode', json={'plan_mode': True},
+        )
+        self.assertEqual(response.status_code, 503)
+
+
+class PlanModeRespawnTests(unittest.TestCase):
+    """``_plan_mode_change_needs_respawn`` — the CLI bakes the mode at spawn."""
+
+    def _app(self):
+        return create_app(session_manager=_FakeManager())
+
+    @staticmethod
+    def _session(*, permission_mode, alive=True, working=False):
+        return SimpleNamespace(
+            permission_mode=permission_mode, is_alive=alive, is_working=working,
+        )
+
+    def _check(self, *, override, session, images=None):
+        from kato_webserver.app import _plan_mode_change_needs_respawn
+        app = self._app()
+        app.config['TASK_PLAN_MODE_OVERRIDES']['T-1'] = override
+        manager = SimpleNamespace(get_session=lambda _t: session)
+        return _plan_mode_change_needs_respawn(app, manager, 'T-1', images or [])
+
+    def test_lock_on_over_editing_session_respawns(self):
+        self.assertTrue(
+            self._check(override='plan', session=self._session(permission_mode='acceptEdits')),
+        )
+
+    def test_unlock_over_planning_session_respawns(self):
+        self.assertTrue(
+            self._check(override='', session=self._session(permission_mode='plan')),
+        )
+
+    def test_already_planning_no_respawn(self):
+        self.assertFalse(
+            self._check(override='plan', session=self._session(permission_mode='plan')),
+        )
+
+    def test_no_live_session_no_respawn(self):
+        self.assertFalse(self._check(override='plan', session=None))
+
+    def test_working_session_not_interrupted(self):
+        self.assertFalse(
+            self._check(
+                override='plan',
+                session=self._session(permission_mode='acceptEdits', working=True),
+            ),
+        )
+
+    def test_images_never_respawn(self):
+        self.assertFalse(
+            self._check(
+                override='plan',
+                session=self._session(permission_mode='acceptEdits'),
+                images=[{'media_type': 'image/png', 'data': 'x'}],
+            ),
+        )
+
+
 if __name__ == '__main__':
     unittest.main()

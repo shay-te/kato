@@ -182,6 +182,29 @@ describe('MessageForm — draft persistence (operator scenario)', () => {
     }
   });
 
+  test('plan-mode button reflects the prop and is always available', () => {
+    // Unlike ultracode it is not version-gated — planning-only works on
+    // any CLI that honors --permission-mode.
+    _agentVer.value = { supports_workflows: false };
+    try {
+      renderForm({ taskId: 'T1', planMode: true });
+      const button = screen.getByRole('button', { name: /plan mode/i });
+      expect(button).toHaveAttribute('aria-pressed', 'true');
+    } finally {
+      _agentVer.value = { supports_workflows: true };
+    }
+  });
+
+  test('clicking plan-mode toggles via onPlanModeChange (no implicit local state)', () => {
+    const onPlanModeChange = vi.fn();
+    renderForm({ taskId: 'T1', planMode: false, onPlanModeChange });
+    const button = screen.getByRole('button', { name: /plan mode/i });
+    expect(button).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(button);
+    // The composer is controlled — it asks the parent to flip, not itself.
+    expect(onPlanModeChange).toHaveBeenCalledWith(true);
+  });
+
   test('ultracode OFF sends the message unchanged', async () => {
     const onSubmit = vi.fn().mockResolvedValue(true);
     renderForm({ taskId: 'T1', onSubmit });

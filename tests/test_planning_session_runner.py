@@ -184,6 +184,33 @@ class PlanningSessionRunnerTests(unittest.TestCase):
         self.assertIn('secret-client', prompt)
         self.assertTrue(prompt.endswith('please continue'))
 
+    def test_resume_session_for_chat_forwards_plan_permission_mode(self) -> None:
+        # The composer's plan-mode lock reaches the spawn as
+        # ``--permission-mode plan`` so the agent can only plan.
+        manager = _FakeManager(_terminal(result='planned'))
+        runner = PlanningSessionRunner(session_manager=manager, defaults=self.defaults)
+
+        runner.resume_session_for_chat(
+            task_id='PROJ-1',
+            message='plan this',
+            cwd='/tmp/client',
+            permission_mode='plan',
+        )
+
+        self.assertEqual(manager.start_kwargs['permission_mode'], 'plan')
+
+    def test_resume_session_for_chat_defaults_permission_mode(self) -> None:
+        # No override → fall back to the configured default mode (the
+        # normal can-implement chat session), never an empty mode.
+        manager = _FakeManager(_terminal(result='done'))
+        runner = PlanningSessionRunner(session_manager=manager, defaults=self.defaults)
+
+        runner.resume_session_for_chat(
+            task_id='PROJ-1', message='go', cwd='/tmp/client',
+        )
+
+        self.assertEqual(manager.start_kwargs['permission_mode'], 'acceptEdits')
+
     def test_implement_task_raises_when_terminal_reports_error(self) -> None:
         manager = _FakeManager(_terminal(is_error=True, result='Credit balance is too low'))
         runner = PlanningSessionRunner(session_manager=manager, defaults=self.defaults)

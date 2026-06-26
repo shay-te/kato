@@ -65,6 +65,8 @@ const MessageForm = forwardRef(function MessageForm({
   selectedEffort = '',
   effortDefault = '',
   onEffortChange,
+  planMode = false,
+  onPlanModeChange,
 }, ref) {
   // Lazy initializer reads the persisted draft once on mount.
   // SessionDetail keys this component on the active task, so this
@@ -464,6 +466,16 @@ const MessageForm = forwardRef(function MessageForm({
             style={{ display: 'none' }}
             onChange={handleFilePickerChange}
           />
+          <button
+            type="button"
+            className={`composer-plan-mode tooltip-above ${planMode ? 'is-on' : ''}`}
+            data-tooltip="Plan mode: lock the agent to planning only. It can read, search and propose a plan but NEVER edits files or runs mutating tools. Applies on the next message (the session re-spawns to take effect)."
+            aria-pressed={planMode}
+            aria-label="Toggle plan mode"
+            onClick={() => onPlanModeChange && onPlanModeChange(!planMode)}
+          >
+            Plan mode
+          </button>
           {supportsWorkflows && (
             <button
               type="button"

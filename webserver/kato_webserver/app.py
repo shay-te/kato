@@ -111,6 +111,10 @@ _SSE_POLL_INTERVAL_SECONDS = 0.1
 # Periodic SSE comment that keeps proxies / load balancers from idling
 # the connection out and lets the browser detect server crashes.
 _SSE_HEARTBEAT_SECONDS = 15.0
+# Claude's planning-only permission mode (``claude --permission-mode plan``):
+# the agent may read / search / plan but never edit files or run mutating
+# tools. Backs the composer's plan-mode lock.
+PLAN_PERMISSION_MODE = 'plan'
 
 
 def _record_cwd_or_none(manager, task_id: str) -> str | None:
@@ -760,6 +764,13 @@ def create_app(
     # the composer's effort selector. Empty/absent => the configured
     # default. Applied on (re)spawn of the chat session.
     app.config['TASK_EFFORT_OVERRIDES'] = {}
+    # Per-task "plan mode" lock, set from the composer's plan-mode toggle.
+    # When on, the chat session spawns with ``--permission-mode plan`` so
+    # the agent can ONLY plan — it never edits files or runs mutating
+    # tools. Stored as the literal ``'plan'`` (on) or '' (off, the
+    # configured default). Like model/effort the CLI bakes the mode at
+    # spawn, so toggling it on a live idle session forces a respawn.
+    app.config['TASK_PLAN_MODE_OVERRIDES'] = {}
 
     # Cache-bust the unhashed static bundles. ``static/build/app.js``
     # and ``static/css/app.css`` keep fixed names across rebuilds, so
@@ -901,6 +912,22 @@ def _register_http_routes(app: Flask) -> None:
             }), 400
         _set_task_override(app, 'TASK_EFFORT_OVERRIDES', task_id, effort)
         return jsonify({'effort': effort})
+
+    @app.get('/api/sessions/<task_id>/plan-mode')
+    def get_session_plan_mode(task_id: str):
+        # ``on`` is the operator-facing boolean; the stored override is the
+        # literal CLI value ('plan' or '') so the spawn path can use it raw.
+        on = _get_task_override(app, 'TASK_PLAN_MODE_OVERRIDES', task_id) == PLAN_PERMISSION_MODE
+        return jsonify({'plan_mode': on})
+
+    @app.post('/api/sessions/<task_id>/plan-mode')
+    def set_session_plan_mode(task_id: str):
+        body = request.get_json(silent=True) or {}
+        on = bool(body.get('plan_mode'))
+        value = PLAN_PERMISSION_MODE if on else ''
+        if not _set_task_override(app, 'TASK_PLAN_MODE_OVERRIDES', task_id, value):
+            return jsonify({'error': 'not available'}), 503
+        return jsonify({'plan_mode': on})
 
     @app.post('/api/scan/trigger')
     def trigger_scan():
@@ -2709,12 +2736,13 @@ def _register_post_message_route(app: Flask) -> None:
         if (
             _model_change_needs_respawn(app, manager, task_id, images)
             or _effort_change_needs_respawn(app, manager, task_id, images)
+            or _plan_mode_change_needs_respawn(app, manager, task_id, images)
         ):
             try:
                 manager.terminate_session(task_id, remove_record=False)
             except Exception:
                 app.logger.exception(
-                    'failed to terminate session for model/effort respawn (task %s)',
+                    'failed to terminate session for model/effort/plan respawn (task %s)',
                     task_id,
                 )
             return _spawn_or_reject_chat_session(app, task_id, text)
@@ -3203,6 +3231,41 @@ def _model_change_needs_respawn(app: Flask, manager, task_id: str, images) -> bo
     return str(getattr(session, 'model', '') or '') != requested
 
 
+def _plan_mode_change_needs_respawn(app: Flask, manager, task_id: str, images) -> bool:
+    """True when a live, idle session must respawn to apply the plan lock.
+
+    Same shape as ``_effort_change_needs_respawn``: the Claude CLI bakes
+    ``--permission-mode`` at spawn time, so flipping the composer's plan
+    lock can't change a running subprocess. Without this, a session that
+    was spawned able to edit keeps editing even after the operator locks
+    it to planning-only — the opposite of "lock him so he never
+    implements". Fires for any difference between the requested mode and
+    the live session's, in either direction (lock on AND unlock), so
+    turning the lock back off also respawns out of plan mode.
+
+    Only fires when the session is idle and there are no images (the
+    respawn path can't carry them — those deliver at the current mode and
+    the change applies on the next plain message).
+    """
+    if images:
+        return False
+    overrides = app.config.get('TASK_PLAN_MODE_OVERRIDES')
+    if overrides is None:
+        return False
+    session = manager.get_session(task_id) if manager is not None else None
+    if session is None or not getattr(session, 'is_alive', False):
+        return False  # no live session — the spawn path applies the mode
+    if bool(getattr(session, 'is_working', False)):
+        return False  # don't interrupt a turn
+    requested = str(overrides.get(task_id, '') or '')
+    live = str(getattr(session, 'permission_mode', '') or '')
+    # The session is "in plan mode" iff its baked mode is exactly 'plan';
+    # any other live mode (acceptEdits / bypassPermissions / '') counts as
+    # "can implement". Compare on that boolean so an unlocked override ('')
+    # only forces a respawn when the live session is actually still locked.
+    return (requested == PLAN_PERMISSION_MODE) != (live == PLAN_PERMISSION_MODE)
+
+
 def _deliver_to_live_session(
     manager, task_id: str, text: str, images=None,
 ):
@@ -3260,6 +3323,11 @@ def _spawn_or_reject_chat_session(app: Flask, task_id: str, text: str):
     # explicitly, so kato never falls through to the CLI's opaque built-in
     # effort (the old "Auto"). The operator always knows the level that ran.
     effort_override = effort_overrides.get(task_id, '') or _configured_chat_effort(app)
+    # Plan-mode lock: when set, force ``--permission-mode plan`` so the
+    # spawned agent can only plan. Empty → '' so the runner falls back to
+    # its configured default mode (the normal can-implement chat session).
+    plan_overrides = app.config.get('TASK_PLAN_MODE_OVERRIDES') or {}
+    permission_mode = plan_overrides.get(task_id, '')
     try:
         runner.resume_session_for_chat(
             task_id=task_id,
@@ -3269,6 +3337,7 @@ def _spawn_or_reject_chat_session(app: Flask, task_id: str, text: str):
             additional_dirs=additional_dirs,
             model=model_override,
             effort=effort_override,
+            permission_mode=permission_mode,
         )
     except Exception as exc:
         return jsonify({'error': str(exc)}), 500
