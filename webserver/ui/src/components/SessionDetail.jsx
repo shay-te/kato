@@ -41,6 +41,7 @@ export default function SessionDetail({
   onResizePointerDown,
   onOpenFile,
   onRegisterReconnect,
+  onWorkspaceMutated,
 }) {
   const taskId = session?.task_id;
   const stream = useSessionStream(taskId, onActivity);
@@ -568,6 +569,7 @@ export default function SessionDetail({
       turnInFlight={stream.turnInFlight}
       awaitingBackground={stream.awaitingBackground}
       onSendPrompt={onSendMessage}
+      onWorkspaceMutated={onWorkspaceMutated}
       searchSlot={
         <ChatSearch
           query={searchQuery}

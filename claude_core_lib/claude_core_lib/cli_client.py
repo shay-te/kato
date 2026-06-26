@@ -942,6 +942,15 @@ class ClaudeCliClient(object):
             command.extend(['--allowedTools', merged_allowed])
         merged_disallowed = self._merge_disallowed_with_floor(self._disallowed_tools)
         command.extend(['--disallowedTools', merged_disallowed])
+        # ``--resume`` and ``--add-dir`` come BEFORE the system prompt:
+        # it is the one multiline, unbounded-length argv value, and a
+        # degraded batch-shim spawn (``_host_binary_argv`` fallback)
+        # truncates the command line at its first newline — losing the
+        # session pin produced the Windows resume-amnesia bug.
+        normalized_session_id = fix_session_id(agent_session_id)
+        if normalized_session_id:
+            command.extend(['--resume', normalized_session_id])
+        append_additional_dirs(command, additional_dirs)
         # ``include_system_prompt=False`` is for boot smoke-tests that
         # only need to confirm model reachability ("Reply with: ok").
         # Inlining the architecture doc + lessons there can push the
@@ -959,10 +968,6 @@ class ClaudeCliClient(object):
             )
             if appended_system_prompt:
                 command.extend(['--append-system-prompt', appended_system_prompt])
-        normalized_session_id = fix_session_id(agent_session_id)
-        if normalized_session_id:
-            command.extend(['--resume', normalized_session_id])
-        append_additional_dirs(command, additional_dirs)
         command.extend(self._extra_args)
         return command
 
@@ -1284,12 +1289,25 @@ class ClaudeCliClient(object):
 
     @staticmethod
     def _resolve_windows_node_invocation(cmd_path: str) -> list[str] | None:
-        """If ``cmd_path`` is a Windows npm cmd-shim, return
-        ``[node.exe, script.js]`` to invoke directly. Returns None
-        on non-Windows hosts, on non-shim binaries, or when we
-        can't confidently parse the shim — caller falls back to
-        invoking ``cmd_path`` as-is, which works for short command
-        lines.
+        """If ``cmd_path`` is a Windows npm cmd-shim, return the direct
+        argv prefix that bypasses it. Two npm shim shapes exist:
+
+        * current ``@anthropic-ai/claude-code`` bundles a native
+          binary — the shim forwards ``%*`` to a quoted
+          ``"...\\bin\\claude.exe"`` → return ``[claude.exe]``;
+        * legacy packages reference the JS entry point —
+          ``"...cli.js"`` → return ``[node.exe, cli.js]``.
+
+        Returns None on non-Windows hosts, on non-shim binaries, or
+        when we can't confidently parse the shim — caller falls back to
+        invoking ``cmd_path`` as-is. That fallback is only safe for
+        short, single-line command lines: cmd.exe SILENTLY cuts its
+        command line at the first raw newline (and caps it at ~8K
+        chars), so a multiline ``--append-system-prompt`` value made it
+        drop every later argument — including ``--resume`` /
+        ``--session-id`` / ``--add-dir`` — and Claude started a fresh,
+        memoryless session under a new id on every kato spawn (the
+        Windows resume-amnesia bug).
         """
         if os.name != 'nt':
             return None
@@ -1300,21 +1318,25 @@ class ClaudeCliClient(object):
             shim_text = path.read_text(encoding='utf-8', errors='replace')
         except OSError:
             return None
-        # Standard npm shim references the JS entry point as a
-        # quoted ``"...something.js"`` literal. Pull the first
-        # match — the shim has fallback branches with the same
-        # path, so the first one is enough.
+        # The shim references its target as a quoted literal. Pull the
+        # first match — the shim has fallback branches with the same
+        # path, so the first one is enough. Native-binary shape first:
+        # when present it needs no node at all.
         import re
+        exe_match = re.search(r'"([^"]+\.exe)"', shim_text, re.IGNORECASE)
+        if exe_match:
+            exe_path = ClaudeCliClient._resolve_shim_reference(
+                exe_match.group(1), path.parent,
+            )
+            if exe_path is not None:
+                return [str(exe_path)]
         match = re.search(r'"([^"]+\.js)"', shim_text)
         if not match:
             return None
-        js_ref = match.group(1)
-        # npm shim uses ``%~dp0`` (the shim's own directory) as the
-        # path prefix. Resolve it to the shim's parent directory
-        # before checking the file exists.
-        js_ref = js_ref.replace('%~dp0\\', '').replace('%~dp0/', '').replace('%~dp0', '')
-        js_path = (path.parent / js_ref).resolve()
-        if not js_path.is_file():
+        js_path = ClaudeCliClient._resolve_shim_reference(
+            match.group(1), path.parent,
+        )
+        if js_path is None:
             return None
         # Prefer the ``node.exe`` next to the shim (npm / nvm layout)
         # so we use the same Node version the shim would have.
@@ -1325,6 +1347,22 @@ class ClaudeCliClient(object):
                 return None
             node_path = Path(node_via_path)
         return [str(node_path), str(js_path)]
+
+    @staticmethod
+    def _resolve_shim_reference(ref: str, shim_dir: Path) -> Path | None:
+        """Resolve a quoted shim target path against the shim's directory.
+
+        npm shims prefix the target with ``%~dp0`` (raw batch parameter
+        expansion) or ``%dp0%`` (the SETLOCAL variable newer shims
+        assign it to); both mean "the shim's own directory". Returns
+        None when the resolved target doesn't exist.
+        """
+        for token in ('%~dp0', '%dp0%'):
+            ref = ref.replace(token + '\\', '').replace(token + '/', '').replace(token, '')
+        target = (shim_dir / ref).resolve()
+        if not target.is_file():
+            return None
+        return target
 
     @staticmethod
     def _coerce_max_turns(value: int | str | None) -> int | None:

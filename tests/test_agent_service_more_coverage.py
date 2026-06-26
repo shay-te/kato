@@ -1599,6 +1599,35 @@ class KickLessonExtractionTests(unittest.TestCase):
         self.assertTrue(candidate_id.startswith('task__T1__prompt__'))
         lessons.compact.assert_not_called()
 
+    def test_trivial_prompt_skips_candidate_extraction(self) -> None:
+        # Continuation/ack prompts spawn no throwaway claude -p — the wart that
+        # spammed the operator's Claude history with "Review completed Kato
+        # task for lessons" transcripts on every "continue".
+        lessons = MagicMock()
+        service = AgentService(**_kwargs(lessons_service=lessons))
+
+        for trivial in (
+            'continue',
+            'Please continue from where you left off.',
+            'ok',
+            '  CONTINUE  ',
+            '👍',
+        ):
+            service.capture_prompt_lesson_candidate('T1', trivial)
+
+        import time
+        time.sleep(0.05)
+        lessons.extract_candidate_and_save.assert_not_called()
+
+    def test_is_trivial_lesson_prompt_heuristic(self) -> None:
+        is_trivial = AgentService._is_trivial_lesson_prompt
+        for trivial in ('continue', '  CONTINUE  ', 'ok', 'yes', '', '👍',
+                        'Please continue from where you left off.'):
+            self.assertTrue(is_trivial(trivial), trivial)
+        for real in ('always run dedup before finishing',
+                     'fix the failing test in module X'):
+            self.assertFalse(is_trivial(real), real)
+
     def test_compacts_after_successful_lesson_extraction(self) -> None:
         lessons = MagicMock()
         lessons.extract_and_save.return_value = '- concrete rule'

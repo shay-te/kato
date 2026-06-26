@@ -45,6 +45,22 @@ def is_reserved_workspace_dirname(name: object) -> bool:
     return str(name or '').strip() in RESERVED_WORKSPACE_ROOT_DIRNAMES
 
 
+# Dedicated working dir for the lessons one-shot ``claude -p``. Lessons
+# extraction is a pure text completion needing no repo access, but the CLI
+# still writes a throwaway transcript under ``~/.claude/projects/<cwd>``.
+# Running it here keeps those transcripts out of whatever repo kato's own
+# process runs in (e.g. the kato source checkout), where they would otherwise
+# surface in the operator's interactive Claude / VS Code session history.
+LESSON_EXTRACTION_CWD_DIRNAME = 'lesson-extraction'
+
+
+def lesson_extraction_cwd() -> Path:
+    """Isolated cwd for the lessons one-shot ``claude -p`` (see comment above)."""
+    return kato_home_path(
+        LESSON_EXTRACTION_CWD_DIRNAME, env_key='KATO_LESSON_EXTRACTION_CWD',
+    )
+
+
 def default_lessons_path() -> Path:
     """Default lessons file under ``KATO_WORKSPACES_ROOT``."""
     return (

@@ -1396,13 +1396,18 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
 
     def test_escalate_to_sigterm_returns_when_proc_exits_after_signal(self) -> None:
         # Line 558 happy branch: SIGTERM is sent; if the proc exits cleanly
-        # within 2s, we don't escalate to kill.
+        # within 2s, we don't escalate to kill. POSIX semantics — Windows
+        # tree-kills instead (covered in test_resume_ignored), so pin the
+        # platform flag or this would shell out to a real taskkill.
         session = self._build_session()
         session.logger = MagicMock()
         fake = _FakeProc()
         fake._returncode = None
         session._proc = fake
         with patch(
+            'claude_core_lib.claude_core_lib.session.streaming._IS_WINDOWS',
+            False,
+        ), patch(
             'claude_core_lib.claude_core_lib.session.streaming._wait_for_exit',
             return_value=True,
         ):
@@ -1411,6 +1416,7 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
 
     def test_escalate_to_sigterm_falls_through_to_kill_on_hang(self) -> None:
         # Line 558: SIGTERM-then-still-alive → _escalate_to_kill is invoked.
+        # Pinned to the POSIX branch for the same reason as above.
         session = self._build_session()
         session.logger = MagicMock()
         fake = _FakeProc()
@@ -1418,6 +1424,9 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         # First wait (post-SIGTERM) returns False → SIGKILL escalation;
         # second wait (post-SIGKILL inside _escalate_to_kill) returns True.
         with patch(
+            'claude_core_lib.claude_core_lib.session.streaming._IS_WINDOWS',
+            False,
+        ), patch(
             'claude_core_lib.claude_core_lib.session.streaming._wait_for_exit',
             side_effect=[False, True],
         ), patch.object(session, '_escalate_to_kill') as mock_kill:

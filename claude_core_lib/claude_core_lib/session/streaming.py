@@ -57,12 +57,16 @@ from claude_core_lib.claude_core_lib.helpers.sandbox_scope import (
     classify_tool_input_sandbox,
 )
 from claude_core_lib.claude_core_lib.session.index import parse_jsonl_dict_line
+from claude_core_lib.claude_core_lib.session.registry import kill_process_tree
 from agent_core_lib.agent_core_lib.helpers.logging_utils import configure_logger
 from agent_core_lib.agent_core_lib.helpers.text_utils import (
     condensed_text,
     normalized_text,
     text_from_mapping,
 )
+
+
+_IS_WINDOWS = os.name == 'nt'
 
 
 def _wait_for_exit(proc: subprocess.Popen, timeout: float) -> bool:
@@ -248,6 +252,17 @@ class StreamingClaudeSession(object):
         # looks like from the operator's side).
         self._session_id_confirmed = False
         self._session_id_mismatch_logged = False
+        # Resume-verdict flags, set from the CLI's init event. The
+        # session manager polls these right after a ``--resume`` spawn:
+        # ``_resume_confirmed`` means the CLI echoed the requested id
+        # (history actually loaded); ``_resume_ignored`` means the CLI
+        # announced a DIFFERENT id — it silently started a fresh,
+        # memoryless session instead of resuming (observed on Windows
+        # when a leftover CLI process still held the transcript). An
+        # ignored resume must be treated as a FAILED spawn, never as a
+        # live conversation.
+        self._resume_confirmed = False
+        self._resume_ignored = False
         # Optional callback: ``fn(actual_session_id)`` fired when Claude
         # announces its actual session id via the init event and it differs
         # from what the orchestrator expected. The manager registers this to keep its
@@ -377,6 +392,19 @@ class StreamingClaudeSession(object):
     @property
     def agent_session_id(self) -> str:
         return self._agent_session_id
+
+    @property
+    def resume_confirmed(self) -> bool:
+        """True once the CLI's init event echoed the requested ``--resume`` id."""
+        return self._resume_confirmed
+
+    @property
+    def resume_was_ignored(self) -> bool:
+        """True when this spawn asked for ``--resume <id>`` but the CLI
+        announced a DIFFERENT session id — i.e. it silently started a
+        fresh conversation with no memory of the task. The manager
+        treats this as a failed spawn and terminates the impostor."""
+        return self._resume_ignored
 
     def allowed_additional_dirs(self) -> tuple[str, ...]:
         """Spawn-time ``--add-dir`` paths the live subprocess was given.
@@ -840,16 +868,49 @@ class StreamingClaudeSession(object):
             'streaming claude session for task %s did not exit; sending SIGTERM',
             self._task_id,
         )
-        self._send_signal_locked(signal.SIGTERM)
+        if not (_IS_WINDOWS and self._kill_tree_safely(proc)):
+            # POSIX, or the tree kill could not run (no taskkill):
+            # fall back to the single-process signal. On Windows
+            # ``send_signal(SIGTERM)`` is ``TerminateProcess`` on the
+            # DIRECT child only — ``claude`` usually resolves to the
+            # npm ``claude.cmd`` shim there, so the direct child is a
+            # cmd.exe wrapper and the real CLI (node) SURVIVES the
+            # kill. The orphan keeps the session transcript open and
+            # the next ``--resume`` silently starts a blank,
+            # memoryless session (the "kato forgot everything after
+            # stop/restart" bug) — which is why the tree kill is
+            # always attempted first on Windows.
+            self._send_signal_locked(signal.SIGTERM)
         if _wait_for_exit(proc, 2.0):
             return
         self._escalate_to_kill(proc)
+
+    def _kill_tree_safely(self, proc: subprocess.Popen) -> bool:
+        """Tree-kill ``proc`` (wrapper AND its CLI child); False on failure.
+
+        Never raises — the terminate path must always fall through to
+        the portable single-process kill rather than crash mid-teardown.
+        """
+        try:
+            return bool(kill_process_tree(proc.pid, logger=self.logger))
+        except Exception:
+            self.logger.exception(
+                'tree kill failed for streaming claude session %s (pid %s)',
+                self._task_id,
+                getattr(proc, 'pid', '?'),
+            )
+            return False
 
     def _escalate_to_kill(self, proc: subprocess.Popen) -> None:
         self.logger.warning(
             'streaming claude session for task %s ignored SIGTERM; killing',
             self._task_id,
         )
+        if _IS_WINDOWS:
+            # Same tree semantics as the SIGTERM step — see above. The
+            # ``proc.kill()`` below stays as a last-resort fallback for
+            # when taskkill itself is unavailable.
+            self._kill_tree_safely(proc)
         # ``Popen.kill()`` is portable: SIGKILL on POSIX, ``TerminateProcess``
         # on Windows. ``signal.SIGKILL`` itself doesn't exist on Windows.
         try:
@@ -957,8 +1018,25 @@ class StreamingClaudeSession(object):
 
     def _build_command(self) -> list[str]:
         binary_path = shutil.which(self._binary) or self._binary
+        # Resolve PAST a Windows npm cmd-shim before spawning. cmd.exe
+        # silently cuts its command line at the first raw newline (and
+        # caps it at ~8K chars); the ``--append-system-prompt`` value
+        # below is multiline, so spawning through ``claude.cmd``
+        # dropped every later argument — including ``--resume`` /
+        # ``--session-id`` / ``--add-dir`` — and Claude started a
+        # fresh, memoryless session under a new id on every kato
+        # respawn (the Windows resume-amnesia bug). Shared with the
+        # one-shot client so both spawn paths bypass the shim the same
+        # way.
+        from claude_core_lib.claude_core_lib.cli_client import (
+            ClaudeCliClient as _CliClient,
+        )
+        spawn_prefix = (
+            _CliClient._resolve_windows_node_invocation(binary_path)
+            or [binary_path]
+        )
         command: list[str] = [
-            binary_path,
+            *spawn_prefix,
             '-p',
             '--output-format', 'stream-json',
             '--input-format', 'stream-json',
@@ -980,6 +1058,28 @@ class StreamingClaudeSession(object):
         command.extend(['--settings', out_of_workspace_write_settings_json()])
         if self._permission_prompt_tool:
             command.extend(['--permission-prompt-tool', self._permission_prompt_tool])
+        # Session identity comes EARLY in the argv — before any
+        # free-text value (``--append-system-prompt`` is multiline).
+        # If the spawn ever degrades back to a cmd.exe shim (resolver
+        # fallback), line truncation must cost us the tail of the
+        # system prompt, never the ``--resume``/``--session-id`` pin.
+        if self._resume_session_id:
+            # ``claude --resume <id>`` keeps the same session id by
+            # default — Claude only forks a new id when ``--fork-session``
+            # is also passed. So just resuming is enough to stick with
+            # the adopted id. Adopt the resume id synchronously so
+            # callers reading ``agent_session_id`` before the first
+            # ``system { subtype: init }`` event arrives get the right
+            # answer; the actual id is re-confirmed via
+            # ``_maybe_capture_session_id`` once the event lands.
+            self._agent_session_id = self._resume_session_id
+            command.extend(['--resume', self._resume_session_id])
+        else:
+            # Pin a session-id up front so callers can resume after restart
+            # without waiting for the system event to arrive.
+            self._agent_session_id = str(uuid.uuid4())
+            command.extend(['--session-id', self._agent_session_id])
+        append_additional_dirs(command, self._additional_dirs)
         append_model_effort_flags(
             command,
             model=self._model,
@@ -1013,24 +1113,11 @@ class StreamingClaudeSession(object):
             logger=self.logger,
         )
         if appended_system_prompt:
+            # The one multiline, unbounded-length value — deliberately
+            # LAST so a degraded batch-shim spawn truncates it instead
+            # of the flags that matter (see the session-identity block
+            # above).
             command.extend(['--append-system-prompt', appended_system_prompt])
-        if self._resume_session_id:
-            # ``claude --resume <id>`` keeps the same session id by
-            # default — Claude only forks a new id when ``--fork-session``
-            # is also passed. So just resuming is enough to stick with
-            # the adopted id. Adopt the resume id synchronously so
-            # callers reading ``agent_session_id`` before the first
-            # ``system { subtype: init }`` event arrives get the right
-            # answer; the actual id is re-confirmed via
-            # ``_maybe_capture_session_id`` once the event lands.
-            self._agent_session_id = self._resume_session_id
-            command.extend(['--resume', self._resume_session_id])
-        else:
-            # Pin a session-id up front so callers can resume after restart
-            # without waiting for the system event to arrive.
-            self._agent_session_id = str(uuid.uuid4())
-            command.extend(['--session-id', self._agent_session_id])
-        append_additional_dirs(command, self._additional_dirs)
         return command
 
     def _build_env(self) -> dict[str, str]:
@@ -1485,6 +1572,8 @@ class StreamingClaudeSession(object):
         if not is_init:
             return
         if candidate == self._agent_session_id:
+            if self._resume_session_id:
+                self._resume_confirmed = True
             if not self._session_id_confirmed:
                 self.logger.info(
                     'task %s: claude confirmed %s session id %s',
@@ -1512,6 +1601,11 @@ class StreamingClaudeSession(object):
             self._session_id_mismatch_logged = True
             self._session_id_confirmed = True  # suppress duplicate "confirmed" on next call
             if self._resume_session_id:
+                # The CLI ignored --resume and started a fresh session
+                # under a new id — a conversation with no memory of the
+                # task. Flag it so the manager terminates this impostor
+                # instead of letting it masquerade as the resumed chat.
+                self._resume_ignored = True
                 return
             # Fresh spawn: adopt the id Claude actually wrote to.
             self._agent_session_id = candidate

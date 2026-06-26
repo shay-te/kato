@@ -140,6 +140,14 @@ export default function App() {
     bumpWorkspaceVersion(activeTaskId);
   }, [activeTaskId, bumpWorkspaceVersion]);
 
+  // The git buttons in the session header (Merge master / Pull) mutate
+  // the workspace clone on disk OUTSIDE the agent stream, so the normal
+  // tool-result bump never fires. Bump explicitly so the Changes tab /
+  // Files tree / open editor refetch the post-merge content.
+  const handleWorkspaceMutated = useCallback((taskId) => {
+    bumpWorkspaceVersion(taskId || activeTaskId);
+  }, [activeTaskId, bumpWorkspaceVersion]);
+
   const setActiveTaskId = useCallback((taskId) => {
     userPickedTabRef.current = true;
     setActiveTaskIdState(taskId);
@@ -560,6 +568,7 @@ export default function App() {
           onResizePointerDown={resizer.onPointerDown}
           onOpenFile={handleOpenFile}
           onRegisterReconnect={handleRegisterReconnect}
+          onWorkspaceMutated={handleWorkspaceMutated}
         />
       }
     />

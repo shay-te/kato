@@ -1047,10 +1047,41 @@ class AgentService(MissionStepLoggerMixin, Service):
             'triggered_immediately': triggered,
         }
 
+    # Continuation / acknowledgement prompts carry no generalizable lesson.
+    # Mining them just fires a throwaway ``claude -p`` per low-signal message
+    # — the WorkingIndicator "continue" button, the Resume "please continue
+    # from where you left off", "ok", "yes", etc. — which spammed the
+    # operator's Claude session history. Skip them so candidate extraction
+    # only runs on prompts that could actually encode a rule. Normalized
+    # (lowercased, whitespace-collapsed, trailing punctuation stripped).
+    _TRIVIAL_LESSON_PROMPTS = frozenset({
+        'continue', 'continue from where you left off',
+        'please continue', 'please continue from where you left off',
+        'go', 'go on', 'go ahead', 'keep going', 'carry on', 'proceed', 'next',
+        'yes', 'yeah', 'yep', 'ok', 'okay', 'sure', 'k', 'y',
+        'no', 'nope', 'n', 'stop',
+        'thanks', 'thank you', 'ty',
+    })
+
+    @classmethod
+    def _is_trivial_lesson_prompt(cls, text: str) -> bool:
+        """True for a no-signal chat prompt that shouldn't trigger lesson mining."""
+        normalized = ' '.join(str(text or '').split()).lower().strip(' .!?,…')
+        if not normalized:
+            return True
+        if normalized in cls._TRIVIAL_LESSON_PROMPTS:
+            return True
+        # Ultra-short tokens (emoji, "k", "👍") never encode a lesson.
+        return len(normalized) < 4
+
     def capture_prompt_lesson_candidate(self, task_id: str, prompt: str) -> None:
         """Best-effort candidate lesson extraction for operator chat prompts."""
         text = str(prompt or '').strip()
         if not text:
+            return
+        if self._is_trivial_lesson_prompt(text):
+            # Continuation/ack prompts have no lesson value — skip to avoid a
+            # throwaway ``claude -p`` (and a stray transcript) per message.
             return
         candidate_id = self._task_lesson_candidate_id(task_id, 'prompt')
         context = f'Operator chat prompt for task {task_id}:\n{text}'
