@@ -12,6 +12,11 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 vi.mock('./api.js', () => ({
   forgetTaskWorkspace: vi.fn().mockResolvedValue({ ok: true }),
   triggerScan: vi.fn().mockResolvedValue({ ok: true }),
+  // usePlanWatch polls this on mount; stub it so the mock doesn't
+  // reject (unhandled-rejection noise Vitest flags).
+  fetchSessionPlan: vi.fn().mockResolvedValue(
+    { exists: false, content: '', mtime: 0 },
+  ),
   // App now mounts <SettingsDrawer>, whose default-tab panel
   // (RepositoriesSettingsPanel) calls fetchSettings on mount even
   // while the drawer is closed. Stub every read the drawer panels

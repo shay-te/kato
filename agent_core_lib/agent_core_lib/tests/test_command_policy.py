@@ -313,6 +313,15 @@ class ToolCapabilityTests(unittest.TestCase):
             self.assertEqual(v.decision, Decision.ALLOW, tool)
             self.assertNotEqual(v.category, RiskCategory.EXTERNAL_CAPABILITY, tool)
 
+    def test_exit_plan_mode_is_local_not_external(self):
+        # Presenting a plan / leaving plan mode is a bounded-local capability —
+        # it must not trip the red "external capability" gate or it would block
+        # the plan-mode handoff. Case-insensitive, like the other tool names.
+        for tool in ('ExitPlanMode', 'exitplanmode'):
+            v = classify_action(tool, {'plan': '# Plan'}, policy=_DEFAULT)
+            self.assertEqual(v.decision, Decision.ALLOW, tool)
+            self.assertNotEqual(v.category, RiskCategory.EXTERNAL_CAPABILITY, tool)
+
     def test_ask_user_question_is_recognized_not_external(self):
         # The agent asking the operator a question is a known local tool — it
         # must NOT trip the red "external capability" gate (the host renders it as

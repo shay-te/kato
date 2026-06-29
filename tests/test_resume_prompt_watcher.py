@@ -18,7 +18,15 @@ from agent_core_lib.agent_core_lib.helpers.session_id_utils import AGENT_SESSION
 from kato_core_lib.data_layers.service.resume_prompt_watcher import (
     ResumePromptWatcher,
 )
+from kato_core_lib.helpers.plan_writer import PLAN_FILENAME
 from kato_core_lib.helpers.resume_prompt_writer import RESUME_PROMPT_FILENAME
+
+
+def _exit_plan_event(plan: str) -> '_Event':
+    """An assistant event whose content carries an ExitPlanMode tool call."""
+    return _Event('assistant', {'message': {'content': [
+        {'type': 'tool_use', 'name': 'ExitPlanMode', 'input': {'plan': plan}},
+    ]}})
 
 
 class _Event(object):
@@ -112,6 +120,9 @@ class ResumePromptWatcherTickTests(unittest.TestCase):
 
     def _resume_path(self, task_id: str) -> Path:
         return self.workspaces.workspace_path(task_id) / RESUME_PROMPT_FILENAME
+
+    def _plan_path(self, task_id: str) -> Path:
+        return self.workspaces.workspace_path(task_id) / PLAN_FILENAME
 
     def test_tick_writes_nothing_when_no_sessions(self) -> None:
         self.assertEqual(self.watcher.tick(), 0)
@@ -260,6 +271,64 @@ class ResumePromptWatcherTickTests(unittest.TestCase):
             return_value=False,
         ):
             self.assertEqual(self.watcher.tick(), 0)
+
+    def test_tick_writes_plan_md_when_exit_plan_mode_appears(self) -> None:
+        # A plan-mode turn ends with an ExitPlanMode tool call + result.
+        session = _FakeSession([
+            _Event('user', {'message': {'role': 'user', 'content': 'plan it'}}),
+            _exit_plan_event('# Plan\n1. Do X\n2. Do Y'),
+            _Event('result', {'is_error': False, 'result': 'planned'}),
+        ])
+        self.sessions.add('T1', session)
+        self.workspaces.add('T1', ['client'])
+        # One tick writes BOTH plan.md and resume_prompt.md → 2 files.
+        self.assertEqual(self.watcher.tick(), 2)
+        plan_path = self._plan_path('T1')
+        self.assertTrue(plan_path.is_file())
+        self.assertEqual(plan_path.read_text(), '# Plan\n1. Do X\n2. Do Y')
+
+    def test_identical_plan_not_rewritten(self) -> None:
+        session = _FakeSession([
+            _exit_plan_event('# Plan A'),
+            _Event('result', {'is_error': False, 'result': 'planned'}),
+        ])
+        self.sessions.add('T1', session)
+        self.workspaces.add('T1', ['client'])
+        self.assertEqual(self.watcher.tick(), 2)
+        plan_path = self._plan_path('T1')
+        first_mtime = plan_path.stat().st_mtime_ns
+        # A new turn that repeats the SAME plan must not rewrite plan.md.
+        session.append(_exit_plan_event('# Plan A'))
+        session.append(_Event('result', {'is_error': False, 'result': 'again'}))
+        # resume_prompt still rewrites (new turn) → 1, but plan stays put.
+        self.assertEqual(self.watcher.tick(), 1)
+        self.assertEqual(plan_path.stat().st_mtime_ns, first_mtime)
+
+    def test_new_plan_rewrites_plan_md(self) -> None:
+        session = _FakeSession([
+            _exit_plan_event('# Old plan'),
+            _Event('result', {'is_error': False, 'result': 'planned'}),
+        ])
+        self.sessions.add('T1', session)
+        self.workspaces.add('T1', ['client'])
+        self.assertEqual(self.watcher.tick(), 2)
+        # Operator iterates; agent emits a revised plan.
+        session.append(_exit_plan_event('# New plan'))
+        session.append(_Event('result', {'is_error': False, 'result': 'replanned'}))
+        self.assertEqual(self.watcher.tick(), 2)
+        self.assertEqual(self._plan_path('T1').read_text(), '# New plan')
+
+    def test_no_plan_md_when_no_exit_plan_mode(self) -> None:
+        session = _FakeSession([
+            _Event('assistant', {'message': {
+                'content': [{'type': 'text', 'text': 'just edited a file'}],
+            }}),
+            _Event('result', {'is_error': False, 'result': 'done'}),
+        ])
+        self.sessions.add('T1', session)
+        self.workspaces.add('T1', ['client'])
+        self.assertEqual(self.watcher.tick(), 1)  # only resume_prompt
+        self.assertFalse(self._plan_path('T1').exists())
 
     def test_records_by_task_indexes_multiple_records(self) -> None:
         # Two records with task ids → the indexing loop iterates (blank ids skip).

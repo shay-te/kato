@@ -929,6 +929,44 @@ def _register_http_routes(app: Flask) -> None:
             return jsonify({'error': 'not available'}), 503
         return jsonify({'plan_mode': on})
 
+    @app.get('/api/sessions/<task_id>/plan')
+    def get_session_plan(task_id: str):
+        """Return the agent's captured plan (``<workspace>/plan.md``).
+
+        Written by ``ResumePromptWatcher`` whenever the agent presents a
+        plan via ExitPlanMode (see ``plan_capture_utils`` / ``plan_writer``).
+        The UI polls this to auto-open the plan in the centre pane for
+        review — ``mtime`` drives the "a NEW plan just landed" detection so
+        the view only auto-opens on a fresh plan, never on every refresh.
+
+        Always 200: ``{ exists, content, mtime }``. ``exists=false`` (empty
+        content, ``mtime=0``) for a task with no plan yet, no workspace, or
+        any read error — the UI treats all of those the same.
+        """
+        from pathlib import Path
+
+        from kato_core_lib.helpers.plan_writer import PLAN_FILENAME
+
+        empty = {'exists': False, 'content': '', 'mtime': 0}
+        workspace_manager = app.config.get('WORKSPACE_MANAGER')
+        if workspace_manager is None:
+            return jsonify(empty)
+        try:
+            workspace_dir = workspace_manager.workspace_path(task_id)
+        except Exception:  # noqa: BLE001 - unknown task → no plan
+            return jsonify(empty)
+        if not workspace_dir:
+            return jsonify(empty)
+        plan_path = Path(str(workspace_dir)) / PLAN_FILENAME
+        try:
+            if not plan_path.is_file():
+                return jsonify(empty)
+            content = plan_path.read_text(encoding='utf-8')
+            mtime = plan_path.stat().st_mtime_ns
+        except (OSError, ValueError, UnicodeDecodeError):
+            return jsonify(empty)
+        return jsonify({'exists': True, 'content': content, 'mtime': mtime})
+
     @app.post('/api/scan/trigger')
     def trigger_scan():
         force_event = app.config.get('FORCE_SCAN_EVENT')

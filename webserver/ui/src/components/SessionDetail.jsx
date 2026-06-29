@@ -42,6 +42,8 @@ export default function SessionDetail({
   onOpenFile,
   onRegisterReconnect,
   onWorkspaceMutated,
+  planAvailable = false,
+  onOpenPlan,
 }) {
   const taskId = session?.task_id;
   const stream = useSessionStream(taskId, onActivity);
@@ -650,6 +652,8 @@ export default function SessionDetail({
           onEffortChange={handleEffortChange}
           planMode={planMode}
           onPlanModeChange={handlePlanModeChange}
+          planAvailable={planAvailable}
+          onOpenPlan={onOpenPlan}
         />
       </section>
       <PermissionDecisionContainer

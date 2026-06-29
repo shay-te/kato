@@ -67,6 +67,8 @@ const MessageForm = forwardRef(function MessageForm({
   onEffortChange,
   planMode = false,
   onPlanModeChange,
+  planAvailable = false,
+  onOpenPlan,
 }, ref) {
   // Lazy initializer reads the persisted draft once on mount.
   // SessionDetail keys this component on the active task, so this
@@ -476,6 +478,17 @@ const MessageForm = forwardRef(function MessageForm({
           >
             Plan mode
           </button>
+          {planAvailable && (
+            <button
+              type="button"
+              className="composer-view-plan tooltip-above"
+              data-tooltip="View the agent's latest plan in the centre pane for review."
+              aria-label="View plan"
+              onClick={() => onOpenPlan && onOpenPlan()}
+            >
+              View plan
+            </button>
+          )}
           {supportsWorkflows && (
             <button
               type="button"

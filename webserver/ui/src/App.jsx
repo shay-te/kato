@@ -7,6 +7,7 @@ import GlobalPermissionContainer from './components/GlobalPermissionContainer.js
 import Header from './components/Header.jsx';
 import Layout from './components/Layout.jsx';
 import OrchestratorActivityFeed from './components/OrchestratorActivityFeed.jsx';
+import PlanPane from './components/PlanPane.jsx';
 import RightPane from './components/RightPane.jsx';
 import SafetyBanner from './components/SafetyBanner.jsx';
 import AgentVersionBanner from './components/AgentVersionBanner.jsx';
@@ -35,6 +36,7 @@ import { useStatusFeed } from './hooks/useStatusFeed.js';
 import { useTaskAttention } from './hooks/useTaskAttention.js';
 import { useTaskTabShortcuts } from './hooks/useTaskTabShortcuts.js';
 import { useToolMemory } from './hooks/useToolMemory.js';
+import { usePlanWatch } from './hooks/usePlanWatch.js';
 import { CLAUDE_EVENT } from './constants/claudeEvent.js';
 import { agentStatusStore } from './stores/agentStatusStore.js';
 import { mergePendingPermissionTaskIds } from './utils/sessionAttention.js';
@@ -461,6 +463,25 @@ export default function App() {
     rememberFileView(nextOpenFile);
     setOpenFile(nextOpenFile);
   }, [activeTaskId]);
+  // Open the agent's plan in the centre pane (a ``view: 'plan'`` openFile
+  // that EditorPane/DiffPane ignore). Deliberately NOT persisted via
+  // ``rememberFileView`` — the plan view is ephemeral, so a reload won't
+  // re-yank the centre pane onto a plan the operator already dismissed.
+  const handleOpenPlan = useCallback(() => {
+    if (!activeTaskId) { return; }
+    setOrchestratorOpen(false);
+    openFileRequestRef.current += 1;
+    const next = {
+      taskId: activeTaskId,
+      view: 'plan',
+      openRequestId: openFileRequestRef.current,
+    };
+    openFileRef.current = next;
+    setOpenFile(next);
+  }, [activeTaskId]);
+  const { content: planContent, available: planAvailable } = usePlanWatch(
+    activeTaskId, handleOpenPlan,
+  );
   const handleFileViewStateChange = useCallback((viewState) => {
     const current = openFileRef.current;
     if (!current || !current.taskId || !viewState) { return; }
@@ -493,6 +514,8 @@ export default function App() {
         onClose={toggleOrchestrator}
       />
     );
+  } else if (activeOpenFile?.view === 'plan') {
+    centerPane = <PlanPane content={planContent} />;
   } else if (activeOpenFile?.view === 'diff') {
     centerPane = (
       <DiffPane
@@ -569,6 +592,8 @@ export default function App() {
           onOpenFile={handleOpenFile}
           onRegisterReconnect={handleRegisterReconnect}
           onWorkspaceMutated={handleWorkspaceMutated}
+          planAvailable={planAvailable}
+          onOpenPlan={handleOpenPlan}
         />
       }
     />

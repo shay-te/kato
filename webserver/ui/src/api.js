@@ -495,6 +495,17 @@ export function setSessionPlanMode(taskId, on) {
   );
 }
 
+// The agent's captured plan (``<workspace>/plan.md``), written whenever
+// the agent presents a plan via ExitPlanMode while in plan mode. Returns
+// ``{ exists, content, mtime }``; ``mtime`` lets the caller detect a NEW
+// plan (auto-open the centre pane only on a strictly-newer plan, never on
+// every poll). Always resolves — empty payload for no plan / no task.
+export function fetchSessionPlan(taskId) {
+  if (!taskId) { return Promise.resolve({ exists: false, content: '', mtime: 0 }); }
+  return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/plan`)
+    .catch(() => ({ exists: false, content: '', mtime: 0 }));
+}
+
 export function triggerScan() {
   return requestEnvelope('/api/scan/trigger', { method: 'POST' });
 }

@@ -497,6 +497,11 @@ _KNOWN_LOCAL_TOOLS = frozenset({
     # the host renders it as an answer UI; it must not look like a scary new
     # "external capability".
     'askuserquestion',
+    # Presenting a plan / leaving plan mode. A bounded-local capability: the
+    # agent proposes a plan for review and never reaches off-machine. The host
+    # captures the plan and renders it; it must not trip the red "external
+    # capability" gate (it would otherwise block the plan-mode handoff).
+    'exitplanmode',
 })
 # Tools that reach the network / a third-party service. ``mcp__*`` (any MCP
 # connector) is matched by prefix. Off-machine data flow → BLOCK by default.

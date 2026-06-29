@@ -3016,6 +3016,7 @@ header .chats-menu button:not(.header-status) {
  * armed. ultracode (cyan) and the plan-mode lock (amber) share the base
  * shape and hover; only the armed accent differs. */
 .composer-ultracode,
+.composer-view-plan,
 .composer-plan-mode {
   flex-shrink: 0;
   height: 26px;
@@ -3031,6 +3032,7 @@ header .chats-menu button:not(.header-status) {
 }
 
 .composer-ultracode:hover,
+.composer-view-plan:hover,
 .composer-plan-mode:hover {
   color: $C-NEUTRAL-96;
   border-color: $C-NEUTRAL-45;
@@ -3631,6 +3633,86 @@ code {
 }
 
 .editor-pane-empty-hint {
+  font-size: $TEXT-12;
+  color: $C-NEUTRAL-96-A42;
+}
+
+// Plan pane — the agent's plan.md rendered as markdown in the centre
+// column. Same chrome family as the editor pane (shared header/empty
+// look) with a scrollable markdown body.
+#plan-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  background: $C-NEUTRAL-16;
+  border-left: 1px solid $C-NEUTRAL-16;
+  border-right: 1px solid $C-NEUTRAL-16;
+}
+
+.plan-pane-header {
+  display: flex;
+  align-items: center;
+  gap: $SPACE-10;
+  padding: $SPACE-8 $SPACE-14;
+  border-bottom: 1px solid $C-NEUTRAL-16;
+  background: linear-gradient(180deg,
+      $C-NEUTRAL-11-A62 0%,
+      $C-NEUTRAL-07-A75 100%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+}
+
+.plan-pane-title {
+  flex: 1;
+  min-width: 0;
+  font-size: $TEXT-12;
+  font-weight: 600;
+  color: $C-NEUTRAL-96;
+}
+
+.plan-pane-pill {
+  flex-shrink: 0;
+  font-size: $TEXT-10;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: $C-NEUTRAL-96-A65;
+  padding: $SPACE-3 $SPACE-9;
+  border-radius: var(--radius-pill);
+  background: $C-NEUTRAL-100-A06;
+  border: 1px solid $C-NEUTRAL-100-A06;
+}
+
+.plan-pane-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.plan-pane-markdown {
+  padding: $SPACE-20 $SPACE-24;
+  color: $C-NEUTRAL-96;
+  line-height: 1.6;
+}
+
+.plan-pane-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: $SPACE-40;
+  text-align: center;
+  color: $C-NEUTRAL-96-A65;
+  background: $C-NEUTRAL-16;
+}
+
+.plan-pane-empty p {
+  margin: $SPACE-6 0;
+  max-width: 420px;
+}
+
+.plan-pane-empty-hint {
   font-size: $TEXT-12;
   color: $C-NEUTRAL-96-A42;
 }

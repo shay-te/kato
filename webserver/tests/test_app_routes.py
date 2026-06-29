@@ -1391,6 +1391,46 @@ class PlanModeRoutesTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
 
 
+class PlanFileRouteTests(unittest.TestCase):
+    """``GET /api/sessions/<id>/plan`` — reads ``<workspace>/plan.md``."""
+
+    def _client_with_plan(self, plan_text=None):
+        import tempfile
+        from kato_core_lib.helpers.plan_writer import PLAN_FILENAME
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        ws = Path(td.name) / 'PROJ-1'
+        ws.mkdir(parents=True)
+        if plan_text is not None:
+            (ws / PLAN_FILENAME).write_text(plan_text, encoding='utf-8')
+        workspace = _FakeWorkspaceManager(workspace_path_for={'PROJ-1': str(ws)})
+        app = create_app(session_manager=_FakeManager(), workspace_manager=workspace)
+        return app.test_client()
+
+    def test_returns_plan_content_when_present(self):
+        body = self._client_with_plan('# Plan\n1. Do X').get(
+            '/api/sessions/PROJ-1/plan').get_json()
+        self.assertTrue(body['exists'])
+        self.assertEqual(body['content'], '# Plan\n1. Do X')
+        self.assertGreater(body['mtime'], 0)
+
+    def test_returns_empty_when_no_plan_file(self):
+        body = self._client_with_plan(None).get(
+            '/api/sessions/PROJ-1/plan').get_json()
+        self.assertEqual(body, {'exists': False, 'content': '', 'mtime': 0})
+
+    def test_returns_empty_for_unknown_task(self):
+        client = self._client_with_plan('# Plan')
+        body = client.get('/api/sessions/UNKNOWN/plan').get_json()
+        self.assertFalse(body['exists'])
+
+    def test_returns_empty_when_no_workspace_manager(self):
+        app = create_app(session_manager=_FakeManager())
+        app.config['WORKSPACE_MANAGER'] = None
+        body = app.test_client().get('/api/sessions/T-1/plan').get_json()
+        self.assertEqual(body, {'exists': False, 'content': '', 'mtime': 0})
+
+
 class PlanModeRespawnTests(unittest.TestCase):
     """``_plan_mode_change_needs_respawn`` — the CLI bakes the mode at spawn."""
 
