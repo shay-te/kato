@@ -770,7 +770,14 @@ def create_app(
     # tools. Stored as the literal ``'plan'`` (on) or '' (off, the
     # configured default). Like model/effort the CLI bakes the mode at
     # spawn, so toggling it on a live idle session forces a respawn.
-    app.config['TASK_PLAN_MODE_OVERRIDES'] = {}
+    #
+    # Unlike model/effort, plan mode is a SAFETY lock, so it persists across
+    # restarts: reload the locked tasks from ``plan_mode.json`` into the
+    # live override map at boot, so the next respawn re-applies the lock.
+    from kato_core_lib.helpers.plan_mode_store import read_plan_mode_tasks
+    app.config['TASK_PLAN_MODE_OVERRIDES'] = {
+        task_id: PLAN_PERMISSION_MODE for task_id in read_plan_mode_tasks()
+    }
 
     # Cache-bust the unhashed static bundles. ``static/build/app.js``
     # and ``static/css/app.css`` keep fixed names across rebuilds, so
@@ -927,6 +934,11 @@ def _register_http_routes(app: Flask) -> None:
         value = PLAN_PERMISSION_MODE if on else ''
         if not _set_task_override(app, 'TASK_PLAN_MODE_OVERRIDES', task_id, value):
             return jsonify({'error': 'not available'}), 503
+        # Persist the lock so it survives a restart (the boot path reloads
+        # it into the override map). Best-effort — a write failure must not
+        # fail the toggle the operator just made in the live session.
+        from kato_core_lib.helpers.plan_mode_store import set_plan_mode
+        set_plan_mode(task_id, on)
         return jsonify({'plan_mode': on})
 
     @app.get('/api/sessions/<task_id>/plan')
@@ -2431,6 +2443,11 @@ def _register_http_routes(app: Flask) -> None:
         # fails on a file lock. Cleared when the operator re-adopts the task.
         from kato_core_lib.helpers.forgotten_tasks_store import forget as _mark_forgotten
         _mark_forgotten(task_id)
+        # Drop any persisted plan-mode lock + its live override so a
+        # forgotten task doesn't reappear plan-locked after a restart.
+        from kato_core_lib.helpers.plan_mode_store import set_plan_mode
+        set_plan_mode(task_id, False)
+        _set_task_override(app, 'TASK_PLAN_MODE_OVERRIDES', task_id, '')
         # 2. Wipe the per-task workspace clone(s). ``delete``
         #    silently swallows ``OSError``; we VERIFY after.
         try:

@@ -14,6 +14,7 @@ so individual feature areas stay readable.
 
 from __future__ import annotations
 
+import os
 import tempfile
 import threading
 import unittest
@@ -1353,6 +1354,18 @@ class EffortRoutesTests(unittest.TestCase):
 class PlanModeRoutesTests(unittest.TestCase):
     """Per-task plan-mode lock: get/set the boolean + respawn helper."""
 
+    def setUp(self):
+        # Isolate the persistent plan-mode store so POSTs never touch the
+        # real ``~/.kato/plan_mode.json`` (plan mode now persists to disk).
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        patcher = patch.dict(
+            os.environ,
+            {'KATO_PLAN_MODE_PATH': str(Path(self._td.name) / 'plan_mode.json')},
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def _client(self):
         return create_app(session_manager=_FakeManager()).test_client()
 
@@ -1389,6 +1402,38 @@ class PlanModeRoutesTests(unittest.TestCase):
             '/api/sessions/T-1/plan-mode', json={'plan_mode': True},
         )
         self.assertEqual(response.status_code, 503)
+
+    def test_plan_mode_survives_restart(self):
+        # Turn it on, then build a FRESH app (simulating a restart): the
+        # boot path reloads the lock from disk so GET still reports on.
+        client = self._client()
+        client.post('/api/sessions/T-1/plan-mode', json={'plan_mode': True})
+        restarted = create_app(session_manager=_FakeManager())
+        self.assertEqual(
+            restarted.config['TASK_PLAN_MODE_OVERRIDES'].get('T-1'), 'plan',
+        )
+        self.assertTrue(
+            restarted.test_client().get(
+                '/api/sessions/T-1/plan-mode').get_json()['plan_mode'],
+        )
+
+    def test_cleared_plan_mode_does_not_return_after_restart(self):
+        client = self._client()
+        client.post('/api/sessions/T-1/plan-mode', json={'plan_mode': True})
+        client.post('/api/sessions/T-1/plan-mode', json={'plan_mode': False})
+        restarted = create_app(session_manager=_FakeManager())
+        self.assertNotIn('T-1', restarted.config['TASK_PLAN_MODE_OVERRIDES'])
+
+    def test_forget_clears_persisted_plan_lock(self):
+        workspace = _FakeWorkspaceManager()
+        app = create_app(session_manager=_FakeManager(), workspace_manager=workspace)
+        client = app.test_client()
+        client.post('/api/sessions/T-9/plan-mode', json={'plan_mode': True})
+        client.delete('/api/sessions/T-9/workspace')
+        # Gone from the live map AND from disk (no resurrection on restart).
+        self.assertNotIn('T-9', app.config['TASK_PLAN_MODE_OVERRIDES'])
+        restarted = create_app(session_manager=_FakeManager())
+        self.assertNotIn('T-9', restarted.config['TASK_PLAN_MODE_OVERRIDES'])
 
 
 class PlanFileRouteTests(unittest.TestCase):
