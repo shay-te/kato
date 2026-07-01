@@ -758,6 +758,21 @@ function renderRepoHeaderStats(stats, commentCount, commentStatus = '') {
 }
 
 
+// Repo-relative paths of every FILE (leaf) node in an attachIds tree.
+// Used to scope the repo-header comment count/status to exactly the files
+// the tree can render a 💬 badge for (see the ``badgeFilePaths`` memo).
+function collectFileRelativePaths(nodes, out = []) {
+  for (const node of nodes || []) {
+    if (Array.isArray(node.children) && node.children.length > 0) {
+      collectFileRelativePaths(node.children, out);
+    } else {
+      const rel = String(node?.relativePath || '');
+      if (rel) { out.push(rel); }
+    }
+  }
+  return out;
+}
+
 function RepoTree({
   repoTree, width, collapsed, onToggle, onPickFile,
   onOpenFile, onOpenPathMenu, onRecheckPush,
@@ -786,13 +801,22 @@ function RepoTree({
   const changedTree = useMemo(() => {
     return buildDiffFileTree(changedFilesList);
   }, [changedFilesList]);
+  // Files the tree actually renders a 💬 badge for: the changed files in the
+  // default view, or every tracked file when "show all files" is on. Scoping
+  // the repo-header count/status to this set keeps the header badge in lockstep
+  // with the per-file badges — a comment on a file NOT in the tree (anchor
+  // outdated, change reverted, path/repo mismatch) can no longer inflate the
+  // header with no visible badge to match ("no badge on the tree → repo 0").
+  const badgeFilePaths = useMemo(() => (
+    showAllFiles ? collectFileRelativePaths(treeData) : changedFilesList
+  ), [showAllFiles, treeData, changedFilesList]);
   // Inline header summary: git +/− totals for this repo and its open
   // comment count, so the operator reads the repo's state without
   // expanding it. Built before the return to keep the JSX logic-free.
   const headerStats = renderRepoHeaderStats(
     changedTree.stats,
-    countRepoComments(commentMeta),
-    repoCommentStatus(commentMeta, moreUrgentCommentStatus),
+    countRepoComments(commentMeta, badgeFilePaths),
+    repoCommentStatus(commentMeta, moreUrgentCommentStatus, badgeFilePaths),
   );
   const filteredChangedNodes = useMemo(() => {
     return filterChangedFileTree(changedTree.nodes, searchTerm);

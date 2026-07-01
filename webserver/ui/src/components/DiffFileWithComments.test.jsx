@@ -175,7 +175,10 @@ describe('DiffFileWithComments — collapse / expand integration', () => {
       }],
     });
 
-    expect(screen.getByText('stale line comment')).toBeInTheDocument();
+    // The body renders in the panel (the header also shows a one-line
+    // preview of the same text — assert the actual thread body, not it).
+    expect(screen.getAllByText('stale line comment')
+      .some((el) => el.closest('.diff-file-comment-body'))).toBe(true);
     expect(screen.getByText(/Original line 3 changed/i)).toBeInTheDocument();
     expect(container.querySelector('.diff-line-comments-host')).not.toBeInTheDocument();
   });
@@ -582,7 +585,10 @@ describe('DiffFileWithComments — buried comment auto-reveal', () => {
     // No expander was clicked — the thread shows up on its own,
     // and the line it is anchored to is now in the diff.
     await waitFor(() => {
-      expect(screen.getByText('open comment in a gap')).toBeInTheDocument();
+      // The thread BODY (not just the header preview) must be revealed —
+      // scope to .diff-file-comment-body so the header preview can't pass this.
+      expect(screen.getAllByText('open comment in a gap')
+        .some((el) => el.closest('.diff-file-comment-body'))).toBe(true);
     });
     expect(screen.getByText('line 15')).toBeInTheDocument();
     expect(apiMocks.fetchBaseFileContent).toHaveBeenCalledWith('T1', {
@@ -662,7 +668,8 @@ describe('DiffFileWithComments — file-level comment shortcut', () => {
         author: 'reviewer', created_at: '2024-01-01T00:00:00Z',
       }],
     });
-    expect(screen.getByText('pre-existing thread')).toBeInTheDocument();
+    expect(screen.getAllByText('pre-existing thread')
+      .some((el) => el.closest('.diff-file-comment-body'))).toBe(true);
   });
 
   test('collapsed file still shows existing file-level threads', () => {
@@ -675,7 +682,8 @@ describe('DiffFileWithComments — file-level comment shortcut', () => {
         author: 'reviewer', created_at: '2024-01-01T00:00:00Z',
       }],
     });
-    expect(screen.getByText('pre-existing thread')).toBeInTheDocument();
+    expect(screen.getAllByText('pre-existing thread')
+      .some((el) => el.closest('.diff-file-comment-body'))).toBe(true);
     expect(screen.queryByRole('button', { name: /add file-level comment/i }))
       .not.toBeInTheDocument();
   });

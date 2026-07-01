@@ -55,7 +55,7 @@ function CommentAvatar({ name }) {
     <span
       className="diff-file-comment-avatar"
       style={{ backgroundColor: avatarColor(name) }}
-      aria-hidden="true"
+      title={name}
     >
       {avatarInitials(name)}
     </span>
@@ -112,10 +112,11 @@ export function CommentBubble({
     ? formatRelativeTime((Date.now() / 1000) - comment.created_at_epoch)
     : '';
   const author = comment.author || (comment.source === 'remote' ? 'remote' : 'operator');
-  // A collapsed row hides the body, so the author name ("operator") tells
-  // the operator nothing about WHICH thread it is. Surface a one-line
-  // preview of the comment text in its place — the avatar still carries
-  // identity, and threads become distinguishable without expanding each.
+  // The author name ("operator") tells the operator nothing about WHICH
+  // comment this is. Show a one-line preview of the comment text in the
+  // header in its place — identity still lives on the avatar (initials +
+  // a hover title). Matters most for collapsed rows (body hidden), but we
+  // do it in every state so the header reads as the comment's title.
   const bodyPreview = String(comment.body || '')
     .replace(/[`*_>#~]/g, '')
     .replace(/\s+/g, ' ')
@@ -276,7 +277,7 @@ export function CommentBubble({
     >
       <header className="diff-file-comment-head">
         <CommentAvatar name={author} />
-        {collapsed && bodyPreview ? (
+        {bodyPreview ? (
           <span className="diff-file-comment-preview" title={bodyPreview}>
             {bodyPreview}
           </span>
@@ -309,20 +310,23 @@ export function CommentBubble({
             {replyCount === 1 ? '1 reply' : `${replyCount} replies`}
           </span>
         )}
-        {/* All actions, as always-visible icons, at the top (operator request).
-            Always rendered — even when collapsed — so Reply/Resolve/Retry/Delete
-            are one click away without expanding first. */}
-        {actionBar}
-        <button
-          type="button"
-          className="diff-file-comment-collapse"
-          onClick={toggleCollapsed}
-          aria-expanded={!collapsed}
-          aria-label={collapsed ? 'Expand comment' : 'Collapse comment'}
-          title={collapsed ? 'Expand comment' : 'Collapse comment'}
-        >
-          {collapsed ? '▸' : '▾'}
-        </button>
+        {/* Actions + collapse chevron, grouped in a sticky tail so they stay
+            pinned to the right edge and never scroll out of view when the diff
+            scrolls horizontally (wide code lines). Always rendered — even when
+            collapsed — so Reply/Resolve/Retry/Delete are one click away. */}
+        <span className="diff-file-comment-head-tail">
+          {actionBar}
+          <button
+            type="button"
+            className="diff-file-comment-collapse"
+            onClick={toggleCollapsed}
+            aria-expanded={!collapsed}
+            aria-label={collapsed ? 'Expand comment' : 'Collapse comment'}
+            title={collapsed ? 'Expand comment' : 'Collapse comment'}
+          >
+            {collapsed ? '▸' : '▾'}
+          </button>
+        </span>
       </header>
       {!collapsed && (
         <>

@@ -104,17 +104,17 @@ describe('buildThreads — root/replies organization', () => {
 
 describe('CommentBubble — rendering', () => {
 
-  test('renders the comment body via children', () => {
-    render(
+  test('shows the comment text as the header preview (in place of the author)', () => {
+    const { container } = render(
       <CommentBubble
         comment={_comment({ body: 'hello reviewer' })}
         isRoot={true}
-      >
-        hello reviewer
-      </CommentBubble>,
+      />,
     );
-    // Author is in the header even when body is in children.
-    expect(screen.getByText('operator')).toBeInTheDocument();
+    // The header shows a one-line preview of the comment, not "operator".
+    const preview = container.querySelector('.diff-file-comment-preview');
+    expect(preview).toHaveTextContent('hello reviewer');
+    expect(screen.queryByText('operator')).toBeNull();
   });
 
   test('shows LOCAL badge for local comments', () => {
@@ -127,31 +127,34 @@ describe('CommentBubble — rendering', () => {
     expect(screen.getByText('LOCAL')).toBeInTheDocument();
   });
 
-  test('shows REMOTE badge for remote comments', () => {
-    render(
+  test('shows REMOTE badge for remote comments; author lives on the avatar', () => {
+    const { container } = render(
       <CommentBubble
         comment={_comment({ source: 'remote', author: 'reviewer-bot' })}
         isRoot={true}
       />,
     );
     expect(screen.getByText('REMOTE')).toBeInTheDocument();
-    expect(screen.getByText('reviewer-bot')).toBeInTheDocument();
+    // The author name moved to the avatar's hover title (the header slot now
+    // shows the comment preview instead).
+    expect(container.querySelector('.diff-file-comment-avatar'))
+      .toHaveAttribute('title', 'reviewer-bot');
   });
 
-  test('falls back to author "operator" for local with no author', () => {
+  test('falls back to author "operator" in the header when the body is empty', () => {
     render(
       <CommentBubble
-        comment={_comment({ author: '', source: 'local' })}
+        comment={_comment({ author: '', source: 'local', body: '' })}
         isRoot={true}
       />,
     );
     expect(screen.getByText('operator')).toBeInTheDocument();
   });
 
-  test('falls back to author "remote" for remote with no author', () => {
+  test('falls back to author "remote" in the header when the body is empty', () => {
     render(
       <CommentBubble
-        comment={_comment({ author: '', source: 'remote' })}
+        comment={_comment({ author: '', source: 'remote', body: '' })}
         isRoot={true}
       />,
     );

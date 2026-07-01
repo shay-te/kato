@@ -242,7 +242,13 @@ test('Bitbucket comment card: avatar, collapse chevron, dot actions', () => {
 
   const collapse = ruleBody('.diff-file-comment-collapse');
   assertDeclaration(collapse, 'cursor', 'pointer');
-  assertDeclaration(collapse, 'margin-left', 'auto');
+
+  // The action icons + collapse chevron live in a sticky, right-pinned tail
+  // so they stay visible when the diff scrolls horizontally. The tail now
+  // carries the ``margin-left: auto`` that used to sit on the chevron.
+  const tail = ruleBody('.diff-file-comment-head-tail');
+  assertDeclaration(tail, 'margin-left', 'auto');
+  assertDeclaration(tail, 'position', 'sticky');
 
   // Collapsed bubble state rule must exist.
   ruleBody('.diff-file-comment.is-collapsed');

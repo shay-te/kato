@@ -186,8 +186,26 @@ export function groupContentMatchesByFile(matches) {
 
 // Total un-resolved comment count for a repo from its file→{count} meta
 // map (buildFilesCommentMeta values). 0 when none. Pure.
-export function countRepoComments(commentMeta) {
+//
+// ``filePaths`` (optional): restrict the count to comments anchored to
+// those files — the files the tree actually renders a row (and thus a
+// per-file 💬 badge) for. This keeps the repo-header badge equal to the
+// SUM of the per-file badges the operator can see, so a comment whose
+// file isn't in the tree (anchor outdated, change reverted, path/repo
+// mismatch) can't inflate the header past the visible badges ("no badge
+// on any file → repo shows 0"). Omit to count every commented file.
+export function countRepoComments(commentMeta, filePaths = null) {
   if (!commentMeta || typeof commentMeta.values !== 'function') { return 0; }
+  if (filePaths) {
+    let total = 0;
+    const seen = new Set();
+    for (const path of filePaths) {
+      if (seen.has(path)) { continue; }
+      seen.add(path);
+      total += Number(commentMeta.get(path)?.count) || 0;
+    }
+    return total;
+  }
   let total = 0;
   for (const entry of commentMeta.values()) {
     total += Number(entry?.count) || 0;
@@ -201,13 +219,27 @@ export function countRepoComments(commentMeta) {
 // the operator saw on the rows underneath). Uses the same
 // ``moreUrgentCommentStatus`` precedence the per-file aggregator uses,
 // so the two stay in lockstep. Pure.
-export function repoCommentStatus(commentMeta, moreUrgentCommentStatus) {
+// ``filePaths`` scopes the status to the same visible-file set as
+// countRepoComments (see there) so the header chip's tint agrees with the
+// per-file badges actually on screen. Omit to consider every commented file.
+export function repoCommentStatus(commentMeta, moreUrgentCommentStatus, filePaths = null) {
   if (!commentMeta || typeof commentMeta.values !== 'function') { return ''; }
   let best = '';
-  for (const entry of commentMeta.values()) {
+  const consider = (entry) => {
     const status = String(entry?.status || '').trim();
-    if (!status) { continue; }
+    if (!status) { return; }
     best = best ? moreUrgentCommentStatus(best, status) : status;
+  };
+  if (filePaths) {
+    const seen = new Set();
+    for (const path of filePaths) {
+      if (seen.has(path)) { continue; }
+      seen.add(path);
+      const entry = commentMeta.get(path);
+      if (entry) { consider(entry); }
+    }
+    return best;
   }
+  for (const entry of commentMeta.values()) { consider(entry); }
   return best;
 }

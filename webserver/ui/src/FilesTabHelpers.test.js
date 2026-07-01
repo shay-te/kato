@@ -28,6 +28,22 @@ test('countRepoComments is 0 for empty / non-map input', () => {
   assert.equal(countRepoComments(undefined), 0);
 });
 
+test('countRepoComments scoped to filePaths ignores comments on files not shown', () => {
+  const meta = new Map([
+    ['a.py', { count: 2, status: 'open' }],    // rendered as a tree row
+    ['gone.py', { count: 1, status: 'open' }], // orphan — not in the tree
+  ]);
+  // The repo-header count must equal the SUM of the visible per-file badges:
+  // the orphan on gone.py (no tree row → no badge) can't inflate it.
+  assert.equal(countRepoComments(meta, ['a.py']), 2);
+  // No shown file carries a comment → repo shows 0 (the operator's report:
+  // "no comment on the file tree means no comments on the repo").
+  assert.equal(countRepoComments(meta, ['x.py']), 0);
+  assert.equal(countRepoComments(meta, []), 0);
+  // A duplicated path is counted once.
+  assert.equal(countRepoComments(meta, ['a.py', 'a.py']), 2);
+});
+
 
 // Repo header chip must tint to the same status the file-row chips do,
 // so the header doesn't read as "different colour from the rows it
@@ -41,6 +57,17 @@ test('repoCommentStatus picks the most-urgent status across files', () => {
   // Precedence: failed > waiting > open > queued > in_progress > addressed.
   // queued beats in_progress.
   assert.equal(repoCommentStatus(meta, moreUrgentCommentStatus), 'queued');
+});
+
+test('repoCommentStatus scoped to filePaths only tints from the shown files', () => {
+  const meta = new Map([
+    ['a.py', { count: 1, status: 'addressed' }], // shown in the tree
+    ['gone.py', { count: 1, status: 'failed' }], // orphan (would win if counted)
+  ]);
+  // Only the shown file counts → 'addressed'; the orphan's more-urgent
+  // 'failed' is ignored because it renders no badge.
+  assert.equal(repoCommentStatus(meta, moreUrgentCommentStatus, ['a.py']), 'addressed');
+  assert.equal(repoCommentStatus(meta, moreUrgentCommentStatus, []), '');
 });
 
 test('repoCommentStatus returns the only present status when one is set', () => {

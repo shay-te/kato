@@ -4741,13 +4741,12 @@ body.kato-resizing #left-pane-resizer::before {
 
 /* Collapse chevron, pushed to the far right Bitbucket-style. */
 .diff-file-comment-collapse {
-  margin-left: auto;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -4787,12 +4786,29 @@ body.kato-resizing #left-pane-resizer::before {
   margin-left: 0;
 }
 
-/* Always-visible icon action cluster in the comment header (Reply / Edit /
-   Retry / Resolve / Reopen / Mark addressed / Delete). Carries the
-   margin-left:auto that pushes the cluster (and the chevron right after it) to
-   the right edge — so the chevron must drop ITS own auto or a gap opens. */
-.diff-file-comment-head-actions {
+/* Trailing group (action icons + collapse chevron). Pinned to the right edge
+   and made ``position: sticky`` so the buttons NEVER scroll out of view when
+   the diff scrolls horizontally on a wide code line — they ride the right edge
+   of the visible area, always one click away. The matching comment-bar
+   background rides with them so a pinned button never overlaps scrolled code.
+   In the non-scrolling file-level panel this is a harmless no-op (stays at its
+   natural right position). Vertically centred with the rest of the header. */
+.diff-file-comment-head-tail {
   margin-left: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  position: sticky;
+  right: 0;
+  background: #0a0a0a;
+  padding-left: 6px;
+}
+
+/* Icon action cluster in the comment header (Reply / Edit / Retry / Resolve /
+   Reopen / Mark addressed / Delete). Right-alignment + stickiness now live on
+   the wrapping ``.diff-file-comment-head-tail``. */
+.diff-file-comment-head-actions {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
@@ -4807,14 +4823,14 @@ body.kato-resizing #left-pane-resizer::before {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   line-height: 0;
   border: none;
   background: transparent;
   color: #a3a3a3;
-  border-radius: 4px;
+  border-radius: 999px;
   cursor: pointer;
   font-size: 13px;
   transition: background 120ms ease, color 120ms ease, transform 90ms ease;
