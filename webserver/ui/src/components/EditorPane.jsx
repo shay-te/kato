@@ -1,16 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Editor from '@monaco-editor/react';
-import {
-  createTaskComment,
-  deleteTaskComment,
-  editTaskComment,
-  fetchFileContent,
-  fetchTaskComments,
-  markTaskCommentAddressed,
-  reopenTaskComment,
-  resolveTaskComment,
-} from '../api.js';
+import { fetchFileContent } from '../api.js';
+import { commentStore } from '../stores/commentStore.js';
+import { useTaskComments } from '../hooks/useTaskComments.js';
 import {
   CommentForm,
   CommentThread,
@@ -20,7 +13,6 @@ import {
 import Icon from './Icon.jsx';
 import { useChatComposer } from '../contexts/ChatComposerContext.jsx';
 import { toast } from '../stores/toastStore.js';
-import { apiErrorMessage } from '../utils/apiError.js';
 import { commentDraftKey } from '../utils/composerDraft.js';
 import { copyRepoRelativePath } from '../utils/clipboard.js';
 import { useDismissOnOutsidePointerOrEscape } from '../hooks/useDismissOnOutsidePointerOrEscape.js';
@@ -60,9 +52,12 @@ export default function EditorPane({
     binary: false,
     tooLarge: false,
   });
-  const [comments, setComments] = useState([]);
-  const [commentsLoading, setCommentsLoading] = useState(false);
-  const [commentsError, setCommentsError] = useState('');
+  // Comments come from the shared ``commentStore`` (single source of
+  // truth) — the same always-current list the diff pane's threads and
+  // the file-tree badges read, so a mutation here shows up there in the
+  // same tick and vice-versa. No per-pane fetch/refresh loop any more.
+  const { comments, loading: commentsLoading, error: commentsError } =
+    useTaskComments(openFile?.taskId || '');
   // ``activeLine`` is the line number where the inline composer is
   // currently open. ``null`` means no composer.
   const [activeLine, setActiveLine] = useState(null);
@@ -133,44 +128,26 @@ export default function EditorPane({
     notify({ editorViewState: saveViewState.call(editor) });
   }
 
-  // Comments scoped to the currently-open file. The /comments
-  // endpoint returns the whole task's set (across repos + files);
-  // filtering client-side keeps the request count low (one fetch
-  // per file open vs. one per line interaction).
-  const fileComments = useMemo(
-    () => comments.filter((c) => String(c.file_path || '') === filePath),
-    [comments, filePath],
-  );
+  // Comments scoped to the currently-open file. The store holds the
+  // whole task's set (across repos + files); filtering client-side by
+  // file path AND repo mirrors the old per-repo fetch (a same-named file
+  // in another repo must not leak its threads onto this one). An empty
+  // repoId means "any repo" — same as the endpoint's no-repo query.
+  const fileComments = useMemo(() => {
+    const repoKey = repoId.toLowerCase();
+    return comments.filter((c) => (
+      String(c.file_path || '') === filePath
+      && (!repoKey || String(c.repo_id || '').toLowerCase() === repoKey)
+    ));
+  }, [comments, filePath, repoId]);
   // Hooks must be top-of-component (no conditional returns above
   // them), so build the threads list here even though it's only
   // rendered in the happy-path body below.
   const threads = useMemo(() => buildThreads(fileComments), [fileComments]);
 
-  // Re-fetch the task's comment list. Used after every mutation so
-  // the chip strip + bubbles reflect the new state without a poll.
-  const refreshComments = useCallback(async () => {
-    if (!taskId) {
-      setComments([]); setCommentsError(''); return;
-    }
-    setCommentsLoading(true);
-    try {
-      const result = await fetchTaskComments(taskId, repoId);
-      if (result.ok) {
-        setComments(Array.isArray(result.body?.comments) ? result.body.comments : []);
-        setCommentsError('');
-      } else {
-        setCommentsError(apiErrorMessage(result, 'failed to load comments'));
-      }
-    } finally {
-      setCommentsLoading(false);
-    }
-  }, [taskId, repoId]);
-
-  useEffect(() => { refreshComments(); }, [refreshComments]);
-
   async function onCommentSubmit(line, body, parentId = '') {
     if (!body.trim()) { return false; }
-    const result = await createTaskComment(taskId, {
+    const result = await commentStore.create(taskId, {
       repo: repoId,
       file_path: filePath,
       line,
@@ -196,7 +173,6 @@ export default function EditorPane({
     });
     setActiveLine(null);
     setReplyTo('');
-    refreshComments();
     if (triggered && typeof onCommentSpawned === 'function') {
       onCommentSpawned();
     }
@@ -204,17 +180,15 @@ export default function EditorPane({
   }
 
   async function onResolve(comment) {
-    const result = await resolveTaskComment(taskId, comment.id);
+    const result = await commentStore.resolve(taskId, comment.id);
     if (!result.ok) {
       toast.errorFromResult(result, {
         title: 'Resolve failed', fallback: 'resolve failed', durationMs: 5000,
       });
-      return;
     }
-    refreshComments();
   }
   async function onReopen(comment) {
-    const result = await reopenTaskComment(taskId, comment.id);
+    const result = await commentStore.reopen(taskId, comment.id);
     if (!result.ok) {
       toast.errorFromResult(result, {
         title: 'Reopen failed', fallback: 'reopen failed', durationMs: 5000,
@@ -228,23 +202,20 @@ export default function EditorPane({
       message: katoTriggeredMessage(triggered),
       durationMs: 5000,
     });
-    refreshComments();
     if (triggered && typeof onCommentSpawned === 'function') {
       onCommentSpawned();
     }
   }
   async function onDelete(comment) {
-    const result = await deleteTaskComment(taskId, comment.id);
+    const result = await commentStore.remove(taskId, comment.id);
     if (!result.ok) {
       toast.errorFromResult(result, {
         title: 'Delete failed', fallback: 'delete failed', durationMs: 5000,
       });
-      return;
     }
-    refreshComments();
   }
   async function onEdit(commentId, { body, katoStatus } = {}) {
-    const result = await editTaskComment(taskId, commentId, { body, katoStatus });
+    const result = await commentStore.edit(taskId, commentId, { body, katoStatus });
     // Check HTTP error AND envelope-level ``{ok: false}`` (validation
     // rejects). See the matching handler in DiffFileWithComments for
     // the rationale.
@@ -254,11 +225,10 @@ export default function EditorPane({
       });
       return false;
     }
-    refreshComments();
     return true;
   }
   async function onMarkAddressed(comment) {
-    const result = await markTaskCommentAddressed(taskId, comment.id, '');
+    const result = await commentStore.markAddressed(taskId, comment.id, '');
     if (!result.ok) {
       toast.errorFromResult(result, {
         title: 'Mark addressed failed',
@@ -273,7 +243,6 @@ export default function EditorPane({
       message: '✓ "Kato addressed this review comment" reply posted',
       durationMs: 5000,
     });
-    refreshComments();
   }
 
   function handleEditorMount(editor, monaco) {

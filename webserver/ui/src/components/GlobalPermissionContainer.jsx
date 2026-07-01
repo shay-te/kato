@@ -1,67 +1,54 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback } from 'react';
 import PermissionDecisionContainer from './PermissionDecisionContainer.jsx';
-import { fetchPendingPermissions, postSession } from '../api.js';
+import { postSession } from '../api.js';
+import { permissionStore } from '../stores/permissionStore.js';
+import { usePendingPermissions } from '../hooks/usePendingPermissions.js';
+import { unpackPermissionEnvelope } from '../utils/permissionEnvelope.js';
 
-// Cross-task permission prompting.
+// The SINGLE owner of the permission-approval modal, for EVERY task.
 //
-// The per-task SSE stream only delivers a ``control_request`` to the browser
-// tab that has THAT session open, so a permission ask on a backgrounded task
-// would sit unanswered until the operator happened to click into it. This
-// polls the global ``/api/permissions/pending`` feed and pops the modal for
-// any pending ask on a task OTHER than the one in focus — the focused task is
-// still handled instantly by its own SSE container in SessionDetail, with the
-// chat audit bubbles. The modal titles itself with the task code (the feed
-// stamps ``task_id``, surfaced by unpackPermissionEnvelope) so the operator
-// knows which task is waiting.
+// It renders the oldest pending ask from the shared ``permissionStore``
+// (fed by the authoritative ``/api/permissions/pending`` poll AND the
+// focused task's live SSE ``control_request`` — see the store). Because
+// the store polls the server truth, the dialog surfaces no matter which
+// task is in view and even when the per-task SSE frame never arrived —
+// closing the "I had to refresh the page to see the popup" bug.
 //
-// Remembered "Allow always"/"Deny always" decisions auto-resolve here too —
-// we hand the ask to the same PermissionDecisionContainer the focused path
-// uses, so a remembered ``mvn`` on a background task is approved silently
-// instead of nagging.
-
-const POLL_MS = 3000;
-
-export default function GlobalPermissionContainer({ activeTaskId, toolMemory }) {
-  const [pendingList, setPendingList] = useState([]);
-
-  const refetch = useCallback(async () => {
-    try {
-      const body = await fetchPendingPermissions();
-      setPendingList(Array.isArray(body?.pending) ? body.pending : []);
-    } catch (_) { /* keep the last snapshot on a transient failure */ }
-  }, []);
-
-  useEffect(() => {
-    let alive = true;
-    async function tick() {
-      try {
-        const body = await fetchPendingPermissions();
-        if (alive) {
-          setPendingList(Array.isArray(body?.pending) ? body.pending : []);
-        }
-      } catch (_) { /* keep the last snapshot */ }
-    }
-    tick();
-    const handle = window.setInterval(tick, POLL_MS);
-    return () => { alive = false; window.clearInterval(handle); };
-  }, []);
-
-  // The oldest pending ask that is NOT the focused task (the focused task's
-  // own SSE container owns that one — instant, with chat audit bubbles).
-  const current = pendingList.find(
-    (entry) => entry && entry.task_id && entry.task_id !== activeTaskId,
-  ) || null;
+// Remembered "Allow always" / "Deny always" decisions auto-resolve here
+// too (via PermissionDecisionContainer). When the resolved ask belongs to
+// a task whose chat is mounted, the audit bubble is routed back into that
+// chat through the store's audit-sink registry.
+export default function GlobalPermissionContainer({ toolMemory }) {
+  const { list } = usePendingPermissions();
+  // Oldest ask first (store preserves insertion order).
+  const current = list[0] || null;
+  const currentTaskId = current ? unpackPermissionEnvelope(current).taskId : '';
+  const currentRequestId = current ? unpackPermissionEnvelope(current).requestId : '';
 
   const submit = useCallback(async ({ requestId, allow, rationale }) => {
-    const taskId = current?.task_id;
-    if (!taskId) { return false; }
-    const result = await postSession(taskId, 'permission', {
+    if (!currentTaskId) { return false; }
+    const result = await postSession(currentTaskId, 'permission', {
       request_id: requestId,
       allow,
       rationale,
     });
+    if (result.ok) {
+      // Resolve immediately so the modal closes without waiting for the
+      // next poll; the tombstone stops a racing poll from re-opening it.
+      permissionStore.resolve(requestId);
+    }
     return !!result.ok;
-  }, [current]);
+  }, [currentTaskId]);
+
+  const dismiss = useCallback(() => {
+    if (currentRequestId) { permissionStore.resolve(currentRequestId); }
+  }, [currentRequestId]);
+
+  const auditBubble = useCallback((bubble) => {
+    // Route the "✓ approved / ✗ denied" bubble into the asking task's chat
+    // if it's mounted (focused task); a no-op otherwise (background task).
+    permissionStore.emitAudit(currentTaskId, bubble);
+  }, [currentTaskId]);
 
   if (!current) { return null; }
 
@@ -69,15 +56,15 @@ export default function GlobalPermissionContainer({ activeTaskId, toolMemory }) 
     <PermissionDecisionContainer
       // Remount only when the actual task+request changes — a fresh poll
       // object for the SAME ask must not tear down a modal mid-decision.
-      key={`${current.task_id}:${current.request_id}`}
+      key={`${currentTaskId}:${currentRequestId}`}
       pending={current}
-      onDismiss={refetch}
+      onDismiss={dismiss}
       onSubmit={submit}
-      onAuditBubble={() => { /* cross-task: no focused chat to bubble into */ }}
+      onAuditBubble={auditBubble}
       recallToolDecision={toolMemory.recall}
       rememberToolDecision={toolMemory.remember}
-      taskCode={current.task_id}
-      taskSummary={current.task_summary || ''}
+      taskCode={currentTaskId}
+      taskSummary={unpackPermissionEnvelope(current).taskSummary}
     />
   );
 }

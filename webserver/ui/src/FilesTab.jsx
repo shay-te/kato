@@ -6,10 +6,11 @@ import {
   fetchDiff,
   fetchFileTree,
   fetchRepoCommits,
-  fetchTaskComments,
   recheckRepositoryPush,
   syncTaskRepositories,
 } from './api.js';
+import { commentStore } from './stores/commentStore.js';
+import { useTaskComments } from './hooks/useTaskComments.js';
 import AddRepositoryModal from './components/AddRepositoryModal.jsx';
 import CommitDiffModal from './components/CommitDiffModal.jsx';
 import ContentSearchResults from './components/ContentSearchResults.jsx';
@@ -101,9 +102,18 @@ export default function FilesTab({
     status: 'loading',
     trees: [],
     diffMetaByRepo: new Map(),
-    commentMetaByRepo: new Map(),
     error: '',
   });
+  // Comment badges read from the shared ``commentStore`` (single source
+  // of truth) — the same always-current list the diff pane's inline
+  // threads read. So deleting the last comment on a file clears its 💬
+  // badge in the same tick the thread disappears, instead of lingering
+  // until the tree's own poll came round (the stale-badge bug).
+  const { comments: allComments } = useTaskComments(taskId);
+  const commentMetaByRepo = useMemo(
+    () => buildFilesCommentMeta(allComments),
+    [allComments],
+  );
   const [collapsed, setCollapsed] = useState(() => new Set());
   const [query, setQuery] = useState('');
   // The input itself stays bound to ``query`` (controlled, no input
@@ -213,28 +223,27 @@ export default function FilesTab({
         ? prev
         : {
             status: 'loading', trees: [], diffMetaByRepo: new Map(),
-            commentMetaByRepo: new Map(), error: '',
+            error: '',
           }
     ));
-    // Fetch the RAW payloads in parallel; the diff/comments fetches
-    // degrade to null (decoration only — the tree still renders) while a
-    // file-tree failure propagates to the error state below.
+    // Fetch the RAW payloads in parallel; the diff fetch degrades to null
+    // (decoration only — the tree still renders) while a file-tree
+    // failure propagates to the error state below. Comments are NOT
+    // fetched here — they live in the shared ``commentStore`` and drive
+    // the badges via ``commentMetaByRepo`` above.
     Promise.all([
       fetchFileTree(taskId),
       fetchDiff(taskId).catch((err) => {
         console.warn('Failed to load file-tree diff metadata', err);
         return null;
       }),
-      fetchTaskComments(taskId).catch(() => null),
     ])
-      .then(([payload, diffPayload, commentResult]) => {
+      .then(([payload, diffPayload]) => {
         if (cancelled) { return; }
-        const commentsRaw = Array.isArray(commentResult?.body?.comments)
-          ? commentResult.body.comments : [];
         // Unchanged bytes → keep the existing state object (and every
         // per-repo Map/Set identity) so the tree's useMemos and child
         // rows bail instead of re-cloning + re-rendering on an idle poll.
-        const sig = JSON.stringify([payload, diffPayload, commentsRaw]);
+        const sig = JSON.stringify([payload, diffPayload]);
         if (sig === fetchSigRef.current) { return; }
         fetchSigRef.current = sig;
         let diffMetaByRepo = new Map();
@@ -246,7 +255,6 @@ export default function FilesTab({
           status: 'ready',
           trees: normalizeTrees(payload),
           diffMetaByRepo,
-          commentMetaByRepo: buildFilesCommentMeta(commentsRaw),
           error: '',
         });
       })
@@ -256,7 +264,6 @@ export default function FilesTab({
           status: 'error',
           trees: prev.trees,
           diffMetaByRepo: prev.diffMetaByRepo,
-          commentMetaByRepo: prev.commentMetaByRepo,
           error: String(err),
         }));
       })
@@ -300,10 +307,18 @@ export default function FilesTab({
       status: 'loading',
       trees: [],
       diffMetaByRepo: new Map(),
-      commentMetaByRepo: new Map(),
       error: '',
     });
   }, [taskId]);
+
+  // A Claude turn / repo sync (workspaceVersion or syncTick bump) can add
+  // or re-status comments outside a UI mutation — reconcile the shared
+  // store so the badges reflect it without waiting for its 5s poll.
+  // Coalesced by the store's single-flight guard; a no-op payload emits
+  // nothing.
+  useEffect(() => {
+    if (taskId) { commentStore.poke(taskId); }
+  }, [taskId, workspaceVersion, syncTick]);
 
   // Re-apply the saved scroll offset after a data refresh re-renders
   // the tree. Runs before paint so a clamped-to-0 scrollTop never
@@ -316,7 +331,7 @@ export default function FilesTab({
     if (saved > 0 && node.scrollTop !== saved) {
       node.scrollTop = saved;
     }
-  }, [state.trees, state.diffMetaByRepo, state.commentMetaByRepo]);
+  }, [state.trees, state.diffMetaByRepo, commentMetaByRepo]);
 
   useEffect(() => {
     const node = containerRef.current;
@@ -514,9 +529,9 @@ export default function FilesTab({
     body = state.trees.map((repoTree) => {
       const repoKey = repoTree.repo_id || repoTree.cwd;
       const diffMeta = state.diffMetaByRepo.get(repoKey) || EMPTY_DIFF_META;
-      const commentMeta = state.commentMetaByRepo.get(repoTree.repo_id)
-        || state.commentMetaByRepo.get(repoKey)
-        || state.commentMetaByRepo.get('')
+      const commentMeta = commentMetaByRepo.get(repoTree.repo_id)
+        || commentMetaByRepo.get(repoKey)
+        || commentMetaByRepo.get('')
         || EMPTY_COMMENT_META;
       return (
         <RepoTree

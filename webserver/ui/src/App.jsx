@@ -587,7 +587,6 @@ export default function App() {
           onActivity={handleSessionEvent}
           onPendingPermissionChange={handlePendingPermissionChange}
           composerRef={composerRef}
-          toolMemory={toolMemory}
           onResizePointerDown={resizer.onPointerDown}
           onOpenFile={handleOpenFile}
           onRegisterReconnect={handleRegisterReconnect}
@@ -628,13 +627,11 @@ export default function App() {
       <ChatComposerContext.Provider value={composerContextValue}>
         {layout}
       </ChatComposerContext.Provider>
-      {/* Permission asks on BACKGROUND tasks — the focused task is handled by
-          its own SSE container in SessionDetail. Together they guarantee a
-          prompt no matter which task is in view. */}
-      <GlobalPermissionContainer
-        activeTaskId={activeTaskId}
-        toolMemory={toolMemory}
-      />
+      {/* The SINGLE permission-approval modal for EVERY task, driven by the
+          shared permissionStore (authoritative poll + the focused task's
+          live SSE). Surfaces the dialog no matter which task is in view and
+          without a page refresh. */}
+      <GlobalPermissionContainer toolMemory={toolMemory} />
       {forgetCandidate && (
         <ForgetTaskModal
           session={forgetCandidate}

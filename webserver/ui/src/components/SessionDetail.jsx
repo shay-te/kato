@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom';
 import ChatSearch from './ChatSearch.jsx';
 import EventLog from './EventLog.jsx';
 import MessageForm from './MessageForm.jsx';
-import PermissionDecisionContainer from './PermissionDecisionContainer.jsx';
 import QueuedMessageList from './QueuedMessageList.jsx';
 import PaneResizer from './PaneResizer.jsx';
 import SessionHeader, { SessionHeaderPlaceholder } from './SessionHeader.jsx';
@@ -21,9 +20,11 @@ import {
   hydrateQueuedMessages,
 } from '../utils/queuedMessagesStore.js';
 import { useSessionOption } from '../hooks/useSessionOption.js';
-import { useToolMemory } from '../hooks/useToolMemory.js';
+import { permissionStore } from '../stores/permissionStore.js';
+import { usePendingPermissions } from '../hooks/usePendingPermissions.js';
+import { unpackPermissionEnvelope } from '../utils/permissionEnvelope.js';
 import { toast } from '../stores/toastStore.js';
-import { fetchEffortLevels, fetchModels, fetchSessionEffort, fetchSessionModel, fetchSessionPlanMode, postChatMessage, postSession, setSessionEffort, setSessionModel, setSessionPlanMode } from '../api.js';
+import { fetchEffortLevels, fetchModels, fetchSessionEffort, fetchSessionModel, fetchSessionPlanMode, postChatMessage, setSessionEffort, setSessionModel, setSessionPlanMode } from '../api.js';
 
 // Grace before we reconnect a still-"live" stream that the server says has a
 // pending permission we haven't received. Long enough for a normal live event
@@ -37,7 +38,6 @@ export default function SessionDetail({
   onPendingPermissionChange,
   needsAttention = false,
   composerRef = null,
-  toolMemory: providedToolMemory = null,
   onResizePointerDown,
   onOpenFile,
   onRegisterReconnect,
@@ -55,6 +55,38 @@ export default function SessionDetail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stream.reconnect]);
 
+  // Pending-permission truth for THIS task from the shared store (the
+  // reliable, poll-backed source) OR the focused stream's live event.
+  // Used for the "waiting for approval" indicator + status so they never
+  // fall back to "taking too long" just because the single SSE frame was
+  // buffered/dropped — the bug that forced a page refresh.
+  const pendingPermissions = usePendingPermissions();
+  const hasPendingPermission = (
+    !!stream.pendingPermission
+    || pendingPermissions.list.some(
+      (ask) => unpackPermissionEnvelope(ask).taskId === taskId,
+    )
+  );
+
+  // Feed the focused task's live ``control_request`` into the shared store
+  // so its dialog (owned globally by GlobalPermissionContainer) pops
+  // instantly; the store's poll is the reliable fallback when the SSE
+  // frame never lands.
+  useEffect(() => {
+    if (stream.pendingPermission) {
+      permissionStore.push(
+        taskId, stream.pendingPermission, session?.task_summary || '',
+      );
+    }
+  }, [taskId, stream.pendingPermission, session?.task_summary]);
+
+  // Let the globally-owned modal drop its approve/deny audit bubble into
+  // THIS chat while it's mounted.
+  useEffect(
+    () => permissionStore.registerAuditSink(taskId, stream.appendLocalEvent),
+    [taskId, stream.appendLocalEvent],
+  );
+
   // Publish this (active) task's live agent status into the shared store, so
   // the tab dot/badge derive from the SAME live value as the header chip
   // instead of the laggy polled fields (UNA-2492). Scalar deps + the store's
@@ -64,11 +96,11 @@ export default function SessionDetail({
       lifecycle: stream.lifecycle,
       turnInFlight: stream.turnInFlight,
       awaitingBackground: stream.awaitingBackground,
-      pendingPermission: !!stream.pendingPermission,
+      pendingPermission: hasPendingPermission,
     });
   }, [
     taskId, stream.lifecycle, stream.turnInFlight,
-    stream.awaitingBackground, stream.pendingPermission,
+    stream.awaitingBackground, hasPendingPermission,
   ]);
 
   // Drop this task's live entry when the active tab changes. SessionDetail is
@@ -201,16 +233,10 @@ export default function SessionDetail({
     setPlanMode(on);
     setSessionPlanMode(taskId, on);
   }, [taskId]);
-  // Prefer the App-level toolMemory when passed (so the same recall
-  // function powers both this modal AND the tab-attention filter);
-  // fall back to a local instance for tests / standalone usage.
-  const localToolMemory = useToolMemory();
-  const memory = providedToolMemory || localToolMemory;
-
   useEffect(() => {
     if (typeof onPendingPermissionChange !== 'function') { return; }
-    onPendingPermissionChange(taskId, !!stream.pendingPermission);
-  }, [taskId, stream.pendingPermission, onPendingPermissionChange]);
+    onPendingPermissionChange(taskId, hasPendingPermission);
+  }, [taskId, hasPendingPermission, onPendingPermissionChange]);
 
   // Auto-reconnect when a permission request lands while we're
   // already sitting on this tab but the per-task SSE was closed.
@@ -417,22 +443,6 @@ export default function SessionDetail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stream.turnInFlight]);
 
-  async function submitPermissionResponse({ requestId, allow, rationale }) {
-    const result = await postSession(taskId, 'permission', {
-      request_id: requestId,
-      allow,
-      rationale,
-    });
-    if (!result.ok) {
-      stream.appendLocalEvent({
-        source: ENTRY_SOURCE.LOCAL, kind: BUBBLE_KIND.ERROR,
-        text: `permission send failed: ${result.error}`,
-      });
-      return false;
-    }
-    return true;
-  }
-
   async function onStopped(result) {
     stream.appendLocalEvent(
       result.ok
@@ -623,8 +633,8 @@ export default function SessionDetail({
           liveAgentSessionId={String(session?.[AGENT_SESSION_ID] || '')}
           footer={
             <WorkingIndicator
-              active={stream.turnInFlight || !!stream.pendingPermission}
-              waitingForApproval={!!stream.pendingPermission}
+              active={stream.turnInFlight || hasPendingPermission}
+              waitingForApproval={hasPendingPermission}
               lastEventAt={stream.lastEventAt}
               onContinue={() => deliverMessage('continue')}
             />
@@ -656,16 +666,6 @@ export default function SessionDetail({
           onOpenPlan={onOpenPlan}
         />
       </section>
-      <PermissionDecisionContainer
-        pending={stream.pendingPermission}
-        onDismiss={stream.dismissPermission}
-        onSubmit={submitPermissionResponse}
-        onAuditBubble={stream.appendLocalEvent}
-        recallToolDecision={memory.recall}
-        rememberToolDecision={memory.remember}
-        taskCode={taskId}
-        taskSummary={session?.task_summary || ''}
-      />
     </main>
   );
 }

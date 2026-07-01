@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { fetchDiff, fetchTaskComments } from '../api.js';
+import { fetchDiff } from '../api.js';
 import {
   diffDisplayPath,
   diffFileKey,
@@ -7,7 +7,8 @@ import {
   parseRepoDiffs,
 } from '../diffModel.js';
 import { useChatComposer } from '../contexts/ChatComposerContext.jsx';
-import { apiErrorMessage } from '../utils/apiError.js';
+import { commentStore } from '../stores/commentStore.js';
+import { useTaskComments } from '../hooks/useTaskComments.js';
 import DiffFileWithComments from './DiffFileWithComments.jsx';
 
 const EMPTY_COMMENTS = [];
@@ -47,20 +48,14 @@ export default function DiffPane({
   const [state, setState] = useState({
     status: 'loading', repoDiffs: [], error: '',
   });
-  // Comments for the selected file's repo only — one file is on
-  // screen, so one repo's comments are all the pane needs.
-  const [comments, setComments] = useState({
-    loading: true, error: '', byFile: new Map(),
-  });
-  const [commentsTick, setCommentsTick] = useState(0);
-  // Signature of the last comments payload we committed. The comments
-  // poll re-fires on every diff refresh (workspaceVersion bumps ~1.2s
-  // during tool use); without this guard each fire built a brand-new
-  // Map even when nothing changed, giving the file box a new
-  // ``comments`` prop identity and re-rendering the whole diff. Skip
-  // the setState when the payload is unchanged so the memoized file
-  // box can bail.
-  const commentsSigRef = useRef('');
+  // Comments come from the shared ``commentStore`` (single source of
+  // truth) — the same always-current list the Files-tree badges read, so
+  // a mutation here (delete / resolve / reply) updates both surfaces in
+  // the same tick. The store keeps the array identity stable across idle
+  // polls, so the ``byFile`` memo below only rebuilds when the bytes
+  // actually change and the memoized file box can still bail.
+  const { comments: allComments, loading: commentsLoading, error: commentsError } =
+    useTaskComments(taskId);
   const diffSigRef = useRef('');
 
   const { appendToInput } = useChatComposer();
@@ -136,55 +131,40 @@ export default function DiffPane({
   }, [state.repoDiffs, repoId, relativePath]);
   const selectedRepoId = selected?.repo.repo_id || '';
 
-  // Selection moved to a file in a DIFFERENT repo: drop the previous
-  // repo's comments immediately. Without this, repo A's threads render on
-  // repo B's file (same relative path = same byFile key) for the whole
-  // fetch round-trip, and the signature guard alone wouldn't help — it
-  // only suppresses identical payloads, not cross-repo staleness.
-  const commentsRepoRef = useRef('');
-  useEffect(() => {
-    if (commentsRepoRef.current === selectedRepoId) { return; }
-    commentsRepoRef.current = selectedRepoId;
-    commentsSigRef.current = '';
-    setComments({ loading: true, error: '', byFile: new Map() });
-  }, [selectedRepoId]);
+  // Threads for the selected file's repo, grouped by file path. Derived
+  // synchronously from the one shared comment list — filtered to the
+  // selected repo (case-insensitive, matching the backend's per-repo
+  // query) so a selection moving to a file in a DIFFERENT repo re-filters
+  // instantly instead of flashing repo A's threads on repo B's file for a
+  // fetch round-trip. The store keeps ``allComments`` referentially
+  // stable across idle polls, so this map (and its per-file arrays) only
+  // rebuilds on a real change and the memoized file box can bail.
+  const byFile = useMemo(() => {
+    const map = new Map();
+    const repoKey = selectedRepoId.toLowerCase();
+    if (!repoKey) { return map; }
+    for (const comment of allComments) {
+      if (String(comment?.repo_id || '').toLowerCase() !== repoKey) { continue; }
+      const path = String(comment?.file_path || '');
+      if (!map.has(path)) { map.set(path, []); }
+      map.get(path).push(comment);
+    }
+    return map;
+  }, [allComments, selectedRepoId]);
 
-  // One comments fetch for the selected file's repo. Re-runs when a
-  // comment mutation bumps ``commentsTick`` or the diff refreshes.
+  // A Claude turn / repo sync (workspaceVersion bump) can add or
+  // re-status comments outside a UI mutation — reconcile the shared
+  // store so the threads reflect it. Coalesced by the store's
+  // single-flight guard; a no-op payload emits nothing.
   useEffect(() => {
-    if (!taskId || state.status !== 'ready' || !selectedRepoId) { return undefined; }
-    let cancelled = false;
-    fetchTaskComments(taskId, selectedRepoId)
-      .catch(() => ({ ok: false, error: 'failed to load comments' }))
-      .then((result) => {
-        if (cancelled) { return; }
-        // Identical payload to last time → keep the existing state object
-        // (and its per-file comment arrays) so referential equality holds
-        // and the memoized file box skips re-rendering.
-        const sig = JSON.stringify([selectedRepoId, result]);
-        if (sig === commentsSigRef.current) { return; }
-        commentsSigRef.current = sig;
-        const byFile = new Map();
-        if (result.ok) {
-          const list = Array.isArray(result.body?.comments)
-            ? result.body.comments : [];
-          for (const comment of list) {
-            const p = String(comment.file_path || '');
-            if (!byFile.has(p)) { byFile.set(p, []); }
-            byFile.get(p).push(comment);
-          }
-        }
-        setComments({
-          loading: false,
-          error: result.ok ? '' : apiErrorMessage(result, 'failed to load comments'),
-          byFile,
-        });
-      });
-    return () => { cancelled = true; };
-  }, [taskId, state.status, selectedRepoId, commentsTick, workspaceVersion]);
+    if (taskId) { commentStore.poke(taskId); }
+  }, [taskId, workspaceVersion]);
 
   const bumpComments = useCallback(() => {
-    setCommentsTick((n) => n + 1);
+    // The store already reconciles comment data on every mutation; this
+    // only forwards the "comments changed" signal to the parent (App
+    // bumps workspaceVersion so the diff itself refetches — kato may have
+    // re-touched the file while addressing the thread).
     if (typeof onCommentsChanged === 'function') {
       onCommentsChanged();
     }
@@ -210,7 +190,7 @@ export default function DiffPane({
     }
   }, [
     restoreViewState, focusComment, state.status, selected,
-    openRequestId, comments,
+    openRequestId, byFile,
   ]);
 
   useEffect(() => {
@@ -317,9 +297,9 @@ export default function DiffPane({
                 })
                 : undefined
             }
-            comments={comments.byFile.get(selected.path) || EMPTY_COMMENTS}
-            commentsLoading={!!comments.loading}
-            commentsError={comments.error || ''}
+            comments={byFile.get(selected.path) || EMPTY_COMMENTS}
+            commentsLoading={!!commentsLoading}
+            commentsError={commentsError || ''}
             onMutated={bumpComments}
             onCommentSpawned={onCommentSpawned}
           />

@@ -4765,6 +4765,20 @@ body.kato-resizing #left-pane-resizer::before {
   color: $C-NEUTRAL-96;
 }
 
+/* Collapsed rows swap the author name for a one-line preview of the
+ * comment body (see CommentBubble). Takes the free space and ellipsis-
+ * truncates so it never pushes the badges / action icons off the row. */
+.diff-file-comment-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: $C-NEUTRAL-96;
+  font-weight: 400;
+  font-size: $TEXT-12;
+}
+
 .diff-file-comment-source {
   padding: $SPACE-1 $SPACE-6;
   border-radius: var(--radius-pill);

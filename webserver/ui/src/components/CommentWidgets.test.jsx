@@ -465,8 +465,12 @@ describe('CommentThread / CommentBubble — Bitbucket collapse', () => {
       />,
     );
     expect(container.querySelector('.diff-file-comment-body')).toBeNull();
-    // The card never disappears — the identity header stays visible.
-    expect(screen.getByText('reviewer')).toBeInTheDocument();
+    // The card never disappears — the header stays, now showing a one-line
+    // preview of the comment text (in place of the author name) so collapsed
+    // threads are distinguishable. The avatar still carries identity.
+    const preview = container.querySelector('.diff-file-comment-preview');
+    expect(preview).toBeInTheDocument();
+    expect(preview).toHaveTextContent('resolved body text');
     const chevron = screen.getByRole('button', { name: /expand comment/i });
     expect(chevron).toHaveAttribute('aria-expanded', 'false');
   });

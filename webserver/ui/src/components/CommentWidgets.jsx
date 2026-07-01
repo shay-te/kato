@@ -112,6 +112,14 @@ export function CommentBubble({
     ? formatRelativeTime((Date.now() / 1000) - comment.created_at_epoch)
     : '';
   const author = comment.author || (comment.source === 'remote' ? 'remote' : 'operator');
+  // A collapsed row hides the body, so the author name ("operator") tells
+  // the operator nothing about WHICH thread it is. Surface a one-line
+  // preview of the comment text in its place — the avatar still carries
+  // identity, and threads become distinguishable without expanding each.
+  const bodyPreview = String(comment.body || '')
+    .replace(/[`*_>#~]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
   const isResolved = comment.status === 'resolved';
   const katoStatus = comment.kato_status;
   const outdatedLine = Number(comment.line) > 0 ? ` ${comment.line}` : '';
@@ -268,7 +276,13 @@ export function CommentBubble({
     >
       <header className="diff-file-comment-head">
         <CommentAvatar name={author} />
-        <span className="diff-file-comment-author">{author}</span>
+        {collapsed && bodyPreview ? (
+          <span className="diff-file-comment-preview" title={bodyPreview}>
+            {bodyPreview}
+          </span>
+        ) : (
+          <span className="diff-file-comment-author">{author}</span>
+        )}
         <span
           className={[
             'diff-file-comment-source',

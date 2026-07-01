@@ -187,17 +187,26 @@ describe('DiffPane — renders ONLY the selected file', () => {
     expect(parseRepoDiffs).toHaveBeenCalledTimes(1);
   });
 
-  test('fetches comments only for the selected file\'s repo', async () => {
+  test('shows only the selected file repo\'s comments (single shared fetch)', async () => {
+    // Comments now come from the shared store, which fetches the whole
+    // task once (no per-repo arg) and each pane filters client-side. A
+    // same-path comment in ANOTHER repo must not leak onto this file.
     fetchDiff.mockResolvedValue({ diffs: [] });
     parseRepoDiffs.mockReturnValue(_repoDiffs());
+    fetchTaskComments.mockResolvedValue({ ok: true, body: { comments: [
+      { id: 'b1', file_path: 'api/auth.py', repo_id: 'backend' },
+      { id: 'c1', file_path: 'api/auth.py', repo_id: 'client' },
+    ] } });
     render(
       <DiffPane openFile={_open({ relativePath: 'api/auth.py', repoId: 'backend' })} />,
     );
-    await screen.findByTestId('diff-file');
+    const file = await screen.findByTestId('diff-file');
     await waitFor(() => {
-      expect(fetchTaskComments).toHaveBeenCalledWith('T1', 'backend');
+      expect(file.getAttribute('data-comments')).toBe('1');
     });
-    expect(fetchTaskComments).not.toHaveBeenCalledWith('T1', 'client');
+    // The store fetches unfiltered — no per-repo request fan-out.
+    expect(fetchTaskComments).toHaveBeenCalledWith('T1');
+    expect(fetchTaskComments).not.toHaveBeenCalledWith('T1', 'backend');
   });
 
   test('the open request token reaches the rendered diff file', async () => {
@@ -316,15 +325,11 @@ describe('DiffPane — renders ONLY the selected file', () => {
     ];
     fetchDiff.mockResolvedValue({ diffs: [] });
     parseRepoDiffs.mockReturnValue(repos);
-    let resolveBackend;
-    fetchTaskComments.mockImplementation((_taskId, rid) => (
-      rid === 'client'
-        ? Promise.resolve({
-          ok: true,
-          body: { comments: [{ id: 'c1', file_path: 'src/shared.js' }] },
-        })
-        : new Promise((resolve) => { resolveBackend = resolve; })
-    ));
+    // Only repo 'client' has a thread on src/shared.js; repo 'backend'
+    // has none. The store holds both — the pane re-filters by repo.
+    fetchTaskComments.mockResolvedValue({ ok: true, body: { comments: [
+      { id: 'c1', file_path: 'src/shared.js', repo_id: 'client' },
+    ] } });
     const { rerender } = render(
       <DiffPane openFile={_open({ relativePath: 'src/shared.js', repoId: 'client' })} />,
     );
@@ -335,13 +340,13 @@ describe('DiffPane — renders ONLY the selected file', () => {
     rerender(
       <DiffPane openFile={_open({ relativePath: 'src/shared.js', repoId: 'backend' })} />,
     );
-    // Repo B's fetch is still pending — repo A's comment must be gone.
+    // Switching to the same path in repo B re-filters synchronously —
+    // repo A's thread must NOT render on repo B's file.
     await waitFor(() => {
       const file = screen.getByTestId('diff-file');
       expect(file.getAttribute('data-repo')).toBe('backend');
       expect(file.getAttribute('data-comments')).toBe('0');
     });
-    resolveBackend({ ok: true, body: { comments: [] } });
   });
 
   test('restores saved diff scroll position', async () => {
@@ -379,11 +384,9 @@ describe('DiffPane — renders ONLY the selected file', () => {
   test('focusComment scrolls to the file\'s first comment thread', async () => {
     fetchDiff.mockResolvedValue({ diffs: [] });
     parseRepoDiffs.mockReturnValue(_repoDiffs());
-    fetchTaskComments.mockImplementation((_taskId, rid) => Promise.resolve(
-      rid === 'backend'
-        ? { ok: true, body: { comments: [{ id: 'c1', file_path: 'api/auth.py' }] } }
-        : { ok: true, body: { comments: [] } },
-    ));
+    fetchTaskComments.mockResolvedValue({ ok: true, body: { comments: [
+      { id: 'c1', file_path: 'api/auth.py', repo_id: 'backend' },
+    ] } });
     const { container } = render(
       <DiffPane
         openFile={_open({
@@ -413,11 +416,9 @@ describe('DiffPane — renders ONLY the selected file', () => {
     // Fresh array per call so a refetch changes state.repoDiffs identity
     // and the comments effect actually re-runs (a real poll).
     parseRepoDiffs.mockImplementation(() => _repoDiffs());
-    fetchTaskComments.mockImplementation((_taskId, rid) => Promise.resolve(
-      rid === 'backend'
-        ? { ok: true, body: { comments: [{ id: 'c1', file_path: 'api/auth.py' }] } }
-        : { ok: true, body: { comments: [] } },
-    ));
+    fetchTaskComments.mockResolvedValue({ ok: true, body: { comments: [
+      { id: 'c1', file_path: 'api/auth.py', repo_id: 'backend' },
+    ] } });
     const open = _open({ relativePath: 'api/auth.py', repoId: 'backend', focusComment: true });
     const { container, rerender } = render(<DiffPane openFile={open} workspaceVersion={1} />);
     const fileNode = () => container.querySelector('[data-diff-key="backend::api/auth.py"]');
@@ -436,14 +437,10 @@ describe('DiffPane — renders ONLY the selected file', () => {
     // state re-builds with a new identity and the focusComment effect
     // re-fires; the requestId guard must keep the pane where the operator
     // left it.
-    fetchTaskComments.mockImplementation((_taskId, rid) => Promise.resolve(
-      rid === 'backend'
-        ? { ok: true, body: { comments: [
-            { id: 'c1', file_path: 'api/auth.py' },
-            { id: 'c2', file_path: 'api/auth.py' },
-          ] } }
-        : { ok: true, body: { comments: [] } },
-    ));
+    fetchTaskComments.mockResolvedValue({ ok: true, body: { comments: [
+      { id: 'c1', file_path: 'api/auth.py', repo_id: 'backend' },
+      { id: 'c2', file_path: 'api/auth.py', repo_id: 'backend' },
+    ] } });
     rerender(<DiffPane openFile={open} workspaceVersion={2} />);
     await waitFor(() => expect(commentCount()).toBe('2'));
     await new Promise((resolve) => setTimeout(resolve, 25));
