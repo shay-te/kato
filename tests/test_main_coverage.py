@@ -41,7 +41,21 @@ class ProxyClassesTests(unittest.TestCase):
             clear=False,
         ):
             main_module._KatoInstanceProxy.init('fake-cfg')
-        fake_module.KatoInstance.init.assert_called_once_with('fake-cfg')
+        fake_module.KatoInstance.init.assert_called_once_with(
+            'fake-cfg', setup_mode=False,
+        )
+
+    def test_kato_instance_proxy_init_forwards_setup_mode(self) -> None:
+        fake_module = MagicMock()
+        with patch.dict(
+            'sys.modules',
+            {'kato_core_lib.kato_instance': fake_module},
+            clear=False,
+        ):
+            main_module._KatoInstanceProxy.init('fake-cfg', setup_mode=True)
+        fake_module.KatoInstance.init.assert_called_once_with(
+            'fake-cfg', setup_mode=True,
+        )
 
     def test_kato_instance_proxy_get_delegates(self) -> None:
         fake_module = MagicMock()
@@ -821,7 +835,9 @@ class MainBodyTests(unittest.TestCase):
 
     def _patches(self, **overrides):
         defaults = dict(
-            validate_environment=MagicMock(),
+            # Default: config is complete (no errors) → full boot. The
+            # setup-mode test below overrides this to a non-empty list.
+            collect_config_errors=MagicMock(return_value=[]),
             validate_bypass_permissions=MagicMock(),
             validate_read_only_tools_requires_docker=MagicMock(),
             validate_anthropic_tls_pin_or_refuse=MagicMock(),
@@ -854,11 +870,21 @@ class MainBodyTests(unittest.TestCase):
             for p in ctx:
                 p.stop()
 
-    def test_main_returns_1_on_environment_failure(self) -> None:
-        # Lines 80-82: ``validate_environment`` raises ValueError → 1.
-        env = MagicMock(side_effect=ValueError('bad env'))
-        rc = self._run_main(validate_environment=env)
-        self.assertEqual(rc, 1)
+    def test_main_boots_setup_mode_on_incomplete_config(self) -> None:
+        # Missing config no longer exits 1 — kato boots into SETUP MODE
+        # (rc 0) so the operator configures from the UI. The webserver,
+        # shutdown hook, and configuration wait loop are stubbed so the
+        # test neither starts Flask nor blocks forever; ``False`` from the
+        # wait loop models a shutdown while still unconfigured.
+        rc = self._run_main(
+            collect_config_errors=MagicMock(
+                return_value=['missing required agent env var: YOUTRACK_TOKEN'],
+            ),
+            _start_planning_webserver_if_enabled=MagicMock(),
+            _register_shutdown_hook=MagicMock(),
+            _wait_until_configured_then_finish_setup=MagicMock(return_value=False),
+        )
+        self.assertEqual(rc, 0)
 
     def test_main_returns_1_on_bypass_refusal(self) -> None:
         # Lines 85-87.
@@ -1398,17 +1424,33 @@ class MainModuleScriptEntryTests(unittest.TestCase):
     """Line 778: ``if __name__ == '__main__': raise SystemExit(main())``."""
 
     def test_module_as_script_entry_point(self) -> None:
-        # Line 778: ``if __name__ == '__main__': raise SystemExit(main())``.
-        # ``main`` is wrapped by hydra so the actual exit code depends on
-        # hydra internals; we just verify that running as __main__ raises
-        # SystemExit.
+        # ``if __name__ == '__main__': raise SystemExit(main())``.
+        #
+        # ``runpy.run_module(run_name='__main__')`` RE-EXECUTES main.py in a
+        # fresh namespace, so ``patch.object(main_module, 'main', ...)`` does
+        # NOT apply — the real hydra-wrapped ``main`` runs. Since the boot
+        # path gained SETUP MODE, a missing-config real ``main`` now starts
+        # the planning webserver and parks on ``_block_until_shutdown``
+        # forever (hanging the suite) instead of returning 1. To keep the
+        # test fast and deterministic we make an imported security gate
+        # refuse: ``main`` catches ``BypassPermissionsRefused`` and returns 1,
+        # so ``raise SystemExit(1)`` fires. The gate is patched on its SOURCE
+        # module (not on ``kato_core_lib.main``) — that binding is what the
+        # fresh runpy module re-imports, so the patch survives the re-exec.
+        # This also proves the security gates still fire in setup mode.
         import runpy
         import sys
+        from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (
+            BypassPermissionsRefused,
+        )
         old_argv = sys.argv
         sys.argv = ['main']
         try:
-            with patch.object(main_module, 'main', return_value=0), \
-                 self.assertRaises(SystemExit):
+            with patch(
+                'sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator'
+                '.validate_bypass_permissions',
+                side_effect=BypassPermissionsRefused('refused (test entry point)'),
+            ), self.assertRaises(SystemExit):
                 runpy.run_module('kato_core_lib.main', run_name='__main__')
         finally:
             sys.argv = old_argv

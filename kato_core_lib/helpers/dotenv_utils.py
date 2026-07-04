@@ -28,6 +28,22 @@ import os
 from pathlib import Path
 
 
+def read_dotenv_values(env_path: Path) -> dict[str, str]:
+    """Parse ``env_path`` into ``{KEY: value}`` without touching the env.
+
+    Tolerant read: a missing or unreadable file returns ``{}`` rather
+    than raising — ``.env`` is a legacy fallback store, and its absence
+    must never break boot or the settings UI.
+    """
+    if not env_path.is_file():
+        return {}
+    try:
+        text = env_path.read_text(encoding='utf-8')
+    except OSError:
+        return {}
+    return parse_dotenv_text(text)
+
+
 def load_dotenv_into_environ(env_path: Path) -> int:
     """Read ``KEY=VALUE`` lines from ``env_path`` into ``os.environ``.
 
@@ -35,14 +51,8 @@ def load_dotenv_into_environ(env_path: Path) -> int:
     environment are NOT overwritten. Returns the number of new keys
     actually added; ``0`` for a missing or unreadable file.
     """
-    if not env_path.is_file():
-        return 0
-    try:
-        text = env_path.read_text(encoding='utf-8')
-    except OSError:
-        return 0
     added = 0
-    for key, value in parse_dotenv_text(text).items():
+    for key, value in read_dotenv_values(env_path).items():
         if key in os.environ:
             continue
         os.environ[key] = value

@@ -33,10 +33,12 @@ import os
 from pathlib import Path
 
 from kato_core_lib.helpers.atomic_json_utils import atomic_write_json
+from kato_core_lib.helpers.dotenv_utils import read_dotenv_values
 from kato_core_lib.helpers.kato_paths_utils import kato_home_path
 
 
 _SETTINGS_PATH_ENV_KEY = 'KATO_SETTINGS_FILE'
+_SETTINGS_ENV_FILE_ENV_KEY = 'KATO_SETTINGS_ENV_FILE'
 
 
 def kato_settings_path() -> Path:
@@ -121,3 +123,43 @@ def load_kato_settings_into_environ() -> int:
         os.environ[key] = value
         added += 1
     return added
+
+
+def settings_env_file_path() -> Path:
+    """``<repo>/.env`` — the legacy read-only fallback store.
+
+    ``$KATO_SETTINGS_ENV_FILE`` overrides it (tests pre-seed a fake
+    ``.env`` this way). The repo root is resolved relative to this
+    file (``<repo>/kato_core_lib/helpers/…``), which holds for both
+    the in-place ``pip install -e .`` layout and a direct checkout.
+    """
+    override = os.environ.get(_SETTINGS_ENV_FILE_ENV_KEY, '').strip()
+    if override:
+        return Path(override)
+    return Path(__file__).resolve().parents[2] / '.env'
+
+
+def effective_config_env() -> dict[str, str]:
+    """The config env kato would boot with RIGHT NOW, as one mapping.
+
+    Merges the three stores with boot precedence — live ``os.environ``
+    > ``~/.kato/settings.json`` > ``<repo>/.env`` — where only
+    NON-EMPTY values override lower layers (an empty value falls
+    through, mirroring how the settings UI resolves a single key).
+
+    This is the single source of truth for "is kato configured yet":
+    the webserver's ``/api/config-status`` endpoint and the setup-mode
+    boot poll in ``main`` both feed it to ``collect_config_errors``,
+    so a value saved through the Settings UI counts immediately —
+    without a restart — and the two checks can never drift apart.
+    """
+    merged: dict[str, str] = {}
+    for source in (
+        read_dotenv_values(settings_env_file_path()),
+        read_kato_settings(),
+        dict(os.environ),
+    ):
+        for key, value in source.items():
+            if value:
+                merged[key] = value
+    return merged

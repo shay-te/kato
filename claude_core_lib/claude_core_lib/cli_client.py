@@ -860,6 +860,7 @@ class ClaudeCliClient(object):
         command = self._build_command(
             additional_dirs=additional_dirs,
             agent_session_id=agent_session_id,
+            cwd=cwd,
             resolve_binary=not self._docker_mode_on,
         )
         env = self._build_subprocess_env()
@@ -913,6 +914,7 @@ class ClaudeCliClient(object):
         *,
         additional_dirs: list[str],
         agent_session_id: str,
+        cwd: str = '',
         resolve_binary: bool = True,
         include_system_prompt: bool = True,
     ) -> list[str]:
@@ -930,7 +932,9 @@ class ClaudeCliClient(object):
         from claude_core_lib.claude_core_lib.helpers.write_scope_settings import (
             out_of_workspace_write_settings_json,
         )
-        command.extend(['--settings', out_of_workspace_write_settings_json()])
+        command.extend(['--settings', out_of_workspace_write_settings_json(
+            cwd, additional_dirs,
+        )])
         append_model_effort_flags(
             command,
             model=self._model,

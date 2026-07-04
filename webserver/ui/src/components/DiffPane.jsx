@@ -1,14 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { fetchDiff } from '../api.js';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   diffDisplayPath,
   diffFileKey,
   isFileConflicted,
-  parseRepoDiffs,
 } from '../diffModel.js';
 import { useChatComposer } from '../contexts/ChatComposerContext.jsx';
 import { commentStore } from '../stores/commentStore.js';
 import { useTaskComments } from '../hooks/useTaskComments.js';
+import { diffStore } from '../stores/diffStore.js';
+import { useTaskDiff } from '../hooks/useTaskDiff.js';
 import DiffFileWithComments from './DiffFileWithComments.jsx';
 
 const EMPTY_COMMENTS = [];
@@ -45,9 +45,17 @@ export default function DiffPane({
   const focusComment = !!openFile?.focusComment;
   const restoreViewState = !!openFile?.restoreViewState;
 
-  const [state, setState] = useState({
-    status: 'loading', repoDiffs: [], error: '',
-  });
+  // The changeset comes from the shared ``diffStore`` (single source of
+  // truth) — the SAME parsed diff the Files-tree badges read, so the tree
+  // and this pane can never drift out of sync, and there's one fetch + one
+  // poll instead of two. The store keeps ``repoDiffs`` referentially stable
+  // across idle polls, so the memos below (selected file, totalFiles) bail.
+  const { repoDiffs, loading: diffLoading, error: diffError } = useTaskDiff(taskId);
+  let status = 'ready';
+  let errorText = '';
+  if (!taskId) { status = 'error'; errorText = 'No task bound.'; }
+  else if (diffError) { status = 'error'; errorText = diffError; }
+  else if (diffLoading) { status = 'loading'; }
   // Comments come from the shared ``commentStore`` (single source of
   // truth) — the same always-current list the Files-tree badges read, so
   // a mutation here (delete / resolve / reply) updates both surfaces in
@@ -56,7 +64,6 @@ export default function DiffPane({
   // actually change and the memoized file box can still bail.
   const { comments: allComments, loading: commentsLoading, error: commentsError } =
     useTaskComments(taskId);
-  const diffSigRef = useRef('');
 
   const { appendToInput } = useChatComposer();
   const bodyRef = useRef(null);
@@ -74,40 +81,16 @@ export default function DiffPane({
     onViewStateChangeRef.current = onViewStateChange;
   }, [onViewStateChange]);
 
+  // A Claude turn / git op (workspaceVersion bump) changed the tree outside
+  // the poll cadence — reconcile the shared store now. Coalesced by its
+  // single-flight guard; an unchanged payload emits nothing.
   useEffect(() => {
-    if (!taskId) {
-      setState({ status: 'error', repoDiffs: [], error: 'No task bound.' });
-      return undefined;
-    }
-    let cancelled = false;
-    setState((prev) => (
-      prev.status === 'ready'
-        ? prev
-        : { status: 'loading', repoDiffs: [], error: '' }
-    ));
-    // Fetch the whole changeset (no repoId filter): the selected file is
-    // located across repos below, and an unfiltered payload keeps the
-    // signature guard effective across selection changes.
-    fetchDiff(taskId)
-      .then((payload) => {
-        if (cancelled) { return; }
-        const sig = JSON.stringify([taskId, payload]);
-        if (sig === diffSigRef.current) { return; }
-        diffSigRef.current = sig;
-        setState({
-          status: 'ready', repoDiffs: parseRepoDiffs(payload), error: '',
-        });
-      })
-      .catch((err) => {
-        if (cancelled) { return; }
-        setState({ status: 'error', repoDiffs: [], error: String(err) });
-      });
-    return () => { cancelled = true; };
+    if (taskId) { diffStore.poke(taskId); }
   }, [taskId, workspaceVersion]);
 
   const totalFiles = useMemo(
-    () => state.repoDiffs.reduce((n, r) => n + (r.files?.length || 0), 0),
-    [state.repoDiffs],
+    () => repoDiffs.reduce((n, r) => n + (r.files?.length || 0), 0),
+    [repoDiffs],
   );
 
   // Locate the selected file: exact (repoId, path) anchor match first,
@@ -116,7 +99,7 @@ export default function DiffPane({
     if (!relativePath) { return null; }
     const targetKey = diffAnchorKey(repoId, relativePath);
     let pathOnly = null;
-    for (const repo of state.repoDiffs) {
+    for (const repo of repoDiffs) {
       for (const file of repo.files || []) {
         const path = diffDisplayPath(file);
         if (diffAnchorKey(repo.repo_id, path) === targetKey) {
@@ -128,7 +111,7 @@ export default function DiffPane({
       }
     }
     return pathOnly;
-  }, [state.repoDiffs, repoId, relativePath]);
+  }, [repoDiffs, repoId, relativePath]);
   const selectedRepoId = selected?.repo.repo_id || '';
 
   // Threads for the selected file's repo, grouped by file path. Derived
@@ -175,7 +158,7 @@ export default function DiffPane({
   // asynchronously, so this also depends on ``comments`` — it re-fires
   // once the threads render and centres the first one.
   useEffect(() => {
-    if (restoreViewState || !focusComment || state.status !== 'ready' || !selected) { return; }
+    if (restoreViewState || !focusComment || status !== 'ready' || !selected) { return; }
     // Already centred this open request on its thread → don't re-scroll
     // when a later comments poll changes the comments identity.
     if (openRequestId === lastCommentScrolledRequestRef.current) { return; }
@@ -189,17 +172,17 @@ export default function DiffPane({
       thread.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
   }, [
-    restoreViewState, focusComment, state.status, selected,
+    restoreViewState, focusComment, status, selected,
     openRequestId, byFile,
   ]);
 
   useEffect(() => {
-    if (state.status !== 'ready') { return; }
+    if (status !== 'ready') { return; }
     const node = bodyRef.current;
     const scrollTop = Number(openFile?.diffScrollTop);
     if (!node || !Number.isFinite(scrollTop) || scrollTop <= 0) { return; }
     node.scrollTop = scrollTop;
-  }, [state.status, openRequestId, openFile?.diffScrollTop]);
+  }, [status, openRequestId, openFile?.diffScrollTop]);
 
   // Reset the pane to the TOP whenever the rendered file SWAPS. The scroll
   // container (.diff-pane-body) survives selection changes — only the inner
@@ -217,7 +200,7 @@ export default function DiffPane({
   const selectedFileKey = selected
     ? diffAnchorKey(selected.repo.repo_id, selected.path) : '';
   useEffect(() => {
-    if (state.status !== 'ready' || !selectedFileKey) { return; }
+    if (status !== 'ready' || !selectedFileKey) { return; }
     const previousKey = renderedFileKeyRef.current;
     renderedFileKeyRef.current = selectedFileKey;
     if (previousKey === null || previousKey === selectedFileKey) { return; }
@@ -226,7 +209,7 @@ export default function DiffPane({
     if (node) { node.scrollTop = 0; }
     const notify = onViewStateChangeRef.current;
     if (typeof notify === 'function') { notify({ diffScrollTop: 0 }); }
-  }, [state.status, selectedFileKey, focusComment]);
+  }, [status, selectedFileKey, focusComment]);
 
   function handleBodyScroll(event) {
     const notify = onViewStateChangeRef.current;
@@ -234,17 +217,17 @@ export default function DiffPane({
     notify({ diffScrollTop: event.currentTarget.scrollTop || 0 });
   }
 
-  if (state.status === 'loading') {
+  if (status === 'loading') {
     return (
       <div className="diff-pane">
         <p className="changes-tab-message">Computing diff…</p>
       </div>
     );
   }
-  if (state.status === 'error') {
+  if (status === 'error') {
     return (
       <div className="diff-pane">
-        <p className="changes-tab-message error">{state.error}</p>
+        <p className="changes-tab-message error">{errorText}</p>
       </div>
     );
   }

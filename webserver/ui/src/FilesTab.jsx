@@ -3,7 +3,6 @@ import {
 } from 'react';
 import { Tree } from 'react-arborist';
 import {
-  fetchDiff,
   fetchFileTree,
   fetchRepoCommits,
   recheckRepositoryPush,
@@ -11,6 +10,8 @@ import {
 } from './api.js';
 import { commentStore } from './stores/commentStore.js';
 import { useTaskComments } from './hooks/useTaskComments.js';
+import { diffStore } from './stores/diffStore.js';
+import { useTaskDiff } from './hooks/useTaskDiff.js';
 import AddRepositoryModal from './components/AddRepositoryModal.jsx';
 import CommitDiffModal from './components/CommitDiffModal.jsx';
 import ContentSearchResults from './components/ContentSearchResults.jsx';
@@ -24,7 +25,6 @@ import {
   countFileChangeStats,
   diffDisplayPath,
   isFileConflicted,
-  parseRepoDiffs,
 } from './diffModel.js';
 import { toastResult } from './stores/toastStore.js';
 import { copyRepoRelativePath } from './utils/clipboard.js';
@@ -101,7 +101,6 @@ export default function FilesTab({
   const [state, setState] = useState({
     status: 'loading',
     trees: [],
-    diffMetaByRepo: new Map(),
     error: '',
   });
   // Comment badges read from the shared ``commentStore`` (single source
@@ -113,6 +112,16 @@ export default function FilesTab({
   const commentMetaByRepo = useMemo(
     () => buildFilesCommentMeta(allComments),
     [allComments],
+  );
+  // Diff badges (added/deleted per file) read from the shared ``diffStore``
+  // (single source of truth) — the SAME parsed changeset the centre diff
+  // pane renders, so the tree and the pane can never disagree, and the diff
+  // is fetched + polled ONCE instead of here AND in DiffPane. The file TREE
+  // itself is still fetched below (a separate endpoint).
+  const { repoDiffs } = useTaskDiff(taskId);
+  const diffMetaByRepo = useMemo(
+    () => buildFilesDiffMeta(repoDiffs),
+    [repoDiffs],
   );
   const [collapsed, setCollapsed] = useState(() => new Set());
   const [query, setQuery] = useState('');
@@ -190,7 +199,7 @@ export default function FilesTab({
     if (!targetPath) { return; }
     for (const repoTree of state.trees) {
       const repoKey = repoTree.repo_id || repoTree.cwd;
-      const diffMeta = state.diffMetaByRepo.get(repoKey) || EMPTY_DIFF_META;
+      const diffMeta = diffMetaByRepo.get(repoKey) || EMPTY_DIFF_META;
       if (!focusTargetMatchesRepo(focusFileTarget, repoTree, state.trees.length)) {
         continue;
       }
@@ -206,7 +215,7 @@ export default function FilesTab({
       });
       break;
     }
-  }, [focusFileTarget, state.status, state.trees, state.diffMetaByRepo]);
+  }, [focusFileTarget, state.status, state.trees, diffMetaByRepo]);
 
   useEffect(() => {
     if (!taskId) { return; }
@@ -221,40 +230,24 @@ export default function FilesTab({
     setState((prev) => (
       prev.status === 'ready' || prev.status === 'error'
         ? prev
-        : {
-            status: 'loading', trees: [], diffMetaByRepo: new Map(),
-            error: '',
-          }
+        : { status: 'loading', trees: [], error: '' }
     ));
-    // Fetch the RAW payloads in parallel; the diff fetch degrades to null
-    // (decoration only — the tree still renders) while a file-tree
-    // failure propagates to the error state below. Comments are NOT
-    // fetched here — they live in the shared ``commentStore`` and drive
-    // the badges via ``commentMetaByRepo`` above.
-    Promise.all([
-      fetchFileTree(taskId),
-      fetchDiff(taskId).catch((err) => {
-        console.warn('Failed to load file-tree diff metadata', err);
-        return null;
-      }),
-    ])
-      .then(([payload, diffPayload]) => {
+    // Fetch the file TREE only. The diff (per-file add/delete badges) and
+    // comments both live in their shared stores now (``diffStore`` /
+    // ``commentStore``) and drive the badges via the memos above — so this
+    // effect owns just the tree endpoint.
+    fetchFileTree(taskId)
+      .then((payload) => {
         if (cancelled) { return; }
         // Unchanged bytes → keep the existing state object (and every
         // per-repo Map/Set identity) so the tree's useMemos and child
         // rows bail instead of re-cloning + re-rendering on an idle poll.
-        const sig = JSON.stringify([payload, diffPayload]);
+        const sig = JSON.stringify(payload);
         if (sig === fetchSigRef.current) { return; }
         fetchSigRef.current = sig;
-        let diffMetaByRepo = new Map();
-        if (diffPayload) {
-          try { diffMetaByRepo = buildFilesDiffMeta(parseRepoDiffs(diffPayload)); }
-          catch (err) { console.warn('Failed to parse file-tree diff metadata', err); }
-        }
         setState({
           status: 'ready',
           trees: normalizeTrees(payload),
-          diffMetaByRepo,
           error: '',
         });
       })
@@ -263,7 +256,6 @@ export default function FilesTab({
         setState((prev) => ({
           status: 'error',
           trees: prev.trees,
-          diffMetaByRepo: prev.diffMetaByRepo,
           error: String(err),
         }));
       })
@@ -306,18 +298,20 @@ export default function FilesTab({
     setState({
       status: 'loading',
       trees: [],
-      diffMetaByRepo: new Map(),
       error: '',
     });
   }, [taskId]);
 
   // A Claude turn / repo sync (workspaceVersion or syncTick bump) can add
-  // or re-status comments outside a UI mutation — reconcile the shared
-  // store so the badges reflect it without waiting for its 5s poll.
-  // Coalesced by the store's single-flight guard; a no-op payload emits
-  // nothing.
+  // or re-status comments AND change the diff outside a UI mutation —
+  // reconcile the shared stores so the badges reflect it without waiting
+  // for their 5s poll. Coalesced by each store's single-flight guard; a
+  // no-op payload emits nothing.
   useEffect(() => {
-    if (taskId) { commentStore.poke(taskId); }
+    if (taskId) {
+      commentStore.poke(taskId);
+      diffStore.poke(taskId);
+    }
   }, [taskId, workspaceVersion, syncTick]);
 
   // Re-apply the saved scroll offset after a data refresh re-renders
@@ -331,7 +325,7 @@ export default function FilesTab({
     if (saved > 0 && node.scrollTop !== saved) {
       node.scrollTop = saved;
     }
-  }, [state.trees, state.diffMetaByRepo, commentMetaByRepo]);
+  }, [state.trees, diffMetaByRepo, commentMetaByRepo]);
 
   useEffect(() => {
     const node = containerRef.current;
@@ -430,11 +424,11 @@ export default function FilesTab({
     return set;
   }, [state.trees]);
   const hasChangedFiles = useMemo(() => {
-    for (const fileMeta of state.diffMetaByRepo.values()) {
+    for (const fileMeta of diffMetaByRepo.values()) {
       if (fileMeta.size > 0) { return true; }
     }
     return false;
-  }, [state.diffMetaByRepo]);
+  }, [diffMetaByRepo]);
   const allFilesButtonClass = [
     'files-tab-text-btn',
     showAllFiles ? 'active' : '',
@@ -524,11 +518,11 @@ export default function FilesTab({
     // tree and the centre pane agree, and so only ONE repo ever highlights
     // (the multi-repo double-highlight this derivation exists to prevent).
     const selectionRepoKey = resolveSelectionRepoKey(
-      openFile, state.trees, state.diffMetaByRepo,
+      openFile, state.trees, diffMetaByRepo,
     );
     body = state.trees.map((repoTree) => {
       const repoKey = repoTree.repo_id || repoTree.cwd;
-      const diffMeta = state.diffMetaByRepo.get(repoKey) || EMPTY_DIFF_META;
+      const diffMeta = diffMetaByRepo.get(repoKey) || EMPTY_DIFF_META;
       const commentMeta = commentMetaByRepo.get(repoTree.repo_id)
         || commentMetaByRepo.get(repoKey)
         || commentMetaByRepo.get('')

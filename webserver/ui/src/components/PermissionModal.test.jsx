@@ -96,6 +96,26 @@ describe('PermissionModal — rendering', () => {
     expect(fieldValue.textContent).toMatch(/ls -la/);
   });
 
+  test('renders the ExitPlanMode plan field as markdown, not raw text', () => {
+    const { container } = render(
+      <PermissionModal
+        raw={_raw({ request: {
+          request_id: 'req-1', tool_name: 'ExitPlanMode',
+          input: { plan: '# My Plan\n\n- step one\n- step two' },
+        } })}
+        onDecide={vi.fn()}
+      />,
+    );
+    // A markdown heading renders as a real <h*> (raw text would not).
+    expect(screen.getByRole('heading', { name: /My Plan/i })).toBeInTheDocument();
+    // The plan renders inside the markdown container: two list items, and
+    // the raw "# " marker is consumed (not shown as literal text).
+    const md = container.querySelector('.permission-field-markdown');
+    expect(md).toBeInTheDocument();
+    expect(md.querySelectorAll('li')).toHaveLength(2);
+    expect(md.textContent).not.toContain('# My Plan');
+  });
+
   test('empty / missing tool input shows "(no arguments)"', () => {
     render(<PermissionModal raw={_raw({
       request: { request_id: 'r', tool_name: 'X', input: {} },

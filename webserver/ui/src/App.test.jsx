@@ -24,6 +24,11 @@ vi.mock('./api.js', () => ({
   // Vitest flags as a possible false-positive source).
   fetchSettings: vi.fn().mockResolvedValue({ ok: true, body: {} }),
   updateSettings: vi.fn().mockResolvedValue({ ok: true, body: {} }),
+  // The first-run setup gate polls this on mount (useConfigStatus).
+  // "configured" keeps the gate hidden in every existing App test.
+  fetchConfigStatus: vi.fn().mockResolvedValue(
+    { setup_mode: false, needs_config: false, missing: [] },
+  ),
   fetchAllSettings: vi.fn().mockResolvedValue(
     { ok: true, body: { sections: [] } },
   ),

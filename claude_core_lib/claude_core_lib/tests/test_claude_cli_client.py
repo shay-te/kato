@@ -310,14 +310,21 @@ class ClaudeCliClientTests(unittest.TestCase):
         self.assertNotIn('bypassPermissions', cmd)
 
     def test_forces_approval_for_out_of_workspace_writes(self) -> None:
-        # acceptEdits auto-accepts /tmp scratch writes with no approval; the
-        # injected --settings ask-rules force them back through the prompt.
+        # acceptEdits auto-accepts writes with no approval; the injected
+        # --settings ASK for every write tool (unscoped) while ALLOW-listing
+        # the workspace, so an out-of-workspace write is forced to the prompt
+        # and an in-workspace edit still auto-accepts.
         client = ClaudeCliClient(binary='claude')
-        cmd = client._build_command(additional_dirs=[], agent_session_id='')
+        cmd = client._build_command(
+            additional_dirs=['/w/UNA-1/repo'], agent_session_id='',
+            cwd='/w/UNA-1/repo',
+        )
         self.assertIn('--settings', cmd)
         settings = cmd[cmd.index('--settings') + 1]
-        self.assertIn('Write(/tmp/**)', settings)
-        self.assertIn('"ask"', settings)
+        # Unscoped catch-all ask on the write tools.
+        self.assertIn('"ask":["Write","Edit","MultiEdit","NotebookEdit"]', settings)
+        # In-workspace edits are allow-listed (so they don't prompt).
+        self.assertIn('Write(/w/UNA-1/repo/**)', settings)
 
     def test_default_allowlist_includes_subagent_tool(self) -> None:
         # The Agent (subagent) tool must be pre-approved so the agent can fan

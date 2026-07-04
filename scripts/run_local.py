@@ -19,7 +19,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _script_utils import (  # noqa: E402
     REPO_ROOT,
+    layered_env,
     load_env_file,
+    read_kato_settings_file,
     venv_python_path,
 )
 
@@ -35,8 +37,11 @@ def main() -> int:
         print('.venv is missing. Run `python scripts/bootstrap.py` first.', file=sys.stderr)
         return 1
 
-    env = os.environ.copy()
-    env.update(load_env_file(env_path))
+    # Precedence: real shell env > ~/.kato/settings.json (the Settings UI) >
+    # <repo>/.env. This used to be ``env.update(.env)`` — .env loaded OVER the
+    # shell and settings.json never read — so a token saved in the Settings UI
+    # silently had no effect (it writes settings.json, which .env shadowed).
+    env = layered_env(os.environ, read_kato_settings_file(), load_env_file(env_path))
 
     completed = subprocess.run(
         [str(python_bin), '-m', 'kato_core_lib.main'],

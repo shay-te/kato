@@ -28,6 +28,7 @@
 
 import { fetchPendingPermissions } from '../api.js';
 import { unpackPermissionEnvelope } from '../utils/permissionEnvelope.js';
+import { createPoller } from './createPoller.js';
 
 const POLL_MS = 1500;
 // Keep an un-polled SSE-pushed ask (and a just-resolved tombstone) alive
@@ -47,7 +48,8 @@ let _snapshot = { list: [], error: '' };
 const _auditSinks = new Map();
 
 const _listeners = new Set();
-let _timer = null;
+// Shared visibility-aware poll loop (_refresh is a hoisted declaration).
+const _poller = createPoller(_refresh, POLL_MS);
 let _inFlight = null;
 
 function _now() { return Date.now(); }
@@ -130,32 +132,17 @@ function _refresh() {
   return _inFlight;
 }
 
-function _startPolling() {
-  if (_timer) { return; }
-  const tick = () => {
-    _timer = setTimeout(() => {
-      if (typeof document === 'undefined' || !document.hidden) { _refresh(); }
-      tick();
-    }, POLL_MS);
-  };
-  tick();
-}
-
-function _stopPolling() {
-  if (_timer) { clearTimeout(_timer); _timer = null; }
-}
-
 export const permissionStore = {
   subscribe(fn) {
     _listeners.add(fn);
     try { fn(_snapshot); } catch (_) { /* see _emitIfChanged */ }
     if (_listeners.size === 1) {
-      _startPolling();
+      _poller.start();
       _refresh();
     }
     return () => {
       _listeners.delete(fn);
-      if (_listeners.size === 0) { _stopPolling(); }
+      if (_listeners.size === 0) { _poller.stop(); }
     };
   },
 
@@ -214,7 +201,7 @@ export const permissionStore = {
   // Test-only: clear all state so this module singleton doesn't leak
   // pending asks / tombstones between tests.
   __resetForTests() {
-    _stopPolling();
+    _poller.stop();
     _pending = new Map();
     _resolved.clear();
     _auditSinks.clear();

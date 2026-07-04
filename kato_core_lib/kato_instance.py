@@ -9,9 +9,11 @@ class KatoInstance(object):
     _app_instance: KatoCoreLib | None = None
 
     @staticmethod
-    def init(core_lib_cfg: DictConfig) -> None:
+    def init(core_lib_cfg: DictConfig, setup_mode: bool = False) -> None:
         if KatoInstance._app_instance is None:
-            KatoInstance._app_instance = KatoCoreLib(core_lib_cfg)
+            KatoInstance._app_instance = KatoCoreLib(
+                core_lib_cfg, setup_mode=setup_mode,
+            )
 
     @staticmethod
     def get() -> KatoCoreLib:

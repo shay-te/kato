@@ -42,9 +42,11 @@ class MainTests(unittest.TestCase):
         self.addCleanup(self._env_patch.stop)
 
     def test_main_returns_zero_on_success(self) -> None:
-        app = types.SimpleNamespace(logger=Mock())
+        app = types.SimpleNamespace(logger=Mock(), needs_config=False)
 
-        with patch('kato_core_lib.main.validate_environment') as mock_validate_environment, patch(
+        with patch(
+            'kato_core_lib.main.collect_config_errors', return_value=[],
+        ) as mock_collect_config_errors, patch(
             'kato_core_lib.main.KatoInstance.init'
         ) as mock_init, patch(
             'kato_core_lib.main.KatoInstance.get',
@@ -53,8 +55,8 @@ class MainTests(unittest.TestCase):
             result = main(self.cfg)
 
         self.assertEqual(result, 0)
-        mock_validate_environment.assert_called_once_with(mode='all')
-        mock_init.assert_called_once_with(self.cfg)
+        mock_collect_config_errors.assert_called_once_with(mode='all')
+        mock_init.assert_called_once_with(self.cfg, setup_mode=False)
         mock_run_loop.assert_called_once_with(
             app,
             startup_delay_seconds=30.0,
@@ -65,9 +67,11 @@ class MainTests(unittest.TestCase):
 
     def test_main_configures_logger_when_app_logger_is_missing(self) -> None:
         configured_logger = Mock()
-        app = types.SimpleNamespace(logger=None)
+        app = types.SimpleNamespace(logger=None, needs_config=False)
 
-        with patch('kato_core_lib.main.validate_environment'), patch(
+        with patch(
+            'kato_core_lib.main.collect_config_errors', return_value=[],
+        ), patch(
             'kato_core_lib.main.configure_logger', return_value=configured_logger
         ), patch(
             'kato_core_lib.main.KatoInstance.init'
@@ -430,21 +434,99 @@ class MainTests(unittest.TestCase):
                 'workspace-session-id',
             )
 
-    def test_main_returns_one_without_traceback_when_startup_validation_fails(self) -> None:
-        configured_logger = Mock()
-        env_error = ValueError('unsupported issue platform: linear')
-
-        with patch('kato_core_lib.main.configure_logger', return_value=configured_logger), patch(
-            'kato_core_lib.main.validate_environment',
-            side_effect=env_error,
+    def _run_setup_mode_main(self, wait_result, app):
+        """Drive ``main()`` through the setup-mode branch with the wait loop
+        stubbed to either shut down (``False``) or finish setup (``True``)."""
+        with patch(
+            'kato_core_lib.main.configure_logger', return_value=app.logger,
         ), patch(
+            'kato_core_lib.main.collect_config_errors',
+            return_value=['missing required agent env var: YOUTRACK_TOKEN'],
+        ) as mock_collect, patch(
             'kato_core_lib.main.KatoInstance.init',
-        ) as mock_init:
+        ) as mock_init, patch(
+            'kato_core_lib.main.KatoInstance.get', return_value=app,
+        ), patch(
+            'kato_core_lib.main._start_planning_webserver_if_enabled',
+        ) as mock_webserver, patch(
+            'kato_core_lib.main._register_shutdown_hook',
+        ) as mock_shutdown_hook, patch(
+            'kato_core_lib.main._wait_until_configured_then_finish_setup',
+            return_value=wait_result,
+        ) as mock_wait, patch(
+            'kato_core_lib.main._run_task_scan_loop',
+        ) as mock_run_loop:
             result = main(self.cfg)
+        return result, {
+            'collect': mock_collect,
+            'init': mock_init,
+            'webserver': mock_webserver,
+            'shutdown_hook': mock_shutdown_hook,
+            'wait': mock_wait,
+            'run_loop': mock_run_loop,
+        }
 
-        self.assertEqual(result, 1)
-        configured_logger.error.assert_called_once_with('%s', env_error)
-        mock_init.assert_not_called()
+    def test_main_boots_setup_mode_when_config_is_incomplete(self) -> None:
+        """Missing config no longer hard-exits — kato boots the setup UI.
+
+        The previous behavior returned 1 and never called
+        ``KatoInstance.init``. Now an unconfigured operator gets a running
+        webserver so they can fill in Settings from the browser (no terminal
+        work). ``KatoInstance.init`` is called with ``setup_mode=True``, the
+        scan loop stays OFF (there is no ticket service yet), and ``main()``
+        parks on the configuration wait loop. A ``False`` from the wait loop
+        (shutdown signal) exits 0 cleanly.
+        """
+        configured_logger = Mock()
+        app = types.SimpleNamespace(logger=configured_logger, needs_config=True)
+
+        result, mocks = self._run_setup_mode_main(False, app)
+
+        self.assertEqual(result, 0)
+        mocks['collect'].assert_called_once_with(mode='all')
+        mocks['init'].assert_called_once_with(self.cfg, setup_mode=True)
+        # The operator gets a running UI to configure from...
+        mocks['webserver'].assert_called_once_with(app)
+        mocks['shutdown_hook'].assert_called_once_with(app)
+        mocks['wait'].assert_called_once_with(app)
+        # ...but the scan loop MUST stay off — kato can't scan tickets
+        # until it's configured.
+        mocks['run_loop'].assert_not_called()
+        # The missing settings are surfaced in the logs for the terminal too.
+        configured_logger.warning.assert_any_call(
+            '  - %s', 'missing required agent env var: YOUTRACK_TOKEN',
+        )
+
+    def test_main_continues_into_full_boot_after_setup_completes(self) -> None:
+        """Terminal-free apply: when the wait loop reports setup finished
+        (operator completed configuration in the UI and ``complete_setup``
+        built the agent service), ``main()`` falls through into the normal
+        boot — the scan loop starts in the SAME process, no restart."""
+        app = types.SimpleNamespace(logger=Mock(), needs_config=True)
+
+        with patch(
+            'kato_core_lib.main._mark_webserver_configured',
+        ) as mock_mark:
+            result, mocks = self._run_setup_mode_main(True, app)
+
+        self.assertEqual(result, 0)
+        mocks['wait'].assert_called_once_with(app)
+        # The full boot ran: the UI left setup mode and the scan loop is live.
+        mock_mark.assert_called_once_with(app)
+        mocks['run_loop'].assert_called_once()
+
+    def test_ui_leaves_setup_mode_only_after_boot_reconciliation(self) -> None:
+        # Source-order guard: on the fall-through, the gate must stay up
+        # while the boot reconciliation steps run — flipping earlier lets
+        # the operator race branch checkouts / comment requeue with chat
+        # sends the moment the gate closes.
+        import inspect
+        from kato_core_lib import main as main_module
+        src = inspect.getsource(main_module.main)
+        mark_idx = src.index('_mark_webserver_configured(app)')
+        self.assertLess(src.index('_recover_orphan_workspaces(app)'), mark_idx)
+        self.assertLess(src.index('_requeue_stuck_comments(app)'), mark_idx)
+        self.assertLess(mark_idx, src.index('_run_task_scan_loop('))
 
     def test_docker_mode_on_runs_sandbox_preflight(self) -> None:
         """``KATO_CLAUDE_DOCKER=true`` must run the sandbox daemon checks.
@@ -456,7 +538,9 @@ class MainTests(unittest.TestCase):
         """
         app = types.SimpleNamespace(logger=Mock())
 
-        with patch('kato_core_lib.main.validate_environment'), patch(
+        with patch(
+            'kato_core_lib.main.collect_config_errors', return_value=[],
+        ), patch(
             'kato_core_lib.main.validate_bypass_permissions'
         ), patch(
             'kato_core_lib.main.print_security_posture'
@@ -496,7 +580,9 @@ class MainTests(unittest.TestCase):
         """
         app = types.SimpleNamespace(logger=Mock())
 
-        with patch('kato_core_lib.main.validate_environment'), patch(
+        with patch(
+            'kato_core_lib.main.collect_config_errors', return_value=[],
+        ), patch(
             'kato_core_lib.main.validate_bypass_permissions'
         ), patch(
             'kato_core_lib.main.print_security_posture'
@@ -568,7 +654,9 @@ class MainTlsPinIntegrationTests(unittest.TestCase):
         noise.
         """
         app = types.SimpleNamespace(logger=Mock())
-        with patch('kato_core_lib.main.validate_environment'), patch(
+        with patch(
+            'kato_core_lib.main.collect_config_errors', return_value=[],
+        ), patch(
             'kato_core_lib.main.validate_bypass_permissions'
         ), patch(
             'kato_core_lib.main.print_security_posture'
@@ -664,7 +752,9 @@ class MainReadOnlyToolsIntegrationTests(unittest.TestCase):
 
     def _run_main_with_other_validators_mocked(self) -> int:
         app = types.SimpleNamespace(logger=Mock())
-        with patch('kato_core_lib.main.validate_environment'), patch(
+        with patch(
+            'kato_core_lib.main.collect_config_errors', return_value=[],
+        ), patch(
             'kato_core_lib.main.validate_bypass_permissions'
         ), patch(
             'kato_core_lib.main.print_security_posture'
@@ -766,7 +856,11 @@ class CleanupDoneTasksAtBootTests(unittest.TestCase):
         from kato_core_lib import main as kato_main
         src = inspect.getsource(kato_main.main)
         boot_idx = src.index('_cleanup_done_tasks_at_boot(app)')
-        web_idx = src.index('_start_planning_webserver_if_enabled(app)')
+        # rindex → the FULL-BOOT webserver call. Setup mode adds an
+        # earlier textual occurrence (it starts the UI to configure from),
+        # but this invariant is about the configured boot path where the
+        # done-task prune must run before the tab list is served.
+        web_idx = src.rindex('_start_planning_webserver_if_enabled(app)')
         self.assertLess(boot_idx, web_idx)
 
 
@@ -1064,6 +1158,286 @@ class StartPendingCommentWorkBootTests(unittest.TestCase):
             _start_pending_comment_work_when_ui_ready(app)
         wait.assert_not_called()
         start.assert_called_once_with(app)
+
+
+class WaitUntilConfiguredTests(unittest.TestCase):
+    """The SETUP-MODE wait loop — the terminal-free apply path.
+
+    Real config evaluation end-to-end: the loop reads an actual
+    ``settings.json`` (redirected to a tmpfile via ``KATO_SETTINGS_FILE``)
+    through the same ``effective_config_env`` + ``collect_config_errors``
+    pair the ``/api/config-status`` endpoint uses. Only the app object and
+    its ``complete_setup`` are test doubles — the config plumbing is real.
+    """
+
+    _REQUIRED_KEYS = (
+        'YOUTRACK_API_BASE_URL', 'YOUTRACK_API_TOKEN', 'YOUTRACK_PROJECT',
+        'YOUTRACK_ASSIGNEE', 'REPOSITORY_ROOT_PATH', 'OPENHANDS_BASE_URL',
+        'OPENHANDS_API_KEY', 'OH_SECRET_KEY', 'OPENHANDS_LLM_MODEL',
+        'OPENHANDS_LLM_API_KEY', 'KATO_ISSUE_PLATFORM', 'KATO_AGENT_BACKEND',
+    )
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        tmp_dir = Path(self._tmp.name)
+        self.settings_path = tmp_dir / 'settings.json'
+        self.env_path = tmp_dir / '.env'   # deliberately absent
+        self.projects = tmp_dir / 'projects'
+        self.projects.mkdir()
+        # patch.dict snapshots os.environ and restores it wholesale on stop,
+        # so the pops below (shell-config isolation) and any keys the loop
+        # loads during a test are all undone automatically.
+        self._env_patch = patch.dict('os.environ', {
+            'KATO_SETTINGS_FILE': str(self.settings_path),
+            'KATO_SETTINGS_ENV_FILE': str(self.env_path),
+            # The transition re-runs the boot security gates; opt out of the
+            # TLS pin exactly like the other main() tests do.
+            'KATO_SANDBOX_ALLOW_NO_TLS_PIN': 'true',
+        }, clear=False)
+        self._env_patch.start()
+        self.addCleanup(self._env_patch.stop)
+        for key in self._REQUIRED_KEYS + (
+            # Gate-relevant flags a developer shell might carry.
+            'KATO_SANDBOX_ANTHROPIC_TLS_PIN_SHA256',
+            'KATO_CLAUDE_BYPASS_PERMISSIONS',
+            'KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS',
+            'KATO_CLAUDE_DOCKER',
+        ):
+            os.environ.pop(key, None)
+
+    def _write_settings(self, extra=None) -> None:
+        import json
+        values = {
+            'YOUTRACK_API_BASE_URL': 'https://youtrack.example',
+            'YOUTRACK_API_TOKEN': 'yt-token',
+            'YOUTRACK_PROJECT': 'PROJ',
+            'YOUTRACK_ASSIGNEE': 'me',
+            'REPOSITORY_ROOT_PATH': str(self.projects),
+            'OPENHANDS_BASE_URL': 'https://openhands.example',
+            'OPENHANDS_API_KEY': 'oh-key',
+            'OH_SECRET_KEY': 'oh-secret',
+            'OPENHANDS_LLM_MODEL': 'gpt-4',
+            'OPENHANDS_LLM_API_KEY': 'llm-key',
+        }
+        values.update(extra or {})
+        self.settings_path.write_text(json.dumps(values), encoding='utf-8')
+
+    def _app(self, complete_setup):
+        flask_app = types.SimpleNamespace(
+            config={'AGENT_SERVICE': None, 'NEEDS_CONFIG': True},
+        )
+        return types.SimpleNamespace(
+            logger=Mock(),
+            complete_setup=complete_setup,
+            planning_flask_app=flask_app,
+        )
+
+    def test_shutdown_signal_returns_false_without_attempting_setup(self) -> None:
+        from kato_core_lib.main import _wait_until_configured_then_finish_setup
+        complete_setup = Mock()
+        app = self._app(complete_setup)
+
+        def interrupted_sleep(_seconds):
+            raise KeyboardInterrupt
+
+        result = _wait_until_configured_then_finish_setup(
+            app, sleep_fn=interrupted_sleep,
+        )
+
+        self.assertFalse(result)
+        complete_setup.assert_not_called()
+
+    def test_keeps_waiting_while_config_incomplete(self) -> None:
+        from kato_core_lib.main import _wait_until_configured_then_finish_setup
+        complete_setup = Mock()
+        app = self._app(complete_setup)
+
+        # Empty settings.json → still unconfigured every tick.
+        result = _wait_until_configured_then_finish_setup(
+            app, sleep_fn=lambda _s: None, max_ticks=3,
+        )
+
+        self.assertFalse(result)
+        complete_setup.assert_not_called()
+        # The webserver stays in setup mode.
+        self.assertTrue(app.planning_flask_app.config['NEEDS_CONFIG'])
+
+    def test_finishes_setup_and_clears_the_error_once_configured(self) -> None:
+        from kato_core_lib.main import _wait_until_configured_then_finish_setup
+        self._write_settings()
+        service = object()
+        app = self._app(None)
+        # The real complete_setup assigns app.service; mirror that.
+        app.complete_setup = Mock(side_effect=lambda: setattr(app, 'service', service))
+
+        result = _wait_until_configured_then_finish_setup(
+            app, sleep_fn=lambda _s: None, max_ticks=3,
+        )
+
+        self.assertTrue(result)
+        app.complete_setup.assert_called_once_with()
+        # The saved settings were loaded into the process env (so hydra's
+        # ${oc.env:...} reads resolve to what the operator saved).
+        self.assertEqual(os.environ.get('YOUTRACK_API_TOKEN'), 'yt-token')
+        # Any earlier failure is cleared right away...
+        self.assertEqual(app.planning_flask_app.config['SETUP_ERROR'], '')
+        # ...but the UI is NOT flipped out of setup mode here: main() first
+        # runs the boot reconciliation steps (orphan recovery, branch
+        # reconcile, comment requeue) and only then calls
+        # _mark_webserver_configured — otherwise the operator could race
+        # those steps with chat sends the moment the gate closes.
+        self.assertTrue(app.planning_flask_app.config['NEEDS_CONFIG'])
+
+    def test_failed_attempt_rolls_back_env_and_retries_only_after_a_change(self) -> None:
+        """Bad creds must not wedge setup mode: the failed attempt's env
+        load is rolled back, the SAME config is not retried (no hammering
+        the provider), and a corrected save goes through."""
+        from kato_core_lib.main import _wait_until_configured_then_finish_setup
+        self._write_settings({'YOUTRACK_API_TOKEN': 'bad-token'})
+        app = self._app(Mock(side_effect=[RuntimeError('bad creds'), None]))
+        ticks = {'n': 0}
+
+        def scripted_sleep(_seconds):
+            ticks['n'] += 1
+            if ticks['n'] == 3:
+                # The operator fixes the token in the Settings UI.
+                self._write_settings({'YOUTRACK_API_TOKEN': 'good-token'})
+
+        result = _wait_until_configured_then_finish_setup(
+            app, sleep_fn=scripted_sleep, max_ticks=6,
+        )
+
+        self.assertTrue(result)
+        # Attempt 1 (bad) + attempt 2 (good) — the unchanged-config ticks
+        # in between did NOT re-attempt.
+        self.assertEqual(app.complete_setup.call_count, 2)
+        app.logger.exception.assert_called_once()
+        # The rollback is what let the corrected value win: without it the
+        # stale 'bad-token' in the process env would outrank settings.json
+        # forever.
+        self.assertEqual(os.environ.get('YOUTRACK_API_TOKEN'), 'good-token')
+        # The final success cleared the failure the UI was showing.
+        self.assertEqual(app.planning_flask_app.config['SETUP_ERROR'], '')
+
+    def test_blank_env_key_from_dotenv_example_does_not_shadow_the_wizard(self) -> None:
+        """.env.example ships blank ``KEY=`` lines; the launcher lands them
+        as set-but-EMPTY process env vars. Empty means unset everywhere else
+        (validators, settings UI, effective_config_env) — the transition's
+        env load must overwrite them or the wizard's saved value would be
+        shadowed forever and kato could never start."""
+        from kato_core_lib.main import _wait_until_configured_then_finish_setup
+        os.environ['YOUTRACK_API_TOKEN'] = ''   # restored by patch.dict stop
+        self._write_settings()                  # wizard saved 'yt-token'
+        service = object()
+        app = self._app(None)
+        app.complete_setup = Mock(side_effect=lambda: setattr(app, 'service', service))
+
+        result = _wait_until_configured_then_finish_setup(
+            app, sleep_fn=lambda _s: None, max_ticks=3,
+        )
+
+        self.assertTrue(result)
+        # The blank was replaced by the operator's saved value, so hydra's
+        # ${oc.env:...} reads resolve to the real token.
+        self.assertEqual(os.environ.get('YOUTRACK_API_TOKEN'), 'yt-token')
+
+    def test_unchanged_config_is_retried_periodically_after_a_failure(self) -> None:
+        """A transient failure (provider blip) with an unchanged config must
+        not wedge setup mode forever — the loop re-attempts every
+        ``_SETUP_RETRY_EVERY_TICKS`` even without a settings change."""
+        from kato_core_lib.main import _wait_until_configured_then_finish_setup
+        self._write_settings()
+        app = self._app(Mock(side_effect=[RuntimeError('blip'), None]))
+
+        with patch('kato_core_lib.main._SETUP_RETRY_EVERY_TICKS', 2):
+            result = _wait_until_configured_then_finish_setup(
+                app, sleep_fn=lambda _s: None, max_ticks=6,
+            )
+
+        self.assertTrue(result)
+        self.assertEqual(app.complete_setup.call_count, 2)
+
+    def test_security_gates_block_a_bypass_flag_saved_during_setup(self) -> None:
+        """SECURITY: the boot gates validated the env at startup — a
+        gate-relevant flag saved through the UI afterwards must clear the
+        SAME bar. Bypass-permissions without its requirements must refuse
+        the transition: no service starts, the flag is rolled back out of
+        the env, and the wizard sees why."""
+        from kato_core_lib.main import _wait_until_configured_then_finish_setup
+        self._write_settings({'KATO_CLAUDE_BYPASS_PERMISSIONS': 'true'})
+        complete_setup = Mock()
+        app = self._app(complete_setup)
+
+        result = _wait_until_configured_then_finish_setup(
+            app, sleep_fn=lambda _s: None, max_ticks=3,
+        )
+
+        self.assertFalse(result)
+        # The gate fired BEFORE anything could start.
+        complete_setup.assert_not_called()
+        # Rolled back: the refused flag must not linger in the process env.
+        self.assertIsNone(os.environ.get('KATO_CLAUDE_BYPASS_PERMISSIONS'))
+        # The wizard shows the refusal.
+        self.assertTrue(app.planning_flask_app.config['SETUP_ERROR'])
+        self.assertTrue(app.planning_flask_app.config['NEEDS_CONFIG'])
+
+    def test_failed_attempt_surfaces_the_error_to_the_webserver(self) -> None:
+        """The terminal must not be the only place that knows the start
+        failed: the wizard polls /api/config-status, which reads the live
+        Flask SETUP_ERROR this loop publishes."""
+        from kato_core_lib.main import _wait_until_configured_then_finish_setup
+        self._write_settings({'YOUTRACK_API_TOKEN': 'bad-token'})
+        app = self._app(Mock(side_effect=RuntimeError('startup dependency validation failed: youtrack')))
+
+        result = _wait_until_configured_then_finish_setup(
+            app, sleep_fn=lambda _s: None, max_ticks=3,
+        )
+
+        self.assertFalse(result)
+        self.assertIn(
+            'startup dependency validation failed: youtrack',
+            app.planning_flask_app.config['SETUP_ERROR'],
+        )
+
+
+class MarkWebserverConfiguredTests(unittest.TestCase):
+    def test_noop_when_webserver_never_started(self) -> None:
+        from kato_core_lib.main import _mark_webserver_configured
+        _mark_webserver_configured(types.SimpleNamespace(logger=Mock()))  # no raise
+
+    def test_flips_live_flask_config(self) -> None:
+        from kato_core_lib.main import _mark_webserver_configured
+        service = object()
+        flask_app = types.SimpleNamespace(
+            config={'AGENT_SERVICE': None, 'NEEDS_CONFIG': True},
+        )
+        app = types.SimpleNamespace(
+            logger=Mock(), planning_flask_app=flask_app, service=service,
+        )
+
+        _mark_webserver_configured(app)
+
+        self.assertIs(flask_app.config['AGENT_SERVICE'], service)
+        self.assertFalse(flask_app.config['NEEDS_CONFIG'])
+
+
+class PlanningWebserverDoubleStartGuardTests(unittest.TestCase):
+    def test_second_start_is_a_noop_when_already_serving(self) -> None:
+        # After the setup→running fall-through, the full boot path calls the
+        # webserver helper again. It must reuse the live thread — a second
+        # bind on the port would fail with "address already in use".
+        from kato_core_lib.main import _start_planning_webserver_if_enabled
+        app = types.SimpleNamespace(
+            logger=Mock(), planning_flask_app=object(),
+        )
+
+        _start_planning_webserver_if_enabled(app)
+
+        # Immediate return: no "disabled"/"skipped"/"listening" logging, no
+        # attribute probing beyond the guard.
+        app.logger.info.assert_not_called()
+        app.logger.warning.assert_not_called()
 
 
 if __name__ == '__main__':

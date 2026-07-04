@@ -1494,10 +1494,13 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         self.assertIn('Bash(git push:*)', disallowed)
         self.assertIn('Bash(mkfs:*)', disallowed)
         self.assertIn('Bash(nsenter:*)', disallowed)
-        # And forces approval for out-of-workspace writes (acceptEdits would
-        # otherwise auto-accept /tmp scratch with no prompt).
+        # And forces approval for out-of-workspace writes: an unscoped ask on
+        # every write tool (acceptEdits would otherwise auto-accept them),
+        # with the workspace allow-listed so in-folder edits still flow.
         self.assertIn('--settings', cmd)
-        self.assertIn('Write(/tmp/**)', cmd[cmd.index('--settings') + 1])
+        settings = cmd[cmd.index('--settings') + 1]
+        self.assertIn('"ask":["Write","Edit","MultiEdit","NotebookEdit"]', settings)
+        self.assertIn('"allow"', settings)
 
     def test_pending_request_input_reads_server_side(self) -> None:
         session = StreamingClaudeSession(task_id='PROJ-1')

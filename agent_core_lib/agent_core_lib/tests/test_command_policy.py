@@ -396,5 +396,74 @@ class OutOfScopeInjectionTests(unittest.TestCase):
         self.assertEqual(v.decision, Decision.ALLOW)
 
 
+class OutOfScopeDenyIsTrulyDeniedTests(unittest.TestCase):
+    """When an out-of-workspace write is DENIED, it stays denied no matter
+    which tool the agent reaches for next — the exact route-around the sandbox
+    incident exposed (bash blocked → agent switched to the Edit tool). The
+    guard classifies the *effect* (write outside scope), not the tool, so one
+    decision covers every tool that can produce it."""
+
+    # Operator posture: "deny always" for out-of-workspace writes.
+    DENY_SCOPE = CommandPolicy.from_mapping({RiskCategory.OUT_OF_SCOPE: Decision.BLOCK})
+
+    @staticmethod
+    def _paths_outside(tool_input, cwd, add, allowed):
+        for key in ('file_path', 'notebook_path', 'path', 'file'):
+            p = str(tool_input.get(key) or '')
+            if p.startswith('/outside'):
+                return (True, p)
+        return (False, '')
+
+    @staticmethod
+    def _command_outside(command, cwd, add, allowed):
+        return ('/outside' in command, '/outside')
+
+    def test_denied_out_of_scope_write_blocked_via_every_file_tool(self):
+        cases = {
+            'Write': {'file_path': '/outside/repo/x.py'},
+            'Edit': {'file_path': '/outside/repo/x.py'},
+            'MultiEdit': {'file_path': '/outside/repo/x.py'},
+            'NotebookEdit': {'notebook_path': '/outside/repo/x.ipynb'},
+        }
+        for tool, tool_input in cases.items():
+            verdict = classify_action(
+                tool, tool_input, policy=self.DENY_SCOPE,
+                tool_input_sandbox_classifier=self._paths_outside,
+            )
+            self.assertEqual(
+                verdict.decision, Decision.BLOCK, f'{tool} must be BLOCKed')
+            self.assertEqual(verdict.category, RiskCategory.OUT_OF_SCOPE)
+
+    def test_denied_out_of_scope_write_blocked_via_bash_workarounds(self):
+        # The agent cannot dodge the denial by writing through the shell.
+        for command in (
+            'echo x > /outside/repo/x.py',
+            'tee /outside/repo/x.py',
+            "python -c \"open('/outside/repo/x.py','w').write('x')\"",
+        ):
+            verdict = classify_action(
+                'Bash', {'command': command}, policy=self.DENY_SCOPE,
+                command_sandbox_classifier=self._command_outside,
+            )
+            self.assertEqual(verdict.decision, Decision.BLOCK, command)
+
+    def test_out_of_scope_write_is_never_silently_allowed(self):
+        # Even with the DEFAULT posture (no explicit "deny always"), an
+        # out-of-scope write via any file tool ASKs — never a silent ALLOW.
+        for tool, tool_input in (
+            ('Write', {'file_path': '/outside/a.py'}),
+            ('Edit', {'file_path': '/outside/a.py'}),
+            ('MultiEdit', {'file_path': '/outside/a.py'}),
+            ('NotebookEdit', {'notebook_path': '/outside/a.ipynb'}),
+        ):
+            verdict = classify_action(
+                tool, tool_input, policy=_DEFAULT,
+                tool_input_sandbox_classifier=self._paths_outside,
+            )
+            self.assertNotEqual(
+                verdict.decision, Decision.ALLOW,
+                f'{tool} out-of-scope write must not be silently allowed')
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -3258,6 +3258,25 @@ code {
   overflow-y: auto;
 }
 
+// The ExitPlanMode ``plan`` field renders as real markdown (not raw text),
+// so drop the pre-wrap and give the rendered elements compact modal spacing.
+.permission-field-markdown {
+  white-space: normal;
+  line-height: 1.55;
+  max-height: 320px;
+
+  h1, h2, h3, h4 { margin: $SPACE-10 0 $SPACE-6; line-height: 1.3; }
+  h1 { font-size: $TEXT-15; }
+  h2 { font-size: $TEXT-14; }
+  h3, h4 { font-size: $TEXT-13; }
+  p { margin: $SPACE-6 0; }
+  ul, ol { margin: $SPACE-6 0; padding-left: $SPACE-20; }
+  li { margin: $SPACE-2 0; }
+  code { word-break: break-word; }
+  > :first-child { margin-top: 0; }
+  > :last-child { margin-bottom: 0; }
+}
+
 // Out-of-sandbox alarm: shown when the agent's permission ask reaches a
 // path outside the task folder. Deliberately loud — red, big, uppercase —
 // so the operator can't miss that this grant escapes the sandbox.
@@ -8485,4 +8504,290 @@ body.kato-resizing #left-pane-resizer::before {
 
 :where([class*=badge], [class*=chip], [class*=pill]) {
   border-radius: var(--radius-pill);
+}
+
+// ---------------------------------------------------------------------------
+// First-run setup gate + wizard (SetupModeGate / SetupWizard). Shown only when
+// kato booted unconfigured. Sits above the app content but below toasts (2000)
+// so save success/error toasts still surface over the wizard.
+// ---------------------------------------------------------------------------
+.setup-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: $SPACE-32 $SPACE-16;
+  background: $C-NEUTRAL-05-A86;
+  overflow-y: auto;
+}
+
+// Hidden (not unmounted) while the Settings drawer is open, so the drawer
+// (z-index 1000) is reachable from the wizard's "Open full settings" and
+// the wizard's typed state survives.
+.setup-gate.is-hidden {
+  display: none;
+}
+
+.setup-gate-panel {
+  width: min(560px, 100%);
+  margin: auto;
+  background: $C-NEUTRAL-04;
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-12;
+  box-shadow: $SHADOW-30;
+  overflow: hidden;
+}
+
+.setup-gate-head {
+  padding: $SPACE-24 $SPACE-24 $SPACE-16;
+  border-bottom: 1px solid $C-NEUTRAL-16;
+}
+
+.setup-gate-badge {
+  display: inline-block;
+  padding: $SPACE-2 $SPACE-8;
+  border-radius: var(--radius-pill);
+  background: $C-CYAN-52-A18;
+  color: $C-CYAN-58;
+  font-size: $TEXT-11;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.setup-gate-title {
+  margin: $SPACE-10 0 $SPACE-6;
+  font-size: $TEXT-20;
+  color: $C-NEUTRAL-96;
+}
+
+.setup-gate-sub {
+  margin: 0;
+  font-size: $TEXT-13;
+  line-height: 1.5;
+  color: $C-NEUTRAL-64;
+}
+
+// Why the last in-process start attempt failed (bad token etc.) — shown on
+// every wizard step so the operator never sees a silent "all set" lie.
+.setup-gate-error {
+  margin: $SPACE-10 0 0;
+  padding: $SPACE-8 $SPACE-10;
+  border: 1px solid $C-RED-31;
+  border-radius: $RADIUS-6;
+  font-size: $TEXT-12;
+  line-height: 1.5;
+  color: $C-RED-82;
+  overflow-wrap: anywhere;
+}
+
+.setup-wizard {
+  padding: $SPACE-20 $SPACE-24 $SPACE-24;
+}
+
+.setup-wizard-steps {
+  display: flex;
+  gap: $SPACE-8;
+  margin: 0 0 $SPACE-20;
+  padding: 0;
+  list-style: none;
+}
+
+.setup-wizard-step-chip {
+  display: flex;
+  align-items: center;
+  gap: $SPACE-6;
+  flex: 1;
+  min-width: 0;
+  font-size: $TEXT-11;
+  color: $C-NEUTRAL-64;
+}
+
+.setup-wizard-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: $RADIUS-CIRCLE;
+  border: 1px solid $C-NEUTRAL-16;
+  background: $C-NEUTRAL-04;
+  font-size: $TEXT-11;
+}
+
+.setup-wizard-step-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setup-wizard-step-chip.is-current .setup-wizard-step-num {
+  border-color: $C-CYAN-52;
+  background: $C-CYAN-52;
+  color: $C-NEUTRAL-96;
+}
+
+.setup-wizard-step-chip.is-current {
+  color: $C-NEUTRAL-96;
+}
+
+.setup-wizard-step-chip.is-done .setup-wizard-step-num {
+  border-color: $C-GREEN-52;
+  color: $C-GREEN-52;
+}
+
+.setup-wizard-heading {
+  margin: 0 0 $SPACE-6;
+  font-size: $TEXT-16;
+  color: $C-NEUTRAL-96;
+}
+
+.setup-wizard-heading--ok {
+  color: $C-GREEN-52;
+}
+
+.setup-wizard-lead {
+  margin: 0 0 $SPACE-16;
+  font-size: $TEXT-13;
+  line-height: 1.5;
+  color: $C-NEUTRAL-64;
+}
+
+.setup-wizard-error {
+  margin: 0 0 $SPACE-12;
+  font-size: $TEXT-13;
+  color: $C-RED-82;
+}
+
+.setup-wizard-choices {
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-8;
+  margin-bottom: $SPACE-20;
+}
+
+.setup-wizard-choice {
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-2;
+  padding: $SPACE-12 $SPACE-14;
+  text-align: left;
+  background: $C-NEUTRAL-04;
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-8;
+  color: $C-NEUTRAL-96;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.setup-wizard-choice:hover {
+  border-color: $C-NEUTRAL-32;
+}
+
+.setup-wizard-choice.is-selected {
+  border-color: $C-CYAN-52;
+  background: $C-CYAN-52-A18;
+}
+
+.setup-wizard-choice-label {
+  font-size: $TEXT-14;
+  font-weight: 600;
+}
+
+.setup-wizard-choice-blurb {
+  font-size: $TEXT-12;
+  color: $C-NEUTRAL-64;
+}
+
+.setup-wizard-fields {
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-14;
+  margin-bottom: $SPACE-20;
+}
+
+.setup-wizard-field {
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-6;
+}
+
+.setup-wizard-field-label {
+  display: flex;
+  align-items: baseline;
+  gap: $SPACE-8;
+  font-size: $TEXT-13;
+  color: $C-NEUTRAL-96;
+}
+
+.setup-wizard-field-key {
+  font-size: $TEXT-11;
+  color: $C-NEUTRAL-64;
+}
+
+.setup-wizard-input {
+  background: $C-NEUTRAL-04;
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-4;
+  color: $C-NEUTRAL-96;
+  padding: $SPACE-8 $SPACE-10;
+  font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  outline: none;
+}
+
+.setup-wizard-input:focus {
+  border-color: $C-CYAN-52;
+}
+
+.setup-wizard-missing {
+  margin: 0 0 $SPACE-20;
+  padding-left: $SPACE-18;
+  font-size: $TEXT-12;
+  line-height: 1.6;
+  color: $C-NEUTRAL-64;
+}
+
+.setup-wizard-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $SPACE-8;
+}
+
+.setup-wizard-actions-group {
+  display: flex;
+  gap: $SPACE-8;
+}
+
+.setup-wizard-btn {
+  padding: $SPACE-8 $SPACE-16;
+  border-radius: $RADIUS-4;
+  font-size: $TEXT-13;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid $C-NEUTRAL-16;
+  color: $C-NEUTRAL-96;
+}
+
+.setup-wizard-btn:hover:not(:disabled) {
+  border-color: $C-NEUTRAL-32;
+}
+
+.setup-wizard-btn--primary {
+  background: $C-CYAN-52;
+  border-color: $C-CYAN-52;
+  color: $C-NEUTRAL-96;
+}
+
+.setup-wizard-btn--primary:hover:not(:disabled) {
+  background: $C-BLUE-48;
+  border-color: $C-BLUE-48;
+}
+
+.setup-wizard-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }

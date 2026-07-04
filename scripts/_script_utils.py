@@ -8,6 +8,7 @@ invoke a subprocess with a clean failure surface, and how to load .env.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -86,3 +87,45 @@ def load_env_file(env_path: Path) -> dict[str, str]:
             value = value[1:-1]
         values[key] = value
     return values
+
+
+def read_kato_settings_file() -> dict[str, str]:
+    """``~/.kato/settings.json`` (or ``$KATO_SETTINGS_FILE``) — the flat
+    ``{"KEY": "value"}`` file the planning-UI Settings drawer writes.
+
+    A deliberate stdlib-only mirror of
+    ``kato_core_lib.helpers.kato_settings_store_utils.read_kato_settings``:
+    ``run_local.py`` must honor UI-saved settings WITHOUT importing
+    kato_core_lib, because its interpreter may not be the venv that has it.
+    Tolerant — returns ``{}`` on a missing / corrupt / non-object file so a
+    hand-edit typo can't brick ``kato up`` (same contract as the canonical
+    reader).
+    """
+    override = os.environ.get('KATO_SETTINGS_FILE', '').strip()
+    path = Path(override) if override else Path.home() / '.kato' / 'settings.json'
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(k): str(v) for k, v in data.items() if k}
+
+
+def layered_env(base_env, *sources) -> dict[str, str]:
+    """Compose a process env: ``base_env`` (the real shell) wins, then each
+    ``source`` fills only keys still unset — earlier sources beat later ones.
+
+    kato's documented precedence is
+    ``layered_env(os.environ, read_kato_settings_file(), load_env_file(.env))``
+    → **shell > ~/.kato/settings.json > <repo>/.env**. (``kato up`` used to
+    ``env.update(.env)`` — loading ``.env`` OVER the shell AND never reading
+    settings.json — so a value saved through the Settings UI had no effect.)
+    """
+    env = dict(base_env)
+    for source in sources:
+        for key, value in (source or {}).items():
+            env.setdefault(str(key), str(value))
+    return env

@@ -96,6 +96,18 @@ def _effective_roots(cwd: str, additional_dirs) -> list[str]:
     return roots
 
 
+def effective_sandbox_roots(
+    cwd: str, additional_dirs: tuple[str, ...] | list[str] = (),
+) -> list[str]:
+    """The sandbox roots that count as "inside the task folder": the ``cwd``,
+    the spawn-time ``--add-dir`` set, and the task-folder parent (see
+    ``_effective_roots``). Public so the PREVENTIVE write-scope settings and
+    this POST-HOC classifier share ONE boundary — a write allowed here is
+    exactly a write that won't be warned about later. Empty when ``cwd`` is
+    unknown."""
+    return _effective_roots(cwd, additional_dirs)
+
+
 def classify_tool_input_sandbox(
     tool_input: Any,
     cwd: str,

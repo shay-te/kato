@@ -1070,7 +1070,9 @@ class StreamingClaudeSession(object):
         from claude_core_lib.claude_core_lib.helpers.write_scope_settings import (
             out_of_workspace_write_settings_json,
         )
-        command.extend(['--settings', out_of_workspace_write_settings_json()])
+        command.extend(['--settings', out_of_workspace_write_settings_json(
+            self._cwd, self._additional_dirs,
+        )])
         if self._permission_prompt_tool:
             command.extend(['--permission-prompt-tool', self._permission_prompt_tool])
         # Session identity comes EARLY in the argv — before any

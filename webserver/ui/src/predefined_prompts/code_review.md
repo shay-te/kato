@@ -53,6 +53,20 @@ EVIDENCE, NOT SPECULATION. Every BLOCKER and MAJOR must show: the exact code pat
      it, RUN coverage (the project's coverage command) and report the % for the changed files;
      anything under 100% on new/changed lines is a BLOCKER — list each uncovered file:line/branch.
      (Core-lib standard: 100% per AGENTS.md.)
+   - MOCK ONLY TRUE BOUNDARIES — over-mocking is the #1 reason a test passes green while the real
+     UI breaks in the operator's hands. Stub ONLY genuine external edges (network/HTTP, timers,
+     randomness, filesystem, third-party SDKs). Do NOT mock the code under test or its own
+     collaborators — sibling components, stores, hooks, reducers, context providers, helpers: run
+     the REAL ones so the test fails the moment their contract drifts. A test that mocks away
+     everything the change touches proves NOTHING about real use — treat it as a naive test and
+     rewrite it against the real code path. Coverage bought with mocks is fake coverage.
+   - TEST REAL USE CASES, NOT COVERAGE THEATER — write what a user ACTUALLY does: render the real
+     component, drive it with real events (click / type / submit / tab-switch), and assert on what
+     the operator SEES or gets — never on mock call-counts or internal calls. Think in real-life
+     scenarios, not just line coverage: cover the failure paths a real session hits (empty, error,
+     slow/pending, out-of-order/race, remount on tab-switch, stale data, rapid re-entry), not only
+     the happy path that bumps the number. For EVERY test ask: "if someone refactors the UI and
+     quietly breaks this behavior, does THIS test go red?" If not, it is naive — a finding — fix it.
    - REVIEW THE TESTS AS PRODUCTION CODE: a test that can't fail when the feature breaks is no
      test. Hunt for assertions that don't verify the actual behavior, mocks that hide the bug,
      tests coupled to implementation details, and tests that pass for the wrong reason — flip the

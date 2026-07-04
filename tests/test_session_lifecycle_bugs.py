@@ -62,7 +62,9 @@ class Bug1NoAutoResumeOnKatoRestartTests(unittest.TestCase):
             kato=SimpleNamespace(),
         )
         patches = dict(
-            validate_environment=MagicMock(),
+            # Config complete → full boot (this suite observes the
+            # post-init startup steps, not the setup-mode branch).
+            collect_config_errors=MagicMock(return_value=[]),
             validate_bypass_permissions=MagicMock(),
             validate_read_only_tools_requires_docker=MagicMock(),
             validate_anthropic_tls_pin_or_refuse=MagicMock(),

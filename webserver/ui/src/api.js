@@ -75,6 +75,15 @@ export function fetchSafetyState() {
   return fetchJson('/api/safety');
 }
 
+// Setup mode — did kato boot unconfigured (``setup_mode``), and is the config
+// complete right now (``needs_config`` / ``missing``). Drives the first-run
+// wizard gate (see useConfigStatus + SetupModeGate). Evaluated live across
+// env > settings.json > .env, so saving in the wizard clears items here
+// without a restart.
+export function fetchConfigStatus() {
+  return fetchJson('/api/config-status');
+}
+
 export function fetchAgentVersion(force = false) {
   // ``force`` re-probes the host CLI server-side (banner/upgrade button reflect
   // a CLI or settings change with no kato restart).

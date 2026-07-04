@@ -10,6 +10,7 @@ import OrchestratorActivityFeed from './components/OrchestratorActivityFeed.jsx'
 import PlanPane from './components/PlanPane.jsx';
 import RightPane from './components/RightPane.jsx';
 import SafetyBanner from './components/SafetyBanner.jsx';
+import SetupModeGate from './components/SetupModeGate.jsx';
 import AgentVersionBanner from './components/AgentVersionBanner.jsx';
 import SessionDetail from './components/SessionDetail.jsx';
 import SettingsDrawer from './components/SettingsDrawer.jsx';
@@ -26,6 +27,7 @@ import {
 } from './utils/permissionEnvelope.js';
 import { useResizable } from './hooks/useResizable.js';
 import { useSafetyState } from './hooks/useSafetyState.js';
+import { useConfigStatus } from './hooks/useConfigStatus.js';
 import { refreshAgentVersion } from './hooks/useAgentVersion.js';
 import { refreshCatalogs } from './hooks/useCatalogRefresh.js';
 import { useSessions } from './hooks/useSessions.js';
@@ -350,6 +352,10 @@ export default function App() {
 
   const status = useStatusFeed(handleStatusEntry);
   const safetyState = useSafetyState();
+  // First-run gate: when kato booted unconfigured, SetupModeGate overlays the
+  // whole app with the setup wizard. ``refreshConfigStatus`` lets the wizard
+  // re-check the moment it saves a setting.
+  const { status: configStatus, refresh: refreshConfigStatus } = useConfigStatus();
 
   // Track viewport width so the chat's max can leave the centre pane its
   // minimum at any window size — a static cap squeezed the centre on
@@ -601,6 +607,16 @@ export default function App() {
   return (
     <>
       <ToastContainer />
+      {/* ``hidden`` while the Settings drawer is open: the gate's overlay
+          (z-index 1500) would otherwise paint OVER the drawer (1000) and
+          dead-end the wizard's "Open full settings" path. Kept mounted (not
+          unmounted) so the wizard's typed state survives the round-trip. */}
+      <SetupModeGate
+        status={configStatus}
+        hidden={settingsOpen}
+        onRefreshStatus={refreshConfigStatus}
+        onOpenFullSettings={openSettings}
+      />
       <SafetyBanner state={safetyState} />
       <AgentVersionBanner />
       <Header

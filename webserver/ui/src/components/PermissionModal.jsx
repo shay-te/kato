@@ -7,6 +7,7 @@ import {
 import { extractAnswerableQuestions } from '../utils/answerableQuestion.js';
 import DialogShell from './DialogShell.jsx';
 import AskUserQuestionForm from './AskUserQuestionForm.jsx';
+import MarkdownContent from './MarkdownContent.jsx';
 
 export default function PermissionModal({
   raw, onDecide, taskCode = '', taskSummary = '',
@@ -240,11 +241,22 @@ function renderFields(toolInput) {
     );
   }
   return Object.entries(toolInput).map(([key, value]) => {
-    const formatted = formatValue(value);
+    // The ExitPlanMode ``plan`` field is a markdown document — render it as
+    // markdown (headings/lists/code), not the raw ``#``/``-`` text.
+    if (key === 'plan' && typeof value === 'string' && value.trim()) {
+      return (
+        <div className="permission-field" key={key}>
+          <span className="permission-field-label">{key}</span>
+          <div className="permission-field-value permission-field-markdown">
+            <MarkdownContent>{value}</MarkdownContent>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="permission-field" key={key}>
         <span className="permission-field-label">{key}</span>
-        <div className="permission-field-value">{formatted}</div>
+        <div className="permission-field-value">{formatValue(value)}</div>
       </div>
     );
   });

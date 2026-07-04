@@ -396,14 +396,29 @@ def _validate(mode: str, env: dict[str, str]) -> list[str]:
     return errors
 
 
+def collect_config_errors(
+    mode: str = 'all',
+    env: dict[str, str] | None = None,
+    env_file: str | None = None,
+) -> list[str]:
+    """The config problems ``validate_environment`` would raise on, as a list
+    (empty ⇒ fully configured).
+
+    Non-raising companion so a caller can boot into a "needs configuration"
+    state and surface WHAT is missing in the UI instead of hard-exiting — the
+    same source of truth the CLI's fatal check uses, so the two never drift.
+    """
+    effective_env = dict(env) if env is not None else _build_env(env_file)
+    return _validate(mode, effective_env)
+
+
 def validate_environment(
     mode: str = 'all',
     env: dict[str, str] | None = None,
     env_file: str | None = None,
 ) -> None:
     """Validate environment settings and raise on invalid configuration."""
-    effective_env = dict(env) if env is not None else _build_env(env_file)
-    errors = _validate(mode, effective_env)
+    errors = collect_config_errors(mode, env, env_file)
     if errors:
         raise ValueError('\n'.join(errors))
 

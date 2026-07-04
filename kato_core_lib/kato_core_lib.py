@@ -120,7 +120,7 @@ def _export_agent_env_from_kato_config() -> None:
 
 
 class KatoCoreLib(CoreLib):
-    def __init__(self, cfg: DictConfig) -> None:
+    def __init__(self, cfg: DictConfig, setup_mode: bool = False) -> None:
         CoreLib.__init__(self)
         self.config = cfg
         _export_agent_env_from_kato_config()
@@ -131,6 +131,21 @@ class KatoCoreLib(CoreLib):
         # can receive a real runner instead of None. The runner is
         # always installed — empty config produces a silent no-op.
         self.hooks_config, self.hook_runner = self._load_hooks(self.logger)
+        # SETUP MODE: kato is not configured (missing issue-platform creds).
+        # Bring up ONLY the backend-agnostic managers the planning UI needs —
+        # no ticket-driven service, no connection validation — so the webserver
+        # runs and the operator can configure via the Settings drawer. The
+        # full-boot path below is unchanged; this branch only runs for a case
+        # that previously hard-crashed at startup.
+        self.needs_config = setup_mode
+        if setup_mode:
+            self._build_setup_mode_managers(cfg.kato)
+            self.service = None
+            self.logger.warning(
+                'kato is NOT configured — starting in setup mode (UI only). '
+                'Open the planning UI and fill in Settings to start working.',
+            )
+            return
         self.service = self._build_agent_service(cfg.kato)
         # Wire the done-sentinel callback after both AgentService and
         # SessionManager exist. Every Claude session spawned from now on
@@ -147,6 +162,72 @@ class KatoCoreLib(CoreLib):
                 KATO_TASK_DONE_SENTINEL,
             )
         self.service.validate_connections()
+
+    def _build_setup_mode_managers(self, open_cfg: DictConfig) -> None:
+        """Setup-boot manager build, tolerant of a broken agent-backend value.
+
+        An unsupported ``KATO_AGENT_BACKEND`` (a typo the operator needs the
+        setup UI to FIX) must not crash the setup boot — without managers the
+        planning webserver refuses to start and the operator is left with a
+        traceback instead of the wizard. Fall back to the default backend for
+        the UI-only managers; the mismatch guard in ``_build_core_managers``
+        turns a later backend switch into a clear restart message anyway.
+        """
+        try:
+            self._build_core_managers(open_cfg)
+            return
+        except Exception:
+            self.logger.exception(
+                'could not build the planning-UI managers from the saved '
+                'config — retrying with the default agent backend so the '
+                'setup UI can start',
+            )
+        original = os.environ.get('KATO_AGENT_BACKEND')
+        os.environ['KATO_AGENT_BACKEND'] = 'openhands'
+        try:
+            self._build_core_managers(open_cfg)
+        finally:
+            if original is None:
+                os.environ.pop('KATO_AGENT_BACKEND', None)
+            else:
+                os.environ['KATO_AGENT_BACKEND'] = original
+
+    def complete_setup(self) -> None:
+        """SETUP MODE → RUNNING without a restart.
+
+        Called by ``main``'s setup-mode wait loop once the operator has
+        completed configuration in the UI (the layered config passes
+        ``collect_config_errors`` and the new values are loaded into the
+        process env). Builds the ticket-driven agent service that
+        ``__init__`` skipped, runs connection validation, and only THEN
+        wires the done-sentinel callback and commits — a failed attempt
+        must leave no live wiring behind (a dead service on the manager's
+        done callback would swallow real completions later).
+
+        The managers built at setup boot are REUSED (see the guard in
+        ``_build_core_managers``); config values are re-read live because
+        hydra's ``${oc.env:...}`` interpolations resolve on access.
+
+        Raises on failure (e.g. bad credentials fail connection
+        validation) and leaves the instance in setup mode — ``service``
+        stays ``None`` and ``needs_config`` stays ``True`` — so the wait
+        loop can surface the error and retry after the next settings save.
+        """
+        if self.service is not None:
+            return
+        _export_agent_env_from_kato_config()
+        service = self._build_agent_service(self.config.kato)
+        service.validate_connections()
+        if self.session_manager is not None:
+            from kato_core_lib.data_layers.data.sentinels import (
+                KATO_TASK_DONE_SENTINEL,
+            )
+            self.session_manager.set_done_callback(
+                service.finish_task_planning_session,
+                KATO_TASK_DONE_SENTINEL,
+            )
+        self.service = service
+        self.needs_config = False
 
     @staticmethod
     def _load_hooks(logger):
@@ -172,21 +253,43 @@ class KatoCoreLib(CoreLib):
             )
         return config, runner
 
-    def _build_agent_service(self, open_cfg: DictConfig) -> AgentService:
-        retry_cfg = open_cfg.retry
+    def _build_core_managers(self, open_cfg: DictConfig):
+        """Build the backend-agnostic managers the planning UI needs — session,
+        workspace, lessons, parallel runner, planning-session runner. These
+        need NO issue-platform credentials, so they come up even when kato is
+        unconfigured. That is exactly what lets the setup UI boot without the
+        ticket-driven services (see ``__init__``'s ``setup_mode``). Returns
+        ``(agent_backend, docker_mode_on)`` for the full-service caller to reuse.
+        """
         agent_backend = resolved_agent_backend(open_cfg)
-        # Read once at boot. Threaded through every Claude spawn point so
-        # the sandbox-wrap decision is uniform across one-shot and
-        # streaming paths and survives a rename without a sweep.
+        # Read once at boot; threaded through every Claude spawn so the
+        # sandbox-wrap decision is uniform across one-shot + streaming paths.
         docker_mode_on = is_docker_mode_enabled()
-        # ``KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS`` — pre-approves the
-        # hardcoded read-only Bash allowlist so the operator isn't
-        # prompted for grep/cat/ls/etc. The startup gate has already
-        # refused the flag when docker is off (see
-        # ``validate_read_only_tools_requires_docker``); by the time
-        # this reads, an enabled read-only flag implies docker is on
-        # too. Threaded through the same fan-out as ``docker_mode_on``.
-        read_only_tools_on = is_read_only_tools_enabled()
+        if (
+            getattr(self, 'session_manager', None) is not None
+            or getattr(self, 'workspace_manager', None) is not None
+        ):
+            # Already built — this is ``complete_setup()`` finishing a
+            # setup-mode boot. REUSE the managers: the planning webserver
+            # captured these exact references at ``create_app`` time, so
+            # rebuilding here would split the orchestrator and the UI onto
+            # different manager instances (browser tabs would stop seeing
+            # the sessions the orchestrator creates).
+            #
+            # ...UNLESS the agent backend changed since they were built
+            # (e.g. openhands → claude picked in Settings during setup):
+            # the managers are backend-shaped (a claude backend NEEDS a
+            # session manager the openhands boot didn't build), and the
+            # webserver's captured references can't be swapped live.
+            # Refuse loudly instead of silently running mis-wired.
+            built_for = getattr(self, '_managers_agent_backend', None)
+            if built_for != agent_backend:
+                raise RuntimeError(
+                    f'agent backend changed ({built_for} → {agent_backend}) '
+                    'after the setup-mode boot — restart kato to apply the '
+                    'new backend',
+                )
+            return agent_backend, docker_mode_on
         # kato owns where session metadata lives; the transport lib takes it
         # as a parameter (so the lib reads no KATO_ env / no ~/.kato default).
         self.session_manager = ClaudeSessionManager.from_config(
@@ -197,33 +300,38 @@ class KatoCoreLib(CoreLib):
             ),
         )
         # Per-task workspace folders (one clone-set per ticket id) are
-        # backend-agnostic. Both Claude and OpenHands flows use them for
-        # isolation + parallelism.
+        # backend-agnostic — both Claude and OpenHands use them for isolation.
         self.workspace_manager = WorkspaceManager.from_config(
             open_cfg, agent_backend,
         )
-        # Lessons subsystem: per-task lesson capture + periodic compact.
-        # The Claude clients re-read ``lessons_path`` on every spawn so
-        # newly-extracted or freshly-compacted lessons take effect on
-        # the next turn without restarting kato. ``LessonsService`` is
-        # also handed to ``AgentService`` so the done-callback can
-        # extract a lesson when the operator marks a task done.
+        # Lessons subsystem: per-task capture + periodic compact. Claude clients
+        # re-read ``lessons_path`` per spawn so fresh lessons apply next turn.
         self.lessons_service = self._build_lessons_service(open_cfg)
         if self.session_manager is not None and self.workspace_manager is not None:
             self.session_manager.attach_workspace_manager(self.workspace_manager)
-        # Worker pool sized to KATO_MAX_PARALLEL_TASKS. With max=1 the
-        # behavior is identical to the previous synchronous loop —
-        # submit-then-block — so single-task setups don't pay any cost.
+        # Worker pool sized to KATO_MAX_PARALLEL_TASKS (max=1 == the old
+        # synchronous submit-then-block, so single-task setups pay nothing).
         self.parallel_task_runner = ParallelTaskRunner(
             max_workers=self.workspace_manager.max_parallel_tasks,
         )
-        planning_session_runner = PlanningSessionRunner.from_config(
+        self.planning_session_runner = PlanningSessionRunner.from_config(
             open_cfg, agent_backend, self.session_manager,
             docker_mode_on=docker_mode_on,
             hook_runner=self.hook_runner,
         )
-        self.planning_session_runner = planning_session_runner
+        # Remember which backend shaped these managers so the setup-mode
+        # reuse guard above can detect a mid-setup backend switch.
+        self._managers_agent_backend = agent_backend
         self.logger.info('using agent backend: %s', agent_backend)
+        return agent_backend, docker_mode_on
+
+    def _build_agent_service(self, open_cfg: DictConfig) -> AgentService:
+        retry_cfg = open_cfg.retry
+        agent_backend, docker_mode_on = self._build_core_managers(open_cfg)
+        # ``KATO_CLAUDE_ALLOWED_READ_ONLY_TOOLS`` pre-approves the read-only Bash
+        # allowlist (grep/cat/ls/…) — the startup gate already refused it when
+        # docker is off, so an enabled flag here implies docker is on.
+        read_only_tools_on = is_read_only_tools_enabled()
         issue_platform, ticket_cfg = self._resolve_ticket_platform_config(open_cfg)
         ticket_client = TaskCoreLib(
             issue_platform,
@@ -341,11 +449,11 @@ class KatoCoreLib(CoreLib):
             implementation_service=implementation_service,
             repository_service=repository_service,
             state_registry=state_registry,
-            planning_session_runner=planning_session_runner,
+            planning_session_runner=self.planning_session_runner,
             # Always stream review-fixes through the planning UI when the
             # streaming runner is wired (Claude backend). The user's tag
             # decides what gets executed, not bypass mode.
-            use_streaming_for_review_fixes=planning_session_runner is not None,
+            use_streaming_for_review_fixes=self.planning_session_runner is not None,
             # Per-task workspace clones isolate parallel review-fix
             # workers from each other's git state on the shared repo.
             workspace_manager=self.workspace_manager,
@@ -377,7 +485,7 @@ class KatoCoreLib(CoreLib):
             startup_validator=startup_validator,
             task_preflight_service=task_preflight_service,
             skip_testing=skip_testing_enabled(open_cfg.openhands),
-            planning_session_runner=planning_session_runner,
+            planning_session_runner=self.planning_session_runner,
             session_manager=self.session_manager,
             workspace_manager=self.workspace_manager,
             parallel_task_runner=self.parallel_task_runner,
@@ -386,7 +494,7 @@ class KatoCoreLib(CoreLib):
                 repository_service=repository_service,
                 task_state_service=task_state_service,
                 workspace_manager=self.workspace_manager,
-                planning_session_runner=planning_session_runner,
+                planning_session_runner=self.planning_session_runner,
             ),
             triage_service=TriageService(
                 task_service=task_service,

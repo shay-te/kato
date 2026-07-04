@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import signal
 import threading
@@ -27,7 +28,7 @@ from agent_core_lib.agent_core_lib.helpers.session_id_utils import (
     read_session_id_from,
 )
 from kato_core_lib.helpers.action_guard_config import print_action_guard_posture
-from kato_core_lib.validate_env import validate_environment
+from kato_core_lib.validate_env import collect_config_errors
 from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (
     BypassPermissionsRefused,
     print_security_posture,
@@ -56,10 +57,10 @@ class _ProcessAssignedTasksJobProxy:
 
 class _KatoInstanceProxy:
     @staticmethod
-    def init(core_lib_cfg: DictConfig) -> None:
+    def init(core_lib_cfg: DictConfig, setup_mode: bool = False) -> None:
         from kato_core_lib.kato_instance import KatoInstance as _KatoInstance
 
-        _KatoInstance.init(core_lib_cfg)
+        _KatoInstance.init(core_lib_cfg, setup_mode=setup_mode)
 
     @staticmethod
     def get():
@@ -79,11 +80,20 @@ KatoInstance = _KatoInstanceProxy()
 )
 def main(cfg: DictConfig) -> int:
     logger = configure_logger(cfg.core_lib.app.name)
-    try:
-        validate_environment(mode='all')
-    except ValueError as exc:
-        logger.error('%s', exc)
-        return 1
+    # Missing config no longer hard-exits at the terminal: kato boots into
+    # SETUP MODE (the planning UI runs so the operator configures via the
+    # Settings drawer) instead of dying. The SECURITY gates below (bypass /
+    # docker / TLS) STILL exit — those are safety, not fill-in-later config.
+    config_errors = collect_config_errors(mode='all')
+    setup_mode = bool(config_errors)
+    if setup_mode:
+        logger.warning(
+            'kato is NOT configured — starting the setup UI only '
+            '(%d setting(s) missing):', len(config_errors),
+        )
+        for problem in config_errors:
+            logger.warning('  - %s', problem)
+        logger.warning('Open the planning UI and fill in Settings to start.')
     try:
         validate_bypass_permissions()
     except BypassPermissionsRefused as exc:
@@ -162,7 +172,7 @@ def main(cfg: DictConfig) -> int:
     print_security_posture()
     print_action_guard_posture()
     try:
-        KatoInstance.init(cfg)
+        KatoInstance.init(cfg, setup_mode=setup_mode)
     except RuntimeError as exc:
         if str(exc).startswith('startup dependency validation failed:') or str(exc).startswith('[Error] '):
             logger.error('%s', exc)
@@ -171,6 +181,23 @@ def main(cfg: DictConfig) -> int:
     app = KatoInstance.get()
     app.logger = getattr(app, 'logger', None) or logger
     app.logger.info('Starting kato agent')
+    if setup_mode:
+        # Not configured: run ONLY the webserver so the operator can configure
+        # in the UI. Skip the scan loop + task-oriented boot steps (no ticket
+        # service yet). The wait loop watches the layered config and finishes
+        # the boot IN-PROCESS the moment configuration completes — the
+        # operator never touches a terminal.
+        _start_planning_webserver_if_enabled(app)
+        _register_shutdown_hook(app)
+        app.logger.warning(
+            'kato is running in SETUP MODE — configure it in the planning UI '
+            'and kato will start on its own.',
+        )
+        if not _wait_until_configured_then_finish_setup(app):
+            return 0
+        # Fall through: the agent service is live now. Continue the normal
+        # boot below — the webserver helper is guarded against double-start,
+        # so the already-serving Flask thread is reused.
     _load_hooks_or_refuse(app, logger)
     _recover_orphan_workspaces(app)
     _reconcile_workspace_branches(app)
@@ -186,6 +213,12 @@ def main(cfg: DictConfig) -> int:
     # workspace at boot, which burned tokens and made the chat look like
     # Claude was starting over.
     _start_planning_webserver_if_enabled(app)
+    # Setup→running fall-through: the webserver has been live the whole
+    # time — only NOW (after the reconciliation steps above, the same point
+    # a configured boot first serves) does the UI leave setup mode. On a
+    # configured boot this is an idempotent no-op (create_app already got
+    # the live service and NEEDS_CONFIG=False).
+    _mark_webserver_configured(app)
     _start_pending_comment_work_after_ui(app)
     _start_resume_prompt_watcher(app)
     _start_comment_run_watcher(app)
@@ -199,6 +232,236 @@ def main(cfg: DictConfig) -> int:
         force_scan_event=_FORCE_SCAN_EVENT,
     )
     return 0
+
+
+# How often the setup-mode wait loop re-checks the layered config. Short
+# enough that "save in the wizard → kato starts" feels immediate; the check
+# is a local settings.json/.env read, no network.
+_SETUP_POLL_SECONDS = 5.0
+# A failed start attempt is normally re-tried only when the config CHANGES
+# (fingerprint guard, so a bad token never hammers the provider every tick).
+# But a transient failure (provider blip) or a value shadowed by the spawn
+# env would then never retry — so an unchanged config is re-attempted every
+# this-many ticks anyway (~2 minutes at the 5s poll).
+_SETUP_RETRY_EVERY_TICKS = 24
+
+
+def _config_env_fingerprint(env: dict) -> str:
+    """Stable digest of a config env, used to avoid re-attempting startup
+    (which runs real connection validation against the providers) until the
+    operator actually changes something in Settings."""
+    payload = repr(sorted(env.items()))
+    return hashlib.sha256(payload.encode('utf-8')).hexdigest()
+
+
+def _wait_until_configured_then_finish_setup(
+    app,
+    sleep_fn=time.sleep,
+    max_ticks: int | None = None,
+) -> bool:
+    """SETUP MODE park loop: poll the layered config until it is complete,
+    then finish the boot in-process.
+
+    Each tick re-evaluates ``collect_config_errors`` over the SAME layered
+    env the ``/api/config-status`` endpoint uses (``effective_config_env``:
+    process env > settings.json > .env), so the UI's "you're all set" and
+    this loop can never disagree. Once complete, the newly-saved values are
+    loaded into the process env (shell still wins; settings.json wins over
+    .env — hydra's ``${oc.env:...}`` reads resolve on access) and
+    ``complete_setup()`` builds the real agent service.
+
+    Returns ``True`` when setup finished and the full boot should continue;
+    ``False`` on shutdown (Ctrl-C / SIGTERM) or when ``max_ticks`` — a test
+    escape hatch — runs out. A failed start attempt (e.g. bad credentials
+    failing connection validation) keeps kato in setup mode and is NOT
+    retried until the config changes — plus a slow periodic re-attempt
+    (``_SETUP_RETRY_EVERY_TICKS``) so a transient provider blip or a value
+    shadowed by the spawn-time env can still recover without a restart.
+    """
+    from kato_core_lib.helpers.kato_settings_store_utils import (
+        effective_config_env,
+    )
+
+    last_failed_fingerprint = ''
+    ticks = 0
+    ticks_since_attempt = 0
+    while max_ticks is None or ticks < max_ticks:
+        ticks += 1
+        ticks_since_attempt += 1
+        try:
+            sleep_fn(_SETUP_POLL_SECONDS)
+        except (KeyboardInterrupt, SystemExit):
+            return False
+        env = effective_config_env()
+        if collect_config_errors(mode='all', env=env):
+            continue
+        fingerprint = _config_env_fingerprint(env)
+        if (
+            fingerprint == last_failed_fingerprint
+            and ticks_since_attempt < _SETUP_RETRY_EVERY_TICKS
+        ):
+            continue
+        ticks_since_attempt = 0
+        # Snapshot so a refused/failed attempt restores the env EXACTLY —
+        # including keys complete_setup itself exports. Leaving residue
+        # would shadow a corrected value saved later in the UI (process env
+        # outranks settings.json), wedging setup mode until a restart.
+        env_snapshot = dict(os.environ)
+        _load_layered_config_into_environ()
+        # SECURITY: the boot-time gates validated the env as it was at
+        # startup. The operator may have saved gate-relevant flags DURING
+        # setup (KATO_CLAUDE_BYPASS_PERMISSIONS / read-only pre-approval /
+        # TLS pin / docker mode), so the same hard gates must pass against
+        # the values just loaded before anything starts. Refusal keeps kato
+        # in setup mode (strictly safer than exiting — nothing runs either
+        # way, and the operator sees why in the wizard).
+        gate_refusal = _run_transition_security_gates(app)
+        if gate_refusal:
+            _restore_environ(env_snapshot)
+            last_failed_fingerprint = fingerprint
+            app.logger.error('%s', gate_refusal)
+            _set_webserver_setup_error(app, gate_refusal[:500])
+            continue
+        try:
+            app.complete_setup()
+        except Exception as exc:
+            _restore_environ(env_snapshot)
+            last_failed_fingerprint = fingerprint
+            app.logger.exception(
+                'configuration looks complete but starting kato failed — '
+                'still in setup mode; fix the values in Settings and kato '
+                'will retry automatically',
+            )
+            # Surface the failure to the UI too: without this the wizard
+            # would keep saying "you're all set" while the terminal alone
+            # knows the start failed. Validation messages name hosts /
+            # projects, never secret values.
+            _set_webserver_setup_error(app, (
+                f'{str(exc)[:500]} — kato retries automatically after you '
+                'save a change (and periodically). If the failing value was '
+                'already set when kato started (shell env or .env), restart '
+                'kato to apply the new one.'
+            ))
+            continue
+        # Clear any earlier failure immediately, but DON'T flip the UI out
+        # of setup mode yet: main() first runs the same boot reconciliation
+        # a configured boot runs BEFORE serving (orphan recovery, branch
+        # reconcile, comment requeue). Flipping now would let the operator
+        # race those steps — chat sends against workspaces whose branches
+        # are still being checked out. ``_mark_webserver_configured`` runs
+        # in the fall-through boot at the configured-boot equivalence point.
+        _set_webserver_setup_error(app, '')
+        app.logger.info('configuration complete — kato is starting')
+        return True
+    return False
+
+
+def _restore_environ(snapshot: dict) -> None:
+    """Restore ``os.environ`` to ``snapshot`` exactly — removes keys added
+    since, reinstates removed ones, and reverts changed values."""
+    for key in list(os.environ):
+        if key not in snapshot:
+            del os.environ[key]
+    for key, value in snapshot.items():
+        if os.environ.get(key) != value:
+            os.environ[key] = value
+
+
+def _run_transition_security_gates(app) -> str:
+    """Re-run the boot security gates against the just-loaded env.
+
+    Same validators the configured boot runs fatally (bypass double-confirm,
+    read-only-tools-requires-docker, TLS pin, docker/gVisor preflight) — a
+    flag saved through the Settings UI during setup mode must clear the
+    exact same bar it would at a terminal boot. Returns ``''`` when every
+    gate passes, else the refusal text for the wizard. The ``*_or_exit``
+    docker preflights ``sys.exit`` by design; here that refusal is converted
+    to "stay in setup mode", which runs nothing either way but keeps the
+    setup UI alive so the operator can fix it.
+    """
+    try:
+        validate_bypass_permissions()
+        validate_read_only_tools_requires_docker()
+        validate_anthropic_tls_pin_or_refuse(logger=app.logger)
+    except (BypassPermissionsRefused, TlsPinError) as exc:
+        return str(exc)
+    from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (
+        is_docker_mode_enabled,
+    )
+    if is_docker_mode_enabled():
+        from sandbox_core_lib.sandbox_core_lib.manager import (
+            check_docker_or_exit,
+            check_gvisor_or_exit,
+        )
+        try:
+            check_docker_or_exit()
+            check_gvisor_or_exit()
+        except SystemExit:
+            return (
+                'docker sandbox preflight refused the saved configuration '
+                '(KATO_CLAUDE_DOCKER is on but the Docker/gVisor requirements '
+                'are not met — details in the kato terminal). Fix the values '
+                'in Settings or start Docker, and kato will retry.'
+            )
+    return ''
+
+
+def _set_webserver_setup_error(app, message: str) -> None:
+    """Publish (or clear, with ``''``) the last failed start attempt's error
+    on the LIVE Flask app so ``/api/config-status`` can show it in the setup
+    wizard."""
+    flask_app = getattr(app, 'planning_flask_app', None)
+    if flask_app is None:
+        return
+    flask_app.config['SETUP_ERROR'] = message
+
+
+def _load_layered_config_into_environ() -> None:
+    """Load settings.json, then ``.env``, into the process env.
+
+    Shell wins, settings.json wins over ``.env`` — the launcher's boot
+    precedence — with ONE deliberate difference from the plain loaders:
+    a key that is set-but-EMPTY in the process env is treated as unset
+    and gets overwritten. Everything else (the validators, the settings
+    UI, ``effective_config_env``) already treats empty as unset, and
+    ``.env.example`` ships blank ``KEY=`` lines that land as empty env
+    vars at spawn — without this, those blanks would shadow the values
+    the operator saves in the wizard forever. Callers snapshot/restore
+    ``os.environ`` around failed attempts, so no separate rollback list
+    is needed.
+    """
+    from kato_core_lib.helpers.dotenv_utils import read_dotenv_values
+    from kato_core_lib.helpers.kato_settings_store_utils import (
+        read_kato_settings,
+        settings_env_file_path,
+    )
+
+    for source in (
+        read_kato_settings(),
+        read_dotenv_values(settings_env_file_path()),
+    ):
+        for key, value in source.items():
+            if value and not os.environ.get(key):
+                os.environ[key] = value
+
+
+def _mark_webserver_configured(app) -> None:
+    """Flip the LIVE Flask app out of setup mode after ``complete_setup``.
+
+    The webserver thread started before the agent service existed, so its
+    config carries ``AGENT_SERVICE=None`` + ``NEEDS_CONFIG=True``. Flask's
+    config is a plain dict — updating it here is what makes
+    ``/api/config-status`` report ``setup_mode: false`` (the UI's setup gate
+    closes itself) and gives every service-backed route the live agent
+    service, all without a restart.
+    """
+    flask_app = getattr(app, 'planning_flask_app', None)
+    if flask_app is None:
+        return
+    flask_app.config['AGENT_SERVICE'] = getattr(app, 'service', None)
+    flask_app.config['NEEDS_CONFIG'] = False
+    # A stale error from an earlier failed attempt must not outlive success.
+    flask_app.config['SETUP_ERROR'] = ''
 
 
 def _reconcile_workspace_branches(app) -> None:
@@ -595,6 +858,12 @@ def _start_planning_webserver_if_enabled(app) -> None:
     import os
     import threading
 
+    if getattr(app, 'planning_flask_app', None) is not None:
+        # Already serving — a setup-mode boot started the webserver before
+        # the full boot fell through. Reuse the live thread; a second start
+        # would only fail with "address already in use".
+        return
+
     if str(os.environ.get('KATO_WEBSERVER_DISABLED', '')).strip().lower() in {'1', 'true', 'yes', 'on'}:
         app.logger.info('planning webserver disabled via KATO_WEBSERVER_DISABLED')
         return
@@ -630,7 +899,13 @@ def _start_planning_webserver_if_enabled(app) -> None:
         force_scan_event=_FORCE_SCAN_EVENT,
         scan_in_progress_event=_SCAN_IN_PROGRESS,
         hook_runner=getattr(app, 'hook_runner', None),
+        needs_config=getattr(app, 'needs_config', False),
     )
+
+    # Keep a handle to the live Flask app: the setup-mode transition
+    # (``_mark_webserver_configured``) mutates its config in place once the
+    # agent service exists, instead of restarting the webserver.
+    app.planning_flask_app = flask_app
 
     # Silence Werkzeug's per-request access log — the planning UI polls
     # /api/sessions every 5s and that drowns the kato terminal in noise.
@@ -697,10 +972,12 @@ def _register_shutdown_hook(app) -> None:
                 watcher.stop()
             except Exception:
                 app.logger.exception('error stopping %s', attr)
-        try:
-            app.service.shutdown()
-        except Exception:
-            app.logger.exception('error during shutdown cleanup')
+        service = getattr(app, 'service', None)
+        if service is not None:
+            try:
+                service.shutdown()
+            except Exception:
+                app.logger.exception('error during shutdown cleanup')
         raise SystemExit(0)
 
     # SIGINT works on every supported platform. SIGTERM works on POSIX

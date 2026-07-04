@@ -26,6 +26,33 @@ class ValidateEnvTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
 
+    def test_collect_config_errors_lists_missing_without_raising(self) -> None:
+        # The UI-facing companion: returns exactly what's missing (so kato can
+        # boot into a "needs configuration" state) while the fatal check still
+        # raises on the same input — one source of truth, no drift.
+        from kato_core_lib.validate_env import (
+            collect_config_errors, validate_environment,
+        )
+        partial = {
+            'KATO_ISSUE_PLATFORM': 'jira', 'KATO_AGENT_BACKEND': 'claude',
+            'JIRA_API_TOKEN': 't',
+        }
+        missing = collect_config_errors('all', partial)
+        self.assertIn('missing required agent env var: JIRA_API_BASE_URL', missing)
+        with self.assertRaises(ValueError):
+            validate_environment('all', partial)
+
+    def test_collect_config_errors_empty_when_configured(self) -> None:
+        from kato_core_lib.validate_env import collect_config_errors
+        configured = {
+            'KATO_ISSUE_PLATFORM': 'bitbucket', 'KATO_AGENT_BACKEND': 'claude',
+            'BITBUCKET_API_BASE_URL': 'x', 'BITBUCKET_WORKSPACE': 'w',
+            'BITBUCKET_REPO_SLUG': 'r', 'BITBUCKET_ASSIGNEE': 'a',
+            'BITBUCKET_API_EMAIL': 'e@x', 'BITBUCKET_API_TOKEN': 't',
+            'REPOSITORY_ROOT_PATH': '/tmp',
+        }
+        self.assertEqual(collect_config_errors('all', configured), [])
+
     def test_validate_agent_env_requires_email_fields_when_enabled(self) -> None:
         errors = self._validate_agent_env(
             {

@@ -231,12 +231,15 @@ def _settings_env_path() -> Path:
     operator who hasn't saved through the new UI yet still sees
     their existing values + a correct source label. The
     ``KATO_SETTINGS_ENV_FILE`` override is preserved for tests that
-    pre-seed a fake ``.env`` fallback.
+    pre-seed a fake ``.env`` fallback. Resolution is delegated to the
+    canonical helper so the boot-time setup poll and this UI read the
+    same file.
     """
-    override = os.environ.get('KATO_SETTINGS_ENV_FILE', '').strip()
-    if override:
-        return Path(override)
-    return KATO_REPO_ROOT / '.env'
+    from kato_core_lib.helpers.kato_settings_store_utils import (
+        settings_env_file_path,
+    )
+
+    return settings_env_file_path()
 
 
 def _resolve_setting(key: str) -> dict:
@@ -447,22 +450,16 @@ def _filtered_provider_updates(
 def _read_env_file_values(path: Path) -> dict[str, str]:
     """Parse a ``.env``-style file into a dict.
 
-    Delegates to kato's single-source-of-truth parser
-    (``parse_dotenv_text``) so the settings UI reads ``.env`` exactly
+    Delegates to kato's single-source-of-truth reader
+    (``read_dotenv_values``) so the settings UI reads ``.env`` exactly
     the way kato's boot path does — ``KEY=value`` lines, a stripped
     leading ``export `` prefix, one matched pair of surrounding quotes
     removed, comments/blanks/malformed lines dropped, last duplicate
     key wins. Returns ``{}`` when the file is missing or unreadable.
     """
-    from kato_core_lib.helpers.dotenv_utils import parse_dotenv_text
+    from kato_core_lib.helpers.dotenv_utils import read_dotenv_values
 
-    if not path.is_file():
-        return {}
-    try:
-        content = path.read_text(encoding='utf-8')
-    except OSError:
-        return {}
-    return parse_dotenv_text(content)
+    return read_dotenv_values(path)
 
 
 
@@ -743,6 +740,7 @@ def create_app(
     force_scan_event=None,
     scan_in_progress_event=None,
     hook_runner=None,
+    needs_config=False,
 ) -> Flask:
     app = Flask(
         __name__,
@@ -759,6 +757,14 @@ def create_app(
     app.config['FORCE_SCAN_EVENT'] = force_scan_event
     app.config['SCAN_IN_PROGRESS_EVENT'] = scan_in_progress_event
     app.config['HOOK_RUNNER'] = hook_runner
+    # True when kato booted UNCONFIGURED (setup mode): the webserver is up so
+    # the operator can configure from the UI, but there's no ticket service
+    # and no scan loop. The onboarding gate reads this via /api/config-status.
+    app.config['NEEDS_CONFIG'] = bool(needs_config)
+    # The last failed in-process start attempt's error (set by main's setup
+    # wait loop, cleared on success) so the wizard can show WHY kato didn't
+    # start instead of silently claiming "all set".
+    app.config['SETUP_ERROR'] = ''
     app.config['TASK_MODEL_OVERRIDES'] = {}
     # Per-task chat effort override (Claude ``--effort`` level), set from
     # the composer's effort selector. Empty/absent => the configured
@@ -1207,6 +1213,39 @@ def _register_http_routes(app: Flask) -> None:
         return jsonify({
             'bypass_permissions': is_bypass_enabled(),
             'running_as_root': is_running_as_root(),
+        })
+
+    @app.get('/api/config-status')
+    def config_status():
+        """Is kato configured, and if not, WHAT is missing.
+
+        Same source of truth as the boot-time check
+        (``collect_config_errors``) so the two never drift — but evaluated
+        across the layered settings stores (env > settings.json > .env), so
+        saving in the Settings UI clears the "not configured" state without a
+        restart.
+
+        - ``setup_mode``: did THIS process boot unconfigured? If so it is not
+          scanning tickets and the UI shows the onboarding gate.
+        - ``needs_config``: live config completeness. Flips to ``false`` the
+          moment the operator finishes filling in the required settings.
+        - ``missing``: the human-readable list of what's still required.
+        """
+        from kato_core_lib.helpers.kato_settings_store_utils import (
+            effective_config_env,
+        )
+        from kato_core_lib.validate_env import collect_config_errors
+
+        errors = collect_config_errors(mode='all', env=effective_config_env())
+        return jsonify({
+            'setup_mode': bool(app.config.get('NEEDS_CONFIG')),
+            'needs_config': bool(errors),
+            'missing': errors,
+            # Why the last in-process start attempt failed ('' when none):
+            # config can be COMPLETE yet still fail to start (bad token
+            # fails connection validation). The wizard must show that
+            # instead of "you're all set".
+            'setup_error': str(app.config.get('SETUP_ERROR') or ''),
         })
 
     @app.get('/api/settings')

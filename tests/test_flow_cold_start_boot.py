@@ -99,7 +99,10 @@ class FlowColdStartBootMainSourceTests(unittest.TestCase):
         # recovery completes. The operator-visible flicker is worth
         # avoiding.
         recovery_idx = self.src.index('_recover_orphan_workspaces(app)')
-        webserver_idx = self.src.index('_start_planning_webserver_if_enabled(app)')
+        # rindex → the FULL-BOOT webserver call. Setup mode adds an earlier
+        # textual occurrence (UI-only boot for an unconfigured operator);
+        # this ordering invariant is about the configured boot path.
+        webserver_idx = self.src.rindex('_start_planning_webserver_if_enabled(app)')
         self.assertLess(
             recovery_idx, webserver_idx,
             'webserver starts before orphan recovery — UI flickers '
@@ -119,7 +122,9 @@ class FlowColdStartBootMainSourceTests(unittest.TestCase):
         # in parallel. Boot must NOT proceed to recovery / webserver
         # if validation failed (the early-return inside the try is
         # what guarantees this — recovery comes AFTER init).
-        init_idx = self.src.index('KatoInstance.init(cfg)')
+        # ``KatoInstance.init(cfg, setup_mode=setup_mode)`` — match the
+        # call prefix so the assertion survives the setup_mode kwarg.
+        init_idx = self.src.index('KatoInstance.init(cfg')
         recovery_idx = self.src.index('_recover_orphan_workspaces(app)')
         self.assertLess(init_idx, recovery_idx)
 

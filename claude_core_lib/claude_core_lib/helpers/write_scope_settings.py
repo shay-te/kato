@@ -1,70 +1,86 @@
 """Force-approval settings for out-of-workspace file writes.
 
-Out-of-folder writes are stopped by THREE layers; this module is the middle one:
+``acceptEdits`` auto-accepts every Write/Edit/MultiEdit/NotebookEdit whose
+path Claude Code considers in-scope. That scope did NOT reliably cover the
+case that bit us: a SIBLING repo under the operator's home dir (e.g.
+``~/Desktop/dev/other-repo``) that is NOT a task clone — Claude wrote there
+with no prompt at all. The old ask-rules only enumerated system roots
+(``/tmp``, ``/etc``, …) and DELIBERATELY skipped ``/Users``/``/home`` (a
+blanket home rule would prompt on every in-workspace edit), so home-tree
+siblings matched no rule and sailed through.
 
-1. **acceptEdits scope boundary (primary, comprehensive).** Claude Code only
-   auto-accepts edits/filesystem commands for paths inside the working directory
-   or ``--add-dir`` ``additionalDirectories`` (the orchestrator keeps that scope tight — just
-   the task's repo clones under ``~/.the orchestrator/workspaces/<task>/``). Any write
-   OUTSIDE that scope is routed to the permission prompt regardless of path, so
-   the Action Guard + the operator decide. This already covers every absolute
-   path, including the home directory.
-2. **These ``permissions.ask`` rules (version-independent insurance).** A flat,
-   enumerated denylist of roots that are NEVER the workspace, so an out-of-folder
-   write to one of them is forced into the permission flow even if a CLI version
-   ever regressed layer 1. The reported ``/tmp/strip_comments.py`` lands here.
-3. **The post-hoc out-of-folder warning** (``_maybe_warn_out_of_sandbox_write``
-   in ``session/streaming.py``) — a synthetic chat event for any write that
-   still slipped through, so it is at least always visible.
+This module now builds task-AWARE settings — allow the sandbox, ask for
+everything else:
 
-The roots are ABSOLUTE and identical on the host and inside the Docker sandbox.
-We deliberately do NOT enumerate the home directory here: the task workspace
-lives under ``~/.the orchestrator/workspaces/…``, so a ``~/**`` rule would prompt on every
-in-workspace edit and defeat ``acceptEdits``' whole purpose — and home writes
-are already covered comprehensively by layer 1.
+  * ``permissions.allow`` — the write tools scoped to the task's sandbox
+    roots (``cwd`` + ``--add-dir`` clones + the task-folder parent — the
+    SAME boundary the post-hoc classifier uses). In-workspace edits
+    auto-accept.
+  * ``permissions.ask`` — the write tools UNSCOPED (bare tool name = every
+    invocation). Claude Code precedence is ``deny > allow > ask``, so a
+    write that matches an allow rule (in-workspace) is auto-accepted and
+    never reaches the ask rule; a write ANYWHERE else — any sibling repo,
+    any home path, ``/tmp``, everything — matches only the ask rule and is
+    forced to the operator's approval. Nothing can slip through
+    un-enumerated any more.
+
+With NO workspace known (``cwd`` empty — e.g. the boot smoke test) there is
+nothing to allow, so every write prompts: the fail-safe direction.
+
+The post-hoc warning (``_maybe_warn_out_of_sandbox_write`` in
+``session/streaming.py``) stays as a last-resort visibility backstop.
 """
 from __future__ import annotations
 
 import json
+
+from claude_core_lib.claude_core_lib.helpers.sandbox_scope import (
+    effective_sandbox_roots,
+)
 
 # File-mutating tools that ``acceptEdits`` auto-accepts. Bash is NOT here: it
 # already routes through the permission callback under ``acceptEdits``, so an
 # out-of-folder ``bash`` write is already gated by the orchestrator.
 _WRITE_TOOLS: tuple[str, ...] = ('Write', 'Edit', 'MultiEdit', 'NotebookEdit')
 
-# Absolute roots that are NEVER the task workspace — a write here is always
-# out-of-folder and must be approved, not auto-accepted. Same paths on the host
-# and in the container (so the rule holds in both run modes). The reported
-# ``/tmp/strip_comments.py`` lands under ``/tmp``; mounted volumes
-# (``/Volumes``, ``/mnt``, ``/media``, ``/Network``) are classic exfil targets —
-# an external/USB/network drive is never the task clone.
-_OUT_OF_WORKSPACE_ROOTS: tuple[str, ...] = (
-    '/tmp', '/private', '/var', '/etc', '/usr', '/opt',
-    '/bin', '/sbin', '/dev', '/proc', '/sys', '/root',
-    '/Library', '/System', '/Applications',
-    '/Volumes', '/Network', '/mnt', '/media', '/srv',
-)
 
-
-def out_of_workspace_write_ask_rules() -> list[str]:
-    """``Tool(root/**)`` ask-rules for every write-tool × out-of-workspace root.
-
-    e.g. ``Write(/tmp/**)``, ``Edit(/etc/**)`` — matched against the target
-    file path; an in-workspace edit (under the task clone) matches none of
-    these, so it still flows through ``acceptEdits`` untouched.
-    """
+def in_workspace_write_allow_rules(
+    cwd: str = '', additional_dirs: tuple[str, ...] | list[str] = (),
+) -> list[str]:
+    """``Tool(root/**)`` allow-rules for each write tool × each sandbox root,
+    so edits INSIDE the task folder auto-accept without a prompt. Empty when
+    no workspace is known (then every write falls to the ask rule)."""
+    roots = effective_sandbox_roots(cwd, additional_dirs)
     return [
         f'{tool}({root}/**)'
+        for root in roots
         for tool in _WRITE_TOOLS
-        for root in _OUT_OF_WORKSPACE_ROOTS
     ]
 
 
-def out_of_workspace_write_settings() -> dict:
+def out_of_workspace_write_ask_rules() -> list[str]:
+    """Unscoped catch-all ask-rules — every write-tool invocation prompts
+    UNLESS an allow rule (in-workspace) matches first. This is what forces
+    approval for ANY out-of-workspace write, including sibling repos under
+    the home tree that no enumerated root list could cover."""
+    return list(_WRITE_TOOLS)
+
+
+def out_of_workspace_write_settings(
+    cwd: str = '', additional_dirs: tuple[str, ...] | list[str] = (),
+) -> dict:
     """Settings dict that forces approval for out-of-workspace file writes."""
-    return {'permissions': {'ask': out_of_workspace_write_ask_rules()}}
+    return {'permissions': {
+        'allow': in_workspace_write_allow_rules(cwd, additional_dirs),
+        'ask': out_of_workspace_write_ask_rules(),
+    }}
 
 
-def out_of_workspace_write_settings_json() -> str:
+def out_of_workspace_write_settings_json(
+    cwd: str = '', additional_dirs: tuple[str, ...] | list[str] = (),
+) -> str:
     """The settings as a compact JSON string for ``claude --settings``."""
-    return json.dumps(out_of_workspace_write_settings(), separators=(',', ':'))
+    return json.dumps(
+        out_of_workspace_write_settings(cwd, additional_dirs),
+        separators=(',', ':'),
+    )
