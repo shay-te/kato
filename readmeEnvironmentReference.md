@@ -1,6 +1,6 @@
 # Environment Reference — kato
 
-The list below mirrors `.env.example`. For provider-specific setup snippets see [readmeIssuePlatforms.md](readmeIssuePlatforms.md) and [readmeOpenHands.md](readmeOpenHands.md).
+The list below catalogs every environment key kato reads (set them in the Settings UI → `~/.kato/settings.json`, or export them in your shell). For provider-specific setup snippets see [readmeIssuePlatforms.md](readmeIssuePlatforms.md) and [readmeOpenHands.md](readmeOpenHands.md).
 
 ## Ticket And Repository
 

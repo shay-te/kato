@@ -45,7 +45,7 @@ const GIT_BODY = {
   providers: {
     bitbucket: {
       fields: {
-        username: { value: 'me', source: 'env_file' },
+        username: { value: 'me', source: 'kato_settings' },
         app_password: { value: 'pw', source: 'kato_settings' },
       },
     },
@@ -67,8 +67,8 @@ describe('ProviderCredentialsPanel — Task provider (includeActive)', () => {
     fetchTaskProviders.mockResolvedValue({ ok: true, body: TASK_BODY });
     render(<TaskProviderSettingsPanel />);
 
-    await waitFor(() => expect(screen.getByText('base_url')).toBeInTheDocument());
-    expect(screen.getByText('token')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('Base URL')).toBeInTheDocument());
+    expect(screen.getByText('Token')).toBeInTheDocument();
     expect(screen.getByText('Active provider')).toBeInTheDocument();
     // sourceLabel: kato_settings -> "saved", env -> "live"
     expect(screen.getByText('saved')).toBeInTheDocument();
@@ -82,7 +82,7 @@ describe('ProviderCredentialsPanel — Task provider (includeActive)', () => {
     fetchTaskProviders.mockResolvedValue({ ok: true, body: TASK_BODY });
     updateTaskProvider.mockResolvedValue({ ok: true, body: {} });
     render(<TaskProviderSettingsPanel />);
-    await waitFor(() => expect(screen.getByText('base_url')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Base URL')).toBeInTheDocument());
 
     const saveBtn = screen.getByRole('button', { name: /^Save$/i });
     expect(saveBtn).toBeDisabled();
@@ -113,7 +113,7 @@ describe('ProviderCredentialsPanel — Git provider (no active)', () => {
     fetchGitProviders.mockResolvedValue({ ok: true, body: GIT_BODY });
     updateGitProvider.mockResolvedValue({ ok: true, body: {} });
     render(<GitProvidersSettingsPanel />);
-    await waitFor(() => expect(screen.getByText('username')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Username')).toBeInTheDocument());
 
     expect(screen.getByText('Host')).toBeInTheDocument();
     fireEvent.change(screen.getByDisplayValue('me'), { target: { value: 'newuser' } });

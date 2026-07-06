@@ -463,7 +463,9 @@ class DeploymentFilesTests(unittest.TestCase):
         bootstrap_py_text = (
             REPO_ROOT / 'scripts' / 'bootstrap.py'
         ).read_text(encoding='utf-8')
-        self.assertIn('.env.example', bootstrap_py_text)
+        # kato no longer creates or reads .env — settings.json is the
+        # only config file (first-run wizard).
+        self.assertNotIn('.env', bootstrap_py_text)
         self.assertIn('install_python_deps.py', bootstrap_py_text)
         self.assertIn("'unittest', 'discover', '-s', 'tests'", bootstrap_py_text)
         self.assertIn('hydra-core>=1.3.2', install_deps_text)
@@ -476,8 +478,6 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertNotIn('kato.install', run_local_text)
         self.assertNotIn('kato_core_lib.validate_env --mode agent', run_local_text)
         self.assertIn('bootstrap:', makefile_text)
-        self.assertIn('configure:', makefile_text)
-        self.assertIn('scripts/generate_env.py --output .env', makefile_text)
         self.assertIn('doctor:', makefile_text)
         self.assertIn('run:', makefile_text)
         self.assertIn('--profile testing', makefile_text)

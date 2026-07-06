@@ -9,14 +9,19 @@ vi.mock('../api.js', () => ({
   updateTaskProvider: vi.fn(),
   fetchSettings: vi.fn(),
   updateSettings: vi.fn(),
+  fetchAllSettings: vi.fn(),
+  updateAllSettings: vi.fn(),
+  fetchDirectoryListing: vi.fn(),
 }));
 
-import { fetchTaskProviders, fetchSettings } from '../api.js';
+import { fetchTaskProviders, fetchSettings, fetchAllSettings } from '../api.js';
 import SetupModeGate from './SetupModeGate.jsx';
 
 beforeEach(() => {
   fetchTaskProviders.mockReset();
   fetchSettings.mockReset();
+  fetchAllSettings.mockReset();
+  fetchAllSettings.mockResolvedValue({ ok: true, body: { sections: [] } });
   fetchTaskProviders.mockResolvedValue({
     ok: true,
     body: { active: 'youtrack', providers: {}, supported: [] },

@@ -11,13 +11,6 @@ from unittest.mock import MagicMock, patch
 from kato_core_lib import validate_env as ve
 
 
-class ReadEnvFileTests(unittest.TestCase):
-    def test_raises_when_path_does_not_exist(self) -> None:
-        # Line 101.
-        with self.assertRaisesRegex(FileNotFoundError, 'env file not found'):
-            ve._read_env_file('/does/not/exist.env')
-
-
 class ValidateClaudeBinaryTests(unittest.TestCase):
     def test_error_when_binary_path_does_not_exist(self) -> None:
         # Lines 356-357: ``elif not Path(binary).exists()``.
@@ -79,7 +72,9 @@ class MainEntryPointTests(unittest.TestCase):
         argv_backup = sys.argv
         sys.argv = ['validate_env', '--mode', 'agent']
         try:
-            with patch.object(ve, '_build_env', return_value={}), \
+            with patch(
+                     'kato_core_lib.helpers.kato_settings_store_utils'
+                     '.effective_config_env', return_value={}), \
                  patch.object(ve, '_validate', return_value=[]):
                 rc = ve.main()
             self.assertEqual(rc, 0)
@@ -92,7 +87,9 @@ class MainEntryPointTests(unittest.TestCase):
         argv_backup = sys.argv
         sys.argv = ['validate_env', '--mode', 'all']
         try:
-            with patch.object(ve, '_build_env', return_value={}), \
+            with patch(
+                     'kato_core_lib.helpers.kato_settings_store_utils'
+                     '.effective_config_env', return_value={}), \
                  patch.object(ve, '_validate',
                               return_value=['err-1', 'err-2']):
                 rc = ve.main()
@@ -142,7 +139,7 @@ class ValidateRepositoryRootPathTests(unittest.TestCase):
         })
         self.assertEqual(len(errors), 1)
         # Operator-readable: must name the bad path so they know what
-        # to fix in their .env.
+        # to fix in Settings.
         self.assertIn(
             '/this/path/should/not/exist/anywhere', errors[0],
         )

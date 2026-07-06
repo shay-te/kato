@@ -9,16 +9,13 @@ shared across multiple kato checkouts.
 
 Precedence (resolved at boot by ``load_kato_settings_into_environ``):
 
-    real shell env  >  ~/.kato/settings.json  >  <repo>/.env
+    real shell env  >  ~/.kato/settings.json
 
 * A variable the operator exported in their shell always wins — an
   emergency override stays in their hands.
-* ``settings.json`` is authoritative for UI-managed keys.
-* ``<repo>/.env`` remains a legacy fallback (loaded separately by
-  ``dotenv_utils``) so installs that predate this file keep working
-  until the operator saves once through the UI — at which point
-  ``settings.json`` is written and from then on wins. No explicit
-  migration step, no data loss.
+* ``settings.json`` is authoritative for everything else. It is the
+  ONLY config file kato reads — ``<repo>/.env`` support was removed
+  entirely (the first-run wizard + Settings drawer replaced it).
 
 The file is a flat ``{"KEY": "value"}`` JSON object — same env-var
 keys kato already reads via hydra ``${oc.env:...}``. Flat (not
@@ -33,12 +30,10 @@ import os
 from pathlib import Path
 
 from kato_core_lib.helpers.atomic_json_utils import atomic_write_json
-from kato_core_lib.helpers.dotenv_utils import read_dotenv_values
 from kato_core_lib.helpers.kato_paths_utils import kato_home_path
 
 
 _SETTINGS_PATH_ENV_KEY = 'KATO_SETTINGS_FILE'
-_SETTINGS_ENV_FILE_ENV_KEY = 'KATO_SETTINGS_ENV_FILE'
 
 
 def kato_settings_path() -> Path:
@@ -107,14 +102,8 @@ def load_kato_settings_into_environ() -> int:
     """Inject ``~/.kato/settings.json`` into ``os.environ``.
 
     Real shell env vars win — a key already present in
-    ``os.environ`` is NOT overwritten (same contract as
-    ``load_dotenv_into_environ``). Returns the count of keys
+    ``os.environ`` is NOT overwritten. Returns the count of keys
     actually inserted, for diagnostics.
-
-    Call order at boot matters: run this BEFORE
-    ``load_dotenv_into_environ`` so settings.json wins over ``.env``
-    (``.env``'s loader also skips keys already set, so once this has
-    populated a key, ``.env`` won't clobber it).
     """
     added = 0
     for key, value in read_kato_settings().items():
@@ -125,27 +114,13 @@ def load_kato_settings_into_environ() -> int:
     return added
 
 
-def settings_env_file_path() -> Path:
-    """``<repo>/.env`` — the legacy read-only fallback store.
-
-    ``$KATO_SETTINGS_ENV_FILE`` overrides it (tests pre-seed a fake
-    ``.env`` this way). The repo root is resolved relative to this
-    file (``<repo>/kato_core_lib/helpers/…``), which holds for both
-    the in-place ``pip install -e .`` layout and a direct checkout.
-    """
-    override = os.environ.get(_SETTINGS_ENV_FILE_ENV_KEY, '').strip()
-    if override:
-        return Path(override)
-    return Path(__file__).resolve().parents[2] / '.env'
-
-
 def effective_config_env() -> dict[str, str]:
     """The config env kato would boot with RIGHT NOW, as one mapping.
 
-    Merges the three stores with boot precedence — live ``os.environ``
-    > ``~/.kato/settings.json`` > ``<repo>/.env`` — where only
-    NON-EMPTY values override lower layers (an empty value falls
-    through, mirroring how the settings UI resolves a single key).
+    Merges the two stores with boot precedence — live ``os.environ``
+    > ``~/.kato/settings.json`` — where only NON-EMPTY values override
+    lower layers (an empty value falls through, mirroring how the
+    settings UI resolves a single key).
 
     This is the single source of truth for "is kato configured yet":
     the webserver's ``/api/config-status`` endpoint and the setup-mode
@@ -154,11 +129,7 @@ def effective_config_env() -> dict[str, str]:
     without a restart — and the two checks can never drift apart.
     """
     merged: dict[str, str] = {}
-    for source in (
-        read_dotenv_values(settings_env_file_path()),
-        read_kato_settings(),
-        dict(os.environ),
-    ):
+    for source in (read_kato_settings(), dict(os.environ)):
         for key, value in source.items():
             if value:
                 merged[key] = value

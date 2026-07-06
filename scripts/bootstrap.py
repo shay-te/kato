@@ -10,8 +10,6 @@ Usage:
 
 from __future__ import annotations
 
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -23,18 +21,6 @@ from _script_utils import (  # noqa: E402
     run_step,
     venv_python_path,
 )
-
-
-def _ensure_env_file() -> None:
-    env_path = REPO_ROOT / '.env'
-    if env_path.exists():
-        return
-    template = REPO_ROOT / '.env.example'
-    if not template.exists():
-        print('.env.example missing; cannot create .env automatically.', file=sys.stderr)
-        return
-    shutil.copyfile(template, env_path)
-    print('Created .env from .env.example')
 
 
 def _ensure_venv() -> None:
@@ -105,7 +91,6 @@ def main() -> int:
     # anything about *your* configuration. The deps + UI bundle are
     # already installed before this point, so skipping is safe.
     skip_tests = '--skip-tests' in sys.argv[1:]
-    _ensure_env_file()
     _ensure_venv()
     _install_python_deps()
     _maybe_build_ui_bundle()
@@ -116,9 +101,9 @@ def main() -> int:
         'Bootstrap complete.\n'
         '\n'
         'Next manual steps:\n'
-        '  1. Fill the required secrets in .env\n'
-        '  2. Run `kato doctor` to validate the environment\n'
-        '  3. Run `kato up` to start kato locally\n'
+        '  1. Run `kato up` — the first-run wizard in the browser\n'
+        '     collects everything (config lives in ~/.kato/settings.json)\n'
+        '  2. Run `kato doctor` any time to validate the environment\n'
         '     (`kato` is on PATH after `pip install -e .`)\n'
     )
     return 0

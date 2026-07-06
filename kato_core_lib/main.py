@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import signal
+import sys
 import threading
 import time
 
@@ -28,6 +29,7 @@ from agent_core_lib.agent_core_lib.helpers.session_id_utils import (
     read_session_id_from,
 )
 from kato_core_lib.helpers.action_guard_config import print_action_guard_posture
+from kato_core_lib.errors import AgentBackendChangedError
 from kato_core_lib.validate_env import collect_config_errors
 from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (
     BypassPermissionsRefused,
@@ -87,13 +89,12 @@ def main(cfg: DictConfig) -> int:
     config_errors = collect_config_errors(mode='all')
     setup_mode = bool(config_errors)
     if setup_mode:
+        # One line only — the setup WIZARD in the browser shows the full
+        # detail; the terminal just needs to say why kato isn't scanning.
         logger.warning(
-            'kato is NOT configured — starting the setup UI only '
-            '(%d setting(s) missing):', len(config_errors),
+            'kato is not configured yet (%d setting(s) missing) — opening '
+            'the setup wizard in the browser.', len(config_errors),
         )
-        for problem in config_errors:
-            logger.warning('  - %s', problem)
-        logger.warning('Open the planning UI and fill in Settings to start.')
     try:
         validate_bypass_permissions()
     except BypassPermissionsRefused as exc:
@@ -236,7 +237,7 @@ def main(cfg: DictConfig) -> int:
 
 # How often the setup-mode wait loop re-checks the layered config. Short
 # enough that "save in the wizard → kato starts" feels immediate; the check
-# is a local settings.json/.env read, no network.
+# is a local settings.json read, no network.
 _SETUP_POLL_SECONDS = 5.0
 # A failed start attempt is normally re-tried only when the config CHANGES
 # (fingerprint guard, so a bad token never hammers the provider every tick).
@@ -264,10 +265,10 @@ def _wait_until_configured_then_finish_setup(
 
     Each tick re-evaluates ``collect_config_errors`` over the SAME layered
     env the ``/api/config-status`` endpoint uses (``effective_config_env``:
-    process env > settings.json > .env), so the UI's "you're all set" and
+    process env > settings.json), so the UI's "you're all set" and
     this loop can never disagree. Once complete, the newly-saved values are
-    loaded into the process env (shell still wins; settings.json wins over
-    .env — hydra's ``${oc.env:...}`` reads resolve on access) and
+    loaded into the process env (shell still wins — hydra's
+    ``${oc.env:...}`` reads resolve on access) and
     ``complete_setup()`` builds the real agent service.
 
     Returns ``True`` when setup finished and the full boot should continue;
@@ -324,6 +325,28 @@ def _wait_until_configured_then_finish_setup(
             continue
         try:
             app.complete_setup()
+        except AgentBackendChangedError as exc:
+            # The setup boot built its managers for the OLD backend and the
+            # webserver holds references to them — the switch can't be
+            # applied live. Deliver the no-terminal promise anyway: re-exec
+            # kato in place. The just-loaded env (new backend included)
+            # survives the exec, so the new process boots CONFIGURED and
+            # the browser gate closes on its next poll.
+            app.logger.warning('%s', exc)
+            _set_webserver_setup_error(app, (
+                'kato is restarting to apply the new agent backend — '
+                'this page reconnects by itself in a few seconds.'
+            ))
+            try:
+                _restart_in_place(app)
+            except OSError:
+                app.logger.exception(
+                    'in-place restart failed — restart kato manually to '
+                    'apply the new agent backend',
+                )
+                _restore_environ(env_snapshot)
+                last_failed_fingerprint = fingerprint
+            continue
         except Exception as exc:
             _restore_environ(env_snapshot)
             last_failed_fingerprint = fingerprint
@@ -339,7 +362,7 @@ def _wait_until_configured_then_finish_setup(
             _set_webserver_setup_error(app, (
                 f'{str(exc)[:500]} — kato retries automatically after you '
                 'save a change (and periodically). If the failing value was '
-                'already set when kato started (shell env or .env), restart '
+                'already set when kato started (shell env), restart '
                 'kato to apply the new one.'
             ))
             continue
@@ -354,6 +377,22 @@ def _wait_until_configured_then_finish_setup(
         app.logger.info('configuration complete — kato is starting')
         return True
     return False
+
+
+def _restart_in_place(app) -> None:
+    """Re-exec the kato process image (same PID, same terminal).
+
+    Used by the setup wait loop when the operator switches the agent
+    backend mid-setup. Never returns on success. Python sets FDs
+    close-on-exec (PEP 446), so the webserver's listen socket is released
+    and the fresh image can bind the same port; Werkzeug's inherited-fd
+    marker must not leak into the new image or it would try to reuse a
+    now-closed descriptor.
+    """
+    os.environ.pop('WERKZEUG_SERVER_FD', None)
+    argv = [sys.executable, '-m', 'kato_core_lib.main', *sys.argv[1:]]
+    app.logger.warning('restarting kato in place: %s', ' '.join(argv))
+    os.execv(sys.executable, argv)
 
 
 def _restore_environ(snapshot: dict) -> None:
@@ -417,32 +456,23 @@ def _set_webserver_setup_error(app, message: str) -> None:
 
 
 def _load_layered_config_into_environ() -> None:
-    """Load settings.json, then ``.env``, into the process env.
+    """Load settings.json into the process env (shell wins).
 
-    Shell wins, settings.json wins over ``.env`` — the launcher's boot
-    precedence — with ONE deliberate difference from the plain loaders:
+    One deliberate difference from ``load_kato_settings_into_environ``:
     a key that is set-but-EMPTY in the process env is treated as unset
     and gets overwritten. Everything else (the validators, the settings
-    UI, ``effective_config_env``) already treats empty as unset, and
-    ``.env.example`` ships blank ``KEY=`` lines that land as empty env
-    vars at spawn — without this, those blanks would shadow the values
-    the operator saves in the wizard forever. Callers snapshot/restore
-    ``os.environ`` around failed attempts, so no separate rollback list
-    is needed.
+    UI, ``effective_config_env``) already treats empty as unset, so a
+    blank env var inherited at spawn must not shadow the value the
+    operator saves in the wizard forever. Callers snapshot/restore
+    ``os.environ`` around failed attempts, so no rollback list is needed.
     """
-    from kato_core_lib.helpers.dotenv_utils import read_dotenv_values
     from kato_core_lib.helpers.kato_settings_store_utils import (
         read_kato_settings,
-        settings_env_file_path,
     )
 
-    for source in (
-        read_kato_settings(),
-        read_dotenv_values(settings_env_file_path()),
-    ):
-        for key, value in source.items():
-            if value and not os.environ.get(key):
-                os.environ[key] = value
+    for key, value in read_kato_settings().items():
+        if value and not os.environ.get(key):
+            os.environ[key] = value
 
 
 def _mark_webserver_configured(app) -> None:
@@ -915,7 +945,14 @@ def _start_planning_webserver_if_enabled(app) -> None:
 
     def _serve() -> None:
         try:
-            flask_app.run(host=host, port=port, debug=False, use_reloader=False, threaded=True)
+            # load_dotenv=False: with python-dotenv installed, Flask's run()
+            # otherwise auto-loads <cwd>/.env into os.environ — a hidden
+            # third config path. kato reads ONLY ~/.kato/settings.json
+            # (plus real shell env); .env support was removed entirely.
+            flask_app.run(
+                host=host, port=port, debug=False, use_reloader=False,
+                threaded=True, load_dotenv=False,
+            )
         except Exception:
             app.logger.exception('planning webserver crashed')
 

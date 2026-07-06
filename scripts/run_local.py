@@ -1,9 +1,10 @@
 """Cross-platform replacement for ``scripts/run-local.sh``.
 
-Loads ``.env``, hands the variables to the kato process via the parent
-environment (no shell-only ``set -a; . .env``), and execs
-``python -m kato_core_lib.main`` from the project venv. Works on Windows, macOS,
-and Linux.
+Loads ``~/.kato/settings.json`` (kato's ONLY config file — ``.env``
+support was removed; the first-run wizard + Settings drawer replaced
+it), hands the variables to the kato process via the parent
+environment, and execs ``python -m kato_core_lib.main`` from the
+project venv. Works on Windows, macOS, and Linux.
 
 Usage:
     python scripts/run_local.py
@@ -20,28 +21,50 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _script_utils import (  # noqa: E402
     REPO_ROOT,
     layered_env,
-    load_env_file,
     read_kato_settings_file,
     venv_python_path,
 )
 
 
-def main() -> int:
-    env_path = REPO_ROOT / '.env'
-    if not env_path.exists():
-        print('.env is missing. Run `python scripts/bootstrap.py` first.', file=sys.stderr)
-        return 1
-
-    python_bin = venv_python_path()
+def _bootstrap_if_needed(python_bin: Path) -> int:
+    """First run on a fresh clone: bootstrap in place (venv + deps + UI
+    bundle) so ``kato up`` is the ONLY command an operator ever needs —
+    it then boots into the setup wizard in the browser. Tests are skipped
+    here (a fresh clone hasn't been touched); ``kato bootstrap`` remains
+    for an explicit full run."""
+    if python_bin.exists():
+        return 0
+    print('first run detected (.venv missing) — bootstrapping kato…')
+    rc = subprocess.call(
+        [sys.executable, str(REPO_ROOT / 'scripts' / 'bootstrap.py'), '--skip-tests'],
+        cwd=str(REPO_ROOT),
+    )
+    if rc != 0:
+        print(
+            'bootstrap failed — fix the errors above and re-run `kato up`.',
+            file=sys.stderr,
+        )
+        return rc
     if not python_bin.exists():
-        print('.venv is missing. Run `python scripts/bootstrap.py` first.', file=sys.stderr)
+        print(
+            'bootstrap completed but .venv is still missing — run '
+            '`python scripts/bootstrap.py` manually.',
+            file=sys.stderr,
+        )
         return 1
+    return 0
 
-    # Precedence: real shell env > ~/.kato/settings.json (the Settings UI) >
-    # <repo>/.env. This used to be ``env.update(.env)`` — .env loaded OVER the
-    # shell and settings.json never read — so a token saved in the Settings UI
-    # silently had no effect (it writes settings.json, which .env shadowed).
-    env = layered_env(os.environ, read_kato_settings_file(), load_env_file(env_path))
+
+def main() -> int:
+    python_bin = venv_python_path()
+    rc = _bootstrap_if_needed(python_bin)
+    if rc != 0:
+        return rc
+
+    # Precedence: real shell env > ~/.kato/settings.json (the Settings UI).
+    # A missing/empty settings.json is fine — kato boots into SETUP MODE
+    # and the first-run wizard collects everything from the browser.
+    env = layered_env(os.environ, read_kato_settings_file())
 
     completed = subprocess.run(
         [str(python_bin), '-m', 'kato_core_lib.main'],

@@ -29,7 +29,6 @@ from kato_webserver.app import (
     _record_cwd_or_none,
     _repo_relative_path,
     _repository_cwd,
-    _settings_env_path,
     _task_repository_ids,
     _workspace_status,
     create_app,
@@ -241,13 +240,6 @@ class ModuleLevelHelperTests(unittest.TestCase):
             outside = Path(other) / 'file.py'
             outside.write_text('x', encoding='utf-8')
             self.assertIsNone(_repo_relative_path(str(outside), root))
-
-    def test_settings_env_path_falls_back_to_repo_root(self):
-        # No ``KATO_SETTINGS_ENV_FILE`` → ``<repo>/.env``.
-        with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop('KATO_SETTINGS_ENV_FILE', None)
-            result = _settings_env_path()
-        self.assertEqual(result, KATO_REPO_ROOT / '.env')
 
     def test_workspace_status_returns_empty_when_no_manager(self):
         self.assertEqual(_workspace_status(None, 'T-1'), '')

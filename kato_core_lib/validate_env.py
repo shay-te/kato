@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 from shutil import which
 
-from kato_core_lib.helpers.dotenv_utils import parse_dotenv_text
 from kato_core_lib.helpers.kato_config_utils import (
     is_bedrock_model,
     is_openrouter_model,
@@ -86,23 +85,6 @@ EMAIL_REQUIREMENTS = {
     ),
 }
 logger = logging.getLogger(__name__)
-
-
-def _read_env_file(path: str | None) -> dict[str, str]:
-    if not path:
-        return {}
-
-    env_path = Path(path)
-    if not env_path.exists():
-        raise FileNotFoundError(f'env file not found: {path}')
-
-    return parse_dotenv_text(env_path.read_text(encoding='utf-8'))
-
-
-def _build_env(env_file: str | None) -> dict[str, str]:
-    env = dict(os.environ)
-    env.update(_read_env_file(env_file))
-    return env
 
 
 def _is_enabled(value: str | None) -> bool:
@@ -399,7 +381,6 @@ def _validate(mode: str, env: dict[str, str]) -> list[str]:
 def collect_config_errors(
     mode: str = 'all',
     env: dict[str, str] | None = None,
-    env_file: str | None = None,
 ) -> list[str]:
     """The config problems ``validate_environment`` would raise on, as a list
     (empty ⇒ fully configured).
@@ -408,17 +389,16 @@ def collect_config_errors(
     state and surface WHAT is missing in the UI instead of hard-exiting — the
     same source of truth the CLI's fatal check uses, so the two never drift.
     """
-    effective_env = dict(env) if env is not None else _build_env(env_file)
+    effective_env = dict(env) if env is not None else dict(os.environ)
     return _validate(mode, effective_env)
 
 
 def validate_environment(
     mode: str = 'all',
     env: dict[str, str] | None = None,
-    env_file: str | None = None,
 ) -> None:
     """Validate environment settings and raise on invalid configuration."""
-    errors = collect_config_errors(mode, env, env_file)
+    errors = collect_config_errors(mode, env)
     if errors:
         raise ValueError('\n'.join(errors))
 
@@ -431,10 +411,14 @@ def main() -> int:
         choices=['agent', 'openhands', 'all'],
         default='all',
     )
-    parser.add_argument('--env-file')
     args = parser.parse_args()
 
-    env = _build_env(args.env_file)
+    # The doctor validates what kato would actually boot with: the live
+    # env overlaid on ~/.kato/settings.json (kato's only config file).
+    from kato_core_lib.helpers.kato_settings_store_utils import (
+        effective_config_env,
+    )
+    env = effective_config_env()
     errors = _validate(args.mode, env)
     if errors:
         for error in errors:

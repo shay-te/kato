@@ -6,11 +6,11 @@ Kato is an autonomous coding agent. It polls YouTrack/Jira/Bitbucket for assigne
 
 ```bash
 pip install -e .     # puts the `kato` CLI on PATH (replaces the Makefile)
-kato up              # start kato locally (.env + run main)
+kato up              # start kato locally (settings.json + run main)
 kato test            # run the unittest suite
 ```
 
-`kato` is the single operator entry point — `kato up | bootstrap | configure | doctor | test | build-agent-server | sandbox <build|login|verify> | compose-docker`. There is no Makefile. The suite can also be run directly: `python -m unittest discover -s tests -p "test_*.py"`.
+`kato` is the single operator entry point — `kato up | bootstrap | doctor | test | build-agent-server | sandbox <build|login|verify> | compose-docker`. There is no Makefile. The suite can also be run directly: `python -m unittest discover -s tests -p "test_*.py"`.
 
 94 pre-existing errors in `openhands_core_lib` — ignore. Zero failures expected.
 

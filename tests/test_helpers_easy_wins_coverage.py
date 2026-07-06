@@ -172,26 +172,6 @@ class AuditLogReadDefensiveTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------
-# dotenv_utils — read OSError on .env file
-# --------------------------------------------------------------------------
-
-
-class DotenvLoaderErrorPathTests(unittest.TestCase):
-    """Lines 42-43: ``.env`` read OSError → return 0 (no keys added).
-    Bootstrap must not fail because the file is locked or permission-
-    flipped — a missing/unreadable file just means "no dotenv values
-    today, real env vars still apply"."""
-
-    def test_returns_zero_on_read_oserror(self) -> None:
-        from kato_core_lib.helpers.dotenv_utils import load_dotenv_into_environ
-        with tempfile.TemporaryDirectory() as td:
-            env_path = Path(td) / '.env'
-            env_path.write_text('KEY=VALUE')
-            with patch.object(Path, 'read_text', side_effect=OSError('locked')):
-                self.assertEqual(load_dotenv_into_environ(env_path), 0)
-
-
-# --------------------------------------------------------------------------
 # error_handling_utils — run_best_effort default fallback
 # --------------------------------------------------------------------------
 

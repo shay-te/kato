@@ -13,7 +13,6 @@ class RuntimeIdentityUtilsTests(unittest.TestCase):
             (root / 'Dockerfile').write_text('FROM python:3.11-slim\n', encoding='utf-8')
             (root / 'Makefile').write_text('test:\n\ttrue\n', encoding='utf-8')
             (root / 'docker-compose.yaml').write_text('services: {}\n', encoding='utf-8')
-            (root / '.env.example').write_text('KATO_LOG_LEVEL=warning\n', encoding='utf-8')
             (root / 'kato').mkdir()
             (root / 'kato' / '__init__.py').write_text('', encoding='utf-8')
             (root / 'kato' / 'main.py').write_text('print("v1")\n', encoding='utf-8')

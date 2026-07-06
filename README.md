@@ -55,11 +55,13 @@ Coding agents are powerful but scary: they run shell commands, touch credentials
 git clone <this-repo>
 cd kato
 
-kato bootstrap     # one-time: Python venv + dependencies
-kato configure     # interactive wizard for your .env (ticket platform, repos, LLM)
-kato doctor        # checks your config is valid
-kato up            # starts kato + opens the planning UI in your browser
+./kato up          # that's it — first run bootstraps itself (venv + deps),
+                   # then opens the setup wizard in your browser
+                   # (config lives in ~/.kato/settings.json)
 ```
+
+Useful extras: `kato doctor` validates your config; `kato bootstrap` re-runs
+the full environment setup (incl. the test suite) explicitly.
 
 That's it. To make kato work a ticket: open it in your tracker, **assign it to yourself**, and add the tag `kato:repo:<repo-folder-name>` (e.g. `kato:repo:my-backend`). Kato picks it up on the next 30-second scan tick.
 

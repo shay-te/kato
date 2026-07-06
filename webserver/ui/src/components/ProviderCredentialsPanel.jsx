@@ -3,6 +3,8 @@ import { useSettingsResource } from '../hooks/useSettingsResource.js';
 import { useRestartingSave } from '../hooks/useRestartingSave.js';
 import { isSecretKey, buildDraftFor } from '../utils/providerFields.js';
 import { sourceLabel } from '../utils/settingsSource.js';
+import { humanizeFieldKey, fieldPlaceholder, fieldInfo } from '../utils/fieldHelp.js';
+import FieldInfoTip from './settings/FieldInfoTip.jsx';
 import SettingsPanelBody from './settings/SettingsPanelBody.jsx';
 import SettingsPanelHead from './settings/SettingsPanelHead.jsx';
 import SettingsActions from './settings/SettingsActions.jsx';
@@ -18,7 +20,7 @@ import RestartBanner from './settings/RestartBanner.jsx';
 // it only edits creds. ``includeActive`` toggles that one branch.
 //
 // ``description`` is the lead sentence(s) of the header copy (a node);
-// the shared "saved to <path> (.env untouched)" tail is appended here.
+// the shared "saved to <path>" tail is appended here.
 export default function ProviderCredentialsPanel({
   fetchFn,
   updateFn,
@@ -47,7 +49,7 @@ export default function ProviderCredentialsPanel({
       active,
       supported,
       providers: body.providers || {},
-      settingsFilePath: String(body.settings_file_path || body.env_file_path || ''),
+      settingsFilePath: String(body.settings_file_path || ''),
     });
     setSelected((current) => current || fallback);
     setDraft(buildDraftFor(body.providers || {}, selected || fallback));
@@ -80,8 +82,7 @@ export default function ProviderCredentialsPanel({
         <p>
           {description}
           {' '}<code>{meta.settingsFilePath || '~/.kato/settings.json'}</code>
-          {' '}(your <code>.env</code> is left untouched — kato still
-          reads it as a fallback).
+          {' '}— kato&apos;s only config file.
         </p>
       </SettingsPanelHead>
 
@@ -111,14 +112,17 @@ export default function ProviderCredentialsPanel({
               const isSecret = isSecretKey(key);
               const placeholder = isSecret && f.value
                 ? '(set — paste again to replace)'
-                : '';
+                : fieldPlaceholder(key);
               return (
                 <label key={key} className="settings-drawer-field">
                   <span className="settings-drawer-field-label">
-                    <code>{key}</code>
+                    <span className="settings-drawer-field-name">
+                      {humanizeFieldKey(key, selected)}
+                    </span>
                     <span className={`settings-drawer-source source-${f.source || 'unset'}`}>
                       {sourceLabel(f.source)}
                     </span>
+                    <FieldInfoTip text={fieldInfo(key)} />
                   </span>
                   <input
                     type={isSecret ? 'password' : 'text'}

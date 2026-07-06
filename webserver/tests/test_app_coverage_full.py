@@ -32,7 +32,6 @@ from kato_webserver.app import (
     _fire_webserver_hook,
     _follow_live_session,
     _live_session_ids,
-    _read_env_file_values,
     _replay_history_from_disk,
     _replay_preflight_log,
     _run_pre_tool_use_hook,
@@ -111,25 +110,6 @@ class SendKatoPngTests(unittest.TestCase):
         # response carrying the cache-control header we passed in.
         self.assertEqual(response.headers.get('Cache-Control'), 'public, max-age=99')
         response.close()
-
-
-# --------------------------------------------------------------------------
-# _read_dotenv_file OSError branch (455-456)
-# --------------------------------------------------------------------------
-
-
-class ReadDotenvTests(unittest.TestCase):
-    def test_unreadable_file_returns_empty_dict(self):
-        with tempfile.TemporaryDirectory() as td:
-            path = Path(td) / '.env'
-            path.write_text('A=1\n', encoding='utf-8')
-            with patch.object(
-                Path, 'read_text', side_effect=OSError('boom'),
-            ):
-                self.assertEqual(_read_env_file_values(path), {})
-
-    def test_missing_file_returns_empty_dict(self):
-        self.assertEqual(_read_env_file_values(Path('/no/such/.env')), {})
 
 
 # --------------------------------------------------------------------------

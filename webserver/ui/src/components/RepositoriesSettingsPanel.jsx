@@ -4,6 +4,9 @@ import { toast } from '../stores/toastStore.js';
 import { useRestartingSave } from '../hooks/useRestartingSave.js';
 import { useSettingsResource } from '../hooks/useSettingsResource.js';
 import { sourceLabelVerbose } from '../utils/settingsSource.js';
+import { fieldInfo, fieldPlaceholder } from '../utils/fieldHelp.js';
+import FieldInfoTip from './settings/FieldInfoTip.jsx';
+import FolderBrowser from './FolderBrowser.jsx';
 import SettingsPanelBody from './settings/SettingsPanelBody.jsx';
 import SettingsPanelHead from './settings/SettingsPanelHead.jsx';
 import SettingsActions from './settings/SettingsActions.jsx';
@@ -13,21 +16,21 @@ import RestartBanner from './settings/RestartBanner.jsx';
 // REPOSITORY_ROOT_PATH — the folder kato walks for ``.git`` to
 // auto-discover repos.
 //
-// Saved to ``~/.kato/settings.json`` via POST /api/settings. The
-// operator's ``<repo>/.env`` is left untouched (kato still reads it
-// as a fallback). The change is load-bearing at boot, so we surface
-// "restart required" prominently after every successful save.
+// Saved to ``~/.kato/settings.json`` via POST /api/settings —
+// kato's only config file. The change is load-bearing at boot, so we
+// surface "restart required" prominently after every successful save.
 
 export default function RepositoriesSettingsPanel() {
   const [meta, setMeta] = useState({ value: '', source: 'unset', settingsFilePath: '' });
   const [draft, setDraft] = useState('');
+  const [browsing, setBrowsing] = useState(false);
 
   const { loading, error, refresh } = useSettingsResource(fetchSettings, (body) => {
     const repo = body?.repository_root_path || {};
     setMeta({
       value: String(repo.value || ''),
       source: String(repo.source || 'unset'),
-      settingsFilePath: String(body?.settings_file_path || body?.env_file_path || ''),
+      settingsFilePath: String(body?.settings_file_path || ''),
     });
     setDraft(String(repo.value || ''));
   });
@@ -60,30 +63,50 @@ export default function RepositoriesSettingsPanel() {
           The folder kato walks for ``.git`` directories to
           auto-discover repos. Saved to
           {' '}<code>{meta.settingsFilePath || '~/.kato/settings.json'}</code>
-          {' '}as <code>REPOSITORY_ROOT_PATH</code> (your <code>.env</code>
-          {' '}is left untouched — kato still reads it as a fallback).
+          {' '}— kato&apos;s only config file.
         </p>
       </SettingsPanelHead>
 
       <SettingsPanelBody loading={loading} error={error} loadingMessage="Loading current setting…">
         <>
           <label className="settings-drawer-field">
-            <span className="settings-drawer-field-label">Folder path</span>
-            <input
-              type="text"
-              className="settings-drawer-input"
-              placeholder="/Users/you/projects"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              spellCheck={false}
-              autoCapitalize="off"
-              autoCorrect="off"
-            />
-            <span className="settings-drawer-field-hint">
-              Tip: paste an absolute path, or <code>~/Projects</code> —
-              kato expands ``~`` and resolves relative segments on save.
+            <span className="settings-drawer-field-label">
+              <span className="settings-drawer-field-name">Folder path</span>
+              <FieldInfoTip text={fieldInfo(
+                'REPOSITORY_ROOT_PATH',
+                'Paste an absolute path, or ~/Projects — kato expands ~ and resolves relative segments on save.',
+              )} />
+            </span>
+            <span className="settings-drawer-input-row">
+              <input
+                type="text"
+                className="settings-drawer-input"
+                placeholder={fieldPlaceholder('REPOSITORY_ROOT_PATH')}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+              />
+              <button
+                type="button"
+                className="settings-drawer-action-secondary"
+                onClick={() => setBrowsing((current) => !current)}
+              >
+                Browse…
+              </button>
             </span>
           </label>
+          {browsing && (
+            <FolderBrowser
+              initialPath={draft.trim() || '~'}
+              onPick={(path) => {
+                setDraft(path);
+                setBrowsing(false);
+              }}
+              onClose={() => setBrowsing(false)}
+            />
+          )}
 
           <div className="settings-drawer-status-row">
             <span className="settings-drawer-kv">

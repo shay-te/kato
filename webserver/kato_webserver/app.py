@@ -223,51 +223,29 @@ def _repo_relative_path(path_arg: str, cwd: str) -> str | None:
     return rel or None
 
 
-def _settings_env_path() -> Path:
-    """Legacy ``<repo>/.env`` path — now only a READ fallback.
-
-    The settings UI writes to ``~/.kato/settings.json`` (see
-    ``kato_settings_store_utils``). ``.env`` is still read here so an
-    operator who hasn't saved through the new UI yet still sees
-    their existing values + a correct source label. The
-    ``KATO_SETTINGS_ENV_FILE`` override is preserved for tests that
-    pre-seed a fake ``.env`` fallback. Resolution is delegated to the
-    canonical helper so the boot-time setup poll and this UI read the
-    same file.
-    """
-    from kato_core_lib.helpers.kato_settings_store_utils import (
-        settings_env_file_path,
-    )
-
-    return settings_env_file_path()
-
-
 def _resolve_setting(key: str) -> dict:
-    """Resolve one settings key across all three stores.
+    """Resolve one settings key across kato's two stores.
 
     Precedence mirrors boot: live ``os.environ`` (shell or
-    already-loaded) > ``~/.kato/settings.json`` > ``<repo>/.env``.
-    Returns ``{value, source, value_from_file}`` where ``source`` is
-    one of ``env`` / ``kato_settings`` / ``env_file`` / ``unset`` so
-    the UI can label where a value lives.
+    already-loaded) > ``~/.kato/settings.json``. Returns
+    ``{value, source}`` where ``source`` is one of ``env`` /
+    ``kato_settings`` / ``unset`` so the UI can label where a value
+    lives. (``.env`` support was removed — settings.json is kato's
+    only config file.)
     """
     from kato_core_lib.helpers.kato_settings_store_utils import read_kato_settings
 
     live = os.environ.get(key, '')
     settings_value = read_kato_settings().get(key, '')
-    env_file_value = _read_env_file_values(_settings_env_path()).get(key, '')
     if live:
         value, source = live, 'env'
     elif settings_value:
         value, source = settings_value, 'kato_settings'
-    elif env_file_value:
-        value, source = env_file_value, 'env_file'
     else:
         value, source = '', 'unset'
     return {
         'value': value,
         'source': source,
-        'value_from_file': env_file_value,
     }
 
 
@@ -308,7 +286,6 @@ def _persist_settings(updates: dict) -> None:
     """Write UI-edited settings to ``~/.kato/settings.json`` (atomic).
 
     Single chokepoint so every settings route writes the same place.
-    Replaces the old per-key ``.env`` writers.
     """
     from kato_core_lib.helpers.kato_settings_store_utils import write_kato_settings
 
@@ -328,8 +305,8 @@ def _persist_settings(updates: dict) -> None:
 #     this is purely "set the credentials kato uses to clone / push
 #     / open PRs against <host>". Connection-level keys only.
 #
-# The same underlying ``.env`` keys back both — e.g. editing
-# ``BITBUCKET_API_TOKEN`` in either tab writes the same line. That's
+# The same underlying env keys back both — e.g. editing
+# ``BITBUCKET_API_TOKEN`` in either tab writes the same key. That's
 # intentional: the operator sees the key in whichever context they
 # came looking for it.
 # ---------------------------------------------------------------------------
@@ -436,7 +413,7 @@ def _filtered_provider_updates(
     Shared by the task-provider / git-host POST handlers: a payload
     can't smuggle env keys that don't belong to the named provider.
     Each kept value is coerced to ``str(value or '')`` (so ``None`` /
-    missing becomes the empty string the ``.env`` layer expects).
+    missing becomes the empty string the settings layer expects).
     ``fields`` is expected to already be a validated dict.
     """
     allowed = set(field_map[provider])
@@ -445,21 +422,6 @@ def _filtered_provider_updates(
         for key, value in fields.items()
         if key in allowed
     }
-
-
-def _read_env_file_values(path: Path) -> dict[str, str]:
-    """Parse a ``.env``-style file into a dict.
-
-    Delegates to kato's single-source-of-truth reader
-    (``read_dotenv_values``) so the settings UI reads ``.env`` exactly
-    the way kato's boot path does — ``KEY=value`` lines, a stripped
-    leading ``export `` prefix, one matched pair of surrounding quotes
-    removed, comments/blanks/malformed lines dropped, last duplicate
-    key wins. Returns ``{}`` when the file is missing or unreadable.
-    """
-    from kato_core_lib.helpers.dotenv_utils import read_dotenv_values
-
-    return read_dotenv_values(path)
 
 
 
@@ -1221,7 +1183,7 @@ def _register_http_routes(app: Flask) -> None:
 
         Same source of truth as the boot-time check
         (``collect_config_errors``) so the two never drift — but evaluated
-        across the layered settings stores (env > settings.json > .env), so
+        across the layered settings stores (env > settings.json), so
         saving in the Settings UI clears the "not configured" state without a
         restart.
 
@@ -1248,14 +1210,51 @@ def _register_http_routes(app: Flask) -> None:
             'setup_error': str(app.config.get('SETUP_ERROR') or ''),
         })
 
+    @app.get('/api/fs/dirs')
+    def list_directories():
+        """Directory listing for the folder-picker UI ("Browse…").
+
+        The planning webserver runs on the operator's own machine, so
+        browsing their filesystem here is equivalent to the terminal
+        they'd otherwise use — and strictly less powerful: DIRECTORY
+        NAMES only, never file names or contents. Hidden directories
+        are skipped.
+        """
+        raw = (request.args.get('path') or '~').strip() or '~'
+        try:
+            base = Path(raw).expanduser().resolve()
+        except (OSError, ValueError):
+            return jsonify({'error': 'invalid path'}), 400
+        if not base.is_dir():
+            return jsonify({'error': f'not a directory: {base}'}), 404
+        try:
+            children = sorted(
+                (
+                    entry for entry in base.iterdir()
+                    if entry.is_dir() and not entry.name.startswith('.')
+                ),
+                key=lambda entry: entry.name.lower(),
+            )
+        except PermissionError:
+            return jsonify({'error': f'permission denied: {base}'}), 403
+        parent = str(base.parent) if base.parent != base else None
+        return jsonify({
+            'path': str(base),
+            'parent': parent,
+            'home': str(Path.home()),
+            'dirs': [
+                {'name': entry.name, 'path': str(entry)} for entry in children
+            ],
+        })
+
     @app.get('/api/settings')
     def get_settings():
-        """Operator-editable settings, resolved across all stores.
+        """Operator-editable settings, resolved across kato's two stores.
 
         Source label tells the operator where the value currently
-        lives: ``env`` (live process / shell), ``kato_settings``
-        (``~/.kato/settings.json`` — what the UI writes), or
-        ``env_file`` (legacy ``<repo>/.env`` fallback).
+        lives: ``env`` (live process / shell) or ``kato_settings``
+        (``~/.kato/settings.json`` — what the UI writes; kato's only
+        config file).
         """
         from kato_core_lib.helpers.kato_settings_store_utils import (
             kato_settings_path,
@@ -1265,8 +1264,6 @@ def _register_http_routes(app: Flask) -> None:
         return jsonify({
             'repository_root_path': repo_root,
             'settings_file_path': str(kato_settings_path()),
-            # Kept for back-compat with any client still reading it.
-            'env_file_path': str(_settings_env_path()),
         })
 
     @app.post('/api/settings')
@@ -1307,20 +1304,14 @@ def _register_http_routes(app: Flask) -> None:
         })
 
     def _provider_field_values(fields_map):
-        """Shared GET shaping for the task / git provider routes.
-
-        Each field resolves across all three stores via
-        ``_resolve_setting`` (live env > settings.json > .env).
-        Returns ``(out, env_file_values)`` — the second is only used
-        by the task route to read the legacy ``KATO_ISSUE_PLATFORM``
-        fallback for the "active" label.
+        """Shared GET shaping for the task / git provider routes: each
+        field resolves via ``_resolve_setting`` (live env > settings.json).
         """
-        env_file_values = _read_env_file_values(_settings_env_path())
         out = {}
         for name, fields in fields_map.items():
             field_values = {key: _resolve_setting(key) for key in fields}
             out[name] = {'fields': field_values}
-        return out, env_file_values
+        return out
 
     @app.get('/api/task-providers')
     def list_task_providers():
@@ -1335,10 +1326,8 @@ def _register_http_routes(app: Flask) -> None:
             kato_settings_path,
         )
 
-        out, env_file_values = _provider_field_values(_TASK_PROVIDER_FIELDS)
-        active = _resolve_setting('KATO_ISSUE_PLATFORM')['value']
-        if not active:
-            active = env_file_values.get('KATO_ISSUE_PLATFORM', '') or 'youtrack'
+        out = _provider_field_values(_TASK_PROVIDER_FIELDS)
+        active = (_resolve_setting('KATO_ISSUE_PLATFORM')['value'] or 'youtrack')
         active = active.strip().lower()
         return jsonify({
             'active': active,
@@ -1349,7 +1338,7 @@ def _register_http_routes(app: Flask) -> None:
 
     @app.post('/api/task-providers')
     def update_task_provider():
-        """Patch ``<repo>/.env`` with one task platform's fields + active.
+        """Persist one task platform's fields + active to settings.json.
 
         Body: ``{active?, provider?, fields?}``. ``active`` switches
         ``KATO_ISSUE_PLATFORM``. Only keys in the named provider's
@@ -1393,7 +1382,7 @@ def _register_http_routes(app: Flask) -> None:
             kato_settings_path,
         )
 
-        out, _ = _provider_field_values(_GIT_HOST_FIELDS)
+        out = _provider_field_values(_GIT_HOST_FIELDS)
         return jsonify({
             'providers': out,
             'settings_file_path': str(kato_settings_path()),
@@ -1402,7 +1391,7 @@ def _register_http_routes(app: Flask) -> None:
 
     @app.post('/api/git-providers')
     def update_git_provider():
-        """Patch ``<repo>/.env`` with one git host's credentials.
+        """Persist one git host's credentials to settings.json.
 
         Body: ``{provider, fields}``. Does NOT touch
         ``KATO_ISSUE_PLATFORM`` — selecting a git host here only
@@ -1474,8 +1463,8 @@ def _register_http_routes(app: Flask) -> None:
         Body: ``{updates: {KEY: value}}``. The schema is the
         whitelist — a key not declared in any section is dropped, so
         a payload can't smuggle one the UI doesn't own. Booleans /
-        numbers are coerced to the string form ``.env`` land
-        expects. ``restart_required`` because kato reads env at boot.
+        numbers are coerced to the string form settings.json stores.
+        ``restart_required`` because kato reads env at boot.
         """
         from kato_core_lib.helpers.kato_settings_schema_utils import (
             all_settings_keys,

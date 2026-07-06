@@ -29,6 +29,10 @@ vi.mock('./api.js', () => ({
   fetchConfigStatus: vi.fn().mockResolvedValue(
     { setup_mode: false, needs_config: false, missing: [] },
   ),
+  // Folder picker (Browse…) inside the wizard / Repositories tab.
+  fetchDirectoryListing: vi.fn().mockResolvedValue(
+    { path: '/', parent: null, home: '/', dirs: [] },
+  ),
   fetchAllSettings: vi.fn().mockResolvedValue(
     { ok: true, body: { sections: [] } },
   ),

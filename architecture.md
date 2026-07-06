@@ -25,7 +25,7 @@ ticket platform ──poll──▶ scan loop ──▶ AgentService ──▶ p
                                               └── WorkspaceManager ── ~/.kato/workspaces/<task-id>/<repo>/
 ```
 
-Configuration is Hydra + env vars (.env). Two pluggable axes: which **issue platform** (`KATO_ISSUE_PLATFORM`) and which **agent backend** (`KATO_AGENT_BACKEND`). Most cross-cutting behavior is also env-toggled — see [.env.example](.env.example) for the canonical list.
+Configuration is Hydra + env vars (sourced from `~/.kato/settings.json` via the Settings UI, or the shell). Two pluggable axes: which **issue platform** (`KATO_ISSUE_PLATFORM`) and which **agent backend** (`KATO_AGENT_BACKEND`). Most cross-cutting behavior is also env-toggled — see [readmeEnvironmentReference.md](readmeEnvironmentReference.md) for the canonical list.
 
 ---
 

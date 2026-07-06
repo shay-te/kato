@@ -8531,7 +8531,7 @@ body.kato-resizing #left-pane-resizer::before {
 }
 
 .setup-gate-panel {
-  width: min(560px, 100%);
+  width: min(660px, 100%);
   margin: auto;
   background: $C-NEUTRAL-04;
   border: 1px solid $C-NEUTRAL-16;
@@ -8692,6 +8692,15 @@ body.kato-resizing #left-pane-resizer::before {
   background: $C-CYAN-52-A18;
 }
 
+.setup-wizard-choice.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.setup-wizard-choice.is-disabled:hover {
+  border-color: $C-NEUTRAL-16;
+}
+
 .setup-wizard-choice-label {
   font-size: $TEXT-14;
   font-weight: 600;
@@ -8723,9 +8732,15 @@ body.kato-resizing #left-pane-resizer::before {
   color: $C-NEUTRAL-96;
 }
 
-.setup-wizard-field-key {
-  font-size: $TEXT-11;
+
+.setup-wizard-field-optional {
+  padding: 0 $SPACE-6;
+  border-radius: var(--radius-pill);
+  background: $C-NEUTRAL-16;
   color: $C-NEUTRAL-64;
+  font-size: $TEXT-10;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
 }
 
 .setup-wizard-input {
@@ -8790,4 +8805,130 @@ body.kato-resizing #left-pane-resizer::before {
 .setup-wizard-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+// Input + "Browse…" side by side (wizard step 3). The field keeps its
+// column layout and stretches; the button aligns with the input's bottom.
+.setup-wizard-field-row {
+  display: flex;
+  align-items: flex-end;
+  gap: $SPACE-8;
+}
+
+.setup-wizard-field-row .setup-wizard-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.setup-wizard-btn--browse {
+  flex-shrink: 0;
+}
+
+// Same input+button row inside the Settings drawer's Repositories tab.
+.settings-drawer-input-row {
+  display: flex;
+  align-items: center;
+  gap: $SPACE-8;
+}
+
+.settings-drawer-input-row .settings-drawer-input {
+  flex: 1;
+  min-width: 0;
+}
+
+// ---------------------------------------------------------------------------
+// FolderBrowser — the inline directory picker behind "Browse…" (wizard +
+// Settings → Repositories). Inline, not a modal, so it works inside the
+// setup gate without stacking-context games.
+// ---------------------------------------------------------------------------
+.folder-browser {
+  margin-top: $SPACE-10;
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-8;
+  background: $C-NEUTRAL-04;
+  overflow: hidden;
+}
+
+.folder-browser-head {
+  display: flex;
+  align-items: center;
+  gap: $SPACE-8;
+  padding: $SPACE-8 $SPACE-10;
+  border-bottom: 1px solid $C-NEUTRAL-16;
+}
+
+.folder-browser-nav {
+  padding: $SPACE-2 $SPACE-10;
+  border-radius: $RADIUS-4;
+  border: 1px solid $C-NEUTRAL-16;
+  background: transparent;
+  color: $C-NEUTRAL-96;
+  font-size: $TEXT-12;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.folder-browser-nav:hover:not(:disabled) {
+  border-color: $C-NEUTRAL-32;
+}
+
+.folder-browser-nav:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.folder-browser-path {
+  font-size: $TEXT-11;
+  color: $C-NEUTRAL-64;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;   // keep the informative tail (deep folder) visible
+  text-align: left;
+}
+
+.folder-browser-error {
+  margin: 0;
+  padding: $SPACE-6 $SPACE-10;
+  font-size: $TEXT-12;
+  color: $C-RED-82;
+}
+
+.folder-browser-list {
+  margin: 0;
+  padding: $SPACE-4;
+  list-style: none;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.folder-browser-entry {
+  display: block;
+  width: 100%;
+  padding: $SPACE-6 $SPACE-8;
+  border: 0;
+  border-radius: $RADIUS-4;
+  background: transparent;
+  color: $C-NEUTRAL-96;
+  font-size: $TEXT-13;
+  text-align: left;
+  cursor: pointer;
+}
+
+.folder-browser-entry:hover {
+  background: $C-NEUTRAL-16;
+}
+
+.folder-browser-empty {
+  padding: $SPACE-6 $SPACE-8;
+  font-size: $TEXT-12;
+  color: $C-NEUTRAL-64;
+}
+
+.folder-browser-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: $SPACE-8;
+  padding: $SPACE-8 $SPACE-10;
+  border-top: 1px solid $C-NEUTRAL-16;
 }

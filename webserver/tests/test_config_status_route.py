@@ -5,12 +5,12 @@ The endpoint answers two questions with real config evaluation (no mocks of
 the validator): (1) did THIS process boot unconfigured (``setup_mode``), and
 (2) is the config complete RIGHT NOW across the layered settings stores
 (``needs_config`` / ``missing``). The second is evaluated over
-``env > settings.json > .env`` — the same precedence the Settings UI uses — so
-a value saved to ``settings.json`` clears the missing item WITHOUT a restart.
+``env > settings.json`` — the same precedence the Settings UI uses — so a
+value saved to ``settings.json`` clears the missing item WITHOUT a restart.
+(``.env`` support was removed entirely; settings.json is kato's only file.)
 
-Both settings-file locations are redirected to tmpfiles per-test
-(``KATO_SETTINGS_FILE`` for settings.json, ``KATO_SETTINGS_ENV_FILE`` for the
-.env fallback) so nothing touches the operator's real files.
+The settings path is redirected to a tmpfile per-test
+(``KATO_SETTINGS_FILE``) so nothing touches the operator's real file.
 """
 
 from __future__ import annotations
@@ -62,15 +62,13 @@ class _Base(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.tmp_dir = Path(self._tmp.name)
-        self.env_path = self.tmp_dir / '.env'                # legacy fallback
-        self.settings_path = self.tmp_dir / 'settings.json'  # write target
+        self.settings_path = self.tmp_dir / 'settings.json'  # the ONLY store
         self.projects = self.tmp_dir / 'projects'            # a real repo root
         self.projects.mkdir()
 
     def _env(self, extra=None):
         base = {
             'KATO_SETTINGS_FILE': str(self.settings_path),
-            'KATO_SETTINGS_ENV_FILE': str(self.env_path),
         }
         if extra:
             base.update(extra)

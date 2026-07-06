@@ -18,7 +18,7 @@ Field ``type``:
 Provider + repo-root keys are deliberately NOT here — they have
 dedicated tabs (Task provider / Git provider / Repositories) with
 custom logic (active-platform switch, path validation). Everything
-else in ``.env.example`` is covered below.
+else kato reads from the environment is covered below.
 """
 
 from __future__ import annotations

@@ -39,21 +39,13 @@ class SubcommandRoutingTests(unittest.TestCase):
             cli.main(['bootstrap'])
         self.assertTrue(_call_argv(m)[1].endswith('scripts/bootstrap.py'))
 
-    def test_configure_uses_venv_and_generate_env(self):
-        with mock.patch.object(cli.subprocess, 'call', return_value=0) as m:
-            cli.main(['configure'])
-        argv = _call_argv(m)
-        self.assertEqual(argv[0], 'VPY')
-        self.assertTrue(argv[1].endswith('scripts/generate_env.py'))
-        self.assertEqual(argv[2:], ['--output', '.env'])
-
     def test_doctor_defaults_to_all_mode(self):
         with mock.patch.object(cli.subprocess, 'call', return_value=0) as m:
             cli.main(['doctor'])
         self.assertEqual(
             _call_argv(m),
             ['VPY', '-m', 'kato_core_lib.validate_env',
-             '--env-file', '.env', '--mode', 'all'],
+             '--mode', 'all'],
         )
 
     def test_doctor_mode_is_forwarded(self):
@@ -133,8 +125,9 @@ class ComposeDockerTests(unittest.TestCase):
         self.run_mock = fp.start()
 
     def test_claude_backend_omits_openhands_profile(self):
-        with mock.patch.object(cli, '_load_env',
-                               return_value={'KATO_AGENT_BACKEND': 'claude'}), \
+        with mock.patch(
+                 'kato_core_lib.helpers.kato_settings_store_utils.read_kato_settings',
+                 return_value={'KATO_AGENT_BACKEND': 'claude'}), \
              mock.patch.dict('os.environ', {}, clear=True), \
              mock.patch.object(cli.subprocess, 'call', return_value=0) as m:
             self.assertEqual(cli.main(['compose-docker']), 0)
@@ -148,7 +141,9 @@ class ComposeDockerTests(unittest.TestCase):
             'OPENHANDS_SKIP_TESTING': 'false',
             'OPENHANDS_TESTING_CONTAINER_ENABLED': 'true',
         }
-        with mock.patch.object(cli, '_load_env', return_value=env), \
+        with mock.patch(
+                 'kato_core_lib.helpers.kato_settings_store_utils.read_kato_settings',
+                 return_value=env), \
              mock.patch.dict('os.environ', {}, clear=True), \
              mock.patch.object(cli.subprocess, 'call', return_value=0) as m:
             cli.main(['compose-docker'])
@@ -162,7 +157,9 @@ class ComposeDockerTests(unittest.TestCase):
             SimpleNamespace(stdout='fp\n'),
             SimpleNamespace(stdout='   \n'),
         ]
-        with mock.patch.object(cli, '_load_env', return_value={}), \
+        with mock.patch(
+                 'kato_core_lib.helpers.kato_settings_store_utils.read_kato_settings',
+                 return_value={}), \
              mock.patch.dict('os.environ', {}, clear=True), \
              mock.patch.object(cli.subprocess, 'call', return_value=0):
             self.assertEqual(cli.main(['compose-docker']), 1)
@@ -170,7 +167,9 @@ class ComposeDockerTests(unittest.TestCase):
     def test_docker_compose_up_failure_short_circuits(self):
         # cli.py line 150: when ``docker compose up --build -d`` returns
         # non-zero, return that exit code without trying to attach.
-        with mock.patch.object(cli, '_load_env', return_value={}), \
+        with mock.patch(
+                 'kato_core_lib.helpers.kato_settings_store_utils.read_kato_settings',
+                 return_value={}), \
              mock.patch.dict('os.environ', {}, clear=True), \
              mock.patch.object(cli.subprocess, 'call', return_value=2) as call_mock:
             rc = cli.main(['compose-docker'])
@@ -202,41 +201,6 @@ class VenvPythonTests(unittest.TestCase):
         self.assertEqual(result, sys.executable)
 
 
-class LoadEnvTests(unittest.TestCase):
-    """Cover ``_load_env``'s parsing edge cases."""
-
-    def test_returns_empty_for_missing_file(self):
-        # Line 63: ``if not path.exists(): return out`` early-return.
-        from pathlib import Path
-        result = cli._load_env(Path('/no/such/path/.env'))
-        self.assertEqual(result, {})
-
-    def test_parses_kv_pairs_and_strips_quotes(self):
-        # Lines 64-75: real file with mixed shapes — blanks,
-        # comments, unquoted, single-quoted, double-quoted, missing key.
-        import tempfile
-        from pathlib import Path
-        with tempfile.NamedTemporaryFile(
-            'w', suffix='.env', delete=False, encoding='utf-8',
-        ) as fh:
-            fh.write(
-                '# comment line\n'
-                '\n'
-                'NOT_A_PAIR\n'
-                'A=plain\n'
-                'B="double quoted"\n'
-                "C='single quoted'\n"
-                '=missing_key\n'
-            )
-            env_path = Path(fh.name)
-        try:
-            out = cli._load_env(env_path)
-        finally:
-            env_path.unlink()
-        self.assertEqual(out['A'], 'plain')
-        self.assertEqual(out['B'], 'double quoted')
-        self.assertEqual(out['C'], 'single quoted')
-        self.assertNotIn('', out)
 
 
 class ScriptEntryPointTest(unittest.TestCase):

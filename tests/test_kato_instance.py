@@ -111,8 +111,9 @@ class KatoInstanceTests(unittest.TestCase):
     def test_complete_setup_refuses_a_mid_setup_backend_switch(self) -> None:
         """The setup-boot managers are backend-shaped and the webserver holds
         references to them — a backend switched in Settings during setup
-        cannot be applied live. It must fail LOUDLY with restart guidance,
-        never run silently mis-wired."""
+        cannot be applied live. It must raise the TYPED error (main's wait
+        loop catches it by identity to self-restart), never run mis-wired."""
+        from kato_core_lib.errors import AgentBackendChangedError
         cfg = build_test_cfg()
         with patch('kato_core_lib.kato_core_lib.EmailCoreLib'), patch(
             'kato_core_lib.kato_core_lib.AgentService.validate_connections'
@@ -123,7 +124,9 @@ class KatoInstanceTests(unittest.TestCase):
                 'kato_core_lib.kato_core_lib.resolved_agent_backend',
                 return_value='claude',
             ):
-                with self.assertRaisesRegex(RuntimeError, 'restart kato'):
+                with self.assertRaisesRegex(
+                    AgentBackendChangedError, 'restarts itself',
+                ):
                     app.complete_setup()
 
         self.assertTrue(app.needs_config)

@@ -2,9 +2,8 @@
 
 Every former ``make <target>`` is now ``kato <subcommand>``::
 
-    kato up                      # start kato locally (.env + run main)
-    kato bootstrap               # one-time setup (venv + deps + .env)
-    kato configure               # (re)generate .env
+    kato up                      # start kato locally (settings.json + run main)
+    kato bootstrap               # one-time setup (venv + deps + UI bundle)
     kato doctor [--mode all|agent|openhands]
     kato test                    # run the unittest suite
     kato build-agent-server      # build the agent-server image
@@ -26,7 +25,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from kato_core_lib.helpers.dotenv_utils import parse_dotenv_text
 
 # kato_core_lib/cli.py -> repo root is two parents up. Matches
 # scripts/_script_utils.REPO_ROOT so delegated scripts resolve the
@@ -55,16 +53,6 @@ def _script(name: str, *args: str) -> int:
     return _run([sys.executable, str(SCRIPTS / name), *args])
 
 
-def _load_env(path: Path) -> dict[str, str]:
-    """Minimal ``KEY=VALUE`` reader for the compose flow (the Makefile
-    did ``set -a; . ./.env``). Ignores blanks/comments, strips one
-    layer of surrounding quotes. Not a full shell parser — kato's
-    ``.env`` is generated, so it stays simple key/value."""
-    if not path.exists():
-        return {}
-    return parse_dotenv_text(path.read_text(encoding='utf-8'))
-
-
 def cmd_up(_args: argparse.Namespace) -> int:
     return _script('run_local.py')
 
@@ -73,14 +61,9 @@ def cmd_bootstrap(_args: argparse.Namespace) -> int:
     return _script('bootstrap.py')
 
 
-def cmd_configure(_args: argparse.Namespace) -> int:
-    return _run([_venv_python(), str(SCRIPTS / 'generate_env.py'),
-                 '--output', '.env'])
-
-
 def cmd_doctor(args: argparse.Namespace) -> int:
     return _run([_venv_python(), '-m', 'kato_core_lib.validate_env',
-                 '--env-file', '.env', '--mode', args.mode])
+                 '--mode', args.mode])
 
 
 def cmd_test(_args: argparse.Namespace) -> int:
@@ -113,11 +96,13 @@ def cmd_sandbox(args: argparse.Namespace) -> int:
 
 def cmd_compose_docker(_args: argparse.Namespace) -> int:
     """Port of the Makefile's ``compose-up-docker`` shell pipeline:
-    load .env, fingerprint the source, pick compose profiles from the
-    backend/testing flags, ``up --build -d``, then ``docker attach``
-    the kato container."""
+    load ~/.kato/settings.json (shell env wins), fingerprint the
+    source, pick compose profiles from the backend/testing flags,
+    ``up --build -d``, then ``docker attach`` the kato container."""
+    from kato_core_lib.helpers.kato_settings_store_utils import read_kato_settings
     env = os.environ.copy()
-    env.update(_load_env(REPO_ROOT / '.env'))
+    for key, value in read_kato_settings().items():
+        env.setdefault(key, value)
     fingerprint = subprocess.run(
         [sys.executable, '-m',
          'kato_core_lib.helpers.runtime_identity_utils', '--root', '.'],
@@ -158,9 +143,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest='command', required=True)
 
-    sub.add_parser('up', help='start kato locally (.env + run main)').set_defaults(func=cmd_up)
-    sub.add_parser('bootstrap', help='one-time setup (venv + deps + .env)').set_defaults(func=cmd_bootstrap)
-    sub.add_parser('configure', help='(re)generate .env').set_defaults(func=cmd_configure)
+    sub.add_parser('up', help='start kato locally (settings.json + run main)').set_defaults(func=cmd_up)
+    sub.add_parser('bootstrap', help='one-time setup (venv + deps + UI bundle)').set_defaults(func=cmd_bootstrap)
 
     doctor = sub.add_parser('doctor', help='validate the environment')
     doctor.add_argument('--mode', choices=['all', 'agent', 'openhands'],

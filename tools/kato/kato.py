@@ -16,20 +16,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-# ``.env`` parsing is shared with ``scripts/approve_repository.py``
-# (the belt-and-suspenders loader for direct script invocations).
-# Both go through this helper so a future tweak (new quote style,
-# multi-line values, …) lands in lockstep.
-#
 # The dispatcher must work BEFORE the venv exists (``bootstrap``
 # subcommand) — that's why we resolve ``kato_core_lib`` via the
 # repo root rather than relying on it being on ``sys.path`` in a
-# regular install. PyInstaller's ``--onefile`` packager walks
-# imports from this file and bundles ``dotenv_utils`` (and only
-# ``dotenv_utils``, since the helpers package's ``__init__`` is
-# empty), so the resulting ``kato.exe`` stays the same size.
+# regular install.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from kato_core_lib.helpers.dotenv_utils import load_dotenv_into_environ  # noqa: E402
 
 # This file lives at ``<repo>/tools/make/make.py``, so the repo root
 # is two parents up. PyInstaller-frozen builds use ``sys._MEIPASS``
@@ -82,25 +73,20 @@ _TARGETS: dict[str, tuple[str, bool, list[str]]] = {
         False,
         ['scripts/bootstrap.py'],
     ),
-    'configure': (
-        'Generate .env interactively',
-        True,
-        ['scripts/generate_env.py', '--output', '.env'],
-    ),
     'doctor': (
         'Validate full env config',
         True,
-        ['-m', 'kato.validate_env', '--env-file', '.env', '--mode', 'all'],
+        ['-m', 'kato.validate_env', '--mode', 'all'],
     ),
     'doctor-agent': (
         'Validate just the agent backend',
         True,
-        ['-m', 'kato.validate_env', '--env-file', '.env', '--mode', 'agent'],
+        ['-m', 'kato.validate_env', '--mode', 'agent'],
     ),
     'doctor-openhands': (
         'Validate just the openhands config',
         True,
-        ['-m', 'kato.validate_env', '--env-file', '.env', '--mode', 'openhands'],
+        ['-m', 'kato.validate_env', '--mode', 'openhands'],
     ),
     'test': (
         'Run the unit-test suite (kato + every owned core-lib)',
@@ -169,28 +155,21 @@ def main(argv: list[str]) -> int:
         return 1
     _desc, prefer_venv, base_args = _TARGETS[target]
     repo_root = _runtime_repo_root()
-    # Load ``<repo_root>/.env`` into the environment BEFORE we hand
-    # off to the subcommand. Without this, scripts like
-    # ``approve_repository.py`` that consult ``os.environ`` get the
-    # bare shell environment — which on Windows almost never
-    # carries kato's vars — and default to ``~/.kato/workspaces``,
-    # silently scoping to the wrong location. Real env vars still
-    # win over ``.env``; see ``kato_core_lib.helpers.dotenv_utils``
-    # for the parser semantics.
-    # Precedence: real shell env > ~/.kato/settings.json > <repo>/.env.
-    # Load settings.json FIRST so it wins over .env (both loaders
-    # skip keys already in os.environ, so shell stays on top and a
-    # key set by settings.json won't be clobbered by .env).
+    # Load ``~/.kato/settings.json`` into the environment BEFORE we
+    # hand off to the subcommand, so child scripts that consult
+    # ``os.environ`` see the operator's saved config. Real shell env
+    # vars still win. settings.json is kato's ONLY config file —
+    # ``.env`` support was removed (the first-run wizard + Settings
+    # drawer replaced it).
     try:
         from kato_core_lib.helpers.kato_settings_store_utils import (
             load_kato_settings_into_environ,
         )
         load_kato_settings_into_environ()
     except Exception:
-        # Never let a settings.json problem block boot — .env is
-        # still loaded below as the legacy fallback.
+        # Never let a settings.json problem block boot — validation
+        # inside the subcommand will report what's wrong.
         pass
-    load_dotenv_into_environ(repo_root / '.env')
     python = _resolve_python(prefer_venv=prefer_venv, repo_root=repo_root)
     cmd = [python, *base_args, *extra]
     try:

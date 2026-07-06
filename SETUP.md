@@ -35,7 +35,7 @@ make bootstrap
 python scripts\bootstrap.py
 ```
 
-Both paths run the same script. It creates `.venv/`, installs kato + the webserver in editable mode, builds the planning UI bundle if `npm` is available, runs the test suite, and copies `.env.example` to `.env` if you don't already have one.
+Both paths run the same script. It creates `.venv/`, installs kato + the webserver in editable mode, builds the planning UI bundle if `npm` is available, and runs the test suite. Configuration happens afterwards in the browser: `kato up` opens the first-run setup wizard (everything is saved to `~/.kato/settings.json` — kato does not read `.env` files).
 
 If anything fails, the script prints exactly which step broke. Fix that and rerun bootstrap.
 

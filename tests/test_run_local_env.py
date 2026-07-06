@@ -74,3 +74,48 @@ class ReadKatoSettingsFileTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class RunLocalAutoBootstrapTests(unittest.TestCase):
+    """``kato up`` on a fresh clone bootstraps itself — the operator's
+    onboarding is ONE command, ending in the browser wizard."""
+
+    def _run_main(self, venv_exists_sequence, bootstrap_rc=0):
+        import run_local
+        from unittest import mock
+        fake_python = mock.Mock()
+        fake_python.exists.side_effect = venv_exists_sequence
+        fake_python.__str__ = lambda self: '/fake/.venv/bin/python'
+        calls = {}
+
+        def fake_call(cmd, cwd=None):
+            calls['bootstrap_cmd'] = cmd
+            return bootstrap_rc
+
+        completed = mock.Mock(returncode=0)
+        with mock.patch.object(run_local, 'venv_python_path', return_value=fake_python), \
+             mock.patch.object(run_local.subprocess, 'call', side_effect=fake_call), \
+             mock.patch.object(run_local.subprocess, 'run', return_value=completed) as run_mock:
+            rc = run_local.main()
+        return rc, calls, run_mock
+
+    def test_existing_venv_skips_bootstrap(self) -> None:
+        rc, calls, run_mock = self._run_main(venv_exists_sequence=[True])
+        self.assertEqual(rc, 0)
+        self.assertNotIn('bootstrap_cmd', calls)
+        run_mock.assert_called_once()
+
+    def test_missing_venv_bootstraps_then_starts_kato(self) -> None:
+        # exists(): False (first check) → True (post-bootstrap re-check)
+        rc, calls, run_mock = self._run_main(venv_exists_sequence=[False, True])
+        self.assertEqual(rc, 0)
+        self.assertIn('--skip-tests', calls['bootstrap_cmd'])
+        self.assertTrue(str(calls['bootstrap_cmd'][1]).endswith('bootstrap.py'))
+        run_mock.assert_called_once()
+
+    def test_failed_bootstrap_stops_before_starting_kato(self) -> None:
+        rc, calls, run_mock = self._run_main(
+            venv_exists_sequence=[False], bootstrap_rc=3,
+        )
+        self.assertEqual(rc, 3)
+        run_mock.assert_not_called()

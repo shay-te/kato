@@ -73,6 +73,7 @@ from kato_core_lib.validation.repository_connections import (
 from kato_core_lib.validation.startup_dependency_validator import (
     StartupDependencyValidator,
 )
+from kato_core_lib.errors import AgentBackendChangedError
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.kato_config_utils import (
     resolved_agent_backend,
@@ -141,10 +142,6 @@ class KatoCoreLib(CoreLib):
         if setup_mode:
             self._build_setup_mode_managers(cfg.kato)
             self.service = None
-            self.logger.warning(
-                'kato is NOT configured — starting in setup mode (UI only). '
-                'Open the planning UI and fill in Settings to start working.',
-            )
             return
         self.service = self._build_agent_service(cfg.kato)
         # Wire the done-sentinel callback after both AgentService and
@@ -284,10 +281,10 @@ class KatoCoreLib(CoreLib):
             # Refuse loudly instead of silently running mis-wired.
             built_for = getattr(self, '_managers_agent_backend', None)
             if built_for != agent_backend:
-                raise RuntimeError(
+                raise AgentBackendChangedError(
                     f'agent backend changed ({built_for} → {agent_backend}) '
-                    'after the setup-mode boot — restart kato to apply the '
-                    'new backend',
+                    'after the setup-mode boot — kato restarts itself to '
+                    'apply the new backend',
                 )
             return agent_backend, docker_mode_on
         # kato owns where session metadata lives; the transport lib takes it

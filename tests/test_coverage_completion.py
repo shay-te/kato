@@ -756,69 +756,6 @@ class WebserverSmallRoutesTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# webserver/kato_webserver/app.py — env-file parsing helper coverage
-# ---------------------------------------------------------------------------
-
-
-class EnvFileParsingHelpersTests(unittest.TestCase):
-    """Cover ``_read_env_file_values`` (lines 412-413 OSError, 419 no-=
-    line skip, 428 quote-stripping)."""
-
-    def setUp(self) -> None:
-        from kato_webserver import app as app_module
-        self._app_module = app_module
-        self._tmp = tempfile.TemporaryDirectory(prefix='kato-envfile-')
-        self.addCleanup(self._tmp.cleanup)
-        self.envfile = Path(self._tmp.name) / '.env'
-
-    def test_missing_file_returns_empty_dict(self) -> None:
-        self.assertEqual(
-            self._app_module._read_env_file_values(self.envfile), {},
-        )
-
-    def test_parses_simple_key_value_pairs(self) -> None:
-        self.envfile.write_text(
-            'KATO_FOO=bar\n# a comment\n\nKATO_BAZ=qux\n',
-            encoding='utf-8',
-        )
-        result = self._app_module._read_env_file_values(self.envfile)
-        self.assertEqual(result, {'KATO_FOO': 'bar', 'KATO_BAZ': 'qux'})
-
-    def test_skips_lines_without_equals_sign(self) -> None:
-        # Line without ``=`` hits the `if '=' not in stripped: continue`
-        # at line 419.
-        self.envfile.write_text(
-            'KATO_OK=yes\njust-a-bare-token\nKATO_ALSO=here\n',
-            encoding='utf-8',
-        )
-        result = self._app_module._read_env_file_values(self.envfile)
-        self.assertEqual(result, {'KATO_OK': 'yes', 'KATO_ALSO': 'here'})
-
-    def test_strips_surrounding_quotes(self) -> None:
-        # The quote-stripping branch at line 428.
-        self.envfile.write_text(
-            'KATO_DOUBLE="quoted"\nKATO_SINGLE=\'also\'\nKATO_BARE=raw\n',
-            encoding='utf-8',
-        )
-        result = self._app_module._read_env_file_values(self.envfile)
-        self.assertEqual(
-            result,
-            {'KATO_DOUBLE': 'quoted', 'KATO_SINGLE': 'also', 'KATO_BARE': 'raw'},
-        )
-
-    def test_oserror_during_read_returns_empty_dict(self) -> None:
-        # Make the env file unreadable so read_text raises PermissionError.
-        self.envfile.write_text('KATO_X=y\n', encoding='utf-8')
-        try:
-            self.envfile.chmod(0o000)
-            self.assertEqual(
-                self._app_module._read_env_file_values(self.envfile), {},
-            )
-        finally:
-            self.envfile.chmod(0o600)
-
-
-# ---------------------------------------------------------------------------
 # Misclassified Bucket A — items audit flagged as actually testable
 # ---------------------------------------------------------------------------
 

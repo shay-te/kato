@@ -4,14 +4,19 @@ import {
   updateTaskProvider,
   fetchSettings,
   updateSettings,
+  fetchAllSettings,
+  updateAllSettings,
 } from '../api.js';
 import { isSecretKey } from '../utils/providerFields.js';
+import { humanizeFieldKey, fieldPlaceholder, fieldInfo } from '../utils/fieldHelp.js';
+import FieldInfoTip from './settings/FieldInfoTip.jsx';
+import FolderBrowser from './FolderBrowser.jsx';
 import { toast } from '../stores/toastStore.js';
 
 // First-run setup wizard. One action per step (the operator asked for a
 // wizard, not the full settings drawer): pick the ticket system, then enter
 // its details, then point kato at the repositories folder. Every save lands
-// in ``~/.kato/settings.json`` (never the operator's ``.env``) and the gate's
+// in ``~/.kato/settings.json`` (kato's only config file) and the gate's
 // live config-status poll flips the wizard to "all set" the moment kato has
 // everything it needs — no terminal, no restart to satisfy the check.
 
@@ -51,17 +56,75 @@ const REQUIRED_TICKET_FIELDS = {
   ],
 };
 
-const STEP_TITLES = ['Ticket system', 'Ticket details', 'Repositories', 'Finish'];
+// The AI agent that runs the work. Only backends kato can actually boot
+// with are selectable (validate_env: openhands | claude); OpenRouter is the
+// OpenHands runtime pointed at OpenRouter's API. Codex ships as a transport
+// lib but is not yet a bootable backend — shown disabled so nobody wedges
+// their config on an unsupported value.
+const AGENT_CHOICES = [
+  {
+    id: 'claude',
+    backend: 'claude',
+    label: 'Claude agent',
+    blurb: 'Anthropic Claude Code CLI, running on this machine',
+    required: [],
+    optional: ['KATO_CLAUDE_MODEL'],
+    note: 'Requires the Claude Code CLI installed and logged in on this '
+      + 'machine (run `claude login` once in a terminal if you have not).',
+  },
+  {
+    id: 'openhands',
+    backend: 'openhands',
+    label: 'OpenHands',
+    blurb: 'Self-hosted OpenHands server with your own LLM',
+    required: [
+      'OPENHANDS_BASE_URL', 'OPENHANDS_API_KEY',
+      'OH_SECRET_KEY', 'OPENHANDS_LLM_MODEL',
+    ],
+    optional: ['OPENHANDS_LLM_API_KEY', 'OPENHANDS_LLM_BASE_URL'],
+  },
+  {
+    id: 'openrouter',
+    backend: 'openhands',
+    label: 'OpenRouter (via OpenHands)',
+    blurb: 'OpenHands runtime with a model served by OpenRouter',
+    required: [
+      'OPENHANDS_BASE_URL', 'OPENHANDS_API_KEY', 'OH_SECRET_KEY',
+      'OPENHANDS_LLM_MODEL', 'OPENHANDS_LLM_API_KEY', 'OPENHANDS_LLM_BASE_URL',
+    ],
+    optional: [],
+    prefill: { OPENHANDS_LLM_BASE_URL: 'https://openrouter.ai/api/v1' },
+  },
+  {
+    id: 'codex',
+    backend: 'codex',
+    label: 'Codex agent',
+    blurb: 'Not yet available as a runtime backend',
+    required: [],
+    optional: [],
+    disabled: true,
+  },
+];
 
-// "YOUTRACK_API_BASE_URL" → "API base URL" (drop the platform prefix, keep
-// well-known acronyms readable) so a first-comer sees friendly labels.
-export function humanizeFieldKey(key, platform) {
-  const prefix = `${String(platform).toUpperCase()}_`;
-  let text = String(key).startsWith(prefix) ? key.slice(prefix.length) : key;
-  text = text.replace(/_/g, ' ').toLowerCase();
-  text = text.replace(/\bapi\b/g, 'API').replace(/\burl\b/g, 'URL');
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
+// Bedrock models authenticate with AWS credentials instead of an LLM API
+// key: EITHER the bearer token OR the access-key trio (all three together).
+const AWS_BEDROCK_KEYS = [
+  'AWS_BEARER_TOKEN_BEDROCK', 'AWS_ACCESS_KEY_ID',
+  'AWS_SECRET_ACCESS_KEY', 'AWS_REGION_NAME',
+];
+
+// Every key any agent choice can read from the server / save.
+const AGENT_KEYS = [
+  'KATO_AGENT_BACKEND', 'KATO_CLAUDE_MODEL',
+  'OPENHANDS_BASE_URL', 'OPENHANDS_API_KEY', 'OH_SECRET_KEY',
+  'OPENHANDS_LLM_MODEL', 'OPENHANDS_LLM_API_KEY', 'OPENHANDS_LLM_BASE_URL',
+  ...AWS_BEDROCK_KEYS,
+];
+
+const STEP_TITLES = [
+  'Ticket system', 'Ticket details', 'AI agent', 'Agent details',
+  'Repositories', 'Finish',
+];
 
 export default function SetupWizard({ status, onRefreshStatus, onOpenFullSettings }) {
   const [step, setStep] = useState(0);
@@ -69,6 +132,9 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
   const [providers, setProviders] = useState({});
   const [ticketDraft, setTicketDraft] = useState({});
   const [repoRoot, setRepoRoot] = useState('');
+  const [agentChoice, setAgentChoice] = useState('');
+  const [agentDraft, setAgentDraft] = useState({});
+  const [agentServer, setAgentServer] = useState({});
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState('');
 
@@ -91,6 +157,37 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
       if (settingsResult.ok) {
         setRepoRoot(String(settingsResult.body?.repository_root_path?.value || ''));
       }
+      // Agent-backend values come from the schema-driven all-settings API
+      // (same store the Settings drawer edits). Secrets are never seeded
+      // into the draft — knowing THAT they're set is enough.
+      const allResult = await fetchAllSettings();
+      if (cancelled || !allResult?.ok) { return; }
+      const values = {};
+      for (const section of (allResult.body?.sections || [])) {
+        for (const field of (section.fields || [])) {
+          if (AGENT_KEYS.includes(field.key) && !(field.key in values)) {
+            values[field.key] = {
+              value: String(field.value || ''),
+              secret: field.type === 'secret',
+            };
+          }
+        }
+      }
+      setAgentServer(values);
+      const backend = values.KATO_AGENT_BACKEND?.value || '';
+      if (backend) {
+        setAgentChoice((current) => current || backend);
+      }
+      setAgentDraft((current) => {
+        const seed = { ...current };
+        for (const key of AGENT_KEYS) {
+          const entry = values[key];
+          if (entry && entry.value && !entry.secret && !(seed[key] || '').trim()) {
+            seed[key] = entry.value;
+          }
+        }
+        return seed;
+      });
     })();
     return () => { cancelled = true; };
   }, []);
@@ -98,6 +195,20 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
   const requiredKeys = REQUIRED_TICKET_FIELDS[platform] || [];
   const fields = providers?.[platform]?.fields || {};
   const serverHasValue = (key) => Boolean(fields[key]?.value);
+  // Step 2 shows EVERY field the backend whitelist exposes for the chosen
+  // platform (`/api/task-providers` → providers[platform].fields), so the
+  // workflow-state settings (progress/review state, issue states) are asked
+  // too — for all platforms, without duplicating the catalog client-side.
+  // Required connection fields come first and gate the save; the rest are
+  // optional (kato has built-in defaults for them).
+  const displayedKeys = useMemo(() => {
+    const serverKeys = Object.keys(fields);
+    return [
+      ...requiredKeys,
+      ...serverKeys.filter((key) => !requiredKeys.includes(key)),
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [platform, providers]);
 
   // Re-seed the ticket draft whenever the selected platform (or the loaded
   // server values) change. Non-secret fields pre-fill so the operator can
@@ -109,9 +220,14 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
   useEffect(() => {
     if (!platform) { return; }
     const platformFields = providers?.[platform]?.fields || {};
+    const required = REQUIRED_TICKET_FIELDS[platform] || [];
+    const keys = [
+      ...required,
+      ...Object.keys(platformFields).filter((key) => !required.includes(key)),
+    ];
     setTicketDraft((current) => {
       const seed = {};
-      for (const key of (REQUIRED_TICKET_FIELDS[platform] || [])) {
+      for (const key of keys) {
         const typed = (current[key] || '').trim();
         const field = platformFields[key] || {};
         seed[key] = typed ? current[key] : (isSecretKey(key) ? '' : (field.value || ''));
@@ -123,6 +239,63 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
   const canSaveTicket = requiredKeys.length > 0 && requiredKeys.every(
     (key) => (ticketDraft[key] || '').trim() || serverHasValue(key),
   );
+
+  const agent = AGENT_CHOICES.find((choice) => choice.id === agentChoice) || null;
+  const agentServerHas = (key) => Boolean(agentServer[key]?.value);
+
+  // The agent-details gate mirrors validate_env's conditional rules so that
+  // EVERY boot-mandatory key is collected HERE, never discovered at Finish:
+  //   - a non-Bedrock model  → OPENHANDS_LLM_API_KEY becomes required
+  //   - an openrouter/* model → OPENHANDS_LLM_BASE_URL becomes required
+  //   - a bedrock/* model    → AWS fields appear; bearer token OR the
+  //     access-key trio must be filled
+  const agentGate = useMemo(() => {
+    if (!agent) { return { keys: [], required: new Set(), ok: false }; }
+    const filled = (key) => Boolean(
+      (agentDraft[key] || '').trim() || agentServer[key]?.value,
+    );
+    const keys = [...(agent.required || []), ...(agent.optional || [])];
+    const required = new Set(agent.required || []);
+    let bedrockOk = true;
+    if (agent.backend === 'openhands') {
+      const model = String(
+        (agentDraft.OPENHANDS_LLM_MODEL || '').trim()
+        || agentServer.OPENHANDS_LLM_MODEL?.value || '',
+      ).toLowerCase();
+      const isBedrock = model.startsWith('bedrock/');
+      const isOpenRouter = model.startsWith('openrouter/');
+      if (model && !isBedrock) { required.add('OPENHANDS_LLM_API_KEY'); }
+      if (isOpenRouter) { required.add('OPENHANDS_LLM_BASE_URL'); }
+      if (isBedrock) {
+        for (const key of AWS_BEDROCK_KEYS) {
+          if (!keys.includes(key)) { keys.push(key); }
+        }
+        bedrockOk = filled('AWS_BEARER_TOKEN_BEDROCK') || (
+          filled('AWS_ACCESS_KEY_ID')
+          && filled('AWS_SECRET_ACCESS_KEY')
+          && filled('AWS_REGION_NAME')
+        );
+      }
+    }
+    const ok = [...required].every(filled) && bedrockOk;
+    return { keys, required, ok };
+  }, [agent, agentDraft, agentServer]);
+
+  const onPickAgent = (choice) => {
+    if (choice.disabled) { return; }
+    setAgentChoice(choice.id);
+    // Pre-fill flavor defaults (e.g. OpenRouter's API base URL) without
+    // overwriting anything the operator already typed.
+    if (choice.prefill) {
+      setAgentDraft((current) => {
+        const seed = { ...current };
+        for (const [key, value] of Object.entries(choice.prefill)) {
+          if (!(seed[key] || '').trim()) { seed[key] = value; }
+        }
+        return seed;
+      });
+    }
+  };
 
   const runSave = async (doSave) => {
     setSaving(true);
@@ -142,9 +315,10 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
 
   const onSaveTicket = async () => {
     // Only send fields the operator actually typed, so blank inputs never
-    // clobber a value already present in settings.json / .env.
+    // clobber a value already present in settings.json. Includes the
+    // optional workflow-state fields, not just the required subset.
     const payloadFields = {};
-    for (const key of requiredKeys) {
+    for (const key of displayedKeys) {
       const value = (ticketDraft[key] || '').trim();
       if (value) { payloadFields[key] = value; }
     }
@@ -165,7 +339,24 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
     if (!ok) { return; }
     toast.show({ kind: 'success', title: 'Saved', message: 'Repositories folder set.' });
     await onRefreshStatus();
-    setStep(3);
+    setStep(5);
+  };
+
+  const onSaveAgent = async () => {
+    if (!agent) { return; }
+    const updates = { KATO_AGENT_BACKEND: agent.backend };
+    for (const key of agentGate.keys) {
+      const value = (agentDraft[key] || '').trim();
+      if (value) { updates[key] = value; }
+    }
+    // NOTE: updateAllSettings wraps the map in {updates: …} itself.
+    const ok = await runSave(() => updateAllSettings(updates));
+    if (!ok) { return; }
+    toast.show({
+      kind: 'success', title: 'AI agent saved', message: `${agent.label} selected.`,
+    });
+    await onRefreshStatus();
+    setStep(4);
   };
 
   const missing = useMemo(
@@ -208,8 +399,8 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
       {step === 1 && (
         <StepTicketDetails
           platform={platform}
+          displayedKeys={displayedKeys}
           requiredKeys={requiredKeys}
-          fields={fields}
           draft={ticketDraft}
           setDraft={setTicketDraft}
           serverHasValue={serverHasValue}
@@ -221,21 +412,45 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
       )}
 
       {step === 2 && (
+        <StepPickAgent
+          agentChoice={agentChoice}
+          onPick={onPickAgent}
+          onBack={() => setStep(1)}
+          onNext={() => setStep(3)}
+        />
+      )}
+
+      {step === 3 && agent && (
+        <StepAgentDetails
+          agent={agent}
+          keys={agentGate.keys}
+          requiredSet={agentGate.required}
+          draft={agentDraft}
+          setDraft={setAgentDraft}
+          serverHasValue={agentServerHas}
+          canSave={agentGate.ok}
+          saving={saving}
+          onBack={() => setStep(2)}
+          onSave={onSaveAgent}
+        />
+      )}
+
+      {step === 4 && (
         <StepRepositories
           repoRoot={repoRoot}
           setRepoRoot={setRepoRoot}
           saving={saving}
-          onBack={() => setStep(1)}
+          onBack={() => setStep(3)}
           onSave={onSaveRepo}
         />
       )}
 
-      {step === 3 && (
+      {step === 5 && (
         <StepFinish
           isConfigured={isConfigured}
           startFailed={Boolean(status?.setup_error)}
           missing={missing}
-          onBack={() => setStep(2)}
+          onBack={() => setStep(4)}
           onRecheck={onRefreshStatus}
           onOpenFullSettings={onOpenFullSettings}
         />
@@ -263,14 +478,45 @@ function WizardSaveActions({ onBack, onSave, canSave, saving }) {
   );
 }
 
-// One labelled input row — the shared field shape for every wizard step
-// (friendly label + the raw env key + a browser-autofill-proof input).
-function WizardField({ label, envKey, type = 'text', value, onChange, placeholder = '' }) {
+// The shared fields block: one WizardField per key, requiredness from the
+// (possibly dynamic) required set, labels humanized per platform prefix.
+function WizardFieldList({ keys, requiredSet, labelPlatform, draft, setDraft, serverHasValue }) {
+  return (
+    <div className="setup-wizard-fields">
+      {keys.map((key) => {
+        const secret = isSecretKey(key);
+        const alreadySet = serverHasValue(key);
+        const optional = !requiredSet.has(key);
+        return (
+          <WizardField
+            key={key}
+            label={humanizeFieldKey(key, labelPlatform)}
+            envKey={key}
+            optional={optional}
+            type={secret ? 'password' : 'text'}
+            value={draft[key] || ''}
+            onChange={(ev) => setDraft((current) => ({ ...current, [key]: ev.target.value }))}
+            placeholder={
+              secret && alreadySet
+                ? '(already set — paste again to replace)'
+                : fieldPlaceholder(key)
+            }
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+// One labelled input row — the shared field shape for every wizard step.
+// The env-var name is NOT printed; it lives in the ⓘ info tooltip.
+function WizardField({ label, envKey, type = 'text', value, onChange, placeholder = '', optional = false }) {
   return (
     <label className="setup-wizard-field">
       <span className="setup-wizard-field-label">
         {label}
-        <code className="setup-wizard-field-key">{envKey}</code>
+        {optional && <span className="setup-wizard-field-optional">optional</span>}
+        <FieldInfoTip text={fieldInfo(envKey)} />
       </span>
       <input
         type={type}
@@ -327,7 +573,7 @@ function StepPickSystem({ platform, onPick, onNext, loadError }) {
 }
 
 function StepTicketDetails({
-  platform, requiredKeys, fields, draft, setDraft,
+  platform, displayedKeys, requiredKeys, draft, setDraft,
   serverHasValue, canSave, saving, onBack, onSave,
 }) {
   const label = TICKET_SYSTEMS.find((s) => s.id === platform)?.label || platform;
@@ -335,27 +581,96 @@ function StepTicketDetails({
     <div className="setup-wizard-body">
       <h3 className="setup-wizard-heading">Connect {label}</h3>
       <p className="setup-wizard-lead">
-        Enter the details kato needs to read your tickets. Saved to
-        {' '}<code>~/.kato/settings.json</code> — your <code>.env</code> is
-        left untouched.
+        Enter the details kato needs to read your tickets — the workflow
+        fields are optional (kato has sensible defaults). Saved to
+        {' '}<code>~/.kato/settings.json</code> — kato&apos;s only config
+        file.
       </p>
-      <div className="setup-wizard-fields">
-        {requiredKeys.map((key) => {
-          const secret = isSecretKey(key);
-          const alreadySet = serverHasValue(key);
-          return (
-            <WizardField
-              key={key}
-              label={humanizeFieldKey(key, platform)}
-              envKey={key}
-              type={secret ? 'password' : 'text'}
-              value={draft[key] || ''}
-              onChange={(ev) => setDraft((current) => ({ ...current, [key]: ev.target.value }))}
-              placeholder={secret && alreadySet ? '(already set — paste again to replace)' : ''}
-            />
-          );
-        })}
+      <WizardFieldList
+        keys={displayedKeys}
+        requiredSet={new Set(requiredKeys)}
+        labelPlatform={platform}
+        draft={draft}
+        setDraft={setDraft}
+        serverHasValue={serverHasValue}
+      />
+      <WizardSaveActions
+        onBack={onBack}
+        onSave={onSave}
+        canSave={canSave}
+        saving={saving}
+      />
+    </div>
+  );
+}
+
+function StepPickAgent({ agentChoice, onPick, onBack, onNext }) {
+  return (
+    <div className="setup-wizard-body">
+      <h3 className="setup-wizard-heading">Which AI agent does the work?</h3>
+      <p className="setup-wizard-lead">
+        Pick the agent kato drives to implement your tickets. You can change
+        this later in Settings.
+      </p>
+      <div className="setup-wizard-choices" role="radiogroup" aria-label="AI agent">
+        {AGENT_CHOICES.map((choice) => (
+          <button
+            key={choice.id}
+            type="button"
+            role="radio"
+            aria-checked={agentChoice === choice.id}
+            disabled={choice.disabled}
+            className={
+              'setup-wizard-choice'
+              + (agentChoice === choice.id ? ' is-selected' : '')
+              + (choice.disabled ? ' is-disabled' : '')
+            }
+            onClick={() => onPick(choice)}
+          >
+            <span className="setup-wizard-choice-label">{choice.label}</span>
+            <span className="setup-wizard-choice-blurb">{choice.blurb}</span>
+          </button>
+        ))}
       </div>
+      <div className="setup-wizard-actions">
+        <button type="button" className="setup-wizard-btn" onClick={onBack}>
+          Back
+        </button>
+        <button
+          type="button"
+          className="setup-wizard-btn setup-wizard-btn--primary"
+          disabled={!agentChoice}
+          onClick={onNext}
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function StepAgentDetails({
+  agent, keys, requiredSet, draft, setDraft, serverHasValue, canSave,
+  saving, onBack, onSave,
+}) {
+  return (
+    <div className="setup-wizard-body">
+      <h3 className="setup-wizard-heading">Connect {agent.label}</h3>
+      <p className="setup-wizard-lead">
+        {agent.note
+          || 'Enter the details kato needs to drive this agent — optional '
+             + 'fields have sensible defaults.'}
+      </p>
+      {keys.length > 0 && (
+        <WizardFieldList
+          keys={keys}
+          requiredSet={requiredSet}
+          labelPlatform={agent.backend === 'claude' ? 'kato_claude' : 'openhands'}
+          draft={draft}
+          setDraft={setDraft}
+          serverHasValue={serverHasValue}
+        />
+      )}
       <WizardSaveActions
         onBack={onBack}
         onSave={onSave}
@@ -367,6 +682,7 @@ function StepTicketDetails({
 }
 
 function StepRepositories({ repoRoot, setRepoRoot, saving, onBack, onSave }) {
+  const [browsing, setBrowsing] = useState(false);
   return (
     <div className="setup-wizard-body">
       <h3 className="setup-wizard-heading">Where are your repositories?</h3>
@@ -374,13 +690,36 @@ function StepRepositories({ repoRoot, setRepoRoot, saving, onBack, onSave }) {
         The folder kato scans for <code>.git</code> repositories to clone and
         work in. An absolute path like <code>~/Projects</code>.
       </p>
-      <WizardField
-        label="Repositories folder"
-        envKey="REPOSITORY_ROOT_PATH"
-        value={repoRoot}
-        onChange={(ev) => setRepoRoot(ev.target.value)}
-        placeholder="/Users/you/Projects"
-      />
+      {/* The .setup-wizard-fields wrapper carries the bottom spacing that
+          keeps the actions row from hugging the input (same as step 2). */}
+      <div className="setup-wizard-fields">
+        <div className="setup-wizard-field-row">
+          <WizardField
+            label="Repositories folder"
+            envKey="REPOSITORY_ROOT_PATH"
+            value={repoRoot}
+            onChange={(ev) => setRepoRoot(ev.target.value)}
+            placeholder="/Users/you/Projects"
+          />
+          <button
+            type="button"
+            className="setup-wizard-btn setup-wizard-btn--browse"
+            onClick={() => setBrowsing((current) => !current)}
+          >
+            Browse…
+          </button>
+        </div>
+        {browsing && (
+          <FolderBrowser
+            initialPath={repoRoot.trim() || '~'}
+            onPick={(path) => {
+              setRepoRoot(path);
+              setBrowsing(false);
+            }}
+            onClose={() => setBrowsing(false)}
+          />
+        )}
+      </div>
       <WizardSaveActions
         onBack={onBack}
         onSave={onSave}

@@ -1,6 +1,6 @@
 """Coverage for the task-provider + git-provider settings routes.
 
-Two distinct concepts share the same ``.env`` backing store:
+Two distinct concepts share the same settings.json backing store:
 
 * ``/api/task-providers`` — where tickets live + which platform
   kato polls. Has an "active" selector that writes
@@ -9,9 +9,8 @@ Two distinct concepts share the same ``.env`` backing store:
   open PRs. NO active selector (host inferred from repo URLs).
   Connection-level keys only; never touches KATO_ISSUE_PLATFORM.
 
-The env file path is overridden per-test via
-``KATO_SETTINGS_ENV_FILE`` so nothing touches the real
-``<repo>/.env``.
+The settings path is overridden per-test via ``KATO_SETTINGS_FILE``
+so nothing touches the real ``~/.kato/settings.json``.
 """
 
 from __future__ import annotations
@@ -38,8 +37,8 @@ class _ProviderRouteTestBase(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        self.env_path = Path(self._tmp.name) / '.env'           # legacy fallback
-        self.settings_path = Path(self._tmp.name) / 'settings.json'  # write target
+        self.env_path = Path(self._tmp.name) / '.env'  # must never be created
+        self.settings_path = Path(self._tmp.name) / 'settings.json'  # the ONLY store
 
     def _client(self):
         app = create_app(session_manager=_FakeManager())
@@ -48,7 +47,6 @@ class _ProviderRouteTestBase(unittest.TestCase):
     def _env(self, extra=None):
         base = {
             'KATO_SETTINGS_FILE': str(self.settings_path),
-            'KATO_SETTINGS_ENV_FILE': str(self.env_path),
         }
         if extra:
             base.update(extra)

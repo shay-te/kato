@@ -10,7 +10,6 @@ _ROOT_FILES = (
     'Dockerfile',
     'Makefile',
     'docker-compose.yaml',
-    '.env.example',
 )
 _ROOT_DIRS = ('kato', 'scripts')
 _IGNORED_PARTS = {'__pycache__', '.git', '.mypy_cache', '.pytest_cache', '.venv'}

@@ -78,10 +78,16 @@ export function fetchSafetyState() {
 // Setup mode — did kato boot unconfigured (``setup_mode``), and is the config
 // complete right now (``needs_config`` / ``missing``). Drives the first-run
 // wizard gate (see useConfigStatus + SetupModeGate). Evaluated live across
-// env > settings.json > .env, so saving in the wizard clears items here
+// env > settings.json, so saving in the wizard clears items here
 // without a restart.
 export function fetchConfigStatus() {
   return fetchJson('/api/config-status');
+}
+
+// Folder-picker listing for the "Browse…" button (wizard + Settings →
+// Repositories). Directory names only; the server never lists files.
+export function fetchDirectoryListing(path) {
+  return fetchJson(`/api/fs/dirs?path=${encodeURIComponent(path || '~')}`);
 }
 
 export function fetchAgentVersion(force = false) {

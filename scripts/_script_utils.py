@@ -63,32 +63,6 @@ def have_executable(name: str) -> bool:
     return which(name) is not None
 
 
-def load_env_file(env_path: Path) -> dict[str, str]:
-    """Parse a ``KEY=VALUE`` ``.env`` file into a dict.
-
-    Accepts the subset every kato consumer uses: blank lines, ``#``
-    comments, ``KEY=VALUE`` pairs with optional surrounding double or
-    single quotes. We don't shell-out to ``set -a; . .env`` because that
-    only works on POSIX; this parser is the cross-platform equivalent.
-    """
-    if not env_path.exists():
-        return {}
-    values: dict[str, str] = {}
-    for raw_line in env_path.read_text(encoding='utf-8').splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith('#') or '=' not in line:
-            continue
-        key, _, value = line.partition('=')
-        key = key.strip()
-        value = value.strip()
-        if (value.startswith('"') and value.endswith('"')) or (
-            value.startswith("'") and value.endswith("'")
-        ):
-            value = value[1:-1]
-        values[key] = value
-    return values
-
-
 def read_kato_settings_file() -> dict[str, str]:
     """``~/.kato/settings.json`` (or ``$KATO_SETTINGS_FILE``) — the flat
     ``{"KEY": "value"}`` file the planning-UI Settings drawer writes.
@@ -119,10 +93,10 @@ def layered_env(base_env, *sources) -> dict[str, str]:
     ``source`` fills only keys still unset — earlier sources beat later ones.
 
     kato's documented precedence is
-    ``layered_env(os.environ, read_kato_settings_file(), load_env_file(.env))``
-    → **shell > ~/.kato/settings.json > <repo>/.env**. (``kato up`` used to
-    ``env.update(.env)`` — loading ``.env`` OVER the shell AND never reading
-    settings.json — so a value saved through the Settings UI had no effect.)
+    ``layered_env(os.environ, read_kato_settings_file())``
+    → **shell > ~/.kato/settings.json**. settings.json is kato's ONLY
+    config file — ``.env`` support was removed entirely (the first-run
+    wizard + Settings drawer replaced it).
     """
     env = dict(base_env)
     for source in sources:

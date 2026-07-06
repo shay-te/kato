@@ -26,7 +26,6 @@ The configurator uses the same style of shell prompts used by `core-lib`, so the
 If you prefer to edit the file manually, start here:
 
 ```bash
-cp .env.example .env
 ```
 
 Use `KATO_ISSUE_PLATFORM` for all new setups.
@@ -38,7 +37,7 @@ If a developer is starting from zero, these are the steps:
 1. Clone the repository.
 2. Change into the repository directory.
 3. Run `kato bootstrap`.
-4. Run `kato configure` to create `.env`, or copy `.env.example` to `.env` and edit it manually.
+4. Run `kato up` — the first-run wizard in the browser collects the configuration (saved to `~/.kato/settings.json`; kato does not read `.env` files).
 5. Fill in or confirm the credentials for the selected issue platform.
 6. Fill in or confirm the first repository entry credentials and local path.
 7. Add more repository entries in the config file if tasks can span multiple repos.
@@ -53,7 +52,6 @@ If a developer is starting from zero, these are the steps:
 What is automated now:
 
 - `./scripts/bootstrap.sh`
-  - creates `.env` from `.env.example` if needed
   - creates `.venv` if needed
   - installs the project
   - runs the tests
@@ -126,7 +124,7 @@ spinners render in place instead of being flattened into prefixed Compose log li
 pip install -e .
 ```
 
-2. Fill `.env` instead of exporting variables one by one. Start from `.env.example` and update the values you need there.
+2. Use the Settings drawer in the planning UI instead of exporting variables one by one — every value is saved to `~/.kato/settings.json`.
 
 3. Adjust `kato_core_lib/config/kato_core_lib.yaml` only if you need settings beyond what `.env` exposes, such as extra repositories or retry tuning via `KATO_EXTERNAL_API_MAX_RETRIES`. Issue states, review columns, and review-ready email recipients can now be configured directly in `.env`.
 
@@ -271,7 +269,6 @@ We use a `.env` file to manage configuration instead of hardcoding values in `do
 
 1. Copy the example environment file:
 ```bash
-cp .env.example .env
 ```
 
 2. Configure your `.env` file with your actual values:

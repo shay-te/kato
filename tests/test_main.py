@@ -492,9 +492,10 @@ class MainTests(unittest.TestCase):
         # ...but the scan loop MUST stay off — kato can't scan tickets
         # until it's configured.
         mocks['run_loop'].assert_not_called()
-        # The missing settings are surfaced in the logs for the terminal too.
+        # The terminal gets ONE concise line — the wizard shows the details.
         configured_logger.warning.assert_any_call(
-            '  - %s', 'missing required agent env var: YOUTRACK_TOKEN',
+            'kato is not configured yet (%d setting(s) missing) — opening '
+            'the setup wizard in the browser.', 1,
         )
 
     def test_main_continues_into_full_boot_after_setup_completes(self) -> None:
@@ -1182,7 +1183,6 @@ class WaitUntilConfiguredTests(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         tmp_dir = Path(self._tmp.name)
         self.settings_path = tmp_dir / 'settings.json'
-        self.env_path = tmp_dir / '.env'   # deliberately absent
         self.projects = tmp_dir / 'projects'
         self.projects.mkdir()
         # patch.dict snapshots os.environ and restores it wholesale on stop,
@@ -1190,7 +1190,6 @@ class WaitUntilConfiguredTests(unittest.TestCase):
         # loads during a test are all undone automatically.
         self._env_patch = patch.dict('os.environ', {
             'KATO_SETTINGS_FILE': str(self.settings_path),
-            'KATO_SETTINGS_ENV_FILE': str(self.env_path),
             # The transition re-runs the boot security gates; opt out of the
             # TLS pin exactly like the other main() tests do.
             'KATO_SANDBOX_ALLOW_NO_TLS_PIN': 'true',
@@ -1320,8 +1319,8 @@ class WaitUntilConfiguredTests(unittest.TestCase):
         # The final success cleared the failure the UI was showing.
         self.assertEqual(app.planning_flask_app.config['SETUP_ERROR'], '')
 
-    def test_blank_env_key_from_dotenv_example_does_not_shadow_the_wizard(self) -> None:
-        """.env.example ships blank ``KEY=`` lines; the launcher lands them
+    def test_blank_inherited_env_key_does_not_shadow_the_wizard(self) -> None:
+        """A blank ``KEY=`` inherited from the spawning shell lands
         as set-but-EMPTY process env vars. Empty means unset everywhere else
         (validators, settings UI, effective_config_env) — the transition's
         env load must overwrite them or the wizard's saved value would be
@@ -1382,6 +1381,49 @@ class WaitUntilConfiguredTests(unittest.TestCase):
         self.assertTrue(app.planning_flask_app.config['SETUP_ERROR'])
         self.assertTrue(app.planning_flask_app.config['NEEDS_CONFIG'])
 
+    def test_backend_change_restarts_kato_in_place(self) -> None:
+        """The no-terminal promise: picking a different agent backend in the
+        wizard cannot be applied to the live managers, so kato re-execs
+        itself instead of telling the operator to run a command."""
+        from kato_core_lib.errors import AgentBackendChangedError
+        from kato_core_lib.main import _wait_until_configured_then_finish_setup
+        self._write_settings({'KATO_AGENT_BACKEND': 'claude'})
+        app = self._app(Mock(side_effect=AgentBackendChangedError(
+            'agent backend changed (openhands → claude) …',
+        )))
+
+        with patch('kato_core_lib.main._restart_in_place') as restart:
+            result = _wait_until_configured_then_finish_setup(
+                app, sleep_fn=lambda _s: None, max_ticks=1,
+            )
+
+        self.assertFalse(result)  # (mocked exec returns; loop keeps waiting)
+        restart.assert_called_once_with(app)
+        # The UI learns WHY the page is about to reconnect.
+        self.assertIn(
+            'restarting', app.planning_flask_app.config['SETUP_ERROR'],
+        )
+
+    def test_backend_change_falls_back_to_setup_error_when_exec_fails(self) -> None:
+        from kato_core_lib.errors import AgentBackendChangedError
+        from kato_core_lib.main import _wait_until_configured_then_finish_setup
+        self._write_settings({'KATO_AGENT_BACKEND': 'claude'})
+        app = self._app(Mock(side_effect=AgentBackendChangedError('changed')))
+
+        with patch(
+            'kato_core_lib.main._restart_in_place',
+            side_effect=OSError('exec failed'),
+        ):
+            result = _wait_until_configured_then_finish_setup(
+                app, sleep_fn=lambda _s: None, max_ticks=2,
+            )
+
+        self.assertFalse(result)
+        # Loud fallback: the operator is told to restart manually.
+        app.logger.exception.assert_called()
+        # The loaded env was rolled back so nothing is left half-applied.
+        self.assertIsNone(os.environ.get('KATO_AGENT_BACKEND'))
+
     def test_failed_attempt_surfaces_the_error_to_the_webserver(self) -> None:
         """The terminal must not be the only place that knows the start
         failed: the wizard polls /api/config-status, which reads the live
@@ -1420,6 +1462,21 @@ class MarkWebserverConfiguredTests(unittest.TestCase):
 
         self.assertIs(flask_app.config['AGENT_SERVICE'], service)
         self.assertFalse(flask_app.config['NEEDS_CONFIG'])
+
+
+class PlanningWebserverNoDotenvTests(unittest.TestCase):
+    def test_flask_run_does_not_load_dotenv(self) -> None:
+        """Flask's ``run()`` silently loads ``<cwd>/.env`` into os.environ
+        when python-dotenv is installed — a hidden third config path.
+        kato reads ONLY ~/.kato/settings.json (+ real shell env), so the
+        webserver spawn must pin ``load_dotenv=False``. Without this pin,
+        an operator's stale .env would leak into the setup-mode transition
+        (caught live: the wait loop saw a "complete" config sourced from a
+        file kato is supposed to ignore)."""
+        import inspect
+        from kato_core_lib import main as main_module
+        src = inspect.getsource(main_module._start_planning_webserver_if_enabled)
+        self.assertIn('load_dotenv=False', src)
 
 
 class PlanningWebserverDoubleStartGuardTests(unittest.TestCase):

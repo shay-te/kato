@@ -2,11 +2,12 @@
 
 GET returns the full section schema + each field's resolved value
 and source. POST writes only schema-declared keys to
-``~/.kato/settings.json`` (the schema IS the whitelist) and never
-touches the operator's ``.env``.
+``~/.kato/settings.json`` (the schema IS the whitelist) — kato's ONLY
+config file (``.env`` support was removed; kato must never read or
+write one).
 
-Both file locations are redirected to tmpfiles per-test so nothing
-hits the real ``~/.kato`` or ``<repo>/.env``.
+The settings path is redirected to a tmpfile per-test so nothing hits
+the real ``~/.kato``.
 """
 
 from __future__ import annotations
@@ -42,7 +43,6 @@ class _Base(unittest.TestCase):
     def _env(self, extra=None):
         base = {
             'KATO_SETTINGS_FILE': str(self.settings_path),
-            'KATO_SETTINGS_ENV_FILE': str(self.env_path),
         }
         if extra:
             base.update(extra)
@@ -164,7 +164,7 @@ class AllSettingsPostTests(_Base):
         self.assertTrue(resp.get_json()['restart_required'])
         saved = self._saved()
         self.assertEqual(saved['KATO_LOG_LEVEL'], 'debug')
-        # Bool coerced to the ".env land" string form.
+        # Bool coerced to the settings.json string form.
         self.assertEqual(saved['KATO_SECURITY_SCANNER_ENABLED'], 'true')
         # .env untouched.
         self.assertEqual(self.env_path.read_text(encoding='utf-8'), env_before)

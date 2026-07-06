@@ -3,16 +3,11 @@
 Storage model under test:
 
 * WRITE target is ``~/.kato/settings.json`` (overridden per-test via
-  ``KATO_SETTINGS_FILE``). The operator's ``<repo>/.env`` is NEVER
-  modified — it stays a read-only legacy fallback.
-* GET resolves a key across three stores, precedence
-  ``live os.environ`` > ``settings.json`` > ``<repo>/.env`` >
-  ``unset``, and labels the winning ``source`` so the UI can show
-  where the value lives.
-
-Both file locations are redirected to tmpfiles per-test
-(``KATO_SETTINGS_FILE`` for settings.json, ``KATO_SETTINGS_ENV_FILE``
-for the .env fallback) so nothing touches the real files.
+  ``KATO_SETTINGS_FILE``) — kato's ONLY config file. ``.env`` support
+  was removed entirely; kato never reads or writes one.
+* GET resolves a key across the two stores, precedence
+  ``live os.environ`` > ``settings.json`` > ``unset``, and labels the
+  winning ``source`` so the UI can show where the value lives.
 """
 
 from __future__ import annotations
@@ -41,13 +36,12 @@ class _Base(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.tmp_dir = Path(self._tmp.name)
-        self.env_path = self.tmp_dir / '.env'           # legacy fallback
-        self.settings_path = self.tmp_dir / 'settings.json'  # write target
+        self.env_path = self.tmp_dir / '.env'   # must NEVER be read or written
+        self.settings_path = self.tmp_dir / 'settings.json'  # the ONLY store
 
     def _env(self, extra=None):
         base = {
             'KATO_SETTINGS_FILE': str(self.settings_path),
-            'KATO_SETTINGS_ENV_FILE': str(self.env_path),
         }
         if extra:
             base.update(extra)
@@ -91,11 +85,11 @@ class SettingsGetTests(_Base):
         self.assertEqual(body['repository_root_path']['value'], '/from/settings')
         self.assertEqual(body['repository_root_path']['source'], 'kato_settings')
 
-    def test_source_env_file_fallback(self) -> None:
-        # Only the legacy .env has it → operator who hasn't migrated
-        # still sees their value, labelled as the .env fallback.
+    def test_env_file_is_completely_ignored(self) -> None:
+        # kato no longer reads .env AT ALL: a value present only in a
+        # .env file must resolve as unset.
         self.env_path.write_text(
-            '# comment\nOTHER=keep\nREPOSITORY_ROOT_PATH=/from/env\n',
+            '# comment\nREPOSITORY_ROOT_PATH=/from/env\n',
             encoding='utf-8',
         )
         with patch.dict(os.environ, {}, clear=False):
@@ -104,23 +98,8 @@ class SettingsGetTests(_Base):
                 app = create_app(session_manager=_FakeManager())
                 response = app.test_client().get('/api/settings')
         body = response.get_json()
-        self.assertEqual(body['repository_root_path']['value'], '/from/env')
-        self.assertEqual(body['repository_root_path']['source'], 'env_file')
-
-    def test_settings_json_wins_over_env_file(self) -> None:
-        self.env_path.write_text('REPOSITORY_ROOT_PATH=/from/env\n', encoding='utf-8')
-        self.settings_path.write_text(
-            json.dumps({'REPOSITORY_ROOT_PATH': '/from/settings'}),
-            encoding='utf-8',
-        )
-        with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop('REPOSITORY_ROOT_PATH', None)
-            with patch.dict(os.environ, self._env()):
-                app = create_app(session_manager=_FakeManager())
-                response = app.test_client().get('/api/settings')
-        body = response.get_json()
-        self.assertEqual(body['repository_root_path']['value'], '/from/settings')
-        self.assertEqual(body['repository_root_path']['source'], 'kato_settings')
+        self.assertEqual(body['repository_root_path']['value'], '')
+        self.assertEqual(body['repository_root_path']['source'], 'unset')
 
 
 class SettingsPostTests(_Base):

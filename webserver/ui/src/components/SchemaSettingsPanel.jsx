@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useRef, useState } from 'react';
 import { fetchOpenRouterModels } from '../api.js';
 import { useSchemaSectionDraft } from '../hooks/useSchemaSectionDraft.js';
 import { sourceLabel } from '../utils/settingsSource.js';
+import { fieldPlaceholder } from '../utils/fieldHelp.js';
+import FieldInfoTip from './settings/FieldInfoTip.jsx';
 import PanelMessage from './settings/PanelMessage.jsx';
 import SettingsPanelHead from './settings/SettingsPanelHead.jsx';
 import SettingsActions from './settings/SettingsActions.jsx';
@@ -16,8 +17,8 @@ import RestartBanner from './settings/RestartBanner.jsx';
 // own ``warning`` renders as a banner (the Sandbox tab uses this).
 //
 // Writes go to ~/.kato/settings.json via POST /api/all-settings
-// (server whitelists to the schema). The operator's .env is never
-// touched. Restart required — banner shown after a save.
+// (server whitelists to the schema) — kato's only config file.
+// Restart required — banner shown after a save.
 
 export default function SchemaSettingsPanel({ sectionId, highlightKey = '' }) {
   const fieldsRef = useRef(null);
@@ -71,8 +72,7 @@ export default function SchemaSettingsPanel({ sectionId, highlightKey = '' }) {
           {section.description}
           {' '}Saved to
           {' '}<code>{settingsFilePath || '~/.kato/settings.json'}</code>
-          {' '}— your <code>.env</code> is left untouched (read as a
-          fallback).
+          {' '}— kato&apos;s only config file.
         </p>
       </SettingsPanelHead>
 
@@ -141,7 +141,6 @@ export function SchemaField({ field, value, onChange }) {
   const isSecret = field.type === 'secret';
   const isNumber = field.type === 'number';
   const boolChecked = String(value).toLowerCase() === 'true';
-  const [tipPos, setTipPos] = useState(null);
 
   // Live autocomplete source (e.g. OpenRouter's catalogue) for free-text fields
   // that opt in via ``field.datalist`` — keeps the input free text, just suggested.
@@ -162,13 +161,14 @@ export function SchemaField({ field, value, onChange }) {
   }, [field.datalist]);
   const datalistId = field.datalist ? `datalist-${field.key}` : undefined;
 
-  const tipText = [field.help, field.warning && `⚠ ${field.warning}`, field.danger && `⛔ ${field.danger}`].filter(Boolean).join('\n\n');
-
-  const showTip = useCallback((e) => {
-    const r = e.currentTarget.getBoundingClientRect();
-    setTipPos({ x: r.left + r.width / 2, y: r.top });
-  }, []);
-  const hideTip = useCallback(() => setTipPos(null), []);
+  // The ⓘ tooltip carries the explanation AND the env-var name — the raw
+  // key is not printed next to the label.
+  const tipText = [
+    field.help,
+    field.warning && `⚠ ${field.warning}`,
+    field.danger && `⛔ ${field.danger}`,
+    `Environment variable: ${field.key}`,
+  ].filter(Boolean).join('\n\n');
 
   return (
     <>
@@ -181,27 +181,13 @@ export function SchemaField({ field, value, onChange }) {
       ].filter(Boolean).join(' ')}
     >
       <span className="settings-drawer-field-label">
-        <code>{field.key}</code>
         <span className="settings-drawer-field-name">{field.label}</span>
         {field.source && (
           <span className={`settings-drawer-source source-${field.source}`}>
             {sourceLabel(field.source)}
           </span>
         )}
-        {tipText && (
-          <span
-            className="settings-drawer-field-info"
-            tabIndex={0}
-            role="img"
-            aria-label="Field info"
-            onMouseEnter={showTip}
-            onMouseLeave={hideTip}
-            onFocus={showTip}
-            onBlur={hideTip}
-          >
-            ⓘ
-          </span>
-        )}
+        <FieldInfoTip text={tipText} />
       </span>
 
       {isBool ? (
@@ -229,7 +215,7 @@ export function SchemaField({ field, value, onChange }) {
           className="settings-drawer-input"
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          placeholder={(isSecret && value) ? '(set — paste to replace)' : (field.placeholder || '')}
+          placeholder={(isSecret && value) ? '(set — paste to replace)' : (field.placeholder || fieldPlaceholder(field.key))}
           list={datalistId}
           spellCheck={false}
           autoComplete="off"
@@ -245,9 +231,6 @@ export function SchemaField({ field, value, onChange }) {
         </datalist>
       )}
 
-      {field.help && (
-        <span className="settings-drawer-field-hint">{field.help}</span>
-      )}
       {field.warning && (
         <span className="settings-drawer-field-warning">⚠ {field.warning}</span>
       )}
@@ -255,15 +238,6 @@ export function SchemaField({ field, value, onChange }) {
         <span className="settings-drawer-field-danger">⛔ {field.danger}</span>
       )}
     </label>
-    {tipPos && tipText && createPortal(
-      <div
-        className="settings-field-tooltip"
-        style={{ left: tipPos.x, top: tipPos.y }}
-      >
-        {tipText}
-      </div>,
-      document.body
-    )}
     </>
   );
 }
