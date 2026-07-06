@@ -207,10 +207,24 @@ export function formatMergeResult(result) {
   for (const entry of merged) {
     const count = Number(entry.commits_merged || 0);
     const branch = String(entry.default_branch || '').trim() || 'default branch';
-    lines.push(`✓ ${entry.repository_id}: merged ${count} commit(s) from ${branch}`);
+    const wip = entry.wip_committed
+      ? ' (uncommitted work saved as a WIP commit first)'
+      : '';
+    lines.push(`✓ ${entry.repository_id}: merged ${count} commit(s) from ${branch}${wip}`);
   }
+  // A skip is only "already up to date" when the backend SAYS so — every
+  // other reason (wrong branch, fetch failure, …) must be shown, not
+  // masked. Masking was the "clicks Merge master, sees 'already up to
+  // date' forever" bug: the merge was being refused and nobody knew why.
+  let blockedSkips = 0;
   for (const entry of skipped) {
-    lines.push(`• ${entry.repository_id}: already up to date`);
+    if ((entry.reason || '') === 'already_up_to_date') {
+      lines.push(`• ${entry.repository_id}: already up to date`);
+    } else {
+      blockedSkips += 1;
+      const why = String(entry.detail || entry.reason || 'skipped').trim();
+      lines.push(`⚠ ${entry.repository_id}: ${why}`);
+    }
   }
   lines.push(...formatFailedLines(failed));
   if (lines.length === 0) {
@@ -225,6 +239,9 @@ export function formatMergeResult(result) {
   } else if (failed.length) {
     title = 'Merge failed';
     kind = 'error';
+  } else if (blockedSkips) {
+    title = 'Merge blocked';
+    kind = 'warning';
   } else {
     // Every repo already contained the default branch — list them so the
     // operator sees what was checked, not a vague "nothing to merge".

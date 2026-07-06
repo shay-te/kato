@@ -402,3 +402,57 @@ test('formatFinishResult: missing move-to-review surfaces the reason', () => {
   assert.equal(out.title, 'Done — partial completion');
   assert.match(out.message, /✗ ticket did NOT move to In Review: state field locked/);
 });
+
+
+
+test('formatMergeResult: a blocked repo shows its real reason, not "already up to date"', () => {
+    const out = formatMergeResult({
+      ok: true,
+      body: {
+        merged_repositories: [],
+        skipped_repositories: [{
+          repository_id: 'backend',
+          reason: 'wrong_branch_checked_out',
+          detail: "workspace is on 'master', expected 'feat/x' — checkout first",
+        }],
+        failed_repositories: [],
+      },
+    });
+    assert.equal(out.title, 'Merge blocked');
+    assert.equal(out.kind, 'warning');
+    assert.ok(out.message.includes("workspace is on 'master'"));
+    assert.ok(!out.message.includes('already up to date'));
+  });
+
+test('formatMergeResult: genuinely up-to-date repos keep the calm info toast', () => {
+    const out = formatMergeResult({
+      ok: true,
+      body: {
+        merged_repositories: [],
+        skipped_repositories: [
+          { repository_id: 'client', reason: 'already_up_to_date', detail: '' },
+        ],
+        failed_repositories: [],
+      },
+    });
+    assert.equal(out.title, 'Nothing to merge');
+    assert.equal(out.kind, 'info');
+    assert.ok(out.message.includes('client: already up to date'));
+  });
+
+test('formatMergeResult: a merge that first saved uncommitted work says so', () => {
+    const out = formatMergeResult({
+      ok: true,
+      body: {
+        merged_repositories: [{
+          repository_id: 'backend', commits_merged: 3,
+          default_branch: 'master', wip_committed: true,
+        }],
+        skipped_repositories: [],
+        failed_repositories: [],
+      },
+    });
+    assert.equal(out.title, 'Default branch merged');
+    assert.ok(out.message.includes('merged 3 commit(s) from master'));
+    assert.ok(out.message.includes('WIP commit'));
+  });

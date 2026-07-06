@@ -3636,6 +3636,7 @@ class AgentService(MissionStepLoggerMixin, Service):
                     'repository_id': repository.id,
                     'commits_merged': int(outcome.get('commits_merged') or 0),
                     'default_branch': outcome.get('default_branch') or '',
+                    'wip_committed': bool(outcome.get('wip_committed')),
                 })
                 self.logger.info(
                     'merge-default for task %s: merged %s into %s (%s commits)',

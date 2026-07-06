@@ -96,15 +96,39 @@ class MergePreflightTests(unittest.TestCase):
             out = self.service.merge_default_branch_into_clone(repo, 'feat/x')
         self.assertEqual(out['reason'], 'wrong_branch_checked_out')
 
-    def test_dirty_working_tree_refused(self) -> None:
+    def test_dirty_working_tree_saves_wip_and_proceeds(self) -> None:
+        # Refusing on a dirty tree turned "Merge master" into a chore (the
+        # agent almost always has in-progress edits). The service now saves
+        # them as a WIP commit and continues into the fetch+merge.
         repo = SimpleNamespace(id='c', local_path='/x')
+        git_calls = []
+
+        def record_git(local_path, args, message, repository=None):
+            git_calls.append(args)
+
         with patch.object(Path, 'is_dir', return_value=True), \
              patch.object(self.service, '_current_branch',
                           return_value='feat/x'), \
              patch.object(self.service, '_working_tree_status',
-                          return_value=' M file.py'):
+                          return_value=' M file.py'), \
+             patch.object(self.service, 'destination_branch',
+                          return_value='main'), \
+             patch.object(self.service, '_run_git',
+                          side_effect=record_git), \
+             patch.object(self.service, '_git_reference_exists',
+                          return_value=True), \
+             patch.object(self.service, '_left_right_commit_counts',
+                          return_value=(0, 0)):
             out = self.service.merge_default_branch_into_clone(repo, 'feat/x')
-        self.assertEqual(out['reason'], 'dirty_working_tree')
+
+        # The WIP was staged + committed before anything else…
+        self.assertEqual(git_calls[0], ['add', '-A'])
+        self.assertEqual(git_calls[1][:2], ['commit', '-m'])
+        self.assertIn('WIP', git_calls[1][2])
+        # …and the flow carried on (fetch ran, outcome reports the WIP).
+        self.assertIn(['fetch', 'origin', '--prune'], git_calls)
+        self.assertTrue(out['wip_committed'])
+        self.assertTrue(out['merged'])
 
 
 class MergeRealGitTests(unittest.TestCase):
@@ -147,6 +171,36 @@ class MergeRealGitTests(unittest.TestCase):
             '<<<<<<<',
             (clone / 'shared.txt').read_text(encoding='utf-8'),
         )
+
+    def test_dirty_tree_wip_commits_then_merges_for_real(self) -> None:
+        clone, repo = _build_repo_with_diverged_default(self.tmp)
+        # Agent left uncommitted work in the tree (non-conflicting file).
+        (clone / 'agent-notes.txt').write_text('in progress\n', encoding='utf-8')
+
+        out = self.service.merge_default_branch_into_clone(repo, 'feat/x')
+
+        self.assertTrue(out['merged'])
+        self.assertTrue(out['updated'])
+        self.assertTrue(out['wip_committed'])
+        # The default branch's change arrived…
+        self.assertEqual(
+            (clone / 'shared.txt').read_text(encoding='utf-8'),
+            'CHANGED ON MAIN\n',
+        )
+        # …the agent's work survived as a commit (clean tree, file present).
+        self.assertEqual(
+            subprocess.run(
+                ['git', 'status', '--porcelain'], cwd=str(clone),
+                capture_output=True, text=True, check=True,
+            ).stdout.strip(),
+            '',
+        )
+        self.assertTrue((clone / 'agent-notes.txt').is_file())
+        log = subprocess.run(
+            ['git', 'log', '--oneline', '-4'], cwd=str(clone),
+            capture_output=True, text=True, check=True,
+        ).stdout
+        self.assertIn('WIP: save in-progress work', log)
 
     def test_already_up_to_date_is_a_noop(self) -> None:
         clone, repo = _build_repo_with_diverged_default(self.tmp)
@@ -315,10 +369,14 @@ class MergePreflightDefensiveBranchTests(unittest.TestCase):
         self.assertIn('git rev-parse failed', out['detail'])
 
     def test_status_check_failure(self) -> None:
+        # The dirty-tree probe now runs AFTER preflight (it feeds the
+        # WIP-commit step), so the default branch must resolve first.
         repo = SimpleNamespace(id='c', local_path='/x')
         with patch.object(Path, 'is_dir', return_value=True), \
              patch.object(self.service, '_current_branch',
                           return_value='feat/x'), \
+             patch.object(self.service, 'destination_branch',
+                          return_value='main'), \
              patch.object(self.service, '_working_tree_status',
                           side_effect=RuntimeError('git status failed')):
             out = self.service.merge_default_branch_into_clone(repo, 'feat/x')
@@ -351,7 +409,9 @@ class MergeDefaultBranchPostPreflightBranchTests(unittest.TestCase):
 
     def test_fetch_failure_surfaces_fetch_failed(self) -> None:
         repo = SimpleNamespace(id='c', local_path='/x')
-        with patch.object(self.service, '_run_git',
+        with patch.object(self.service, '_working_tree_status',
+                          return_value=''), \
+             patch.object(self.service, '_run_git',
                           side_effect=RuntimeError('network down')):
             out = self.service.merge_default_branch_into_clone(repo, 'feat/x')
         self.assertEqual(out['reason'], 'fetch_failed')

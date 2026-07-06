@@ -634,19 +634,6 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
                 f'{normalized_branch!r} — checkout first',
             )
         try:
-            dirty = bool(self._working_tree_status(local_path).strip())
-        except Exception as exc:
-            return fail('status_check_failed', str(exc))
-        if dirty:
-            # A merge into a dirty tree is git-unsafe and would also
-            # tangle the agent's in-progress edits with the merge.
-            # Push (which commits) first, then Merge.
-            return fail(
-                'dirty_working_tree',
-                'workspace has uncommitted changes; push or discard '
-                'them before merging the default branch',
-            )
-        try:
             return {'default_branch': self.destination_branch(repository)}
         except ValueError as exc:
             return fail('default_branch_unknown', str(exc))
@@ -683,6 +670,41 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         if preflight.get('error'):
             return preflight['error']
         default_branch = preflight['default_branch']
+        # The agent's in-progress edits would make the merge git-unsafe —
+        # but refusing here turned every "Merge master" click into a chore
+        # (and the UI misread the refusal as "already up to date"). Save
+        # the work as a WIP commit on the task branch instead: kato owns
+        # the git plumbing, the later push includes it, and a conflicted
+        # merge can no longer tangle uncommitted files.
+        wip_committed = False
+        try:
+            dirty = bool(self._working_tree_status(local_path).strip())
+        except Exception as exc:
+            return {
+                'merged': False, 'reason': 'status_check_failed',
+                'detail': str(exc),
+            }
+        if dirty:
+            try:
+                self._run_git(
+                    local_path, ['add', '-A'],
+                    f'failed to stage in-progress work for {repository.id}',
+                    repository,
+                )
+                self._run_git(
+                    local_path,
+                    ['commit', '-m',
+                     f'WIP: save in-progress work before merging '
+                     f'{default_branch} (kato)'],
+                    f'failed to save in-progress work for {repository.id}',
+                    repository,
+                )
+            except RuntimeError as exc:
+                return {
+                    'merged': False, 'reason': 'wip_commit_failed',
+                    'detail': str(exc),
+                }
+            wip_committed = True
         try:
             self._run_git(
                 local_path, ['fetch', 'origin', '--prune'],
@@ -721,6 +743,7 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
             return {
                 'merged': True, 'updated': False, 'commits_merged': 0,
                 'default_branch': default_branch,
+                'wip_committed': wip_committed,
             }
         # ``_run_git_subprocess`` (not ``_run_git``) — a merge
         # conflict is a non-zero exit we EXPECT and want to handle,
@@ -735,6 +758,7 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
                 'merged': True, 'updated': True,
                 'commits_merged': int(behind),
                 'default_branch': default_branch,
+                'wip_committed': wip_committed,
             }
         conflicted = self._unmerged_paths(local_path)
         if conflicted:
