@@ -904,6 +904,39 @@ describe('FilesTab — render shell', () => {
 });
 
 
+describe('FilesTab — open file follows into the All view', () => {
+  test('clicking "All" while a diff is open reveals + highlights the file in the tree', async () => {
+    fetchFileTree.mockResolvedValue(FILE_TREE_PAYLOAD);
+    fetchDiff.mockResolvedValue(DIFF_PAYLOAD);
+    // The centre pane has the diff for src/Changed.js open.
+    const openFile = {
+      absolutePath: '/tmp/client/src/Changed.js',
+      relativePath: 'src/Changed.js',
+      repoId: 'client',
+      view: 'diff',
+    };
+    render(
+      <FilesTab taskId="T1" onOpenFile={vi.fn()} openFile={openFile} />,
+    );
+    // Changed view first (default): the file is listed there.
+    expect(await screen.findByText('Changed.js')).toBeInTheDocument();
+
+    // Operator switches to the ALL files view.
+    fireEvent.click(screen.getByRole('button', { name: /all files/i }));
+
+    // The open file is REVEALED (its folder auto-expands — without the
+    // reveal the closed 'src' folder would hide it)…
+    const row = await screen.findByText('Changed.js');
+    // …and its row carries the selection highlight.
+    await waitFor(() => {
+      const treeRow = row.closest('.tree-row');
+      expect(treeRow).not.toBeNull();
+      expect(treeRow.className).toContain('selected');
+    });
+  });
+});
+
+
 // --------------------------------------------------------------------------
 // Chaos / random-order driver against the REAL FilesTab component.
 //

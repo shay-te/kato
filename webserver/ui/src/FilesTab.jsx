@@ -30,6 +30,7 @@ import { toastResult } from './stores/toastStore.js';
 import { copyRepoRelativePath } from './utils/clipboard.js';
 import {
   activateTreeNode,
+  findTreeNodeIdByRelativePath,
   attachIds,
   countRepoComments,
   folderContainsChange,
@@ -831,6 +832,37 @@ function RepoTree({
     () => changedSelectionKeyFor(openFile, repoId, diffMeta),
     [openFile, repoId, diffMeta],
   );
+  // The ALL-files tree mirrors the same single-source selection: resolve
+  // the open file to its tree id so the row highlights, and reveal it
+  // (expand ancestors + scroll) when the operator switches to "All" or
+  // opens a different file. The memo returns a stable STRING, so the
+  // reveal effect below does NOT re-fire on background tree polls —
+  // per the no-UI-shift rule, it only acts on operator intent.
+  const allTreeRef = useRef(null);
+  const selectedAllFileId = useMemo(
+    () => (openFile
+      ? findTreeNodeIdByRelativePath(treeData, openFile.relativePath)
+      : null),
+    [openFile, treeData],
+  );
+  useEffect(() => {
+    if (!showAllFiles || collapsed || !selectedAllFileId) { return undefined; }
+    const raf = window.requestAnimationFrame(() => {
+      const tree = allTreeRef.current;
+      if (!tree) { return; }
+      try {
+        tree.openParents?.(selectedAllFileId);
+        tree.scrollTo?.(selectedAllFileId, 'auto');
+      } catch (_) {
+        // The node can vanish between polls (file deleted); never let the
+        // reveal take the tree down.
+      }
+    });
+    return () => window.cancelAnimationFrame(raf);
+    // Intent-only deps: All toggled on, repo expanded, or the open file
+    // changed. treeData refreshes must NOT yank the scroll position.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showAllFiles, collapsed, selectedAllFileId]);
   // Per-repo commit dropdown state. Populated lazily on first
   // open so we don't fetch ``/commits`` for every repo on every
   // file-tree refetch (would be 5+ extra HTTP calls per
@@ -1013,11 +1045,13 @@ function RepoTree({
   } else {
     body = (
       <Tree
+        ref={allTreeRef}
         data={treeData}
         width={width}
         height={treeHeight}
         rowHeight={28}
         indent={14}
+        selection={selectedAllFileId || undefined}
         openByDefault={isFiltering}
         searchTerm={searchTerm}
         searchMatch={matchTreeNode}

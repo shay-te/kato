@@ -3345,6 +3345,27 @@ code {
   display: flex;
   flex-direction: column;
   gap: $SPACE-12;
+  // Inside the 80vh .modal-card (overflow hidden): without min-height the
+  // flex child refuses to shrink, the card clips, and the options + action
+  // buttons below the fold become unreachable.
+  min-height: 0;
+}
+
+// The questions scroll; the modal-actions row after this stays pinned.
+.ask-question-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-12;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+// Same clipping guard for the standard permission dialog: giant tool
+// arguments scroll while the rationale box + Deny/Allow stay visible.
+#permission-fields {
+  overflow-y: auto;
+  min-height: 0;
+  flex-shrink: 1;
 }
 
 .ask-question-block {

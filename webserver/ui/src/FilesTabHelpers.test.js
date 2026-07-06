@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  findTreeNodeIdByRelativePath,
   activateTreeNode,
   attachIds,
   countRepoComments,
@@ -384,4 +385,39 @@ test('folderContainsChange: path recorded exactly against a dir entry → true',
 test('folderContainsChange: empty / missing changed set → false', function () {
   assert.equal(folderContainsChange('src', new Set()), false);
   assert.equal(folderContainsChange('src', null), false);
+});
+
+
+test('findTreeNodeIdByRelativePath resolves a nested file to its tree id', () => {
+  const nodes = attachIds([
+    {
+      name: 'src',
+      path: '/tmp/client/src',
+      children: [
+        { name: 'App.jsx', path: '/tmp/client/src/App.jsx' },
+        {
+          name: 'utils',
+          path: '/tmp/client/src/utils',
+          children: [{ name: 'dom.js', path: '/tmp/client/src/utils/dom.js' }],
+        },
+      ],
+    },
+  ], '/tmp/client');
+  assert.equal(
+    findTreeNodeIdByRelativePath(nodes, 'src/utils/dom.js'),
+    '/tmp/client/src/utils/dom.js',
+  );
+  assert.equal(
+    findTreeNodeIdByRelativePath(nodes, 'src/App.jsx'),
+    '/tmp/client/src/App.jsx',
+  );
+});
+
+test('findTreeNodeIdByRelativePath returns null for unknown / blank paths', () => {
+  const nodes = attachIds(
+    [{ name: 'a.js', path: '/tmp/client/a.js' }], '/tmp/client',
+  );
+  assert.equal(findTreeNodeIdByRelativePath(nodes, 'missing.js'), null);
+  assert.equal(findTreeNodeIdByRelativePath(nodes, ''), null);
+  assert.equal(findTreeNodeIdByRelativePath(null, 'a.js'), null);
 });

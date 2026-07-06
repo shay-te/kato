@@ -54,6 +54,25 @@ export function attachIds(nodes, cwd = '') {
   });
 }
 
+// Resolve the all-files tree id (= the node's absolute path, see
+// ``attachIds``) for a repo-relative file path. Lets the tree highlight +
+// reveal the centre pane's open file when the operator switches to "All".
+// Returns null when the file isn't in this repo's tree (e.g. a deleted
+// file that only exists in the diff).
+export function findTreeNodeIdByRelativePath(nodes, relativePath) {
+  const target = String(relativePath || '').trim();
+  if (!target || !Array.isArray(nodes)) { return null; }
+  for (const node of nodes) {
+    const isFolder = Array.isArray(node.children);
+    if (!isFolder && node.relativePath === target) { return node.id || null; }
+    if (isFolder) {
+      const found = findTreeNodeIdByRelativePath(node.children, target);
+      if (found) { return found; }
+    }
+  }
+  return null;
+}
+
 // True when ``changedFiles`` holds a path that lives inside the
 // folder at ``folderRelativePath`` (the folder itself or any
 // descendant). Used to tint the whole ancestor chain of a changed

@@ -349,3 +349,43 @@ describe('PermissionModal — AskUserQuestion', () => {
     expect(screen.queryByRole('button', { name: /allow once/i })).toBeNull();
   });
 });
+
+
+describe('AskUserQuestion — long forms stay usable', () => {
+  function _rawFor(questions) {
+    return {
+      request_id: 'q9',
+      request: {
+        request_id: 'q9',
+        tool_name: 'AskUserQuestion',
+        input: { questions },
+      },
+    };
+  }
+
+  test('options live in a scroll region; the action buttons stay outside it (pinned)', () => {
+    const questions = Array.from({ length: 6 }, (_, i) => ({
+      header: `Q${i}`,
+      question: `Question number ${i}?`,
+      multiSelect: false,
+      options: [
+        { label: 'Option A', description: 'first' },
+        { label: 'Option B', description: 'second' },
+      ],
+    }));
+    const raw = _rawFor(questions);
+    const { container } = render(
+      <PermissionModal raw={raw} onDecide={vi.fn()} />,
+    );
+    const scroll = container.querySelector('.ask-question-scroll');
+    expect(scroll).not.toBeNull();
+    // Every question block is INSIDE the scroll region…
+    expect(scroll.querySelectorAll('.ask-question-block').length).toBe(6);
+    // …and the Dismiss / Send answer actions are OUTSIDE it, so they can
+    // never be clipped below the 80vh modal card (the "buttons cut off,
+    // cannot scroll" bug).
+    const actions = container.querySelector('.ask-question .modal-actions');
+    expect(actions).not.toBeNull();
+    expect(scroll.contains(actions)).toBe(false);
+  });
+});

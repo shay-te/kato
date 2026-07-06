@@ -3297,6 +3297,21 @@ code {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-height: 0;
+}
+
+.ask-question-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+#permission-fields {
+  overflow-y: auto;
+  min-height: 0;
+  flex-shrink: 1;
 }
 
 .ask-question-block {

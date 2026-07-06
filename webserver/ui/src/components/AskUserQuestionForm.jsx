@@ -57,6 +57,10 @@ export default function AskUserQuestionForm({ questions, onAnswer, onDismiss }) 
 
   return (
     <div className="ask-question">
+      {/* The question blocks scroll inside the 80vh modal card; the
+          Dismiss / Send answer actions below stay pinned and reachable
+          no matter how many questions/options Claude asked. */}
+      <div className="ask-question-scroll">
       {qs.map((q, i) => {
         const multi = !!q.multiSelect;
         const opts = Array.isArray(q.options) ? q.options : [];
@@ -108,6 +112,7 @@ export default function AskUserQuestionForm({ questions, onAnswer, onDismiss }) 
           </fieldset>
         );
       })}
+      </div>
       <div className="modal-actions">
         <button type="button" className="secondary" onClick={onDismiss}>
           Dismiss
