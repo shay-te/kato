@@ -55,6 +55,14 @@ def _bootstrap_if_needed(python_bin: Path) -> int:
     return 0
 
 
+# Exit-code contract with kato_core_lib.main._restart_in_place: kato exits
+# with this code when it needs a clean relaunch (e.g. the agent backend was
+# switched in the setup wizard). The launcher loop below respawns it — a
+# full process teardown releases the webserver port on every platform,
+# which an in-place exec cannot guarantee.
+_RESTART_EXIT_CODE = 87
+
+
 def main() -> int:
     python_bin = venv_python_path()
     rc = _bootstrap_if_needed(python_bin)
@@ -65,13 +73,23 @@ def main() -> int:
     # A missing/empty settings.json is fine — kato boots into SETUP MODE
     # and the first-run wizard collects everything from the browser.
     env = layered_env(os.environ, read_kato_settings_file())
+    # Tell kato it is supervised: restarts go through a clean exit +
+    # relaunch here instead of an in-place exec.
+    env['KATO_SUPERVISED_RESTART'] = '1'
 
-    completed = subprocess.run(
-        [str(python_bin), '-m', 'kato_core_lib.main'],
-        cwd=REPO_ROOT,
-        env=env,
-    )
-    return completed.returncode
+    while True:
+        completed = subprocess.run(
+            [str(python_bin), '-m', 'kato_core_lib.main'],
+            cwd=REPO_ROOT,
+            env=env,
+        )
+        if completed.returncode != _RESTART_EXIT_CODE:
+            return completed.returncode
+        # Reload settings saved through the UI before the relaunch so the
+        # fresh process boots with them (shell still wins).
+        env = layered_env(os.environ, read_kato_settings_file())
+        env['KATO_SUPERVISED_RESTART'] = '1'
+        print('kato requested a restart — relaunching…')
 
 
 if __name__ == '__main__':

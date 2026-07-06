@@ -1464,6 +1464,90 @@ class MarkWebserverConfiguredTests(unittest.TestCase):
         self.assertFalse(flask_app.config['NEEDS_CONFIG'])
 
 
+class RestartInPlaceTests(unittest.TestCase):
+    """The backend-switch restart. Supervised (normal ``kato up``) exits
+    with the launcher's restart code — a clean teardown is the only
+    port-release guarantee on every platform. Exec is only the fallback
+    for unsupervised direct runs."""
+
+    def test_supervised_run_exits_with_the_restart_code(self) -> None:
+        from kato_core_lib.main import _restart_in_place, _RESTART_EXIT_CODE
+        app = types.SimpleNamespace(logger=Mock())
+        with patch.dict('os.environ', {'KATO_SUPERVISED_RESTART': '1'}), \
+             patch('os._exit') as fake_exit, patch('os.execv') as fake_exec:
+            _restart_in_place(app)
+        fake_exit.assert_called_once_with(_RESTART_EXIT_CODE)
+        fake_exec.assert_not_called()
+
+    def test_unsupervised_run_falls_back_to_exec(self) -> None:
+        from kato_core_lib.main import _restart_in_place
+        app = types.SimpleNamespace(logger=Mock())
+        with patch.dict('os.environ', {}, clear=False):
+            os.environ.pop('KATO_SUPERVISED_RESTART', None)
+            with patch('os.execv') as fake_exec, patch('os._exit') as fake_exit:
+                _restart_in_place(app)
+        fake_exec.assert_called_once()
+        fake_exit.assert_not_called()
+
+    def test_werkzeug_fd_marker_never_leaks_into_the_next_process(self) -> None:
+        from kato_core_lib.main import _restart_in_place
+        app = types.SimpleNamespace(logger=Mock())
+        with patch.dict('os.environ', {
+            'KATO_SUPERVISED_RESTART': '1',
+            'WERKZEUG_SERVER_FD': '7',
+        }), patch('os._exit'):
+            _restart_in_place(app)
+            self.assertIsNone(os.environ.get('WERKZEUG_SERVER_FD'))
+
+
+class ServeFlaskBindRetryTests(unittest.TestCase):
+    """The webserver must survive a port-release race after a restart —
+    Werkzeug raises SystemExit on a busy port, which a plain
+    ``except Exception`` misses."""
+
+    def test_retries_busy_port_then_serves(self) -> None:
+        from kato_core_lib.main import _serve_flask_with_bind_retry
+        flask_app = Mock()
+        flask_app.run.side_effect = [SystemExit(1), OSError('in use'), None]
+        logger = Mock()
+
+        _serve_flask_with_bind_retry(
+            flask_app, '127.0.0.1', 5050, logger, sleep_fn=lambda _s: None,
+        )
+
+        self.assertEqual(flask_app.run.call_count, 3)
+        logger.error.assert_not_called()
+        # The dotenv trap stays closed on every attempt.
+        self.assertFalse(flask_app.run.call_args.kwargs['load_dotenv'])
+
+    def test_gives_up_loudly_after_the_attempt_budget(self) -> None:
+        from kato_core_lib.main import _serve_flask_with_bind_retry
+        flask_app = Mock()
+        flask_app.run.side_effect = SystemExit(1)
+        logger = Mock()
+
+        _serve_flask_with_bind_retry(
+            flask_app, '127.0.0.1', 5050, logger,
+            sleep_fn=lambda _s: None, attempts=3,
+        )
+
+        self.assertEqual(flask_app.run.call_count, 3)
+        logger.error.assert_called_once()
+
+    def test_non_bind_crash_is_logged_not_retried(self) -> None:
+        from kato_core_lib.main import _serve_flask_with_bind_retry
+        flask_app = Mock()
+        flask_app.run.side_effect = RuntimeError('boom')
+        logger = Mock()
+
+        _serve_flask_with_bind_retry(
+            flask_app, '127.0.0.1', 5050, logger, sleep_fn=lambda _s: None,
+        )
+
+        self.assertEqual(flask_app.run.call_count, 1)
+        logger.exception.assert_called_once()
+
+
 class PlanningWebserverNoDotenvTests(unittest.TestCase):
     def test_flask_run_does_not_load_dotenv(self) -> None:
         """Flask's ``run()`` silently loads ``<cwd>/.env`` into os.environ
@@ -1475,7 +1559,7 @@ class PlanningWebserverNoDotenvTests(unittest.TestCase):
         file kato is supposed to ignore)."""
         import inspect
         from kato_core_lib import main as main_module
-        src = inspect.getsource(main_module._start_planning_webserver_if_enabled)
+        src = inspect.getsource(main_module._serve_flask_with_bind_retry)
         self.assertIn('load_dotenv=False', src)
 
 

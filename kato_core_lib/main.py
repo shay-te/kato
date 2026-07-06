@@ -379,17 +379,27 @@ def _wait_until_configured_then_finish_setup(
     return False
 
 
-def _restart_in_place(app) -> None:
-    """Re-exec the kato process image (same PID, same terminal).
+# Exit-code contract with scripts/run_local.py: exiting with this code asks
+# the launcher to relaunch kato cleanly (full teardown → port free).
+_RESTART_EXIT_CODE = 87
 
-    Used by the setup wait loop when the operator switches the agent
-    backend mid-setup. Never returns on success. Python sets FDs
-    close-on-exec (PEP 446), so the webserver's listen socket is released
-    and the fresh image can bind the same port; Werkzeug's inherited-fd
-    marker must not leak into the new image or it would try to reuse a
-    now-closed descriptor.
+
+def _restart_in_place(app) -> None:
+    """Restart the kato process. Never returns on success.
+
+    Preferred path: the launcher (``kato up`` → run_local) supervises us —
+    exit with the restart code and let it respawn a FRESH process. That is
+    reliable on every platform: the old process is fully gone (webserver
+    port released) before the new one starts.
+
+    Fallback (direct ``python -m kato_core_lib.main`` runs, POSIX): re-exec
+    the process image in place.
     """
     os.environ.pop('WERKZEUG_SERVER_FD', None)
+    if os.environ.get('KATO_SUPERVISED_RESTART') == '1':
+        app.logger.warning('restarting kato (supervised relaunch)…')
+        os._exit(_RESTART_EXIT_CODE)
+        return  # unreachable in production; keeps mocked-_exit tests honest
     argv = [sys.executable, '-m', 'kato_core_lib.main', *sys.argv[1:]]
     app.logger.warning('restarting kato in place: %s', ' '.join(argv))
     os.execv(sys.executable, argv)
@@ -944,17 +954,7 @@ def _start_planning_webserver_if_enabled(app) -> None:
     _logging.getLogger('werkzeug').setLevel(_logging.ERROR)
 
     def _serve() -> None:
-        try:
-            # load_dotenv=False: with python-dotenv installed, Flask's run()
-            # otherwise auto-loads <cwd>/.env into os.environ — a hidden
-            # third config path. kato reads ONLY ~/.kato/settings.json
-            # (plus real shell env); .env support was removed entirely.
-            flask_app.run(
-                host=host, port=port, debug=False, use_reloader=False,
-                threaded=True, load_dotenv=False,
-            )
-        except Exception:
-            app.logger.exception('planning webserver crashed')
+        _serve_flask_with_bind_retry(flask_app, host, port, app.logger)
 
     thread = threading.Thread(
         target=_serve,
@@ -966,6 +966,43 @@ def _start_planning_webserver_if_enabled(app) -> None:
     app.planning_webserver_url = url
     app.logger.info('planning webserver listening on %s', url)
     _open_browser_when_ready(url, app.logger)
+
+
+def _serve_flask_with_bind_retry(
+    flask_app, host, port, logger,
+    sleep_fn=time.sleep, attempts: int = 20,
+) -> None:
+    """Run the Flask dev server, retrying briefly when the port is busy.
+
+    After a kato self-restart the OS may not have released the previous
+    process's listen socket yet (particularly on Windows, where process
+    replacement is emulated). Werkzeug reacts to a busy port with
+    ``SystemExit`` — a BaseException a plain ``except Exception`` misses —
+    so both are caught and retried for ~10s before giving up loudly.
+
+    ``load_dotenv=False``: with python-dotenv installed, Flask's ``run()``
+    otherwise auto-loads ``<cwd>/.env`` into ``os.environ`` — a hidden
+    config path. kato reads ONLY ``~/.kato/settings.json`` (+ shell env).
+    """
+    for attempt in range(attempts):
+        try:
+            flask_app.run(
+                host=host, port=port, debug=False, use_reloader=False,
+                threaded=True, load_dotenv=False,
+            )
+            return
+        except (OSError, SystemExit):
+            if attempt == attempts - 1:
+                logger.error(
+                    'planning webserver could not bind %s:%s after %d '
+                    'attempts — is another kato still running?',
+                    host, port, attempts,
+                )
+                return
+            sleep_fn(0.5)
+        except Exception:
+            logger.exception('planning webserver crashed')
+            return
 
 
 def _open_browser_when_ready(url: str, logger) -> None:

@@ -29,10 +29,7 @@ Outputs `kato.exe` at the repo root (~8 MB, gitignored).
 ```
 kato up                  Start kato
 kato bootstrap           Install Python deps + build the planning UI
-kato configure           Generate .env interactively
 kato doctor              Validate full env config
-kato doctor-agent        Validate just the agent backend
-kato doctor-openhands    Validate just the openhands config
 kato test                Run the unit-test suite
 kato sandbox-build       Build the hardened Docker sandbox image
 kato sandbox-login       Interactive Claude login inside the sandbox

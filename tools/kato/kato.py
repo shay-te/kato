@@ -78,16 +78,6 @@ _TARGETS: dict[str, tuple[str, bool, list[str]]] = {
         True,
         ['-m', 'kato.validate_env', '--mode', 'all'],
     ),
-    'doctor-agent': (
-        'Validate just the agent backend',
-        True,
-        ['-m', 'kato.validate_env', '--mode', 'agent'],
-    ),
-    'doctor-openhands': (
-        'Validate just the openhands config',
-        True,
-        ['-m', 'kato.validate_env', '--mode', 'openhands'],
-    ),
     'test': (
         'Run the unit-test suite (kato + every owned core-lib)',
         True,

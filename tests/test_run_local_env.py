@@ -119,3 +119,27 @@ class RunLocalAutoBootstrapTests(unittest.TestCase):
         )
         self.assertEqual(rc, 3)
         run_mock.assert_not_called()
+
+
+class RunLocalSupervisedRestartTests(unittest.TestCase):
+    """``kato up`` relaunches kato when it exits with the restart code —
+    the clean-teardown restart used by the setup wizard's backend switch."""
+
+    def test_restart_code_relaunches_with_fresh_settings(self) -> None:
+        import run_local
+        from unittest import mock
+        fake_python = mock.Mock()
+        fake_python.exists.return_value = True
+        fake_python.__str__ = lambda self: '/fake/.venv/bin/python'
+        results = [mock.Mock(returncode=run_local._RESTART_EXIT_CODE),
+                   mock.Mock(returncode=0)]
+        with mock.patch.object(run_local, 'venv_python_path', return_value=fake_python), \
+             mock.patch.object(run_local.subprocess, 'run', side_effect=results) as run_mock:
+            rc = run_local.main()
+        self.assertEqual(rc, 0)
+        self.assertEqual(run_mock.call_count, 2)
+        # Every spawn is marked supervised so kato prefers the clean exit.
+        for call_obj in run_mock.call_args_list:
+            self.assertEqual(
+                call_obj.kwargs['env'].get('KATO_SUPERVISED_RESTART'), '1',
+            )

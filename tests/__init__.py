@@ -1,7 +1,34 @@
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 import unittest
+
+# ---------------------------------------------------------------------------
+# Machine-state isolation: kato keeps operator sidecar stores under ~/.kato
+# (forgotten tasks, approvals, plan-mode locks, settings, workspaces, …).
+# Unit tests must NEVER read or write the operator's real files — a live
+# kato on the same machine would otherwise leak state into assertions
+# (e.g. a forgotten ``PROJ-1`` fixture silently filtering every test task)
+# and tests would leak fixtures back into the operator's UI. Redirect every
+# store to a per-run temp dir. ``setdefault`` so a test (or operator) that
+# sets an explicit override still wins; tests that ``pop`` a key fall back
+# to kato's default path semantics unchanged.
+# ---------------------------------------------------------------------------
+_ISOLATED_KATO_HOME = Path(tempfile.mkdtemp(prefix='kato-tests-home-'))
+for _key, _name in (
+    ('KATO_FORGOTTEN_TASKS_PATH', 'forgotten_tasks.json'),
+    ('KATO_READ_ONLY_REPOS_PATH', 'read_only_repos.json'),
+    ('KATO_PLAN_MODE_PATH', 'plan_mode.json'),
+    ('KATO_APPROVED_REPOSITORIES_PATH', 'approved-repositories.json'),
+    ('KATO_ACTION_GUARD_AUDIT_PATH', 'action-guard-audit.log'),
+    ('KATO_AUDIT_LOG_PATH', 'audit.log.jsonl'),
+    ('KATO_SETTINGS_FILE', 'settings.json'),
+    ('KATO_WORKSPACES_ROOT', 'workspaces'),
+    ('KATO_SESSION_STATE_DIR', 'sessions'),
+):
+    os.environ.setdefault(_key, str(_ISOLATED_KATO_HOME / _name))
 
 
 def load_tests(loader: unittest.TestLoader, tests: unittest.TestSuite, pattern: str | None):
