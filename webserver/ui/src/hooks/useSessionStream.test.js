@@ -202,6 +202,57 @@ test('system/preflight does NOT flip turnInFlight (still provisioning)', functio
   assert.equal(next.turnInFlight, false);
 });
 
+test('a Workflow tool_use keeps the session busy after the turn AND flags it as a workflow', function () {
+  // assistant launches a background Workflow → RESULT closes the turn but
+  // ``awaitingBackground`` stays true (still busy) and ``backgroundIsWorkflow``
+  // marks it as a workflow so the status surfaces read "workflow" (indigo).
+  const afterAssistant = reducer(_freshState(), {
+    type: 'incoming_event',
+    event: {
+      type: 'assistant',
+      message: { content: [{ type: 'tool_use', name: 'Workflow', input: {} }] },
+    },
+    receivedAtEpoch: Date.now(),
+  });
+  const afterResult = reducer(afterAssistant, {
+    type: 'incoming_event',
+    event: { type: 'result' },
+    receivedAtEpoch: Date.now(),
+  });
+  assert.equal(afterResult.turnInFlight, false);
+  assert.equal(afterResult.awaitingBackground, true);
+  assert.equal(afterResult.backgroundIsWorkflow, true);
+});
+
+test('a Monitor background wait is busy but NOT flagged as a workflow', function () {
+  const afterAssistant = reducer(_freshState(), {
+    type: 'incoming_event',
+    event: {
+      type: 'assistant',
+      message: { content: [{ type: 'tool_use', name: 'Monitor', input: {} }] },
+    },
+    receivedAtEpoch: Date.now(),
+  });
+  const afterResult = reducer(afterAssistant, {
+    type: 'incoming_event',
+    event: { type: 'result' },
+    receivedAtEpoch: Date.now(),
+  });
+  assert.equal(afterResult.awaitingBackground, true);
+  assert.equal(afterResult.backgroundIsWorkflow, false);
+});
+
+test('a fresh turn (assistant) clears a prior workflow background flag', function () {
+  const busy = { ..._freshState(), awaitingBackground: true, backgroundIsWorkflow: true };
+  const next = reducer(busy, {
+    type: 'incoming_event',
+    event: { type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } },
+    receivedAtEpoch: Date.now(),
+  });
+  assert.equal(next.awaitingBackground, false);
+  assert.equal(next.backgroundIsWorkflow, false);
+});
+
 test('idle-session reconnect settles back to idle: init then result', function () {
   // Backlog replay flows through the same live (incoming_event) path and
   // always ends with the turn's ``result``. The transient init→true must

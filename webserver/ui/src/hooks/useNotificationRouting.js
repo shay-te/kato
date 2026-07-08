@@ -6,6 +6,7 @@ import {
   unpackPermissionEnvelope,
   decisionCommandFor,
 } from '../utils/permissionEnvelope.js';
+import { maybePlayPermissionChime } from '../utils/permissionSound.js';
 
 // ``recallToolDecision`` (optional): ``(toolName) => 'allow' | 'deny' | null``.
 // When set AND the recall returns a definitive decision, the permission ask
@@ -52,6 +53,11 @@ export function useNotificationRouting(
         ? recallToolDecision(classification.permissionTool, '')
         : null;
       if (decision === 'allow' || decision === 'deny') { return; }
+      // A real, un-remembered permission ask on a BACKGROUND task → chime
+      // (honours the operator's sound prefs + focus mode internally).
+      maybePlayPermissionChime(
+        `${classification.taskId || ''}:${classification.permissionTool}`,
+      );
     }
     notify(classification);
   }, [notify, recallToolDecision]);
@@ -73,6 +79,11 @@ export function useNotificationRouting(
         ? recallToolDecision(toolName, command)
         : null;
       if (decision === 'allow' || decision === 'deny') { return; }
+      // A real, un-remembered permission ask on the FOCUSED task → chime.
+      // The dedupe key (request id) collapses this with the status feed's
+      // duplicate line for the same ask.
+      const { requestId } = unpackPermissionEnvelope(raw);
+      maybePlayPermissionChime(requestId || `${taskId || ''}:${toolName}`);
       notify({
         title: 'Approval needed',
         body: toolName,

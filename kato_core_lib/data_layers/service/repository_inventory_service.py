@@ -70,6 +70,15 @@ class RepositoryInventoryService(Service):
         explicit = self._explicit_repositories_from_config(repositories_config)
         self._repositories: list[object] | None = explicit if explicit else None
         self._inventory_validated = False
+        # True once the inventory came from an auto-discovery walk of
+        # ``repository_root_path`` (vs an explicit ``kato.repositories``
+        # list). Discovery derives aliases from folder name + origin slug, so
+        # two clones of the same remote (``foo`` and ``foo-new``) unavoidably
+        # collide on the slug alias — which must NOT take the whole inventory
+        # down. Explicit config collisions stay fatal (a real mistake to fix).
+        # Set True in ``_load_repositories`` when the root walk supplies the
+        # inventory; explicit config (materialised above) is never discovery.
+        self._inventory_from_discovery = False
 
     @classmethod
     def _explicit_repositories_from_config(cls, repository_source) -> list[object]:
@@ -291,6 +300,25 @@ class RepositoryInventoryService(Service):
             seen_repository_ids.add(repository.id)
             for alias in self._repository_aliases(repository):
                 if alias in seen_aliases and seen_aliases[alias] != repository.id:
+                    # An alias claimed by two DIFFERENT repos. In explicit
+                    # config that's an operator mistake worth stopping for.
+                    # In an AUTO-DISCOVERED inventory it's unavoidable — two
+                    # clones of one remote in ``foo`` and ``foo-new`` share
+                    # the origin slug — and raising here would empty the
+                    # WHOLE inventory (the add-repo picker showed nothing and
+                    # task pickup crashed). Keep the alias on its first owner,
+                    # warn, and carry on; repos still resolve by their unique
+                    # ids and folder aliases.
+                    if self._inventory_from_discovery:
+                        self.logger.warning(
+                            'auto-discovery: alias "%s" is shared by "%s" and '
+                            '"%s"; keeping it on "%s". Resolving a task to a '
+                            'repo by that ambiguous name may be unreliable — '
+                            'rename one folder if it matters.',
+                            alias, seen_aliases[alias], repository.id,
+                            seen_aliases[alias],
+                        )
+                        continue
                     raise ValueError(
                         f'duplicate repository alias "{alias}" for '
                         f'{seen_aliases[alias]} and {repository.id}'
@@ -321,6 +349,7 @@ class RepositoryInventoryService(Service):
                 repository_source
             )
             if discovered_repositories:
+                self._inventory_from_discovery = True
                 return discovered_repositories
             return []
         return self._normalized_repositories(repository_source)

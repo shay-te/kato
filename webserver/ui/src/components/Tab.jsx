@@ -73,6 +73,13 @@ export default function Tab({
     </span>
   );
 
+  // The tab shows the task NAME next to the id (VSCode/Chrome style) so the
+  // operator can tell tabs apart WITHOUT hovering for the tooltip. The id
+  // stays (short, stable, never truncated); the name is the wide part and
+  // ellipsises when the tab hits its max-width. The hover card still carries
+  // the untruncated name + the rest of the detail.
+  const summary = String(session?.task_summary || '').trim();
+
   const model = buildTooltipModel(session, baseStatus, needsAttention, agent);
 
   return (
@@ -91,7 +98,12 @@ export default function Tab({
         tabIndex={0}
       >
         <span className={dotClass} />
-        <strong>{session.task_id}</strong>
+        <span className="tab-label">
+          <strong className="tab-label-id">{session.task_id}</strong>
+          {summary ? (
+            <span className="tab-label-title">{summary}</span>
+          ) : null}
+        </span>
         {changesIndicator}
         <button
           type="button"

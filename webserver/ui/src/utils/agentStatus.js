@@ -21,6 +21,7 @@ import { deriveTabStatus, resolveTabStatus, statusDotClass } from './tabStatus.j
 const STATUS_BY_KIND = {
   [AGENT_STATUS_KIND.PROVISIONING]: { label: 'provisioning', title: 'Workspace is being set up.' },
   [AGENT_STATUS_KIND.WORKING]: { label: 'working', title: 'Claude is processing the current turn.' },
+  [AGENT_STATUS_KIND.WORKFLOW]: { label: 'workflow', title: 'A background workflow is running — Claude will report back when it finishes.' },
   [AGENT_STATUS_KIND.APPROVAL]: { label: 'approval', title: 'Claude is paused waiting for your approval.' },
   [AGENT_STATUS_KIND.IDLE]: { label: 'idle', title: 'Claude is connected and waiting for input.' },
   [AGENT_STATUS_KIND.CONNECTING]: { label: 'connecting', title: 'Connecting to the Claude session…' },
@@ -41,10 +42,17 @@ const KIND_BY_LIFECYCLE = {
 // Live (active-task) path — ported from describeClaudeStatus's precedence.
 function liveKind(liveStatus, baseStatus, needsAttention) {
   if (baseStatus === TAB_STATUS.PROVISIONING) { return AGENT_STATUS_KIND.PROVISIONING; }
+  // An in-flight turn is the foreground "working" state.
+  if (liveStatus.turnInFlight) { return AGENT_STATUS_KIND.WORKING; }
   // ``awaitingBackground`` = turn closed but the agent is blocked on a
-  // background wait it scheduled (Monitor / run_in_background) — still
-  // working, not idle.
-  if (liveStatus.turnInFlight || liveStatus.awaitingBackground) { return AGENT_STATUS_KIND.WORKING; }
+  // background wait it scheduled (Monitor / Workflow / run_in_background) —
+  // still busy, not idle. A background WORKFLOW gets its own status/colour
+  // so the operator can see "something is churning in the background".
+  if (liveStatus.awaitingBackground) {
+    return liveStatus.backgroundIsWorkflow
+      ? AGENT_STATUS_KIND.WORKFLOW
+      : AGENT_STATUS_KIND.WORKING;
+  }
   if (needsAttention) { return AGENT_STATUS_KIND.APPROVAL; }
   return KIND_BY_LIFECYCLE[liveStatus.lifecycle] || AGENT_STATUS_KIND.UNKNOWN;
 }
@@ -78,9 +86,11 @@ function polledKind(session, baseStatus) {
   return AGENT_STATUS_KIND.UNKNOWN;
 }
 
-// The only tab-tooltip badge CSS classes that exist are is-work/idle/sleep/wait.
+// The only tab-tooltip badge CSS classes that exist are
+// is-work/flow/idle/sleep/wait.
 const BADGE_KIND = {
   [AGENT_STATUS_KIND.WORKING]: 'work',
+  [AGENT_STATUS_KIND.WORKFLOW]: 'flow',
   [AGENT_STATUS_KIND.IDLE]: 'idle',
   [AGENT_STATUS_KIND.CONNECTING]: 'idle',
   [AGENT_STATUS_KIND.SLEEPING]: 'sleep',
@@ -97,6 +107,7 @@ export function badgeKindFor(kind) {
 
 function dotStatusForKind(kind, resolved) {
   if (kind === AGENT_STATUS_KIND.WORKING) { return TAB_STATUS.WORKING; }
+  if (kind === AGENT_STATUS_KIND.WORKFLOW) { return TAB_STATUS.WORKFLOW; }
   if (kind === AGENT_STATUS_KIND.APPROVAL) { return TAB_STATUS.ATTENTION; }
   return resolved;
 }

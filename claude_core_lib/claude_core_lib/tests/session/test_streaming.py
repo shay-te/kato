@@ -1369,14 +1369,26 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'request_id is required'):
             session.send_permission_response(request_id='   ', allow=True)
 
-    def test_bypass_permissions_clears_prompt_tool(self) -> None:
-        # Line 183-185: ``bypassPermissions`` with no prompt tool → tool cleared.
+    def test_bypass_permissions_still_routes_asks_over_stdio(self) -> None:
+        # bypassPermissions auto-approves TOOL permissions, but the prompt
+        # tool must stay set so the agent's AskUserQuestion is routed to the
+        # operator instead of the headless CLI auto-answering it. Questions
+        # are NEVER auto-answered, regardless of permission mode.
         session = StreamingClaudeSession(
             task_id='PROJ-1',
             permission_mode='bypassPermissions',
             permission_prompt_tool='',
         )
-        self.assertEqual(session._permission_prompt_tool, '')
+        self.assertEqual(session._permission_prompt_tool, 'stdio')
+
+    def test_explicit_prompt_tool_overrides_default_even_in_bypass(self) -> None:
+        # An explicit prompt tool still wins in bypass mode.
+        session = StreamingClaudeSession(
+            task_id='PROJ-1',
+            permission_mode='bypassPermissions',
+            permission_prompt_tool='custom-tool',
+        )
+        self.assertEqual(session._permission_prompt_tool, 'custom-tool')
 
     def test_explicit_prompt_tool_overrides_default(self) -> None:
         # Line 182: ``normalized_prompt_tool`` truthy → use it as-is.

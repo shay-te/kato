@@ -100,16 +100,26 @@ export default function TabList({
       if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) {
         return;
       }
+      // Normalise deltaY to PIXELS. A physical mouse wheel on
+      // Windows/Firefox reports deltaMode === 1 (LINES, deltaY ≈ 3)
+      // — adding 3 to scrollLeft barely moves, so the wheel felt
+      // dead (the reported bug). Lines → ~16px each; pages → a
+      // viewport width. Pixel wheels (deltaMode 0) pass through as-is.
+      const step = event.deltaMode === 1
+        ? event.deltaY * 16
+        : event.deltaMode === 2
+          ? event.deltaY * node.clientWidth
+          : event.deltaY;
       // Only consume the event when there's actually room to
       // scroll in that direction — otherwise the page should
       // still scroll normally.
-      const goingRight = event.deltaY > 0;
+      const goingRight = step > 0;
       const atEnd = goingRight
         ? node.scrollLeft + node.clientWidth >= node.scrollWidth - 1
         : node.scrollLeft <= 0;
       if (atEnd) { return; }
       event.preventDefault();
-      node.scrollLeft += event.deltaY;
+      node.scrollLeft += step;
     };
     node.addEventListener('scroll', onScroll, { passive: true });
     node.addEventListener('wheel', onWheel, { passive: false });

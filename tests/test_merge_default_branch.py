@@ -172,6 +172,51 @@ class MergeRealGitTests(unittest.TestCase):
             (clone / 'shared.txt').read_text(encoding='utf-8'),
         )
 
+    def test_finalize_merge_commits_once_the_agent_resolved_the_conflict(self) -> None:
+        clone, repo = _build_repo_with_diverged_default(self.tmp)
+        (clone / 'shared.txt').write_text('CHANGED ON FEAT\n', encoding='utf-8')
+        _git(clone, 'add', '-A')
+        _git(clone, 'commit', '-q', '-m', 'feat edits shared')
+        self.service.merge_default_branch_into_clone(repo, 'feat/x')
+        # Sanity: mid-merge with markers + MERGE_HEAD.
+        self.assertTrue((clone / '.git' / 'MERGE_HEAD').exists())
+
+        # Before resolution the finalize is a NO-OP (markers remain).
+        pending = self.service.finalize_merge_if_resolved(repo)
+        self.assertFalse(pending['finalized'])
+        self.assertEqual(pending['reason'], 'conflicts_remain')
+        self.assertIn('shared.txt', pending['unresolved_files'])
+        self.assertTrue((clone / '.git' / 'MERGE_HEAD').exists())
+
+        # The agent resolves by editing the file (no ``git add`` — sandbox).
+        (clone / 'shared.txt').write_text('RESOLVED\n', encoding='utf-8')
+
+        out = self.service.finalize_merge_if_resolved(repo)
+        self.assertTrue(out['finalized'], out)
+        self.assertEqual(out['repository_id'], 'client')
+        # The merge is committed: MERGE_HEAD gone, tree clean.
+        self.assertFalse((clone / '.git' / 'MERGE_HEAD').exists())
+        self.assertEqual(
+            subprocess.run(
+                ['git', 'status', '--porcelain'], cwd=str(clone),
+                capture_output=True, text=True, check=True,
+            ).stdout.strip(),
+            '',
+        )
+        # It IS a merge commit (two parents) so the diff base collapses to
+        # origin/main → the operator sees only the branch's work.
+        parents = subprocess.run(
+            ['git', 'rev-list', '--parents', '-n', '1', 'HEAD'], cwd=str(clone),
+            capture_output=True, text=True, check=True,
+        ).stdout.split()
+        self.assertEqual(len(parents), 3, 'expected a merge commit (2 parents)')
+
+    def test_finalize_merge_is_a_noop_when_no_merge_pending(self) -> None:
+        clone, repo = _build_repo_with_diverged_default(self.tmp)
+        out = self.service.finalize_merge_if_resolved(repo)
+        self.assertFalse(out['finalized'])
+        self.assertEqual(out['reason'], 'no_pending_merge')
+
     def test_dirty_tree_wip_commits_then_merges_for_real(self) -> None:
         clone, repo = _build_repo_with_diverged_default(self.tmp)
         # Agent left uncommitted work in the tree (non-conflicting file).
@@ -265,6 +310,44 @@ class AgentAggregationTests(unittest.TestCase):
         self.assertEqual(
             out['merged_repositories'][0]['commits_merged'], 3,
         )
+
+    def test_finalize_resolved_merges_aggregates_finalized_and_pending(self) -> None:
+        svc = self._service()
+        done = SimpleNamespace(id='resolved')
+        still = SimpleNamespace(id='still-conflicted')
+        svc._repository_service.finalize_merge_if_resolved.side_effect = [
+            {'finalized': True, 'repository_id': 'resolved'},
+            {'finalized': False, 'reason': 'conflicts_remain',
+             'unresolved_files': ['x.py']},
+        ]
+        with patch.object(
+            svc, '_resolve_publish_context',
+            return_value=([done, still], 'feat/x', SimpleNamespace(id='T-1')),
+        ):
+            out = svc.finalize_resolved_merges_for_task('T-1')
+        self.assertEqual(out['finalized_repositories'], ['resolved'])
+        self.assertEqual(out['pending_repositories'], ['still-conflicted'])
+
+    def test_finalize_resolved_merges_isolates_a_raising_repo(self) -> None:
+        svc = self._service()
+        repo = SimpleNamespace(id='boom')
+        svc._repository_service.finalize_merge_if_resolved.side_effect = (
+            RuntimeError('git exploded')
+        )
+        with patch.object(
+            svc, '_resolve_publish_context',
+            return_value=([repo], 'feat/x', SimpleNamespace(id='T-1')),
+        ):
+            out = svc.finalize_resolved_merges_for_task('T-1')
+        # The raise is swallowed (best-effort read path) and logged.
+        self.assertEqual(out['finalized_repositories'], [])
+        svc.logger.exception.assert_called()
+
+    def test_finalize_resolved_merges_empty_task_id_is_a_noop(self) -> None:
+        svc = self._service()
+        out = svc.finalize_resolved_merges_for_task('   ')
+        self.assertEqual(out['finalized_repositories'], [])
+        svc._repository_service.finalize_merge_if_resolved.assert_not_called()
 
     def test_no_workspace_context_returns_error(self) -> None:
         # _resolve_publish_context yields no repos (clone gone /

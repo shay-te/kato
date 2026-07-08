@@ -163,6 +163,13 @@ function DiffFileWithComments({
       : _defaultInitiallyExpanded(file)
   ));
   const [renderedHunks, setRenderedHunks] = useState(() => file.hunks || []);
+  // In-flight base-source fetch, so concurrent callers coalesce (see
+  // ``loadBaseSourceLines``). Cleared on file switch below.
+  const baseSourcePromiseRef = useRef(null);
+  // Latest loaded base lines, read by ``loadBaseSourceLines`` so a caller
+  // whose closure captured a pre-load ``baseSource`` still gets the lines
+  // (no stale-closure "already loaded but I see null" race).
+  const baseSourceLinesRef = useRef(null);
   const [baseSource, setBaseSource] = useState({
     status: 'idle',
     lines: null,
@@ -170,21 +177,49 @@ function DiffFileWithComments({
   });
   const [pathMenu, setPathMenu] = useState(null);
 
-  // Reset only when the FILE IDENTITY changes (operator switched files,
-  // or the workspace itself changed). ``file.hunks`` is a fresh array
-  // reference on every 5s poll, so depending on it here was wiping the
-  // operator's expanded ranges every poll — they hit "expand 20 more
-  // lines", read for a few seconds, and the view snapped back to the
-  // original hunks. The hunks-content path (a real diff change while
-  // viewing the same file) is rare and intentionally accepts a stale
-  // render until the operator switches files; the alternative would be
-  // to re-apply each expansion on top of fresh hunks, which is a much
-  // bigger change.
+  // A stable CONTENT signature of the diff — same string across identical
+  // 5s polls (``file.hunks`` gets a fresh array reference each poll even
+  // when the bytes are unchanged), but different the instant the diff
+  // actually changes (Claude edits the open file, a merge lands, …). It
+  // must react to the actual TEXT, not just line counts/lengths: a Claude
+  // edit that swaps a value on a line (``b`` → ``c``) keeps every length
+  // identical, so a length-only signature would miss it and the open file
+  // would go stale. Cheap FNV-1a hash over each change's content — one pass
+  // over the hunks, tiny result.
+  const hunksSignature = useMemo(() => {
+    let hash = 0x811c9dc5;
+    const mix = (text) => {
+      for (let i = 0; i < text.length; i += 1) {
+        hash ^= text.charCodeAt(i);
+        hash = Math.imul(hash, 0x01000193);
+      }
+      hash ^= 0x7f; // separator, so "ab"+"c" ≠ "a"+"bc"
+    };
+    const hunks = file.hunks || [];
+    for (const hunk of hunks) {
+      mix(hunk.content || '');
+      for (const change of hunk.changes || []) {
+        mix(change.content || '');
+      }
+    }
+    return (hash >>> 0).toString(16);
+  }, [file.hunks]);
+
+  // Reset the rendered hunks when the file identity changes (operator
+  // switched files / the workspace changed) OR when the open file's diff
+  // actually changed (``hunksSignature``). Keying on the SIGNATURE — not
+  // the ``file.hunks`` array reference — is what lets the OPEN file update
+  // LIVE when Claude edits it, WITHOUT wiping the operator's manual
+  // expansions on every idle poll (unchanged bytes → same signature → no
+  // reset). A genuine change resets to the fresh diff, which is exactly
+  // what the operator wants to see.
   useEffect(() => {
     setRenderedHunks(file.hunks || []);
     setBaseSource({ status: 'idle', lines: null, error: '' });
+    baseSourcePromiseRef.current = null;
+    baseSourceLinesRef.current = null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path, repoId, repoCwd, taskId]);
+  }, [path, repoId, repoCwd, taskId, hunksSignature]);
 
   useEffect(() => {
     if (forceExpandToken) { setExpanded(true); }
@@ -615,30 +650,41 @@ function DiffFileWithComments({
     </button>
   );
 
-  async function loadBaseSourceLines() {
-    if (baseSource.status === 'ready') { return baseSource.lines; }
-    if (baseSource.status === 'loading') { return null; }
+  function loadBaseSourceLines() {
+    if (baseSourceLinesRef.current) { return Promise.resolve(baseSourceLinesRef.current); }
+    // Coalesce concurrent callers onto ONE in-flight fetch. Without this the
+    // eager load-on-expand (for the trailing gap) and a manual gap-expander
+    // click race: the second caller used to see status 'loading' and get
+    // ``null``, silently dropping its expansion.
+    if (baseSourcePromiseRef.current) { return baseSourcePromiseRef.current; }
     const basePath = basePathForDiffFile(file, path);
-    if (!basePath || basePath === '/dev/null') { return null; }
+    if (!basePath || basePath === '/dev/null') { return Promise.resolve(null); }
     setBaseSource({ status: 'loading', lines: null, error: '' });
-    try {
-      const body = await fetchBaseFileContent(taskId, {
-        repoId,
-        repoCwd,
-        path: basePath,
-      });
-      if (body.binary || body.too_large) {
-        const error = body.too_large ? 'file too large' : 'binary file';
-        setBaseSource({ status: 'error', lines: null, error });
+    const promise = (async () => {
+      try {
+        const body = await fetchBaseFileContent(taskId, {
+          repoId,
+          repoCwd,
+          path: basePath,
+        });
+        if (body.binary || body.too_large) {
+          const error = body.too_large ? 'file too large' : 'binary file';
+          setBaseSource({ status: 'error', lines: null, error });
+          return null;
+        }
+        const lines = splitSourceLines(body.content || '');
+        baseSourceLinesRef.current = lines;
+        setBaseSource({ status: 'ready', lines, error: '' });
+        return lines;
+      } catch (err) {
+        setBaseSource({ status: 'error', lines: null, error: String(err) });
         return null;
+      } finally {
+        baseSourcePromiseRef.current = null;
       }
-      const lines = splitSourceLines(body.content || '');
-      setBaseSource({ status: 'ready', lines, error: '' });
-      return lines;
-    } catch (err) {
-      setBaseSource({ status: 'error', lines: null, error: String(err) });
-      return null;
-    }
+    })();
+    baseSourcePromiseRef.current = promise;
+    return promise;
   }
 
   // Auto-reveal buried threads. A comment anchored to a line that
@@ -682,6 +728,21 @@ function DiffFileWithComments({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expanded, openCommentLines, renderedHunks, baseSource]);
 
+  // Eagerly load the base file's line count once the file is expanded so
+  // the TRAILING gap (the "view more lines below the last hunk" expander)
+  // can render — it needs the total line count to know how many lines sit
+  // between the last hunk and EOF. Without this the bottom expander only
+  // appeared after clicking some OTHER expander first (which is what
+  // triggered the lazy load). Leading/middle gaps compute from the hunks
+  // alone, so they were never affected. One fetch per file, cached.
+  useEffect(() => {
+    if (!expanded) { return undefined; }
+    if (baseSource.status !== 'idle') { return undefined; }
+    loadBaseSourceLines();
+    return undefined;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded, baseSource.status]);
+
   async function onExpandGap(event, gap, direction) {
     event.preventDefault();
     const range = expansionRangeForGap(gap, direction, event.shiftKey);
@@ -702,6 +763,12 @@ function DiffFileWithComments({
   }
 
   function renderGapDecoration(gap) {
+    // ``loading`` only marks the buttons busy (aria-busy) — it must NOT
+    // disable them. The base file is fetched eagerly on expand (so the
+    // trailing gap can render), which means a fast operator would otherwise
+    // hit a dead expander for the fetch's duration. ``loadBaseSourceLines``
+    // coalesces, so a click mid-fetch just awaits the same load and then
+    // expands.
     const loading = baseSource.status === 'loading';
     const label = countNoun(gap.count, 'hidden line');
     return (
@@ -715,7 +782,7 @@ function DiffFileWithComments({
             type="button"
             className="diff-context-expander-btn"
             onClick={(event) => onExpandGap(event, gap, 'above')}
-            disabled={loading}
+            aria-busy={loading}
             aria-label={`Show hidden lines above (${label})`}
             title="Show lines from the top of this hidden block. Shift-click shows all."
           >
@@ -726,7 +793,7 @@ function DiffFileWithComments({
             type="button"
             className="diff-context-expander-btn"
             onClick={(event) => onExpandGap(event, gap, 'below')}
-            disabled={loading}
+            aria-busy={loading}
             aria-label={`Show hidden lines below (${label})`}
             title="Show lines from the bottom of this hidden block. Shift-click shows all."
           >

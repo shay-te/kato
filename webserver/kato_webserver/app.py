@@ -89,7 +89,9 @@ from kato_webserver.git_diff_utils import (
     diff_for_commit,
     ensure_branch_checked_out,
     file_text_at_ref,
+    has_origin_remote,
     list_branch_commits,
+    resolve_base_ref,
     tracked_file_tree,
 )
 from kato_webserver.prompt_draft_store import read_draft, write_draft
@@ -520,7 +522,14 @@ def _compute_repo_diff(
     if task_id:
         ensure_branch_checked_out(cwd, task_id)
     base = _resolve_diff_base(repo_id, cwd, agent_service)
-    if not base:
+    ref, is_local = resolve_base_ref(cwd, base)
+    # A repo WITH an origin remote but no resolvable base is a genuine config
+    # problem (wrong/missing destination_branch) — surface the guiding error
+    # rather than silently HEAD-diffing and hiding committed task-branch work.
+    # A repo with NO origin remote is a local-only clone the operator dropped
+    # into the task: there is no cloud base, so diff the working tree against
+    # HEAD to show the edits they see in their editor.
+    if is_local and has_origin_remote(cwd):
         return {
             'repo_id': repo_id,
             'cwd': cwd,
@@ -536,9 +545,9 @@ def _compute_repo_diff(
     return {
         'repo_id': repo_id,
         'cwd': cwd,
-        'base': base,
+        'base': '' if is_local else base,
         'head': current_branch(cwd),
-        'diff': diff_against_base(cwd, f'origin/{base}'),
+        'diff': diff_against_base(cwd, ref),
         'conflicted_files': conflicted_paths(cwd),
         'error': '',
     }
@@ -565,13 +574,35 @@ def _changed_files_for_repo(repo_id: str, cwd: str, agent_service) -> list[str]:
     the same way the Changes tab does so the two never disagree.
 
     Read-only (no ``ensure_branch_checked_out``): the Files tab must
-    not mutate git state. Empty list when the base can't be resolved
-    — the tree just renders without change colouring.
+    not mutate git state. Empty list when a base is required (repo has a
+    remote) but can't be resolved — the tree just renders without change
+    colouring. A no-remote local clone falls back to a HEAD diff so its
+    working-tree edits still colour the tree (matches the Changes tab).
     """
     base = _resolve_diff_base(repo_id, cwd, agent_service)
-    if not base:
+    ref, is_local = resolve_base_ref(cwd, base)
+    if is_local and has_origin_remote(cwd):
         return []
-    return changed_paths(cwd, f'origin/{base}')
+    return changed_paths(cwd, ref)
+
+
+def _finalize_resolved_merges(agent_service, task_id: str) -> None:
+    """Best-effort: commit any pending merge whose conflicts are resolved.
+
+    Called at the top of the polled Files / Changes reads so a merge the
+    agent just resolved gets finalised (it can't run git itself), leaving
+    the diff showing only the branch's work. A cheap no-op when no merge is
+    pending. Never lets a git hiccup break the read the operator is waiting
+    on.
+    """
+    if agent_service is None:
+        return
+    try:
+        agent_service.finalize_resolved_merges_for_task(task_id)
+    except Exception:
+        logging.getLogger(__name__).exception(
+            'finalize-resolved-merges failed for %s', task_id,
+        )
 
 
 def _no_base_error_message(repo_id: str) -> str:
@@ -1661,6 +1692,12 @@ def _register_http_routes(app: Flask) -> None:
         manager = app.config['SESSION_MANAGER']
         workspace_manager = app.config.get('WORKSPACE_MANAGER')
         agent_service = app.config.get('AGENT_SERVICE')
+        # A merge the agent has just resolved is still uncommitted (the agent
+        # can't run git), so the tree would show every merged-in file as a
+        # conflict + change. Finalise it here — a cheap no-op unless a merge
+        # is pending AND its markers are gone — so the tree reflects only the
+        # branch's work.
+        _finalize_resolved_merges(agent_service, task_id)
         # Repos kato can't push to (read-only / reference) — badge them in the
         # tree so the operator knows edits there won't be published.
         from kato_core_lib.helpers.read_only_repos_store import read_only_repos
@@ -1736,6 +1773,10 @@ def _register_http_routes(app: Flask) -> None:
         manager = app.config['SESSION_MANAGER']
         workspace_manager = app.config.get('WORKSPACE_MANAGER')
         agent_service = app.config.get('AGENT_SERVICE')
+        # Commit a just-resolved merge before diffing so the Changes tab
+        # shows only the branch's work, not the whole merged-in default
+        # branch (see list_session_files). No-op unless a merge is pending.
+        _finalize_resolved_merges(agent_service, task_id)
         workspace_status = _workspace_status(workspace_manager, task_id)
         repository_ids = _task_repository_ids(workspace_manager, task_id)
         # Multi-repo task: compute one diff per clone so the UI can
@@ -1935,9 +1976,11 @@ def _register_http_routes(app: Flask) -> None:
         if rel_path is None:
             return jsonify({'error': 'path is outside the task repository'}), 403
         base = _resolve_diff_base(repo_id, cwd, agent_service)
-        if not base:
+        ref, is_local = resolve_base_ref(cwd, base)
+        if is_local and has_origin_remote(cwd):
             return jsonify({'error': _no_base_error_message(repo_id)}), 404
-        ref = f'origin/{base}'
+        # For a no-remote local clone ``ref`` is HEAD — the base the diff is
+        # computed against — so context expansion reads the right blob.
         size = blob_size_at_ref(cwd, ref, rel_path)
         if size is None:
             return jsonify({'error': 'file not found at base'}), 404
@@ -1981,15 +2024,18 @@ def _register_http_routes(app: Flask) -> None:
         # destination_branch wins over git auto-detection so the
         # commit list matches what the operator sees in Changes.
         base = _resolve_diff_base(repo_id, cwd, agent_service)
-        if not base:
+        ref, is_local = resolve_base_ref(cwd, base)
+        if is_local and has_origin_remote(cwd):
             return jsonify({
                 'commits': [],
                 'error': _no_base_error_message(repo_id),
             }), 200
-        commits = list_branch_commits(cwd, f'origin/{base}', limit=limit)
+        # No-remote local clone: no "commits ahead of a base" concept, so the
+        # list is simply empty (HEAD ahead of HEAD is nothing) — not an error.
+        commits = list_branch_commits(cwd, ref, limit=limit)
         return jsonify({
             'repo_id': repo_id,
-            'base': base,
+            'base': '' if is_local else base,
             'head': current_branch(cwd),
             'commits': commits,
         })
@@ -2907,6 +2953,10 @@ def _register_post_permission_route(app: Flask) -> None:
         if not request_id:
             return jsonify({'error': 'request_id is required'}), 400
         allow = bool(payload.get('allow', False))
+        # The operator's ORIGINAL intent, before a hard-block override flips it
+        # below. Used to word the feed bubble correctly: "you approved, but this
+        # is a hard floor" reads very differently from "you denied this".
+        operator_approved = allow
         rationale = str(payload.get('rationale', '') or '')
         # Re-derive the tool SERVER-SIDE (never trust the client body for the
         # command) and classify it. The Action Guard + the operator's
@@ -2938,7 +2988,9 @@ def _register_post_permission_route(app: Flask) -> None:
         # A hard BLOCK becomes a loud bubble in the feed; every risky decision
         # (block / approved-ask / denied-ask) is recorded to the audit log.
         if guard_blocked:
-            _publish_action_guard_block(session, verdict)
+            _publish_action_guard_block(
+                session, verdict, operator_approved=operator_approved,
+            )
         _audit_action_guard(app, task_id, request_id, verdict, guard_command, allow)
         # ``post_tool_use`` sees the final, post-hook decision so the
         # audit log reflects what actually got delivered to Claude.
@@ -3214,23 +3266,42 @@ def _annotate_action_guard(raw: dict, session) -> None:
         pass
 
 
-def _publish_action_guard_block(session, verdict) -> None:
-    """Surface a hard BLOCK as a loud system bubble in the session feed."""
+def _publish_action_guard_block(session, verdict, operator_approved=False) -> None:
+    """Surface a hard BLOCK as a loud system bubble in the session feed.
+
+    ``operator_approved`` distinguishes the two ways a hard block reaches the
+    feed so the bubble states what actually happened. When the operator
+    clicked *Approve* on a floor category the message must NOT read "the agent
+    was refused" as if they weren't involved — they approved; the block is a
+    hard safety floor that overrides the approval. Either way it stays a loud
+    (red) notice — only the wording changes.
+    """
     publisher = getattr(session, 'publish_system_notice', None)
     if not callable(publisher):
         return
     category = _action_guard_enum_value(verdict.category)
     reason = verdict.reason or 'blocked by Action Guard'
+    if operator_approved:
+        message = (
+            f'BLOCKED by Action Guard ({category}): {reason}. You approved this, '
+            f'but it is a hard safety floor that can’t be overridden — the '
+            f'action was refused and the agent was told why.'
+        )
+    else:
+        message = (
+            f'BLOCKED by Action Guard ({category}): {reason}. You denied this — '
+            f'the action was refused and the agent was told why.'
+        )
     try:
         publisher(
             CLAUDE_SYSTEM_SUBTYPE_ACTION_GUARD_BLOCK,
-            f'BLOCKED by Action Guard ({category}): {reason}. The agent was '
-            'refused this action and told why.',
+            message,
             {'action_guard': {
                 'category': category,
                 'decision': 'block',
                 'reason': reason,
                 'rule_id': verdict.rule_id,
+                'operator_approved': bool(operator_approved),
             }},
         )
     except Exception:

@@ -1,4 +1,5 @@
 import { NOTIFICATION_KIND } from '../constants/notificationKind.js';
+import PermissionSoundSettings from './PermissionSoundSettings.jsx';
 
 // The shared body of the notification preferences UI — used both by the
 // SettingsDrawer "Notifications" tab (variant="panel") and the header
@@ -106,6 +107,8 @@ export default function NotificationPrefsBody({
         </div>
       )}
       {kindRows}
+      <div className="notification-settings-divider" />
+      <PermissionSoundSettings />
     </>
   );
 }

@@ -546,16 +546,19 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   color: rgba(245, 245, 247, 0.85);
   cursor: pointer;
   white-space: nowrap;
-  /* Tabs keep their FULL width (status dot + task id + the two action
-   * discs) and never compress — the strip scrolls horizontally when
-   * there are too many to fit (chevrons + wheel handle the overflow).
+  /* Tabs never COMPRESS when the strip is crowded — the strip scrolls
+   * horizontally instead (chevrons + wheel handle the overflow).
    * ``flex-shrink: 0`` is the fix for the "every chip squeezed until
    * only the dot showed" regression: the default flex-shrink:1 let a
-   * crowded #tab-list shrink each segment to nothing. No max-width cap
-   * either, so the chip always grows to contain its content and the
-   * pin/× icons can never be pushed past the right edge. */
+   * crowded #tab-list shrink each segment to nothing.
+   *
+   * A ``max-width`` cap makes them behave like VSCode / Chrome tabs: the
+   * chip grows to fit the task id + name up to the cap, then the NAME
+   * ellipsises (the id + pin/× icons are never squeezed — those parts
+   * are flex-shrink:0 inside). Without the cap a long task name would
+   * blow one tab out to the full strip width. */
   flex-shrink: 0;
-  max-width: none;
+  max-width: 260px;
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease, transform 90ms ease;
 }
 
@@ -586,13 +589,40 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   outline: none;
 }
 
-.tabs-pane-top .tab strong {
+/* id + name group. ``min-width: 0`` lets the name child ellipsise inside
+ * the flex row (a flex item's default min-width:auto would refuse to
+ * shrink and overflow the pill instead). */
+.tabs-pane-top .tab .tab-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.tabs-pane-top .tab strong,
+.tabs-pane-top .tab .tab-label-id {
   font-weight: 600;
   font-size: 12px;
   letter-spacing: 0.01em;
-  /* Always show the full task id. The tab never shrinks (.tab has
-   * flex-shrink:0) so the id is never squeezed — no ellipsis needed. */
+  /* The task id is short and stable — always shown in full, never
+   * ellipsised (it's the id you scan for). */
   flex-shrink: 0;
+}
+
+/* The task NAME — the wide, VSCode-style part. Ellipsises when the tab
+ * hits its max-width so one long name can't blow the pill out. Dimmer
+ * than the id so the id still reads as the primary handle. */
+.tabs-pane-top .tab .tab-label-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: rgba(245, 245, 247, 0.65);
+}
+
+.tabs-pane-top .tab.active .tab-label-title {
+  color: rgba(245, 245, 247, 0.85);
 }
 
 .tabs-pane-top .tab p {
@@ -1011,6 +1041,10 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   background: #f59e0b;
   border-color: #f59e0b;
 } /* orange: Claude working */
+.status-workflow {
+  background: #a78bfa;
+  border-color: #a78bfa;
+} /* indigo: a background workflow is running */
 .status-done {
   background: #2a2a2a;
   border-color: #2a2a2a;
@@ -6652,6 +6686,15 @@ body.kato-resizing #left-pane-resizer::before {
   background: #0a0a0a;
 }
 
+/* Background WORKFLOW running — indigo, distinct from the amber foreground
+ * "working" so the operator can tell a multi-agent workflow is churning in
+ * the background (not just the current turn). */
+.claude-status-workflow {
+  color: #a78bfa;
+  border-color: #a78bfa;
+  background: rgba(139, 92, 246, 0.12);
+}
+
 .claude-status-approval {
   color: #f59e0b;
   border-color: #f59e0b;
@@ -7087,6 +7130,28 @@ body.kato-resizing #left-pane-resizer::before {
   color: #f5f5f7;
   cursor: pointer;
   user-select: none;
+}
+
+/* "Test sound" preview button under the approval-sound toggles. Compact,
+ * secondary — it's a try-it affordance, not a primary action. */
+.notification-sound-test {
+  margin: 4px 0 0 4px;
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(245, 245, 247, 0.85);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.notification-sound-test:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  color: #f5f5f7;
+}
+.notification-sound-test:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* iOS-style toggle switch — the underlying ``<input type="checkbox">``
@@ -8262,6 +8327,10 @@ body.kato-resizing #left-pane-resizer::before {
   background: #f59e0b;
 }
 
+.tab-tooltip-dot.status-workflow {
+  background: #a78bfa;
+}
+
 .tab-tooltip-dot.status-attention {
   background: #f59e0b;
 }
@@ -8304,6 +8373,11 @@ body.kato-resizing #left-pane-resizer::before {
 .tab-tooltip-badge.is-work {
   background: rgba(52, 211, 153, 0.16);
   color: #79f2c0;
+}
+
+.tab-tooltip-badge.is-flow {
+  background: rgba(139, 92, 246, 0.12);
+  color: #a78bfa;
 }
 
 .tab-tooltip-badge.is-idle {

@@ -429,7 +429,9 @@ function serverBubblesFor(
         ];
       }
       if (raw.subtype === CLAUDE_SYSTEM_SUBTYPE.ACTION_GUARD_BLOCK) {
-        // Kato-synthetic: the Action Guard refused a tool call. Loud
+        // Kato-synthetic: the Action Guard refused a tool call (either the
+        // operator denied it, or they approved a hard floor that overrode
+        // the approval — the backend words the message accordingly). Loud
         // ERROR-kind bubble so the operator sees exactly what was blocked.
         const message = String(raw.message || '').trim();
         if (!message) { return []; }

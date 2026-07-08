@@ -111,6 +111,29 @@ class RepositoryInventoryServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'duplicate repository alias'):
             service.validate_connections()
 
+    def test_discovered_inventory_tolerates_duplicate_aliases(self) -> None:
+        # Two AUTO-DISCOVERED clones of one remote (``foo`` and ``foo-new``)
+        # share the origin slug alias. Unlike an explicit-config collision,
+        # this is unavoidable and must NOT empty the whole inventory (the bug:
+        # the add-repo picker showed nothing + task pickup crashed).
+        repositories = [
+            types.SimpleNamespace(
+                id='foo', display_name='Foo', local_path='/x/foo',
+                repo_slug='foo', aliases=[],
+            ),
+            types.SimpleNamespace(
+                id='foo-new', display_name='Foo New', local_path='/x/foo-new',
+                repo_slug='foo', aliases=[],
+            ),
+        ]
+        service = RepositoryInventoryService(repositories)
+        # Simulate the discovery source so the collision is tolerated.
+        service._inventory_from_discovery = True
+
+        result = service.repositories  # triggers validation; must NOT raise
+
+        self.assertEqual({r.id for r in result}, {'foo', 'foo-new'})
+
     def test_resolve_task_repositories_matches_multiple_repositories_from_task_text(self) -> None:
         service = RepositoryInventoryService([self.client_repo, self.backend_repo])
         task = build_task(description='Update client and backend endpoints')

@@ -523,8 +523,11 @@ describe('DiffFileWithComments — collapsed context expansion', () => {
     renderDiff({ file, initiallyExpanded: true });
     expect(screen.getByText(/26 hidden lines/i)).toBeInTheDocument();
 
+    // The middle gap's "below" expander (the base file also has 8 lines
+    // after the last hunk → a trailing expander appears once the base
+    // loads, so target the 26-hidden-lines one specifically).
     const expandBelow = screen.getByRole('button', {
-      name: /show hidden lines below/i,
+      name: /show hidden lines below \(26 hidden lines\)/i,
     });
     fireEvent.click(expandBelow);
 
@@ -539,6 +542,55 @@ describe('DiffFileWithComments — collapsed context expansion', () => {
         path: 'src/promises.scss',
       },
     );
+  });
+});
+
+
+describe('DiffFileWithComments — live update while the file stays open', () => {
+  function diffFor(bodyLine) {
+    return parseDiff([
+      'diff --git a/src/app.js b/src/app.js',
+      '--- a/src/app.js',
+      '+++ b/src/app.js',
+      '@@ -1,2 +1,2 @@',
+      ' const a = 1;',
+      `-${bodyLine} old`,
+      `+${bodyLine} new`,
+      '',
+    ].join('\n'))[0];
+  }
+
+  test('a changed diff for the SAME open file re-renders live (no switch-away needed)', () => {
+    // react-diff-view tokenizes each line into multiple spans, so assert on
+    // the container's concatenated text, not getByText (which matches a
+    // single element's full text).
+    const { container, rerender } = render(
+      <DiffFileWithComments {...diffProps({ file: diffFor('const b ='), initiallyExpanded: true })} />,
+    );
+    expect(container.textContent).toContain('const b = new');
+
+    // Claude edits the same file → a fresh diff arrives for the SAME path.
+    // The view must show it WITHOUT the operator switching files.
+    rerender(
+      <DiffFileWithComments {...diffProps({ file: diffFor('const c ='), initiallyExpanded: true })} />,
+    );
+    expect(container.textContent).toContain('const c = new');
+    expect(container.textContent).not.toContain('const b = new');
+  });
+
+  test('an identical diff (idle poll, fresh array ref) does NOT reset — expansions survive', () => {
+    const file = diffFor('const b =');
+    const { container, rerender } = render(
+      <DiffFileWithComments {...diffProps({ file, initiallyExpanded: true })} />,
+    );
+    // A poll returns the SAME bytes in a NEW array reference. If the reset
+    // keyed on the reference it would wipe state every 5s; keyed on the
+    // content signature it must be a no-op.
+    const sameBytesFreshRef = diffFor('const b =');
+    rerender(
+      <DiffFileWithComments {...diffProps({ file: sameBytesFreshRef, initiallyExpanded: true })} />,
+    );
+    expect(container.textContent).toContain('const b = new');
   });
 });
 
@@ -565,6 +617,24 @@ describe('DiffFileWithComments — buried comment auto-reveal', () => {
   function gapSource() {
     return new Array(40).fill(0).map((_, i) => `line ${i + 1}`).join('\n');
   }
+
+  test('a trailing expander appears below the last hunk (view lines to EOF)', async () => {
+    // The last hunk ends at line 32; the base file has 40 lines, so there
+    // are 8 lines below with NO expander before this fix (the trailing gap
+    // needs the base line count, which now loads eagerly on expand).
+    const file = parseDiff(gappedDiff)[0];
+    apiMocks.fetchBaseFileContent.mockResolvedValue({
+      content: gapSource(), binary: false,
+    });
+
+    renderDiff({ file, initiallyExpanded: true });
+
+    // Bottom expander shows the 8 hidden lines below the last hunk.
+    const below = await screen.findByRole('button', {
+      name: /show hidden lines below \(8 hidden lines\)/i,
+    });
+    expect(below).toBeInTheDocument();
+  });
 
   test('an open comment hidden in a gap is revealed with no manual click', async () => {
     const file = parseDiff(gappedDiff)[0];
@@ -614,11 +684,12 @@ describe('DiffFileWithComments — buried comment auto-reveal', () => {
       }],
     });
 
-    // Resolved threads must not auto-expand: the gap stays collapsed
-    // and we never even fetch the base file for it.
+    // Resolved threads must not auto-expand: the gap stays collapsed and
+    // the resolved thread is not surfaced. (The base file may be fetched to
+    // render the trailing "show lines below" expander — that's independent
+    // of comment auto-reveal; what matters is the gap is NOT forced open.)
     expect(screen.getByText(/26 hidden lines/i)).toBeInTheDocument();
     await Promise.resolve();
-    expect(apiMocks.fetchBaseFileContent).not.toHaveBeenCalled();
     expect(screen.queryByText('resolved long ago')).not.toBeInTheDocument();
   });
 });

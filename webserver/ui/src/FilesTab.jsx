@@ -388,6 +388,17 @@ export default function FilesTab({
     closePathMenu();
     await copyRepoRelativePath(repoId, path);
   }
+  // Drop the file's path into the chat composer as a reference (repo-scoped
+  // when the repo is known), so the operator can point Claude at the whole
+  // file without pasting its contents.
+  function placePathInChat() {
+    const repoId = String(pathMenu?.repoId || '').trim();
+    const path = String(pathMenu?.relativePath || '').trim();
+    closePathMenu();
+    if (!path) { return; }
+    const reference = repoId ? `${repoId}/${path}` : path;
+    appendToInput(`\`${reference}\``);
+  }
 
   useDismissOnOutsidePointerOrEscape(pathMenu, closePathMenu);
 
@@ -619,6 +630,14 @@ export default function FilesTab({
           onPointerDown={(event) => event.stopPropagation()}
           role="menu"
         >
+          <button
+            type="button"
+            className="files-tab-context-menu-item"
+            onClick={placePathInChat}
+            role="menuitem"
+          >
+            Place in chat
+          </button>
           <button
             type="button"
             className="files-tab-context-menu-item"

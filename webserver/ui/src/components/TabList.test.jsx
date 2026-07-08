@@ -254,4 +254,47 @@ describe('TabList — pinned tab ordering', () => {
     // Stale 'T-deleted' is dropped; A-2 still pins to the left.
     expect(tabOrder(container)).toEqual(['A-2', 'A-1']);
   });
+
+  test('a LINE-mode mouse wheel scrolls the strip by pixels, not by ~3px', () => {
+    const { container } = render(
+      <TabList
+        sessions={[_session('A-1'), _session('A-2'), _session('A-3')]}
+        onSelect={() => {}}
+      />,
+    );
+    const scroller = container.querySelector('.tabs-scroller');
+    // jsdom does no layout, so fake a strip that CAN scroll right.
+    Object.defineProperty(scroller, 'clientWidth', { value: 100, configurable: true });
+    Object.defineProperty(scroller, 'scrollWidth', { value: 500, configurable: true });
+    scroller.scrollLeft = 0;
+
+    // A physical wheel on Windows/Firefox reports deltaMode 1 (LINES):
+    // deltaY of 3 means "3 lines". The old code did scrollLeft += 3 (dead).
+    // Normalised, 3 lines → 48px.
+    const wheel = new WheelEvent('wheel', {
+      deltaY: 3, deltaMode: 1, bubbles: true, cancelable: true,
+    });
+    scroller.dispatchEvent(wheel);
+
+    expect(scroller.scrollLeft).toBe(48);
+    expect(wheel.defaultPrevented).toBe(true);
+  });
+
+  test('a mostly-horizontal (trackpad) wheel is left to the browser', () => {
+    const { container } = render(
+      <TabList sessions={[_session('A-1'), _session('A-2')]} onSelect={() => {}} />,
+    );
+    const scroller = container.querySelector('.tabs-scroller');
+    Object.defineProperty(scroller, 'clientWidth', { value: 100, configurable: true });
+    Object.defineProperty(scroller, 'scrollWidth', { value: 500, configurable: true });
+    scroller.scrollLeft = 10;
+    // deltaX dominates → the handler must NOT hijack it (native horizontal
+    // trackpad scroll already works).
+    const wheel = new WheelEvent('wheel', {
+      deltaX: 40, deltaY: 5, bubbles: true, cancelable: true,
+    });
+    scroller.dispatchEvent(wheel);
+    expect(scroller.scrollLeft).toBe(10);
+    expect(wheel.defaultPrevented).toBe(false);
+  });
 });

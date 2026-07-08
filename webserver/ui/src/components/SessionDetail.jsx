@@ -96,11 +96,12 @@ export default function SessionDetail({
       lifecycle: stream.lifecycle,
       turnInFlight: stream.turnInFlight,
       awaitingBackground: stream.awaitingBackground,
+      backgroundIsWorkflow: stream.backgroundIsWorkflow,
       pendingPermission: hasPendingPermission,
     });
   }, [
     taskId, stream.lifecycle, stream.turnInFlight,
-    stream.awaitingBackground, hasPendingPermission,
+    stream.awaitingBackground, stream.backgroundIsWorkflow, hasPendingPermission,
   ]);
 
   // Drop this task's live entry when the active tab changes. SessionDetail is
@@ -595,6 +596,7 @@ export default function SessionDetail({
       streamLifecycle={stream.lifecycle}
       turnInFlight={stream.turnInFlight}
       awaitingBackground={stream.awaitingBackground}
+      backgroundIsWorkflow={stream.backgroundIsWorkflow}
       onSendPrompt={onSendMessage}
       onWorkspaceMutated={onWorkspaceMutated}
       searchSlot={

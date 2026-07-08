@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
 
 from bitbucket_core_lib.bitbucket_core_lib.helpers.git_auth import git_http_auth_header
@@ -63,6 +64,11 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
     def __init__(self, repositories_config, max_retries: int) -> None:
         super().__init__(repositories_config, max_retries)
         self._publication_service = RepositoryPublicationService(self, max_retries)
+        # Serialises merge-finalisation so a burst of polled reads (Files
+        # tab + Changes tab both refresh ~every 5s) can't race two commits
+        # of the same pending merge. Finalisation is rare, so one lock for
+        # the service is plenty.
+        self._merge_finalize_lock = threading.Lock()
 
     def _build_git_http_auth_header(self, repository) -> str:
         return git_http_auth_header(
@@ -794,6 +800,97 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
             for line in result.stdout.splitlines()
             if line.strip()
         ]
+
+    def _merge_in_progress(self, local_path: str) -> bool:
+        """True when a merge started in this clone is still pending.
+
+        ``MERGE_HEAD`` exists between ``git merge`` conflicting and the
+        finalising commit — it's the marker that ``merge_default_branch_into_clone``
+        left the tree mid-merge for the agent to resolve.
+        """
+        result = self._run_git_subprocess(
+            local_path, ['rev-parse', '-q', '--verify', 'MERGE_HEAD'],
+        )
+        return result.returncode == 0
+
+    def _file_still_conflicted(self, local_path: str, rel_path: str) -> bool:
+        """True when the working-tree file still carries git conflict markers.
+
+        The agent resolves a conflict by EDITING the file to remove the
+        ``<<<<<<<`` / ``>>>>>>>`` markers — it can't ``git add`` (sandbox),
+        so the index keeps the path unmerged and ``git ls-files --unmerged``
+        can't tell "resolved but unstaged" from "still conflicted". The
+        working-tree markers are the honest signal. We key on the opening
+        and closing markers (7 chars + a space) — those effectively never
+        occur in real source, so no false "still conflicted".
+        """
+        full = os.path.join(local_path, rel_path)
+        try:
+            with open(full, 'r', encoding='utf-8', errors='replace') as handle:
+                for line in handle:
+                    if line.startswith(('<<<<<<< ', '>>>>>>> ')):
+                        return True
+        except OSError:
+            # File removed as part of the resolution (delete/modify
+            # conflict resolved by deletion) — nothing left to conflict.
+            return False
+        return False
+
+    def finalize_merge_if_resolved(self, repository) -> dict[str, object]:
+        """Commit a pending merge once the agent has resolved its conflicts.
+
+        ``merge_default_branch_into_clone`` deliberately leaves ``MERGE_HEAD``
+        + conflict markers in the tree so the agent can resolve them by
+        editing files. The agent can't run git, so without this the merge
+        never completes: the index keeps its unmerged entries and the
+        working tree carries every merged-in change — so the Changes/Files
+        diff shows ALL of the default branch's changes, not just the task
+        branch's (the "hard to track" bug). This finalises the merge —
+        the completion of the operator's own "Merge master" click — but
+        ONLY when every conflicted file's markers are gone, so a half-done
+        resolution is never committed.
+
+        Returns:
+            {'finalized': True,  'repository_id': str, 'default_branch': str}
+            {'finalized': False, 'reason': '<short>', ...}
+        """
+        local_path = str(getattr(repository, 'local_path', '') or '').strip()
+        if not local_path:
+            return {'finalized': False, 'reason': 'no_local_path'}
+        with self._merge_finalize_lock:
+            if not self._merge_in_progress(local_path):
+                return {'finalized': False, 'reason': 'no_pending_merge'}
+            unresolved = [
+                path for path in self._unmerged_paths(local_path)
+                if self._file_still_conflicted(local_path, path)
+            ]
+            if unresolved:
+                return {
+                    'finalized': False, 'reason': 'conflicts_remain',
+                    'unresolved_files': unresolved,
+                }
+            try:
+                # ``add -A`` stages the resolved files. The pre-merge WIP
+                # commit means the only uncommitted work here IS the merge
+                # resolution, so this never sweeps up unrelated edits.
+                self._run_git(
+                    local_path, ['add', '-A'],
+                    f'failed to stage resolved merge for {repository.id}',
+                    repository,
+                )
+                # ``--no-edit`` keeps git's prepared MERGE_MSG → a proper
+                # merge commit.
+                self._run_git(
+                    local_path, ['commit', '--no-edit'],
+                    f'failed to finalize merge for {repository.id}',
+                    repository,
+                )
+            except RuntimeError as exc:
+                return {
+                    'finalized': False, 'reason': 'commit_failed',
+                    'detail': str(exc),
+                }
+            return {'finalized': True, 'repository_id': repository.id}
 
     def resolve_review_comment(self, repository, comment) -> None:
         self._publication_service.resolve_review_comment(repository, comment)

@@ -3667,6 +3667,52 @@ class AgentService(MissionStepLoggerMixin, Service):
             'failed_repositories': failed_repositories,
         }
 
+    def finalize_resolved_merges_for_task(self, task_id: str) -> dict[str, object]:
+        """Commit any pending merge whose conflicts the agent has resolved.
+
+        After ``merge_default_branch_for_task`` leaves a conflicted merge in
+        the tree, the agent resolves it by editing files but can't run git,
+        so the merge sits unfinished — the diff then shows every merged-in
+        change, not just the branch's (the "hard to track" bug). Called
+        opportunistically when the UI reads the Files/Changes view: kato
+        finalises the merge (the completion of the operator's own "Merge
+        master" click) the moment the markers are gone. A no-op — cheap
+        ``MERGE_HEAD`` check — when nothing is pending, so it's safe to call
+        on every read. Never raises; failures are logged and reported.
+
+        Returns {'finalized_repositories': [ids], 'pending_repositories': [ids]}.
+        """
+        normalized = str(task_id or '').strip()
+        finalized: list[str] = []
+        pending: list[str] = []
+        if not normalized:
+            return {'finalized_repositories': finalized, 'pending_repositories': pending}
+        try:
+            repos, _branch_name, _task = self._resolve_publish_context(normalized)
+        except Exception:
+            return {'finalized_repositories': finalized, 'pending_repositories': pending}
+        for repository in repos or []:
+            try:
+                outcome = self._repository_service.finalize_merge_if_resolved(repository)
+            except Exception:
+                self.logger.exception(
+                    'finalize-merge for task %s failed in repository %s',
+                    normalized, getattr(repository, 'id', '?'),
+                )
+                continue
+            if outcome.get('finalized'):
+                finalized.append(repository.id)
+                self.logger.info(
+                    'finalize-merge for task %s: committed the resolved merge '
+                    'in %s', normalized, repository.id,
+                )
+            elif outcome.get('reason') == 'conflicts_remain':
+                pending.append(repository.id)
+        return {
+            'finalized_repositories': finalized,
+            'pending_repositories': pending,
+        }
+
     def create_pull_request_for_task(self, task_id: str) -> dict[str, object]:
         """Open a PR for every repo of the task that doesn't already have one.
 

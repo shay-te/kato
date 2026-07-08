@@ -152,3 +152,44 @@ test('no awaitingBackground + closed turn → idle (unchanged)', () => {
   );
   assert.equal(got.kind, AGENT_STATUS_KIND.IDLE);
 });
+
+// ---- background WORKFLOW: its own status + colour --------------------------
+
+test('background WORKFLOW (turn closed, workflow still running) → workflow, indigo dot', () => {
+  const got = deriveAgentStatus(
+    session(),
+    live({
+      lifecycle: SESSION_LIFECYCLE.STREAMING,
+      turnInFlight: false,
+      awaitingBackground: true,
+      backgroundIsWorkflow: true,
+    }),
+    false,
+  );
+  assert.equal(got.kind, AGENT_STATUS_KIND.WORKFLOW);
+  assert.equal(got.label, 'workflow');
+  // Distinct dot from working — its own status class so the CSS paints indigo.
+  assert.equal(got.status, 'workflow');
+  assert.ok(got.dotClass.includes('status-workflow'));
+  assert.equal(badgeKindFor(got.kind), 'flow');
+});
+
+test('an IN-FLIGHT turn stays "working" even if the turn also has a workflow', () => {
+  // While the foreground turn is live, working wins — the workflow status is
+  // for the AFTER-the-turn background window.
+  const got = deriveAgentStatus(
+    session(),
+    live({ turnInFlight: true, awaitingBackground: false, backgroundIsWorkflow: true }),
+    false,
+  );
+  assert.equal(got.kind, AGENT_STATUS_KIND.WORKING);
+});
+
+test('a non-workflow background wait (Monitor) still reads working, not workflow', () => {
+  const got = deriveAgentStatus(
+    session(),
+    live({ turnInFlight: false, awaitingBackground: true, backgroundIsWorkflow: false }),
+    false,
+  );
+  assert.equal(got.kind, AGENT_STATUS_KIND.WORKING);
+});

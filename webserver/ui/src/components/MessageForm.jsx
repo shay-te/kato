@@ -11,6 +11,12 @@ import {
   collectImageParts,
   IMAGE_REJECT_REASON,
 } from '../utils/imageAttachment.js';
+import {
+  looksLikeTextFile,
+  readTextAttachment,
+  formatTextAttachment,
+  TEXT_REJECT_REASON,
+} from '../utils/textAttachment.js';
 import { toast } from '../stores/toastStore.js';
 import { useAutoSizeTextarea } from '../hooks/useAutoSizeTextarea.js';
 import { usePublishedHeight } from '../hooks/usePublishedHeight.js';
@@ -352,7 +358,7 @@ const MessageForm = forwardRef(function MessageForm({
     const files = Array.from(event.target.files || []);
     event.target.value = '';
     if (files.length === 0) { return; }
-    await ingestImages(files);
+    await ingestFiles(files);
   }
 
   function handleDragEnter(event) {
@@ -377,7 +383,59 @@ const MessageForm = forwardRef(function MessageForm({
     setDragging(false);
     const files = Array.from(event.dataTransfer?.files || []);
     if (files.length === 0) { return; }
-    await ingestImages(files);
+    await ingestFiles(files);
+  }
+
+  // Route dropped / picked files: images become attachment thumbnails,
+  // text-based files (xml, json, yaml, plain/extensionless text…) get their
+  // content inlined into the composer as a fenced block. Everything else is
+  // rejected. Keeps the operator from hitting "Only PNG… supported" for a
+  // config/data file they legitimately want to hand the agent.
+  async function ingestFiles(files) {
+    const images = [];
+    const textFiles = [];
+    for (const file of files || []) {
+      if (looksLikeTextFile(file)) { textFiles.push(file); }
+      else { images.push(file); }
+    }
+    if (images.length > 0) { await ingestImages(images); }
+    if (textFiles.length > 0) { await ingestTextFiles(textFiles); }
+  }
+
+  async function ingestTextFiles(files) {
+    const blocks = [];
+    for (const file of files) {
+      // eslint-disable-next-line no-await-in-loop
+      const { text, truncated, reason } = await readTextAttachment(file);
+      if (text != null) {
+        blocks.push(formatTextAttachment(file.name, text, { truncated }));
+        if (truncated) {
+          toast.show({
+            kind: 'warning',
+            title: 'Large file truncated',
+            message: `${file.name} was truncated — only the first part was attached.`,
+            durationMs: 6000,
+          });
+        }
+      } else {
+        toast.show({
+          kind: reason === TEXT_REJECT_REASON.BINARY ? 'warning' : 'error',
+          title: 'File attachment rejected',
+          message: _textRejectionMessage(reason, file.name),
+          durationMs: 6000,
+        });
+      }
+    }
+    if (blocks.length === 0) { return; }
+    // Inline via the same fragment path as "Place in chat" — the live state
+    // now owns the draft, so a still-in-flight hydrate can't clobber it.
+    markDraftSettled();
+    setValue((current) => {
+      let next = current;
+      for (const block of blocks) { next = appendComposerFragment(next, block); }
+      pendingCaretRef.current = next.length;
+      return next;
+    });
   }
 
   async function ingestImages(items) {
@@ -453,17 +511,16 @@ const MessageForm = forwardRef(function MessageForm({
             type="button"
             id="message-attach"
             className="tooltip-above"
-            data-tooltip="Attach images — paste a screenshot, drop a file, or click to pick."
+            data-tooltip="Attach files — images (PNG/JPEG/GIF/WebP) show as thumbnails; text files (json, xml, yaml, logs, or any plain-text/extensionless file) are inlined into your message. Paste, drop, or click to pick."
             disabled={disabled}
             onClick={() => fileInputRef.current?.click()}
-            aria-label="Attach images"
+            aria-label="Attach files"
           >
             <span aria-hidden="true">+</span>
           </button>
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/png,image/jpeg,image/gif,image/webp"
             multiple
             style={{ display: 'none' }}
             onChange={handleFilePickerChange}
@@ -617,5 +674,19 @@ function _rejectionMessage(reason) {
       return 'Could not read the image.';
     default:
       return 'Image rejected.';
+  }
+}
+
+function _textRejectionMessage(reason, name) {
+  const label = name ? `"${name}"` : 'This file';
+  switch (reason) {
+    case TEXT_REJECT_REASON.BINARY:
+      return `${label} looks like a binary file — attach images as PNG/JPEG/GIF/WebP, or paste text directly.`;
+    case TEXT_REJECT_REASON.EMPTY:
+      return `${label} is empty.`;
+    case TEXT_REJECT_REASON.READ_FAILED:
+      return `Could not read ${label}.`;
+    default:
+      return `${label} could not be attached.`;
   }
 }

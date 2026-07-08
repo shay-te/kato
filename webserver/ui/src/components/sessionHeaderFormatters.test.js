@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   formatFinishResult,
   formatMergeResult,
+  formatMergeConflicts,
   formatPullResult,
   formatPushResult,
   formatPushSummary,
@@ -456,3 +457,32 @@ test('formatMergeResult: a merge that first saved uncommitted work says so', () 
     assert.ok(out.message.includes('merged 3 commit(s) from master'));
     assert.ok(out.message.includes('WIP commit'));
   });
+
+test('formatMergeConflicts NAMES each conflicted repository with its file count', () => {
+  const out = formatMergeConflicts([
+    { repository_id: 'ob-love-admin-backend', default_branch: 'master',
+      conflicted_files: ['a.py', 'b.py', 'c.py'] },
+    { repository_id: 'ob-love-admin-client', default_branch: 'master',
+      conflicted_files: ['x.js'] },
+  ], { chatDelivered: true });
+
+  assert.equal(out.kind, 'warning');
+  assert.equal(out.title, 'Merged master — conflicts to resolve');
+  // Each repo is named, with correct singular/plural counts.
+  assert.ok(out.message.includes('ob-love-admin-backend: 3 conflicted files'));
+  assert.ok(out.message.includes('ob-love-admin-client: 1 conflicted file'));
+  assert.ok(out.message.includes('Asked Claude in the chat'));
+});
+
+test('formatMergeConflicts falls back gracefully when repos differ / chat unreachable', () => {
+  const out = formatMergeConflicts([
+    { repository_id: 'backend', default_branch: 'master', conflicted_files: ['a'] },
+    { repository_id: 'client', default_branch: 'main', conflicted_files: ['b'] },
+  ], { chatDelivered: false });
+
+  // Mixed default branches → generic branch phrasing in the title.
+  assert.equal(out.title, 'Merged the default branch — conflicts to resolve');
+  assert.ok(out.message.includes('backend: 1 conflicted file'));
+  assert.ok(out.message.includes('client: 1 conflicted file'));
+  assert.ok(out.message.includes("Couldn't reach the chat"));
+});

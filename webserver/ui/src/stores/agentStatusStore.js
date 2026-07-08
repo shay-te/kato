@@ -29,6 +29,7 @@ function sameStatus(a, b) {
   return a.lifecycle === b.lifecycle
     && a.turnInFlight === b.turnInFlight
     && a.awaitingBackground === b.awaitingBackground
+    && a.backgroundIsWorkflow === b.backgroundIsWorkflow
     && a.pendingPermission === b.pendingPermission;
 }
 
@@ -44,6 +45,7 @@ export const agentStatusStore = {
     lifecycle = '',
     turnInFlight = false,
     awaitingBackground = false,
+    backgroundIsWorkflow = false,
     pendingPermission = false,
   } = {}) {
     if (!taskId) { return; }
@@ -51,6 +53,7 @@ export const agentStatusStore = {
       lifecycle,
       turnInFlight: !!turnInFlight,
       awaitingBackground: !!awaitingBackground,
+      backgroundIsWorkflow: !!backgroundIsWorkflow,
       pendingPermission: !!pendingPermission,
     };
     if (sameStatus(_statuses[taskId], next)) { return; }

@@ -44,9 +44,15 @@ function emptyTaskState() {
     // run_in_background) and is blocked on it — still "working", not idle.
     // Cleared when the next turn starts or the session closes.
     awaitingBackground: false,
+    // The outstanding background wait is specifically a Workflow (the
+    // ultracode orchestrator), so the status surfaces read "workflow" in
+    // its own colour rather than the generic "working".
+    backgroundIsWorkflow: false,
     // Transient: a background-wait tool_use was seen in the OPEN turn, so
     // the upcoming RESULT knows to flip ``awaitingBackground``.
     turnHasBackgroundWait: false,
+    // Transient sibling: that background wait was a Workflow.
+    turnHasWorkflow: false,
     pendingPermission: null,
     lastEventAt: 0,
   };
@@ -54,16 +60,27 @@ function emptyTaskState() {
 
 // Tools that park the agent on a long-running wait (it scheduled work and
 // is blocked on its result). MUST match the backend
-// StreamingClaudeSession._BACKGROUND_WAIT_TOOLS.
-const BACKGROUND_WAIT_TOOLS = new Set(['Monitor']);
+// StreamingClaudeSession._BACKGROUND_WAIT_TOOLS ({'Monitor', 'Workflow'}).
+const BACKGROUND_WAIT_TOOLS = new Set(['Monitor', 'Workflow']);
+// The subset that is a background WORKFLOW — surfaced as its own status.
+const WORKFLOW_TOOLS = new Set(['Workflow']);
+
+function eventBackgroundWaitTools(raw) {
+  const content = raw && raw.message && raw.message.content;
+  if (!Array.isArray(content)) { return { wait: false, workflow: false }; }
+  let wait = false;
+  let workflow = false;
+  for (const block of content) {
+    if (!block || block.type !== 'tool_use') { continue; }
+    if (WORKFLOW_TOOLS.has(block.name)) { wait = true; workflow = true; }
+    else if (BACKGROUND_WAIT_TOOLS.has(block.name)) { wait = true; }
+    else if (block.input && block.input.run_in_background === true) { wait = true; }
+  }
+  return { wait, workflow };
+}
 
 function eventHasBackgroundWaitTool(raw) {
-  const content = raw && raw.message && raw.message.content;
-  if (!Array.isArray(content)) { return false; }
-  return content.some((block) => block
-    && block.type === 'tool_use'
-    && (BACKGROUND_WAIT_TOOLS.has(block.name)
-      || (block.input && block.input.run_in_background === true)));
+  return eventBackgroundWaitTools(raw).wait;
 }
 
 function readCachedState(taskId) {
@@ -218,7 +235,9 @@ export function reducer(state, action) {
           pendingPermission: null,
           turnInFlight: false,
           awaitingBackground: false,
+          backgroundIsWorkflow: false,
           turnHasBackgroundWait: false,
+          turnHasWorkflow: false,
         };
       }
       return { ...state, lifecycle: action.value };
@@ -231,6 +250,7 @@ export function reducer(state, action) {
         ...state,
         turnInFlight: action.value,
         awaitingBackground: action.value ? false : state.awaitingBackground,
+        backgroundIsWorkflow: action.value ? false : state.backgroundIsWorkflow,
       };
     default:
       return state;
@@ -343,24 +363,30 @@ function reduceIncomingEvent(state, raw, receivedAtEpoch) {
       if (raw.subtype === CLAUDE_SYSTEM_SUBTYPE.INIT) {
         next.turnInFlight = true;
         next.awaitingBackground = false;
+        next.backgroundIsWorkflow = false;
       }
       break;
-    case CLAUDE_EVENT.ASSISTANT:
+    case CLAUDE_EVENT.ASSISTANT: {
       next.turnInFlight = true;
       next.awaitingBackground = false;
+      next.backgroundIsWorkflow = false;
       // Remember a background-wait tool seen this turn so the closing
-      // RESULT can keep the status "working" while the agent waits on it.
-      if (eventHasBackgroundWaitTool(raw)) {
-        next.turnHasBackgroundWait = true;
-      }
+      // RESULT can keep the status "working" while the agent waits on it —
+      // and whether that wait was a Workflow (its own status).
+      const bg = eventBackgroundWaitTools(raw);
+      if (bg.wait) { next.turnHasBackgroundWait = true; }
+      if (bg.workflow) { next.turnHasWorkflow = true; }
       break;
+    }
     case CLAUDE_EVENT.RESULT:
       // RESULT ends the turn AND clears pending. If the turn scheduled a
-      // background wait (Monitor / run_in_background), stay "working"
-      // (awaitingBackground) until the next turn or session close.
+      // background wait (Monitor / Workflow / run_in_background), stay
+      // "working" (awaitingBackground) until the next turn or session close.
       next.turnInFlight = false;
       next.awaitingBackground = !!state.turnHasBackgroundWait;
+      next.backgroundIsWorkflow = !!state.turnHasWorkflow;
       next.turnHasBackgroundWait = false;
+      next.turnHasWorkflow = false;
       applyPermissionTransition(next, raw, state, { strict: true });
       break;
     default:
@@ -512,6 +538,7 @@ export function useSessionStream(taskId, onIncomingEvent) {
     lifecycle: state.lifecycle,
     turnInFlight: state.turnInFlight,
     awaitingBackground: state.awaitingBackground,
+    backgroundIsWorkflow: state.backgroundIsWorkflow,
     pendingPermission: state.pendingPermission,
     lastEventAt: state.lastEventAt,
     // Stamp the wall-clock at append (epoch SECONDS, matching the server's

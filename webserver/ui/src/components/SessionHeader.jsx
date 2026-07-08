@@ -23,6 +23,7 @@ import Icon, { BusyIcon } from './Icon.jsx';
 import {
   formatFinishResult,
   formatMergeResult,
+  formatMergeConflicts,
   formatPullResult,
   formatUpdateSourceResult,
 } from './sessionHeaderFormatters.js';
@@ -38,6 +39,7 @@ export default function SessionHeader({
   streamLifecycle,
   turnInFlight = false,
   awaitingBackground = false,
+  backgroundIsWorkflow = false,
   searchSlot = null,
   onSendPrompt = null,
   onWorkspaceMutated = null,
@@ -127,14 +129,13 @@ export default function SessionHeader({
             + `markers, keeping both sides' intent where it makes sense), `
             + `then continue:\n${fileLines.join('\n')}`;
           const sent = await postChatMessage(session.task_id, instruction);
+          // The toast NAMES each conflicted repository (+ file count) so the
+          // operator knows where to look; the per-file resolution went to
+          // Claude above.
           toast.show({
-            kind: 'warning',
-            title: `Merged ${defaultBranch} — conflicts to resolve`,
-            message: sent && sent.ok
-              ? `${fileLines.length} conflicted file(s). Asked Claude in the `
-                + 'chat to resolve them.'
-              : `${fileLines.length} conflicted file(s). Couldn't reach the `
-                + 'chat — resolve manually or message Claude yourself.',
+            ...formatMergeConflicts(conflicted, {
+              chatDelivered: !!(sent && sent.ok),
+            }),
             durationMs: 12000,
           });
           return;
@@ -296,7 +297,7 @@ export default function SessionHeader({
   // the tab read "working" during a background wait.
   const agent = deriveAgentStatus(
     session,
-    { lifecycle: streamLifecycle, turnInFlight, awaitingBackground },
+    { lifecycle: streamLifecycle, turnInFlight, awaitingBackground, backgroundIsWorkflow },
     needsAttention,
   );
   const stopLabel = stopping ? 'Stopping…' : 'Stop';

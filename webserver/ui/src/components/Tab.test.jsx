@@ -28,15 +28,16 @@ function _session(overrides = {}) {
 
 describe('Tab', () => {
 
-  test('pill shows the task id only (summary lives in the hover card)', () => {
+  test('pill shows the task id AND the task name (VSCode-style title)', () => {
     const { container } = render(
       <Tab session={_session()} onSelect={() => {}} />,
     );
     expect(screen.getByText('KATO-123')).toBeInTheDocument();
-    // The summary is intentionally NOT in the pill — it moved to
-    // the on-hover TabTooltip so wide titles don't shove neighbours
-    // off the strip. No card is mounted until hover.
-    expect(container.querySelector('li')).not.toHaveTextContent('Fix the bug');
+    // The name is now shown IN the pill (ellipsised at the tab's
+    // max-width) so the operator can tell tabs apart without hovering.
+    // The full name still lives in the hover card too.
+    expect(container.querySelector('.tab-label-title')).toHaveTextContent('Fix the bug');
+    // Still no card mounted until hover.
     expect(document.querySelector('.tab-tooltip')).toBeNull();
   });
 

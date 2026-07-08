@@ -194,6 +194,35 @@ export function formatFinishResult(result, taskId = '') {
 // path stays in the component (it has async side effects — it messages
 // the agent to resolve); this covers the clean merged / skipped / failed
 // / nothing outcomes.
+// The conflict toast for the "Merge master" button. NAMES every repository
+// that conflicted (+ its conflicted-file count) so the operator knows WHERE
+// to look — the old toast said only "N conflicted file(s)" with no repo, so
+// in a multi-repo task you couldn't tell which clone needed attention. The
+// agent is asked to resolve in the chat separately; ``chatDelivered`` says
+// whether that message reached it.
+export function formatMergeConflicts(conflicted, { chatDelivered } = {}) {
+  const repos = Array.isArray(conflicted) ? conflicted : [];
+  const branches = new Set(
+    repos.map((r) => String(r.default_branch || '').trim()).filter(Boolean),
+  );
+  const branch = branches.size === 1 ? [...branches][0] : 'the default branch';
+  const lines = repos.map((repo) => {
+    const files = Array.isArray(repo.conflicted_files) ? repo.conflicted_files : [];
+    const n = files.length;
+    const noun = n === 1 ? 'file' : 'files';
+    return `⚠ ${repo.repository_id}: ${n} conflicted ${noun}`;
+  });
+  const tail = chatDelivered
+    ? 'Asked Claude in the chat to resolve them.'
+    : "Couldn't reach the chat — resolve manually or message Claude yourself.";
+  const body = lines.length ? `${lines.join('\n')}\n\n${tail}` : tail;
+  return {
+    kind: 'warning',
+    title: `Merged ${branch} — conflicts to resolve`,
+    message: body,
+  };
+}
+
 export function formatMergeResult(result) {
   if (!result || !result.ok) {
     return formatRequestFailure(result, 'Merge failed');

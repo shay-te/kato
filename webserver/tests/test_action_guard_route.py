@@ -90,6 +90,32 @@ class ActionGuardRouteTests(unittest.TestCase):
         self.assertTrue(session.notices)
         self.assertEqual(session.notices[-1][0], 'action_guard_block')
 
+    def test_approved_hard_block_bubble_credits_the_operator_approval(self):
+        # The operator clicked APPROVE on a floor category. The floor still
+        # wins, but the feed bubble must say they approved — not read as if
+        # the agent was auto-refused without them (the "stupid label" bug).
+        session = _AGSession('Bash', {'command': 'rm -rf /'})
+        app = self._app(session)
+        resp = self._post(app, {'request_id': 'r1', 'allow': True})
+        self.assertFalse(resp.get_json()['allow'])
+        _subtype, message, extra = session.notices[-1]
+        self.assertIn('You approved this', message)
+        self.assertIn('hard safety floor', message)
+        self.assertNotIn('You denied', message)
+        # Still a loud BLOCK bubble; carries the approval flag for the UI.
+        self.assertEqual(_subtype, 'action_guard_block')
+        self.assertTrue(extra['action_guard']['operator_approved'])
+
+    def test_denied_hard_block_bubble_says_you_denied(self):
+        session = _AGSession('Bash', {'command': 'rm -rf /'})
+        app = self._app(session)
+        resp = self._post(app, {'request_id': 'r1', 'allow': False})
+        self.assertFalse(resp.get_json()['allow'])
+        _subtype, message, extra = session.notices[-1]
+        self.assertIn('You denied this', message)
+        self.assertNotIn('You approved', message)
+        self.assertFalse(extra['action_guard']['operator_approved'])
+
     def test_server_side_derivation_ignores_client_supplied_command(self):
         # The body lies (benign tool/command); the PENDING request is the
         # real, dangerous one — the guard must use the server-side input.

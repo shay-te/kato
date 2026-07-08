@@ -124,6 +124,53 @@ def ensure_branch_checked_out(cwd: str, branch: str) -> bool:
     return current_branch(cwd) == branch
 
 
+def _ref_exists(cwd: str, ref: str) -> bool:
+    """True when ``ref`` resolves to a commit in this clone."""
+    if not cwd or not ref:
+        return False
+    return run_git(
+        cwd, ['rev-parse', '--verify', '--quiet', f'{ref}^{{commit}}'], timeout=5,
+    ) is not None
+
+
+def has_origin_remote(cwd: str) -> bool:
+    """True when the clone has an ``origin`` remote configured.
+
+    A per-task workspace clone that kato provisioned always does. A git
+    folder the operator copied straight into the task — a repo that was
+    never pushed to any host — does not, and that is exactly the case where
+    ``origin/<base>`` cannot be the diff base.
+    """
+    if not cwd:
+        return False
+    out = run_git(cwd, ['remote'], timeout=5)
+    if not out:
+        return False
+    return any(line.strip() == 'origin' for line in out.splitlines())
+
+
+def resolve_base_ref(cwd: str, base: str) -> tuple[str, bool]:
+    """Pick the best EXISTING ref to diff the task branch against.
+
+    Returns ``(ref, is_local_fallback)``. Preference order:
+
+      1. ``origin/<base>`` — the normal cloud-repo case.
+      2. a local ``<base>`` branch — repo present but base only local.
+      3. ``HEAD`` (``is_local_fallback=True``) — no reachable base at all.
+
+    The ``HEAD`` fallback is what makes a clone with NO reachable base — a
+    git folder the operator copied into the task and never pushed — still
+    show its changes: ``git diff HEAD`` surfaces the working-tree edits the
+    operator sees in their editor, instead of the empty diff a non-existent
+    ``origin/<base>`` produced (the "kato ignores the changes" bug).
+    """
+    if base:
+        for ref in (f'origin/{base}', base):
+            if _ref_exists(cwd, ref):
+                return ref, False
+    return 'HEAD', True
+
+
 def detect_default_branch(cwd: str) -> str:
     """Repo's default branch as published by the remote, or '' on failure.
 

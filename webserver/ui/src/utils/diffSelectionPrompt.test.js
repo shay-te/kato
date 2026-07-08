@@ -1,80 +1,75 @@
-// Locks the chat-composer wording produced by the Changes-tab
-// right-click handler. The fragment is what Claude reads as the
-// operator's prompt, so a reword can change agent behaviour —
-// treat changes here as content review, not string nits.
+// Locks the chat-composer wording produced by the diff-pane right-click
+// "Place in chat". The fragment is what Claude reads as the operator's
+// prompt, so a reword can change agent behaviour — treat changes here as
+// content review, not string nits.
 
-import { describe, afterEach, test } from 'node:test';
+import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildChatFragmentFromSelection } from './diffSelectionPrompt.js';
+import {
+  buildChatFragmentFromSelection,
+  formatSelectionReference,
+} from './diffSelectionPrompt.js';
 
 
-function installSelection(text) {
-  global.window = {
-    getSelection: () => ({
-      toString: () => text,
-    }),
-  };
-}
-
-
-function uninstallSelection() {
-  delete global.window;
-}
-
-
-describe('buildChatFragmentFromSelection', () => {
-  afterEach(uninstallSelection);
-
-  test('with no selection, falls back to a bare file reference', () => {
-    installSelection('');
-    const fragment = buildChatFragmentFromSelection('src/auth.py', 'admin-backend');
-    // Bare backtick-wrapped path so the operator's freeform prompt
-    // ("please refactor this") still reads as natural prose with
-    // an inline code reference.
-    assert.equal(fragment, '`admin-backend:src/auth.py`');
+describe('formatSelectionReference', () => {
+  test('a multi-line selection becomes a compact L<start>-L<end> reference', () => {
+    // The whole point: NAME the lines, never paste the code — so the
+    // composer stays readable and Claude reads the file itself.
+    assert.equal(
+      formatSelectionReference('src/auth.py', 'admin-backend', { start: 20, end: 45 }),
+      '`admin-backend:src/auth.py:L20-L45`',
+    );
   });
 
-  test('with a selection, wraps the text in a fenced block under the file header', () => {
-    installSelection('+ const x = 1\n- const x = 2');
-    const fragment = buildChatFragmentFromSelection(
-      'src/auth.py', 'admin-backend',
+  test('a single-line selection collapses to L<n>', () => {
+    assert.equal(
+      formatSelectionReference('src/auth.py', 'r', { start: 12, end: 12 }),
+      '`r:src/auth.py:L12`',
     );
-    // ``In `repo:path` the following diff lines:`` is the load-
-    // bearing wording — Claude treats this as "the operator
-    // wants me to act on these specific lines" rather than
-    // "here's some context, decide what to do."
-    assert.match(fragment, /^In `admin-backend:src\/auth\.py` the following diff lines:\n/);
-    assert.match(fragment, /```\n\+ const x = 1\n- const x = 2\n```$/);
+  });
+
+  test('no line range → bare file reference (freeform ask about the file)', () => {
+    assert.equal(
+      formatSelectionReference('src/auth.py', 'admin-backend', null),
+      '`admin-backend:src/auth.py`',
+    );
   });
 
   test('omits the repo prefix when no repo id is supplied', () => {
-    installSelection('');
     assert.equal(
-      buildChatFragmentFromSelection('src/auth.py'),
-      '`src/auth.py`',
+      formatSelectionReference('src/auth.py', '', { start: 3, end: 8 }),
+      '`src/auth.py:L3-L8`',
     );
-  });
-
-  test('truncates pathologically long selections so the composer doesn\'t blow up', () => {
-    const longText = 'x'.repeat(20 * 1024);
-    installSelection(longText);
-    const fragment = buildChatFragmentFromSelection('big.py', 'r');
-    assert.match(fragment, /\(selection truncated\)\n```$/);
-    assert.ok(fragment.length < 9 * 1024);
   });
 
   test('returns empty string when path is missing', () => {
-    installSelection('whatever');
-    assert.equal(buildChatFragmentFromSelection(''), '');
-    assert.equal(buildChatFragmentFromSelection(null), '');
+    assert.equal(formatSelectionReference('', 'r', { start: 1, end: 2 }), '');
+    assert.equal(formatSelectionReference(null), '');
   });
 
-  test('handles missing window.getSelection gracefully (SSR / tests)', () => {
-    // No installSelection() — global.window is undefined.
+  test('a non-finite range degrades to the bare file reference', () => {
     assert.equal(
-      buildChatFragmentFromSelection('src/auth.py', 'r'),
-      '`r:src/auth.py`',
+      formatSelectionReference('a.js', 'r', { start: NaN, end: 5 }),
+      '`r:a.js`',
     );
+  });
+});
+
+
+describe('buildChatFragmentFromSelection', () => {
+  test('with no DOM selection (SSR / tests) it is the bare file reference — never a code dump', () => {
+    // No global.window → selectedNewLineRange() returns null.
+    assert.equal(
+      buildChatFragmentFromSelection('src/auth.py', 'admin-backend'),
+      '`admin-backend:src/auth.py`',
+    );
+    // And crucially it never emits a fenced code block.
+    assert.ok(!buildChatFragmentFromSelection('src/auth.py', 'r').includes('```'));
+  });
+
+  test('returns empty string when path is missing', () => {
+    assert.equal(buildChatFragmentFromSelection(''), '');
+    assert.equal(buildChatFragmentFromSelection(null), '');
   });
 });

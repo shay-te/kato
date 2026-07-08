@@ -227,12 +227,19 @@ class StreamingClaudeSession(object):
         normalized_prompt_tool = normalized_text(permission_prompt_tool)
         if normalized_prompt_tool:
             self._permission_prompt_tool = normalized_prompt_tool
-        elif self._permission_mode == 'bypassPermissions':
-            # Fully autonomous: nothing will be asked anyway.
-            self._permission_prompt_tool = ''
         else:
-            # Default for any non-bypass mode: route permission asks back
-            # over stdio so the planning UI can intercept them.
+            # ALWAYS route asks over stdio — INCLUDING bypassPermissions mode.
+            # bypassPermissions auto-approves regular TOOL permissions without
+            # ever invoking the prompt tool, so keeping it set is free for
+            # normal tool use. What it DOES buy is a channel for the agent's
+            # ``AskUserQuestion`` (a question to the human, NOT a tool
+            # permission): without a prompt tool the headless CLI auto-answers
+            # the question itself and the agent barrels on. The rule is that
+            # EVERY question the agent asks is answered by a human — never
+            # auto-answered — so the ask must always come back to the host,
+            # regardless of permission mode. (The rare bypass-mode circuit
+            # breakers — rm -rf ~, explicit ask-rules — route here too, which
+            # is also what we want.)
             self._permission_prompt_tool = self.DEFAULT_PERMISSION_PROMPT_TOOL
         self._allowed_tools = normalized_text(allowed_tools)
         self._disallowed_tools = normalized_text(disallowed_tools)
@@ -374,8 +381,10 @@ class StreamingClaudeSession(object):
                 'for task %s will run with --permission-mode bypassPermissions. '
                 'The planning UI will not intercept tool calls — the agent can '
                 'run Bash, Edit, Write, and any other tool without asking. '
-                'The operator who set this flag accepts responsibility for any '
-                'harm caused by the agent. See SECURITY.md.',
+                '(AskUserQuestion is still routed to the operator — questions '
+                'are never auto-answered.) The operator who set this flag '
+                'accepts responsibility for any harm caused by the agent. See '
+                'SECURITY.md.',
                 self._task_id,
             )
 
