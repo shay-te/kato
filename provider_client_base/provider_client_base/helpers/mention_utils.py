@@ -37,6 +37,12 @@ import re
 #   ``@bob-jr``) is still allowed.
 _MENTION_PATTERN = re.compile(r'(?<![\w.])@(\w(?:[\w.\-]*\w)?)')
 
+# Brace-encoded mention: Bitbucket Cloud writes ``@{account_id}`` (or
+# ``@{uuid}``) in a comment's ``raw`` body. The plain ``@login`` pattern
+# above can't see it (the char after ``@`` is ``{``), so a comment that tags
+# a teammate on Bitbucket looked mention-free and slipped past the filter.
+_BRACE_MENTION_PATTERN = re.compile(r'@\{([^}]+)\}')
+
 
 def extract_mention_logins(body: object) -> list[str]:
     """Return lowercase logins mentioned in ``body`` via ``@login``.
@@ -50,6 +56,56 @@ def extract_mention_logins(body: object) -> list[str]:
         return []
     text = body if isinstance(body, str) else str(body)
     return [m.group(1).lower() for m in _MENTION_PATTERN.finditer(text)]
+
+
+def extract_all_mention_tokens(body: object) -> list[str]:
+    """Every mention token in ``body``, ACROSS encodings.
+
+    Unions the plain ``@login`` form (GitHub/GitLab/YouTrack) with the
+    brace ``@{account_id}`` form (Bitbucket Cloud), lowercased and
+    de-duplicated (source order preserved). This is the encoding-agnostic
+    extractor the review-comment path needs: it can't know up front whether
+    a body carries ``@jane`` or ``@{557058:...}``, and it must catch both to
+    tell "this comment tags a human" from "mention-free".
+    """
+    if not body:
+        return []
+    text = body if isinstance(body, str) else str(body)
+    seen: set[str] = set()
+    tokens: list[str] = []
+    for match in _MENTION_PATTERN.finditer(text):
+        token = match.group(1).lower()
+        if token not in seen:
+            seen.add(token)
+            tokens.append(token)
+    for match in _BRACE_MENTION_PATTERN.finditer(text):
+        token = match.group(1).strip().lower()
+        if token and token not in seen:
+            seen.add(token)
+            tokens.append(token)
+    return tokens
+
+
+def mentions_include_identity(mention_tokens: object, bot_identities: object) -> bool:
+    """True when at least one mention token matches a known bot identity.
+
+    Both sides are normalised (lowercased/stripped). Used by the "process
+    only if the bot itself is tagged" rule: a comment that tags people is
+    for the bot ONLY when one of those tags is the bot.
+    """
+    identities = {
+        str(identity).strip().lower()
+        for identity in (bot_identities or ())
+        if str(identity).strip()
+    }
+    if not identities:
+        return False
+    tokens = {
+        str(token).strip().lower()
+        for token in (mention_tokens or ())
+        if str(token).strip()
+    }
+    return not identities.isdisjoint(tokens)
 
 
 def _normalize_bot_login(bot_login: object) -> str:

@@ -1,19 +1,18 @@
 """The PR review-comment scan must skip comments @-mentioning a teammate.
 
-Regression: issue/ticket comments are @-mention-filtered (the shared
-``mention_utils``), but PR review comments were not — so a comment like
-``@jane can you take this?`` on kato's PR was picked up and acted on by kato
-instead of skipped. ``_unprocessed_review_comments`` now applies the same
-filter.
+Operator's hard rule: a review comment that @-tags ANYONE is that person's to
+answer, NOT kato's — kato acts ONLY when the tag is kato itself, or when the
+comment tags no one. Two encodings are caught: plain ``@login``
+(GitHub/GitLab/YouTrack) and Bitbucket's ``@{account_id}``.
 
-The bot's identity is its login on the code-review platform that hosts the repo
-(its GitHub / GitLab / Bitbucket username), resolved per provider. That is the
-identity a reviewer actually ``@mentions``. The task-platform ``assignee`` is
-added only as a SECONDARY identity, and ONLY when the code-host login is known
-— because matching against a different platform's login alone could silently
-drop a comment genuinely directed at the bot. So when the code-host identity
-can't be resolved the filter is disabled (keeps everything) rather than risk a
-wrong drop.
+Crucially — and this is the change from the old behavior — when a comment tags
+people but kato CANNOT confirm it is one of them (its code-host identity isn't
+resolvable), the comment is SKIPPED, not processed. The operator would rather
+kato stay out of a human-directed comment than jump on it; a comment genuinely
+directed at kato under an unresolvable handle being left for a human is the
+accepted trade-off. kato's identities are gathered from every source (code-host
+login + task ``assignee``) so a real kato mention is still recognised whenever
+possible.
 
 Single-comment cases on purpose: a lone non-kato reviewer comment can only be
 dropped by the mention filter (no thread-dedup partner, no position gate, not
@@ -91,23 +90,39 @@ class ReviewCommentMentionSkipTests(unittest.TestCase):
             ['1'],
         )
 
-    def test_unknown_code_host_identity_disables_filter(self) -> None:
-        # The mixed-deployment safety gate: the bot's review-platform login
-        # can't be resolved (e.g. a GitHub PR with no configured GitHub
-        # username). Matching against the task assignee alone could drop a
-        # comment @-mentioning the bot under its (different) code-host handle,
-        # so the filter is disabled — keep everything rather than risk it.
+    def test_unknown_code_host_identity_still_skips_a_human_tag(self) -> None:
+        # Operator rule (the change): the bot's review-platform login can't be
+        # resolved, but the comment clearly tags a human — kato stays out of
+        # it rather than processing a comment meant for jane. (Old behavior
+        # kept it; that was the reported bug.)
         service = self._service(task_login='kato_yt', review_login='')
         self.assertEqual(
             self._kept_ids(service, [_comment('1', '@jane.doe please look')]),
-            ['1'],
+            [],
         )
 
-    def test_no_identities_at_all_disables_filter(self) -> None:
+    def test_no_identities_at_all_still_skips_a_human_tag(self) -> None:
+        # No resolvable kato identity at all → a tagged comment is definitely
+        # not confirmably kato's → skip.
         service = self._service(task_login='', review_login='')
         self.assertEqual(
             self._kept_ids(service, [_comment('1', '@jane.doe please look')]),
-            ['1'],
+            [],
+        )
+
+    def test_bitbucket_brace_account_id_mention_is_seen(self) -> None:
+        # Bitbucket encodes mentions as ``@{account_id}`` — the plain @login
+        # regex couldn't see it, so tagged Bitbucket comments slipped through.
+        # Now the brace form is caught: a comment tagging a human account id
+        # is skipped, one tagging the bot's account id is kept.
+        service = self._service(task_login='kato_yt', review_login='557058:kato-bot')
+        self.assertEqual(
+            self._kept_ids(service, [_comment('1', '@{557058:teammate} look here')]),
+            [],
+        )
+        self.assertEqual(
+            self._kept_ids(service, [_comment('2', '@{557058:kato-bot} handle X')]),
+            ['2'],
         )
 
     def test_me_secondary_login_is_normalized_away(self) -> None:
@@ -124,13 +139,15 @@ class ReviewCommentMentionSkipTests(unittest.TestCase):
         )
 
     def test_identity_lookup_failure_does_not_break_selection(self) -> None:
-        # A best-effort identity lookup that raises must not crash the scan;
-        # with no resolvable code-host identity the filter safely disables.
+        # A best-effort identity lookup that raises must not crash the scan.
+        # The code-host identity is lost, but the task assignee (kato_yt) is
+        # still known — and @jane.doe isn't it, so the human-tagged comment is
+        # still correctly skipped.
         service = self._service(task_login='kato_yt')
         service._repository_service.review_comment_bot_login.side_effect = RuntimeError('boom')
         self.assertEqual(
             self._kept_ids(service, [_comment('1', '@jane.doe please look')]),
-            ['1'],
+            [],
         )
 
     def test_code_host_login_alone_when_no_task_assignee(self) -> None:

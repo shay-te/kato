@@ -10,11 +10,60 @@ from __future__ import annotations
 import unittest
 
 from provider_client_base.provider_client_base.helpers.mention_utils import (
+    extract_all_mention_tokens,
     extract_mention_logins,
     is_addressed_elsewhere_from_mentions,
     is_comment_addressed_elsewhere,
     is_comment_addressed_elsewhere_any,
+    mentions_include_identity,
 )
+
+
+class ExtractAllMentionTokensTests(unittest.TestCase):
+
+    def test_empty_body_returns_empty(self) -> None:
+        self.assertEqual(extract_all_mention_tokens(''), [])
+        self.assertEqual(extract_all_mention_tokens(None), [])
+
+    def test_plain_login_form(self) -> None:
+        self.assertEqual(
+            extract_all_mention_tokens('hey @Jane.Doe and @bob'),
+            ['jane.doe', 'bob'],
+        )
+
+    def test_bitbucket_brace_account_id_form(self) -> None:
+        # The Bitbucket bug: mentions come as ``@{account_id}`` which the
+        # plain @login regex can't see.
+        self.assertEqual(
+            extract_all_mention_tokens('please @{557058:abc-123} look'),
+            ['557058:abc-123'],
+        )
+
+    def test_unions_both_encodings_deduped(self) -> None:
+        self.assertEqual(
+            extract_all_mention_tokens('@alice and @{557058:abc} and @Alice again'),
+            ['alice', '557058:abc'],
+        )
+
+
+class MentionsIncludeIdentityTests(unittest.TestCase):
+
+    def test_true_when_a_mention_matches_an_identity(self) -> None:
+        self.assertTrue(mentions_include_identity(
+            ['jane', 'review-bot'], ['review-bot', '557058:x']))
+
+    def test_case_insensitive_and_trimmed(self) -> None:
+        self.assertTrue(mentions_include_identity([' Review_Bot '], ['review_bot']))
+
+    def test_false_when_no_match(self) -> None:
+        self.assertFalse(mentions_include_identity(['jane', 'bob'], ['review-bot']))
+
+    def test_false_when_no_identities(self) -> None:
+        # No known bot identity → can't confirm the bot is tagged.
+        self.assertFalse(mentions_include_identity(['jane'], []))
+
+    def test_false_when_no_mentions(self) -> None:
+        self.assertFalse(mentions_include_identity([], ['review-bot']))
 
 
 class ExtractMentionLoginsTests(unittest.TestCase):

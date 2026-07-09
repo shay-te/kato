@@ -13,7 +13,8 @@ from kato_core_lib.data_layers.data.fields import (
 )
 from provider_client_base.provider_client_base.data.review_comment import ReviewComment
 from provider_client_base.provider_client_base.helpers.mention_utils import (
-    is_comment_addressed_elsewhere_any,
+    extract_all_mention_tokens,
+    mentions_include_identity,
 )
 from kato_core_lib.data_layers.service.agent_state_registry import AgentStateRegistry
 from kato_core_lib.data_layers.service.implementation_service import ImplementationService
@@ -542,19 +543,19 @@ class ReviewCommentService(Service):
         # depends on context from an earlier one.
         new_comments: list[ReviewComment] = []
         seen_resolution_targets: set = set()
-        # The bot's own logins, gathered once (constant for this repo) so a
-        # reviewer comment directed at a teammate (``@jane please look``) is
-        # skipped, while one @-mentioning the bot under EITHER its task-platform
-        # or its code-host login is still handled. Mirrors the @-mention filter
-        # the issue-comment path already applies; disabled when no login is set.
-        bot_logins = self._review_bot_logins(repository_id)
+        # The bot's own identities on this repo's review host — gathered once
+        # (constant for the repo) so the "@-mention" rule below can tell a
+        # comment that tags KATO from one that tags a teammate.
+        bot_identities = self._review_bot_identities(repository_id)
         for index in range(len(comments) - 1, -1, -1):
             comment = comments[index]
             if is_kato_review_comment_reply(comment):
                 continue
-            # Run AFTER the kato-own-reply skip so kato's replies (which may
-            # themselves @-mention the reviewer) are never mention-filtered.
-            if is_comment_addressed_elsewhere_any(comment.body, bot_logins):
+            # Operator's hard rule: a review comment that @-tags ANYONE is
+            # that person's to answer, NOT kato's — UNLESS the tag is kato
+            # itself. Runs AFTER the kato-own-reply skip so kato's replies
+            # (which may @-mention the reviewer) are never mention-filtered.
+            if self._review_comment_targets_someone_else(comment.body, bot_identities):
                 continue
             setattr(comment, PullRequestFields.REPOSITORY_ID, repository_id)
             setattr(comment, ReviewCommentFields.ALL_COMMENTS, list(comment_context))
@@ -573,37 +574,60 @@ class ReviewCommentService(Service):
         new_comments.reverse()
         return new_comments
 
-    def _review_bot_logins(self, repository_id: str) -> tuple[str, ...]:
-        """The bot's known logins for review-comment @-mention filtering.
+    def _review_bot_identities(self, repository_id: str) -> tuple[str, ...]:
+        """Every identity a reviewer might @-mention to address KATO.
 
-        The PRIMARY identity is the bot's login on the code-review platform
-        that hosts this repo (its GitHub / GitLab / Bitbucket username) — the
-        identity a reviewer would actually ``@mention``. If we can't resolve
-        it, the filter is DISABLED (returns ``()``): matching only against the
-        task-platform ``assignee`` — a different platform's login in a mixed
-        deployment — could silently drop a comment genuinely directed at the
-        bot, the one thing this filter must never do. When the code-host login
-        IS known, the task ``assignee`` is added as a secondary identity (it
-        only ever helps: an extra identity can cause a harmless keep, never a
-        wrong drop). All lookups are best-effort so a scan tick can't crash.
+        Gathered best-effort from all sources — the bot's login/account on the
+        code-review host (from config/discovery) AND its task-platform
+        ``assignee``. Deliberately does NOT disable the filter (return ``()``)
+        just because the code-host login is missing: the operator's rule is
+        "a comment that tags a human is not kato's to answer, even when we
+        can't positively confirm kato is the tagged party", so a thin identity
+        set simply means more tagged comments are (correctly) left for a human.
+        All lookups are best-effort so a scan tick can never crash.
         """
-        review_login = ''
+        identities: list[str] = []
         try:
             review_login = str(
                 self._repository_service.review_comment_bot_login(repository_id) or '',
             )
         except Exception:  # noqa: BLE001 - identity is best-effort
             review_login = ''
-        if not review_login:
-            return ()
-        logins = [review_login]
+        if review_login:
+            identities.append(review_login)
         try:
             task_login = str(getattr(self._task_service, 'bot_login', '') or '')
         except Exception:  # noqa: BLE001 - identity is best-effort
             task_login = ''
         if task_login:
-            logins.append(task_login)
-        return tuple(logins)
+            identities.append(task_login)
+        # Normalise: lowercase, drop blanks and the YouTrack ``me`` query alias
+        # (never a real ``@mention`` handle), de-dupe, preserve order.
+        normalized: list[str] = []
+        for identity in identities:
+            token = identity.strip().lower()
+            if token and token != 'me' and token not in normalized:
+                normalized.append(token)
+        return tuple(normalized)
+
+    @staticmethod
+    def _review_comment_targets_someone_else(
+        body: object, bot_identities: tuple[str, ...],
+    ) -> bool:
+        """True when a review comment @-tags someone OTHER than kato.
+
+        The operator's rule, exactly: a comment that tags anyone is theirs to
+        answer — kato only acts when the tag is kato itself, or when the
+        comment tags no one at all. Catches BOTH mention encodings (plain
+        ``@login`` and Bitbucket's ``@{account_id}``) so a tagged comment is
+        never mistaken for a mention-free one. When the comment tags people
+        but we can't confirm kato is among them (unknown/partial bot
+        identity), it counts as "someone else" — kato stays out.
+        """
+        mentions = extract_all_mention_tokens(body)
+        if not mentions:
+            return False
+        return not mentions_include_identity(mentions, bot_identities)
 
     def _review_fix_context(self, comment: ReviewComment) -> ReviewFixContext:
         repository_id = text_from_attr(comment, PullRequestFields.REPOSITORY_ID)
