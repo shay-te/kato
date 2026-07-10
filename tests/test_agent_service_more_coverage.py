@@ -1710,6 +1710,32 @@ class TaskPublishStateTests(unittest.TestCase):
             result = service.task_publish_state('T1')
         self.assertTrue(result['has_pull_request'])
 
+    def test_pull_request_button_stays_enabled_when_a_repo_still_needs_one(self) -> None:
+        # Regression: a repo added to the task after the first PR
+        # round (e.g. via "Add repository" / Sync) has no PR yet.
+        # ``has_pull_request`` must reflect "every repo already has a
+        # PR" — not "any repo has one" — or the button stays
+        # permanently disabled and the new repo never gets a PR.
+        published_repo = SimpleNamespace(id='r1')
+        new_repo = SimpleNamespace(id='r2')
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'T1'
+        repo.branch_needs_push.return_value = False
+
+        def _find_pull_requests(repository, source_branch='', title_prefix=''):
+            if repository is published_repo:
+                return [{'url': 'https://example.com/pr/17'}]
+            return []
+
+        repo.find_pull_requests.side_effect = _find_pull_requests
+        service = AgentService(**_kwargs(repository_service=repo))
+        with patch.object(service, '_resolve_publish_context',
+                          return_value=([published_repo, new_repo], 'T1',
+                                        SimpleNamespace(id='T1'))):
+            result = service.task_publish_state('T1')
+        self.assertFalse(result['has_pull_request'])
+        self.assertEqual(result['pull_request_urls'], ['https://example.com/pr/17'])
+
     def test_swallows_branch_needs_push_exception(self) -> None:
         repo_obj = SimpleNamespace(id='r1')
         repo = MagicMock()

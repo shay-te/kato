@@ -54,7 +54,15 @@ def discover_git_repositories(
             continue
         repository_path = Path(current_root).resolve()
         repositories.append(build_discovered_repository(repository_path))
-        dir_names[:] = []
+        # Keep walking into this repository's own subdirectories —
+        # some operators nest independent repos inside a parent folder
+        # that itself happens to be a git checkout (e.g. a workspace
+        # root). Stopping here would hide those nested repos from the
+        # inventory picker even though they're individually resolvable
+        # by tag (``_discover_repository_at_named_folder`` already
+        # looks up ``<root>/<name>`` directly). ``.git`` itself stays
+        # excluded via ``DISCOVERY_SKIP_DIRS`` above, so this doesn't
+        # walk into the found repo's own object store.
 
     repositories.sort(key=lambda repository: repository.local_path.lower())
     return repositories

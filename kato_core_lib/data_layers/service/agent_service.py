@@ -3992,8 +3992,16 @@ class AgentService(MissionStepLoggerMixin, Service):
           *any* repo has unpushed work (dirty tree, branch never pushed,
           or local ahead of ``origin/<branch>``); disabled when every
           repo is in sync with its remote.
-        - ``has_pull_request``       → the Pull request button is
-          disabled and the existing URL is surfaced as a hint.
+        - ``has_pull_request``       → True only once EVERY repo on the
+          task already has an open PR (nothing left to publish) — the
+          Pull request button is disabled and the existing URL(s) are
+          surfaced as a hint. A repo added to the task after the first
+          PR round (e.g. via "Add repository" / Sync) still has no PR,
+          so this stays False and the button stays enabled until that
+          repo is covered too — a task-wide "any repo has a PR" check
+          previously left the button permanently disabled once the
+          FIRST repo was published, silently blocking PRs for repos
+          added later.
 
         Best-effort: any per-repo lookup failure is ignored so a
         transient git/API hiccup doesn't lock the UI buttons forever.
@@ -4012,9 +4020,9 @@ class AgentService(MissionStepLoggerMixin, Service):
                 'has_changes_to_push': False,
                 'has_pull_request': False,
             }
-        has_pull_request = False
         has_changes_to_push = False
         pull_request_urls: list[str] = []
+        repos_missing_pull_request = 0
         for repository in repos:
             branch_name = self._repository_service.build_branch_name(task_obj, repository)
             if not has_changes_to_push:
@@ -4030,15 +4038,16 @@ class AgentService(MissionStepLoggerMixin, Service):
                     )
             existing = self._cached_find_pull_requests(repository, branch_name)
             if existing:
-                has_pull_request = True
                 first = existing[0] if isinstance(existing[0], dict) else {}
                 url = str(first.get('url', '') or '')
                 if url:
                     pull_request_urls.append(url)
+            else:
+                repos_missing_pull_request += 1
         return {
             'has_workspace': True,
             'has_changes_to_push': has_changes_to_push,
-            'has_pull_request': has_pull_request,
+            'has_pull_request': repos_missing_pull_request == 0,
             'pull_request_urls': pull_request_urls,
         }
 

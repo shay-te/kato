@@ -131,33 +131,12 @@ export default function TabList({
     };
   }, [recomputeScrollState]);
 
-  // When the active task changes, scroll its segment into view —
-  // operators using the keyboard / external task tag flips
-  // shouldn't have to find the new tab themselves.
-  useEffect(() => {
-    const node = scrollRef.current;
-    if (!node || !activeTaskId) { return; }
-    const active = node.querySelector(`[data-task-id="${activeTaskId}"]`);
-    if (!active) { return; }
-    // Scroll ONLY this strip — never ``active.scrollIntoView()``.
-    // scrollIntoView walks and scrolls every scrollable ancestor; on
-    // the rightmost tab it would also scroll the layout/page
-    // horizontally, dragging the whole UI left and clipping the file
-    // pane (the reported bug). Compute the centred scrollLeft from
-    // rects and clamp it to the strip's own range so the scroll is
-    // contained.
-    const nodeRect = node.getBoundingClientRect();
-    const activeRect = active.getBoundingClientRect();
-    const delta = (activeRect.left - nodeRect.left)
-      - (node.clientWidth - activeRect.width) / 2;
-    const maxLeft = node.scrollWidth - node.clientWidth;
-    const left = Math.max(0, Math.min(node.scrollLeft + delta, maxLeft));
-    if (typeof node.scrollTo === 'function') {
-      node.scrollTo({ left, behavior: 'smooth' });
-    } else {
-      node.scrollLeft = left;
-    }
-  }, [activeTaskId, sessions]);
+  // No auto-scroll-into-view on tab selection: the operator's own
+  // scroll position is intentional and must not be fought. With many
+  // open tasks, ``sessions`` changes on every status poll, and a
+  // dependency on it here would re-center the active tab mid-scroll
+  // (the reported bug) — better to let operators navigate freely and
+  // use the chevrons or wheel to reach a tab that's off-screen.
 
   function scrollByPage(direction) {
     const node = scrollRef.current;

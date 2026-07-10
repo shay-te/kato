@@ -69,6 +69,24 @@ class DiscoverGitRepositoriesTests(unittest.TestCase):
         self.assertIn('real', names)
         self.assertNotIn('pkg', names)
 
+    def test_discovers_repositories_nested_inside_another_repository(self) -> None:
+        # Regression: an operator's workspace folder is itself a git
+        # checkout (e.g. ``dev-una``) but the individually-cloned repos
+        # it's meant to hold live one level deeper inside it. Stopping
+        # the walk at the first ``.git`` hid every nested repo from the
+        # repository picker — the operator could only reach a nested
+        # repo by naming it directly (the by-name lookup fast path).
+        workspace = self.root / 'dev-una'
+        workspace.mkdir()
+        _make_git_dir(workspace, 'git@github.com:org/dev-una.git')
+        nested = workspace / 'inner-repo'
+        nested.mkdir()
+        _make_git_dir(nested, 'git@github.com:org/inner-repo.git')
+        results = discover_git_repositories(str(self.root))
+        names = [Path(r.local_path).name for r in results]
+        self.assertIn('dev-una', names)
+        self.assertIn('inner-repo', names)
+
     def test_ignored_folders_argument_filters_results(self) -> None:
         repo_keep = self.root / 'keep'
         repo_keep.mkdir()

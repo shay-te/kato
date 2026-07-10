@@ -72,11 +72,11 @@ describe('TabList', () => {
     expect(tabs[1].querySelector('.status-dot')).not.toHaveClass(`status-${TAB_STATUS.WORKING}`);
   });
 
-  test('active-tab auto-scroll moves the STRIP, never scrollIntoView', () => {
-    // Regression: ``active.scrollIntoView()`` walks + scrolls every
-    // scrollable ancestor, so selecting the rightmost tab dragged
-    // the whole page left and clipped the file pane. The effect must
-    // scroll only its own container.
+  test('selecting/updating the active tab never auto-scrolls the strip', () => {
+    // Regression: an effect that re-centered the active tab on every
+    // ``sessions`` change (e.g. a status poll) fought the operator's
+    // own manual scroll/wheel input, making the strip feel like it
+    // "jumped back" mid-scroll. Selection must never move the strip.
     const scrollToSpy = vi.fn();
     const scrollIntoViewSpy = vi.fn();
     const origScrollTo = window.HTMLElement.prototype.scrollTo;
@@ -84,14 +84,23 @@ describe('TabList', () => {
     window.HTMLElement.prototype.scrollTo = scrollToSpy;
     window.HTMLElement.prototype.scrollIntoView = scrollIntoViewSpy;
     try {
-      render(
+      const { rerender } = render(
         <TabList
           sessions={[_session('A-1'), _session('A-2'), _session('A-3')]}
           activeTaskId="A-3"
           onSelect={() => {}}
         />,
       );
-      expect(scrollToSpy).toHaveBeenCalled();
+      // Simulate a status poll producing a new sessions array while
+      // the active tab stays the same.
+      rerender(
+        <TabList
+          sessions={[_session('A-1'), _session('A-2'), _session('A-3')]}
+          activeTaskId="A-3"
+          onSelect={() => {}}
+        />,
+      );
+      expect(scrollToSpy).not.toHaveBeenCalled();
       expect(scrollIntoViewSpy).not.toHaveBeenCalled();
     } finally {
       window.HTMLElement.prototype.scrollTo = origScrollTo;

@@ -15,9 +15,12 @@ const POLL_INTERVAL_MS = 10_000;
 // Drives the planning UI's `Push` and `Pull request` buttons.
 //   - hasWorkspace:    false → both buttons disabled (kato hasn't
 //                      provisioned a workspace for this task yet)
-//   - hasPullRequest:  true  → the PR button stays disabled with a
+//   - hasPullRequest:  true  → EVERY repo on the task already has an
+//                      open PR, so the button stays disabled with a
 //                      "PR already exists" hint; push is still allowed
-//                      so the operator can refresh the branch.
+//                      so the operator can refresh the branch. A repo
+//                      added to the task later (still missing a PR)
+//                      keeps this false so the button stays usable.
 //   - pushBusy / prBusy: per-action in-flight flags so a double-click
 //                      doesn't fire two pushes.
 export function useTaskPublish(taskId) {
