@@ -264,7 +264,11 @@ class YouTrackClientBase(IssueClientBase):
         Used only when no real ``assignee`` login was configured (the common
         ``assignee: me`` setup), so a comment @-mentioning a human is still
         recognized and skipped. Best-effort: returns ``()`` on any error or
-        when YouTrack echoes back the ``me`` alias.
+        when YouTrack echoes back the ``me`` alias — logged (not silent),
+        since an empty return here means the @-mention filter is disabled
+        for every comment scanned until this resolves, and that state
+        needs to be visible to diagnose, not invisible until a restart
+        happens to clear it.
         """
         try:
             response = self._get_with_retry(
@@ -275,6 +279,11 @@ class YouTrackClientBase(IssueClientBase):
             login = normalized_lower_text(str(payload.get('login', '') or ''))
             return (login,) if login and login != 'me' else ()
         except Exception:
+            self.logger.exception(
+                'failed to resolve bot login via /api/users/me — the '
+                '@-mention filter is disabled for comments until this '
+                'succeeds',
+            )
             return ()
 
     # ----- attachments -----

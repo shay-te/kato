@@ -243,20 +243,29 @@ class IssueClientBase(RetryingClientBase):
         normalized = str(bot_login or '').strip().lower()
         self._bot_login = '' if normalized in self._BOT_LOGIN_ALIASES else normalized
         self._resolved_bot_logins: tuple = ()
-        self._bot_login_resolved = False
 
     def _effective_bot_logins(self) -> tuple:
         """The bot identities a mention must match to count as "for the bot".
 
         The configured login when one was given; otherwise the platform's
         real identities resolved lazily from its current-user endpoint and
-        cached (resolved at most once, even when it comes back empty, so a
-        genuinely unresolvable bot never re-hits the API per comment).
+        cached ONLY once actually resolved (non-empty) — a resolution
+        failure (network blip, auth race, rate limit) is retried on the
+        next call instead of being cached as permanent. The previous
+        "resolved at most once, even when empty" caching treated a single
+        transient failure identically to "this bot genuinely has no
+        identity," which silently and PERMANENTLY disabled the @-mention
+        filter for the rest of the process's life — a comment tagging a
+        human co-worker would then be treated as addressed to nobody in
+        particular and get worked by the agent, with no error anywhere
+        and no fix short of a full restart. A genuinely unresolvable bot
+        still costs at most one extra API call per comment that actually
+        carries a mention (already the hot-path guard in
+        ``_comment_addressed_elsewhere``), not a request storm.
         """
         if self._bot_login:
             return (self._bot_login,)
-        if not self._bot_login_resolved:
-            self._bot_login_resolved = True
+        if not self._resolved_bot_logins:
             self._resolved_bot_logins = tuple(self._fetch_current_user_logins())
         return self._resolved_bot_logins
 

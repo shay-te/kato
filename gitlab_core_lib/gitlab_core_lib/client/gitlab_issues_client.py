@@ -51,6 +51,11 @@ class GitLabIssuesClient(IssueClientBase):
             ).strip().lower()
             return (username,) if username else ()
         except Exception:
+            self.logger.exception(
+                'failed to resolve bot username via GET /user — the '
+                '@-mention filter is disabled for comments until this '
+                'succeeds',
+            )
             return ()
 
     def validate_connection(self, project: str, assignee: str, states: list[str]) -> None:

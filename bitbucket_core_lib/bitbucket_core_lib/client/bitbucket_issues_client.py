@@ -73,6 +73,11 @@ class BitbucketIssuesClient(IssueClientBase):
                     identities.append(value)
             return tuple(identities)
         except Exception:
+            self.logger.exception(
+                'failed to resolve bot identity via GET /2.0/user — the '
+                '@-mention filter is disabled for comments until this '
+                'succeeds',
+            )
             return ()
 
     def _extract_comment_mentions(self, body: object) -> list:

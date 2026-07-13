@@ -88,6 +88,11 @@ class JiraClient(IssueClientBase):
             ]
             return tuple(identity for identity in identities if identity)
         except Exception:
+            self.logger.exception(
+                'failed to resolve bot identity via /rest/api/3/myself — '
+                'the @-mention filter is disabled for comments until this '
+                'succeeds',
+            )
             return ()
 
     @staticmethod

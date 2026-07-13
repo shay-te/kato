@@ -476,7 +476,18 @@ class EffectiveBotLoginsTests(unittest.TestCase):
             self.assertEqual(client._effective_bot_logins(), ('resolved',))
         fetch.assert_called_once()
 
-    def test_unresolvable_caches_empty_without_refetch(self) -> None:
+    def test_unresolvable_is_retried_not_cached_forever(self) -> None:
+        # Regression: an empty resolution (transient failure OR a
+        # genuinely unconfigurable bot) used to be cached identically to
+        # a real success — "resolved at most once, even when empty." That
+        # collapsed "one network blip" and "this bot will NEVER have an
+        # identity" into the same permanent state, silently and forever
+        # disabling the @-mention filter after a single bad API call
+        # (a real, previously-reported bug: a comment tagging a human
+        # co-worker kept getting treated as addressed to nobody in
+        # particular after one transient resolution failure, for the rest
+        # of the process's life, with no error anywhere). An empty result
+        # must now be retried on the next call, not cached.
         client = _make_client()
         client._configure_bot_login('')
         with patch.object(
@@ -484,7 +495,22 @@ class EffectiveBotLoginsTests(unittest.TestCase):
         ) as fetch:
             self.assertEqual(client._effective_bot_logins(), ())
             self.assertEqual(client._effective_bot_logins(), ())
-        fetch.assert_called_once()
+        self.assertEqual(fetch.call_count, 2)
+
+    def test_resolution_recovers_once_the_api_call_succeeds(self) -> None:
+        client = _make_client()
+        client._configure_bot_login('')
+        with patch.object(
+            client, '_fetch_current_user_logins', return_value=(),
+        ):
+            self.assertEqual(client._effective_bot_logins(), ())
+        with patch.object(
+            client, '_fetch_current_user_logins', return_value=('resolved',),
+        ) as fetch:
+            self.assertEqual(client._effective_bot_logins(), ('resolved',))
+            # Now that it succeeded, it must go back to being cached.
+            self.assertEqual(client._effective_bot_logins(), ('resolved',))
+        self.assertEqual(fetch.call_count, 1)
 
     def test_default_fetch_returns_empty(self) -> None:
         # Base default does no resolution (subclasses override).

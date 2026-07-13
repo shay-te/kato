@@ -57,6 +57,11 @@ class GitHubIssuesClient(IssueClientBase):
             ).strip().lower()
             return (login,) if login else ()
         except Exception:
+            self.logger.exception(
+                'failed to resolve bot login via GET /user — the '
+                '@-mention filter is disabled for comments until this '
+                'succeeds',
+            )
             return ()
 
     def validate_connection(self, project: str, assignee: str, states: list[str]) -> None:

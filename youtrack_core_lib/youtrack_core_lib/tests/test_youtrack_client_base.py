@@ -513,6 +513,53 @@ class YouTrackBotIdentityWiringTests(unittest.TestCase):
             self.assertEqual(client._effective_bot_logins(), ('kato_bot',))
         fetch.assert_called_once()
 
+    def test_transient_resolution_failure_is_retried_not_cached_forever(self):
+        # Regression: a real, previously-reported bug. A comment @-mentioning
+        # a human co-worker should be dropped from the task context — but if
+        # the FIRST attempt to resolve the bot's own YouTrack login (e.g. one
+        # network blip, one auth race, one rate-limited /api/users/me call)
+        # fails, the old code cached that failure as if the bot had no
+        # identity at all, FOREVER — permanently and silently disabling the
+        # @-mention filter for the rest of the process's life. Every comment
+        # mentioning a coworker, from then on, looked mention-free (no bot
+        # identity to compare against) and got worked by the agent — with no
+        # error anywhere, only clearing on a full process restart. Uses the
+        # REAL client + REAL mention-detection code path
+        # (_comment_addressed_elsewhere), only the network call is mocked.
+        client = _make_base_with_login('me')  # forces lazy resolution
+        with patch.object(
+            client, '_get_with_retry', side_effect=RuntimeError('network blip'),
+        ):
+            # First attempt fails — filter must NOT silently disable itself.
+            self.assertFalse(
+                client._comment_addressed_elsewhere('@alice please handle this'),
+            )
+        # A later call, once the API is healthy again, must actually retry
+        # (not reuse a permanently-cached empty result).
+        with patch.object(
+            client, '_get_with_retry',
+            return_value=mock_response(json_data={'login': 'resolved_bot'}),
+        ):
+            self.assertTrue(
+                client._comment_addressed_elsewhere('@alice please handle this'),
+            )
+            self.assertFalse(
+                client._comment_addressed_elsewhere('@resolved_bot please fix this'),
+            )
+
+    def test_successful_resolution_is_still_cached_not_refetched(self):
+        # The other half of the same fix: a genuinely successful resolution
+        # must still be cached (not re-hit the API on every mentioned
+        # comment) — only a FAILURE should be retried, not a success.
+        client = _make_base_with_login('me')
+        with patch.object(
+            client, '_get_with_retry',
+            return_value=mock_response(json_data={'login': 'resolved_bot'}),
+        ) as get:
+            client._comment_addressed_elsewhere('@alice first comment')
+            client._comment_addressed_elsewhere('@bob second comment')
+        self.assertEqual(get.call_count, 1)
+
 
 class YouTrackCommentAddressedElsewhereTests(unittest.TestCase):
     """``_comment_addressed_elsewhere`` with a resolved bot login."""
