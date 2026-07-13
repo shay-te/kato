@@ -14,23 +14,27 @@ import { unpackPermissionEnvelope } from '../utils/permissionEnvelope.js';
 // task is in view and even when the per-task SSE frame never arrived —
 // closing the "I had to refresh the page to see the popup" bug.
 //
-// Remembered "Allow always" / "Deny always" decisions auto-resolve here
-// too (via PermissionDecisionContainer). When the resolved ask belongs to
-// a task whose chat is mounted, the audit bubble is routed back into that
-// chat through the store's audit-sink registry.
-export default function GlobalPermissionContainer({ toolMemory }) {
+// Remembered "Allow always" / "Deny always" decisions are resolved
+// SERVER-SIDE before an ask ever reaches this store (see
+// kato_core_lib/helpers/tool_decision_store.py) — clicking "remember"
+// here just tells the backend to persist the choice via the ``remember``
+// flag on the submit call. When the resolved ask belongs to a task whose
+// chat is mounted, the audit bubble is routed back into that chat
+// through the store's audit-sink registry.
+export default function GlobalPermissionContainer() {
   const { list } = usePendingPermissions();
   // Oldest ask first (store preserves insertion order).
   const current = list[0] || null;
   const currentTaskId = current ? unpackPermissionEnvelope(current).taskId : '';
   const currentRequestId = current ? unpackPermissionEnvelope(current).requestId : '';
 
-  const submit = useCallback(async ({ requestId, allow, rationale }) => {
+  const submit = useCallback(async ({ requestId, allow, rationale, remember }) => {
     if (!currentTaskId) { return false; }
     const result = await postSession(currentTaskId, 'permission', {
       request_id: requestId,
       allow,
       rationale,
+      remember: !!remember,
     });
     if (result.ok) {
       // Resolve immediately so the modal closes without waiting for the
@@ -61,8 +65,6 @@ export default function GlobalPermissionContainer({ toolMemory }) {
       onDismiss={dismiss}
       onSubmit={submit}
       onAuditBubble={auditBubble}
-      recallToolDecision={toolMemory.recall}
-      rememberToolDecision={toolMemory.remember}
       taskCode={currentTaskId}
       taskSummary={unpackPermissionEnvelope(current).taskSummary}
     />

@@ -71,6 +71,34 @@ export function fetchPendingPermissions() {
   return fetchJson('/api/permissions/pending');
 }
 
+// Backend-owned remembered "Allow always" / "Deny always" decisions —
+// the browser holds no copy of its own (kato_core_lib/helpers/
+// tool_decision_store.py is the sole source of truth; the server
+// auto-resolves a matching pending ask before it's ever surfaced here).
+// Returns ``{ decisions: [{tool_name, command_signature, allow}, …] }``.
+export function fetchToolDecisions() {
+  return requestEnvelope('/api/tool-decisions');
+}
+
+export function forgetToolDecision(toolName, commandSignature = '') {
+  return postEnvelope('/api/tool-decisions/forget', {
+    tool_name: toolName,
+    command_signature: commandSignature,
+  });
+}
+
+export function setToolDecision(toolName, commandSignature, allow) {
+  return postEnvelope('/api/tool-decisions/set', {
+    tool_name: toolName,
+    command_signature: commandSignature,
+    allow: !!allow,
+  });
+}
+
+export function clearToolDecisions() {
+  return postEnvelope('/api/tool-decisions/clear', {});
+}
+
 export function fetchSafetyState() {
   return fetchJson('/api/safety');
 }

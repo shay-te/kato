@@ -778,6 +778,7 @@ class KatoCoreLib(CoreLib):
             KATO_WORKSPACE_REFUSAL_GUIDANCE,
         )
         from kato_core_lib.helpers.review_comment_utils import (
+            KATO_REVIEW_COMMENT_ANSWER_PREFIX,
             KATO_REVIEW_COMMENT_FIXED_PREFIX,
             KATO_REVIEW_COMMENT_REPLY_PREFIX,
         )
@@ -793,8 +794,14 @@ class KatoCoreLib(CoreLib):
             # The body prefixes kato's bot uses for the replies it posts, so
             # the agent doesn't get fed back its own prior review replies. The
             # 'Kato' brand lives here in kato, not in agent_core_lib.
+            # ANSWER_PREFIX must be included too — omitting it left kato's own
+            # past answer-mode replies unfiltered, leaking back into future
+            # prompts as if they were reviewer text (a context-hygiene gap,
+            # not a loop bug: is_kato_review_comment_reply's own dedupe
+            # check already includes all three prefixes).
             self_reply_prefixes=(
                 KATO_REVIEW_COMMENT_FIXED_PREFIX,
                 KATO_REVIEW_COMMENT_REPLY_PREFIX,
+                KATO_REVIEW_COMMENT_ANSWER_PREFIX,
             ),
         ).agent

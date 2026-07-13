@@ -26,8 +26,6 @@ function _ask(taskId, requestId = 'r1', tool = 'Bash') {
   };
 }
 
-const _memory = { recall: () => null, remember: vi.fn() };
-
 beforeEach(() => {
   permissionStore.__resetForTests();
   fetchPendingPermissions.mockReset();
@@ -41,7 +39,7 @@ describe('GlobalPermissionContainer', () => {
 
   test('pops a titled modal for a pending ask', async () => {
     fetchPendingPermissions.mockResolvedValue({ pending: [_ask('POJ-2')] });
-    render(<GlobalPermissionContainer toolMemory={_memory} />);
+    render(<GlobalPermissionContainer />);
     const heading = await screen.findByRole('heading');
     expect(heading).toHaveTextContent(/POJ-2.*wants permission/);
   });
@@ -50,23 +48,34 @@ describe('GlobalPermissionContainer', () => {
     // Previously the focused task was excluded here; now this container is
     // the sole owner, so the ask must surface no matter which task it is.
     fetchPendingPermissions.mockResolvedValue({ pending: [_ask('POJ-1')] });
-    render(<GlobalPermissionContainer toolMemory={_memory} />);
+    render(<GlobalPermissionContainer />);
     const heading = await screen.findByRole('heading');
     expect(heading).toHaveTextContent(/POJ-1.*wants permission/);
   });
 
   test('a decision posts to the asking task and resolves it', async () => {
     fetchPendingPermissions.mockResolvedValue({ pending: [_ask('POJ-2', 'req-9')] });
-    render(<GlobalPermissionContainer toolMemory={_memory} />);
+    render(<GlobalPermissionContainer />);
     fireEvent.click(await screen.findByRole('button', { name: /allow once/i }));
     await waitFor(() => expect(postSession).toHaveBeenCalled());
     expect(postSession).toHaveBeenCalledWith(
       'POJ-2', 'permission',
-      expect.objectContaining({ request_id: 'req-9', allow: true }),
+      expect.objectContaining({ request_id: 'req-9', allow: true, remember: false }),
     );
     // The modal closes once the decision resolves the ask.
     await waitFor(() => {
       expect(screen.queryByRole('heading')).toBeNull();
     });
+  });
+
+  test('"Allow always" forwards remember=true so the backend persists it', async () => {
+    fetchPendingPermissions.mockResolvedValue({ pending: [_ask('POJ-2', 'req-9')] });
+    render(<GlobalPermissionContainer />);
+    fireEvent.click(await screen.findByRole('button', { name: /allow always/i }));
+    await waitFor(() => expect(postSession).toHaveBeenCalled());
+    expect(postSession).toHaveBeenCalledWith(
+      'POJ-2', 'permission',
+      expect.objectContaining({ request_id: 'req-9', allow: true, remember: true }),
+    );
   });
 });

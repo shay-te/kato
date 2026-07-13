@@ -2,29 +2,33 @@ import { useCallback, useEffect, useRef } from 'react';
 import { CLAUDE_EVENT } from '../constants/claudeEvent.js';
 import { NOTIFICATION_KIND } from '../constants/notificationKind.js';
 import { classifyStatusEntry } from '../utils/classifyStatusEntry.js';
-import {
-  unpackPermissionEnvelope,
-  decisionCommandFor,
-} from '../utils/permissionEnvelope.js';
+import { unpackPermissionEnvelope } from '../utils/permissionEnvelope.js';
 import { maybePlayPermissionChime } from '../utils/permissionSound.js';
 
-// ``recallToolDecision`` (optional): ``(toolName) => 'allow' | 'deny' | null``.
-// When set AND the recall returns a definitive decision, the permission ask
-// will be auto-resolved silently by PermissionDecisionContainer and the
-// browser notification ("Approval needed") MUST be suppressed — pinging the
-// operator for an action they already decided is noise (the operator-
-// reported "I get browser notification approval needed even when claude is
-// approving automatically from saved rules" bug). Mirrors the tab-orange
-// gate already in App.jsx, so the two surfaces stay aligned.
+// ``recallToolDecision`` (optional): ``(toolName, command) => 'allow' | 'deny' | null``,
+// reading the BACKEND's remembered-decision cache (see
+// useRememberedToolDecisions — the browser holds no decision of its
+// own). Only needed for the STATUS FEED path below: that "asking
+// permission to run X" log line fires unconditionally the moment
+// Claude asks (claude_core_lib's _log_event_for_operator), before the
+// webserver's own auto-resolve check runs, so it can't tell a
+// several-times-in-a-row auto-approved Bash call apart from one that
+// genuinely needs the operator — pinging for a decision already made
+// is noise (the reported "I get browser notification approval needed
+// even when claude is approving automatically from saved rules" bug).
+//
+// The per-task SSE path (``onSessionEvent`` below) needs NO such
+// check any more: the webserver auto-resolves a matching pending
+// request against the SAME remembered-decision store before it is
+// ever published over SSE (see _maybe_auto_resolve_live_event in
+// kato_webserver/app.py), so any control_request/permission_request
+// this hook receives from the live stream already needs a human.
 //
 // ``activeTaskId`` (optional): the focused task. Its permission ask is
-// already notified — with full command-level recall — by ``onSessionEvent``
-// off the live SSE stream. The orchestrator status feed emits a duplicate
-// "asking permission to run X" line for that SAME ask, and that line carries
-// only the tool name, so it can't see a remembered ``(Bash, mvn)`` grant and
-// would re-ping even when the SSE path correctly stayed silent. So the
-// status-feed permission notification is suppressed for the focused task
-// (owned by onSessionEvent) and, for background tasks, best-effort suppressed
+// already notified by ``onSessionEvent`` off the live SSE stream, and
+// the status feed emits a duplicate "asking permission to run X" line
+// for that SAME ask — suppressed here for the focused task (owned by
+// onSessionEvent) and, for background tasks, best-effort suppressed
 // when a saved decision exists.
 export function useNotificationRouting(
   notify,
@@ -66,23 +70,13 @@ export function useNotificationRouting(
     if (!raw?.type) { return; }
     if (raw.type === CLAUDE_EVENT.PERMISSION_REQUEST
         || raw.type === CLAUDE_EVENT.CONTROL_REQUEST) {
-      const { toolName, toolInput } = unpackPermissionEnvelope(raw);
-      // Command-keyed tools (Bash) remember decisions by program
-      // signature, not bare tool name — without ``decisionCommandFor``
-      // the recall for ``Bash`` would miss ``(Bash, mvn)`` entries and
-      // the notification would still fire for every remembered ``mvn``
-      // ask. Mirror PermissionDecisionContainer's auto-resolve key so
-      // a decision the auto-handler will silently honour suppresses the
-      // notification too.
-      const command = decisionCommandFor(toolName, toolInput);
-      const decision = typeof recallToolDecision === 'function' && toolName
-        ? recallToolDecision(toolName, command)
-        : null;
-      if (decision === 'allow' || decision === 'deny') { return; }
-      // A real, un-remembered permission ask on the FOCUSED task → chime.
+      // The webserver already auto-resolved this against a remembered
+      // decision before publishing it over SSE if it could — reaching
+      // here means it genuinely needs the operator, so always chime +
+      // notify (no client-side recall check needed).
+      const { toolName, requestId } = unpackPermissionEnvelope(raw);
       // The dedupe key (request id) collapses this with the status feed's
       // duplicate line for the same ask.
-      const { requestId } = unpackPermissionEnvelope(raw);
       maybePlayPermissionChime(requestId || `${taskId || ''}:${toolName}`);
       notify({
         title: 'Approval needed',
@@ -104,7 +98,7 @@ export function useNotificationRouting(
         kind: ok ? NOTIFICATION_KIND.REPLY : NOTIFICATION_KIND.ERROR,
       });
     }
-  }, [notify, recallToolDecision]);
+  }, [notify]);
 
   return { onStatusEntry, onSessionEvent };
 }

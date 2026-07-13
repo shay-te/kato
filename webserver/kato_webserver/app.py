@@ -17,7 +17,11 @@ Endpoints:
     GET  /api/sessions/<task_id>/commits?repo=<id>      — recent commits on a repo's task branch
     GET  /api/sessions/<task_id>/commit?repo=<id>&sha=  — unified diff for one commit
     POST /api/sessions/<task_id>/messages               — body: {"text", "images": [{media_type, data}]}
-    POST /api/sessions/<task_id>/permission             — body: {"request_id", "allow", "rationale"}
+    POST /api/sessions/<task_id>/permission             — body: {"request_id", "allow", "rationale", "remember"}
+    GET  /api/tool-decisions                            — list remembered "allow/deny always" decisions
+    POST /api/tool-decisions/set                        — body: {"tool_name", "command_signature", "allow"}
+    POST /api/tool-decisions/forget                      — body: {"tool_name", "command_signature"}
+    POST /api/tool-decisions/clear                       — clear every remembered decision
     POST /api/sessions/<task_id>/adopt-agent-session    — body keyed by AGENT_SESSION_ID
     POST /api/sessions/<task_id>/sync-repositories      — clone task repos missing from workspace
     POST /api/sessions/<task_id>/add-repository         — body: {"repository_id"} — tag + clone
@@ -46,6 +50,7 @@ import os
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from flask import (
     Flask,
@@ -722,6 +727,57 @@ def _set_task_override(app: Flask, key: str, task_id: str, value: str = '') -> b
     return True
 
 
+# Only OPTIONS is exempt: Flask/Werkzeug answers it automatically
+# (allowed-methods introspection) without ever running a view
+# function, so there is no route body — and therefore no side
+# effect — it could reach. Every other method, INCLUDING GET/HEAD,
+# is guarded: see the docstring below for why "GET never mutates"
+# does not actually hold in this app.
+_CSRF_EXEMPT_HTTP_METHODS = frozenset({'OPTIONS'})
+
+
+def _register_csrf_guard(app: Flask) -> None:
+    """Reject cross-origin requests — including GET.
+
+    Kato has no login/session, so the risk here isn't a stolen
+    authenticated cookie (there isn't one) — it's a page open in the
+    operator's own browser using that browser as a network pivot to
+    reach the loopback-bound API a remote attacker's own machine can't
+    reach directly (e.g. a malicious page running
+    ``fetch('http://127.0.0.1:5050/api/...', {method: 'POST', ...})``).
+    Browsers attach ``Origin`` (or, failing that, ``Referer``) on every
+    cross-origin request and on same-origin non-GET/HEAD requests too,
+    so comparing it against the server's own host is a real defense
+    even with zero authentication. A request with NEITHER header
+    (curl, a local script, server-to-server calls, direct navigation —
+    typing the URL or a bookmark) is let through — it carries no
+    ambient browser context to abuse in the first place, so this
+    check has nothing to defend against there.
+
+    GET is deliberately NOT exempted, unlike a textbook CSRF guard.
+    An audit turned up real GET-triggered mutations in this app:
+    ``/files``/``/diff`` can commit a resolved merge, and
+    ``/sessions``/``/permissions/pending``/the SSE stream can
+    auto-resolve (approve/deny) a live agent's pending tool
+    permission from a remembered decision — reachable via nothing
+    more than ``<img src="http://127.0.0.1:5050/api/sessions">`` on
+    any page the operator's browser visits, no JavaScript required.
+    Browsers DO send ``Referer`` on a cross-origin ``<img>`` request
+    even though they skip ``Origin`` for it, so this still catches it.
+    """
+    @app.before_request
+    def _reject_cross_origin_request():
+        if request.method in _CSRF_EXEMPT_HTTP_METHODS:
+            return None
+        origin = request.headers.get('Origin') or request.headers.get('Referer') or ''
+        if not origin:
+            return None
+        origin_host = urlsplit(origin).netloc
+        if origin_host and origin_host != request.host:
+            return jsonify({'error': 'cross-origin request rejected'}), 403
+        return None
+
+
 def create_app(
     *,
     session_manager=None,
@@ -740,6 +796,7 @@ def create_app(
         template_folder=str(REPO_ROOT / 'templates'),
         static_folder=str(REPO_ROOT / 'static'),
     )
+    _register_csrf_guard(app)
     if session_manager is None:
         session_manager = _build_fallback_manager(fallback_state_dir)
     app.config['SESSION_MANAGER'] = session_manager
@@ -825,6 +882,7 @@ def _register_http_routes(app: Flask) -> None:
             app.config['SESSION_MANAGER'],
             app.config.get('WORKSPACE_MANAGER'),
             app.config.get('AGENT_SERVICE'),
+            app=app,
         ))
 
     @app.get('/api/models')
@@ -2640,6 +2698,7 @@ def _register_streaming_routes(app: Flask) -> None:
     _register_stop_session_route(app)
     _register_post_permission_route(app)
     _register_get_pending_permissions_route(app)
+    _register_tool_decisions_routes(app)
     _register_action_guard_audit_route(app)
     _register_agent_version_route(app)
     _register_agent_version_upgrade_route(app)
@@ -2653,7 +2712,7 @@ def _register_session_events_route(app: Flask) -> None:
         agent_service = app.config.get('AGENT_SERVICE')
         return _sse_response(
             _event_stream_generator(
-                manager, workspace_manager, task_id, agent_service,
+                manager, workspace_manager, task_id, agent_service, app=app,
             ),
         )
 
@@ -2940,6 +2999,101 @@ def _fire_webserver_hook(app: Flask, point: str, event: dict) -> None:
         app.logger.exception('webserver hook firing failed for %s', point)
 
 
+def _resolve_permission_decision(
+    app: Flask,
+    session,
+    task_id: str,
+    request_id: str,
+    allow: bool,
+    rationale: str,
+    *,
+    hook_tool_name: str = '',
+) -> dict:
+    """Core permission-resolution logic: re-derive the tool SERVER-SIDE
+    (never trust a caller's claimed command), classify it via Action
+    Guard, run the operator's ``pre_tool_use`` hook, deliver the
+    decision, then audit + ``post_tool_use``.
+
+    Shared by the operator-facing ``POST /permission`` route AND the
+    server-side auto-resolve path for a remembered decision
+    (``_maybe_auto_resolve_pending``) — routing both through the same
+    function guarantees a remembered "allow" gets IDENTICAL enforcement
+    to a human clicking Allow, never a shortcut around either check.
+
+    Returns ``{'status': 'delivered', 'allow': ...}`` on success, or
+    ``{'error': ...}`` if delivering the decision to the session failed.
+    """
+    # The operator's ORIGINAL intent, before a hard-block override flips it
+    # below. Used to word the feed bubble correctly: "you approved, but this
+    # is a hard floor" reads very differently from "you denied this".
+    operator_approved = allow
+    tool_name, tool_input = _pending_tool(session, request_id)
+    guard_command = str(tool_input.get('command') or '')
+    verdict = _classify_action_for(session, tool_name, tool_input)
+    guard_blocked = (
+        verdict is not None
+        and _action_guard_enum_value(verdict.decision) == 'block'
+    )
+    if allow and guard_blocked:
+        allow = False
+        rationale = verdict.reason or rationale or 'blocked by Action Guard'
+    elif allow:
+        blocked, hook_rationale = _run_pre_tool_use_hook(app, task_id, {
+            'request_id': request_id, 'tool': hook_tool_name, 'allow': allow,
+        })
+        if blocked:
+            allow = False
+            rationale = hook_rationale or rationale or 'blocked by pre_tool_use hook'
+    try:
+        session.send_permission_response(
+            request_id=request_id,
+            allow=allow,
+            rationale=rationale,
+        )
+    except Exception as exc:
+        return {'error': str(exc)}
+    # A hard BLOCK becomes a loud bubble in the feed; every risky decision
+    # (block / approved-ask / denied-ask) is recorded to the audit log.
+    if guard_blocked:
+        _publish_action_guard_block(
+            session, verdict, operator_approved=operator_approved,
+        )
+    _audit_action_guard(app, task_id, request_id, verdict, guard_command, allow)
+    # ``post_tool_use`` sees the final, post-hook decision so the
+    # audit log reflects what actually got delivered to Claude.
+    _fire_webserver_hook(app, 'post_tool_use', {
+        'task_id': task_id,
+        'request_id': request_id,
+        'allow': bool(allow),
+        'rationale': rationale,
+        'tool': hook_tool_name,
+        'action_guard_category': (
+            _action_guard_enum_value(verdict.category) if verdict else ''
+        ),
+    })
+    return {'status': 'delivered', 'allow': allow}
+
+
+def _remember_decision_for_pending(session, request_id: str, allow: bool) -> None:
+    """Persist an "Allow always" / "Deny always" choice server-side.
+
+    Never remembers an ``AskUserQuestion``-shaped ask — each question is
+    a distinct clarification, never a repeat of a previously-approved
+    action (mirrors the removed client-side carve-out).
+    """
+    from kato_core_lib.helpers.tool_decision_store import remember_tool_decision
+    from kato_core_lib.helpers.tool_decision_utils import (
+        decision_command_for,
+        is_answerable_question,
+    )
+    tool_name, tool_input = _pending_tool(session, request_id)
+    if not tool_name or is_answerable_question(tool_input):
+        return
+    remember_tool_decision(
+        tool_name, decision_command_for(tool_name, tool_input), allow,
+    )
+
+
 def _register_post_permission_route(app: Flask) -> None:
     @app.post('/api/sessions/<task_id>/permission')
     def post_permission(task_id: str):
@@ -2953,58 +3107,16 @@ def _register_post_permission_route(app: Flask) -> None:
         if not request_id:
             return jsonify({'error': 'request_id is required'}), 400
         allow = bool(payload.get('allow', False))
-        # The operator's ORIGINAL intent, before a hard-block override flips it
-        # below. Used to word the feed bubble correctly: "you approved, but this
-        # is a hard floor" reads very differently from "you denied this".
-        operator_approved = allow
         rationale = str(payload.get('rationale', '') or '')
-        # Re-derive the tool SERVER-SIDE (never trust the client body for the
-        # command) and classify it. The Action Guard + the operator's
-        # pre_tool_use hook only matter when the operator is letting the tool
-        # RUN — a deny already stops it. A guard BLOCK force-flips allow→deny.
-        tool_name, tool_input = _pending_tool(session, request_id)
-        guard_command = str(tool_input.get('command') or '')
-        verdict = _classify_action_for(session, tool_name, tool_input)
-        guard_blocked = (
-            verdict is not None
-            and _action_guard_enum_value(verdict.decision) == 'block'
+        if bool(payload.get('remember', False)):
+            _remember_decision_for_pending(session, request_id, allow)
+        result = _resolve_permission_decision(
+            app, session, task_id, request_id, allow, rationale,
+            hook_tool_name=str(payload.get('tool', '') or ''),
         )
-        if allow and guard_blocked:
-            allow = False
-            rationale = verdict.reason or rationale or 'blocked by Action Guard'
-        elif allow:
-            blocked, hook_rationale = _run_pre_tool_use_hook(app, task_id, payload)
-            if blocked:
-                allow = False
-                rationale = hook_rationale or rationale or 'blocked by pre_tool_use hook'
-        try:
-            session.send_permission_response(
-                request_id=request_id,
-                allow=allow,
-                rationale=rationale,
-            )
-        except Exception as exc:
-            return jsonify({'error': str(exc)}), 500
-        # A hard BLOCK becomes a loud bubble in the feed; every risky decision
-        # (block / approved-ask / denied-ask) is recorded to the audit log.
-        if guard_blocked:
-            _publish_action_guard_block(
-                session, verdict, operator_approved=operator_approved,
-            )
-        _audit_action_guard(app, task_id, request_id, verdict, guard_command, allow)
-        # ``post_tool_use`` sees the final, post-hook decision so the
-        # audit log reflects what actually got delivered to Claude.
-        _fire_webserver_hook(app, 'post_tool_use', {
-            'task_id': task_id,
-            'request_id': request_id,
-            'allow': bool(allow),
-            'rationale': rationale,
-            'tool': str(payload.get('tool', '') or ''),
-            'action_guard_category': (
-                _action_guard_enum_value(verdict.category) if verdict else ''
-            ),
-        })
-        return jsonify({'status': 'delivered', 'allow': allow})
+        if 'error' in result:
+            return jsonify(result), 500
+        return jsonify(result)
 
 
 def _register_action_guard_audit_route(app: Flask) -> None:
@@ -3091,10 +3203,69 @@ def _register_agent_version_upgrade_route(app: Flask) -> None:
         return jsonify(result)
 
 
+# Action Guard categories whose remembered "allow always" must never
+# be auto-resolved server-side without asking a human ONE more time —
+# mirrors the (removed) client-side ``isHighRiskActionGuard`` carve-out
+# in permissionEnvelope.js. A signature remembered as safe in one
+# context (e.g. a bare ``mvn``) must not silently ride through when
+# Action Guard now flags the SAME program name as touching credentials,
+# exfiltrating data, remote-executing, or escaping the sandbox.
+_HIGH_RISK_ACTION_GUARD_CATEGORIES = frozenset({
+    'credential_read', 'network_exfil', 'remote_exec', 'sandbox_escape',
+})
+
+
+def _maybe_auto_resolve_pending(
+    app: Flask, session, task_id: str, request_id: str, outside_sandbox: bool,
+) -> bool:
+    """Resolve a still-pending request from a remembered backend
+    decision BEFORE it is ever surfaced to the browser. Returns True
+    when resolved — callers must skip showing/yielding this request.
+
+    This is the server-side replacement for the (removed) client-side
+    "recall and auto-submit" logic: the CHOICE of whether a pending ask
+    needs a human is now made here, not in the browser — the client
+    only ever sees requests the backend has already decided need one.
+    Preserves the same safety carve-outs the client used to apply:
+    never for an ``AskUserQuestion``-shaped ask, an out-of-sandbox
+    write, or a high-risk Action Guard category.
+    """
+    if not request_id:
+        return False
+    from kato_core_lib.helpers.tool_decision_store import recall_tool_decision
+    from kato_core_lib.helpers.tool_decision_utils import (
+        decision_command_for,
+        is_answerable_question,
+    )
+    tool_name, tool_input = _pending_tool(session, request_id)
+    if not tool_name or is_answerable_question(tool_input):
+        return False
+    if outside_sandbox:
+        return False
+    verdict = _classify_action_for(session, tool_name, tool_input)
+    if (
+        verdict is not None
+        and _action_guard_enum_value(verdict.category) in _HIGH_RISK_ACTION_GUARD_CATEGORIES
+    ):
+        return False
+    remembered = recall_tool_decision(
+        tool_name, decision_command_for(tool_name, tool_input),
+    )
+    if remembered is None:
+        return False
+    _resolve_permission_decision(
+        app, session, task_id, request_id, remembered,
+        'auto-resolved: remembered decision', hook_tool_name=tool_name,
+    )
+    return True
+
+
 def _register_get_pending_permissions_route(app: Flask) -> None:
     @app.get('/api/permissions/pending')
     def get_pending_permissions():
-        """Every unanswered permission ask across ALL live sessions.
+        """Every unanswered permission ask across ALL live sessions that
+        still needs a human — the backend auto-resolves anything a
+        remembered decision already covers before it ever appears here.
 
         The per-task SSE stream delivers a ``control_request`` only to the
         browser tab that has that session open, so a permission ask on a
@@ -3123,6 +3294,19 @@ def _register_get_pending_permissions_route(app: Flask) -> None:
                 if not isinstance(envelope, dict):
                     continue
                 envelope = dict(envelope)
+                try:
+                    resolved = _maybe_auto_resolve_pending(
+                        app, session, record.task_id,
+                        str(envelope.get('request_id') or ''),
+                        bool(envelope.get('outside_sandbox')),
+                    )
+                except Exception:
+                    resolved = False
+                    app.logger.exception(
+                        'auto-resolve check failed for a pending permission',
+                    )
+                if resolved:
+                    continue
                 _annotate_action_guard(envelope, session)
                 envelope['task_id'] = record.task_id
                 # Stamp the task summary alongside the id so the
@@ -3135,6 +3319,51 @@ def _register_get_pending_permissions_route(app: Flask) -> None:
                 )
                 pending.append(envelope)
         return jsonify({'pending': pending})
+
+
+def _register_tool_decisions_routes(app: Flask) -> None:
+    """Manage backend-owned remembered permission decisions.
+
+    Drives the Settings → Permissions panel, which used to read/write
+    the browser's ``localStorage`` directly — the backend is now the
+    only place a remembered decision lives (see ``tool_decision_store``
+    module docstring), so the panel reads/mutates it through here.
+    """
+    @app.get('/api/tool-decisions')
+    def get_tool_decisions():
+        from kato_core_lib.helpers.tool_decision_store import list_tool_decisions
+        return jsonify({'decisions': list_tool_decisions()})
+
+    @app.post('/api/tool-decisions/set')
+    def set_tool_decision_route():
+        """Change the scope of an existing (or brand new) remembered
+        decision — the Settings panel's allow/deny dropdown, which acts
+        without a live pending permission to attach to."""
+        from kato_core_lib.helpers.tool_decision_store import remember_tool_decision
+        payload = request.get_json(silent=True) or {}
+        tool_name = text_from_mapping(payload, 'tool_name')
+        if not tool_name:
+            return jsonify({'error': 'tool_name is required'}), 400
+        command_signature = str(payload.get('command_signature', '') or '')
+        remember_tool_decision(tool_name, command_signature, bool(payload.get('allow', False)))
+        return jsonify({'saved': True})
+
+    @app.post('/api/tool-decisions/forget')
+    def forget_tool_decision_route():
+        from kato_core_lib.helpers.tool_decision_store import forget_tool_decision
+        payload = request.get_json(silent=True) or {}
+        tool_name = text_from_mapping(payload, 'tool_name')
+        if not tool_name:
+            return jsonify({'error': 'tool_name is required'}), 400
+        command_signature = str(payload.get('command_signature', '') or '')
+        forget_tool_decision(tool_name, command_signature)
+        return jsonify({'forgotten': True})
+
+    @app.post('/api/tool-decisions/clear')
+    def clear_tool_decisions_route():
+        from kato_core_lib.helpers.tool_decision_store import clear_all_tool_decisions
+        clear_all_tool_decisions()
+        return jsonify({'cleared': True})
 
 
 def _run_pre_tool_use_hook(app: Flask, task_id: str, payload: dict):
@@ -3651,7 +3880,7 @@ def _resolve_writable_session(manager, task_id: str):
 
 
 def _event_stream_generator(
-    manager, workspace_manager, task_id: str, agent_service=None,
+    manager, workspace_manager, task_id: str, agent_service=None, app=None,
 ):
     """Yield SSE frames for one tab's session.
 
@@ -3682,11 +3911,11 @@ def _event_stream_generator(
             session = manager.get_session(task_id) if manager is not None else None
             if session is not None:
                 replayed_count = yield from _replay_session_backlog(
-                    session, agent_service=agent_service, task_id=task_id,
+                    session, agent_service=agent_service, task_id=task_id, app=app,
                 )
                 yield from _follow_live_session(
                     session, start_index=replayed_count,
-                    agent_service=agent_service, task_id=task_id,
+                    agent_service=agent_service, task_id=task_id, app=app,
                 )
                 return
         idle_payload = _record_to_dict(record) if record is not None else {}
@@ -3695,11 +3924,11 @@ def _event_stream_generator(
     yield from _replay_preflight_log(workspace_manager, task_id)
     yield from _replay_history_from_disk(agent_session_id)
     replayed_count = yield from _replay_session_backlog(
-        session, agent_service=agent_service, task_id=task_id,
+        session, agent_service=agent_service, task_id=task_id, app=app,
     )
     yield from _follow_live_session(
         session, start_index=replayed_count,
-        agent_service=agent_service, task_id=task_id,
+        agent_service=agent_service, task_id=task_id, app=app,
     )
 
 
@@ -3817,7 +4046,33 @@ def _session_event_frame(event, session) -> str:
     return _sse_message(SSE_EVENT_SESSION_EVENT, {'event': payload})
 
 
-def _replay_session_backlog(session, agent_service=None, task_id=''):
+def _maybe_auto_resolve_live_event(app, session, task_id: str, event) -> bool:
+    """Same server-side auto-resolve check as
+    ``_maybe_auto_resolve_pending``, applied to a LIVE ``control_request``
+    event about to be yielded over SSE. Returns True when resolved —
+    callers must not yield this event to the browser.
+
+    ``app`` is None for the direct-generator call sites used in tests
+    (no Flask app in scope there) — auto-resolve is simply skipped, same
+    as before this feature existed.
+    """
+    if app is None:
+        return False
+    payload = event.to_dict()
+    raw = payload.get('raw') if isinstance(payload, dict) else None
+    if not isinstance(raw, dict) or raw.get('type') != CLAUDE_EVENT_CONTROL_REQUEST:
+        return False
+    request_id = str(raw.get('request_id') or '')
+    try:
+        return _maybe_auto_resolve_pending(
+            app, session, task_id, request_id, bool(raw.get('outside_sandbox')),
+        )
+    except Exception:
+        app.logger.exception('auto-resolve check failed for a live permission event')
+        return False
+
+
+def _replay_session_backlog(session, agent_service=None, task_id='', app=None):
     """Catch a freshly-connecting browser up on everything seen so far.
 
     UI catch-up ONLY — it must NOT drive comment completion. Replaying
@@ -3833,12 +4088,14 @@ def _replay_session_backlog(session, agent_service=None, task_id=''):
     """
     backlog = session.recent_events()
     for event in backlog:
+        if _maybe_auto_resolve_live_event(app, session, task_id, event):
+            continue
         yield _session_event_frame(event, session)
     return len(backlog)
 
 
 def _follow_live_session(
-    session, start_index: int = 0, agent_service=None, task_id: str = '',
+    session, start_index: int = 0, agent_service=None, task_id: str = '', app=None,
 ):
     """Tail new events as they arrive, plus a periodic SSE heartbeat.
 
@@ -3854,6 +4111,8 @@ def _follow_live_session(
     while True:
         new_events, last_index = session.events_after(last_index)
         for event in new_events:
+            if _maybe_auto_resolve_live_event(app, session, task_id, event):
+                continue
             yield _session_event_frame(event, session)
             _advance_task_comments_after_result(event, agent_service, task_id)
 
@@ -3862,6 +4121,8 @@ def _follow_live_session(
             # and ``is_alive`` flipping, then close.
             tail, last_index = session.events_after(last_index)
             for event in tail:
+                if _maybe_auto_resolve_live_event(app, session, task_id, event):
+                    continue
                 yield _session_event_frame(event, session)
                 _advance_task_comments_after_result(event, agent_service, task_id)
             yield _sse_message(SSE_EVENT_SESSION_CLOSED, {})
@@ -3978,7 +4239,7 @@ def _sse_message(event_type: str, data: dict[str, Any]) -> str:
 
 
 def _records_as_dicts(
-    session_manager, workspace_manager, agent_service=None,
+    session_manager, workspace_manager, agent_service=None, app=None,
 ) -> list[dict[str, Any]]:
     """Tab list payload — one entry per known task.
 
@@ -3994,7 +4255,7 @@ def _records_as_dicts(
     )
     live_session_ids = _live_session_ids(session_manager)
     working_session_ids = _working_session_ids(session_manager)
-    pending_permission_tool_by_task = _pending_permission_tool_by_task(session_manager)
+    pending_permission_tool_by_task = _pending_permission_tool_by_task(session_manager, app=app)
     pending_permission_session_ids = set(pending_permission_tool_by_task.keys())
     if workspace_manager is None:
         return [
@@ -4109,28 +4370,62 @@ def _working_session_ids(session_manager) -> set[str]:
     return working
 
 
-def _pending_permission_tool_by_task(session_manager) -> dict[str, str]:
+def _pending_permission_tool_by_task(session_manager, app=None) -> dict[str, str]:
     """Per-task ``{task_id: pending_tool_name}`` for the tab-attention path.
 
     Returns the tool name on the most recent unanswered permission
-    request so the UI can decide whether to mark the tab orange. The
-    tool name is the load-bearing piece: when the operator has a
-    remembered "Allow always" decision for that tool, kato's
-    PermissionDecisionContainer auto-submits silently and the tab
-    SHOULDN'T go orange — without the tool name, the UI can't tell
-    "Bash auto-handled" apart from "Edit waiting on a real ask" and
-    flashes orange on every rapid-fire Bash request, which is the
-    confused-operator UX in the reported screenshot.
+    request so the UI can decide whether to mark the tab orange.
+    Auto-resolves against a remembered decision first (same check the
+    ``/api/permissions/pending`` poll and the SSE stream already run) —
+    a request that gets silently allowed/denied must not flash the tab
+    orange for the split second before the other paths catch up.
+    ``app`` is None for the direct-call test sites; auto-resolve is
+    then simply skipped (a request just stays "pending" until the
+    other paths resolve it, same as before this feature existed).
     """
     pending: dict[str, str] = {}
     for record, session in _iter_live_sessions(session_manager):
         tool_name = _session_pending_permission_tool(session)
-        if tool_name:
-            # Empty-string tool name still marks pending (legacy
-            # callers + back-compat) — the UI's filter just can't
-            # match it to a remembered decision.
-            pending[record.task_id] = tool_name
+        if not tool_name:
+            continue
+        if app is not None and _auto_resolve_newest_pending(app, session, record.task_id):
+            continue
+        # Empty-string tool name still marks pending (legacy
+        # callers + back-compat) — the UI's filter just can't
+        # match it to a remembered decision.
+        pending[record.task_id] = tool_name
     return pending
+
+
+def _auto_resolve_newest_pending(app, session, task_id: str) -> bool:
+    """Best-effort: auto-resolve a session's most recent still-pending
+    control request from a remembered decision, for the tab-attention
+    path. Mirrors ``_maybe_auto_resolve_pending`` (used by the
+    ``/api/permissions/pending`` poll and the SSE stream) so all THREE
+    surfacing paths agree — the client never needs to reason about
+    remembered decisions itself, even for the tab-attention indicator.
+    """
+    probe = getattr(session, 'pending_control_requests', None)
+    if not callable(probe):
+        return False
+    try:
+        envelopes = probe() or []
+    except Exception:
+        return False
+    if not envelopes or not isinstance(envelopes[-1], dict):
+        return False
+    envelope = envelopes[-1]
+    try:
+        return _maybe_auto_resolve_pending(
+            app, session, task_id,
+            str(envelope.get('request_id') or ''),
+            bool(envelope.get('outside_sandbox')),
+        )
+    except Exception:
+        app.logger.exception(
+            'auto-resolve check failed for tab-attention pending permission',
+        )
+        return False
 
 
 def _session_pending_permission_tool(session) -> str:
@@ -4272,7 +4567,15 @@ def main() -> None:
     app = create_app()
     host = os.environ.get('KATO_WEBSERVER_HOST', '127.0.0.1')
     port = int(os.environ.get('KATO_WEBSERVER_PORT', '5050'))
-    app.run(host=host, port=port, debug=False, threaded=True)
+    ssl_context = None
+    if str(os.environ.get('KATO_WEBSERVER_HTTPS', '1')).strip().lower() not in {
+        '0', 'false', 'no', 'off',
+    }:
+        from kato_core_lib.helpers.tls_cert_utils import ensure_local_tls_cert
+        ssl_context = ensure_local_tls_cert(logger=app.logger, install_trust=True)
+    scheme = 'https' if ssl_context else 'http'
+    app.logger.info('dev server listening on %s://%s:%s', scheme, host, port)
+    app.run(host=host, port=port, debug=False, threaded=True, ssl_context=ssl_context)
 
 
 if __name__ == '__main__':  # pragma: no cover - module-as-script guard, never hit under import-based tests

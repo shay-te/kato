@@ -61,9 +61,6 @@ vi.mock('./MessageForm.jsx', () => ({
 }));
 vi.mock('./PermissionDecisionContainer.jsx', () => ({ default: () => null }));
 vi.mock('./ChatSearch.jsx', () => ({ default: () => null }));
-vi.mock('../hooks/useToolMemory.js', () => ({
-  useToolMemory: () => ({ recall: vi.fn(), remember: vi.fn() }),
-}));
 vi.mock('../stores/toastStore.js', () => ({
   toast: { show: vi.fn(), errorFromResult: vi.fn() },
   toastResult: vi.fn(),

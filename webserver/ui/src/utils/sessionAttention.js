@@ -1,27 +1,15 @@
-// ``recallToolDecision`` is optional. When provided, sessions whose
-// pending permission is for a tool the operator has set to "Allow
-// always" / "Deny always" are NOT marked as needing attention — the
-// PermissionDecisionContainer auto-handles those silently and the
-// orange tab dot would be misleading. Without a recall function (or
-// for tools with no remembered decision) the legacy behaviour
-// applies: any pending permission marks the tab.
-export function mergePendingPermissionTaskIds(taskIds, sessions, recallToolDecision = null) {
+// The backend auto-resolves a pending permission against a remembered
+// "Allow always" / "Deny always" decision BEFORE reporting
+// ``has_pending_permission`` (see kato_core_lib/helpers/tool_decision_store.py
+// and _pending_permission_tool_by_task in kato_webserver/app.py), so any
+// session this flags genuinely needs a human — no client-side recall
+// check needed here.
+export function mergePendingPermissionTaskIds(taskIds, sessions) {
   const next = new Set(taskIds);
   for (const session of sessions || []) {
-    if (!session?.has_pending_permission || !session?.task_id) {
-      continue;
+    if (session?.has_pending_permission && session?.task_id) {
+      next.add(session.task_id);
     }
-    const toolName = String(session.pending_permission_tool_name || '').trim();
-    if (toolName && typeof recallToolDecision === 'function') {
-      // Only suppress when there's an explicit decision on file —
-      // null means "operator hasn't decided", and we should still
-      // mark attention so the modal gets a chance to render.
-      const decision = recallToolDecision(toolName);
-      if (decision === 'allow' || decision === 'deny') {
-        continue;
-      }
-    }
-    next.add(session.task_id);
   }
   return next;
 }

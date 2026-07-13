@@ -29,7 +29,11 @@ class RunGitTests(unittest.TestCase):
             out = git_diff_utils.run_git('/repo', ['rev-parse', 'HEAD'], timeout=5)
         self.assertEqual(out, 'hello\n')
         args, kwargs = mock_run.call_args
-        self.assertEqual(args[0], ['git', '-C', '/repo', 'rev-parse', 'HEAD'])
+        self.assertEqual(
+            args[0],
+            ['git', '-c', 'safe.directory=/repo', '-c', 'core.hooksPath=/dev/null',
+             '-C', '/repo', 'rev-parse', 'HEAD'],
+        )
         self.assertEqual(kwargs['timeout'], 5)
         self.assertEqual(kwargs['encoding'], 'utf-8')
 

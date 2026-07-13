@@ -133,12 +133,12 @@ describe('useNotificationRouting — onSessionEvent', () => {
     expect(arg.title.toLowerCase()).toContain('approval');
   });
 
-  test('PERMISSION_REQUEST is SUPPRESSED when recallToolDecision returns allow', () => {
-    // Operator-reported regression: a remembered "Allow always" still
-    // fired the browser notification because the auto-resolve happens
-    // in PermissionDecisionContainer, AFTER routing has already
-    // notified. With recallToolDecision wired in, the hook must
-    // short-circuit the same way the tab-orange gate does in App.jsx.
+  test('PERMISSION_REQUEST always notifies regardless of recallToolDecision', () => {
+    // The webserver already auto-resolves a matching pending request
+    // against a remembered decision before it's ever published over
+    // SSE (see _maybe_auto_resolve_live_event in kato_webserver/app.py)
+    // — so onSessionEvent no longer needs (or reads) recallToolDecision
+    // at all; reaching here always means a real ask.
     const notify = vi.fn();
     const recallToolDecision = vi.fn().mockReturnValue('allow');
     const { result } = renderHook(() => useNotificationRouting(notify, {
@@ -151,71 +151,9 @@ describe('useNotificationRouting — onSessionEvent', () => {
       tool_name: 'Bash',
     }, 'T1');
 
-    expect(notify).not.toHaveBeenCalled();
-    // ``decisionCommandFor('Bash', undefined)`` resolves to '' (no
-    // command payload on this envelope) and the hook forwards it as
-    // the second arg so the recall hits the bare-Bash tool-level key
-    // rather than a command-specific one.
-    expect(recallToolDecision).toHaveBeenCalledWith('Bash', '');
-  });
-
-  test('PERMISSION_REQUEST is SUPPRESSED when recallToolDecision returns deny', () => {
-    // Same gate for "deny always" — the auto-handler dispatches a
-    // silent deny; surfacing an "Approval needed" ping for it would be
-    // a lie.
-    const notify = vi.fn();
-    const recallToolDecision = vi.fn().mockReturnValue('deny');
-    const { result } = renderHook(() => useNotificationRouting(notify, {
-      recallToolDecision,
-    }));
-
-    result.current.onSessionEvent({
-      type: CLAUDE_EVENT.PERMISSION_REQUEST,
-      tool_name: 'Bash',
-    }, 'T1');
-
-    expect(notify).not.toHaveBeenCalled();
-  });
-
-  test('PERMISSION_REQUEST for command-keyed Bash is SUPPRESSED via (tool, command) recall', () => {
-    // Bash is command-keyed: a remembered ``mvn`` decision lives under
-    // ``(Bash, mvn)``, not bare ``Bash``. The hook must compute
-    // ``decisionCommandFor`` from the envelope's ``input`` and pass it
-    // through, otherwise auto-allowed mvn runs still ping the operator.
-    const notify = vi.fn();
-    const recallToolDecision = vi.fn((tool, command) => (
-      tool === 'Bash' && command === 'mvn' ? 'allow' : null
-    ));
-    const { result } = renderHook(() => useNotificationRouting(notify, {
-      recallToolDecision,
-    }));
-
-    result.current.onSessionEvent({
-      type: CLAUDE_EVENT.PERMISSION_REQUEST,
-      tool_name: 'Bash',
-      input: { command: 'mvn -B verify' },
-    }, 'T1');
-
-    expect(notify).not.toHaveBeenCalled();
-    expect(recallToolDecision).toHaveBeenCalledWith('Bash', 'mvn');
-  });
-
-  test('PERMISSION_REQUEST still fires when recallToolDecision returns null', () => {
-    // No remembered decision → modal will actually pop → notify
-    // (existing behaviour preserved).
-    const notify = vi.fn();
-    const recallToolDecision = vi.fn().mockReturnValue(null);
-    const { result } = renderHook(() => useNotificationRouting(notify, {
-      recallToolDecision,
-    }));
-
-    result.current.onSessionEvent({
-      type: CLAUDE_EVENT.PERMISSION_REQUEST,
-      tool_name: 'Bash',
-    }, 'T1');
-
     expect(notify).toHaveBeenCalledTimes(1);
     expect(notify.mock.calls[0][0].body).toBe('Bash');
+    expect(recallToolDecision).not.toHaveBeenCalled();
   });
 
   test('CONTROL_REQUEST → ATTENTION notification (unpacks nested envelope)', () => {

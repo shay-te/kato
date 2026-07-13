@@ -14,9 +14,12 @@ so the UI degrades gracefully (empty pane > stack trace).
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
+
+from git_core_lib.git_core_lib.helpers.git_command_utils import build_safe_git_command
 
 
 # Caps for synthesized "new file" diff hunks (untracked working-tree files
@@ -24,6 +27,13 @@ from typing import Any
 # instead of dumping megabytes into the diff response.
 UNTRACKED_FILE_LINE_LIMIT = 1500
 UNTRACKED_FILE_BYTE_LIMIT = 256 * 1024
+
+# A real commit SHA (full or abbreviated) is hex digits only. Enforced
+# before any caller-supplied "sha" reaches a git argv — git subcommands
+# like `show`/`log`/`diff` accept `--output=<file>`-style options in ANY
+# positional slot, so an unvalidated value (e.g. from a query param) is
+# an arbitrary-file-write primitive, not just a lookup key.
+_COMMIT_SHA_RE = re.compile(r'^[0-9a-fA-F]{4,40}$')
 
 # Per-file cap for the main ``git diff`` output. A single changed file
 # whose diff section exceeds this many lines has its body replaced
@@ -47,12 +57,20 @@ def run_git(cwd: str, args: list[str], *, timeout: float) -> str | None:
 
     Returning ``None`` rather than ``''`` lets callers tell "git failed"
     apart from "git ran and the answer was empty".
+
+    Built through ``build_safe_git_command`` (not a bare
+    ``['git', '-C', cwd, *args]``) so every invocation disables git
+    hooks (``core.hooksPath=/dev/null``) — a per-task workspace clone
+    is agent-writable, including its own ``.git/hooks/``, so any git
+    command run here without that flag risks executing a hook the
+    agent planted, with the OPERATOR's own privileges (a real
+    sandbox-escape path a previous version of this function had).
     """
     if not cwd:
         return None
     try:
         result = subprocess.run(
-            ['git', '-C', cwd, *args],
+            build_safe_git_command(cwd, args),
             capture_output=True,
             text=True,
             # Pin UTF-8 so a smart-quote in a commit message or a
@@ -410,9 +428,17 @@ def diff_for_commit(cwd: str, sha: str) -> str:
     commit header — we want the file-by-file diff payload only,
     so the existing react-diff-view ``parseDiff`` can render it
     the same way it renders the branch-vs-base diff.
+
+    ``sha`` is caller-supplied (the webserver route reads it straight
+    from a query param) and MUST be validated as an actual hex
+    commit-ish before reaching git — ``git show`` accepts option-style
+    arguments like ``--output=<path>`` in this same positional slot,
+    so an unvalidated value is an arbitrary-file-write primitive, not
+    just an invalid lookup. Anything that isn't hex digits returns
+    ``''`` exactly like any other "commit not found" failure.
     """
     safe_sha = str(sha or '').strip()
-    if not cwd or not safe_sha:
+    if not cwd or not safe_sha or not _COMMIT_SHA_RE.fullmatch(safe_sha):
         return ''
     return run_git(
         cwd,

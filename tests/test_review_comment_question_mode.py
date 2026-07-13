@@ -101,6 +101,28 @@ class HeuristicTests(unittest.TestCase):
         # Defensive: empty list shouldn't trigger answer flow.
         self.assertFalse(is_question_only_batch([]))
 
+    def test_imperative_favor_phrasing_disqualifies(self) -> None:
+        # Regression: "handle"/"default" were missing from the fix-word
+        # list, so an imperative ask phrased as a favor slipped through
+        # as a pure question and got NO fix applied at all.
+        for body in (
+            'Could you handle the null case here?',
+            'Can we default this to zero when the value is null?',
+        ):
+            self.assertFalse(is_question_comment(_comment(body=body)), body)
+
+    def test_genuine_question_is_not_swallowed_by_a_shorter_fix_word(self) -> None:
+        # Regression: plain substring matching let "add"/"fix"/"remove"
+        # swallow "address"/"fixture"/"removed", misclassifying a real
+        # question as a fix request (wasted fix-mode spawn instead of an
+        # actual answer).
+        for body in (
+            'How does this address the null case?',
+            'What is this fixture used for in the test?',
+            'Why does the timer get removed when idle?',
+        ):
+            self.assertTrue(is_question_comment(_comment(body=body)), body)
+
 
 class AnswerModePromptTests(unittest.TestCase):
     """Mode='answer' produces the no-edit prompt; mode='fix' is unchanged."""

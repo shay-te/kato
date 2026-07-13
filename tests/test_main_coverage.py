@@ -1347,8 +1347,11 @@ class StartPlanningWebserverFullPathTests(unittest.TestCase):
         )
         fake_webserver_module = MagicMock()
         fake_webserver_module.create_app.return_value = MagicMock()
-        with patch.dict(os.environ, {'KATO_WEBSERVER_DISABLED': ''},
-                        clear=False), \
+        # HTTPS off: this test doesn't exercise TLS and must not touch
+        # the real ~/.kato/tls (ensure_local_tls_cert writes for real).
+        with patch.dict(os.environ, {
+            'KATO_WEBSERVER_DISABLED': '', 'KATO_WEBSERVER_HTTPS': '0',
+        }, clear=False), \
              patch.dict('sys.modules',
                         {'kato_webserver.app': fake_webserver_module},
                         clear=False), \
@@ -1380,8 +1383,11 @@ class StartPlanningWebserverFullPathTests(unittest.TestCase):
             captured_target['fn'] = kwargs.get('target')
             return MagicMock()
 
-        with patch.dict(os.environ, {'KATO_WEBSERVER_DISABLED': ''},
-                        clear=False), \
+        # HTTPS off: this test doesn't exercise TLS and must not touch
+        # the real ~/.kato/tls (ensure_local_tls_cert writes for real).
+        with patch.dict(os.environ, {
+            'KATO_WEBSERVER_DISABLED': '', 'KATO_WEBSERVER_HTTPS': '0',
+        }, clear=False), \
              patch.dict('sys.modules',
                         {'kato_webserver.app': fake_webserver_module},
                         clear=False), \

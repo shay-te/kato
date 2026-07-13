@@ -930,6 +930,7 @@ def _start_planning_webserver_if_enabled(app) -> None:
 
     host = os.environ.get('KATO_WEBSERVER_HOST', '127.0.0.1')
     port = int(os.environ.get('KATO_WEBSERVER_PORT', '5050'))
+    scheme, ssl_context = _resolve_webserver_tls(app.logger)
     flask_app = _create_webserver_app(
         session_manager=session_manager,
         workspace_manager=workspace_manager,
@@ -954,7 +955,9 @@ def _start_planning_webserver_if_enabled(app) -> None:
     _logging.getLogger('werkzeug').setLevel(_logging.ERROR)
 
     def _serve() -> None:
-        _serve_flask_with_bind_retry(flask_app, host, port, app.logger)
+        _serve_flask_with_bind_retry(
+            flask_app, host, port, app.logger, ssl_context=ssl_context,
+        )
 
     thread = threading.Thread(
         target=_serve,
@@ -962,15 +965,37 @@ def _start_planning_webserver_if_enabled(app) -> None:
         daemon=True,
     )
     thread.start()
-    url = f'http://{host}:{port}'
+    url = f'{scheme}://{host}:{port}'
     app.planning_webserver_url = url
     app.logger.info('planning webserver listening on %s', url)
     _open_browser_when_ready(url, app.logger)
 
 
+def _resolve_webserver_tls(logger) -> tuple[str, tuple[str, str] | None]:
+    """``(scheme, ssl_context)`` for the planning webserver.
+
+    Enabled by default (``KATO_WEBSERVER_HTTPS=0`` opts out) — plain
+    HTTP means anyone whose browser can reach the bound port (a page
+    open on the operator's machine using it as a pivot, or the OS-level
+    bind host if ever widened beyond loopback) can read/write everything
+    kato serves, unencrypted. A loopback address can't get a CA-signed
+    cert, so this generates + persists a self-signed one instead — the
+    browser needs a one-time "trust this cert" click, not a restart-time
+    one. Falls back to plain HTTP (never blocks startup) if the
+    ``cryptography`` package is missing or the cert can't be written.
+    """
+    if str(os.environ.get('KATO_WEBSERVER_HTTPS', '1')).strip().lower() in {
+        '0', 'false', 'no', 'off',
+    }:
+        return 'http', None
+    from kato_core_lib.helpers.tls_cert_utils import ensure_local_tls_cert
+    ssl_context = ensure_local_tls_cert(logger=logger, install_trust=True)
+    return ('https', ssl_context) if ssl_context else ('http', None)
+
+
 def _serve_flask_with_bind_retry(
     flask_app, host, port, logger,
-    sleep_fn=time.sleep, attempts: int = 20,
+    sleep_fn=time.sleep, attempts: int = 20, ssl_context=None,
 ) -> None:
     """Run the Flask dev server, retrying briefly when the port is busy.
 
@@ -983,12 +1008,16 @@ def _serve_flask_with_bind_retry(
     ``load_dotenv=False``: with python-dotenv installed, Flask's ``run()``
     otherwise auto-loads ``<cwd>/.env`` into ``os.environ`` — a hidden
     config path. kato reads ONLY ``~/.kato/settings.json`` (+ shell env).
+
+    ``ssl_context`` is the ``(cert_path, key_path)`` pair from
+    ``tls_cert_utils.ensure_local_tls_cert`` — ``None`` serves plain HTTP
+    (HTTPS disabled or cert generation failed; see ``_resolve_webserver_tls``).
     """
     for attempt in range(attempts):
         try:
             flask_app.run(
                 host=host, port=port, debug=False, use_reloader=False,
-                threaded=True, load_dotenv=False,
+                threaded=True, load_dotenv=False, ssl_context=ssl_context,
             )
             return
         except (OSError, SystemExit):
@@ -1202,14 +1231,38 @@ def _wait_for_planning_ui_healthz(
     import urllib.error
     import urllib.request
 
+    ssl_context = _healthz_ssl_context()
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            with urllib.request.urlopen(f'{url}/healthz', timeout=1):
+            with urllib.request.urlopen(
+                f'{url}/healthz', timeout=1, context=ssl_context,
+            ):
                 return True
         except (urllib.error.URLError, OSError):
             time.sleep(0.25)
     return False
+
+
+def _healthz_ssl_context():
+    """An SSL context trusting ONLY kato's own generated local CA
+    (never a blanket "skip verification") — this poll hits our own
+    just-started ``https://127.0.0.1:.../healthz``, whose leaf cert is
+    signed by that CA, not self-signed, so the CA (not the leaf) is the
+    correct trust anchor. Returns None (default verification) when the
+    CA doesn't exist yet — the normal state for plain-HTTP mode, where
+    ``context`` is unused anyway. Best-effort: any read failure also
+    falls back to None.
+    """
+    try:
+        from kato_core_lib.helpers.tls_cert_utils import ca_paths
+        ca_cert_path, _ca_key_path = ca_paths()
+        if not ca_cert_path.is_file():
+            return None
+        import ssl
+        return ssl.create_default_context(cafile=str(ca_cert_path))
+    except Exception:
+        return None
 
 
 def _warm_up_repository_inventory(app) -> None:

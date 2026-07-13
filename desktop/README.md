@@ -9,8 +9,15 @@ double-clickable alternative.
 
 1. On launch, spawns `./kato up` (the existing bash wrapper at the
    repo root) as a child process.
-2. Polls `http://127.0.0.1:5050/` until the Flask webserver kato
-   boots inside its own process is reachable (up to 60s).
+2. Polls `https://127.0.0.1:5050/` until the Flask webserver kato
+   boots inside its own process is reachable (up to 60s). kato serves
+   HTTPS by default with a certificate signed by its own local CA (a
+   loopback address can't get one from a real public CA). On macOS
+   kato installs that CA into your login Keychain on first run (a
+   one-time Keychain prompt), after which Electron trusts the
+   certificate the normal way; as a fallback the launcher also pins
+   the exact leaf certificate by fingerprint itself, never a blanket
+   "skip verification" — see `KATO_WEBSERVER_HTTPS` below to opt out.
 3. Opens a BrowserWindow on that URL. The Electron process owns
    the window; kato owns the orchestrator + webserver.
 4. When the window closes, sends SIGTERM to the kato child so the
@@ -63,6 +70,8 @@ The launcher honours the same env vars as the CLI flow:
 |---|---|---|
 | `KATO_WEBSERVER_HOST` | `127.0.0.1` | Address kato binds + Electron loads |
 | `KATO_WEBSERVER_PORT` | `5050`      | Port for the same |
+| `KATO_WEBSERVER_HTTPS` | `1` (on) | Serve/load over HTTPS with a self-signed cert. Set `0`/`false` to use plain HTTP instead (both kato and the launcher must agree — set it before spawning either). |
+| `KATO_TLS_DIR` | `~/.kato/tls` | Where the self-signed cert/key live — the launcher reads the same path to know which certificate to trust. |
 | `KATO_WEBSERVER_DISABLED` | unset | If set, kato won't start the webserver — the launcher won't be able to reach it and will error out |
 
 Put these in `<repo>/.env` (the existing kato file) so both the

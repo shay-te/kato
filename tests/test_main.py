@@ -1547,6 +1547,102 @@ class ServeFlaskBindRetryTests(unittest.TestCase):
         self.assertEqual(flask_app.run.call_count, 1)
         logger.exception.assert_called_once()
 
+    def test_ssl_context_is_forwarded_to_flask_run(self) -> None:
+        from kato_core_lib.main import _serve_flask_with_bind_retry
+        flask_app = Mock()
+        logger = Mock()
+
+        _serve_flask_with_bind_retry(
+            flask_app, '127.0.0.1', 5050, logger,
+            sleep_fn=lambda _s: None, ssl_context=('cert.pem', 'key.pem'),
+        )
+
+        self.assertEqual(
+            flask_app.run.call_args.kwargs['ssl_context'], ('cert.pem', 'key.pem'),
+        )
+
+    def test_ssl_context_defaults_to_none_for_plain_http(self) -> None:
+        from kato_core_lib.main import _serve_flask_with_bind_retry
+        flask_app = Mock()
+        logger = Mock()
+
+        _serve_flask_with_bind_retry(
+            flask_app, '127.0.0.1', 5050, logger, sleep_fn=lambda _s: None,
+        )
+
+        self.assertIsNone(flask_app.run.call_args.kwargs['ssl_context'])
+
+
+class ResolveWebserverTlsTests(unittest.TestCase):
+    """``KATO_WEBSERVER_HTTPS`` gate + graceful fallback to plain HTTP."""
+
+    def test_disabled_via_env_returns_http_with_no_context(self) -> None:
+        from kato_core_lib.main import _resolve_webserver_tls
+        with patch.dict('os.environ', {'KATO_WEBSERVER_HTTPS': '0'}):
+            scheme, ssl_context = _resolve_webserver_tls(Mock())
+        self.assertEqual(scheme, 'http')
+        self.assertIsNone(ssl_context)
+
+    def test_enabled_by_default_uses_https_when_cert_available(self) -> None:
+        from kato_core_lib.main import _resolve_webserver_tls
+        with patch.dict('os.environ', {}, clear=False), \
+             patch(
+                 'kato_core_lib.helpers.tls_cert_utils.ensure_local_tls_cert',
+                 return_value=('cert.pem', 'key.pem'),
+             ):
+            os.environ.pop('KATO_WEBSERVER_HTTPS', None)
+            scheme, ssl_context = _resolve_webserver_tls(Mock())
+        self.assertEqual(scheme, 'https')
+        self.assertEqual(ssl_context, ('cert.pem', 'key.pem'))
+
+    def test_falls_back_to_http_when_cert_generation_fails(self) -> None:
+        from kato_core_lib.main import _resolve_webserver_tls
+        with patch.dict('os.environ', {}, clear=False), \
+             patch(
+                 'kato_core_lib.helpers.tls_cert_utils.ensure_local_tls_cert',
+                 return_value=None,
+             ):
+            os.environ.pop('KATO_WEBSERVER_HTTPS', None)
+            scheme, ssl_context = _resolve_webserver_tls(Mock())
+        self.assertEqual(scheme, 'http')
+        self.assertIsNone(ssl_context)
+
+
+class HealthzSslContextTests(unittest.TestCase):
+    """The internal healthz poll must trust kato's OWN local CA (never
+    skip verification) once HTTPS is on, and stay a no-op in
+    plain-HTTP mode."""
+
+    def setUp(self) -> None:
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        patcher = patch.dict('os.environ', {'KATO_TLS_DIR': self._td.name})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_returns_none_when_no_cert_exists_yet(self) -> None:
+        from kato_core_lib.main import _healthz_ssl_context
+        self.assertIsNone(_healthz_ssl_context())
+
+    def test_returns_a_context_trusting_the_generated_ca(self) -> None:
+        import ssl
+        from kato_core_lib.helpers.tls_cert_utils import ensure_local_tls_cert
+        from kato_core_lib.main import _healthz_ssl_context
+        ensure_local_tls_cert()
+        context = _healthz_ssl_context()
+        self.assertIsNotNone(context)
+        # A real ssl.SSLContext — verification is still ON (this must
+        # never be ssl.CERT_NONE, which would trust ANY server).
+        self.assertNotEqual(context.verify_mode, ssl.CERT_NONE)
+
+    def test_returns_none_on_unexpected_error(self) -> None:
+        from kato_core_lib.main import _healthz_ssl_context
+        with patch(
+            'kato_core_lib.helpers.tls_cert_utils.ca_paths',
+            side_effect=RuntimeError('boom'),
+        ):
+            self.assertIsNone(_healthz_ssl_context())
+
 
 class PlanningWebserverNoDotenvTests(unittest.TestCase):
     def test_flask_run_does_not_load_dotenv(self) -> None:

@@ -11,6 +11,7 @@ from kato_core_lib.helpers.workspace_refusal_guidance import (
     KATO_WORKSPACE_REFUSAL_GUIDANCE,
 )
 from kato_core_lib.helpers.review_comment_utils import (
+    KATO_REVIEW_COMMENT_ANSWER_PREFIX,
     KATO_REVIEW_COMMENT_FIXED_PREFIX,
     KATO_REVIEW_COMMENT_REPLY_PREFIX,
 )
@@ -179,6 +180,7 @@ class KatoCoreLibTests(unittest.TestCase):
                 'self_reply_prefixes': (
                     KATO_REVIEW_COMMENT_FIXED_PREFIX,
                     KATO_REVIEW_COMMENT_REPLY_PREFIX,
+                    KATO_REVIEW_COMMENT_ANSWER_PREFIX,
                 ),
             },
         )
@@ -204,6 +206,7 @@ class KatoCoreLibTests(unittest.TestCase):
                 'self_reply_prefixes': (
                     KATO_REVIEW_COMMENT_FIXED_PREFIX,
                     KATO_REVIEW_COMMENT_REPLY_PREFIX,
+                    KATO_REVIEW_COMMENT_ANSWER_PREFIX,
                 ),
             },
         )

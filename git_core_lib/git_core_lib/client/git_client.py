@@ -13,10 +13,11 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from git_core_lib.git_core_lib.helpers.text_utils import (
-    normalized_lower_text,
-    normalized_text,
+from git_core_lib.git_core_lib.helpers.git_command_utils import (
+    build_safe_git_command,
+    safe_directory_args,
 )
+from git_core_lib.git_core_lib.helpers.text_utils import normalized_lower_text
 
 
 class GitClientMixin:
@@ -55,24 +56,15 @@ class GitClientMixin:
 
     @staticmethod
     def _git_safe_directory_args(local_path: str) -> list[str]:
-        safe_directory = normalized_text(local_path)
-        if not safe_directory:
-            return []
-        return ['-c', f'safe.directory={safe_directory}']
+        return safe_directory_args(local_path)
 
     @classmethod
     def _git_command(cls, local_path: str, args: list[str]) -> list[str]:
-        # ``core.hooksPath=/dev/null`` disables every git hook for our own
-        # invocations — guards against a sandboxed agent dropping a malicious
-        # hook that would fire with operator privileges on the next push.
-        return [
-            'git',
-            *cls._git_safe_directory_args(local_path),
-            '-c', 'core.hooksPath=/dev/null',
-            '-C',
-            local_path,
-            *args,
-        ]
+        # Delegates to the shared helper (git_command_utils.py) so every
+        # git-invoking module in the codebase gets the SAME hook-disabling
+        # protection from one place — a second, independently-written git
+        # helper once duplicated this logic inline and shipped without it.
+        return build_safe_git_command(local_path, args)
 
     @classmethod
     def _run_capture(cls, cmd: list[str], *, env=None):

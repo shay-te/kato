@@ -1,6 +1,7 @@
 from __future__ import annotations
 from agent_core_lib.agent_core_lib.helpers.session_id_utils import fix_session_id
 
+import re
 from dataclasses import dataclass
 
 from provider_client_base.provider_client_base.data.review_comment import ReviewComment
@@ -163,7 +164,10 @@ def review_comment_resolution_key(comment: ReviewComment) -> tuple[str, str]:
     return resolution_target_type, resolution_target_id
 
 
-def is_kato_review_comment_reply(comment: ReviewComment) -> bool:
+def is_kato_review_comment_reply(
+    comment: ReviewComment,
+    bot_identities: object = (),
+) -> bool:
     """True when ``comment`` is one of kato's own auto-replies.
 
     Drops a leading ``<sub>``/``<small>`` opening tag before the
@@ -171,19 +175,48 @@ def is_kato_review_comment_reply(comment: ReviewComment) -> bool:
     header was wrapped in ``<sub>...</sub>`` to render smaller.
     Existing un-wrapped historical replies still match the bare
     prefix, so old PRs do not regress.
+
+    The reply-header prefixes are public text: they are literally
+    what kato posts on every PR it has ever fixed a comment on, so
+    ANY PR participant can copy one into their own comment (e.g.
+    replying inside the same thread as a real reviewer's unaddressed
+    comment). ``_unprocessed_review_comments`` treats a match as
+    "kato already addressed this thread" and silently, permanently
+    drops every earlier comment in it — so a prefix-only check lets
+    any commenter suppress a real reviewer's comment (e.g. a flagged
+    vulnerability) forever. When the caller can supply the bot's own
+    review-host identities, a prefix match ALSO requires the comment
+    to actually be authored by kato.
+
+    ``bot_identities`` empty (identity unresolved for this repo/
+    provider) falls back to the prefix-only check — same as before
+    this author check existed — so an unresolvable identity degrades
+    to the old behaviour rather than making kato mistake its OWN
+    replies for new reviewer comments it must re-process.
     """
     body = normalized_text(comment.body)
     for opener in ('<sub>', '<small>'):
         if body.startswith(opener):
             body = body[len(opener):]
             break
-    return body.startswith(
+    prefix_matches = body.startswith(
         (
             KATO_REVIEW_COMMENT_FIXED_PREFIX,
             KATO_REVIEW_COMMENT_REPLY_PREFIX,
             KATO_REVIEW_COMMENT_ANSWER_PREFIX,
         )
     )
+    if not prefix_matches:
+        return False
+    identities = {
+        str(identity).strip().lower()
+        for identity in (bot_identities or ())
+        if str(identity).strip()
+    }
+    if not identities:
+        return True
+    author = str(getattr(comment, 'author', '') or '').strip().lower()
+    return author in identities
 
 
 # Heuristic: question vs fix-request classification for review comments.
@@ -210,9 +243,12 @@ _QUESTION_START_WORDS = (
 # Imperative-leaning words that disqualify even a ?-ending comment
 # from the answer flow. Catches phrasing like "should this be a
 # constant?" / "shouldn't we use X?" — those read as fix requests
-# despite the question mark.
+# despite the question mark. ``handle``/``default`` catch imperative
+# asks phrased as a favor ("could you handle the null case here?" /
+# "can we default this to zero?") that would otherwise slip through as
+# pure questions and get no fix applied at all.
 _FIX_REQUEST_WORDS = (
-    'fix', 'rename', 'extract', 'remove', 'delete', 'add',
+    'fix', 'rename', 'extract', 'remove', 'delete', 'add', 'handle', 'default',
     'use a constant', 'use the constant',
     'should be', 'should use', 'shouldn\'t this', 'should this',
     'shouldn\'t we', 'should we',
@@ -223,6 +259,20 @@ _FIX_REQUEST_WORDS = (
 # Cap on body length. Long comments are rarely pure questions; the
 # reviewer usually buries a fix request inside the explanation.
 _QUESTION_MAX_LENGTH = 400
+
+# Word-boundary anchored versions of the two word lists above. A plain
+# substring check (``token in lowered`` / ``str.startswith``) let an
+# ordinary word swallow a shorter one buried inside it — "address"
+# contains "add", "fixture" contains "fix", "removed" contains "remove"
+# — silently disqualifying genuine questions ("How does this address
+# the null case?", "What is this fixture used for?", "Why does the
+# timer get removed when idle?") as if they were fix requests.
+_QUESTION_START_PATTERN = re.compile(
+    r'^(?:' + '|'.join(re.escape(w) for w in _QUESTION_START_WORDS) + r')\b'
+)
+_FIX_REQUEST_PATTERN = re.compile(
+    r'\b(?:' + '|'.join(re.escape(w) for w in _FIX_REQUEST_WORDS) + r')\b'
+)
 
 
 def is_question_comment(comment: ReviewComment) -> bool:
@@ -240,9 +290,9 @@ def is_question_comment(comment: ReviewComment) -> bool:
     if len(body) > _QUESTION_MAX_LENGTH:
         return False
     lowered = body.lower()
-    if not lowered.startswith(_QUESTION_START_WORDS):
+    if not _QUESTION_START_PATTERN.match(lowered):
         return False
-    if any(token in lowered for token in _FIX_REQUEST_WORDS):
+    if _FIX_REQUEST_PATTERN.search(lowered):
         return False
     return True
 

@@ -425,5 +425,53 @@ class ClassifyCommandSandboxAdversarialTests(unittest.TestCase):
             self.assertClean('cat $HOME/admin-backend/app/x.py')
 
 
+class ClassifyCommandSandboxCdChainTests(unittest.TestCase):
+    """Regression: a multi-hop escape split across separate ``cd ..`` hops
+    (an ordinary, unsuspicious shell idiom) used to evade detection
+    entirely — each hop resolved independently against the FROZEN
+    original ``cwd`` instead of the shell's actual cumulative position,
+    and a bare relative filename (no ``..``, no leading ``/``) was never
+    scanned at all. A single combined ``../..`` token was already caught;
+    only the SPLIT form was the bug."""
+
+    CWD = '/Users/dev/.agent/workspaces/TASK-100/repo1'
+
+    def test_split_cd_chain_into_another_task_is_flagged(self) -> None:
+        outside, _ = classify_command_sandbox(
+            'cd .. && cd .. && cat OTHER-TASK-999/repoX/secret.txt', self.CWD,
+        )
+        self.assertTrue(outside)
+
+    def test_combined_dotdot_dotdot_is_still_flagged(self) -> None:
+        # Contrast case proving the SPLIT is what used to defeat it.
+        outside, _ = classify_command_sandbox(
+            'cd ../.. && cat OTHER-TASK-999/repoX/secret.txt', self.CWD,
+        )
+        self.assertTrue(outside)
+
+    def test_three_hop_split_chain_is_flagged(self) -> None:
+        outside, _ = classify_command_sandbox(
+            'cd .. && cd .. && cd .. && cat x', self.CWD,
+        )
+        self.assertTrue(outside)
+
+    def test_cd_chain_staying_within_the_same_task_is_clean(self) -> None:
+        # cd .. lands on the task folder (an existing, legitimate root);
+        # reading a sibling repo of the SAME task must stay clean.
+        outside, _ = classify_command_sandbox(
+            'cd .. && cat repo2/README.md', self.CWD,
+        )
+        self.assertFalse(outside)
+
+    def test_cd_dash_and_bare_cd_do_not_crash_or_falsely_widen(self) -> None:
+        # ``cd -`` / bare ``cd`` (home) can't be resolved without tracking
+        # OLDPWD/$HOME — must be a no-op (stay at the last known cwd), not
+        # a crash or a silent wrong answer.
+        outside, _ = classify_command_sandbox(
+            'cd - && cat repo2/README.md', self.CWD,
+        )
+        self.assertFalse(outside)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -2763,13 +2763,35 @@ class CommentAgentCwdBranchTests(unittest.TestCase):
 
     def test_no_repo_id_falls_back_directly_to_workspace_path(self) -> None:
         # Lines 1633-1634: ``repo_id`` blank → skip the repo branch
-        # and use workspace_path.
+        # and use workspace_path (no repos in the workspace record at
+        # all — genuinely nothing better to fall back to).
         service = AgentService(**_kwargs())
         wm = MagicMock()
         wm.workspace_path.return_value = '/work/T1'
+        wm.get.return_value = SimpleNamespace(repository_ids=[])
         service._workspace_manager = wm
         record = SimpleNamespace(repo_id='   ')
         self.assertEqual(service._comment_agent_cwd('T1', record), '/work/T1')
+
+    def test_no_repo_id_falls_back_to_a_sibling_repo_not_the_bare_workspace(self) -> None:
+        # Regression: a blank/unresolvable repo_id (a real case —
+        # CommentRecord.repo_id defaults to '') used to fall straight
+        # to workspace_path(task_id) — the TASK FOLDER ITSELF. That
+        # cwd is already "one level up" from where sandbox_scope
+        # expects a session cwd to be, so its "widen one level up to
+        # the task folder" step widened AGAIN, to the entire
+        # workspaces root shared by every task. When the workspace
+        # actually has repos, we must pick one of THOSE instead so
+        # the widening lands on the task folder, not its parent.
+        service = AgentService(**_kwargs())
+        wm = MagicMock()
+        wm.workspace_path.return_value = '/work/T1'
+        wm.repository_path.return_value = '/work/T1/backend'
+        wm.get.return_value = SimpleNamespace(repository_ids=['backend', 'frontend'])
+        service._workspace_manager = wm
+        record = SimpleNamespace(repo_id='')
+        self.assertEqual(service._comment_agent_cwd('T1', record), '/work/T1/backend')
+        wm.repository_path.assert_called_with('T1', 'backend')
 
 
 class UpdateSourceWorkspaceHasChangesBranchTests(unittest.TestCase):

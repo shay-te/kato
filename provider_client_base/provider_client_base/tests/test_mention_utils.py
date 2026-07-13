@@ -117,6 +117,28 @@ class ExtractMentionLoginsTests(unittest.TestCase):
             ['my_user.name-v2'],
         )
 
+    def test_code_annotations_and_decorators_are_not_mentions(self) -> None:
+        # Regression: a review comment discussing code — "missing
+        # @Override", "should use a @pytest.fixture", "add @property" —
+        # was misread as @-mentioning a human named "override"/
+        # "pytest.fixture"/"property", causing the mention filter to
+        # silently drop ordinary, actionable review feedback.
+        for body in (
+            'This method is missing @Override here, please add it.',
+            "Shouldn't this test use a @pytest.fixture instead of manual setup?",
+            'Add @property to expose this as read-only.',
+            'Mark this @staticmethod since it does not use self.',
+        ):
+            self.assertEqual(extract_mention_logins(body), [], body)
+
+    def test_real_login_alongside_a_decorator_is_still_found(self) -> None:
+        # The denylist must not suppress a genuine mention just because a
+        # decorator also appears in the same comment.
+        self.assertEqual(
+            extract_mention_logins('@alice can you check the @Override here?'),
+            ['alice'],
+        )
+
 
 class IsCommentAddressedElsewhereTests(unittest.TestCase):
 

@@ -89,7 +89,16 @@ _PHISHING_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         'pipe_to_shell',
         re.compile(
-            r'\b(?:curl|wget)\b[^\n|]{1,200}\|\s*(?:sudo\s+)?(?:bash|sh|zsh)\b'
+            # A curl/wget fetch, through UP TO 5 intermediary pipe hops
+            # (tee, base64 -d, ...) so an obfuscated relay doesn't dodge
+            # the very-next-stage-only version of this check, landing in
+            # a shell OR a scripting interpreter capable of running
+            # arbitrary fetched code (not bash/sh/zsh alone) — bare name
+            # or a full path (``/bin/bash``).
+            r'\b(?:curl|wget)\b[^\n|]{1,200}'
+            r'(?:\|[^\n|]{1,200}){0,5}'
+            r'\|\s*(?:sudo\s+)?(?:[\w./-]*/)?'
+            r'(?:bash|sh|zsh|ksh|dash|python3?|perl|ruby|node|php)\b'
         ),
     ),
     (

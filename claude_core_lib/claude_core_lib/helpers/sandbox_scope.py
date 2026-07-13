@@ -24,6 +24,7 @@ from typing import Any
 
 from agent_core_lib.agent_core_lib.helpers.command_introspection import (
     deobfuscate_command,
+    split_command_segments,
 )
 
 # Tool-input keys that name a filesystem path the agent intends to
@@ -167,18 +168,51 @@ _COMMAND_REL_DOTDOT = re.compile(r'(?<![\w/~])(?:[\w.~+=*-]+/)*\.\.(?:/[\w.~+=*-
 # climbing out of the workspace is itself the signal.)
 _USER_SPACE_PREFIXES = ('/Users/', '/home/')
 
+# A bare multi-segment relative path with NO leading ``/``/``~``/``..`` —
+# e.g. ``OTHER-TASK-999/repoX/secret.txt``. Needed because a ``cd`` chain
+# that climbs out (``cd .. && cd ..``) followed by a plain filename is
+# otherwise invisible to any scanner: the filename itself carries no
+# escape marker, only the ACCUMULATED effect of the prior ``cd`` hops
+# reveals it resolves outside the sandbox. Same lookbehind convention as
+# ``_COMMAND_REL_DOTDOT`` (not word/``/``/``~``) so a match starts at the
+# token's real beginning, not mid-token.
+_COMMAND_BARE_RELATIVE = re.compile(r'(?<![\w/~])[\w.+=*-]+(?:/[\w.+=*-]+)+')
 
-def _command_path_args(command: str) -> list[str]:
-    """Filesystem paths referenced anywhere in a shell command that are worth
-    sandbox-checking: absolute home-tree paths, plus relative ``..`` escapes.
+# A ``cd <target>`` segment — used to simulate the shell's cumulative
+# working directory across a ``&&``/``;``/``|``-chained command so later
+# segments' relative paths resolve against where the shell ACTUALLY is by
+# then, not the frozen session ``cwd``. ``cd -`` (previous dir, unknown
+# without tracking ``OLDPWD``) and a bare ``cd`` (home) are deliberately
+# left unhandled — under-tracking here just means a path is checked
+# against a stale cwd, the same static-only limitation every other check
+# in this module already has.
+_CD_COMMAND_RE = re.compile(r'^cd\s+(\S.*)$')
 
-    Quotes/backslashes are stripped first so a buried or split path is seen
-    whole. System paths, URLs, and glob fragments are left out of the absolute
-    set on purpose (low-noise); relative ``..`` paths are included and the
-    caller decides if they actually escape."""
-    text = deobfuscate_command(command)
+
+def _next_simulated_cwd(segment: str, current_cwd: str) -> str:
+    if not current_cwd:
+        return current_cwd
+    match = _CD_COMMAND_RE.match(segment.strip())
+    if not match:
+        return current_cwd
+    target = match.group(1).strip()
+    if not target or target == '-':
+        return current_cwd
+    return _normalize(os.path.expanduser(target), current_cwd)
+
+
+def _segment_path_args(segment: str) -> list[str]:
+    """Filesystem paths referenced anywhere in ONE command segment that are
+    worth sandbox-checking: absolute home-tree paths, relative ``..``
+    escapes, and bare multi-segment relative paths.
+
+    Quotes/backslashes are stripped by the caller first so a buried or
+    split path is seen whole. System paths, URLs, and glob fragments are
+    left out of the absolute set on purpose (low-noise); relative paths
+    are included and the caller decides (against the simulated cwd) if
+    they actually escape."""
     args: list[str] = []
-    for match in _COMMAND_ABS_PATH.finditer(text):
+    for match in _COMMAND_ABS_PATH.finditer(segment):
         raw = match.group(0)
         if len(raw) < 2:
             continue
@@ -186,10 +220,13 @@ def _command_path_args(command: str) -> list[str]:
         # doubled slashes can't dodge it (e.g. ``/Users/x/../../etc``).
         if os.path.normpath(os.path.expanduser(raw)).startswith(_USER_SPACE_PREFIXES):
             args.append(raw)
-    for match in _COMMAND_REL_DOTDOT.finditer(text):
+    for match in _COMMAND_REL_DOTDOT.finditer(segment):
         raw = match.group(0)
         if '..' in raw.split('/'):  # a real ``..`` segment, not ``foo..bar``
             args.append(raw)
+    for match in _COMMAND_BARE_RELATIVE.finditer(segment):
+        raw = match.group(0)
+        args.append(raw)
     return args
 
 
@@ -208,16 +245,28 @@ def classify_command_sandbox(
     escaping and ``$HOME`` indirection; the sandbox roots + ``allowed_paths``
     allow-list are exempt, so ordinary ``git``/``ls``/``mvn`` never trips it.
 
+    Processed segment-by-segment (``&&``/``||``/``;``/``|``), simulating
+    the cumulative effect of any ``cd`` segments — a multi-hop escape
+    split across separate ``cd ..`` hops (an ordinary, unsuspicious shell
+    idiom) is otherwise judged against the session's FROZEN original
+    ``cwd`` and never resolves as escaping, even though the shell itself
+    has genuinely walked out of the sandbox by the time the final
+    segment runs.
+
     Static-only by nature: a path computed at runtime ($VAR, base64, fetched)
     is invisible here — the docker setting is the OS-level guarantee."""
     norm_roots = _effective_roots(cwd, additional_dirs)
     if not norm_roots:
         return False, ''
     norm_allowed = {_normalize(p, cwd) for p in allowed_paths if p}
-    for raw in _command_path_args(command):
-        resolved = _normalize(os.path.expanduser(raw), cwd)
-        if resolved in norm_allowed:
-            continue
-        if not any(_is_within(resolved, root) for root in norm_roots):
-            return True, raw
+    text = deobfuscate_command(command)
+    current_cwd = os.path.normpath(cwd) if cwd else cwd
+    for segment in split_command_segments(text):
+        for raw in _segment_path_args(segment):
+            resolved = _normalize(os.path.expanduser(raw), current_cwd)
+            if resolved in norm_allowed:
+                continue
+            if not any(_is_within(resolved, root) for root in norm_roots):
+                return True, raw
+        current_cwd = _next_simulated_cwd(segment, current_cwd)
     return False, ''

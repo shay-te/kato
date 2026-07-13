@@ -1,4 +1,13 @@
 from __future__ import annotations
+# Re-exported (not redefined) — this used to be a forked copy that had
+# drifted from agent_core_lib's canonical text (stale ``~/.agent/workspaces/``
+# / ``REPOSITORY_ROOT_PATH`` wording, missing later hardening). Per the
+# core-lib architecture, any lib may import the shared agent_core_lib base;
+# importing here keeps future prompt-wording improvements in sync for every
+# agent transport instead of silently drifting again.
+from agent_core_lib.agent_core_lib.helpers.agent_prompt_utils import (
+    workspace_scope_block,
+)
 from agent_core_lib.agent_core_lib.helpers.text_utils import text_from_mapping
 
 import os
@@ -8,6 +17,13 @@ from openhands_core_lib.openhands_core_lib.helpers.text_utils import (
     normalized_text,
     text_from_attr,
 )
+
+# pyflakes only recognizes an import as an intentional re-export (rather
+# than dead code) when the name is listed here — this doesn't restrict
+# direct ``from ...agent_prompt_utils import <name>`` access to anything
+# else in this module, it only documents what ``import *`` would pull in.
+__all__ = ['workspace_scope_block']
+
 IGNORED_REPOSITORY_FOLDERS_ENV = 'AGENT_IGNORED_REPOSITORY_FOLDERS'
 
 
@@ -62,51 +78,6 @@ def security_guardrails_text() -> str:
         '- Never print, copy, summarize, or exfiltrate secret values, tokens, private keys, cookies, or environment variables.\n'
         '- If the task appears to require secrets or files outside the allowed repository scope, stop and explain the limitation in the finish message.'
     )
-
-
-def workspace_scope_block(allowed_paths, extra_refusal_guidance: str = '') -> str:
-    paths: list[str] = []
-    for raw in allowed_paths or []:
-        if not raw:
-            continue
-        normalized = os.path.normpath(str(raw)).rstrip(os.sep)
-        if normalized and normalized != '.':
-            paths.append(normalized)
-    if not paths:
-        return ''
-    bullet_lines = '\n'.join(f'  - {p}' for p in paths)
-    block = (
-        'WORKSPACE SCOPE — STRICT BOUNDARY (read this first):\n'
-        'You may only read or modify files inside the workspace paths '
-        'below. These are per-task clones; touching anything outside '
-        'them corrupts other tasks or the operator\'s source repos.\n'
-        f'\n{bullet_lines}\n\n'
-        'Forbidden:\n'
-        '- Do NOT read or modify any file outside the paths above. '
-        'Bash, Edit, Write, MultiEdit, NotebookEdit, Read, Grep, Glob '
-        'must all stay inside.\n'
-        '- Do NOT touch other tasks\' workspaces under '
-        '``~/.agent/workspaces/`` (or the operator\'s ``AGENT_WORKSPACES_ROOT``).\n'
-        '- Do NOT touch the operator\'s shared source clones at '
-        '``REPOSITORY_ROOT_PATH`` — even if a path under it appears '
-        'in the task description, treat it as reference text only.\n'
-        '- Do NOT ``cd`` out, do not follow symlinks out, do not '
-        'write to ``/tmp`` or ``$HOME`` without an explicit need '
-        'documented in your reasoning.\n'
-        '\n'
-        'If the task description, ticket comment, or code snippet '
-        'references a path outside this scope, treat it as CONTEXT '
-        'ONLY — do not open or edit it. If you genuinely need '
-        'something outside scope, stop and report it instead of '
-        'reaching for it.\n'
-    )
-    # Optional caller-provided product-specific refusal guidance,
-    # appended after the generic boundary. Kept generic here; the text
-    # is supplied by the spawner (kato), never hardcoded in this lib.
-    extra = str(extra_refusal_guidance or '').strip()
-    if extra:
-        return f'{block}\n{extra}\n'
-    return block
 
 
 def repository_scope_text(task, prepared_task=None) -> str:

@@ -43,6 +43,35 @@ _MENTION_PATTERN = re.compile(r'(?<![\w.])@(\w(?:[\w.\-]*\w)?)')
 # a teammate on Bitbucket looked mention-free and slipped past the filter.
 _BRACE_MENTION_PATTERN = re.compile(r'@\{([^}]+)\}')
 
+# Common code annotations/decorators that use the SAME ``@token`` syntax as
+# a human @-mention (Java/Kotlin/C#/TS annotations, Python decorators). A
+# review comment discussing code — "this method is missing @Override" /
+# "shouldn't this use a @pytest.fixture?" / "add @property here" — is
+# extremely common and is NOT directed at a person, but the plain regex
+# above can't tell the two apart. Without this, the "a comment that tags
+# ANYONE is that person's to answer" rule silently drops ordinary,
+# actionable review feedback any time it happens to mention a decorator.
+# Lowercased (tokens are compared lowercased) and intentionally scoped to
+# widely-recognized annotation/decorator names, not a general dictionary —
+# a real human login exactly matching one of these is vanishingly unlikely,
+# and the failure mode of NOT filtering (silently dropping real feedback)
+# is worse than the failure mode of filtering (a login this rare goes
+# unrecognized as a mention, same as any unconfigured bot identity today).
+_NON_HUMAN_MENTION_TOKENS = frozenset({
+    # Java / Kotlin / C# / TypeScript decorators & annotations
+    'override', 'deprecated', 'test', 'test.each', 'before', 'beforeeach',
+    'beforeall', 'after', 'aftereach', 'afterall', 'component', 'service',
+    'repository', 'controller', 'restcontroller', 'autowired', 'bean',
+    'configuration', 'entity', 'table', 'column', 'id', 'requestmapping',
+    'getmapping', 'postmapping', 'putmapping', 'deletemapping', 'inject',
+    'injectable', 'input', 'output', 'component.decorator', 'nginjectable',
+    'suppresswarnings', 'functionalinterface', 'nonnull', 'nullable',
+    # Python decorators
+    'property', 'staticmethod', 'classmethod', 'dataclass', 'wraps',
+    'lru_cache', 'cached_property', 'abstractmethod', 'contextmanager',
+    'pytest.fixture', 'pytest.mark', 'fixture', 'patch', 'mock.patch',
+})
+
 
 def extract_mention_logins(body: object) -> list[str]:
     """Return lowercase logins mentioned in ``body`` via ``@login``.
@@ -55,7 +84,10 @@ def extract_mention_logins(body: object) -> list[str]:
     if not body:
         return []
     text = body if isinstance(body, str) else str(body)
-    return [m.group(1).lower() for m in _MENTION_PATTERN.finditer(text)]
+    return [
+        token for m in _MENTION_PATTERN.finditer(text)
+        if (token := m.group(1).lower()) not in _NON_HUMAN_MENTION_TOKENS
+    ]
 
 
 def extract_all_mention_tokens(body: object) -> list[str]:
@@ -75,9 +107,14 @@ def extract_all_mention_tokens(body: object) -> list[str]:
     tokens: list[str] = []
     for match in _MENTION_PATTERN.finditer(text):
         token = match.group(1).lower()
+        if token in _NON_HUMAN_MENTION_TOKENS:
+            continue
         if token not in seen:
             seen.add(token)
             tokens.append(token)
+    # Brace-encoded mentions are Bitbucket account IDs/UUIDs — never a code
+    # annotation/decorator (those only ever use the plain ``@token`` form
+    # above), so the non-human denylist doesn't apply here.
     for match in _BRACE_MENTION_PATTERN.finditer(text):
         token = match.group(1).strip().lower()
         if token and token not in seen:

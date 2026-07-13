@@ -2545,7 +2545,22 @@ class AgentService(MissionStepLoggerMixin, Service):
         return True
 
     def _comment_agent_cwd(self, task_id: str, record) -> str:
-        """Prefer the commented repo clone, fallback to the task workspace."""
+        """Prefer the commented repo clone, fallback to another repo
+        clone in the same task.
+
+        Deliberately never falls back to the bare task workspace
+        folder (``workspace_path(task_id)``) except as a last resort
+        with zero repos to fall back to: sandbox_scope's
+        ``_effective_roots`` widens the sandbox ONE level up from
+        ``cwd`` on the assumption ``cwd`` is ``<workspaces>/<task_id>/
+        <repo>``. A comment with a blank/unresolvable ``repo_id`` (a
+        real, reachable case — ``CommentRecord.repo_id`` defaults to
+        ``''``) used to fall back to the task folder ITSELF, which is
+        already one level up — so the widening then added
+        ``dirname(<task_id folder>)``, i.e. the ENTIRE workspaces root
+        shared by every task, silently making every other task's files
+        read as "inside this session's sandbox".
+        """
         if self._workspace_manager is None:
             return ''
         repo_id = str(getattr(record, 'repo_id', '') or '').strip()
@@ -2554,6 +2569,17 @@ class AgentService(MissionStepLoggerMixin, Service):
                 return str(self._workspace_manager.repository_path(task_id, repo_id))
             except Exception:
                 pass
+        try:
+            workspace = self._workspace_manager.get(task_id)
+            repo_ids = getattr(workspace, 'repository_ids', None)
+            if isinstance(repo_ids, list) and repo_ids:
+                fallback_repo_id = str(repo_ids[0] or '').strip()
+                if fallback_repo_id:
+                    return str(
+                        self._workspace_manager.repository_path(task_id, fallback_repo_id),
+                    )
+        except Exception:
+            pass
         try:
             return str(self._workspace_manager.workspace_path(task_id))
         except Exception:

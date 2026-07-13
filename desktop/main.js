@@ -14,8 +14,11 @@
 
 const { app, BrowserWindow, Menu, shell, dialog } = require('electron');
 const path = require('path');
+const os = require('os');
+const crypto = require('crypto');
 const { spawn } = require('child_process');
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 
 // Default kato webserver address. Same defaults the Python side
@@ -26,6 +29,59 @@ const KATO_HOST = process.env.KATO_WEBSERVER_HOST || '127.0.0.1';
 const KATO_PORT = Number(process.env.KATO_WEBSERVER_PORT || 5050);
 const HEALTHCHECK_TIMEOUT_MS = 60 * 1000;     // give kato up to a minute to boot
 const HEALTHCHECK_INTERVAL_MS = 500;
+
+// Mirrors kato_core_lib.main's KATO_WEBSERVER_HTTPS default (enabled
+// unless explicitly turned off) — we don't override this env var when
+// spawning kato below, so the child picks the SAME default we assume
+// here for building the URL / cert-trust logic.
+const KATO_HTTPS_ENABLED = !['0', 'false', 'no', 'off'].includes(
+  String(process.env.KATO_WEBSERVER_HTTPS || '1').trim().toLowerCase(),
+);
+const KATO_SCHEME = KATO_HTTPS_ENABLED ? 'https' : 'http';
+const KATO_ORIGIN = `${KATO_SCHEME}://${KATO_HOST}:${KATO_PORT}`;
+
+// Same self-signed-cert location kato_core_lib/helpers/tls_cert_utils.py
+// writes to — a loopback address can't get a CA-signed cert, so kato
+// generates its own and we need to know EXACTLY which one to trust
+// (never a blanket "skip verification").
+function katoTlsCertPath() {
+  const override = (process.env.KATO_TLS_DIR || '').trim();
+  const dir = override || path.join(os.homedir(), '.kato', 'tls');
+  return path.join(dir, 'cert.pem');
+}
+
+// SHA-256 fingerprint via Node's own X509Certificate parser — used to
+// confirm a certificate is EXACTLY the one kato generated, not "any
+// certificate for this hostname." Returns null if the input isn't a
+// parseable certificate (missing file, cert not generated yet, etc).
+function certFingerprint(pemOrDerBuffer) {
+  try {
+    return new crypto.X509Certificate(pemOrDerBuffer).fingerprint256;
+  } catch {
+    return null;
+  }
+}
+
+// Only trust kato's self-signed cert for kato's OWN origin — every
+// other certificate error (there shouldn't be any; the window never
+// navigates elsewhere) keeps Electron's default behaviour (reject).
+if (KATO_HTTPS_ENABLED) {
+  app.on('certificate-error', (event, _webContents, url, _error, certificate, callback) => {
+    if (!url.startsWith(`${KATO_ORIGIN}/`) && url !== KATO_ORIGIN) { return; }
+    let trustedFingerprint = null;
+    try {
+      trustedFingerprint = certFingerprint(fs.readFileSync(katoTlsCertPath()));
+    } catch {
+      // Cert not generated yet (kato still starting) — fall through
+      // to Electron's default rejection; the caller will retry.
+    }
+    const offeredFingerprint = certFingerprint(certificate.data);
+    if (trustedFingerprint && offeredFingerprint === trustedFingerprint) {
+      event.preventDefault();
+      callback(true);
+    }
+  });
+}
 
 // Resolve the repo root. In development the desktop folder lives
 // at ``<repo>/desktop`` so the repo is one level up. In a packaged
@@ -108,8 +164,19 @@ function spawnKato() {
 
 function pingKato() {
   return new Promise((resolve) => {
-    const req = http.get(
-      { host: KATO_HOST, port: KATO_PORT, path: '/', timeout: 1000 },
+    // Re-read the cert fresh on every poll: kato generates it moments
+    // after it starts listening, so an early poll (before the file
+    // exists) legitimately has nothing to trust yet — it just fails
+    // and retries, same as any other "not up yet" poll failure. Once
+    // the cert exists we trust ONLY that exact certificate (`ca`), not
+    // a blanket ``rejectUnauthorized: false``.
+    let ca;
+    if (KATO_HTTPS_ENABLED) {
+      try { ca = fs.readFileSync(katoTlsCertPath()); } catch { /* not ready yet */ }
+    }
+    const client = KATO_HTTPS_ENABLED ? https : http;
+    const req = client.get(
+      { host: KATO_HOST, port: KATO_PORT, path: '/', timeout: 1000, ca },
       (res) => {
         // Any HTTP response means the server is up. Status code
         // doesn't matter — the planning UI's index returns 200 but
@@ -148,7 +215,7 @@ function createWindow() {
     },
     icon: path.join(__dirname, 'icons', 'icon.png'),
   });
-  mainWindow.loadURL(`http://${KATO_HOST}:${KATO_PORT}/`);
+  mainWindow.loadURL(`${KATO_ORIGIN}/`);
   // Open external links (PR URLs, ticket URLs, etc.) in the
   // operator's real browser. Without this they'd open inside the
   // Electron window and the kato UI would become a navigation
@@ -232,7 +299,7 @@ app.whenReady().then(async () => {
   if (!ready) {
     dialog.showErrorBox(
       'Kato failed to start',
-      `Could not reach http://${KATO_HOST}:${KATO_PORT}/ within `
+      `Could not reach ${KATO_ORIGIN}/ within `
       + `${HEALTHCHECK_TIMEOUT_MS / 1000}s.\n\nLast log lines:\n`
       + katoStartupLog.slice(-2000),
     );

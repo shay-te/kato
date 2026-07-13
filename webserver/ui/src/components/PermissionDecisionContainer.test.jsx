@@ -1,19 +1,19 @@
-// Component tests for PermissionDecisionContainer — the surface that
-// auto-handles "remembered" tool decisions and renders the modal
-// otherwise. Three operator-trust contracts:
+// Component tests for PermissionDecisionContainer — a thin renderer over
+// PermissionModal. Remembered "Allow always"/"Deny always" decisions are
+// resolved SERVER-SIDE before an ask ever reaches this component (see
+// kato_core_lib/helpers/tool_decision_store.py + _maybe_auto_resolve_pending
+// in kato_webserver/app.py) — so this component has no recall/auto-submit
+// logic of its own. Its contract:
 //
-//   1. When the tool has a remembered "allow" / "deny" decision,
-//      auto-submit silently (no modal flash).
-//   2. When auto-submit FAILS (Bug C territory: backend rejects),
-//      the modal MUST resurface so the operator can retry or
-//      decide manually. The "auto-failed" record_id is tracked to
-//      prevent an infinite auto-retry loop.
-//   3. Manual decisions call ``rememberToolDecision`` only when
-//      the operator ticks "remember", and emit a system bubble
-//      describing what happened.
+//   1. Renders the modal for any non-null ``pending``.
+//   2. A manual decision forwards {requestId, allow, rationale, remember}
+//      to onSubmit, and on success calls onDismiss + emits an audit bubble.
+//   3. A FAILED submit (backend rejects, or onSubmit throws) keeps the
+//      modal up so the operator can retry.
+//   4. Renders nothing when pending is null.
 
 import { describe, test, expect, vi } from 'vitest';
-import { render, screen, waitFor, act } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 
 import PermissionDecisionContainer from './PermissionDecisionContainer.jsx';
 
@@ -32,203 +32,18 @@ function _pending(overrides = {}) {
 }
 
 
-describe('PermissionDecisionContainer — auto-allow / auto-deny', () => {
-
-  test('auto-submits "allow" when the tool has a remembered allow decision', async () => {
-    const onSubmit = vi.fn().mockResolvedValue(true);
-    const onDismiss = vi.fn();
-    const onAuditBubble = vi.fn();
-
-    render(
-      <PermissionDecisionContainer
-        pending={_pending()}
-        onDismiss={onDismiss}
-        onSubmit={onSubmit}
-        onAuditBubble={onAuditBubble}
-        recallToolDecision={(tool) => (tool === 'Edit' ? 'allow' : null)}
-        rememberToolDecision={vi.fn()}
-      />,
-    );
-
-    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
-
-    const call = onSubmit.mock.calls[0][0];
-    expect(call.allow).toBe(true);
-    expect(call.requestId).toBe('req-1');
-    // Auto-submit must NOT request re-remembering (it's already
-    // remembered — double-write is a waste).
-    expect(call.remember).toBe(false);
-
-    await waitFor(() => expect(onDismiss).toHaveBeenCalled());
-    // Audit bubble announces the auto-action so the operator can
-    // scroll back and see what was approved without their input.
-    expect(onAuditBubble).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: expect.stringContaining('auto-allow'),
-      }),
-    );
-  });
-
-  test('auto-submits "deny" when the tool has a remembered deny decision', async () => {
-    const onSubmit = vi.fn().mockResolvedValue(true);
-
-    render(
-      <PermissionDecisionContainer
-        pending={_pending()}
-        onDismiss={vi.fn()}
-        onSubmit={onSubmit}
-        onAuditBubble={vi.fn()}
-        recallToolDecision={() => 'deny'}
-        rememberToolDecision={vi.fn()}
-      />,
-    );
-
-    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
-    expect(onSubmit.mock.calls[0][0].allow).toBe(false);
-  });
-
-  test('does NOT render the modal while auto-submitting', () => {
-    // The modal would flash on screen briefly; we hide it so the
-    // operator only sees auto-handled tools as a silent audit bubble.
-    render(
-      <PermissionDecisionContainer
-        pending={_pending()}
-        onDismiss={vi.fn()}
-        onSubmit={vi.fn().mockResolvedValue(true)}
-        onAuditBubble={vi.fn()}
-        recallToolDecision={() => 'allow'}
-        rememberToolDecision={vi.fn()}
-      />,
-    );
-    // Modal hidden during auto-submit (no dialog role rendered).
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  });
-
-  test('auto-submit FAILURE resurfaces the modal for manual handling (Bug C surface)', async () => {
-    // Critical regression guard: if the backend rejects the
-    // remembered decision (e.g., stdin write failed — exactly the
-    // Bug C scenario), the modal MUST come back so the operator
-    // can retry instead of being silently stuck.
-    const onSubmit = vi.fn().mockResolvedValue(false);  // backend rejection
-
-    render(
-      <PermissionDecisionContainer
-        pending={_pending()}
-        onDismiss={vi.fn()}
-        onSubmit={onSubmit}
-        onAuditBubble={vi.fn()}
-        recallToolDecision={() => 'allow'}
-        rememberToolDecision={vi.fn()}
-      />,
-    );
-
-    // After auto-submit settles, the modal should be visible.
-    await waitFor(() => {
-      expect(onSubmit).toHaveBeenCalled();
-    });
-    // The auto-submit failed, so the modal renders.
-    await waitFor(() => {
-      expect(screen.queryByRole('dialog')).toBeInTheDocument();
-    });
-  });
-
-  test('thrown error in onSubmit is treated as a failure (modal resurfaces)', async () => {
-    // Belt-and-braces: even if onSubmit throws instead of
-    // returning false, the container must catch and treat as
-    // delivery failure. Otherwise the silent failure leaves the
-    // operator with no UI.
-    const onSubmit = vi.fn().mockRejectedValue(new Error('network down'));
-
-    render(
-      <PermissionDecisionContainer
-        pending={_pending()}
-        onDismiss={vi.fn()}
-        onSubmit={onSubmit}
-        onAuditBubble={vi.fn()}
-        recallToolDecision={() => 'allow'}
-        rememberToolDecision={vi.fn()}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(screen.queryByRole('dialog')).toBeInTheDocument();
-    });
-  });
-});
-
-
-describe('PermissionDecisionContainer — out-of-sandbox never auto-resolves', () => {
-
-  test('an out-of-sandbox ask shows the modal even when the tool is remembered', async () => {
-    // The remembered decision is keyed by tool name; without the guard
-    // an "allow always"'d Edit would silently approve an out-of-sandbox
-    // Edit too. The modal must surface so the operator decides explicitly.
-    const onSubmit = vi.fn().mockResolvedValue(true);
-
-    render(
-      <PermissionDecisionContainer
-        pending={_pending({
-          outside_sandbox: true,
-          outside_path: '/etc/passwd',
-          request: { request_id: 'req-1', tool_name: 'Edit', input: { file_path: '/etc/passwd' } },
-        })}
-        onDismiss={vi.fn()}
-        onSubmit={onSubmit}
-        onAuditBubble={vi.fn()}
-        recallToolDecision={() => 'allow'}
-        rememberToolDecision={vi.fn()}
-      />,
-    );
-
-    // No silent auto-submit…
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeInTheDocument());
-    expect(onSubmit).not.toHaveBeenCalled();
-    // …and no remembered scope offered.
-    expect(screen.queryByRole('button', { name: /allow always/i })).toBeNull();
-  });
-
-  test('a high-risk Action Guard ask shows the modal even when remembered', async () => {
-    // A remembered bare `Bash` allow must NOT silently approve a credential
-    // read flagged by the Action Guard — the modal must surface.
-    const onSubmit = vi.fn().mockResolvedValue(true);
-
-    render(
-      <PermissionDecisionContainer
-        pending={_pending({
-          request: { request_id: 'req-1', tool_name: 'Bash', input: { command: 'cat ~/.ssh/id_rsa' } },
-          action_guard: { category: 'credential_read', decision: 'block' },
-        })}
-        onDismiss={vi.fn()}
-        onSubmit={onSubmit}
-        onAuditBubble={vi.fn()}
-        recallToolDecision={() => 'allow'}
-        rememberToolDecision={vi.fn()}
-      />,
-    );
-
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeInTheDocument());
-    expect(onSubmit).not.toHaveBeenCalled();
-    expect(screen.queryByRole('button', { name: /allow always/i })).toBeNull();
-  });
-});
-
-
-describe('PermissionDecisionContainer — no remembered decision', () => {
-
-  test('renders the modal when nothing is remembered for the tool', () => {
+describe('PermissionDecisionContainer — rendering', () => {
+  test('renders the modal for a pending ask', () => {
     render(
       <PermissionDecisionContainer
         pending={_pending()}
         onDismiss={vi.fn()}
         onSubmit={vi.fn()}
         onAuditBubble={vi.fn()}
-        recallToolDecision={() => null}
-        rememberToolDecision={vi.fn()}
       />,
     );
     const dialog = screen.getByRole('dialog');
     expect(dialog).toBeInTheDocument();
-    expect(dialog).toHaveAttribute('aria-modal', 'true');
     expect(screen.getByRole('button', { name: /allow once/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /allow always/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /deny/i })).toBeInTheDocument();
@@ -241,10 +56,153 @@ describe('PermissionDecisionContainer — no remembered decision', () => {
         onDismiss={vi.fn()}
         onSubmit={vi.fn()}
         onAuditBubble={vi.fn()}
-        recallToolDecision={() => null}
-        rememberToolDecision={vi.fn()}
       />,
     );
     expect(container.firstChild).toBeNull();
+  });
+});
+
+
+describe('PermissionDecisionContainer — manual decision', () => {
+  test('Allow once submits {allow: true, remember: false}', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(true);
+    const onDismiss = vi.fn();
+    const onAuditBubble = vi.fn();
+
+    render(
+      <PermissionDecisionContainer
+        pending={_pending()}
+        onDismiss={onDismiss}
+        onSubmit={onSubmit}
+        onAuditBubble={onAuditBubble}
+      />,
+    );
+
+    screen.getByRole('button', { name: /allow once/i }).click();
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    const call = onSubmit.mock.calls[0][0];
+    expect(call.requestId).toBe('req-1');
+    expect(call.allow).toBe(true);
+    expect(call.remember).toBe(false);
+
+    await waitFor(() => expect(onDismiss).toHaveBeenCalled());
+    expect(onAuditBubble).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining('approved') }),
+    );
+  });
+
+  test('Allow always submits {allow: true, remember: true} and the bubble names the tool', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(true);
+    const onAuditBubble = vi.fn();
+
+    render(
+      <PermissionDecisionContainer
+        pending={_pending()}
+        onDismiss={vi.fn()}
+        onSubmit={onSubmit}
+        onAuditBubble={onAuditBubble}
+      />,
+    );
+
+    screen.getByRole('button', { name: /allow always/i }).click();
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0][0].remember).toBe(true);
+    await waitFor(() => expect(onAuditBubble).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining('remembered for Edit') }),
+    ));
+  });
+
+  test('Deny submits {allow: false}', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(true);
+
+    render(
+      <PermissionDecisionContainer
+        pending={_pending()}
+        onDismiss={vi.fn()}
+        onSubmit={onSubmit}
+        onAuditBubble={vi.fn()}
+      />,
+    );
+
+    screen.getByRole('button', { name: /^deny$/i }).click();
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0][0].allow).toBe(false);
+  });
+
+  test('a FAILED submit keeps the modal up (operator can retry)', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(false);
+    const onDismiss = vi.fn();
+
+    render(
+      <PermissionDecisionContainer
+        pending={_pending()}
+        onDismiss={onDismiss}
+        onSubmit={onSubmit}
+        onAuditBubble={vi.fn()}
+      />,
+    );
+
+    screen.getByRole('button', { name: /allow once/i }).click();
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onDismiss).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  test('a THROWN error in onSubmit is treated as a failure (modal stays up)', async () => {
+    const onSubmit = vi.fn().mockRejectedValue(new Error('network down'));
+
+    render(
+      <PermissionDecisionContainer
+        pending={_pending()}
+        onDismiss={vi.fn()}
+        onSubmit={onSubmit}
+        onAuditBubble={vi.fn()}
+      />,
+    );
+
+    screen.getByRole('button', { name: /allow once/i }).click();
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+});
+
+
+describe('PermissionDecisionContainer — out-of-sandbox / high-risk still surface (via PermissionModal)', () => {
+  test('an out-of-sandbox ask never offers "Allow always"', () => {
+    render(
+      <PermissionDecisionContainer
+        pending={_pending({
+          outside_sandbox: true,
+          outside_path: '/etc/passwd',
+          request: { request_id: 'req-1', tool_name: 'Edit', input: { file_path: '/etc/passwd' } },
+        })}
+        onDismiss={vi.fn()}
+        onSubmit={vi.fn()}
+        onAuditBubble={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /allow always/i })).toBeNull();
+  });
+
+  test('a high-risk Action Guard ask never offers "Allow always"', () => {
+    render(
+      <PermissionDecisionContainer
+        pending={_pending({
+          request: { request_id: 'req-1', tool_name: 'Bash', input: { command: 'cat ~/.ssh/id_rsa' } },
+          action_guard: { category: 'credential_read', decision: 'block' },
+        })}
+        onDismiss={vi.fn()}
+        onSubmit={vi.fn()}
+        onAuditBubble={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /allow always/i })).toBeNull();
   });
 });

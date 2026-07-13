@@ -46,7 +46,7 @@ _MAX_KATO_LINES = {
     'task_core_lib': 0,
     # ---- known debt — clean these up; lower the number, never raise it ----
     'agent_provider_contracts': 18,
-    'openhands_core_lib': 16,
+    'openhands_core_lib': 15,
     'provider_client_base': 53,
     'repository_core_lib': 2,
     'sandbox_core_lib': 410,

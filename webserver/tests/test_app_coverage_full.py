@@ -1669,13 +1669,29 @@ class WorkspaceRecordBackfillEmptyTests(unittest.TestCase):
 
 class MainEntrypointTests(unittest.TestCase):
     def test_main_builds_app_and_runs(self):
-        with patch.object(app_module.Flask, 'run') as run:
+        # HTTPS off: this test doesn't exercise TLS and must not touch
+        # the real ~/.kato/tls (ensure_local_tls_cert writes for real).
+        with patch.dict(os.environ, {'KATO_WEBSERVER_HTTPS': '0'}), \
+             patch.object(app_module.Flask, 'run') as run:
             main()
         run.assert_called_once()
         # Host/port come from env defaults.
         kwargs = run.call_args.kwargs
         self.assertEqual(kwargs.get('host'), '127.0.0.1')
         self.assertEqual(kwargs.get('port'), 5050)
+        self.assertIsNone(kwargs.get('ssl_context'))
+
+    def test_main_serves_https_with_a_generated_cert_by_default(self):
+        with patch.dict(os.environ, {}, clear=False), \
+             patch(
+                 'kato_core_lib.helpers.tls_cert_utils.ensure_local_tls_cert',
+                 return_value=('cert.pem', 'key.pem'),
+             ), \
+             patch.object(app_module.Flask, 'run') as run:
+            os.environ.pop('KATO_WEBSERVER_HTTPS', None)
+            main()
+        kwargs = run.call_args.kwargs
+        self.assertEqual(kwargs.get('ssl_context'), ('cert.pem', 'key.pem'))
 
 
 # --------------------------------------------------------------------------

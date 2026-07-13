@@ -46,6 +46,7 @@ from enum import Enum
 from agent_core_lib.agent_core_lib.helpers.command_introspection import (
     classify_command_escape,
     deobfuscate_command,
+    segment_program,
     split_command_segments,
 )
 from agent_core_lib.agent_core_lib.helpers.credential_patterns import (
@@ -226,7 +227,21 @@ class CommandPolicy(object):
 _PATH_KEYS = ('file_path', 'notebook_path', 'path', 'file')
 
 # --- destructive filesystem -----------------------------------------------
-_CATASTROPHIC_RM_TARGET = re.compile(r'^(/|/\*|~|~/|~/\*|\*|\.\.?/?\*?)$')
+# ``~[\w-]*`` (not bare ``~``) also catches tilde-username targets
+# (``~root``, ``~ubuntu``) — POSIX expands those to another user's home,
+# just as catastrophic to recursively force-delete as your own.
+_CATASTROPHIC_RM_TARGET = re.compile(
+    r'^(/|/\*|~[\w-]*(?:/\*?)?|\*|\.\.?/?\*?)$'
+)
+# Repeated leading slashes (``//``, ``////``) are POSIX-identical to a
+# single ``/`` for every path EXCEPT exactly ``//`` (implementation-defined,
+# and no real filesystem treats it specially in practice) — collapse before
+# matching so ``rm -rf //`` can't dodge the single-``/`` regex above.
+_REPEATED_SLASHES = re.compile(r'/{2,}')
+
+
+def _collapsed_slashes(target: str) -> str:
+    return _REPEATED_SLASHES.sub('/', target)
 _FORK_BOMB = re.compile(r':\s*\(\s*\)\s*\{[^}]*\|[^}]*&[^}]*\}\s*;\s*:')
 _MKFS = re.compile(r'\bmkfs(\.\w+)?\b')
 _DD_TO_DEVICE = re.compile(r'\bdd\b[^|;&]*\bof=\s*/dev/')
@@ -278,7 +293,7 @@ def _detect_destructive_fs(command: str, segments) -> list:
         if not recursive:
             continue
         catastrophic = no_preserve or any(
-            _CATASTROPHIC_RM_TARGET.match(t) for t in targets
+            _CATASTROPHIC_RM_TARGET.match(_collapsed_slashes(t)) for t in targets
         )
         if catastrophic:
             found.append(_Candidate(
@@ -307,20 +322,73 @@ def _detect_destructive_fs(command: str, segments) -> list:
 _REMOTE_EXEC_PHISHING = frozenset({'pipe_to_shell', 'eval_remote_fetch'})
 _SOURCE_PROCESS_SUB = re.compile(r'(?:\bsource\b|(?:^|[\s;&|])\.)\s+<\(\s*(?:curl|wget)\b')
 
+# Backtick/``$(...)`` command substitution wrapping a fetch — checked
+# separately from ``eval_remote_fetch`` (which requires a literal
+# ``eval``/``bash -c``/``sh -c`` prefix) because a BARE substitution used
+# directly as (part of) the command is just as much an RCE, and because
+# the backtick form must run on the RAW command: ``deobfuscate_command``
+# DELETES backtick markers outright (rather than normalizing them), so
+# `` `curl -s url` `` is invisible in the de-obfuscated text the other
+# checks run on — the very thing that makes the shell RUN the fetched
+# output as a command, not just print it, disappears with the backticks.
+_BACKTICK_SUBSTITUTION_FETCH = re.compile(r'`[^`]*\b(?:curl|wget)\b[^`]*`')
+_DOLLAR_PAREN_SUBSTITUTION_FETCH = re.compile(r'\$\([^()]*\b(?:curl|wget)\b[^()]*\)')
 
-def _detect_remote_exec(command: str) -> list:
+# A script saved to a file (``curl ... -o <path>`` / ``wget ... -O <path>``)
+# and then invoked directly is remote-exec even with NO pipe into a shell
+# anywhere in the command — only whether some LATER segment references
+# the exact path the fetch just wrote.
+_DOWNLOAD_OUTPUT_FLAG = re.compile(
+    r'\b(?:curl|wget)\b[^|;&\n]*?(?:-[oO]\s+|--output(?:-document)?[= ])(\S+)'
+)
+_FETCH_PROGRAMS = frozenset({'curl', 'wget'})
+
+
+def _detect_download_then_exec(segments: list) -> list:
+    downloaded: set = set()
+    download_segment_indices: set = set()
+    for index, segment in enumerate(segments):
+        if segment_program(segment) not in _FETCH_PROGRAMS:
+            continue
+        match = _DOWNLOAD_OUTPUT_FLAG.search(segment)
+        if match:
+            downloaded.add(match.group(1).strip('\'"'))
+            download_segment_indices.add(index)
+    if not downloaded:
+        return []
+    for index, segment in enumerate(segments):
+        if index in download_segment_indices:
+            continue
+        tokens = [t.strip('\'"') for t in segment.strip().split() if t]
+        if any(token in downloaded for token in tokens):
+            return [_Candidate(
+                RiskCategory.REMOTE_EXEC, True,
+                'executes a file just downloaded from the network',
+                'rce.download_then_exec',
+            )]
+    return []
+
+
+def _detect_remote_exec(command: str, deob: str, segments: list) -> list:
     for name, regex in _PHISHING_PATTERNS:
-        if name in _REMOTE_EXEC_PHISHING and regex.search(command):
+        if name in _REMOTE_EXEC_PHISHING and regex.search(deob):
             return [_Candidate(
                 RiskCategory.REMOTE_EXEC, True,
                 'pipes a downloaded script straight into a shell', f'rce.{name}',
             )]
-    if _SOURCE_PROCESS_SUB.search(command):
+    if _SOURCE_PROCESS_SUB.search(deob):
         return [_Candidate(
             RiskCategory.REMOTE_EXEC, True,
             'sources a remote script via process substitution', 'rce.source_proc_sub',
         )]
-    return []
+    if _BACKTICK_SUBSTITUTION_FETCH.search(command) \
+            or _DOLLAR_PAREN_SUBSTITUTION_FETCH.search(deob):
+        return [_Candidate(
+            RiskCategory.REMOTE_EXEC, True,
+            'command-substitutes a network fetch straight into the shell',
+            'rce.command_substitution_fetch',
+        )]
+    return _detect_download_then_exec(segments)
 
 
 # --- network exfiltration / reverse shells --------------------------------
@@ -336,21 +404,62 @@ _SCP_SFTP = re.compile(r'\b(scp|sftp)\b\s')
 _RSYNC_REMOTE = re.compile(r'\brsync\b[^|;&]*\s\S*\w@?[\w.-]*:')
 _NC_CONNECT = re.compile(r'\b(nc|ncat)\b\s+\S+\s+\d{1,5}\b')
 
+# The orchestrator's own git operations always push to the ONE
+# pre-configured task remote — adding a foreign remote (or pushing
+# straight to an inline URL) and pushing the repo to it has no
+# legitimate task-agent use, so this is floor-severity like the
+# reverse-shell patterns above. For Claude this is separately (and
+# redundantly) caught by a CLI-level ``--disallowedTools`` floor, but
+# Codex has no such transport-level equivalent — this classifier is the
+# ONLY line of defense for that transport, so it must not be empty.
+_GIT_REMOTE_ADD = re.compile(r'\bgit\s+remote\s+add\b')
+_GIT_PUSH = re.compile(r'\bgit\s+push\b')
+_GIT_PUSH_TO_URL = re.compile(
+    r'\bgit\s+push\b[^|;&\n]*\b(?:https?://|git@|ssh://)',
+)
 
-def _detect_network_exfil(command: str) -> list:
-    if _REVERSE_SHELL_DEV.search(command) or _NC_EXEC.search(command) \
-            or _SOCAT_EXEC.search(command):
+# A DNS lookup whose query embeds command-substituted data (``$(...)`` or
+# a backtick form) is a DNS-exfiltration channel: no legitimate lookup
+# needs its query built from shell substitution. Checked against the RAW
+# command for the backtick form for the same reason as the remote-exec
+# backtick check above — ``deobfuscate_command`` deletes backtick markers.
+_DNS_EXFIL_DOLLAR_PAREN = re.compile(r'\b(?:dig|nslookup|host)\b[^|;&\n]*\$\(')
+_DNS_EXFIL_BACKTICK = re.compile(r'\b(?:dig|nslookup|host)\b[^|;&\n`]*`')
+
+
+def _detect_network_exfil(deob: str, command: str = '') -> list:
+    """``deob`` is the de-obfuscated command every existing pattern here
+    runs against (unchanged). ``command`` is the RAW pre-deobfuscation
+    text, needed ONLY for the DNS-exfil backtick form — ``deobfuscate_command``
+    deletes backtick markers outright, so that form is invisible in ``deob``.
+    Defaults to ``deob`` when the caller doesn't have a raw copy handy."""
+    command = command or deob
+    if _REVERSE_SHELL_DEV.search(deob) or _NC_EXEC.search(deob) \
+            or _SOCAT_EXEC.search(deob):
         return [_Candidate(
             RiskCategory.NETWORK_EXFIL, True,
             'opens a reverse shell / raw network connection', 'net.reverse_shell',
         )]
-    if _CURL_UPLOAD.search(command) or _WGET_POST.search(command):
+    if (_GIT_REMOTE_ADD.search(deob) and _GIT_PUSH.search(deob)) \
+            or _GIT_PUSH_TO_URL.search(deob):
+        return [_Candidate(
+            RiskCategory.NETWORK_EXFIL, True,
+            'pushes the repository to a remote outside the task config',
+            'net.git_exfil',
+        )]
+    if _DNS_EXFIL_DOLLAR_PAREN.search(deob) or _DNS_EXFIL_BACKTICK.search(command):
+        return [_Candidate(
+            RiskCategory.NETWORK_EXFIL, True,
+            'DNS query embeds command-substituted data — exfiltration channel',
+            'net.dns_exfil',
+        )]
+    if _CURL_UPLOAD.search(deob) or _WGET_POST.search(deob):
         return [_Candidate(
             RiskCategory.NETWORK_EXFIL, False,
             'uploads a local file to a remote host', 'net.http_upload',
         )]
-    if _SCP_SFTP.search(command) or _RSYNC_REMOTE.search(command) \
-            or _NC_CONNECT.search(command):
+    if _SCP_SFTP.search(deob) or _RSYNC_REMOTE.search(deob) \
+            or _NC_CONNECT.search(deob):
         return [_Candidate(
             RiskCategory.NETWORK_EXFIL, False,
             'transfers data to a remote host', 'net.remote_copy',
@@ -379,7 +488,27 @@ _CRED_FLOOR_PATHS = (
 )
 
 
-def _detect_credential_read(text: str) -> list:
+# Programs that read/transfer file CONTENT — a bare filename with no
+# credential-looking name (``cat my_custom_deploy_key``) is otherwise
+# invisible to the path-pattern checks above, so when the shell's cwd is
+# ALREADY inside a known credential directory (e.g. a prior `cd ~/.ssh`
+# in the same persistent shell — Claude's Bash tool keeps ONE shell
+# across calls), any of these programs running there is itself the
+# credential read, regardless of what it names.
+_FILE_READ_PROGRAMS = frozenset({
+    'cat', 'less', 'more', 'head', 'tail', 'cp', 'scp', 'rsync', 'base64',
+    'xxd', 'od', 'strings', 'vim', 'vi', 'nano', 'emacs', 'grep', 'sed', 'awk',
+})
+
+
+def _reads_a_file(text: str) -> bool:
+    return any(
+        segment_program(segment) in _FILE_READ_PROGRAMS
+        for segment in split_command_segments(text)
+    )
+
+
+def _detect_credential_read(text: str, cwd: str = '') -> list:
     for rule_id, regex in _CRED_FLOOR_PATHS:
         if regex.search(text):
             return [_Candidate(
@@ -392,6 +521,14 @@ def _detect_credential_read(text: str) -> list:
                 RiskCategory.CREDENTIAL_READ, False,
                 'accesses a credential / secret file', rule_id,
             )]
+    if cwd:
+        for rule_id, regex in _CRED_PATHS:
+            if regex.search(cwd) and _reads_a_file(text):
+                return [_Candidate(
+                    RiskCategory.CREDENTIAL_READ, False,
+                    'reads a file while the shell is inside a credential directory',
+                    f'{rule_id}.cwd',
+                )]
     return []
 
 
@@ -560,11 +697,11 @@ def _detect_in_command(command, cwd, additional_dirs, allowed_paths,
     segments = split_command_segments(deob)
     # Order = severity priority (earlier wins ties among equal decisions).
     candidates: list = []
-    candidates += _detect_network_exfil(deob)
-    candidates += _detect_remote_exec(deob)
+    candidates += _detect_network_exfil(deob, command)
+    candidates += _detect_remote_exec(command, deob, segments)
     candidates += _detect_escape(command)
     candidates += _detect_destructive_fs(deob, segments)
-    candidates += _detect_credential_read(deob)
+    candidates += _detect_credential_read(deob, cwd)
     candidates += _detect_persistence_command(deob)
     candidates += _out_of_scope_candidate(
         command_sandbox_classifier, command, cwd, additional_dirs,
@@ -579,6 +716,11 @@ def _detect_in_paths(tool_name, tool_input, cwd, additional_dirs, allowed_paths,
     candidates: list = []
     for raw_path in _candidate_path_args(tool_input):
         deob_path = deobfuscate_command(raw_path)
+        # NOT cwd-aware here (unlike the Bash-command path below): a
+        # bare relative ``file_path`` has no shell "program" to check
+        # via ``_reads_a_file``, so the cwd-fallback in
+        # ``_detect_credential_read`` would never actually fire for a
+        # tool-input path — passing ``cwd`` through would be dead code.
         candidates += _detect_credential_read(deob_path)
         if is_write:
             candidates += _detect_persistence_path(deob_path)

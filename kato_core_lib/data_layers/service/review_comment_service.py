@@ -529,9 +529,16 @@ class ReviewCommentService(Service):
         # Map thread → index of kato's most recent reply in this
         # comment list. Threads with no kato reply have index = -1
         # so every reviewer comment is "after" by definition.
+        # The bot's own identities on this repo's review host — gathered once
+        # (constant for the repo) so both the "is this kato's own reply"
+        # author check and the "@-mention" rule below can tell KATO apart
+        # from a teammate (or, for the reply check, from an impersonator
+        # who copied kato's public reply-prefix text into their own
+        # comment to make it look pre-addressed).
+        bot_identities = self._review_bot_identities(repository_id)
         last_kato_reply_index: dict = {}
         for index, comment in enumerate(comments):
-            if is_kato_review_comment_reply(comment):
+            if is_kato_review_comment_reply(comment, bot_identities):
                 last_kato_reply_index[review_comment_resolution_key(comment)] = index
 
         # Walk backwards for thread dedup (keep the newest comment per
@@ -543,13 +550,9 @@ class ReviewCommentService(Service):
         # depends on context from an earlier one.
         new_comments: list[ReviewComment] = []
         seen_resolution_targets: set = set()
-        # The bot's own identities on this repo's review host — gathered once
-        # (constant for the repo) so the "@-mention" rule below can tell a
-        # comment that tags KATO from one that tags a teammate.
-        bot_identities = self._review_bot_identities(repository_id)
         for index in range(len(comments) - 1, -1, -1):
             comment = comments[index]
-            if is_kato_review_comment_reply(comment):
+            if is_kato_review_comment_reply(comment, bot_identities):
                 continue
             # Operator's hard rule: a review comment that @-tags ANYONE is
             # that person's to answer, NOT kato's — UNLESS the tag is kato

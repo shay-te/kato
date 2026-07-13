@@ -192,6 +192,28 @@ test('signature: navigation-only command keys on the navigation verb', function 
   assert.equal(commandSignatureOf('cd /Users/x/somewhere'), 'cd');
 });
 
+test('signature: privilege-escalation wrappers never collapse to a bare key', function () {
+  // Regression: `sudo npm install`, `sudo rm -rf /`, and `sudo cat
+  // /etc/shadow` used to ALL key on the same bare "sudo" — approving any
+  // ONE of them once via "Allow always" silently auto-approved every
+  // future `sudo <anything>`. Each target must remember independently.
+  assert.equal(commandSignatureOf('sudo npm install'), 'sudo npm');
+  assert.equal(commandSignatureOf('sudo rm -rf /important'), 'sudo rm');
+  assert.equal(commandSignatureOf('sudo cat /etc/shadow'), 'sudo cat');
+  assert.notEqual(
+    commandSignatureOf('sudo npm install'),
+    commandSignatureOf('sudo rm -rf /important'),
+  );
+  // Same coverage for the other escalation wrappers.
+  assert.equal(commandSignatureOf('doas rm -rf /'), 'doas rm');
+  assert.equal(commandSignatureOf('pkexec systemctl restart x'), 'pkexec systemctl');
+  assert.equal(commandSignatureOf('su -c "rm -rf /"'), 'su -c');
+  // A plain (non-escalated) invocation of the same program is a
+  // DIFFERENT signature — running under sudo is materially more
+  // dangerous and must not ride on a non-sudo grant, or vice versa.
+  assert.notEqual(commandSignatureOf('npm install'), commandSignatureOf('sudo npm install'));
+});
+
 test('signature: empty / whitespace → empty', function () {
   assert.equal(commandSignatureOf(''), '');
   assert.equal(commandSignatureOf('   '), '');
@@ -210,6 +232,60 @@ test('signature: a NON-empty command never collapses to an empty key (no tool-wi
     assert.notEqual(commandSignatureOf(cmd), '', cmd);
     assert.notEqual(decisionCommandFor('Bash', { command: cmd }), '', cmd);
   }
+});
+
+test('signature: quoted ;/|/&& inside an argument do not fork the key', function () {
+  // Regression: the naive split used to fire on ANY `;`/`|`/`&&`, even
+  // inside a quoted argument — so `git commit -m "msg; with & and | chars"`
+  // got a different, unstable signature than a plain `git commit -m "ok"`.
+  assert.equal(commandSignatureOf('git commit -m "fix bug"'), 'git');
+  assert.equal(
+    commandSignatureOf('git commit -m "fix a; b && c | d bug"'),
+    'git',
+  );
+  assert.equal(commandSignatureOf('grep -rn "foo|bar" src/'), 'grep');
+  assert.equal(commandSignatureOf('sed -n "s/a|b/c/" file.txt'), 'sed');
+  assert.equal(
+    commandSignatureOf('python3 -c "import os; print(os.getcwd())"'),
+    'python3',
+  );
+});
+
+test('signature: a heredoc body with shell metacharacters does not fork the key', function () {
+  // Regression: a heredoc'd source file or commit message containing
+  // `;`/`|`/`&&`/`()` fractured the signature — the exact "I keep approving
+  // and it keeps asking" bug for commits made via
+  // `git commit -m "$(cat <<'EOF' ... EOF)"`.
+  const plain = commandSignatureOf('git commit -m "fix bug"');
+  const viaHeredoc = commandSignatureOf(
+    'git commit -m "$(cat <<\'EOF\'\n'
+    + 'Fix the parser; handle a|b cases and (x && y) logic\n'
+    + 'Co-Authored-By: Claude <noreply@anthropic.com>\n'
+    + 'EOF\n'
+    + ')"',
+  );
+  assert.equal(plain, 'git');
+  assert.equal(viaHeredoc, 'git');
+  assert.equal(plain, viaHeredoc);
+
+  assert.equal(
+    commandSignatureOf(
+      "cat <<'EOF' > /tmp/x.js\n"
+      + 'function f(a, b) { if (a && b) { return a || b; } }\n'
+      + 'const x = a ? b : c;\n'
+      + 'EOF',
+    ),
+    'cat',
+  );
+});
+
+test('signature: a real chain after a heredoc still splits normally', function () {
+  assert.equal(
+    commandSignatureOf(
+      "cat <<'EOF' > /tmp/x.txt\nhello\nEOF\n&& rm -rf /tmp/x.txt",
+    ),
+    'cat rm',
+  );
 });
 
 test('decisionCommandFor: Bash keys on the signature, non-Bash stays tool-level', function () {

@@ -21,10 +21,6 @@ import { toast } from './stores/toastStore.js';
 import { ChatComposerContext } from './contexts/ChatComposerContext.jsx';
 import { useNotifications } from './hooks/useNotifications.js';
 import { useNotificationRouting } from './hooks/useNotificationRouting.js';
-import {
-  decisionCommandFor,
-  unpackPermissionEnvelope,
-} from './utils/permissionEnvelope.js';
 import { useResizable } from './hooks/useResizable.js';
 import { useSafetyState } from './hooks/useSafetyState.js';
 import { useConfigStatus } from './hooks/useConfigStatus.js';
@@ -37,7 +33,7 @@ import { clearImageDraft } from './utils/composerImageDraft.js';
 import { useStatusFeed } from './hooks/useStatusFeed.js';
 import { useTaskAttention } from './hooks/useTaskAttention.js';
 import { useTaskTabShortcuts } from './hooks/useTaskTabShortcuts.js';
-import { useToolMemory } from './hooks/useToolMemory.js';
+import { useRememberedToolDecisions } from './hooks/useRememberedToolDecisions.js';
 import { usePlanWatch } from './hooks/usePlanWatch.js';
 import { CLAUDE_EVENT } from './constants/claudeEvent.js';
 import { agentStatusStore } from './stores/agentStatusStore.js';
@@ -78,12 +74,15 @@ export default function App() {
   // same value as the header chip (UNA-2492).
   const [agentStatuses, setAgentStatuses] = useState({});
   useEffect(() => agentStatusStore.subscribe(setAgentStatuses), []);
-  // Lifted from SessionDetail so the same recall function powers
-  // both the permission modal AND the tab-attention filter. Without
-  // this lift, the server's "has_pending_permission" poll would
-  // re-mark a tab orange between auto-allow turns even though the
-  // modal correctly suppressed itself.
-  const toolMemory = useToolMemory();
+  // Remembered "Allow always"/"Deny always" decisions are backend-owned
+  // (kato_core_lib/helpers/tool_decision_store.py) — the server
+  // auto-resolves a matching pending ask before it ever reaches the
+  // tab-attention feed, the permission modal, or the per-task SSE
+  // stream. This read-only cache of the backend's decisions is only
+  // needed for the status-feed notification de-dup hint (see
+  // useNotificationRouting) — a log line that fires before that
+  // server-side check runs.
+  const rememberedToolDecisions = useRememberedToolDecisions();
   // "+ Add task" picker open/closed state — owned by App so the
   // modal sits above the layout (not inside TabList) and can fire
   // a ``refresh()`` of the session list once an adoption succeeds.
@@ -279,7 +278,7 @@ export default function App() {
   });
 
   const routing = useNotificationRouting(notifications.notify, {
-    recallToolDecision: toolMemory.recall,
+    recallToolDecision: rememberedToolDecisions.recall,
     activeTaskId,
   });
 
@@ -301,28 +300,11 @@ export default function App() {
     if (!raw?.type || !taskId) { return; }
     if (raw.type === CLAUDE_EVENT.PERMISSION_REQUEST
         || raw.type === CLAUDE_EVENT.CONTROL_REQUEST) {
-      // Skip the attention mark when the operator has already
-      // remembered a decision for this tool — the auto-handler in
-      // PermissionDecisionContainer will dispatch silently and a
-      // tab-orange flash would be misleading. Without this gate,
-      // rapid-fire Bash requests (the screenshotted symptom) make
-      // the tab strobe orange even though no UI prompt is needed.
-      // Command-keyed tools (Bash) remember by program signature, so
-      // we MUST compute ``decisionCommandFor`` and pass it to recall
-      // — without the second arg ``recall('Bash')`` looks up a tool-
-      // level key only and misses every ``(Bash, mvn)`` decision the
-      // auto-handler will honour. Matches the same unpack +
-      // decisionCommandFor pair PermissionDecisionContainer uses.
-      const envelope = unpackPermissionEnvelope(raw);
-      const decision = envelope.toolName
-        ? toolMemory.recall(
-          envelope.toolName,
-          decisionCommandFor(envelope.toolName, envelope.toolInput),
-        )
-        : null;
-      if (decision !== 'allow' && decision !== 'deny') {
-        attention.mark(taskId);
-      }
+      // The webserver already auto-resolves a pending request against a
+      // remembered decision before it's ever published over SSE (see
+      // _maybe_auto_resolve_live_event in kato_webserver/app.py) — so
+      // reaching here always means a real ask that needs the operator.
+      attention.mark(taskId);
     } else if (raw.type === CLAUDE_EVENT.PERMISSION_RESPONSE
         || raw.type === CLAUDE_EVENT.RESULT) {
       attention.clear(taskId);
@@ -348,7 +330,7 @@ export default function App() {
         && taskId !== activeTaskId) {
       setActiveTaskIdState(taskId);
     }
-  }, [routing, attention, bumpWorkspaceVersion, refresh, activeTaskId, toolMemory]);
+  }, [routing, attention, bumpWorkspaceVersion, refresh, activeTaskId]);
 
   const status = useStatusFeed(handleStatusEntry);
   const safetyState = useSafetyState();
@@ -407,10 +389,8 @@ export default function App() {
 
   const activeSession = sessions.find((s) => s.task_id === activeTaskId) || null;
   const attentionTaskIds = useMemo(() => {
-    return mergePendingPermissionTaskIds(
-      attention.taskIds, sessions, toolMemory.recall,
-    );
-  }, [attention.taskIds, sessions, toolMemory.recall]);
+    return mergePendingPermissionTaskIds(attention.taskIds, sessions);
+  }, [attention.taskIds, sessions]);
   const activeNeedsAttention = !!activeTaskId && attentionTaskIds.has(activeTaskId);
   const activeSessionKey = activeTaskId || '__none__';
   const activeWorkspaceVersion = workspaceVersion[activeTaskId] || 0;
@@ -647,7 +627,7 @@ export default function App() {
           shared permissionStore (authoritative poll + the focused task's
           live SSE). Surfaces the dialog no matter which task is in view and
           without a page refresh. */}
-      <GlobalPermissionContainer toolMemory={toolMemory} />
+      <GlobalPermissionContainer />
       {forgetCandidate && (
         <ForgetTaskModal
           session={forgetCandidate}
