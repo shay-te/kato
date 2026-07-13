@@ -21,7 +21,13 @@ COMMAND_KEYED_TOOLS = frozenset({'Bash'})
 # command (``cd <task-workspace> && ...``). Keying on these would collapse
 # everything into one entry, so they're treated as noise unless a command
 # is ONLY navigation (then key on it so a bare `cd` still works).
-_NOISE_PROGRAMS = frozenset({'cd', 'pushd', 'popd', 'export', 'source', '.'})
+# NOTE: ``source``/``.`` are NOT here -- see _TARGET_FOLDING_PROGRAMS below.
+# Unlike ``cd``, they execute arbitrary file content in the current shell;
+# treating them as noise let `source ./setup_venv.sh` and `source ./evil.sh`
+# (or `cd project && source venv/bin/activate` vs `cd /tmp && source
+# /tmp/payload.sh`) collapse to the identical bare "source" / "cd source"
+# signature -- approving one silently blessed the other forever.
+_NOISE_PROGRAMS = frozenset({'cd', 'pushd', 'popd', 'export'})
 
 # Privilege-escalation wrappers -- the OPPOSITE problem from _NOISE_PROGRAMS:
 # dropping these would be wrong (running AS root is exactly the part that
@@ -32,6 +38,15 @@ _NOISE_PROGRAMS = frozenset({'cd', 'pushd', 'popd', 'export', 'source', '.'})
 # escalation command AND its target into one signature entry instead (see
 # _program_of_segment) so each stays independently remembered.
 _PRIVILEGE_ESCALATION_PROGRAMS = frozenset({'sudo', 'doas', 'pkexec', 'su'})
+
+# ``source``/``.`` (its POSIX alias) execute arbitrary shell code from a
+# file -- same "the target is what matters" problem as privilege escalation,
+# just a script path instead of a root shell. Folded the same way.
+_SOURCE_EXECUTION_PROGRAMS = frozenset({'source', '.'})
+
+# Union used by _program_of_segment's fold check -- both wrapper classes get
+# identical treatment (fold wrapper + cleaned target token).
+_TARGET_FOLDING_PROGRAMS = _PRIVILEGE_ESCALATION_PROGRAMS | _SOURCE_EXECUTION_PROGRAMS
 
 _LEADING_WRAPPER_RE = re.compile(r'^[\s($`]+')
 _ENV_ASSIGNMENT_RE = re.compile(r'^[A-Za-z_]\w*=')
@@ -67,7 +82,7 @@ def _program_of_segment(segment: str) -> str:
     if i >= len(tokens):
         return ''
     prog = _clean_token(tokens[i])
-    if prog in _PRIVILEGE_ESCALATION_PROGRAMS and i + 1 < len(tokens):
+    if prog in _TARGET_FOLDING_PROGRAMS and i + 1 < len(tokens):
         # Not maximally precise about which token is a flag vs. the real
         # target (sudo's own flags can take arguments, e.g. `-u root`) --
         # but ANY additional token narrows the key vs. the bare wrapper

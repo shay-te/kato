@@ -370,18 +370,30 @@ class CodexCliClient(object):
         if not comments:
             raise ValueError('fix_review_comments requires at least one comment')
         cwd = self._review_comment_cwd(comments[0])
+        # Codex has no ``--append-system-prompt`` flag (unlike Claude, where
+        # this is attached to the CLI invocation itself and so applies to
+        # EVERY spawn uniformly) — every Codex prompt builder must splice it
+        # into the prompt text individually. The implementation/testing
+        # builders already did; the review builders did not, which meant a
+        # review-fix/-answer spawn got no architecture doc, no lessons, and
+        # (once the untrusted-workspace-content explanation became always-on
+        # rather than docker-gated) no explanation of what the
+        # UNTRUSTED_WORKSPACE_FILE tags around comment.body even mean.
+        system_addendum = self._system_prompt_addendum()
         if len(comments) == 1:
             single = comments[0]
             prompt = self._build_review_prompt(
                 single, branch_name, workspace_path=cwd, mode=mode,
                 workspace_refusal_guidance=self._workspace_refusal_guidance,
                 self_reply_prefixes=self._self_reply_prefixes,
+                system_addendum=system_addendum,
             )
         else:
             prompt = self._build_review_comments_batch_prompt(
                 comments, branch_name, workspace_path=cwd, mode=mode,
                 workspace_refusal_guidance=self._workspace_refusal_guidance,
                 self_reply_prefixes=self._self_reply_prefixes,
+                system_addendum=system_addendum,
             )
         result = self._run_prompt_result(
             prompt=prompt,
@@ -492,7 +504,9 @@ class CodexCliClient(object):
         mode: str = 'fix',
         workspace_refusal_guidance: str = '',
         self_reply_prefixes: tuple = (),
+        system_addendum: str = '',
     ) -> str:
+        addendum_prefix = f'{system_addendum}\n\n' if system_addendum else ''
         first = comments[0]
         repository_context = agent_prompt_utils.review_repository_context(first)
         wrapped_comments: list = []
@@ -541,6 +555,7 @@ class CodexCliClient(object):
         agents_block = f'{agents_text}\n\n' if agents_text else ''
         if mode == 'answer':
             return (
+                f'{addendum_prefix}'
                 f'{scope_prefix}'
                 f'The following pull request review questions are on branch '
                 f'{branch_name}{repository_context}.\n\n'
@@ -564,6 +579,7 @@ class CodexCliClient(object):
                 'posted as the reply to each question.\n'
             )
         return (
+            f'{addendum_prefix}'
             f'{scope_prefix}'
             f'Address the following pull request review comments on branch '
             f'{branch_name}{repository_context}.\n\n'
@@ -592,7 +608,9 @@ class CodexCliClient(object):
         mode: str = 'fix',
         workspace_refusal_guidance: str = '',
         self_reply_prefixes: tuple = (),
+        system_addendum: str = '',
     ) -> str:
+        addendum_prefix = f'{system_addendum}\n\n' if system_addendum else ''
         repository_context = agent_prompt_utils.review_repository_context(comment)
         review_context = agent_prompt_utils.review_comment_context_text(
             comment, self_reply_prefixes,
@@ -615,8 +633,20 @@ class CodexCliClient(object):
             if review_context
             else ''
         )
+        # The snippet is real repo file content — potentially planted by ANY
+        # past contributor with merge access, just like the comment body is
+        # from the current commenter. It shares the same untrusted-content
+        # status and must be wrapped the same way; unwrapped, a poisoned
+        # code comment near the reviewed line rides in on the back of any
+        # unrelated, routine reviewer comment. (agent_core_lib itself can't
+        # do this wrapping — it may not import sandbox_core_lib — so every
+        # transport that embeds a snippet must wrap it at the call site.)
+        wrapped_snippet_text = wrap_untrusted_workspace_content(
+            snippet_text,
+            source_path=f'repo-file:{getattr(comment, "file_path", "") or "unknown"}',
+        )
         location_block = f'{location_text}\n' if location_text else ''
-        snippet_block = f'{snippet_text}\n' if snippet_text else ''
+        snippet_block = f'{wrapped_snippet_text}\n' if wrapped_snippet_text else ''
         scope_block = agent_prompt_utils.workspace_scope_block(
             [workspace_path] if workspace_path else [],
             extra_refusal_guidance=workspace_refusal_guidance,
@@ -632,6 +662,7 @@ class CodexCliClient(object):
         agents_block = f'{agents_text}\n\n' if agents_text else ''
         if mode == 'answer':
             return (
+                f'{addendum_prefix}'
                 f'{scope_prefix}'
                 f'A pull request reviewer asked a QUESTION on branch '
                 f'{branch_name}{repository_context}.\n'
@@ -652,6 +683,7 @@ class CodexCliClient(object):
                 'question.\n'
             )
         return (
+            f'{addendum_prefix}'
             f'{scope_prefix}'
             f'Address pull request comment on branch {branch_name}{repository_context}.\n'
             f'{location_block}'

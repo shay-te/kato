@@ -44,6 +44,10 @@ from pathlib import Path
 
 from kato_core_lib import main as kato_main
 from claude_core_lib.claude_core_lib import cli_client as cli_client_module
+from codex_core_lib.codex_core_lib import cli_client as codex_cli_client_module
+from openhands_core_lib.openhands_core_lib import (
+    openhands_client as openhands_client_module,
+)
 from sandbox_core_lib.sandbox_core_lib import manager as sandbox_manager
 
 
@@ -233,16 +237,40 @@ class OG9aWorkspaceDelimiterWiringTests(unittest.TestCase):
     def test_each_prompt_builder_calls_wrap_function(self) -> None:
         import inspect
 
-        # The three call sites enumerated in the OG9a closure plan.
-        # If a fourth prompt builder is added that handles untrusted
-        # content (e.g. issue-comment expansion), add it here.
+        # Every prompt builder, across ALL THREE agent transports, that
+        # embeds externally-sourced text (task.summary/description,
+        # comment.body) into a prompt. A prior version of this guard only
+        # checked ClaudeCliClient — an audit found codex_core_lib's review
+        # builders missing the system-prompt addendum wiring (a separate,
+        # now-fixed bug) and openhands_core_lib with ZERO wrapping
+        # anywhere, neither of which this test would have caught. If a
+        # fourth prompt builder is added that handles untrusted content
+        # (e.g. issue-comment expansion), add it here too.
         builders = {
-            '_build_implementation_prompt':
+            'claude._build_implementation_prompt':
                 cli_client_module.ClaudeCliClient._build_implementation_prompt,
-            '_build_testing_prompt':
+            'claude._build_testing_prompt':
                 cli_client_module.ClaudeCliClient._build_testing_prompt,
-            '_build_review_prompt':
+            'claude._build_review_prompt':
                 cli_client_module.ClaudeCliClient._build_review_prompt,
+            'claude._build_review_comments_batch_prompt':
+                cli_client_module.ClaudeCliClient._build_review_comments_batch_prompt,
+            'codex._build_implementation_prompt':
+                codex_cli_client_module.CodexCliClient._build_implementation_prompt,
+            'codex._build_testing_prompt':
+                codex_cli_client_module.CodexCliClient._build_testing_prompt,
+            'codex._build_review_prompt':
+                codex_cli_client_module.CodexCliClient._build_review_prompt,
+            'codex._build_review_comments_batch_prompt':
+                codex_cli_client_module.CodexCliClient._build_review_comments_batch_prompt,
+            'openhands._build_implementation_prompt':
+                openhands_client_module.OpenHandsClient._build_implementation_prompt,
+            'openhands._build_testing_prompt':
+                openhands_client_module.OpenHandsClient._build_testing_prompt,
+            'openhands._build_review_prompt':
+                openhands_client_module.OpenHandsClient._build_review_prompt,
+            'openhands._build_review_comments_batch_prompt':
+                openhands_client_module.OpenHandsClient._build_review_comments_batch_prompt,
         }
         missing: list[str] = []
         for name, fn in builders.items():
@@ -251,22 +279,27 @@ class OG9aWorkspaceDelimiterWiringTests(unittest.TestCase):
                 missing.append(name)
         self.assertEqual(
             missing, [],
-            f'OG9a wiring missing in: {missing}. Each Claude prompt builder '
-            'must wrap externally-sourced text (task.summary/description, '
-            'comment.body) via wrap_untrusted_workspace_content. Either '
-            'restore the wrap call or flip OG9a to Open in '
-            'BYPASS_PROTECTIONS.md.',
+            f'OG9a wiring missing in: {missing}. Each prompt builder, in '
+            'every agent transport, must wrap externally-sourced text '
+            '(task.summary/description, comment.body) via '
+            'wrap_untrusted_workspace_content. Either restore the wrap '
+            'call or flip OG9a to Open in BYPASS_PROTECTIONS.md.',
         )
 
     def test_addendum_describes_the_marker(self) -> None:
         # Independent of the wrap calls: the model needs the
         # decoder. If the addendum stops describing the marker,
         # OG9a is decorative — the model sees the tags but has no
-        # rule to treat in-tag content as data.
+        # rule to treat in-tag content as data. Checked on the
+        # ALWAYS-ON addendum, not the docker-only sandbox one — every
+        # transport wraps content unconditionally, so the explanation
+        # must be unconditional too (a prior version of this guard
+        # checked the docker-only addendum, which would have missed
+        # the addendum going silently inert outside docker mode).
         from sandbox_core_lib.sandbox_core_lib.system_prompt import (
-            SANDBOX_SYSTEM_PROMPT_ADDENDUM,
+            UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM,
         )
-        self.assertIn('UNTRUSTED_WORKSPACE_FILE', SANDBOX_SYSTEM_PROMPT_ADDENDUM)
+        self.assertIn('UNTRUSTED_WORKSPACE_FILE', UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM)
 
 
 class ReadOnlyToolsAllowlistPinTests(unittest.TestCase):

@@ -764,6 +764,17 @@ def _register_csrf_guard(app: Flask) -> None:
     any page the operator's browser visits, no JavaScript required.
     Browsers DO send ``Referer`` on a cross-origin ``<img>`` request
     even though they skip ``Origin`` for it, so this still catches it.
+
+    Comparison is allowlist-style (reject unless it resolves to OUR
+    host), not blocklist-style (reject only a resolvable mismatch).
+    ``Origin: null`` — sent by real browsers from an opaque-origin
+    context (a sandboxed iframe without ``allow-same-origin``, a
+    ``data:`` URI) — is the textbook null-origin CSRF bypass: it IS a
+    header the attacker's page sent, but ``urlsplit('null').netloc``
+    is ``''``, which a blocklist compare (``origin_host and ... !=``)
+    silently treated identically to "no header sent at all." A header
+    that was sent but doesn't resolve to a real host is exactly the
+    suspicious case, not the safe one.
     """
     @app.before_request
     def _reject_cross_origin_request():
@@ -773,7 +784,7 @@ def _register_csrf_guard(app: Flask) -> None:
         if not origin:
             return None
         origin_host = urlsplit(origin).netloc
-        if origin_host and origin_host != request.host:
+        if origin_host != request.host:
             return jsonify({'error': 'cross-origin request rejected'}), 403
         return None
 

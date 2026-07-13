@@ -71,7 +71,12 @@ export function commandOf(toolInput) {
 // these would collapse everything into one entry — effectively a tool-wide
 // allow — so they're treated as noise and dropped from the signature unless
 // a command is ONLY navigation (then we key on it so a bare `cd` still works).
-const NOISE_PROGRAMS = new Set(['cd', 'pushd', 'popd', 'export', 'source', '.']);
+// NOTE: `source`/`.` are NOT here — see TARGET_FOLDING_PROGRAMS below. Unlike
+// `cd`, they execute arbitrary file content in the current shell; treating
+// them as noise let `source ./setup_venv.sh` and `source ./evil.sh` (or
+// `cd project && source venv/bin/activate` vs `cd /tmp && source /tmp/payload.sh`)
+// collapse to the identical bare "source" / "cd source" signature.
+const NOISE_PROGRAMS = new Set(['cd', 'pushd', 'popd', 'export']);
 
 // Privilege-escalation wrappers — the OPPOSITE problem from NOISE_PROGRAMS:
 // dropping these would be wrong (unlike `cd`, running AS root is exactly the
@@ -82,6 +87,18 @@ const NOISE_PROGRAMS = new Set(['cd', 'pushd', 'popd', 'export', 'source', '.'])
 // the escalation command AND its target into one signature entry instead
 // (see _programOfSegment) so each stays independently remembered.
 const PRIVILEGE_ESCALATION_PROGRAMS = new Set(['sudo', 'doas', 'pkexec', 'su']);
+
+// `source`/`.` (its POSIX alias) execute arbitrary shell code from a file —
+// same "the target is what matters" problem as privilege escalation, just a
+// script path instead of a root shell. Folded the same way: `source
+// setup_venv.sh` and `source evil.sh` must never share a signature.
+const SOURCE_EXECUTION_PROGRAMS = new Set(['source', '.']);
+
+// Union used by _programOfSegment's fold check — both classes of wrapper get
+// identical treatment (fold wrapper + cleaned target token).
+const TARGET_FOLDING_PROGRAMS = new Set([
+  ...PRIVILEGE_ESCALATION_PROGRAMS, ...SOURCE_EXECUTION_PROGRAMS,
+]);
 
 function _cleanToken(token) {
   // Drop trailing subshell closers/backticks, then strip any path → basename.
@@ -103,7 +120,7 @@ function _programOfSegment(segment) {
   const rawProg = tokens[i];
   if (!rawProg) { return ''; }
   const prog = _cleanToken(rawProg);
-  if (PRIVILEGE_ESCALATION_PROGRAMS.has(prog) && tokens[i + 1]) {
+  if (TARGET_FOLDING_PROGRAMS.has(prog) && tokens[i + 1]) {
     // Not maximally precise about which token is a flag vs. the real
     // target (sudo's own flags can take arguments, e.g. `-u root`) — but
     // ANY additional token narrows the key vs. the bare wrapper name,

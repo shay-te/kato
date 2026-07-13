@@ -49,7 +49,7 @@ _MAX_KATO_LINES = {
     'openhands_core_lib': 15,
     'provider_client_base': 53,
     'repository_core_lib': 2,
-    'sandbox_core_lib': 410,
+    'sandbox_core_lib': 407,
     'security_scanner_core_lib': 33,
     'vcs_provider_contracts': 2,
     'workspace_core_lib': 8,

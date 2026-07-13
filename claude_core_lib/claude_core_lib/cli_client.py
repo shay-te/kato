@@ -706,8 +706,17 @@ class ClaudeCliClient(object):
             if review_context
             else ''
         )
+        # OG9a: the snippet is real repo file content — potentially planted
+        # by ANY past contributor with merge access, same untrusted status
+        # as the comment body above. Unwrapped, a poisoned code comment
+        # near the reviewed line rides in on the back of any unrelated,
+        # routine reviewer comment.
+        wrapped_snippet_text = wrap_untrusted_workspace_content(
+            snippet_text,
+            source_path=f'repo-file:{getattr(comment, "file_path", "") or "unknown"}',
+        )
         location_block = f'{location_text}\n' if location_text else ''
-        snippet_block = f'{snippet_text}\n' if snippet_text else ''
+        snippet_block = f'{wrapped_snippet_text}\n' if wrapped_snippet_text else ''
         scope_block = agent_prompt_utils.workspace_scope_block(
             [workspace_path] if workspace_path else [],
             extra_refusal_guidance=workspace_refusal_guidance,

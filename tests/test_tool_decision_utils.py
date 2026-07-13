@@ -90,6 +90,31 @@ class CommandSignatureOfTests(unittest.TestCase):
             command_signature_of('npm install'), command_signature_of('sudo npm install'),
         )
 
+    def test_source_and_dot_fold_their_target_never_collapse_to_a_bare_key(self) -> None:
+        # Regression: `source`/`.` execute arbitrary file content in the
+        # current shell -- unlike `cd`, they were wrongly bucketed as
+        # "noise" and dropped from the signature, so `source
+        # ./setup_venv.sh` (operator approves once) and `source ./evil.sh`
+        # (a different, malicious script) collapsed to the identical bare
+        # "source" signature -- and a `cd project && source
+        # venv/bin/activate` approval silently blessed every future
+        # `cd <anything> && source <anything>` too.
+        self.assertEqual(command_signature_of('source ./setup_venv.sh'), 'source setup_venv.sh')
+        self.assertEqual(command_signature_of('source ./evil.sh'), 'source evil.sh')
+        self.assertNotEqual(
+            command_signature_of('source ./setup_venv.sh'),
+            command_signature_of('source ./evil.sh'),
+        )
+        self.assertNotEqual(
+            command_signature_of('cd myproject && source .venv/bin/activate'),
+            command_signature_of('cd /tmp && source /tmp/payload.sh'),
+        )
+        self.assertEqual(command_signature_of('. ./setup_venv.sh'), '. setup_venv.sh')
+        self.assertNotEqual(
+            command_signature_of('. ./setup_venv.sh'),
+            command_signature_of('. ./evil.sh'),
+        )
+
     def test_empty_or_whitespace(self) -> None:
         self.assertEqual(command_signature_of(''), '')
         self.assertEqual(command_signature_of('   '), '')

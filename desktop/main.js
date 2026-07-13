@@ -219,10 +219,29 @@ function createWindow() {
   // Open external links (PR URLs, ticket URLs, etc.) in the
   // operator's real browser. Without this they'd open inside the
   // Electron window and the kato UI would become a navigation
-  // history we don't manage.
+  // history we don't manage. Scheme-restricted independently of
+  // whatever sanitization the renderer already does — this is the
+  // last line of defense before a URL reaches the OS (a non-http(s)
+  // scheme here could be a `file:`/platform-URI-handler primitive).
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      shell.openExternal(url);
+    }
     return { action: 'deny' };
+  });
+  // Same-window top-level navigation has no Electron-enforced origin
+  // restriction by default (unlike popups, which setWindowOpenHandler
+  // above already denies) — a same-window `location` change / plain
+  // `<a href>` / form submit / redirect would otherwise sail the
+  // operator's window to an arbitrary origin. Nothing in the UI does
+  // this today (every renderer that turns untrusted text into a link
+  // uses target="_blank", which goes through the handler above), but
+  // this is the origin allowlist that keeps it that way if that ever
+  // changes.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!url.startsWith(`${KATO_ORIGIN}/`) && url !== KATO_ORIGIN) {
+      event.preventDefault();
+    }
   });
   mainWindow.on('closed', () => { mainWindow = null; });
 }

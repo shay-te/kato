@@ -325,8 +325,22 @@ def _safe_segment(value: str, *, label: str) -> str:
     repository id and escaping the workspace root. Doesn't try to
     sanitize unicode or other quirks — callers are expected to pass
     well-formed identifiers (e.g. ``PROJ-123``, ``my-repo``).
+
+    A BARE ``.``/``..`` (no slash at all) survives the replace() calls
+    below untouched — ``Path(root) / ".."`` is resolved by the OS as
+    "parent of root" regardless of there being no separator character
+    in the string. This was a real, unauthenticated path-traversal
+    reachable via an HTTP route that takes a task/repository id
+    straight from the URL: it recursively deleted the ENTIRE parent
+    of the workspaces root (in a typical deployment, the app's whole
+    state directory — every workspace, every credential, every
+    session). Reject these two literal values explicitly; every other
+    input (including one that merely CONTAINS ``..`` as a substring,
+    e.g. ``PROJ..123``) is unaffected since it isn't a traversal token.
     """
     normalized = str(value or '').strip()
     if not normalized:
         raise ValueError(f'{label} is required')
+    if normalized in ('.', '..'):
+        raise ValueError(f'{label} must not be "." or ".."')
     return normalized.replace('/', '_').replace(os.sep, '_')

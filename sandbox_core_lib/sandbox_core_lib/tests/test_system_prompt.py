@@ -11,6 +11,7 @@ import unittest
 from sandbox_core_lib.sandbox_core_lib.system_prompt import (
     RESUMED_SESSION_ADDENDUM,
     SANDBOX_SYSTEM_PROMPT_ADDENDUM,
+    UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM,
     WORKSPACE_SCOPE_ADDENDUM,
     compose_system_prompt,
 )
@@ -36,14 +37,14 @@ class SystemPromptConstantsTests(unittest.TestCase):
     def test_sandbox_addendum_mentions_privilege_drop(self):
         self.assertIn('non-root', SANDBOX_SYSTEM_PROMPT_ADDENDUM)
 
-    def test_sandbox_addendum_mentions_untrusted_workspace_tag(self):
-        self.assertIn('UNTRUSTED_WORKSPACE_FILE', SANDBOX_SYSTEM_PROMPT_ADDENDUM)
-
-    def test_sandbox_addendum_warns_against_prompt_injection(self):
-        self.assertIn('prompt-injection', SANDBOX_SYSTEM_PROMPT_ADDENDUM)
-
     def test_workspace_scope_addendum_warns_against_find_tilde(self):
         self.assertIn('find ~', WORKSPACE_SCOPE_ADDENDUM)
+
+    def test_untrusted_workspace_content_addendum_mentions_the_delimiter_tag(self):
+        self.assertIn('UNTRUSTED_WORKSPACE_FILE', UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM)
+
+    def test_untrusted_workspace_content_addendum_warns_against_prompt_injection(self):
+        self.assertIn('prompt-injection', UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM)
 
 
 class ComposeSystemPromptTests(unittest.TestCase):
@@ -67,6 +68,17 @@ class ComposeSystemPromptTests(unittest.TestCase):
         self.assertIn(RESUMED_SESSION_ADDENDUM, result_off)
         self.assertIn(RESUMED_SESSION_ADDENDUM, result_on)
 
+    def test_always_includes_untrusted_workspace_content_addendum(self):
+        # Regression: every transport calls wrap_untrusted_workspace_content
+        # UNCONDITIONALLY (task descriptions, PR comments, code snippets),
+        # regardless of docker mode -- so the explanation of what the
+        # delimiter tags mean must not be docker-gated either, or the
+        # wrapping is silently inert in the (default) non-docker config.
+        result_off = compose_system_prompt('', docker_mode_on=False)
+        result_on = compose_system_prompt('', docker_mode_on=True)
+        self.assertIn(UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM, result_off)
+        self.assertIn(UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM, result_on)
+
     def test_architecture_doc_included_when_provided(self):
         arch = '# Architecture\nThis is the arch doc.'
         result = compose_system_prompt(arch, docker_mode_on=False)
@@ -83,9 +95,10 @@ class ComposeSystemPromptTests(unittest.TestCase):
 
     def test_lessons_excluded_when_empty(self):
         result = compose_system_prompt('', docker_mode_on=False, lessons='')
-        # Both standard addenda present, no arch or lessons content added
+        # All always-on addenda present, no arch or lessons content added
         self.assertIn(WORKSPACE_SCOPE_ADDENDUM, result)
         self.assertIn(RESUMED_SESSION_ADDENDUM, result)
+        self.assertIn(UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM, result)
         self.assertNotIn('# Architecture', result)
         self.assertNotIn(SANDBOX_SYSTEM_PROMPT_ADDENDUM, result)
 
@@ -125,4 +138,5 @@ class ComposeSystemPromptTests(unittest.TestCase):
         self.assertIn(lessons, result)
         self.assertIn(WORKSPACE_SCOPE_ADDENDUM, result)
         self.assertIn(RESUMED_SESSION_ADDENDUM, result)
+        self.assertIn(UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM, result)
         self.assertIn(SANDBOX_SYSTEM_PROMPT_ADDENDUM, result)

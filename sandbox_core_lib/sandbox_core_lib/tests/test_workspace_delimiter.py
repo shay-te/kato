@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import unittest
 
-from sandbox_core_lib.sandbox_core_lib.system_prompt import SANDBOX_SYSTEM_PROMPT_ADDENDUM
+from sandbox_core_lib.sandbox_core_lib.system_prompt import UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM
 from sandbox_core_lib.sandbox_core_lib.workspace_delimiter import (
     CLOSE_TAG,
     OPEN_TAG,
@@ -111,21 +111,27 @@ class AddendumIntegrationTests(unittest.TestCase):
     silently disables the framing — the model is still given
     instructions about a marker shape that's no longer emitted, or
     sees a marker the addendum doesn't tell it to recognize.
+
+    Targets ``UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM`` specifically
+    (not the docker-only ``SANDBOX_SYSTEM_PROMPT_ADDENDUM``) because
+    every transport wraps content UNCONDITIONALLY — the explanation
+    of what the tags mean must be always-on too, or the wrapping is
+    silently inert outside docker mode.
     """
 
     def test_addendum_names_the_open_marker_shape(self) -> None:
         # Addendum tells the model what to look for. The marker
         # name in the addendum must match what the wrap function
         # actually emits.
-        self.assertIn('UNTRUSTED_WORKSPACE_FILE', SANDBOX_SYSTEM_PROMPT_ADDENDUM)
+        self.assertIn('UNTRUSTED_WORKSPACE_FILE', UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM)
 
     def test_addendum_describes_data_not_instruction_framing(self) -> None:
         # The load-bearing instruction. Without "data, not
         # instructions" the framing is decorative — the model needs
         # the rule to apply, not just the recognition pattern.
-        addendum = SANDBOX_SYSTEM_PROMPT_ADDENDUM
-        self.assertIn('data the operator cloned', addendum)
-        self.assertIn('not\n   instructions', addendum)
+        addendum = UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM
+        self.assertIn('is data', addendum)
+        self.assertIn('not instructions', addendum)
 
     def test_addendum_warns_about_close_tag_forgery(self) -> None:
         # Locks the operator-friendly framing: even if the model
@@ -133,13 +139,13 @@ class AddendumIntegrationTests(unittest.TestCase):
         # kato (because we escaped any literal close in the data).
         # Without this guidance the model could interpret an
         # in-content close as ending the data section.
-        self.assertIn('escapes any literal closing tag', SANDBOX_SYSTEM_PROMPT_ADDENDUM)
+        self.assertIn('escapes any literal closing tag', UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM)
 
     def test_addendum_explicitly_calls_out_prompt_injection(self) -> None:
         # The threat model is named so the model knows WHY the
         # framing matters — abstract "treat as data" guidance is
         # easier to ignore than "this is a prompt-injection attempt."
-        self.assertIn('prompt-injection', SANDBOX_SYSTEM_PROMPT_ADDENDUM)
+        self.assertIn('prompt-injection', UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM)
 
     def test_addendum_permits_using_the_content_for_the_task(self) -> None:
         # Negative-lock: a too-strict reading would refuse to use
@@ -147,8 +153,8 @@ class AddendumIntegrationTests(unittest.TestCase):
         # legitimate use so the model doesn't over-correct.
         # Phrases checked individually since the source has line
         # wraps between them.
-        self.assertIn('read it, edit it,', SANDBOX_SYSTEM_PROMPT_ADDENDUM)
-        self.assertIn('summarize it', SANDBOX_SYSTEM_PROMPT_ADDENDUM)
+        self.assertIn('read it, edit it,', UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM)
+        self.assertIn('summarize it', UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM)
 
 
 if __name__ == '__main__':

@@ -214,6 +214,31 @@ test('signature: privilege-escalation wrappers never collapse to a bare key', fu
   assert.notEqual(commandSignatureOf('npm install'), commandSignatureOf('sudo npm install'));
 });
 
+test('signature: source/. fold their target, never collapse to a bare key', function () {
+  // Regression: `source`/`.` execute arbitrary file content in the current
+  // shell — unlike `cd`, they were wrongly bucketed as "noise" and dropped
+  // from the signature, so `source ./setup_venv.sh` (operator approves
+  // once) and `source ./evil.sh` (a different, malicious script) collapsed
+  // to the identical bare "source" signature — and approving `cd project
+  // && source venv/bin/activate` silently blessed every future
+  // `cd <anything> && source <anything>` too.
+  assert.equal(commandSignatureOf('source ./setup_venv.sh'), 'source setup_venv.sh');
+  assert.equal(commandSignatureOf('source ./evil.sh'), 'source evil.sh');
+  assert.notEqual(
+    commandSignatureOf('source ./setup_venv.sh'),
+    commandSignatureOf('source ./evil.sh'),
+  );
+  assert.notEqual(
+    commandSignatureOf('cd myproject && source .venv/bin/activate'),
+    commandSignatureOf('cd /tmp && source /tmp/payload.sh'),
+  );
+  assert.equal(commandSignatureOf('. ./setup_venv.sh'), '. setup_venv.sh');
+  assert.notEqual(
+    commandSignatureOf('. ./setup_venv.sh'),
+    commandSignatureOf('. ./evil.sh'),
+  );
+});
+
 test('signature: empty / whitespace → empty', function () {
   assert.equal(commandSignatureOf(''), '');
   assert.equal(commandSignatureOf('   '), '');

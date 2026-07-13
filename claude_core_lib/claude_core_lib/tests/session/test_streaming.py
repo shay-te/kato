@@ -1929,6 +1929,7 @@ class StreamingClaudeSessionDockerModeTests(unittest.TestCase):
         from sandbox_core_lib.sandbox_core_lib.system_prompt import (
             RESUMED_SESSION_ADDENDUM,
             SANDBOX_SYSTEM_PROMPT_ADDENDUM,
+            UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM,
             WORKSPACE_SCOPE_ADDENDUM,
         )
 
@@ -1937,13 +1938,16 @@ class StreamingClaudeSessionDockerModeTests(unittest.TestCase):
             docker_mode_on=False,
         )
         cmd = session._build_command()
-        # Workspace + resumed-session addenda are always appended;
-        # sandbox is only added in docker mode.
+        # Workspace + resumed-session + untrusted-content addenda are
+        # always appended; sandbox is only added in docker mode.
         self.assertIn('--append-system-prompt', cmd)
         idx = cmd.index('--append-system-prompt')
         self.assertEqual(
             cmd[idx + 1],
-            f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{RESUMED_SESSION_ADDENDUM}',
+            (
+                f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{RESUMED_SESSION_ADDENDUM}\n\n'
+                f'{UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM}'
+            ),
         )
         self.assertNotIn(SANDBOX_SYSTEM_PROMPT_ADDENDUM, cmd[idx + 1])
 
@@ -1951,6 +1955,7 @@ class StreamingClaudeSessionDockerModeTests(unittest.TestCase):
         from sandbox_core_lib.sandbox_core_lib.system_prompt import (
             RESUMED_SESSION_ADDENDUM,
             SANDBOX_SYSTEM_PROMPT_ADDENDUM,
+            UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM,
             WORKSPACE_SCOPE_ADDENDUM,
         )
 
@@ -1965,7 +1970,7 @@ class StreamingClaudeSessionDockerModeTests(unittest.TestCase):
             cmd[idx + 1],
             (
                 f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{RESUMED_SESSION_ADDENDUM}\n\n'
-                f'{SANDBOX_SYSTEM_PROMPT_ADDENDUM}'
+                f'{UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM}\n\n{SANDBOX_SYSTEM_PROMPT_ADDENDUM}'
             ),
         )
 

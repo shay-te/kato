@@ -406,7 +406,10 @@ class OpenHandsClientImplementTaskTests(unittest.TestCase):
         self.assertEqual(mock_post.call_args.args, ('/api/v1/app-conversations',))
         request_body = mock_post.call_args.kwargs['json']
         self.assertEqual(request_body['title'], 'PROJ-1')
-        self.assertIn('Implement task PROJ-1: fix it already', request_body['initial_message']['content'][0]['text'])
+        # Task summary/description is now wrapped in the OG9a untrusted-content delimiter.
+        self.assertIn('Implement task PROJ-1.', request_body['initial_message']['content'][0]['text'])
+        self.assertIn('<UNTRUSTED_WORKSPACE_FILE', request_body['initial_message']['content'][0]['text'])
+        self.assertIn('fix it already', request_body['initial_message']['content'][0]['text'])
         self.assertIn('Files changed:', request_body['initial_message']['content'][0]['text'])
         self.assertEqual(
             [c.args[0] for c in mock_get.call_args_list],
@@ -612,10 +615,12 @@ class OpenHandsClientFixReviewCommentTests(unittest.TestCase):
         self.assertEqual(result['branch_name'], 'feature/proj-1')
         self.assertEqual(result[ImplementationFields.AGENT_SESSION_ID], 'conversation-3')
         self.assertTrue(result[ImplementationFields.SUCCESS])
+        # Comment body is now wrapped in the OG9a untrusted-content delimiter.
         self.assertIn(
-            'Comment by reviewer: Please rename this variable.',
+            'Comment by reviewer: <UNTRUSTED_WORKSPACE_FILE',
             mock_run_prompt.call_args.kwargs['prompt'],
         )
+        self.assertIn('Please rename this variable.', mock_run_prompt.call_args.kwargs['prompt'])
         self.assertIn('always include its required command field', mock_run_prompt.call_args.kwargs['prompt'])
         self.assertIn(
             'Do not report success until all intended changes are saved',

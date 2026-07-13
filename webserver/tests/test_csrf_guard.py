@@ -146,6 +146,29 @@ class CsrfGuardTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 403)
 
+    def test_origin_null_is_rejected_not_treated_as_absent(self) -> None:
+        # Regression: ``Origin: null`` is what a real browser sends from an
+        # opaque-origin context (a sandboxed iframe without
+        # allow-same-origin, a data: URI) — the textbook null-origin CSRF
+        # bypass. urlsplit('null').netloc == '', which the old blocklist
+        # compare (``origin_host and origin_host != request.host``)
+        # silently treated identically to "no header sent at all" and let
+        # through. A header that WAS sent but doesn't resolve to a real
+        # host is exactly the suspicious case, not the safe one.
+        response = self.client.post(
+            '/api/sessions/T-1/permission',
+            json={},
+            headers={'Origin': 'null'},
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_referer_null_is_rejected_not_treated_as_absent(self) -> None:
+        response = self.client.get(
+            '/api/sessions',
+            headers={'Referer': 'null'},
+        )
+        self.assertEqual(response.status_code, 403)
+
 
 if __name__ == '__main__':
     unittest.main()

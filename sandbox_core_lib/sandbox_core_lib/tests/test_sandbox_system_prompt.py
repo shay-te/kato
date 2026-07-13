@@ -19,6 +19,7 @@ import unittest
 from sandbox_core_lib.sandbox_core_lib.system_prompt import (
     RESUMED_SESSION_ADDENDUM,
     SANDBOX_SYSTEM_PROMPT_ADDENDUM,
+    UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM,
     WORKSPACE_SCOPE_ADDENDUM,
     compose_system_prompt,
 )
@@ -28,7 +29,10 @@ class ComposeSystemPromptTests(unittest.TestCase):
     def test_off_with_no_arch_doc_returns_workspace_then_resumed(self) -> None:
         self.assertEqual(
             compose_system_prompt('', docker_mode_on=False),
-            f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{RESUMED_SESSION_ADDENDUM}',
+            (
+                f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{RESUMED_SESSION_ADDENDUM}\n\n'
+                f'{UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM}'
+            ),
         )
 
     def test_off_with_arch_doc_joins_arch_workspace_resumed(self) -> None:
@@ -41,7 +45,7 @@ class ComposeSystemPromptTests(unittest.TestCase):
             result,
             (
                 f'{arch}\n\n{WORKSPACE_SCOPE_ADDENDUM}\n\n'
-                f'{RESUMED_SESSION_ADDENDUM}'
+                f'{RESUMED_SESSION_ADDENDUM}\n\n{UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM}'
             ),
         )
 
@@ -51,7 +55,7 @@ class ComposeSystemPromptTests(unittest.TestCase):
             result,
             (
                 f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{RESUMED_SESSION_ADDENDUM}\n\n'
-                f'{SANDBOX_SYSTEM_PROMPT_ADDENDUM}'
+                f'{UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM}\n\n{SANDBOX_SYSTEM_PROMPT_ADDENDUM}'
             ),
         )
 
@@ -64,11 +68,13 @@ class ComposeSystemPromptTests(unittest.TestCase):
         self.assertTrue(result.endswith(SANDBOX_SYSTEM_PROMPT_ADDENDUM))
         self.assertIn(WORKSPACE_SCOPE_ADDENDUM, result)
         self.assertIn(RESUMED_SESSION_ADDENDUM, result)
+        self.assertIn(UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM, result)
         self.assertEqual(
             result,
             (
                 f'{arch}\n\n{WORKSPACE_SCOPE_ADDENDUM}\n\n'
-                f'{RESUMED_SESSION_ADDENDUM}\n\n{SANDBOX_SYSTEM_PROMPT_ADDENDUM}'
+                f'{RESUMED_SESSION_ADDENDUM}\n\n{UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM}\n\n'
+                f'{SANDBOX_SYSTEM_PROMPT_ADDENDUM}'
             ),
         )
 
@@ -77,13 +83,16 @@ class ComposeSystemPromptTests(unittest.TestCase):
         # the composer must accept both without raising.
         self.assertEqual(
             compose_system_prompt(None, docker_mode_on=False),  # type: ignore[arg-type]
-            f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{RESUMED_SESSION_ADDENDUM}',
+            (
+                f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{RESUMED_SESSION_ADDENDUM}\n\n'
+                f'{UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM}'
+            ),
         )
         self.assertEqual(
             compose_system_prompt(None, docker_mode_on=True),  # type: ignore[arg-type]
             (
                 f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{RESUMED_SESSION_ADDENDUM}\n\n'
-                f'{SANDBOX_SYSTEM_PROMPT_ADDENDUM}'
+                f'{UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM}\n\n{SANDBOX_SYSTEM_PROMPT_ADDENDUM}'
             ),
         )
 

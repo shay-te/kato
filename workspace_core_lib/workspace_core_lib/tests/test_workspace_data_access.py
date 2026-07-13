@@ -15,6 +15,7 @@ from workspace_core_lib.workspace_core_lib.data_layers.data.workspace_record imp
 from workspace_core_lib.workspace_core_lib.data_layers.data_access.workspace_data_access import (
     DEFAULT_METADATA_FILENAME,
     WorkspaceDataAccess,
+    _safe_segment,
 )
 
 
@@ -41,6 +42,34 @@ class WorkspaceDataAccessTests(unittest.TestCase):
         path = self.data_access.workspace_dir('evil/../escape')
         self.assertEqual(path.parent, self.root)
         self.assertEqual(path.name, 'evil_.._escape')
+
+    def test_workspace_dir_rejects_bare_dotdot(self) -> None:
+        # Regression: a BARE ".." (no slash at all) survived the old
+        # replace()-only sanitizer untouched — Path(root) / ".." resolves
+        # to the PARENT of root regardless of there being no separator
+        # character in the string. Reached live via an unauthenticated
+        # HTTP route that passed a task id straight from the URL into
+        # delete() -> shutil.rmtree on the parent of the workspaces root
+        # (in a typical deployment, the app's whole state directory —
+        # every workspace, every credential, every session).
+        for bad in ('..', '.'):
+            with self.assertRaises(ValueError):
+                self.data_access.workspace_dir(bad)
+
+    def test_repository_path_rejects_bare_dotdot_in_either_segment(self) -> None:
+        with self.assertRaises(ValueError):
+            self.data_access.workspace_dir('..') and None
+        with self.assertRaises(ValueError):
+            _safe_segment('..', label='repository_id')
+        with self.assertRaises(ValueError):
+            _safe_segment('.', label='repository_id')
+
+    def test_non_traversal_dots_are_still_allowed(self) -> None:
+        # Only the EXACT tokens "." and ".." are rejected — a value that
+        # merely contains ".." as a substring (not a real traversal token)
+        # must keep working normally.
+        path = self.data_access.workspace_dir('PROJ..123')
+        self.assertEqual(path.name, 'PROJ..123')
 
     def test_metadata_path_uses_default_filename(self) -> None:
         path = self.data_access.metadata_path('PROJ-1')

@@ -610,6 +610,63 @@ class StartPlanningWebserverTests(unittest.TestCase):
             main_module._start_planning_webserver_if_enabled(app)
         app.logger.info.assert_called()
 
+    def test_warns_loudly_when_binding_non_loopback_host(self) -> None:
+        # Regression: every security control in the planning webserver
+        # (the CSRF guard's "no Origin/Referer = trusted local caller"
+        # exemption, zero authentication) assumes loopback-only reachability.
+        # KATO_WEBSERVER_HOST=0.0.0.0 silently hands the entire unauthenticated
+        # API -- including routes that return provider credentials verbatim --
+        # to the whole network with no warning at all. Confirm the operator
+        # can't miss it.
+        import os
+        app = SimpleNamespace(
+            session_manager=MagicMock(),
+            workspace_manager=MagicMock(),
+            logger=MagicMock(),
+        )
+        with patch.dict(
+            os.environ,
+            {'KATO_WEBSERVER_DISABLED': '', 'KATO_WEBSERVER_HOST': '0.0.0.0'},
+        ), patch(
+            'kato_webserver.app.create_app', return_value=MagicMock(),
+        ), patch.object(
+            main_module, '_resolve_webserver_tls', return_value=('http', None),
+        ), patch.object(
+            main_module, '_serve_flask_with_bind_retry',
+        ), patch.object(
+            main_module, '_open_browser_when_ready',
+        ), patch('threading.Thread') as mock_thread:
+            mock_thread.return_value = MagicMock()
+            main_module._start_planning_webserver_if_enabled(app)
+        warning_messages = ' '.join(
+            str(call.args[0] % call.args[1:]) if len(call.args) > 1 else str(call.args[0])
+            for call in app.logger.warning.call_args_list
+        )
+        self.assertIn('0.0.0.0', warning_messages)
+        self.assertIn('loopback', warning_messages)
+
+    def test_no_warning_for_default_loopback_host(self) -> None:
+        import os
+        app = SimpleNamespace(
+            session_manager=MagicMock(),
+            workspace_manager=MagicMock(),
+            logger=MagicMock(),
+        )
+        with patch.dict(
+            os.environ, {'KATO_WEBSERVER_DISABLED': '', 'KATO_WEBSERVER_HOST': '127.0.0.1'},
+        ), patch(
+            'kato_webserver.app.create_app', return_value=MagicMock(),
+        ), patch.object(
+            main_module, '_resolve_webserver_tls', return_value=('http', None),
+        ), patch.object(
+            main_module, '_serve_flask_with_bind_retry',
+        ), patch.object(
+            main_module, '_open_browser_when_ready',
+        ), patch('threading.Thread') as mock_thread:
+            mock_thread.return_value = MagicMock()
+            main_module._start_planning_webserver_if_enabled(app)
+        app.logger.warning.assert_not_called()
+
 
 class RegisterShutdownHookTests(unittest.TestCase):
     def test_registers_handler_and_handles_missing_sigterm(self) -> None:

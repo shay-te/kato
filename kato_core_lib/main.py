@@ -930,6 +930,24 @@ def _start_planning_webserver_if_enabled(app) -> None:
 
     host = os.environ.get('KATO_WEBSERVER_HOST', '127.0.0.1')
     port = int(os.environ.get('KATO_WEBSERVER_PORT', '5050'))
+    if host not in ('127.0.0.1', 'localhost', '::1'):
+        # Every security control in this webserver (the CSRF guard's "no
+        # Origin/Referer = trusted local caller" exemption, the complete
+        # absence of a login) assumes the socket is reachable ONLY from
+        # this machine. Binding to a non-loopback address (0.0.0.0, a LAN
+        # IP, ...) hands every route -- including ones that return git
+        # provider / task provider API tokens verbatim, run agent prompts,
+        # and approve/deny live tool-permission asks -- to anyone who can
+        # reach this host on the network, with zero authentication.
+        app.logger.warning(
+            'planning webserver is binding to %s, not loopback -- this '
+            'exposes kato\'s ENTIRE unauthenticated API (including stored '
+            'provider credentials) to anything that can reach this host on '
+            'the network, not just this machine. Only do this if you '
+            'understand and accept that risk (e.g. behind your own '
+            'authenticating reverse proxy).',
+            host,
+        )
     scheme, ssl_context = _resolve_webserver_tls(app.logger)
     flask_app = _create_webserver_app(
         session_manager=session_manager,

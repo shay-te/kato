@@ -642,19 +642,23 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
         from sandbox_core_lib.sandbox_core_lib.system_prompt import (
             RESUMED_SESSION_ADDENDUM,
             SANDBOX_SYSTEM_PROMPT_ADDENDUM,
+            UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM,
             WORKSPACE_SCOPE_ADDENDUM,
         )
 
         client = ClaudeCliClient(binary='claude', docker_mode_on=False)
         cmd = client._build_command(additional_dirs=[], agent_session_id='')
-        # Workspace + resumed-session addenda are always appended
-        # (independent of docker mode) so the flag is present, but
-        # the sandbox-specific addendum is not.
+        # Workspace + resumed-session + untrusted-content addenda are
+        # always appended (independent of docker mode) so the flag is
+        # present, but the sandbox-specific (docker-only) addendum is not.
         self.assertIn('--append-system-prompt', cmd)
         idx = cmd.index('--append-system-prompt')
         self.assertEqual(
             cmd[idx + 1],
-            f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{RESUMED_SESSION_ADDENDUM}',
+            (
+                f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{RESUMED_SESSION_ADDENDUM}\n\n'
+                f'{UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM}'
+            ),
         )
         self.assertNotIn(SANDBOX_SYSTEM_PROMPT_ADDENDUM, cmd[idx + 1])
 
@@ -662,6 +666,7 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
         from sandbox_core_lib.sandbox_core_lib.system_prompt import (
             RESUMED_SESSION_ADDENDUM,
             SANDBOX_SYSTEM_PROMPT_ADDENDUM,
+            UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM,
             WORKSPACE_SCOPE_ADDENDUM,
         )
 
@@ -673,7 +678,7 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
             cmd[idx + 1],
             (
                 f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{RESUMED_SESSION_ADDENDUM}\n\n'
-                f'{SANDBOX_SYSTEM_PROMPT_ADDENDUM}'
+                f'{UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM}\n\n{SANDBOX_SYSTEM_PROMPT_ADDENDUM}'
             ),
         )
 
