@@ -182,6 +182,26 @@ class ReadOriginUrlTests(unittest.TestCase):
                 mod._read_origin_url(Path('/x')), 'git@h:org/r.git',
             )
 
+    def test_disables_git_hooks(self) -> None:
+        # Regression: this call site used to shell out via a bare
+        # ['git', '-C', ...] argv that skipped -c core.hooksPath=/dev/null.
+        # repo_dir here is always an agent-writable clone (a checkout or
+        # per-task workspace directory), including its own .git/hooks/ —
+        # without this flag, a hook the agent planted would fire with the
+        # OPERATOR's own privileges the next time this ran. Same bug class
+        # git_diff_utils.py / GitClientMixin were hardened against
+        # elsewhere; this call site had drifted and reopened it.
+        captured = {}
+
+        def fake_run(argv, **kwargs):
+            captured['argv'] = argv
+            return SimpleNamespace(returncode=0, stdout='u\n')
+
+        with patch.object(mod.subprocess, 'run', side_effect=fake_run):
+            mod._read_origin_url(Path('/x'))
+        self.assertIn('core.hooksPath=/dev/null', captured['argv'])
+        self.assertEqual(captured['argv'][0], 'git')
+
 
 class MergeSourcesTests(unittest.TestCase):
     def test_first_source_wins_and_sorted(self) -> None:

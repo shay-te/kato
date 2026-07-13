@@ -69,7 +69,7 @@ class AtomicWriteRaiseOnErrorTests(unittest.TestCase):
     def test_raise_on_error_reraises_oserror(self) -> None:
         path = MagicMock(spec=Path)
         tmp_path = MagicMock(spec=Path)
-        path.with_suffix.return_value = tmp_path
+        path.with_name.return_value = tmp_path
         boom = OSError('disk full')
         tmp_path.write_text.side_effect = boom
 
@@ -89,7 +89,7 @@ class AtomicWriteRaiseOnErrorTests(unittest.TestCase):
     def test_swallows_oserror_and_returns_false_without_raise_flag(self) -> None:
         path = MagicMock(spec=Path)
         tmp_path = MagicMock(spec=Path)
-        path.with_suffix.return_value = tmp_path
+        path.with_name.return_value = tmp_path
         tmp_path.write_text.side_effect = OSError('nope')
         # No logger, no raise: returns False (the False branch / line 59).
         self.assertFalse(atomic_write_json(path, {'k': 'v'}))
@@ -97,7 +97,7 @@ class AtomicWriteRaiseOnErrorTests(unittest.TestCase):
     def test_trailing_newline_appends_final_newline(self) -> None:
         path = MagicMock(spec=Path)
         tmp_path = MagicMock(spec=Path)
-        path.with_suffix.return_value = tmp_path
+        path.with_name.return_value = tmp_path
         ok = atomic_write_json(path, {'k': 'v'}, trailing_newline=True)
         self.assertTrue(ok)
         written = tmp_path.write_text.call_args[0][0]

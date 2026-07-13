@@ -31,22 +31,38 @@ npm run build
 
 ## Core-Lib Architecture
 
-Monorepo of mostly **closed black-box libs**. `kato_core_lib` is the top-level orchestrator. The ONE shared base is **`agent_core_lib`** — the reusable agent-behavior layer (prompt helpers, session/text utils, architecture/lessons readers, the resume-prompt renderer, the generic `workspace_scope_block`). The agent transports (`claude_core_lib`, `codex_core_lib`, `openhands_core_lib`) **may depend on `agent_core_lib`**; everything else stays independent.
+Monorepo of mostly **closed black-box libs**. `kato_core_lib` is the top-level orchestrator. The agent transports (`claude_core_lib`, `codex_core_lib`, `openhands_core_lib`) depend on THREE shared bases, not one:
+- **`agent_core_lib`** — the reusable agent-behavior layer (prompt helpers, session/text utils, architecture/lessons readers, the resume-prompt renderer, the generic `workspace_scope_block`). Imports zero other core-libs itself.
+- **`sandbox_core_lib`** — workspace-content delimiter framing (`wrap_untrusted_workspace_content`, the prompt-injection defense), the Docker sandbox manager, bypass-permissions validation, system-prompt composition.
+- **`provider_client_base`** — the shared `ReviewComment` type and provider-agnostic retry/client-base plumbing.
 
 ```
 kato_core_lib                  ← orchestrator (imports any lib below; wires PRODUCT-specific
 │                                 text — e.g. helpers/workspace_refusal_guidance.py — into
 │                                 agent clients via constructor params)
+├── agent_backend_core_lib     ← agent-transport CLIENT FACTORY — lazily imports
+│                                 claude/codex/openhands_core_lib inside the factory only
 ├── agent_core_lib             ← SHARED AGENT-BEHAVIOR BASE. Imported by claude/codex/openhands
 │                                 + kato + webserver. Generic + product-agnostic: NO kato /
 │                                 YouTrack / Jira / Files-tab / UI text. Accepts product text
-│                                 only via caller params (e.g. extra_refusal_guidance).
-├── claude_core_lib            ← Claude CLI transport          (may import agent_core_lib)
-├── codex_core_lib             ← Codex CLI transport           (may import agent_core_lib)
-├── openhands_core_lib         ← OpenHands transport           (may import agent_core_lib)
+│                                 only via caller params (e.g. extra_refusal_guidance). Imports
+│                                 NO other core-lib, not even lazily (agent_backend_core_lib
+│                                 owns the transport factory now, not this lib).
+├── sandbox_core_lib           ← Docker sandbox manager, untrusted-content delimiter framing,
+│                                 bypass-permissions validation, system-prompt composition
+├── claude_core_lib            ← Claude CLI transport   (may import agent_core_lib, sandbox_core_lib,
+│                                 provider_client_base)
+├── codex_core_lib             ← Codex CLI transport    (same three-lib allowance as above)
+├── openhands_core_lib         ← OpenHands transport    (same three-lib allowance as above)
 ├── git_core_lib               ← GitClientMixin, git subprocess engine, repo discovery utils
-├── repository_core_lib        ← provider utils (URL parsing, token messages)
-├── task_core_lib              ← task data types and platform config
+├── repository_core_lib        ← provider utils (URL parsing, token messages); imports
+│                                 git_core_lib's pure URL-parsing helpers directly (module
+│                                 level, not lazy — narrow, stateless, no transport coupling);
+│                                 its own pull_request_client_factory lazily imports
+│                                 github/gitlab/bitbucket_core_lib inside the factory
+├── task_core_lib              ← task data types and platform config; its own
+│                                 task_client_factory lazily imports youtrack/jira/
+│                                 bitbucket/github/gitlab_core_lib inside the factory
 ├── bitbucket_core_lib
 ├── github_core_lib
 ├── gitlab_core_lib
@@ -56,7 +72,7 @@ kato_core_lib                  ← orchestrator (imports any lib below; wires PR
 └── provider_client_base       ← ReviewComment and shared provider types
 ```
 
-**Rule:** reusable agent/LLM-behavior code belongs in `agent_core_lib`; the agent transports import it. Provider/transport specifics stay in their own lib. Anything product-specific (ticket workflow, repo publishing, Kato UI, and the *text* of product-specific prompt guidance) stays in `kato_core_lib` and is injected into agent clients as a parameter — `agent_core_lib` must never contain kato-specific workflow/product text. Glue between the non-agent black-box libs still belongs in `kato_core_lib`.
+**Rule:** reusable agent/LLM-behavior code belongs in `agent_core_lib`; the agent transports import it (plus `sandbox_core_lib` for sandbox/prompt-injection concerns and `provider_client_base` for the shared `ReviewComment` type — these three are the full set of sanctioned peer-imports for a transport lib). Provider/transport specifics stay in their own lib. Anything product-specific (ticket workflow, repo publishing, Kato UI, and the *text* of product-specific prompt guidance) stays in `kato_core_lib` and is injected into agent clients as a parameter — `agent_core_lib` must never contain kato-specific workflow/product text. Glue between the non-agent black-box libs still belongs in `kato_core_lib`.
 
 ### Core-Lib Quality Standard
 
@@ -64,7 +80,7 @@ Every core-lib must meet all of these (use `youtrack_core_lib` as the reference 
 
 1. **100% test coverage** — every service function, every permutation of inputs
 2. **Flow tests A-Z** — end-to-end flow tests inside the lib's own `tests/` folder (`test_flow.py`)
-3. **Minimal peer imports** — only stdlib + third-party packages, with ONE allowed exception: any lib may import the shared **`agent_core_lib`** base (the agent transports do; provider/git/ticket libs still don't). `agent_core_lib` itself imports no other core-lib (it may lazily import a transport only inside its client *factory*). No lib imports another *transport/provider* lib peer-to-peer.
+3. **Minimal peer imports** — only stdlib + third-party packages, with narrow, documented exceptions: any lib may import the shared **`agent_core_lib`** base; the three agent transports (`claude_core_lib`/`codex_core_lib`/`openhands_core_lib`) additionally import **`sandbox_core_lib`** and **`provider_client_base`** (sandbox/prompt-injection concerns and the shared `ReviewComment` type — provider/git/ticket libs still don't need these). `agent_core_lib` itself imports NO other core-lib, not even lazily. The one sanctioned lazy-import pattern is a dedicated **client factory** — `agent_backend_core_lib` (agent transports), `repository_core_lib/client/pull_request_client_factory.py` (github/gitlab/bitbucket), `task_core_lib/client/task_client_factory.py` (youtrack/jira/bitbucket/github/gitlab) — which imports its provider implementations lazily, inside the factory function only. Outside those factories, no lib imports another *transport/provider* lib peer-to-peer, and no git-subprocess call anywhere bypasses `git_core_lib`'s `GitClientMixin`/`build_safe_git_command` (a bare `subprocess.run(['git', ...])` skips the hook-disabling hardening and reopens a real RCE-out-of-sandbox path — this has regressed at least once; see `repository_approval_discovery_service.py`'s `_read_origin_url`, fixed after an audit found it drifted).
 4. **No kato references — AT ALL, ENFORCED.** The string `kato` (any case, incl. `KATO_*` env names) must NOT appear ANYWHERE in a core-lib — not source, tests, comments, or field names. All `KATO_*` variables and the `kato` brand live ONLY in `kato_core_lib`; every other lib reads GENERIC names (`AGENT_IGNORED_REPOSITORY_FOLDERS`, `CLAUDE_SESSIONS_ROOT`, …) or takes values via constructor/params, and `kato_core_lib` bridges its `KATO_*` config to those (e.g. `_export_agent_env_from_kato_config()`, `from_config(..., state_dir=...)`, `workspace_refusal_guidance`). This regresses during feature work, so it is gated: **`python -m unittest tests.test_corelib_agnostic_gate`** (runs in `kato test`) — a ratchet that fails the build when a lib gains a kato ref. Fix the code; never raise a ceiling. Full rule: AGENTS.md → "Core-libs stay kato-free".
 5. **Tests live inside the lib** — at `<lib>/<lib>/tests/`, not in the top-level `tests/` folder
 6. **Check for leaked tests** — after building a lib, grep `kato_core_lib/` and `tests/` for any tests that belong inside the lib instead
@@ -150,8 +166,10 @@ scan → get_new_pull_request_comments() on PRs in "In Review"
      → is_question_only_batch()?
          YES → agent answers → post reply with "NO CODE CHANGED" disclaimer → leave thread OPEN
          NO  → agent fixes → _review_fix_produced_changes()?
-                  NO  → post "no changes" reply → raise (thread stays open)
-                  YES → push → resolve thread
+                  NO  → post "no changes" reply, mark processed, return (thread stays open)
+                  YES → push → reply "addressed" (thread left UNRESOLVED — only an
+                        operator-triggered resolve via resolve_task_comment mirrors to
+                        the remote; the autonomous flow never auto-resolves a thread)
 ```
 
 **`is_question_comment` heuristic:** requires `?` ending + question start word + no fix keywords + ≤400 chars. Conservative — defaults to fix-mode on ambiguity.
@@ -168,7 +186,7 @@ scan → get_new_pull_request_comments() on PRs in "In Review"
 kato:
   task_scan:
     startup_delay_seconds: 5    # default
-    scan_interval_seconds: 30   # default
+    scan_interval_seconds: 180  # default (3 min — a 30s cadence tripped provider rate limits)
 ```
 
 Auto-discovery: if `REPOSITORY_ROOT_PATH` is set (no explicit `repositories:` list), Kato walks the tree for `.git` folders. Result cached after first run. Background warm-up runs this at boot.

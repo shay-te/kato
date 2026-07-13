@@ -314,6 +314,10 @@ class StreamingClaudeSession(object):
         self._done_sentinel_fired = False
 
         self._proc: subprocess.Popen[bytes] | None = None
+        # Set at spawn time when docker_mode_on — lets the kill-escalation
+        # path issue a direct `docker kill` if the wrapping `docker run`
+        # client process itself has to be force-killed (see _escalate_to_kill).
+        self._docker_container_name: str = ''
         self._proc_lock = threading.Lock()
         self._stdin_lock = threading.Lock()
         self._event_queue: Queue[SessionEvent] = Queue()
@@ -683,7 +687,7 @@ class StreamingClaudeSession(object):
                 # audit log fires before the subprocess starts so the
                 # operator has a record even if the container fails to
                 # come up.
-                command = wrap_spawn_for_docker(
+                command, self._docker_container_name = wrap_spawn_for_docker(
                     command,
                     workspace_path=self._cwd,
                     task_id=self._task_id,
@@ -942,6 +946,16 @@ class StreamingClaudeSession(object):
         except (ProcessLookupError, OSError):
             pass
         _wait_for_exit(proc, 2.0)
+        if self._docker_container_name:
+            # SIGKILL to ``proc`` (the wrapping ``docker run`` client) can
+            # NEVER be forwarded to the container it started — unlike
+            # SIGTERM, which the attached docker CLI does forward while
+            # it's still alive to catch it. Without this, every session
+            # that ignores SIGTERM leaks its container running forever;
+            # ``--rm`` only fires on the container's OWN clean exit, never
+            # as a side effect of the host client process dying.
+            from sandbox_core_lib.sandbox_core_lib.manager import kill_container
+            kill_container(self._docker_container_name, logger=self.logger)
 
     # ----- event consumption -----
 

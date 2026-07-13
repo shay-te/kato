@@ -1014,5 +1014,63 @@ class SeccompUnconfinedRefusalTests(unittest.TestCase):
         _assert_seccomp_not_unconfined(argv)
 
 
+# --------------------------------------------------------------------------
+# kill_container — the ONLY way to stop a sandboxed container once the
+# wrapping ``docker run`` client had to be force-killed (SIGKILL to the
+# client can never be forwarded to the container it started).
+# --------------------------------------------------------------------------
+
+
+class KillContainerTests(unittest.TestCase):
+    def test_empty_name_returns_false_without_calling_subprocess(self) -> None:
+        with patch.object(manager.subprocess, 'run') as mock_run:
+            self.assertFalse(manager.kill_container(''))
+        mock_run.assert_not_called()
+
+    def test_calls_docker_kill_with_the_container_name(self) -> None:
+        with patch.object(
+            manager.subprocess, 'run',
+            return_value=MagicMock(returncode=0, stderr=''),
+        ) as mock_run:
+            result = manager.kill_container('sandbox-UNA-1-abcd1234')
+        self.assertTrue(result)
+        mock_run.assert_called_once()
+        argv = mock_run.call_args.args[0]
+        self.assertEqual(argv, ['docker', 'kill', 'sandbox-UNA-1-abcd1234'])
+
+    def test_nonzero_returncode_returns_false_and_logs(self) -> None:
+        logger = MagicMock()
+        with patch.object(
+            manager.subprocess, 'run',
+            return_value=MagicMock(returncode=1, stderr='No such container'),
+        ):
+            result = manager.kill_container('gone-already', logger=logger)
+        self.assertFalse(result)
+        logger.warning.assert_called_once()
+
+    def test_oserror_returns_false_and_logs_without_raising(self) -> None:
+        logger = MagicMock()
+        with patch.object(manager.subprocess, 'run', side_effect=OSError('no docker')):
+            result = manager.kill_container('c1', logger=logger)
+        self.assertFalse(result)
+        logger.warning.assert_called_once()
+
+    def test_timeout_returns_false_without_raising(self) -> None:
+        with patch.object(
+            manager.subprocess, 'run',
+            side_effect=subprocess.TimeoutExpired(cmd='docker', timeout=10),
+        ):
+            self.assertFalse(manager.kill_container('c1'))
+
+    def test_no_logger_does_not_raise_on_failure(self) -> None:
+        # logger is optional — must not crash the caller's own
+        # teardown/error path just because no logger was passed.
+        with patch.object(
+            manager.subprocess, 'run',
+            return_value=MagicMock(returncode=1, stderr='err'),
+        ):
+            self.assertFalse(manager.kill_container('c1', logger=None))
+
+
 if __name__ == '__main__':
     unittest.main()

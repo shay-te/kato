@@ -1,6 +1,7 @@
 import os
 import re
 import shutil
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from core_lib.data_layers.service.service import Service
@@ -79,6 +80,17 @@ class RepositoryInventoryService(Service):
         # Set True in ``_load_repositories`` when the root walk supplies the
         # inventory; explicit config (materialised above) is never discovery.
         self._inventory_from_discovery = False
+        # Guards the check-then-populate sequence in ``_ensure_repositories``.
+        # The background warm-up thread (``AgentService.warm_up_repository_inventory``)
+        # and a concurrent webserver request thread (e.g. GET /api/repositories,
+        # served with threaded=True) can both observe ``self._repositories is
+        # None`` before either finishes its disk walk; without a lock, whichever
+        # finishes LAST overwrites the other's already-filtered/validated result
+        # with its own raw list — and since ``_inventory_validated`` is already
+        # True by then, the denylist filter and duplicate-alias validation never
+        # run on that overwrite. This silently and PERMANENTLY (until restart)
+        # bypasses KATO_REPOSITORY_DENYLIST.
+        self._inventory_lock = threading.Lock()
 
     @classmethod
     def _explicit_repositories_from_config(cls, repository_source) -> list[object]:
@@ -93,13 +105,14 @@ class RepositoryInventoryService(Service):
         return list(self._ensure_repositories())
 
     def _ensure_repositories(self) -> list[object]:
-        if self._repositories is None:
-            self._repositories = self._load_repositories(self._repositories_config)
-        if not self._inventory_validated:
-            self._repositories = self._filter_denied_repositories(self._repositories)
-            self._validate_inventory()
-            self._inventory_validated = True
-        return self._repositories
+        with self._inventory_lock:
+            if self._repositories is None:
+                self._repositories = self._load_repositories(self._repositories_config)
+            if not self._inventory_validated:
+                self._repositories = self._filter_denied_repositories(self._repositories)
+                self._validate_inventory()
+                self._inventory_validated = True
+            return self._repositories
 
     def _filter_denied_repositories(self, repositories: list[object]) -> list[object]:
         """Drop entries whose id appears in ``KATO_REPOSITORY_DENYLIST``.

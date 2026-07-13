@@ -1378,6 +1378,45 @@ class SessionIdsHelperTests(unittest.TestCase):
         manager.list_records.side_effect = RuntimeError('boom')
         self.assertEqual(_session_ids_by_task(manager), {})
 
+    def test_iter_live_sessions_logs_when_list_records_raises(self):
+        # Regression: this walk backs /api/permissions/pending — the
+        # operator's ONLY visibility into a pending tool-approval
+        # request for a backgrounded task. A silent failure here used
+        # to return an empty result indistinguishable from "nothing
+        # needs approval." Must now at least be logged.
+        from kato_webserver.app import _iter_live_sessions
+
+        manager = MagicMock()
+        manager.list_records.side_effect = RuntimeError('boom')
+        with patch('kato_webserver.app.logging.getLogger') as mock_get_logger:
+            mock_logger = MagicMock()
+            mock_get_logger.return_value = mock_logger
+            self.assertEqual(list(_iter_live_sessions(manager)), [])
+        mock_logger.exception.assert_called_once()
+
+    def test_iter_live_sessions_logs_when_get_session_raises_per_record(self):
+        from kato_webserver.app import _iter_live_sessions
+
+        manager = MagicMock()
+        manager.list_records.return_value = [_FakeRecord(task_id='T-1')]
+        manager.get_session.side_effect = RuntimeError('fail')
+        with patch('kato_webserver.app.logging.getLogger') as mock_get_logger:
+            mock_logger = MagicMock()
+            mock_get_logger.return_value = mock_logger
+            self.assertEqual(list(_iter_live_sessions(manager)), [])
+        mock_logger.exception.assert_called_once()
+
+    def test_session_ids_by_task_logs_when_list_records_raises(self):
+        from kato_webserver.app import _session_ids_by_task
+
+        manager = MagicMock()
+        manager.list_records.side_effect = RuntimeError('boom')
+        with patch('kato_webserver.app.logging.getLogger') as mock_get_logger:
+            mock_logger = MagicMock()
+            mock_get_logger.return_value = mock_logger
+            self.assertEqual(_session_ids_by_task(manager), {})
+        mock_logger.exception.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # _chat_resume_context / _chat_additional_dirs error handling

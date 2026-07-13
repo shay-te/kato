@@ -232,6 +232,31 @@ class SettingsStoreUtilsTests(unittest.TestCase):
             # File mtime unchanged → no write.
             self.assertEqual(self.path.stat().st_mtime_ns, before_mtime)
 
+    def test_concurrent_writes_never_lose_a_key(self) -> None:
+        # Regression: write_kato_settings() used to have no lock around
+        # its read-modify-write cycle — two concurrent saves (two
+        # Settings tabs, or two sections auto-saving near simultaneously)
+        # could both read the old file before either wrote, silently
+        # reverting one save's keys. Now under a lock (mirrors
+        # tool_decision_store.py's pattern): every key from every
+        # concurrent writer must survive.
+        import threading
+        with _env_override('KATO_SETTINGS_FILE', str(self.path)):
+            def writer(i: int) -> None:
+                store_utils.write_kato_settings({f'KATO_CONCURRENT_TEST_{i}': str(i)})
+
+            threads = [threading.Thread(target=writer, args=(i,)) for i in range(12)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            final = store_utils.read_kato_settings()
+        for i in range(12):
+            self.assertEqual(
+                final.get(f'KATO_CONCURRENT_TEST_{i}'), str(i),
+                f'key from writer {i} was lost',
+            )
+
     # ---- load_kato_settings_into_environ (lines 114-120) ----
 
     def test_load_kato_settings_into_environ_injects_keys(self) -> None:

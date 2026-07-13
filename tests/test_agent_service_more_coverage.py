@@ -1562,6 +1562,61 @@ class FinishTaskPlanningSessionTests(unittest.TestCase):
         self.assertFalse(result['finished'])
         self.assertIn('move fail', result['move_error'])
 
+    def test_does_not_move_to_review_when_push_and_pr_both_fail_everywhere(self) -> None:
+        # Regression: push_task/create_pull_request_for_task never raise —
+        # every per-repo failure is only recorded in their own
+        # 'failed_repositories' lists. Without this guard, a task whose
+        # push AND PR creation both failed for every repo (auth expired,
+        # remote unreachable, ...) still moved to "In Review"
+        # unconditionally, implying a ready PR exists when nothing
+        # actually reached the remote — the exact false-success class
+        # task_publisher.py's NO_CHANGES guard exists to prevent
+        # elsewhere in the publish pipeline.
+        task_state = MagicMock()
+        service = AgentService(**_kwargs(task_state_service=task_state))
+        service.logger = MagicMock()
+        with patch.object(
+            service, 'push_task',
+            return_value={
+                'pushed': False, 'pushed_repositories': [],
+                'failed_repositories': [{'repository_id': 'client', 'error': 'auth expired'}],
+            },
+        ), patch.object(
+            service, 'create_pull_request_for_task',
+            return_value={
+                'created': False, 'created_pull_requests': [], 'skipped_existing': [],
+                'failed_repositories': [{'repository_id': 'client', 'error': 'auth expired'}],
+            },
+        ), patch.object(service, '_kick_lesson_extraction'):
+            result = service.finish_task_planning_session('T1')
+        self.assertFalse(result['finished'])
+        self.assertFalse(result['moved_to_review'])
+        self.assertIn('failed for every', result['move_error'])
+        task_state.move_task_to_review.assert_not_called()
+
+    def test_moves_to_review_when_push_fails_but_pr_already_existed(self) -> None:
+        # A partial/idempotent state (push failed this time, but a PR
+        # from an earlier run already exists) is real progress, not a
+        # total failure — must still proceed to In Review.
+        task_state = MagicMock()
+        service = AgentService(**_kwargs(task_state_service=task_state))
+        with patch.object(
+            service, 'push_task',
+            return_value={
+                'pushed': False, 'pushed_repositories': [],
+                'failed_repositories': [{'repository_id': 'client', 'error': 'nothing to push'}],
+            },
+        ), patch.object(
+            service, 'create_pull_request_for_task',
+            return_value={
+                'created': False, 'created_pull_requests': [],
+                'skipped_existing': ['client'], 'failed_repositories': [],
+            },
+        ), patch.object(service, '_kick_lesson_extraction'):
+            result = service.finish_task_planning_session('T1')
+        self.assertTrue(result['finished'])
+        task_state.move_task_to_review.assert_called_once()
+
 
 class KickLessonExtractionTests(unittest.TestCase):
     def test_returns_silently_when_no_lessons_service(self) -> None:

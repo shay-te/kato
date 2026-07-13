@@ -1693,6 +1693,38 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         session._escalate_to_kill(fake_proc)  # must not raise
         fake_proc.kill.assert_called_once()
 
+    def test_escalate_to_kill_docker_mode_also_kills_the_container(self) -> None:
+        # Regression: SIGKILL to the wrapping `docker run` client can never
+        # be forwarded to the container it started (unlike SIGTERM, which
+        # the attached docker CLI does forward) — without an explicit
+        # `docker kill`, every session that ignores SIGTERM leaks its
+        # container running forever (`--rm` only fires on the container's
+        # own clean exit, never as a side effect of the host client dying).
+        session = self._build_session()
+        session._docker_container_name = 'sandbox-UNA-1-abcd1234'
+        fake_proc = MagicMock()
+        fake_proc.poll.return_value = 0
+        fake_proc.wait.return_value = 0
+        with patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.kill_container',
+        ) as mock_kill_container:
+            session._escalate_to_kill(fake_proc)
+        mock_kill_container.assert_called_once_with(
+            'sandbox-UNA-1-abcd1234', logger=session.logger,
+        )
+
+    def test_escalate_to_kill_non_docker_mode_never_calls_kill_container(self) -> None:
+        session = self._build_session()
+        self.assertEqual(session._docker_container_name, '')
+        fake_proc = MagicMock()
+        fake_proc.poll.return_value = 0
+        fake_proc.wait.return_value = 0
+        with patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.kill_container',
+        ) as mock_kill_container:
+            session._escalate_to_kill(fake_proc)
+        mock_kill_container.assert_not_called()
+
     def test_wait_for_new_events_returns_immediately_when_events_present(self) -> None:
         # Lines 633-647: ``wait_for_new_events`` happy path.
         session = self._build_session()

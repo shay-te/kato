@@ -906,6 +906,39 @@ class DockerSandboxSpawnTests(unittest.TestCase):
             result = client.implement_task(_task())
         self.assertEqual(result[ImplementationFields.MESSAGE], 'ok-from-docker')
 
+    def test_timeout_in_docker_mode_kills_the_container(self) -> None:
+        # Regression: subprocess.run's own TimeoutExpired handling SIGKILLs
+        # the wrapping `docker run` client internally before raising —
+        # SIGKILL can never be forwarded to the container, so without an
+        # explicit `docker kill` the container leaks and runs forever
+        # (`--rm` only fires on the container's own clean exit).
+        client = self._make_client()
+        import subprocess as subprocess_module
+        with patch('sandbox_core_lib.sandbox_core_lib.manager.ensure_image'), \
+             patch('sandbox_core_lib.sandbox_core_lib.manager.check_spawn_rate'), \
+             patch('sandbox_core_lib.sandbox_core_lib.manager.make_container_name',
+                   return_value='sandbox-T-1-abcd'), \
+             patch('sandbox_core_lib.sandbox_core_lib.manager.enforce_no_workspace_secrets'), \
+             patch('sandbox_core_lib.sandbox_core_lib.manager.wrap_command',
+                   side_effect=lambda c, **kw: c), \
+             patch('sandbox_core_lib.sandbox_core_lib.manager.record_spawn'), \
+             patch('codex_core_lib.codex_core_lib.cli_client.subprocess.run',
+                   side_effect=subprocess_module.TimeoutExpired('docker', 1800)), \
+             patch('sandbox_core_lib.sandbox_core_lib.manager.kill_container') as mock_kc:
+            with self.assertRaises(TimeoutError):
+                client.implement_task(_task())
+        mock_kc.assert_called_once_with('sandbox-T-1-abcd', logger=client.logger)
+
+    def test_timeout_outside_docker_mode_never_kills_a_container(self) -> None:
+        client = CodexCliClient(binary='codex')
+        import subprocess as subprocess_module
+        with patch('codex_core_lib.codex_core_lib.cli_client.subprocess.run',
+                   side_effect=subprocess_module.TimeoutExpired('codex', 1800)), \
+             patch('sandbox_core_lib.sandbox_core_lib.manager.kill_container') as mock_kc:
+            with self.assertRaises(TimeoutError):
+                client.implement_task(_task())
+        mock_kc.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # Credential / phishing scan

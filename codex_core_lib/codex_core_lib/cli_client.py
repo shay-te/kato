@@ -841,6 +841,7 @@ class CodexCliClient(object):
             env = self._build_subprocess_env()
             log_label = log_label or 'Codex CLI'
             spawn_cwd: str | None = cwd or None
+            container_name = ''
             if self._docker_mode_on:
                 from sandbox_core_lib.sandbox_core_lib.manager import (
                     SandboxError,
@@ -904,6 +905,15 @@ class CodexCliClient(object):
                     timeout=self._timeout_seconds,
                 )
             except subprocess.TimeoutExpired as exc:
+                if container_name:
+                    # subprocess.run's own TimeoutExpired handling SIGKILLs
+                    # the wrapping `docker run` client internally before
+                    # raising — SIGKILL can never be forwarded to the
+                    # container, so without this the container leaks and
+                    # runs forever (`--rm` only fires on the container's
+                    # own clean exit).
+                    from sandbox_core_lib.sandbox_core_lib.manager import kill_container
+                    kill_container(container_name, logger=self.logger)
                 raise TimeoutError(
                     f'Codex CLI did not finish within {self._timeout_seconds}s for {log_label}'
                 ) from exc

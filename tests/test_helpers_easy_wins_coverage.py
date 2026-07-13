@@ -59,6 +59,60 @@ class AtomicWriteJsonErrorPathTests(unittest.TestCase):
             ):
                 self.assertFalse(atomic_write_json(target, {'x': 1}))
 
+    def test_concurrent_writers_to_the_same_path_never_drop_a_write(self) -> None:
+        # Regression: the tmp filename used to be a FIXED
+        # ``<path>.json.tmp`` shared by every writer of the same target —
+        # two threads racing on the same path could clobber each other's
+        # tempfile before either renamed, causing one write to silently
+        # return False (or raise FileNotFoundError with
+        # raise_on_error=True) despite nothing being wrong with the
+        # actual data. Verified: 500/500 trials against the old
+        # implementation dropped at least one write; the fix (a unique
+        # per-call tmp name) must make every concurrent write succeed.
+        import threading
+        from kato_core_lib.helpers.atomic_json_utils import atomic_write_json
+
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td) / 'store.json'
+            results: list[bool] = []
+            results_lock = threading.Lock()
+
+            def writer(i: int) -> None:
+                ok = atomic_write_json(target, {'writer': i})
+                with results_lock:
+                    results.append(ok)
+
+            threads = [threading.Thread(target=writer, args=(i,)) for i in range(16)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            self.assertTrue(all(results), f'a concurrent write was dropped: {results}')
+            # The file must be valid, parseable JSON afterward (whichever
+            # writer's content "won" the last rename) — never truncated
+            # or a mix of two writers' bytes.
+            final = json.loads(target.read_text())
+            self.assertIn('writer', final)
+            # No leftover unique-named tmp files after every writer finished.
+            leftovers = list(Path(td).glob('store.json.*.tmp'))
+            self.assertEqual(leftovers, [], f'orphaned tmp files: {leftovers}')
+
+    def test_no_leftover_tmp_file_when_rename_fails(self) -> None:
+        # The finally-block cleanup must remove the uniquely-named tmp
+        # file even when the rename step itself fails (not just when
+        # write_text fails) — otherwise every failed write leaks one
+        # orphan tmp file forever.
+        from kato_core_lib.helpers.atomic_json_utils import atomic_write_json
+
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td) / 'store.json'
+            with patch.object(Path, 'replace', side_effect=OSError('rename failed')):
+                result = atomic_write_json(target, {'x': 1})
+            self.assertFalse(result)
+            leftovers = list(Path(td).glob('store.json.*.tmp'))
+            self.assertEqual(leftovers, [], f'orphaned tmp files: {leftovers}')
+
 
 # --------------------------------------------------------------------------
 # atomic_text_utils — mkdir failure + tmpfile cleanup paths

@@ -63,6 +63,31 @@ class ReadOnlyReposStoreTests(unittest.TestCase):
         store.set_read_only_repos('UNA-1', ['a'])  # recovers cleanly
         self.assertEqual(store.read_only_repos('UNA-1'), {'a'})
 
+    def test_concurrent_tasks_never_lose_each_others_entries(self) -> None:
+        # Regression: set_read_only_repos() used to have no lock around its
+        # read-modify-write cycle — two tasks finishing preflight around
+        # the same moment (the default KATO_MAX_PARALLEL_TASKS=2 makes
+        # this a routine scan-cycle occurrence, not a rare race) could
+        # both read the old file before either wrote, so the second
+        # writer's save silently reverted the first task's entry. Now
+        # under a lock (mirrors tool_decision_store.py's pattern): every
+        # concurrent task's entry must survive.
+        import threading
+
+        def writer(i: int) -> None:
+            store.set_read_only_repos(f'task-{i}', [f'repo-{i}'])
+
+        threads = [threading.Thread(target=writer, args=(i,)) for i in range(12)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        for i in range(12):
+            self.assertEqual(
+                store.read_only_repos(f'task-{i}'), {f'repo-{i}'},
+                f'entry for task-{i} was lost',
+            )
+
 
 if __name__ == '__main__':
     unittest.main()

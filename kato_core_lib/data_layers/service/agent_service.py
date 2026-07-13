@@ -3879,22 +3879,54 @@ class AgentService(MissionStepLoggerMixin, Service):
         pr_result = self.create_pull_request_for_task(normalized)
         moved_to_review = False
         move_error = ''
-        try:
-            self._task_state_service.move_task_to_review(normalized)
-            moved_to_review = True
-            self.logger.info(
-                'finished planning session for task %s: moved to In Review',
-                normalized,
+        # False-success guard (mirrors task_publisher.py's NO_CHANGES
+        # rule): push_task/create_pull_request_for_task never raise —
+        # every per-repo failure is only recorded in their own
+        # 'failed_repositories' lists. Without this check, a task whose
+        # push AND PR creation both failed for every single repo (auth
+        # expired, remote unreachable, branch protection, ...) still
+        # moved to "In Review" unconditionally, implying a ready PR
+        # exists when nothing actually reached the remote. Idempotent
+        # no-ops (already pushed, PR already exists — no failures
+        # recorded at all) and partial successes still proceed exactly
+        # as before; this only blocks the all-repos-failed case.
+        any_failure = bool(push_result.get('failed_repositories')) or bool(
+            pr_result.get('failed_repositories'),
+        )
+        any_success = (
+            bool(push_result.get('pushed_repositories'))
+            or bool(pr_result.get('created_pull_requests'))
+            or bool(pr_result.get('skipped_existing'))
+        )
+        if any_failure and not any_success:
+            move_error = (
+                'push and pull-request creation both failed for every '
+                'repository; not moving to In Review'
             )
-        except Exception as exc:
-            move_error = str(exc) or exc.__class__.__name__
-            # Full traceback to the kato terminal so the operator can
-            # diagnose state-machine / auth / config issues. UI also
-            # surfaces the message inline via the /finish response.
-            self.logger.exception(
-                'failed to move task %s to In Review during finish',
+            self.logger.warning(
+                'finish_task_planning_session: task %s had zero successes '
+                '(push failures=%s, PR failures=%s) — NOT moving to In Review',
                 normalized,
+                push_result.get('failed_repositories'),
+                pr_result.get('failed_repositories'),
             )
+        else:
+            try:
+                self._task_state_service.move_task_to_review(normalized)
+                moved_to_review = True
+                self.logger.info(
+                    'finished planning session for task %s: moved to In Review',
+                    normalized,
+                )
+            except Exception as exc:
+                move_error = str(exc) or exc.__class__.__name__
+                # Full traceback to the kato terminal so the operator can
+                # diagnose state-machine / auth / config issues. UI also
+                # surfaces the message inline via the /finish response.
+                self.logger.exception(
+                    'failed to move task %s to In Review during finish',
+                    normalized,
+                )
         # Lesson capture (best-effort, non-blocking). When configured,
         # ``LessonsService`` extracts a one-line rule from the task and
         # writes it to the per-task lesson file. Runs in a background

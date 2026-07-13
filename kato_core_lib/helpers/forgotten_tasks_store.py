@@ -19,6 +19,7 @@ Stored at ``~/.kato/forgotten_tasks.json`` (override via
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 from kato_core_lib.helpers.atomic_json_utils import atomic_write_json
@@ -26,6 +27,12 @@ from kato_core_lib.helpers.kato_paths_utils import kato_home_path
 
 _ENV_KEY = 'KATO_FORGOTTEN_TASKS_PATH'
 _FILENAME = 'forgotten_tasks.json'
+
+# forget()/unforget() are read-modify-write against the whole file — without
+# this lock, two calls close together (e.g. forget() racing unforget() on
+# re-adopt) can both read the old set before either writes, silently
+# reverting one call's change. Mirrors tool_decision_store.py's pattern.
+_lock = threading.Lock()
 
 
 def _path() -> Path:
@@ -71,13 +78,14 @@ def forget(task_id: str) -> None:
     raw = str(task_id or '').strip()
     if not raw:
         return
-    ids = forgotten_task_ids()
-    # Dedup case-insensitively — ``UNA-1495`` and ``una-1495`` are the same
-    # task, so the file never accumulates case-variant duplicates.
-    if _normalize(raw) in {_normalize(item) for item in ids}:
-        return
-    ids.add(raw)
-    _write(ids)
+    with _lock:
+        ids = forgotten_task_ids()
+        # Dedup case-insensitively — ``UNA-1495`` and ``una-1495`` are the
+        # same task, so the file never accumulates case-variant duplicates.
+        if _normalize(raw) in {_normalize(item) for item in ids}:
+            return
+        ids.add(raw)
+        _write(ids)
 
 
 def unforget(task_id: str) -> None:
@@ -85,13 +93,14 @@ def unforget(task_id: str) -> None:
     normalized = _normalize(task_id)
     if not normalized:
         return
-    ids = forgotten_task_ids()
-    # Drop EVERY case-variant of the id — the mark may have been written in
-    # a different case than the one the operator re-adopts in.
-    remaining = {item for item in ids if _normalize(item) != normalized}
-    if remaining == ids:
-        return
-    _write(remaining)
+    with _lock:
+        ids = forgotten_task_ids()
+        # Drop EVERY case-variant of the id — the mark may have been
+        # written in a different case than the one the operator re-adopts in.
+        remaining = {item for item in ids if _normalize(item) != normalized}
+        if remaining == ids:
+            return
+        _write(remaining)
 
 
 def _write(ids: set[str]) -> None:

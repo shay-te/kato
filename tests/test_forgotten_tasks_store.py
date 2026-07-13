@@ -91,6 +91,27 @@ class ForgottenTasksStoreTests(unittest.TestCase):
         store.forget('UNA-9')
         self.assertEqual(store.forgotten_task_ids(), {'UNA-9'})
 
+    def test_concurrent_forgets_never_lose_an_entry(self) -> None:
+        # Regression: forget() used to have no lock around its
+        # read-modify-write cycle — two concurrent forget() calls could
+        # both read the old set before either wrote, silently reverting
+        # one call's mark. Now under a lock (mirrors
+        # tool_decision_store.py's pattern): every concurrent forget
+        # must survive.
+        import threading
+
+        threads = [
+            threading.Thread(target=store.forget, args=(f'UNA-{i}',))
+            for i in range(12)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(
+            store.forgotten_task_ids(), {f'UNA-{i}' for i in range(12)},
+        )
+
 
 if __name__ == '__main__':
     unittest.main()

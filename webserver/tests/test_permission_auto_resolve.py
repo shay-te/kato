@@ -174,6 +174,24 @@ class PendingListAutoResolveTests(_BaseCase):
         self.assertEqual(len(resp.get_json()['pending']), 1)
         self.assertEqual(session.permission_calls, [])
 
+    def test_probe_failure_is_logged_not_silently_swallowed(self) -> None:
+        # Regression: pending_control_requests() raising used to be a
+        # silent `except Exception: continue` — indistinguishable from
+        # "this session genuinely has nothing pending." This is the
+        # operator's ONLY visibility into a backgrounded task's pending
+        # tool-approval ask, so a systemic failure here must at least
+        # be logged (best-effort behavior — skip this session, don't
+        # fail the whole feed — stays unchanged).
+        session = _Session('Bash', {'command': 'docker ps'})
+        session.pending_control_requests = mock.Mock(side_effect=RuntimeError('boom'))
+        app = self._app(session)
+
+        with mock.patch.object(app.logger, 'exception') as mock_exception:
+            resp = app.test_client().get('/api/permissions/pending')
+
+        self.assertEqual(resp.get_json()['pending'], [])
+        mock_exception.assert_called_once()
+
 
 class PermissionRouteRememberTests(_BaseCase):
     def test_remember_true_persists_allow_decision(self) -> None:

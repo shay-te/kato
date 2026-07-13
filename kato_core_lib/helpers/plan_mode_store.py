@@ -15,6 +15,7 @@ override map the routes key by (which is NOT case-normalized).
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 from kato_core_lib.helpers.atomic_json_utils import atomic_write_json
@@ -22,6 +23,12 @@ from kato_core_lib.helpers.kato_paths_utils import kato_home_path
 
 _ENV_KEY = 'KATO_PLAN_MODE_PATH'
 _FILENAME = 'plan_mode.json'
+
+# set_plan_mode() is read-modify-write against the whole file — without
+# this lock, two tasks toggling plan mode around the same moment can both
+# read the old set before either writes, silently reverting one task's
+# SAFETY lock. Mirrors tool_decision_store.py's pattern.
+_lock = threading.Lock()
 
 
 def _path() -> Path:
@@ -64,13 +71,14 @@ def set_plan_mode(task_id: str, on: bool) -> None:
     task = _norm(task_id)
     if not task:
         return
-    tasks = read_plan_mode_tasks()
-    if on:
-        if task in tasks:
-            return
-        tasks.add(task)
-    else:
-        if task not in tasks:
-            return
-        tasks.discard(task)
-    _write(tasks)
+    with _lock:
+        tasks = read_plan_mode_tasks()
+        if on:
+            if task in tasks:
+                return
+            tasks.add(task)
+        else:
+            if task not in tasks:
+                return
+            tasks.discard(task)
+        _write(tasks)

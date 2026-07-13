@@ -17,6 +17,7 @@ case-insensitively (the platform yields ``UNA-1`` while records are lowercased)
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 from kato_core_lib.helpers.atomic_json_utils import atomic_write_json
@@ -24,6 +25,15 @@ from kato_core_lib.helpers.kato_paths_utils import kato_home_path
 
 _ENV_KEY = 'KATO_READ_ONLY_REPOS_PATH'
 _FILENAME = 'read_only_repos.json'
+
+# Every mutator does read-modify-write against the WHOLE file (one entry
+# per task, all tasks in one JSON doc) — without this lock, two tasks
+# finishing preflight around the same moment (the default
+# KATO_MAX_PARALLEL_TASKS=2 makes this a routine, not rare, scan-cycle
+# occurrence) can both read the old file before either writes, and the
+# second writer's save silently reverts the first task's entry. Mirrors
+# ``tool_decision_store.py``'s existing pattern.
+_lock = threading.Lock()
 
 
 def _path() -> Path:
@@ -85,12 +95,13 @@ def set_read_only_repos(task_id: str, repo_ids) -> None:
     if not task:
         return
     repos = sorted({_norm_repo(r) for r in (repo_ids or []) if _norm_repo(r)})
-    data = _read_all()
-    if repos:
-        data[task] = repos
-    else:
-        data.pop(task, None)
-    _write_all(data)
+    with _lock:
+        data = _read_all()
+        if repos:
+            data[task] = repos
+        else:
+            data.pop(task, None)
+        _write_all(data)
 
 
 def clear_read_only_repo(task_id: str, repo_id: str) -> None:
@@ -99,13 +110,14 @@ def clear_read_only_repo(task_id: str, repo_id: str) -> None:
     repo = _norm_repo(repo_id)
     if not task or not repo:
         return
-    data = _read_all()
-    remaining = [r for r in data.get(task, []) if r != repo]
-    if remaining:
-        data[task] = remaining
-    else:
-        data.pop(task, None)
-    _write_all(data)
+    with _lock:
+        data = _read_all()
+        remaining = [r for r in data.get(task, []) if r != repo]
+        if remaining:
+            data[task] = remaining
+        else:
+            data.pop(task, None)
+        _write_all(data)
 
 
 def forget_task(task_id: str) -> None:
@@ -113,6 +125,7 @@ def forget_task(task_id: str) -> None:
     task = _norm_task(task_id)
     if not task:
         return
-    data = _read_all()
-    if data.pop(task, None) is not None:
-        _write_all(data)
+    with _lock:
+        data = _read_all()
+        if data.pop(task, None) is not None:
+            _write_all(data)

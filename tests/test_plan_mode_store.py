@@ -76,6 +76,27 @@ class PlanModeStoreTests(unittest.TestCase):
         Path(self._path).write_text('{"PROJ-1": "plan"}', encoding='utf-8')
         self.assertEqual(read_plan_mode_tasks(), set())
 
+    def test_concurrent_locks_never_lose_a_task(self) -> None:
+        # Regression: set_plan_mode() used to have no lock around its
+        # read-modify-write cycle — two tasks toggling plan mode around
+        # the same moment could both read the old set before either
+        # wrote, silently reverting one task's SAFETY lock. Now under a
+        # lock (mirrors tool_decision_store.py's pattern): every
+        # concurrent toggle must survive.
+        import threading
+
+        threads = [
+            threading.Thread(target=set_plan_mode, args=(f'PROJ-{i}', True))
+            for i in range(12)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(
+            read_plan_mode_tasks(), {f'PROJ-{i}' for i in range(12)},
+        )
+
 
 if __name__ == '__main__':
     unittest.main()

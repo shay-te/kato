@@ -1402,6 +1402,46 @@ def make_container_name(task_id: str = '') -> str:
     return f'kato-sandbox-{safe_task}-{uuid.uuid4().hex[:8]}'
 
 
+def kill_container(container_name: str, *, logger=None) -> bool:
+    """Best-effort ``docker kill <container_name>``.
+
+    The ONLY reliable way to stop a sandboxed container once the
+    wrapping ``docker run`` client process itself had to be
+    force-killed. SIGKILL can never be forwarded by any process — that
+    is exactly what distinguishes it from SIGTERM, which the attached
+    ``docker`` CLI does forward to the container while it's still
+    alive. Without this, every task that ignores SIGTERM (routine —
+    e.g. mid tool-call) or hits the CLI subprocess timeout leaves its
+    container running indefinitely: ``--rm`` only fires on the
+    container's OWN clean exit, never as a side effect of the host
+    client process dying.
+
+    Never raises — callers use this from a teardown/error path and
+    must not have cleanup itself introduce a new failure. Returns
+    False (docker missing, container already gone, timeout, ...)
+    without treating that as fatal; the operator can still find and
+    remove a stray container manually via ``docker ps``.
+    """
+    name = str(container_name or '').strip()
+    if not name:
+        return False
+    try:
+        result = subprocess.run(
+            ['docker', 'kill', name],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        if logger:
+            logger.warning('docker kill %s failed: %s', name, exc)
+        return False
+    if result.returncode != 0 and logger:
+        logger.warning(
+            'docker kill %s exited %s: %s',
+            name, result.returncode, result.stderr.strip(),
+        )
+    return result.returncode == 0
+
+
 _AUDIT_GENESIS_HASH = '0' * 64
 
 # Spawn-rate guard. A buggy task scan loop or a malicious orchestrator

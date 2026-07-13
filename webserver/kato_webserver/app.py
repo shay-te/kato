@@ -3300,6 +3300,17 @@ def _register_get_pending_permissions_route(app: Flask) -> None:
             try:
                 envelopes = probe() or []
             except Exception:
+                # Best-effort by design (per docstring: one session's
+                # failure must not fail the whole feed) — but silent,
+                # unlike the auto-resolve-check failure a few lines
+                # below, which already logs. If EVERY session's probe
+                # starts failing (a real bug, not a one-off), this must
+                # still be visible somewhere, or "no pending approvals"
+                # becomes indistinguishable from "the poll is broken."
+                app.logger.exception(
+                    'pending_control_requests() failed for task %s',
+                    record.task_id,
+                )
                 continue
             for envelope in envelopes:
                 if not isinstance(envelope, dict):
@@ -4336,17 +4347,34 @@ def _iter_live_sessions(session_manager):
     dropped. ``_session_ids_by_task`` is intentionally NOT built on
     this — it never calls ``get_session`` (it keys off the record's
     own stored agent_session_id), so it has no session to yield.
+
+    ``list_records`` failing is logged, not just swallowed: this walk
+    backs ``/api/permissions/pending`` — the operator's ONLY visibility
+    into a pending tool-approval request for a backgrounded task. A
+    silent failure here returns an empty list indistinguishable from
+    "nothing needs approval," which can leave an agent sitting blocked
+    on an approval the operator is never shown, with zero signal
+    anything went wrong.
     """
     if session_manager is None:
         return
     try:
         records = session_manager.list_records()
     except Exception:
+        logging.getLogger(__name__).exception(
+            'session_manager.list_records() failed — pending-permission '
+            'poll and live-session visibility will see NO sessions this '
+            'cycle, not just none needing approval',
+        )
         return
     for record in records:
         try:
             session = session_manager.get_session(record.task_id)
         except Exception:
+            logging.getLogger(__name__).exception(
+                'get_session(%s) failed while walking live sessions',
+                record.task_id,
+            )
             continue
         if session is None:
             continue
@@ -4359,6 +4387,9 @@ def _session_ids_by_task(session_manager) -> dict[str, str]:
     try:
         records = session_manager.list_records()
     except Exception:
+        logging.getLogger(__name__).exception(
+            'session_manager.list_records() failed in _session_ids_by_task',
+        )
         return {}
     return {
         str(record.task_id): read_session_id_from(record)

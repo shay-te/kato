@@ -1395,6 +1395,59 @@ class RunPromptDockerErrorPaths(unittest.TestCase):
                 )
 
 
+class RunPromptDockerTimeoutKillsContainerTests(unittest.TestCase):
+    """Regression: subprocess.run's TimeoutExpired handling SIGKILLs the
+    wrapping `docker run` client internally before raising — SIGKILL can
+    never be forwarded to the container, so without an explicit
+    `docker kill` the container leaks and runs forever (`--rm` only
+    fires on the container's own clean exit)."""
+
+    def test_timeout_in_docker_mode_calls_kill_container(self) -> None:
+        client = ClaudeCliClient(
+            binary='claude', docker_mode_on=True, model_smoke_test_enabled=False,
+        )
+        with patch.multiple(
+            'sandbox_core_lib.sandbox_core_lib.manager',
+            ensure_image=MagicMock(return_value=None),
+            check_spawn_rate=MagicMock(return_value=None),
+            enforce_no_workspace_secrets=MagicMock(return_value=None),
+            make_container_name=MagicMock(return_value='sandbox-T-1-abcd'),
+            wrap_command=MagicMock(return_value=['docker', 'run', 'image']),
+            record_spawn=MagicMock(return_value=None),
+        ), patch(
+            'claude_core_lib.claude_core_lib.cli_client.subprocess.run',
+            side_effect=subprocess.TimeoutExpired('docker', 30),
+        ), patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.kill_container',
+        ) as mock_kill_container:
+            with self.assertRaises(TimeoutError):
+                client._run_prompt(
+                    prompt='hi', cwd='/wks', additional_dirs=[],
+                    log_label='test', task_id='T-1',
+                )
+        mock_kill_container.assert_called_once_with(
+            'sandbox-T-1-abcd', logger=client.logger,
+        )
+
+    def test_timeout_outside_docker_mode_never_calls_kill_container(self) -> None:
+        client = ClaudeCliClient(binary='claude', model_smoke_test_enabled=False)
+        with patch(
+            'claude_core_lib.claude_core_lib.cli_client.shutil.which',
+            return_value='/usr/bin/claude',
+        ), patch(
+            'claude_core_lib.claude_core_lib.cli_client.subprocess.run',
+            side_effect=subprocess.TimeoutExpired('claude', 30),
+        ), patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.kill_container',
+        ) as mock_kill_container:
+            with self.assertRaises(TimeoutError):
+                client._run_prompt(
+                    prompt='hi', cwd='/wks', additional_dirs=[],
+                    log_label='test', task_id='T-1',
+                )
+        mock_kill_container.assert_not_called()
+
+
 class RunPromptSubprocessErrorPaths(unittest.TestCase):
     """Lines 860-861, 888: subprocess errors in ``_run_prompt`` → wrapped."""
 

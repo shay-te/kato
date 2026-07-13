@@ -105,8 +105,8 @@ def wrap_spawn_for_docker(
     workspace_path: str,
     task_id: str,
     logger,
-) -> list[str]:
-    """Run the six sandbox pre-spawn steps and return the docker argv.
+) -> tuple[list[str], str]:
+    """Run the six sandbox pre-spawn steps and return ``(docker_argv, container_name)``.
 
     Identical containment sequence for both spawn paths: ensure the
     image, rate-check spawns, name the container, refuse committed
@@ -120,6 +120,13 @@ def wrap_spawn_for_docker(
     The caller is responsible for setting ``spawn_cwd=None`` afterwards
     — the docker WORKDIR is ``/workspace`` and the host cwd is
     irrelevant to the docker client itself.
+
+    The container name is returned (not just embedded in the argv) so
+    a caller that has to force-kill the wrapping ``docker run`` client
+    process can ALSO issue ``docker kill <container_name>`` — SIGKILL
+    to the client can never be forwarded to the container, so without
+    this the container leaks and keeps running after the host process
+    is gone (``--rm`` only fires on the container's own clean exit).
     """
     from sandbox_core_lib.sandbox_core_lib.manager import (
         SandboxError,
@@ -167,4 +174,4 @@ def wrap_spawn_for_docker(
         raise RuntimeError(
             f'sandbox audit log required but failed: {exc}',
         ) from exc
-    return wrapped
+    return wrapped, container_name

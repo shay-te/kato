@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from pathlib import Path
 
 from kato_core_lib.helpers.atomic_json_utils import atomic_write_json
@@ -34,6 +35,13 @@ from kato_core_lib.helpers.kato_paths_utils import kato_home_path
 
 
 _SETTINGS_PATH_ENV_KEY = 'KATO_SETTINGS_FILE'
+
+# write_kato_settings() is read-modify-write against the whole file — two
+# concurrent saves (two Settings tabs, or two sections auto-saving near
+# simultaneously) can both read the old file before either writes,
+# silently reverting one save's keys. Mirrors tool_decision_store.py's
+# pattern.
+_lock = threading.Lock()
 
 
 def kato_settings_path() -> Path:
@@ -82,20 +90,22 @@ def write_kato_settings(updates: dict[str, str]) -> dict[str, str]:
     """
     if not updates:
         return read_kato_settings()
-    current = read_kato_settings()
-    current.update({str(k): str(v) for k, v in updates.items() if k})
-    path = kato_settings_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Route through the shared atomic writer (sibling tmp + os.replace) but
-    # keep settings-specific behavior: surface OSError to the operator (the
-    # UI relies on it) and preserve the trailing newline for clean diffs.
-    atomic_write_json(
-        path,
-        current,
-        trailing_newline=True,
-        raise_on_error=True,
-    )
-    return current
+    with _lock:
+        current = read_kato_settings()
+        current.update({str(k): str(v) for k, v in updates.items() if k})
+        path = kato_settings_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Route through the shared atomic writer (sibling tmp + os.replace)
+        # but keep settings-specific behavior: surface OSError to the
+        # operator (the UI relies on it) and preserve the trailing
+        # newline for clean diffs.
+        atomic_write_json(
+            path,
+            current,
+            trailing_newline=True,
+            raise_on_error=True,
+        )
+        return current
 
 
 def load_kato_settings_into_environ() -> int:

@@ -29,6 +29,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from git_core_lib.git_core_lib.helpers.git_command_utils import build_safe_git_command
+
 from kato_core_lib.helpers.kato_paths_utils import kato_home_path
 
 
@@ -173,10 +175,20 @@ def _discovered_repo_from_clone(
 
 
 def _read_origin_url(repo_dir: Path) -> str:
-    """``git -C <repo_dir> remote get-url origin``. Empty on failure."""
+    """``git -C <repo_dir> remote get-url origin``. Empty on failure.
+
+    Built through ``build_safe_git_command`` (not a bare
+    ``['git', '-C', ...]``) so hooks are disabled for this invocation
+    — ``repo_dir`` is an agent-writable clone (a checkout or per-task
+    workspace directory), including its own ``.git/hooks/``, so any
+    git command run here without that flag risks executing a hook
+    the agent planted, with the OPERATOR's own privileges. This is
+    the exact bug class ``git_diff_utils.py``/``GitClientMixin``
+    were hardened against; this call site had drifted and reopened it.
+    """
     try:
         result = subprocess.run(
-            ['git', '-C', str(repo_dir), 'remote', 'get-url', 'origin'],
+            build_safe_git_command(str(repo_dir), ['remote', 'get-url', 'origin']),
             capture_output=True,
             text=True,
             encoding='utf-8',

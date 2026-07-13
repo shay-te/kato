@@ -267,3 +267,70 @@ class RepositoryInventoryServiceTests(unittest.TestCase):
             capture_output=True,
             text=True,
         )
+
+
+class EnsureRepositoriesConcurrencyTests(unittest.TestCase):
+    """Regression: ``_ensure_repositories``'s check-then-populate sequence
+    used to have no lock. The background warm-up thread
+    (``AgentService.warm_up_repository_inventory``) and a concurrent
+    webserver request thread (GET /api/repositories, served
+    threaded=True) could both observe ``self._repositories is None``
+    before either finished its disk walk; whichever finished LAST
+    overwrote the other's already-filtered/validated result with its
+    own raw list — and since ``_inventory_validated`` was already True
+    by then, the denylist filter and duplicate-alias validation never
+    ran on that overwrite. This silently and PERMANENTLY (until
+    restart) bypassed KATO_REPOSITORY_DENYLIST.
+
+    Verified before this lock existed: 5 concurrent callers produced 5
+    raw (unfiltered) loads and the denylisted repo id survived in at
+    least one thread's returned list.
+    """
+
+    def test_concurrent_callers_load_and_filter_exactly_once(self) -> None:
+        import threading
+        import time
+        from unittest.mock import patch
+
+        service = RepositoryInventoryService(
+            repositories_config=types.SimpleNamespace(repositories=[]),
+        )
+        call_counts = {'load': 0, 'filter': 0}
+
+        def slow_load(_config):
+            call_counts['load'] += 1
+            time.sleep(0.05)
+            return [
+                types.SimpleNamespace(id='repoA'),
+                types.SimpleNamespace(id='denied-repo'),
+            ]
+
+        def fake_filter(repositories):
+            call_counts['filter'] += 1
+            return [r for r in repositories if r.id != 'denied-repo']
+
+        with patch.object(
+            service, '_load_repositories', side_effect=slow_load,
+        ), patch.object(
+            service, '_filter_denied_repositories', side_effect=fake_filter,
+        ), patch.object(service, '_validate_inventory', return_value=None):
+            results: list[list[object]] = []
+            results_lock = threading.Lock()
+
+            def worker() -> None:
+                result = service._ensure_repositories()
+                with results_lock:
+                    results.append(result)
+
+            threads = [threading.Thread(target=worker) for _ in range(5)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+        self.assertEqual(call_counts['load'], 1, 'disk walk ran more than once')
+        self.assertEqual(call_counts['filter'], 1, 'denylist filter ran more than once')
+        for result in results:
+            ids = [r.id for r in result]
+            self.assertNotIn('denied-repo', ids, 'denylist was bypassed on one caller')
+            self.assertEqual(ids, ['repoA'])
