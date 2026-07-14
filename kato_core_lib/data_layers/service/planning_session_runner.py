@@ -364,10 +364,12 @@ class PlanningSessionRunner(object):
         prompt = (
             ClaudeCliClient._build_review_prompt(
                 comments[0], branch_name, workspace_path=workspace, mode=mode,
+                additional_dirs=additional_dirs,
             )
             if len(comments) == 1
             else ClaudeCliClient._build_review_comments_batch_prompt(
                 comments, branch_name, workspace_path=workspace, mode=mode,
+                additional_dirs=additional_dirs,
             )
         )
         return self._run_to_terminal(

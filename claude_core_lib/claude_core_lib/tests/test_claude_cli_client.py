@@ -1794,5 +1794,87 @@ class InvestigateTests(unittest.TestCase):
         self.assertEqual(client._disallowed_tools, 'Write')
 
 
+class ReviewPromptMultiRepoWorkspaceScopeTests(unittest.TestCase):
+    """Regression for the production bug: a review-fix session's
+    WORKSPACE SCOPE prompt text listed only the comment's own repo,
+    even when ``additional_dirs`` (the OS-level ``--add-dir`` sandbox)
+    already granted access to every sibling repo the task touches.
+    Claude reads and obeys the prompt TEXT as an authoritative
+    boundary regardless of what the sandbox technically permits, so
+    the text itself must list every repo — not just the plumbing.
+    """
+
+    def test_build_review_prompt_lists_every_repo_in_scope_block(self) -> None:
+        comment = build_review_comment(body='fix this')
+        prompt = ClaudeCliClient._build_review_prompt(
+            comment, 'feature/proj-1',
+            workspace_path='/wks/UNA-2763/ob-love-admin-backend',
+            additional_dirs=['/wks/UNA-2763/library-core-lib'],
+        )
+        self.assertIn('WORKSPACE SCOPE', prompt)
+        self.assertIn('/wks/UNA-2763/ob-love-admin-backend', prompt)
+        self.assertIn('/wks/UNA-2763/library-core-lib', prompt)
+
+    def test_build_review_prompt_omits_additional_dirs_gracefully(self) -> None:
+        # Single-repo task (or additional_dirs not supplied) must not
+        # crash and must not fabricate a second path out of nowhere.
+        comment = build_review_comment(body='fix this')
+        prompt = ClaudeCliClient._build_review_prompt(
+            comment, 'feature/proj-1',
+            workspace_path='/wks/UNA-2763/ob-love-admin-backend',
+        )
+        self.assertIn('/wks/UNA-2763/ob-love-admin-backend', prompt)
+        self.assertEqual(prompt.count('  - /wks/'), 1)
+
+    def test_build_review_comments_batch_prompt_lists_every_repo_in_scope_block(
+        self,
+    ) -> None:
+        c1 = build_review_comment(comment_id='1', body='first')
+        c2 = build_review_comment(comment_id='2', body='second')
+        prompt = ClaudeCliClient._build_review_comments_batch_prompt(
+            [c1, c2], 'feature/proj-1',
+            workspace_path='/wks/UNA-2763/ob-love-admin-backend',
+            additional_dirs=[
+                '/wks/UNA-2763/library-core-lib',
+                '/wks/UNA-2763/another-repo',
+            ],
+        )
+        self.assertIn('/wks/UNA-2763/ob-love-admin-backend', prompt)
+        self.assertIn('/wks/UNA-2763/library-core-lib', prompt)
+        self.assertIn('/wks/UNA-2763/another-repo', prompt)
+
+    def test_fix_review_comments_end_to_end_scope_block_includes_sibling_repo(
+        self,
+    ) -> None:
+        # Full flow through the public entrypoint the service actually
+        # calls — proves the wiring from additional_dirs param all the
+        # way to the literal prompt text sent to Claude, not just that
+        # the private builder accepts the kwarg in isolation.
+        client = ClaudeCliClient(binary='claude')
+        comment = build_review_comment(body='fix this')
+        captured = {}
+
+        def _capture_run_prompt_result(**kwargs):
+            captured.update(kwargs)
+            return {'success': True, 'result': 'done'}
+
+        with patch.object(
+            client, '_run_prompt_result', side_effect=_capture_run_prompt_result,
+        ), patch.object(
+            client, '_review_comment_cwd',
+            return_value='/wks/UNA-2763/ob-love-admin-backend',
+        ):
+            client.fix_review_comments(
+                [comment], branch_name='feature/UNA-2763',
+                additional_dirs=['/wks/UNA-2763/library-core-lib'],
+            )
+        self.assertIn('WORKSPACE SCOPE', captured['prompt'])
+        self.assertIn('/wks/UNA-2763/ob-love-admin-backend', captured['prompt'])
+        self.assertIn('/wks/UNA-2763/library-core-lib', captured['prompt'])
+        self.assertEqual(
+            captured['additional_dirs'], ['/wks/UNA-2763/library-core-lib'],
+        )
+
+
 if __name__ == '__main__':
     unittest.main()

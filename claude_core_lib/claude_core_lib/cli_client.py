@@ -454,12 +454,14 @@ class ClaudeCliClient(object):
                 single, branch_name, workspace_path=cwd, mode=mode,
                 workspace_refusal_guidance=self._workspace_refusal_guidance,
                 self_reply_prefixes=self._self_reply_prefixes,
+                additional_dirs=extra_dirs,
             )
         else:
             prompt = self._build_review_comments_batch_prompt(
                 comments, branch_name, workspace_path=cwd, mode=mode,
                 workspace_refusal_guidance=self._workspace_refusal_guidance,
                 self_reply_prefixes=self._self_reply_prefixes,
+                additional_dirs=extra_dirs,
             )
         result = self._run_prompt_result(
             prompt=prompt,
@@ -568,6 +570,7 @@ class ClaudeCliClient(object):
         mode: str = 'fix',
         workspace_refusal_guidance: str = '',
         self_reply_prefixes: tuple = (),
+        additional_dirs: list[str] | None = None,
     ) -> str:
         """Render a batched prompt for 2+ comments on one PR.
 
@@ -623,7 +626,7 @@ class ClaudeCliClient(object):
             else ''
         )
         scope_block = agent_prompt_utils.workspace_scope_block(
-            [workspace_path] if workspace_path else [],
+            ([workspace_path] if workspace_path else []) + list(additional_dirs or []),
             extra_refusal_guidance=workspace_refusal_guidance,
         )
         scope_prefix = f'{scope_block}\n' if scope_block else ''
@@ -690,6 +693,7 @@ class ClaudeCliClient(object):
         mode: str = 'fix',
         workspace_refusal_guidance: str = '',
         self_reply_prefixes: tuple = (),
+        additional_dirs: list[str] | None = None,
     ) -> str:
         repository_context = agent_prompt_utils.review_repository_context(comment)
         review_context = agent_prompt_utils.review_comment_context_text(
@@ -735,7 +739,7 @@ class ClaudeCliClient(object):
         location_block = f'{location_text}\n' if location_text else ''
         snippet_block = f'{wrapped_snippet_text}\n' if wrapped_snippet_text else ''
         scope_block = agent_prompt_utils.workspace_scope_block(
-            [workspace_path] if workspace_path else [],
+            ([workspace_path] if workspace_path else []) + list(additional_dirs or []),
             extra_refusal_guidance=workspace_refusal_guidance,
         )
         scope_prefix = f'{scope_block}\n' if scope_block else ''

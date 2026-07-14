@@ -511,6 +511,70 @@ class PlanningSessionRunnerDockerModeTests(unittest.TestCase):
 
         self.assertIs(manager.start_kwargs['docker_mode_on'], True)
 
+    def test_fix_review_comment_additional_dirs_reach_both_sandbox_and_prompt_text(
+        self,
+    ) -> None:
+        """Production regression (UNA-2763): a review-fix session on a
+        multi-repo task refused to touch a sibling repo the SAME task
+        needed, even after the ``--add-dir`` OS sandbox was widened to
+        include it — because the WORKSPACE SCOPE prompt TEXT (what
+        Claude actually reads and treats as an authoritative boundary)
+        still only ever named the triggering comment's own repo.
+        ``additional_dirs`` must reach BOTH:
+          1. ``start_session``'s ``additional_dirs`` kwarg (the sandbox), and
+          2. the literal WORKSPACE SCOPE block inside ``initial_prompt``
+             (what Claude is actually told).
+        Testing only #1 (as the earlier fix did) is not sufficient —
+        this is exactly the gap that shipped and was reported broken.
+        """
+        from tests.utils import build_review_comment
+
+        manager = _FakeManager(_terminal(result='fix done'))
+        defaults = StreamingSessionDefaults(binary='claude', permission_mode='acceptEdits')
+        runner = PlanningSessionRunner(session_manager=manager, defaults=defaults)
+
+        runner.fix_review_comment(
+            build_review_comment(),
+            'feature/UNA-2763',
+            task_id='UNA-2763',
+            task_summary='rename open_node to open_document',
+            repository_local_path='/workspaces/UNA-2763/ob-love-admin-backend',
+            additional_dirs=['/workspaces/UNA-2763/library-core-lib'],
+        )
+
+        # 1. The OS-level sandbox got the sibling dir.
+        self.assertEqual(
+            manager.start_kwargs['additional_dirs'],
+            ['/workspaces/UNA-2763/library-core-lib'],
+        )
+        # 2. The prompt TEXT Claude reads also names both repos.
+        prompt = manager.start_kwargs['initial_prompt']
+        self.assertIn('WORKSPACE SCOPE', prompt)
+        self.assertIn('/workspaces/UNA-2763/ob-love-admin-backend', prompt)
+        self.assertIn('/workspaces/UNA-2763/library-core-lib', prompt)
+
+    def test_fix_review_comments_batch_additional_dirs_reach_prompt_text(self) -> None:
+        # Same regression, batch (2+ comment) prompt-builder path.
+        from tests.utils import build_review_comment
+
+        manager = _FakeManager(_terminal(result='fix done'))
+        defaults = StreamingSessionDefaults(binary='claude', permission_mode='acceptEdits')
+        runner = PlanningSessionRunner(session_manager=manager, defaults=defaults)
+
+        runner.fix_review_comments(
+            [build_review_comment(comment_id='1'), build_review_comment(comment_id='2')],
+            'feature/UNA-2763',
+            task_id='UNA-2763',
+            task_summary='batch fix',
+            repository_local_path='/workspaces/UNA-2763/ob-love-admin-backend',
+            additional_dirs=['/workspaces/UNA-2763/library-core-lib'],
+        )
+
+        prompt = manager.start_kwargs['initial_prompt']
+        self.assertIn('WORKSPACE SCOPE', prompt)
+        self.assertIn('/workspaces/UNA-2763/ob-love-admin-backend', prompt)
+        self.assertIn('/workspaces/UNA-2763/library-core-lib', prompt)
+
 
 if __name__ == '__main__':
     unittest.main()
