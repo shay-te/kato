@@ -29,7 +29,7 @@
 blueprint:
   schema: 1
   version: 0.1.0
-  requires_reploy: ">=0.5.1.dev1"
+  requires_reploy: ">=0.5.0.dev1"
 
 app:
   id: kato
@@ -79,6 +79,13 @@ bundle:
         (KATO_COMPLETION_EMAIL_ENABLED / KATO_FAILURE_EMAIL_ENABLED).
 
 docker:
+  deployment_dirs:
+    # kato has no config/data split — ~/.kato is the single unified state
+    # directory (settings.json config, workspaces, sessions, the TLS cert,
+    # small JSON stores). Both point at the same managed path below.
+    config: .kato
+    data: .kato
+    bundle: .reploy/bundle
   service:
     image: python:3.11-slim
   health:
@@ -92,11 +99,25 @@ docker:
     default_host: 127.0.0.1
     default_port: "5050"
     path: /healthz
-  runtime:
+  install:
     hooks:
+      # Reploy requires a `config check` command trigger by convention
+      # (see the reference smoke blueprint). kato has no literal "config
+      # check" subcommand, so this maps to `kato doctor` — the closest
+      # existing equivalent (validates the environment: python deps,
+      # provider connectivity, agent CLI availability). Unlike the
+      # reference example, kato doctor has no --live flag, so it's run
+      # identically before and after start rather than forwarding one.
+      before_start:
+        - app:
+            - config
+            - check
       after_start:
         - health_check:
             wait: true
+        - app:
+            - config
+            - check
   default_command: serve
   command_defaults:
     app_command: true
@@ -105,8 +126,38 @@ docker:
   commands:
     serve:
       container:
-        argv_suffix: []
-    doctor:
+        # Reploy injects its OWN env vars into the container — it does NOT
+        # rename them to whatever docker.health.host_env/port_env say
+        # (verified directly against a real `reploy stage` + the generated
+        # compose.yaml). kato itself only reads KATO_WEBSERVER_HOST/_PORT,
+        # so without a bridge it falls back to its own hardcoded
+        # 127.0.0.1:5050 default. The generated compose.yaml has TWO
+        # separate pairs, and the distinction matters:
+        #   REPLOY_HOST_BIND / REPLOY_HOST_PORT      — the EXTERNAL,
+        #     host-side address Docker publishes (e.g. 127.0.0.1:15050).
+        #   REPLOY_CONTAINER_HOST / REPLOY_CONTAINER_PORT — what the
+        #     process INSIDE the container should actually bind to,
+        #     defaulting to 0.0.0.0 (all interfaces), not 127.0.0.1.
+        # Binding kato to REPLOY_HOST_BIND (127.0.0.1) *inside* the
+        # container would make it unreachable through Docker's port
+        # forwarding entirely — a process bound to loopback-only inside
+        # its own network namespace can't be reached via the bridge
+        # network Docker's `-p host:container` mapping uses. Bind to the
+        # CONTAINER pair; Docker's own port mapping handles translating
+        # the external host_bind:host_port to this internal address.
+        argv_override:
+          - sh
+          - -c
+          - >-
+            export KATO_WEBSERVER_HOST="${REPLOY_CONTAINER_HOST:-0.0.0.0}";
+            export KATO_WEBSERVER_PORT="${REPLOY_CONTAINER_PORT:-5050}";
+            exec python -m kato_core_lib.main "$@"
+          - --
+    config_check:
+      trigger:
+        - config
+        - check
+      app_command: true
       deployed_command: true
       container:
         argv_override: [kato, doctor]

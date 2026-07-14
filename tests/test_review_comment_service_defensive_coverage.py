@@ -22,7 +22,10 @@ from kato_core_lib.data_layers.data.fields import (
 from kato_core_lib.data_layers.service.review_comment_service import (
     ReviewCommentService,
 )
-from kato_core_lib.helpers.review_comment_utils import ReviewFixContext
+from kato_core_lib.helpers.review_comment_utils import (
+    ReviewFixContext,
+    is_kato_review_comment_reply,
+)
 
 
 def _make_service(**overrides):
@@ -666,6 +669,28 @@ class PublishReviewNoChangesTests(unittest.TestCase):
         )
         service.logger.exception.assert_called_once()
 
+    def test_posted_body_is_self_recognized_no_infinite_loop(self) -> None:
+        # Regression for the production incident where kato reposted its
+        # own "no changes" reply every scan tick forever: the body this
+        # method actually posts must be recognised by
+        # is_kato_review_comment_reply on the NEXT poll, or kato mistakes
+        # its own reply for a fresh, unaddressed reviewer comment and
+        # reprocesses it — producing another equally-unrecognised reply,
+        # ad infinitum.
+        service = _make_service()
+        context = ReviewFixContext(
+            repository_id='r', pull_request_title='',
+            branch_name='b', task_id='T', task_summary='', agent_session_id='',
+        )
+        service._publish_review_no_changes(
+            [_comment()], SimpleNamespace(id='r'), context,
+        )
+        posted_body = service._repository_service.reply_to_review_comment.call_args[0][2]
+        kato_own_reply = _comment(
+            comment_id='reply-1', body=posted_body, author='kato',
+        )
+        self.assertTrue(is_kato_review_comment_reply(kato_own_reply))
+
 
 class PublishReviewCommentAnswersTests(unittest.TestCase):
     def test_swallows_reply_failure(self) -> None:
@@ -739,6 +764,119 @@ class CallFixReviewCommentsStreamingTests(unittest.TestCase):
         self.assertEqual(len(call.args), 2)
         # Streaming kwargs include ``repository_local_path``.
         self.assertEqual(call.kwargs['repository_local_path'], '/workspace/clone')
+
+
+class CallFixReviewCommentsAdditionalDirsTests(unittest.TestCase):
+    """Regression for the "stuck under one repo scope" production bug:
+    a review-fix session must see every OTHER repo the task touches, not
+    just the repo the triggering comment lives on."""
+
+    def test_streaming_forwards_sibling_dirs_from_repository_attr(self) -> None:
+        service = _make_service()
+        backend = MagicMock()
+        backend.fix_review_comments.return_value = {'success': True}
+        context = ReviewFixContext(
+            repository_id='r', pull_request_title='',
+            branch_name='feat/x', task_id='T', task_summary='s',
+            agent_session_id='session-id',
+        )
+        repo = SimpleNamespace(id='r', local_path='/workspace/r')
+        setattr(
+            repo,
+            ReviewCommentService._ADDITIONAL_TASK_REPO_DIRS_ATTR,
+            ['/workspace/other-repo', '/workspace/third-repo'],
+        )
+        service._call_fix_review_comments_or_fanout(
+            backend, [_comment('c1')], context,
+            streaming=True, mode='fix', repository=repo,
+        )
+        self.assertEqual(
+            backend.fix_review_comments.call_args.kwargs['additional_dirs'],
+            ['/workspace/other-repo', '/workspace/third-repo'],
+        )
+
+    def test_non_streaming_forwards_sibling_dirs_from_repository_attr(self) -> None:
+        service = _make_service()
+        backend = MagicMock()
+        backend.fix_review_comments.return_value = {'success': True}
+        context = ReviewFixContext(
+            repository_id='r', pull_request_title='',
+            branch_name='feat/x', task_id='T', task_summary='s',
+            agent_session_id='session-id',
+        )
+        repo = SimpleNamespace(id='r', local_path='/workspace/r')
+        setattr(
+            repo,
+            ReviewCommentService._ADDITIONAL_TASK_REPO_DIRS_ATTR,
+            ['/workspace/other-repo'],
+        )
+        service._call_fix_review_comments_or_fanout(
+            backend, [_comment('c1')], context,
+            streaming=False, mode='fix', repository=repo,
+        )
+        self.assertEqual(
+            backend.fix_review_comments.call_args.kwargs['additional_dirs'],
+            ['/workspace/other-repo'],
+        )
+
+    def test_missing_attr_defaults_to_empty_list(self) -> None:
+        # A repository object never touched by _provision_workspace_clone
+        # (e.g. the caller passed the raw inventory repo) has no
+        # sibling-dirs attribute at all — must degrade to [], not crash.
+        service = _make_service()
+        backend = MagicMock()
+        backend.fix_review_comments.return_value = {'success': True}
+        context = ReviewFixContext(
+            repository_id='r', pull_request_title='',
+            branch_name='feat/x', task_id='T', task_summary='s',
+            agent_session_id='session-id',
+        )
+        repo = SimpleNamespace(id='r', local_path='/workspace/r')
+        service._call_fix_review_comments_or_fanout(
+            backend, [_comment('c1')], context,
+            streaming=True, mode='fix', repository=repo,
+        )
+        self.assertEqual(
+            backend.fix_review_comments.call_args.kwargs['additional_dirs'], [],
+        )
+
+    def test_none_repository_defaults_to_empty_list(self) -> None:
+        service = _make_service()
+        backend = MagicMock()
+        backend.fix_review_comments.return_value = {'success': True}
+        context = ReviewFixContext(
+            repository_id='r', pull_request_title='',
+            branch_name='feat/x', task_id='T', task_summary='s',
+            agent_session_id='session-id',
+        )
+        service._call_fix_review_comments_or_fanout(
+            backend, [_comment('c1')], context,
+            streaming=False, mode='fix', repository=None,
+        )
+        self.assertEqual(
+            backend.fix_review_comments.call_args.kwargs['additional_dirs'], [],
+        )
+
+
+class SiblingLocalPathsTests(unittest.TestCase):
+    def test_excludes_primary_and_dedupes(self) -> None:
+        primary = SimpleNamespace(id='a', local_path='/repos/a')
+        repos = [
+            SimpleNamespace(id='a', local_path='/repos/a'),
+            SimpleNamespace(id='b', local_path='/repos/b'),
+            SimpleNamespace(id='c', local_path='/repos/b'),  # duplicate path
+            SimpleNamespace(id='d', local_path=''),  # blank path skipped
+        ]
+        self.assertEqual(
+            ReviewCommentService._sibling_local_paths(repos, primary),
+            ['/repos/b'],
+        )
+
+    def test_empty_repositories_returns_empty_list(self) -> None:
+        primary = SimpleNamespace(id='a', local_path='/repos/a')
+        self.assertEqual(
+            ReviewCommentService._sibling_local_paths(None, primary), [],
+        )
 
 
 class TaskForWorkspaceCloneSkipNonMatchingTests(unittest.TestCase):

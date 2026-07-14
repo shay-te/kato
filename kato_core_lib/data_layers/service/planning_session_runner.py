@@ -302,6 +302,7 @@ class PlanningSessionRunner(object):
         task_id: str,
         task_summary: str = '',
         repository_local_path: str = '',
+        additional_dirs: list[str] | None = None,
     ) -> dict[str, str | bool]:
         """Run a review-comment fix as a streaming session bound to ``task_id``.
 
@@ -317,6 +318,7 @@ class PlanningSessionRunner(object):
             task_id=task_id,
             task_summary=task_summary,
             repository_local_path=repository_local_path,
+            additional_dirs=additional_dirs,
         )
 
     def fix_review_comments(
@@ -328,6 +330,7 @@ class PlanningSessionRunner(object):
         task_summary: str = '',
         repository_local_path: str = '',
         mode: str = 'fix',
+        additional_dirs: list[str] | None = None,
     ) -> dict[str, str | bool]:
         """Address multiple comments in a single streaming session.
 
@@ -335,6 +338,12 @@ class PlanningSessionRunner(object):
         the prompt is batched. ``len(comments) == 1`` produces an
         identical prompt to ``fix_review_comment``. ``mode='answer'``
         switches the prompt to the question-answering shape.
+
+        ``additional_dirs`` widens the session's sandbox (``--add-dir``)
+        beyond ``repository_local_path`` to every OTHER repo the task
+        touches — without it, a multi-repo task's review-fix session is
+        stuck editing only the repo the triggering comment happens to
+        live on, even when the fix legitimately spans several repos.
         """
         if not comments:
             raise ValueError('fix_review_comments requires at least one comment')
@@ -369,6 +378,7 @@ class PlanningSessionRunner(object):
             branch_name=normalized_text(branch_name),
             default_commit_message='Address review comments',
             log_label='review-fix session',
+            additional_dirs=additional_dirs,
         )
 
     def _run_to_terminal(
@@ -381,6 +391,7 @@ class PlanningSessionRunner(object):
         branch_name: str,
         default_commit_message: str,
         log_label: str,
+        additional_dirs: list[str] | None = None,
     ) -> dict[str, str | bool]:
         """Spawn the streaming session, block until terminal, shape the result.
 
@@ -397,6 +408,7 @@ class PlanningSessionRunner(object):
             initial_prompt=initial_prompt,
             cwd=cwd,
             branch_name=branch_name,
+            additional_dirs=additional_dirs,
         )
         sid = read_session_id_from(session)
         self.logger.info(

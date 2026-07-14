@@ -386,6 +386,7 @@ class ClaudeCliClient(object):
         agent_session_id: str = '',
         task_id: str = '',
         task_summary: str = '',
+        additional_dirs: list[str] | None = None,
     ) -> dict[str, str | bool]:
         return self.fix_review_comments(
             [comment],
@@ -393,6 +394,7 @@ class ClaudeCliClient(object):
             agent_session_id=agent_session_id,
             task_id=task_id,
             task_summary=task_summary,
+            additional_dirs=additional_dirs,
         )
 
     def fix_review_comments(
@@ -403,6 +405,7 @@ class ClaudeCliClient(object):
         task_id: str = '',
         task_summary: str = '',
         mode: str = 'fix',
+        additional_dirs: list[str] | None = None,
     ) -> dict[str, str | bool]:
         """Address multiple PR review comments in a single Claude spawn.
 
@@ -427,10 +430,24 @@ class ClaudeCliClient(object):
         builder enumerates each comment with its file/line
         localization and asks the agent to address them in one
         coherent change-set.
+
+        ``additional_dirs`` widens the sandbox (``--add-dir``) beyond
+        ``cwd`` to every OTHER repo the task touches. Without this a
+        multi-repo task's review-fix session was permanently scoped to
+        just the repo the triggering comment happens to live on, even
+        when the initial task-implementation session for the same task
+        (``implement_task`` / ``_working_directories``) had access to
+        every attached repo.
         """
         if not comments:
             raise ValueError('fix_review_comments requires at least one comment')
         cwd = self._review_comment_cwd(comments[0])
+        extra_dirs = [
+            path for path in (
+                normalized_text(path) for path in (additional_dirs or [])
+            )
+            if path and path != cwd
+        ]
         if len(comments) == 1:
             single = comments[0]
             prompt = self._build_review_prompt(
@@ -447,7 +464,7 @@ class ClaudeCliClient(object):
         result = self._run_prompt_result(
             prompt=prompt,
             cwd=cwd,
-            additional_dirs=[],
+            additional_dirs=extra_dirs,
             agent_session_id=agent_session_id,
             branch_name=branch_name,
             default_commit_message='Address review comments',

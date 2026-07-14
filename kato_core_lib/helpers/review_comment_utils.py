@@ -26,6 +26,17 @@ KATO_REVIEW_COMMENT_REPLY_PREFIX = 'Kato addressed this review comment'
 KATO_REVIEW_COMMENT_ANSWER_PREFIX = (
     '**No code was changed and nothing was pushed.**'
 )
+# "No changes" replies (agent ran but produced no commits) open with this
+# sentence instead of the "Kato addressed…" prefix. Defined here so
+# _publish_review_no_changes's reply body and is_kato_review_comment_reply's
+# dedupe rule share one source and cannot drift — without it kato fails to
+# recognise its own "no changes" reply as its own, re-polls it as an
+# unaddressed reviewer comment, and reposts "no changes" every scan tick
+# forever (each new reply is equally unrecognised).
+KATO_REVIEW_COMMENT_NO_CHANGES_PREFIX = (
+    'Kato ran an agent against this comment but produced no commits '
+    'and left the working tree clean.'
+)
 
 
 class ReviewReplyTemplate:
@@ -204,6 +215,7 @@ def is_kato_review_comment_reply(
             KATO_REVIEW_COMMENT_FIXED_PREFIX,
             KATO_REVIEW_COMMENT_REPLY_PREFIX,
             KATO_REVIEW_COMMENT_ANSWER_PREFIX,
+            KATO_REVIEW_COMMENT_NO_CHANGES_PREFIX,
         )
     )
     if not prefix_matches:

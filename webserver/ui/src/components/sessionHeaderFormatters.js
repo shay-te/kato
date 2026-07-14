@@ -200,7 +200,12 @@ export function formatFinishResult(result, taskId = '') {
 // in a multi-repo task you couldn't tell which clone needed attention. The
 // agent is asked to resolve in the chat separately; ``chatDelivered`` says
 // whether that message reached it.
-export function formatMergeConflicts(conflicted, { chatDelivered } = {}) {
+//
+// ``taskId`` (optional) is interpolated into the title, same as
+// formatFinishResult/formatPushResult — the global toast surfaces for
+// backgrounded tasks too, so without it a multi-task operator can't tell
+// which tab's merge just conflicted.
+export function formatMergeConflicts(conflicted, { chatDelivered, taskId = '' } = {}) {
   const repos = Array.isArray(conflicted) ? conflicted : [];
   const branches = new Set(
     repos.map((r) => String(r.default_branch || '').trim()).filter(Boolean),
@@ -216,14 +221,16 @@ export function formatMergeConflicts(conflicted, { chatDelivered } = {}) {
     ? 'Asked Claude in the chat to resolve them.'
     : "Couldn't reach the chat — resolve manually or message Claude yourself.";
   const body = lines.length ? `${lines.join('\n')}\n\n${tail}` : tail;
+  const trimmedTask = String(taskId || '').trim();
+  const baseTitle = `Merged ${branch} — conflicts to resolve`;
   return {
     kind: 'warning',
-    title: `Merged ${branch} — conflicts to resolve`,
+    title: trimmedTask ? `${baseTitle} (${trimmedTask})` : baseTitle,
     message: body,
   };
 }
 
-export function formatMergeResult(result) {
+export function formatMergeResult(result, taskId = '') {
   if (!result || !result.ok) {
     return formatRequestFailure(result, 'Merge failed');
   }
@@ -277,7 +284,12 @@ export function formatMergeResult(result) {
     title = 'Nothing to merge';
     kind = 'info';
   }
-  return { title, kind, message: lines.join('\n') };
+  const trimmedTask = String(taskId || '').trim();
+  return {
+    title: trimmedTask ? `${title} (${trimmedTask})` : title,
+    kind,
+    message: lines.join('\n'),
+  };
 }
 
 // Toast for the operator-triggered Push button (POST /push).

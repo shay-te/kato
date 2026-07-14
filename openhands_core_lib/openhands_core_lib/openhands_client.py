@@ -159,6 +159,7 @@ class OpenHandsClient(RetryingClientBase):
         agent_session_id: str = '',
         task_id: str = '',
         task_summary: str = '',
+        additional_dirs: list[str] | None = None,
     ) -> dict[str, str | bool]:
         return self.fix_review_comments(
             [comment],
@@ -166,6 +167,7 @@ class OpenHandsClient(RetryingClientBase):
             agent_session_id=agent_session_id,
             task_id=task_id,
             task_summary=task_summary,
+            additional_dirs=additional_dirs,
         )
 
     def fix_review_comments(
@@ -176,6 +178,10 @@ class OpenHandsClient(RetryingClientBase):
         task_id: str = '',
         task_summary: str = '',
         mode: str = 'fix',
+        # Accepted for interface parity with ClaudeCliClient/CodexCliClient
+        # (ImplementationService calls every backend uniformly) — not wired
+        # into a sandbox here; OpenHands multi-repo scoping is untouched.
+        additional_dirs: list[str] | None = None,
     ) -> dict[str, str | bool]:
         if not comments:
             raise ValueError('fix_review_comments requires at least one comment')

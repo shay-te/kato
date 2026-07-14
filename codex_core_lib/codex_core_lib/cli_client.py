@@ -343,6 +343,7 @@ class CodexCliClient(object):
         agent_session_id: str = '',
         task_id: str = '',
         task_summary: str = '',
+        additional_dirs: list[str] | None = None,
     ) -> dict[str, str | bool]:
         return self.fix_review_comments(
             [comment],
@@ -350,6 +351,7 @@ class CodexCliClient(object):
             agent_session_id=agent_session_id,
             task_id=task_id,
             task_summary=task_summary,
+            additional_dirs=additional_dirs,
         )
 
     def fix_review_comments(
@@ -360,16 +362,23 @@ class CodexCliClient(object):
         task_id: str = '',
         task_summary: str = '',
         mode: str = 'fix',
+        additional_dirs: list[str] | None = None,
     ) -> dict[str, str | bool]:
         """Address one or more PR review comments in a single spawn.
 
         Mirrors ``ClaudeCliClient.fix_review_comments`` — same signature,
         same return contract, same ``mode`` semantics (``fix`` vs
-        ``answer``).
+        ``answer``), same ``additional_dirs`` sandbox-widening semantics.
         """
         if not comments:
             raise ValueError('fix_review_comments requires at least one comment')
         cwd = self._review_comment_cwd(comments[0])
+        extra_dirs = [
+            path for path in (
+                normalized_text(path) for path in (additional_dirs or [])
+            )
+            if path and path != cwd
+        ]
         # Codex has no ``--append-system-prompt`` flag (unlike Claude, where
         # this is attached to the CLI invocation itself and so applies to
         # EVERY spawn uniformly) — every Codex prompt builder must splice it
@@ -398,7 +407,7 @@ class CodexCliClient(object):
         result = self._run_prompt_result(
             prompt=prompt,
             cwd=cwd,
-            additional_dirs=[],
+            additional_dirs=extra_dirs,
             agent_session_id=agent_session_id,
             branch_name=branch_name,
             default_commit_message='Address review comments',

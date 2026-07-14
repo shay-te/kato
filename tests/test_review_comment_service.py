@@ -440,6 +440,19 @@ class ReviewCommentServiceTests(unittest.TestCase):
         # workspace clone (so the fix branch / push lands there).
         self.assertEqual(result.id, 'admin-client')
         self.assertEqual(result.local_path, '/wks/PROJ-9/admin-client')
+        # Regression: the OTHER two repos' clone paths must be stashed
+        # on the result so the caller can widen the review-fix agent's
+        # sandbox to the whole task, not just this one repo — the "kato
+        # is stuck under one repo scope after PR comments" production bug.
+        self.assertEqual(
+            sorted(
+                getattr(result, ReviewCommentService._ADDITIONAL_TASK_REPO_DIRS_ATTR),
+            ),
+            sorted([
+                f'/wks/PROJ-9/{repo_id}'
+                for repo_id in ('admin-backend', 'core-lib')
+            ]),
+        )
 
     def test_provision_workspace_clone_finds_task_in_assigned_queue_too(self) -> None:
         # Regression: ``_task_for_workspace_clone`` only looked at

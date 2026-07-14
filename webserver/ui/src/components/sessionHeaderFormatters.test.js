@@ -31,6 +31,22 @@ test('formatMergeResult lists each merged repo with its commit count + branch', 
   assert.match(out.message, /✓ task-core-lib: merged 1 commit\(s\) from master/);
 });
 
+test('formatMergeResult includes the task id in the title when given', () => {
+  // Regression: same class of bug as formatFinishResult/formatPushResult —
+  // the merge toast named the repo but never the task.
+  const out = formatMergeResult({
+    ok: true,
+    body: {
+      merged_repositories: [
+        { repository_id: 'ob-love-admin-client', commits_merged: 32, default_branch: 'master' },
+      ],
+      skipped_repositories: [],
+      failed_repositories: [],
+    },
+  }, 'UNA-2536');
+  assert.equal(out.title, 'Default branch merged (UNA-2536)');
+});
+
 test('formatMergeResult: nothing to merge LISTS the already-up-to-date repos', () => {
   const out = formatMergeResult({
     ok: true,
@@ -485,4 +501,24 @@ test('formatMergeConflicts falls back gracefully when repos differ / chat unreac
   assert.ok(out.message.includes('backend: 1 conflicted file'));
   assert.ok(out.message.includes('client: 1 conflicted file'));
   assert.ok(out.message.includes("Couldn't reach the chat"));
+});
+
+test('formatMergeConflicts includes the task id in the title when given', () => {
+  // Regression: this toast (like every other global/backgrounded-task
+  // toast) named the repo but never the task — in a multi-task operator
+  // session there was no way to tell which tab's merge just conflicted.
+  const out = formatMergeConflicts(
+    [{ repository_id: 'ob-love-admin-backend', default_branch: 'master',
+       conflicted_files: ['a.py', 'b.py', 'c.py'] }],
+    { chatDelivered: true, taskId: 'UNA-2536' },
+  );
+  assert.equal(out.title, 'Merged master — conflicts to resolve (UNA-2536)');
+});
+
+test('formatMergeConflicts omits the task-id suffix when no taskId is given', () => {
+  const out = formatMergeConflicts(
+    [{ repository_id: 'backend', default_branch: 'master', conflicted_files: ['a'] }],
+    { chatDelivered: true },
+  );
+  assert.equal(out.title, 'Merged master — conflicts to resolve');
 });

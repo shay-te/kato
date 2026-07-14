@@ -6,6 +6,7 @@ from kato_core_lib.data_layers.data.fields import (
 )
 from provider_client_base.provider_client_base.data.review_comment import ReviewComment
 from kato_core_lib.helpers.review_comment_utils import (
+    KATO_REVIEW_COMMENT_NO_CHANGES_PREFIX,
     ReviewReplyTemplate,
     is_kato_review_comment_reply,
     normalize_comment_context,
@@ -143,6 +144,27 @@ class ReviewCommentUtilsTests(unittest.TestCase):
             ),
         )
         self.assertTrue(is_kato_review_comment_reply(answer))
+
+    def test_is_kato_review_comment_reply_recognizes_no_changes_reply(self) -> None:
+        # Regression: kato's "agent ran but produced no commits" reply
+        # opens with KATO_REVIEW_COMMENT_NO_CHANGES_PREFIX, not the
+        # "Kato addressed…" prefix. Before this prefix was registered,
+        # kato never recognised its own "no changes" reply on the next
+        # poll, re-processed it as an unaddressed reviewer comment, and
+        # reposted "no changes" every scan tick forever.
+        no_changes = ReviewComment(
+            pull_request_id='17',
+            comment_id='202',
+            author='kato',
+            body=(
+                f'{KATO_REVIEW_COMMENT_NO_CHANGES_PREFIX} The comment '
+                'has not been resolved — please review the agent\'s '
+                'reasoning in the planning UI and either re-prompt with '
+                'more context, edit the file directly, or resolve the '
+                'comment yourself if no change is needed.'
+            ),
+        )
+        self.assertTrue(is_kato_review_comment_reply(no_changes))
 
     def test_is_kato_review_comment_reply_false_for_plain_reviewer_comment(self) -> None:
         reviewer = ReviewComment(

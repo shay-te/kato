@@ -30,6 +30,7 @@ from kato_core_lib.helpers.mission_logging_utils import (
     log_review_comment_start,
 )
 from kato_core_lib.helpers.review_comment_utils import (
+    KATO_REVIEW_COMMENT_NO_CHANGES_PREFIX,
     ReviewFixContext,
     comment_context_entry,
     is_kato_review_comment_reply,
@@ -744,6 +745,15 @@ class ReviewCommentService(Service):
         mode: str = 'fix',
         repository=None,
     ) -> dict[str, str | bool]:
+        # Every OTHER repo the task touches, beyond the one the triggering
+        # comment lives on — stashed by ``_provision_workspace_clone``.
+        # Widens the agent's sandbox to the whole task instead of just
+        # this one repo; without it a review-fix agent that finishes the
+        # comment's repo has no filesystem access to a sibling repo the
+        # SAME task also needs (the "stuck under one repo scope" bug).
+        additional_dirs = list(
+            getattr(repository, self._ADDITIONAL_TASK_REPO_DIRS_ATTR, ()) or ()
+        ) if repository is not None else []
         if streaming:
             # Spawn cwd for the streaming agent. MUST be the workspace
             # clone's path (under ``KATO_WORKSPACES_ROOT``), NOT the
@@ -763,12 +773,14 @@ class ReviewCommentService(Service):
                 task_id=review_context.task_id,
                 task_summary=review_context.task_summary,
                 repository_local_path=spawn_cwd,
+                additional_dirs=additional_dirs,
             )
             singular_args = lambda c: (c, review_context.branch_name)  # noqa: E731
         else:
             kwargs = dict(
                 task_id=review_context.task_id,
                 task_summary=review_context.task_summary,
+                additional_dirs=additional_dirs,
             )
             singular_args = lambda c: (  # noqa: E731
                 c, review_context.branch_name, review_context.agent_session_id,
@@ -806,6 +818,25 @@ class ReviewCommentService(Service):
                 return last_execution
         return last_execution
 
+    # Attribute stashed on the repository returned by
+    # ``_provision_workspace_clone`` — the local paths of every OTHER
+    # repo the task touches. Read by ``_call_fix_review_comments_or_fanout``
+    # to widen the review-fix agent's sandbox to the whole task instead of
+    # just the repo the triggering comment happens to live on.
+    _ADDITIONAL_TASK_REPO_DIRS_ATTR = 'kato_review_fix_additional_dirs'
+
+    @staticmethod
+    def _sibling_local_paths(repositories, primary) -> list[str]:
+        primary_path = normalized_text(getattr(primary, 'local_path', '') or '')
+        seen = {primary_path} if primary_path else set()
+        paths: list[str] = []
+        for candidate in repositories or []:
+            path = normalized_text(getattr(candidate, 'local_path', '') or '')
+            if path and path not in seen:
+                paths.append(path)
+                seen.add(path)
+        return paths
+
     def _provision_workspace_clone(self, repository, review_context):
         """Return a copy of ``repository`` re-pointed at the per-task clone.
 
@@ -828,6 +859,15 @@ class ReviewCommentService(Service):
         Falls through to the original ``repository`` when no workspace
         manager is configured — preserves the legacy single-repo
         behaviour for setups that never opted into workspaces.
+
+        Also stashes the OTHER cloned repos' local paths on the
+        returned object (see ``_ADDITIONAL_TASK_REPO_DIRS_ATTR``) so
+        the caller can widen the agent's sandbox to every repo the
+        task touches, not just this one. Without this, a review-fix
+        agent that finishes editing the repo tied to the triggering
+        comment has no filesystem access to a sibling repo the SAME
+        task also needs — even though the initial task-implementation
+        session for that same task had access to every attached repo.
         """
         if self._workspace_manager is None:
             return repository
@@ -873,10 +913,17 @@ class ReviewCommentService(Service):
             # the rest of the review-fix flow (branch checkout, push,
             # etc.) operates on its workspace clone, not the operator's
             # shared checkout.
+            result = repository
             for clone in provisioned or []:
                 if getattr(clone, 'id', '') == review_context.repository_id:
-                    return clone
-            return repository
+                    result = clone
+                    break
+            setattr(
+                result,
+                self._ADDITIONAL_TASK_REPO_DIRS_ATTR,
+                self._sibling_local_paths(provisioned or task_repositories, result),
+            )
+            return result
         except Exception:
             self.logger.exception(
                 'failed to provision per-task workspace clone for review-fix '
@@ -1058,8 +1105,7 @@ class ReviewCommentService(Service):
         the next comment's reply.
         """
         body = (
-            'Kato ran an agent against this comment but produced no '
-            'commits and left the working tree clean. The comment '
+            f'{KATO_REVIEW_COMMENT_NO_CHANGES_PREFIX} The comment '
             'has not been resolved — please review the agent\'s '
             'reasoning in the planning UI and either re-prompt with '
             'more context, edit the file directly, or resolve the '

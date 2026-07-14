@@ -1286,6 +1286,7 @@ class AgentServiceTests(unittest.TestCase):
             {
                 'task_id': 'PROJ-1',
                 'task_summary': 'fix it already',
+                'additional_dirs': [],
             },
         )
         self.repository_service.prepare_task_branches.assert_called_once_with(

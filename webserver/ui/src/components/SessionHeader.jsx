@@ -135,6 +135,7 @@ export default function SessionHeader({
           toast.show({
             ...formatMergeConflicts(conflicted, {
               chatDelivered: !!(sent && sent.ok),
+              taskId: session.task_id,
             }),
             durationMs: 12000,
           });
@@ -143,7 +144,7 @@ export default function SessionHeader({
         // Clean / skipped / failed / nothing — one toast that NAMES every
         // repo merged from the default branch (formatMergeResult). The
         // conflict path above is handled separately (it messages Claude).
-        const merged = formatMergeResult(result);
+        const merged = formatMergeResult(result, session.task_id);
         toast.show({ ...merged, durationMs: merged.kind === 'success' ? 7000 : 6000 });
       },
     },

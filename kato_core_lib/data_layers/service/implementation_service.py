@@ -31,6 +31,7 @@ class ImplementationService(_AgentClientService):
         agent_session_id: str = '',
         task_id: str = '',
         task_summary: str = '',
+        additional_dirs=None,
     ) -> dict[str, str | bool]:
         return self._client.fix_review_comment(
             comment,
@@ -38,6 +39,7 @@ class ImplementationService(_AgentClientService):
             agent_session_id,
             task_id=task_id,
             task_summary=task_summary,
+            additional_dirs=additional_dirs,
         )
 
     def fix_review_comments(
@@ -48,6 +50,7 @@ class ImplementationService(_AgentClientService):
         task_id: str = '',
         task_summary: str = '',
         mode: str = 'fix',
+        additional_dirs=None,
     ) -> dict[str, str | bool]:
         """Address every comment in ``comments`` via the agent client.
 
@@ -69,6 +72,7 @@ class ImplementationService(_AgentClientService):
                 task_id=task_id,
                 task_summary=task_summary,
                 mode=mode,
+                additional_dirs=additional_dirs,
             )
         # Fallback: iterate. Loses the batching efficiency, but
         # preserves correctness — every comment still gets addressed.
@@ -78,11 +82,24 @@ class ImplementationService(_AgentClientService):
         # commit that nobody pushes.
         last_result: dict[str, str | bool] = {}
         for comment in comments:
-            last_result = self._client.fix_review_comment(
-                comment,
-                branch_name,
-                agent_session_id,
-                task_id=task_id,
-                task_summary=task_summary,
-            )
+            try:
+                last_result = self._client.fix_review_comment(
+                    comment,
+                    branch_name,
+                    agent_session_id,
+                    task_id=task_id,
+                    task_summary=task_summary,
+                    additional_dirs=additional_dirs,
+                )
+            except TypeError:
+                # Older/custom clients written before ``additional_dirs``
+                # existed don't accept the kwarg — degrade to single-repo
+                # scope rather than crash the whole batch.
+                last_result = self._client.fix_review_comment(
+                    comment,
+                    branch_name,
+                    agent_session_id,
+                    task_id=task_id,
+                    task_summary=task_summary,
+                )
         return last_result

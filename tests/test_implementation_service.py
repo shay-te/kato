@@ -34,6 +34,7 @@ class ImplementationServiceTests(unittest.TestCase):
             'conversation-1',
             task_id='',
             task_summary='',
+            additional_dirs=None,
         )
 
 
