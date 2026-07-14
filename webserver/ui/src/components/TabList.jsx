@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Icon, { BusyIcon } from './Icon.jsx';
 import Tab from './Tab.jsx';
+import { useHorizontalWheelScroll } from '../hooks/useHorizontalWheelScroll.js';
 import {
   orderByPinned,
   readPinnedIds,
@@ -90,46 +91,17 @@ export default function TabList({
     if (!node) { return undefined; }
     const onScroll = () => recomputeScrollState();
     const onResize = () => recomputeScrollState();
-    // Mouse wheels on non-Mac platforms emit deltaY only by
-    // default; in a horizontal strip that would scroll the page
-    // instead of the segments. We map any "mostly vertical"
-    // wheel event to a horizontal scroll on this node so a
-    // single-axis wheel can step through tabs. Trackpad gestures
-    // (which already carry deltaX) are passed through untouched.
-    const onWheel = (event) => {
-      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) {
-        return;
-      }
-      // Normalise deltaY to PIXELS. A physical mouse wheel on
-      // Windows/Firefox reports deltaMode === 1 (LINES, deltaY ≈ 3)
-      // — adding 3 to scrollLeft barely moves, so the wheel felt
-      // dead (the reported bug). Lines → ~16px each; pages → a
-      // viewport width. Pixel wheels (deltaMode 0) pass through as-is.
-      const step = event.deltaMode === 1
-        ? event.deltaY * 16
-        : event.deltaMode === 2
-          ? event.deltaY * node.clientWidth
-          : event.deltaY;
-      // Only consume the event when there's actually room to
-      // scroll in that direction — otherwise the page should
-      // still scroll normally.
-      const goingRight = step > 0;
-      const atEnd = goingRight
-        ? node.scrollLeft + node.clientWidth >= node.scrollWidth - 1
-        : node.scrollLeft <= 0;
-      if (atEnd) { return; }
-      event.preventDefault();
-      node.scrollLeft += step;
-    };
     node.addEventListener('scroll', onScroll, { passive: true });
-    node.addEventListener('wheel', onWheel, { passive: false });
     window.addEventListener('resize', onResize);
     return () => {
       node.removeEventListener('scroll', onScroll);
-      node.removeEventListener('wheel', onWheel);
       window.removeEventListener('resize', onResize);
     };
   }, [recomputeScrollState]);
+  // Vertical-mouse-wheel-to-horizontal-scroll remap — shared with
+  // every other horizontally-scrolling tab strip (see the hook for
+  // the Windows/Firefox deltaMode normalisation this fixes).
+  useHorizontalWheelScroll(scrollRef);
 
   // No auto-scroll-into-view on tab selection: the operator's own
   // scroll position is intentional and must not be fought. With many

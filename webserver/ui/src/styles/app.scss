@@ -51,6 +51,40 @@
   box-sizing: border-box;
 }
 
+// Global scrollbar theme — thin, dark, low-contrast — applied to every
+// scrollable element in the app by default (operator report: native
+// scrollbars read as chunky and visually mismatched against the dark
+// theme). The site-specific @include custom-scrollbar(...) calls below
+// (.tabs-scroller, #message-input, .event-log) still apply on top —
+// their class selector is more specific than this universal one, so
+// they simply win where a spot needs a different width/colour/radius.
+* {
+  scrollbar-width: thin; // Firefox
+  scrollbar-color: $C-NEUTRAL-96-A42 transparent; // Firefox: thumb track
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: $C-NEUTRAL-96-A42;
+  border-radius: $RADIUS-4;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: $C-NEUTRAL-96-A65;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 /* Make HTML `hidden` actually hide elements that override `display` in CSS
  * (e.g. `.modal { display: flex }` would otherwise leak through). */
 [hidden] {
@@ -552,7 +586,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 
   /* WebKit: slim horizontal (height-sized) bar with a bordered thumb. */
   @include custom-scrollbar(
-    $width: 8px,
+    $width: 6px,
     $thumb: $C-NEUTRAL-96-A42,
     $track: $C-NEUTRAL-100-A06,
     $vertical: false,
@@ -1532,7 +1566,7 @@ header .chats-menu button:not(.header-status) {
   scrollbar-width: thin;
   scrollbar-color: $C-NEUTRAL-96-A42 transparent;
   @include custom-scrollbar(
-    10px, $C-NEUTRAL-96-A42, transparent, $thumb-radius: $RADIUS-PILL
+    6px, $C-NEUTRAL-96-A42, transparent, $thumb-radius: $RADIUS-PILL
   );
 }
 

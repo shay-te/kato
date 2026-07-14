@@ -492,8 +492,18 @@ class ClaudeCliClient(object):
         task: Any,
         prepared_task: Any | None = None,
     ) -> str:
+        # workspace_root (the task's whole workspace folder, set only when
+        # workspace-clone mode provisioned these repos) goes FIRST so
+        # workspace_scope_block's redundant-descendant collapse drops each
+        # individual repo path in favor of it — one boundary instead of
+        # one bullet per attached repo, and one that still covers a repo
+        # attached to the task AFTER this prompt was built.
+        workspace_root = normalized_text(text_from_attr(prepared_task, 'workspace_root'))
+        scope_paths = _repository_local_paths(prepared_task)
+        if workspace_root:
+            scope_paths = [workspace_root, *scope_paths]
         scope_block = agent_prompt_utils.workspace_scope_block(
-            _repository_local_paths(prepared_task),
+            scope_paths,
             extra_refusal_guidance=self._workspace_refusal_guidance,
         )
         repository_scope = agent_prompt_utils.repository_scope_text(task, prepared_task)

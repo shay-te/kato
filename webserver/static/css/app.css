@@ -3,6 +3,33 @@
   box-sizing: border-box;
 }
 
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(245, 245, 247, 0.42) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(245, 245, 247, 0.42);
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(245, 245, 247, 0.65);
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 /* Make HTML `hidden` actually hide elements that override `display` in CSS
  * (e.g. `.modal { display: flex }` would otherwise leak through). */
 [hidden] {
@@ -502,7 +529,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   /* WebKit: slim horizontal (height-sized) bar with a bordered thumb. */
 }
 .tabs-scroller::-webkit-scrollbar {
-  height: 8px;
+  height: 6px;
 }
 .tabs-scroller::-webkit-scrollbar-track {
   background: rgba(255, 255, 255, 0.06);
@@ -1488,7 +1515,7 @@ header .chats-menu button:not(.header-status) {
   scrollbar-color: rgba(245, 245, 247, 0.42) transparent;
 }
 #event-log::-webkit-scrollbar {
-  width: 10px;
+  width: 6px;
 }
 #event-log::-webkit-scrollbar-track {
   background: transparent;

@@ -139,6 +139,43 @@ class TaskPreflightDefensiveTests(unittest.TestCase):
             [repo],
         )
 
+    def test_attach_task_repository_context_sets_workspace_root_when_provisioned(
+        self,
+    ) -> None:
+        # Workspace-clone mode: every repo's local_path is a sibling
+        # under the same task folder — workspace_root must be that
+        # shared parent, so the agent's prompt can collapse the
+        # enumerated repo list to one boundary (and stay in scope for
+        # a repo attached to the task later, since it clones into the
+        # same folder).
+        provisioner = MagicMock(return_value=[
+            types.SimpleNamespace(id='client', local_path='/wks/PROJ-1/client'),
+            types.SimpleNamespace(id='backend', local_path='/wks/PROJ-1/backend'),
+        ])
+        service, _ = _make_service(workspace_provisioner=provisioner)
+        repo_a = types.SimpleNamespace(id='client', local_path='/wks/PROJ-1/client')
+        repo_b = types.SimpleNamespace(id='backend', local_path='/wks/PROJ-1/backend')
+        prepared = service._attach_task_repository_context(self.task, [repo_a, repo_b])
+        self.assertEqual(prepared.workspace_root, '/wks/PROJ-1')
+
+    def test_attach_task_repository_context_leaves_workspace_root_blank_without_provisioner(
+        self,
+    ) -> None:
+        # Legacy / adopted-checkout mode: repos can live anywhere the
+        # operator configured (often ALL sharing one generic
+        # REPOSITORY_ROOT_PATH parent that spans every other task/repo
+        # too) — workspace_root must stay blank so the prompt never
+        # guesses a "shared parent" that would actually be far wider
+        # than this one task.
+        service, repo = _make_service()
+        prepared = service._attach_task_repository_context(self.task, [repo])
+        self.assertEqual(prepared.workspace_root, '')
+
+    def test_task_workspace_root_blank_for_empty_repositories(self) -> None:
+        provisioner = MagicMock(return_value=[])
+        service, _ = _make_service(workspace_provisioner=provisioner)
+        self.assertEqual(service._task_workspace_root([]), '')
+
     def test_enforce_rep_refuses_unapproved_without_handler(self) -> None:
         # Lines 348-353: no failure_handler → ``logger.error`` + return False.
         approval = MagicMock()

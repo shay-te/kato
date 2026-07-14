@@ -163,6 +163,34 @@ def security_guardrails_text() -> str:
     )
 
 
+def _collapse_redundant_scope_paths(paths: list[str]) -> list[str]:
+    """Drop any path that is a descendant of another path in the same
+    list — the ancestor the caller ALREADY explicitly included covers
+    it, so listing both is redundant and reads as two independent
+    boundaries instead of one (e.g. a review-fix comment's own repo
+    directory alongside the task's whole workspace folder that
+    already contains it).
+
+    Deliberately does NOT try to collapse SIBLING paths onto a common
+    parent directory the caller never listed, even when they happen to
+    share one — that parent might be the operator's entire configured
+    repository root (containing every OTHER task's/repo's checkout
+    too), not something scoped to this task. Only a path the caller
+    explicitly passed in can ever act as a boundary here; this
+    function only removes redundant, already-covered entries, never
+    invents a wider one.
+    """
+    if len(paths) < 2:
+        return paths
+    return [
+        candidate for candidate in paths
+        if not any(
+            other != candidate and candidate.startswith(other + os.sep)
+            for other in paths
+        )
+    ]
+
+
 def workspace_scope_block(allowed_paths, extra_refusal_guidance: str = '') -> str:
     """Render the unmissable strict workspace-boundary block.
 
@@ -178,12 +206,15 @@ def workspace_scope_block(allowed_paths, extra_refusal_guidance: str = '') -> st
     path set don't emit a malformed boundary.
     """
     paths: list[str] = []
+    seen: set[str] = set()
     for raw in allowed_paths or []:
         if not raw:
             continue
         normalized = os.path.normpath(str(raw)).rstrip(os.sep)
-        if normalized and normalized != '.':
+        if normalized and normalized != '.' and normalized not in seen:
+            seen.add(normalized)
             paths.append(normalized)
+    paths = _collapse_redundant_scope_paths(paths)
     if not paths:
         return ''
     bullet_lines = '\n'.join(f'  - {p}' for p in paths)

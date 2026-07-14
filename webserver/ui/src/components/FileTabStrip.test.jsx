@@ -118,6 +118,27 @@ describe('FileTabStrip', () => {
     expect(screen.getByTitle('client/src/auth.py')).toBeInTheDocument();
   });
 
+  test('a vertical mouse wheel scrolls the strip horizontally (useHorizontalWheelScroll wired up)', () => {
+    const { container } = render(
+      <FileTabStrip
+        tabs={[tab(), tab({ key: 'client::src/other.py', relativePath: 'src/other.py' })]}
+        activeKey={null}
+        onSelect={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    const strip = container.querySelector('.file-tab-strip');
+    Object.defineProperty(strip, 'scrollLeft', { value: 0, writable: true });
+    Object.defineProperty(strip, 'clientWidth', { value: 100 });
+    Object.defineProperty(strip, 'scrollWidth', { value: 500 });
+    const event = new WheelEvent('wheel', {
+      deltaY: 50, deltaX: 0, bubbles: true, cancelable: true,
+    });
+    strip.dispatchEvent(event);
+    expect(strip.scrollLeft).toBe(50);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
   test('a diff-view tab and a file-view tab render distinct icons', () => {
     const { container } = render(
       <FileTabStrip

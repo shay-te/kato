@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 from agent_core_lib.agent_core_lib.helpers.agent_prompt_utils import (
     IGNORED_REPOSITORY_FOLDERS_ENV,
+    _collapse_redundant_scope_paths,
     forbidden_repository_guardrails_text,
     ignored_repository_folder_names,
     repository_scope_text,
@@ -84,6 +85,83 @@ class WorkspaceScopeBlockBranchTests(unittest.TestCase):
         # Same branch (155->151), but the filter takes EVERY path so
         # ``paths`` stays empty and the function short-circuits to ''.
         self.assertEqual(workspace_scope_block(['.', '', None]), '')
+
+    def test_collapses_a_repo_path_nested_under_the_workspace_root(self) -> None:
+        # UNA-2763 production report: review-fix's scope block listed
+        # BOTH the comment's own repo AND the task's whole workspace
+        # folder (which already contains it) as two separate, seemingly
+        # independent bullets. The narrower, already-covered path must
+        # not appear once its ancestor is also in the list.
+        block = workspace_scope_block([
+            '/wks/UNA-2763/ob-love-admin-client', '/wks/UNA-2763',
+        ])
+        self.assertIn('  - /wks/UNA-2763\n', block)
+        self.assertNotIn('ob-love-admin-client', block)
+
+    def test_does_not_collapse_unrelated_sibling_paths(self) -> None:
+        # Two repos that don't nest inside each other must BOTH stay —
+        # this is the legitimate multi-repo case, not redundancy.
+        block = workspace_scope_block([
+            '/wks/UNA-2763/ob-love-admin-client',
+            '/wks/UNA-2763/library-core-lib',
+        ])
+        self.assertIn('ob-love-admin-client', block)
+        self.assertIn('library-core-lib', block)
+
+
+class CollapseRedundantScopePathsTests(unittest.TestCase):
+    """Direct unit coverage for the helper, isolating it from
+    workspace_scope_block's rendering so the SAFETY boundary — never
+    inventing a shared-parent path the caller didn't explicitly list —
+    is pinned independently of the prose around it.
+    """
+
+    def test_drops_a_path_nested_under_another(self) -> None:
+        result = _collapse_redundant_scope_paths([
+            '/wks/T1/repo-a', '/wks/T1',
+        ])
+        self.assertEqual(result, ['/wks/T1'])
+
+    def test_order_of_ancestor_and_descendant_does_not_matter(self) -> None:
+        result = _collapse_redundant_scope_paths([
+            '/wks/T1', '/wks/T1/repo-a',
+        ])
+        self.assertEqual(result, ['/wks/T1'])
+
+    def test_drops_multiple_descendants_of_the_same_ancestor(self) -> None:
+        result = _collapse_redundant_scope_paths([
+            '/wks/T1/repo-a', '/wks/T1/repo-b', '/wks/T1',
+        ])
+        self.assertEqual(result, ['/wks/T1'])
+
+    def test_never_invents_a_shared_parent_that_was_not_explicitly_listed(self) -> None:
+        # SAFETY: two repos sharing a parent directory that is NOT
+        # itself in the list must NOT collapse to that parent — it
+        # could be the operator's entire configured repository root
+        # (every task's, every repo's checkout), not something scoped
+        # to this one task.
+        result = _collapse_redundant_scope_paths([
+            '/repos/admin-client', '/repos/admin-backend',
+        ])
+        self.assertEqual(
+            sorted(result), ['/repos/admin-backend', '/repos/admin-client'],
+        )
+
+    def test_single_path_is_returned_unchanged(self) -> None:
+        self.assertEqual(
+            _collapse_redundant_scope_paths(['/wks/T1']), ['/wks/T1'],
+        )
+
+    def test_empty_list_is_returned_unchanged(self) -> None:
+        self.assertEqual(_collapse_redundant_scope_paths([]), [])
+
+    def test_a_path_that_merely_shares_a_string_prefix_is_not_treated_as_nested(self) -> None:
+        # '/wks/T1-extra' is NOT inside '/wks/T1' — a naive
+        # startswith('/wks/T1') (no separator) would wrongly say it is.
+        result = _collapse_redundant_scope_paths([
+            '/wks/T1', '/wks/T1-extra',
+        ])
+        self.assertEqual(sorted(result), ['/wks/T1', '/wks/T1-extra'])
 
 
 class RepositoryScopeTextBranchTests(unittest.TestCase):

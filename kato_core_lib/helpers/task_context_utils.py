@@ -21,6 +21,15 @@ class PreparedTaskContext(object):
     # un-pushable reference repo (e.g. an external library) doesn't reject the
     # whole task — kato just works the writable repos and notes the rest.
     read_only_repository_ids: set[str] = field(default_factory=set)
+    # The task's whole per-task workspace folder (parent of every attached
+    # repo's clone, e.g. ``<workspace_root>/<task_id>``) — set ONLY when
+    # workspace-clone mode actually provisioned these repos (never guessed
+    # from path structure; see ``_attach_task_repository_context``). Lets the
+    # agent's WORKSPACE SCOPE prompt collapse to this single folder instead
+    # of enumerating every repo individually, so a repo attached to the task
+    # AFTER the prompt was built is still in scope (it clones into this same
+    # folder) instead of the agent staying blind to it.
+    workspace_root: str = ''
 
 
 def task_has_actionable_definition(task: Task) -> bool:

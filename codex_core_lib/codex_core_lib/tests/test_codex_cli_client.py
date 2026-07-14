@@ -1647,5 +1647,52 @@ class ReadableMessageFromEnvelopeLoopExitTests(unittest.TestCase):
         )
 
 
+class ImplementationPromptWorkspaceRootScopeTests(unittest.TestCase):
+    """Mirrors ClaudeCliClient's equivalent regression: the WORKSPACE
+    SCOPE block must collapse to workspace_root (when
+    TaskPreflightService set it — workspace-clone mode only, never
+    guessed) instead of enumerating every attached repo's own clone
+    path, so it reads as one boundary and stays in scope for a repo
+    attached to the task after this prompt was built.
+    """
+
+    def test_collapses_to_workspace_root_when_set(self) -> None:
+        client = CodexCliClient(binary='codex')
+        prepared_task = SimpleNamespace(
+            repositories=[
+                SimpleNamespace(id='client', local_path='/wks/PROJ-7/client'),
+                SimpleNamespace(id='backend', local_path='/wks/PROJ-7/backend'),
+            ],
+            repository_branches={'client': 'PROJ-7', 'backend': 'PROJ-7'},
+            agents_instructions='',
+            workspace_root='/wks/PROJ-7',
+        )
+        task = SimpleNamespace(id='PROJ-1', summary='fix it', description='details')
+
+        prompt = client._build_implementation_prompt(task, prepared_task)
+
+        scope_block = prompt.split('Implement task', 1)[0]
+        self.assertIn('WORKSPACE SCOPE', scope_block)
+        self.assertIn('  - /wks/PROJ-7\n', scope_block)
+        self.assertNotIn('/wks/PROJ-7/client', scope_block)
+        self.assertNotIn('/wks/PROJ-7/backend', scope_block)
+
+    def test_falls_back_to_enumerated_repos_when_workspace_root_unset(self) -> None:
+        client = CodexCliClient(binary='codex')
+        prepared_task = SimpleNamespace(
+            repositories=[
+                SimpleNamespace(id='client', local_path='/checkout/client'),
+            ],
+            repository_branches={'client': 'PROJ-7'},
+            agents_instructions='',
+            workspace_root='',
+        )
+        task = SimpleNamespace(id='PROJ-1', summary='fix it', description='details')
+
+        prompt = client._build_implementation_prompt(task, prepared_task)
+
+        self.assertIn('/checkout/client', prompt)
+
+
 if __name__ == '__main__':
     unittest.main()

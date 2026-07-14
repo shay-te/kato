@@ -20,6 +20,7 @@ class PreparedTaskContext:
     repositories: list[Any] = field(default_factory=list)
     repository_branches: dict[str, str] = field(default_factory=dict)
     agents_instructions: str = ''
+    workspace_root: str = ''
 
 
 class _FakeRepo:
@@ -1874,6 +1875,66 @@ class ReviewPromptMultiRepoWorkspaceScopeTests(unittest.TestCase):
         self.assertEqual(
             captured['additional_dirs'], ['/wks/UNA-2763/library-core-lib'],
         )
+
+
+class ImplementationPromptWorkspaceRootScopeTests(unittest.TestCase):
+    """Regression: the initial task-implementation prompt's WORKSPACE
+    SCOPE block enumerated every attached repo's own clone path
+    individually, even in workspace-clone mode where they all live
+    under one shared task folder. That's confusing (reads as several
+    independent boundaries instead of one) and it left the agent BLIND
+    to a repo the operator attached to the task AFTER this prompt was
+    built — only paths named explicitly are ever in scope, and the new
+    repo was never named. ``workspace_root`` (set by
+    TaskPreflightService only when workspace-clone mode actually
+    provisioned the repos — never guessed) collapses the enumerated
+    list to the one folder that already covers all of them, present
+    and future.
+    """
+
+    def test_collapses_to_workspace_root_when_set(self) -> None:
+        client = ClaudeCliClient(binary='claude')
+        prepared_task = PreparedTaskContext(
+            branch_name='PROJ-7',
+            repositories=[
+                _FakeRepo('client', '/wks/PROJ-7/client'),
+                _FakeRepo('backend', '/wks/PROJ-7/backend'),
+            ],
+            repository_branches={'client': 'PROJ-7', 'backend': 'PROJ-7'},
+            workspace_root='/wks/PROJ-7',
+        )
+
+        prompt = client._build_implementation_prompt(build_task(), prepared_task)
+
+        self.assertIn('WORKSPACE SCOPE', prompt)
+        self.assertIn('  - /wks/PROJ-7\n', prompt)
+        # Only the WORKSPACE SCOPE boundary block collapses to the root —
+        # repository_scope_text's per-repo branch instructions further
+        # down the prompt legitimately still name each repo individually
+        # (that section isn't a security boundary, it's per-repo workflow
+        # guidance), so check just the scope block, not the whole prompt.
+        scope_block = prompt.split('Implement task', 1)[0]
+        self.assertNotIn('/wks/PROJ-7/client', scope_block)
+        self.assertNotIn('/wks/PROJ-7/backend', scope_block)
+
+    def test_falls_back_to_enumerated_repos_when_workspace_root_unset(self) -> None:
+        # Legacy / adopted-checkout mode (no workspace manager wired):
+        # workspace_root stays '' and every repo is listed individually,
+        # exactly as before this change.
+        client = ClaudeCliClient(binary='claude')
+        prepared_task = PreparedTaskContext(
+            branch_name='PROJ-7',
+            repositories=[
+                _FakeRepo('client', '/checkout/client'),
+                _FakeRepo('backend', '/checkout/backend'),
+            ],
+            repository_branches={'client': 'PROJ-7', 'backend': 'PROJ-7'},
+        )
+
+        prompt = client._build_implementation_prompt(build_task(), prepared_task)
+
+        self.assertIn('/checkout/client', prompt)
+        self.assertIn('/checkout/backend', prompt)
 
 
 if __name__ == '__main__':

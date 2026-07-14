@@ -29,6 +29,21 @@ COMMAND_KEYED_TOOLS = frozenset({'Bash'})
 # signature -- approving one silently blessed the other forever.
 _NOISE_PROGRAMS = frozenset({'cd', 'pushd', 'popd', 'export'})
 
+# Pure output-shaping pipes Claude tacks onto the END of a command to
+# truncate/summarize what it reads back (`... | head -30`, `| tail -20`,
+# `| wc -l`). These change nothing about what the command actually DOES —
+# unlike a "new program tacked onto an allowed one" that genuinely needs
+# its own re-approval (test_chain_keeps_every_program), a different
+# truncation choice on an otherwise-identical, already-approved command
+# was silently re-prompting every time (operator report: approved
+# `python -m pytest ...` once, the next turn appended `| head -30` and
+# the remembered decision no longer matched). Deliberately a SHORT,
+# hand-picked allowlist of read-only, side-effect-free utilities — NOT
+# a general "trust anything after a pipe" rule. Do not add anything here
+# that can affect program behavior or exfiltrate data (grep, curl, xargs,
+# tee, sh -c, eval, nc, ...); those must keep re-prompting.
+_OUTPUT_SHAPING_PROGRAMS = frozenset({'head', 'tail', 'wc', 'sort', 'uniq'})
+
 # Privilege-escalation wrappers -- the OPPOSITE problem from _NOISE_PROGRAMS:
 # dropping these would be wrong (running AS root is exactly the part that
 # matters), but keying on the bare wrapper name is just as unsafe -- `sudo npm
@@ -233,7 +248,10 @@ def command_signature_of(command: str) -> str:
     across task folders. ALL programs in a chain are included (deduped,
     in order) so `mvn ... && rm -rf ...` never matches a remembered bare
     `mvn` — a new program tacked onto an allowed one re-prompts instead
-    of riding through."""
+    of riding through. The one exception is _OUTPUT_SHAPING_PROGRAMS
+    (`head`/`tail`/`wc`/`sort`/`uniq`) — read-only truncation/summary
+    pipes folded into noise like `cd`, so `... | head -30` this turn and
+    `... | tail -20` next turn still match the same remembered decision."""
     raw = str(command or '')
     if not raw.strip():
         return ''
@@ -243,7 +261,8 @@ def command_signature_of(command: str) -> str:
         prog = _program_of_segment(segment)
         if not prog:
             continue
-        bucket = noise if prog in _NOISE_PROGRAMS else meaningful
+        is_noise = prog in _NOISE_PROGRAMS or prog in _OUTPUT_SHAPING_PROGRAMS
+        bucket = noise if is_noise else meaningful
         if prog not in bucket:
             bucket.append(prog)
     # A non-empty command MUST never yield an empty signature: an empty key

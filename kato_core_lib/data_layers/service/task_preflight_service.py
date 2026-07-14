@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 
 from core_lib.data_layers.service.service import Service
@@ -822,7 +823,29 @@ class TaskPreflightService(MissionStepLoggerMixin, Service):
             repositories=list(repositories),
             repository_branches=repository_branches,
             agents_instructions=repository_agents_instructions_text(list(repositories)),
+            workspace_root=self._task_workspace_root(repositories),
         )
+
+    def _task_workspace_root(self, repositories: list[object]) -> str:
+        """The task's shared workspace folder, when workspace-clone mode
+        provisioned ``repositories`` — NEVER guessed from path structure.
+
+        Gated on ``self._workspace_provisioner is not None``: that is
+        confirmation (not a guess) that every repo's ``local_path`` was
+        just rewritten to ``<workspace_root>/<task.id>/<repo.id>`` by the
+        SAME provisioner call, so they are guaranteed siblings under one
+        parent. Without this gate, deriving a "shared parent" from
+        legacy/adopted-checkout paths could accidentally resolve to the
+        operator's entire configured repository root (every task's and
+        every repo's checkout), which must never be handed out as a
+        single scope boundary.
+        """
+        if self._workspace_provisioner is None or not repositories:
+            return ''
+        first_local_path = str(getattr(repositories[0], 'local_path', '') or '')
+        if not first_local_path:
+            return ''
+        return os.path.dirname(first_local_path)
 
     def _add_task_comment(
         self,

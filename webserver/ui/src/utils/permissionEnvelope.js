@@ -78,6 +78,20 @@ export function commandOf(toolInput) {
 // collapse to the identical bare "source" / "cd source" signature.
 const NOISE_PROGRAMS = new Set(['cd', 'pushd', 'popd', 'export']);
 
+// Pure output-shaping pipes Claude tacks onto the END of a command to
+// truncate/summarize what it reads back (`… | head -30`, `| tail -20`,
+// `| wc -l`). These change nothing about what the command actually DOES —
+// unlike a genuinely new program tacked onto an allowed one, a different
+// truncation choice on an otherwise-identical, already-approved command
+// was silently re-prompting every time (operator report: approved
+// `python -m pytest …` once, the next turn appended `| head -30` and the
+// remembered decision no longer matched). Deliberately a SHORT, hand-picked
+// allowlist of read-only, side-effect-free utilities — NOT a general
+// "trust anything after a pipe" rule. Never add anything here that can
+// affect program behavior or exfiltrate data (grep, curl, xargs, tee,
+// sh -c, eval, nc, …); those must keep re-prompting.
+const OUTPUT_SHAPING_PROGRAMS = new Set(['head', 'tail', 'wc', 'sort', 'uniq']);
+
 // Privilege-escalation wrappers — the OPPOSITE problem from NOISE_PROGRAMS:
 // dropping these would be wrong (unlike `cd`, running AS root is exactly the
 // part that matters), but keying on the bare wrapper name is just as unsafe —
@@ -253,7 +267,11 @@ function _splitTopLevelShellSegments(command) {
 // path/arg/cwd-independent, so the same `mvn verify` matches across task
 // folders. ALL programs in a chain are included (deduped, in order) so that
 // `mvn … && rm -rf …` ("mvn rm") never matches a remembered bare `mvn` — a
-// new program tacked onto an allowed one re-prompts instead of riding through.
+// new program tacked onto an allowed one re-prompts instead of riding
+// through. The one exception is OUTPUT_SHAPING_PROGRAMS (head/tail/wc/
+// sort/uniq) — read-only truncation/summary pipes folded into noise like
+// `cd`, so `… | head -30` this turn and `… | tail -20` next turn still
+// match the same remembered decision.
 export function commandSignatureOf(command) {
   const raw = String(command || '');
   if (!raw.trim()) { return ''; }
@@ -262,7 +280,8 @@ export function commandSignatureOf(command) {
   for (const segment of _splitTopLevelShellSegments(raw)) {
     const prog = _programOfSegment(segment);
     if (!prog) { continue; }
-    const bucket = NOISE_PROGRAMS.has(prog) ? noise : meaningful;
+    const isNoise = NOISE_PROGRAMS.has(prog) || OUTPUT_SHAPING_PROGRAMS.has(prog);
+    const bucket = isNoise ? noise : meaningful;
     if (!bucket.includes(prog)) { bucket.push(prog); }
   }
   // A non-empty command MUST never yield an empty signature: an empty key

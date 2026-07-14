@@ -1,5 +1,7 @@
+import { useRef } from 'react';
 import { cx } from '../utils/cx.js';
 import { basenameOf } from '../utils/basenameOf.js';
+import { useHorizontalWheelScroll } from '../hooks/useHorizontalWheelScroll.js';
 import Icon from './Icon.jsx';
 
 // VS Code-style row of open-file tabs above the centre editor/diff
@@ -7,13 +9,15 @@ import Icon from './Icon.jsx';
 // replaces another tab's content (see utils/fileTabs.js for the
 // open/focus/close logic this renders). Deliberately simpler than the
 // top task-tab strip (TabList.jsx): no pinning, no hover tooltip card,
-// no click-and-hold scroll — a plain horizontally-scrolling row is
-// enough for a handful of open files, and native scroll (mouse wheel /
-// trackpad) covers overflow without the extra machinery.
+// no chevron buttons / click-and-hold scroll — just the shared
+// wheel-scroll remap (a mouse wheel would otherwise scroll the page,
+// not this strip) plus native drag-the-thumb scrolling for overflow.
 export default function FileTabStrip({ tabs, activeKey, onSelect, onClose }) {
+  const scrollRef = useRef(null);
+  useHorizontalWheelScroll(scrollRef);
   if (!tabs || tabs.length === 0) { return null; }
   return (
-    <nav className="file-tab-strip" aria-label="Open files">
+    <nav className="file-tab-strip" aria-label="Open files" ref={scrollRef}>
       <ul className="file-tab-list">
         {tabs.map((tab) => (
           <FileTab

