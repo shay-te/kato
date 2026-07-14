@@ -1,0 +1,112 @@
+# Reploy deployment blueprint for Kato.
+# Schema reference: https://reploy.yadan.net/docs/blueprint-structure
+#
+# IMPORTANT CAVEATS — read before deploying:
+#
+# 1. Agent backend: this blueprint only supports KATO_AGENT_BACKEND=openhands.
+#    The Claude backend authenticates via `claude login` credentials stored
+#    in the HOST machine's keychain, which a container can never reach —
+#    kato itself refuses to start with KATO_AGENT_BACKEND=claude inside
+#    Docker (see Dockerfile / docker/entrypoint-run.sh). If you need the
+#    Claude backend, run kato natively on the host (`pip install -e .` +
+#    `kato up`) instead of through this container blueprint.
+#
+# 2. OpenHands companion service: kato's OpenHands backend needs a reachable
+#    OpenHands agent-server at OPENHANDS_BASE_URL (default
+#    http://openhands:3000 — see docker-compose.yaml for the reference
+#    two-service topology). This blueprint describes the kato app/container
+#    alone; provisioning the OpenHands companion service is a separate
+#    concern the deploying platform/operator must wire up (a second Reploy
+#    app, an existing OpenHands deployment, etc.) — kato will wait at
+#    startup for OPENHANDS_BASE_URL to answer before proceeding.
+#
+# 3. Provider credentials (YouTrack/Jira/Bitbucket/GitHub/GitLab tokens) are
+#    normally entered once through the planning UI's Settings drawer and
+#    persisted to ~/.kato/settings.json — that's why the whole ~/.kato
+#    directory is a managed, writeable, update-preserved path below rather
+#    than something rebuilt from env vars on every deploy.
+
+blueprint:
+  schema: 1
+  version: 0.1.0
+  requires_reploy: ">=0.5.1.dev1"
+
+app:
+  id: kato
+  provider:
+    type: python
+    identifier: kato
+
+install:
+  target:
+    default_path: "{{ reploy.install_root }}/{{ app.id }}"
+  system:
+    run_as:
+      user: kato
+      group: kato
+      on_missing: create
+  ports:
+    deployed:
+      https:
+        host_bind: 127.0.0.1
+        host_port: 5050
+    staging:
+      https:
+        host_bind: 127.0.0.1
+        host_port: 15050
+  managed_paths:
+    dirs:
+      # kato's ONLY state directory: settings.json (provider credentials +
+      # config), per-task workspaces/ clones, session transcripts, the
+      # local TLS CA + leaf cert the planning webserver generates for
+      # itself, and the small JSON stores (tool_decisions.json,
+      # forgotten_tasks.json, plan_mode.json, read_only_repos.json, ...).
+      # Preserved across updates and writeable at runtime — losing it
+      # means losing every stored credential, every in-flight task
+      # workspace, and every remembered permission/plan-mode decision.
+      - path: .kato
+        update: preserve
+        mount: /{{ path }}
+        writeable: true
+
+bundle:
+  options:
+    completion_email:
+      identifier: kato-completion-email
+      group: plugins
+      description: >-
+        Enable task/failure completion emails
+        (KATO_COMPLETION_EMAIL_ENABLED / KATO_FAILURE_EMAIL_ENABLED).
+
+docker:
+  service:
+    image: python:3.11-slim
+  health:
+    # kato has no literal "scheme" env var — KATO_WEBSERVER_HTTPS is a
+    # boolean flag (default enabled), not a scheme string — so scheme_env
+    # is intentionally omitted; default_scheme below is always accurate
+    # since HTTPS is on unless explicitly disabled.
+    host_env: KATO_WEBSERVER_HOST
+    port_env: KATO_WEBSERVER_PORT
+    default_scheme: https
+    default_host: 127.0.0.1
+    default_port: "5050"
+    path: /healthz
+  runtime:
+    hooks:
+      after_start:
+        - health_check:
+            wait: true
+  default_command: serve
+  command_defaults:
+    app_command: true
+    container:
+      argv_prefix: [python, -m, kato_core_lib.main]
+  commands:
+    serve:
+      container:
+        argv_suffix: []
+    doctor:
+      deployed_command: true
+      container:
+        argv_override: [kato, doctor]
