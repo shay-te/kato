@@ -24,6 +24,7 @@ import { toast } from '../stores/toastStore.js';
 import { diffDisplayPath } from '../diffModel.js';
 import { copyRepoRelativePath } from '../utils/clipboard.js';
 import { useDismissOnOutsidePointerOrEscape } from '../hooks/useDismissOnOutsidePointerOrEscape.js';
+import { useClampedPointMenu } from '../hooks/useClampedPointMenu.js';
 import { commentDraftKey } from '../utils/composerDraft.js';
 import { buildChatFragmentFromSelection } from '../utils/diffSelectionPrompt.js';
 import { tokenizeHunks } from '../utils/diffSyntax.js';
@@ -603,6 +604,7 @@ function DiffFileWithComments({
   }
 
   useDismissOnOutsidePointerOrEscape(pathMenu, closePathMenu);
+  const { menuRef: pathMenuRef, style: pathMenuStyle } = useClampedPointMenu(pathMenu);
 
   const fileThreads = useMemo(
     () => buildThreads(fileLevelComments),
@@ -902,8 +904,9 @@ function DiffFileWithComments({
   const placeInChatDisabled = typeof onAddToChat !== 'function';
   const pathContextMenu = pathMenu ? (
     <div
+      ref={pathMenuRef}
       className="diff-file-context-menu"
-      style={{ left: pathMenu.x, top: pathMenu.y }}
+      style={pathMenuStyle}
       onPointerDown={(event) => event.stopPropagation()}
       onContextMenu={(event) => event.preventDefault()}
       role="menu"

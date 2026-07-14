@@ -16,6 +16,7 @@ import { toast } from '../stores/toastStore.js';
 import { commentDraftKey } from '../utils/composerDraft.js';
 import { copyRepoRelativePath } from '../utils/clipboard.js';
 import { useDismissOnOutsidePointerOrEscape } from '../hooks/useDismissOnOutsidePointerOrEscape.js';
+import { useClampedPointMenu } from '../hooks/useClampedPointMenu.js';
 import { useMonacoViewZone } from '../hooks/useMonacoViewZone.js';
 
 /**
@@ -88,6 +89,7 @@ export default function EditorPane({
     await copyRepoRelativePath(repoId, filePath);
   }
   useDismissOnOutsidePointerOrEscape(pathMenu, closePathMenu);
+  const { menuRef: pathMenuRef, style: pathMenuStyle } = useClampedPointMenu(pathMenu);
 
   // Refs so Monaco actions (registered once) always read latest
   // values without closing over stale state.
@@ -566,8 +568,9 @@ export default function EditorPane({
       </header>
       {pathMenu && (
         <div
+          ref={pathMenuRef}
           className="diff-file-context-menu"
-          style={{ left: pathMenu.x, top: pathMenu.y }}
+          style={pathMenuStyle}
           onPointerDown={(event) => event.stopPropagation()}
           onContextMenu={(event) => event.preventDefault()}
           role="menu"

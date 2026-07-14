@@ -47,6 +47,7 @@ import {
   moreUrgentCommentStatus,
 } from './utils/commentStatus.js';
 import { useDismissOnOutsidePointerOrEscape } from './hooks/useDismissOnOutsidePointerOrEscape.js';
+import { useClampedPointMenu } from './hooks/useClampedPointMenu.js';
 
 
 // Same auto-poll cadence as ChangesTab. Keeps the file tree in sync
@@ -401,6 +402,7 @@ export default function FilesTab({
   }
 
   useDismissOnOutsidePointerOrEscape(pathMenu, closePathMenu);
+  const { menuRef: pathMenuRef, style: pathMenuStyle } = useClampedPointMenu(pathMenu);
 
   // Sync icon: re-resolve the task's repositories from YouTrack /
   // Jira / etc. tags + description, and clone any that aren't yet on
@@ -625,8 +627,9 @@ export default function FilesTab({
       </div>
       {pathMenu && (
         <div
+          ref={pathMenuRef}
           className="files-tab-context-menu"
-          style={{ left: pathMenu.x, top: pathMenu.y }}
+          style={pathMenuStyle}
           onPointerDown={(event) => event.stopPropagation()}
           role="menu"
         >
