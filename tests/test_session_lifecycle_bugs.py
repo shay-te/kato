@@ -141,13 +141,21 @@ class Bug1NoAutoResumeOnKatoRestartTests(unittest.TestCase):
 
 class Bug2ResumeSendsRawUserMessageTests(unittest.TestCase):
     """Lock that ``resume_session_for_chat`` does NOT pre-wrap the
-    operator's message in workspace-inventory / continuity / forbidden
-    blocks when a session id is on file. Wrapping makes Claude treat
-    each respawn as a fresh task and re-explore the workspace —
-    burning tokens and producing the "starts everything from scratch"
-    behaviour the operator reported."""
+    operator's message in the continuity / forbidden-repos blocks when
+    a session id is on file. Wrapping makes Claude treat each respawn
+    as a fresh task and re-explore the workspace — burning tokens and
+    producing the "starts everything from scratch" behaviour the
+    operator reported.
 
-    def test_resume_with_session_id_sends_raw_message(self) -> None:
+    The repo-scope reminder (``Repositories available...``) is the one
+    exception — it IS re-sent on every resumed turn (see the UNA-2763
+    "stuck under one repo scope, a new chat doesn't help" incident): a
+    resumed session's first-turn history can bake in a scope narrower
+    than what kato later resolves, and that history can never be
+    edited after the fact.
+    """
+
+    def test_resume_with_session_id_sends_raw_message_with_scope_reminder(self) -> None:
         manager = MagicMock()
         manager.get_record.return_value = SimpleNamespace(
             agent_session_id='persisted-id-abc',
@@ -161,8 +169,12 @@ class Bug2ResumeSendsRawUserMessageTests(unittest.TestCase):
             additional_dirs=['/wks/T1/sibling'],
         )
         sent = manager.start_session.call_args.kwargs['initial_prompt']
-        # The raw message was sent — no inventory / continuity wrapper.
-        self.assertEqual(sent, 'fix the bug')
+        self.assertIn('fix the bug', sent)
+        self.assertIn('Repositories available', sent)
+        self.assertIn('/wks/T1', sent)
+        self.assertIn('/wks/T1/sibling', sent)
+        self.assertNotIn('Trust it', sent)
+        self.assertNotIn('Continuity instruction', sent)
 
     def test_resume_with_session_id_does_not_emit_continuity_block(self) -> None:
         manager = MagicMock()
@@ -176,10 +188,24 @@ class Bug2ResumeSendsRawUserMessageTests(unittest.TestCase):
             task_id='T1', message='message', cwd='/wks',
         )
         sent = manager.start_session.call_args.kwargs['initial_prompt']
-        # Continuity-block tells (used on first spawn) are absent.
+        # Continuity-block tells (used on first spawn) are absent — only
+        # the first-spawn-only onboarding wrapper carries these.
         self.assertNotIn('Trust it', sent)
-        self.assertNotIn('Repositories available', sent)
         self.assertNotIn('Forbidden repository folders', sent)
+
+    def test_resume_with_session_id_and_no_cwd_or_dirs_sends_raw_message(self) -> None:
+        # workspace_inventory_block('', []) returns '' — nothing to
+        # remind about, so the message goes through completely raw.
+        manager = MagicMock()
+        manager.get_record.return_value = SimpleNamespace(
+            agent_session_id='persisted-id-abc',
+        )
+        runner = PlanningSessionRunner(
+            session_manager=manager, defaults=StreamingSessionDefaults(),
+        )
+        runner.resume_session_for_chat(task_id='T1', message='message')
+        sent = manager.start_session.call_args.kwargs['initial_prompt']
+        self.assertEqual(sent, 'message')
 
     def test_first_spawn_with_no_record_keeps_workspace_wrapper(self) -> None:
         # Symmetric guarantee: when there's NO record (genuine first

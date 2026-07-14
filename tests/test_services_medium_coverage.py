@@ -928,15 +928,25 @@ class PlanningSessionRunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'message is required'):
             runner.resume_session_for_chat(task_id='T1', message='   ')
 
-    def test_resume_session_for_chat_sends_raw_message_when_session_id_persisted(
+    def test_resume_session_for_chat_sends_scope_reminder_but_not_full_wrapper(
         self,
     ) -> None:
-        # Bug-fix lock: when ``--resume <agent_session_id>`` will be used,
-        # Claude already has the workspace context from the prior JSONL.
-        # Wrapping the follow-up message in another inventory/continuity
-        # block makes Claude treat each respawn as a fresh task and
-        # re-explore the workspace — burning tokens and producing the
-        # "starts everything from scratch" behavior the operator sees.
+        # When ``--resume <agent_session_id>`` will be used, Claude
+        # already has the FULL workspace context (continuity framing +
+        # forbidden-repo guardrails) from the prior JSONL — resending
+        # that "read first" / continuity block makes Claude treat each
+        # respawn as a fresh task and re-explore the workspace, burning
+        # tokens and producing the "starts everything from scratch"
+        # behavior the operator sees. That part stays gated to first
+        # spawn only.
+        #
+        # But the repo-SCOPE list is re-sent on every resumed turn too:
+        # a task's scope can widen after the underlying Claude session's
+        # first turn (operator attaches a repo mid-conversation, or an
+        # older task's first turn baked in a narrower scope than kato
+        # now resolves) and that first turn's history can never be
+        # edited after the fact — see the UNA-2763 "stuck under one
+        # repo scope, a new chat doesn't help" production incident.
         from kato_core_lib.data_layers.service.planning_session_runner import (
             PlanningSessionRunner, StreamingSessionDefaults,
         )
@@ -952,10 +962,34 @@ class PlanningSessionRunnerTests(unittest.TestCase):
             task_id='T1', message='please look at the bug',
             cwd='/wks/T1', additional_dirs=['/wks/T1/repo-b'],
         )
-        # The raw message went through verbatim — NO ``Repositories
-        # available`` / ``Trust it`` / ``Forbidden`` wrapper.
         sent_prompt = manager.start_session.call_args.kwargs['initial_prompt']
-        self.assertEqual(sent_prompt, 'please look at the bug')
+        # The scope reminder IS present — both repo paths listed.
+        self.assertIn('Repositories available in this workspace', sent_prompt)
+        self.assertIn('/wks/T1', sent_prompt)
+        self.assertIn('/wks/T1/repo-b', sent_prompt)
+        # The continuity / "read first" framing is NOT — that's the
+        # part that caused the original regression.
+        self.assertNotIn('Trust it', sent_prompt)
+        self.assertNotIn('Continuity instruction', sent_prompt)
+        # The raw follow-up message still comes through untouched.
+        self.assertIn('please look at the bug', sent_prompt)
+
+    def test_resume_session_for_chat_no_scope_reminder_when_no_dirs(self) -> None:
+        # No cwd, no additional_dirs → workspace_inventory_block returns
+        # '' → the raw message goes through with no leading blank lines.
+        from kato_core_lib.data_layers.service.planning_session_runner import (
+            PlanningSessionRunner, StreamingSessionDefaults,
+        )
+        manager = MagicMock()
+        manager.get_record.return_value = SimpleNamespace(
+            agent_session_id='abc-123',
+        )
+        runner = PlanningSessionRunner(
+            session_manager=manager, defaults=StreamingSessionDefaults(),
+        )
+        runner.resume_session_for_chat(task_id='T1', message='hello again')
+        sent_prompt = manager.start_session.call_args.kwargs['initial_prompt']
+        self.assertEqual(sent_prompt, 'hello again')
 
     def test_resume_session_for_chat_wraps_message_on_first_spawn(self) -> None:
         # Symmetric guarantee: when there's no session id to resume from

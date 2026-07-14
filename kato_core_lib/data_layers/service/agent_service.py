@@ -2527,7 +2527,7 @@ class AgentService(MissionStepLoggerMixin, Service):
         # forbidden" refusal) and made every sibling-repo path look
         # outside the sandbox. Mirrors the chat-send route's --add-dir set.
         additional_dirs = sibling_repository_dirs(
-            self._workspace_manager, task_id, cwd,
+            self._workspace_manager, task_id,
         )
         self.logger.info(
             'comment %s on task %s: respawning Claude to work on it '

@@ -184,10 +184,19 @@ class FlowMultiTurnContinuityTests(unittest.TestCase):
             'Claude has no inventory or guardrails to ground its work',
         )
 
-    def test_flow_multi_turn_second_message_is_raw_no_wrapper(self) -> None:
+    def test_flow_multi_turn_second_message_is_raw_no_continuity_wrapper(self) -> None:
         # The exact regression case from Bug 2: on the second spawn,
-        # the runner MUST NOT re-wrap the message. The CLI's --resume
-        # already loaded all prior context, including the inventory.
+        # the runner MUST NOT re-wrap the message with the "read first" /
+        # continuity framing — the CLI's --resume already loaded prior
+        # context, and repeating that framing made Claude treat each
+        # respawn as a fresh task and re-explore the workspace.
+        #
+        # It DOES still get a short, non-continuity repo-scope reminder
+        # on every turn (see test_planning_session_runner / the UNA-2763
+        # "stuck under one repo scope, a new chat doesn't help" incident):
+        # the underlying Claude session's first turn can bake in a scope
+        # narrower than what kato resolves later, and that history can
+        # never be edited after the fact.
         recorded = {}
         manager = self._make_manager(recorded, fresh_id='session-X')
         runner = self._make_runner(manager)
@@ -203,13 +212,13 @@ class FlowMultiTurnContinuityTests(unittest.TestCase):
         )
         second_prompt = recorded['starts'][1]
 
-        # The second prompt must equal the operator's text exactly —
-        # no inventory block, no continuity block, no forbidden-repos block.
-        self.assertEqual(
-            second_prompt, operator_msg,
-            'follow-up message was re-wrapped with workspace context — '
+        self.assertIn(operator_msg, second_prompt)
+        self.assertNotIn(
+            'Continuity instruction', second_prompt,
+            'follow-up message was re-wrapped with the continuity framing — '
             'Bug 2 has returned, Claude will re-explore the workspace',
         )
+        self.assertNotIn('Trust it', second_prompt)
 
     def test_flow_multi_turn_record_without_session_id_uses_wrapper(self) -> None:
         # Adversarial edge: a record exists for T1 but ``agent_session_id``

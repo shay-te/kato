@@ -893,20 +893,19 @@ class ChatResumeContextTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------
-# _chat_additional_dirs: empty repo path skip (2683-2684)
+# _chat_additional_dirs: blank workspace_path is skipped
 # --------------------------------------------------------------------------
 
 
 class ChatAdditionalDirsTests(unittest.TestCase):
-    def test_skips_empty_repo_path(self):
+    def test_skips_blank_workspace_path(self):
         from kato_webserver.app import _chat_additional_dirs
 
         workspace = MagicMock()
-        workspace.get.return_value = SimpleNamespace(repository_ids=['a', 'b'])
-        # 'a' -> empty string (skipped at 2683-2684); 'b' -> real path.
-        workspace.repository_path.side_effect = lambda t, r: '' if r == 'a' else '/ws/b'
-        result = _chat_additional_dirs(workspace, 'T-1', cwd='/other')
-        self.assertEqual(result, ['/ws/b'])
+        workspace.get.return_value = SimpleNamespace()
+        workspace.workspace_path.return_value = ''
+        result = _chat_additional_dirs(workspace, 'T-1')
+        self.assertEqual(result, [])
 
 
 # --------------------------------------------------------------------------

@@ -1468,53 +1468,47 @@ class ChatResumeContextTests(unittest.TestCase):
 class ChatAdditionalDirsTests(unittest.TestCase):
     def test_returns_empty_when_no_workspace_manager(self):
         from kato_webserver.app import _chat_additional_dirs
-        self.assertEqual(_chat_additional_dirs(None, 'T-1', ''), [])
+        self.assertEqual(_chat_additional_dirs(None, 'T-1'), [])
 
     def test_returns_empty_when_no_task_id(self):
         from kato_webserver.app import _chat_additional_dirs
         ws = _FakeWorkspaceManager()
-        self.assertEqual(_chat_additional_dirs(ws, '', ''), [])
+        self.assertEqual(_chat_additional_dirs(ws, ''), [])
 
     def test_returns_empty_when_get_raises(self):
         from kato_webserver.app import _chat_additional_dirs
 
         workspace_manager = MagicMock()
         workspace_manager.get.side_effect = RuntimeError('fail')
-        self.assertEqual(_chat_additional_dirs(workspace_manager, 'T-1', ''), [])
+        self.assertEqual(_chat_additional_dirs(workspace_manager, 'T-1'), [])
 
     def test_returns_empty_when_workspace_missing(self):
         from kato_webserver.app import _chat_additional_dirs
 
         workspace_manager = MagicMock()
         workspace_manager.get.return_value = None
-        self.assertEqual(_chat_additional_dirs(workspace_manager, 'T-1', ''), [])
+        self.assertEqual(_chat_additional_dirs(workspace_manager, 'T-1'), [])
 
-    def test_extras_skip_cwd_and_dedupe(self):
+    def test_returns_the_whole_task_workspace_folder(self):
+        # Regression: the operator can attach a new repo to the task
+        # mid-conversation — it clones into the SAME task folder. The
+        # whole-folder scope covers it immediately; an enumerated
+        # repo-id list would miss it until the session respawned.
         from kato_webserver.app import _chat_additional_dirs
 
         workspace_manager = MagicMock()
-        workspace_manager.get.return_value = SimpleNamespace(
-            repository_ids=['client', 'backend', 'duplicate'],
-        )
-        paths = {
-            'client': '/ws/client',
-            'backend': '/ws/backend',
-            'duplicate': '/ws/backend',  # collides with backend
-        }
-        workspace_manager.repository_path.side_effect = lambda t, r: paths[r]
-        # cwd matches /ws/client → skipped.
-        extras = _chat_additional_dirs(workspace_manager, 'T-1', '/ws/client')
-        self.assertEqual(extras, ['/ws/backend'])
+        workspace_manager.get.return_value = SimpleNamespace()
+        workspace_manager.workspace_path.return_value = '/ws/T-1'
+        extras = _chat_additional_dirs(workspace_manager, 'T-1')
+        self.assertEqual(extras, ['/ws/T-1'])
 
-    def test_extras_skips_repository_path_errors(self):
+    def test_returns_empty_when_workspace_path_raises(self):
         from kato_webserver.app import _chat_additional_dirs
 
         workspace_manager = MagicMock()
-        workspace_manager.get.return_value = SimpleNamespace(
-            repository_ids=['client'],
-        )
-        workspace_manager.repository_path.side_effect = RuntimeError('boom')
-        self.assertEqual(_chat_additional_dirs(workspace_manager, 'T-1', ''), [])
+        workspace_manager.get.return_value = SimpleNamespace()
+        workspace_manager.workspace_path.side_effect = RuntimeError('boom')
+        self.assertEqual(_chat_additional_dirs(workspace_manager, 'T-1'), [])
 
 
 # ---------------------------------------------------------------------------

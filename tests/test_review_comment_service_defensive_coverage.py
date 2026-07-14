@@ -858,27 +858,6 @@ class CallFixReviewCommentsAdditionalDirsTests(unittest.TestCase):
         )
 
 
-class SiblingLocalPathsTests(unittest.TestCase):
-    def test_excludes_primary_and_dedupes(self) -> None:
-        primary = SimpleNamespace(id='a', local_path='/repos/a')
-        repos = [
-            SimpleNamespace(id='a', local_path='/repos/a'),
-            SimpleNamespace(id='b', local_path='/repos/b'),
-            SimpleNamespace(id='c', local_path='/repos/b'),  # duplicate path
-            SimpleNamespace(id='d', local_path=''),  # blank path skipped
-        ]
-        self.assertEqual(
-            ReviewCommentService._sibling_local_paths(repos, primary),
-            ['/repos/b'],
-        )
-
-    def test_empty_repositories_returns_empty_list(self) -> None:
-        primary = SimpleNamespace(id='a', local_path='/repos/a')
-        self.assertEqual(
-            ReviewCommentService._sibling_local_paths(None, primary), [],
-        )
-
-
 class TaskForWorkspaceCloneSkipNonMatchingTests(unittest.TestCase):
     """Branch 844->843: ``_task_for_workspace_clone`` iterates past tasks
     whose ``id`` doesn't match before returning the matching one."""

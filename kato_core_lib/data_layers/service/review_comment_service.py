@@ -745,12 +745,14 @@ class ReviewCommentService(Service):
         mode: str = 'fix',
         repository=None,
     ) -> dict[str, str | bool]:
-        # Every OTHER repo the task touches, beyond the one the triggering
-        # comment lives on — stashed by ``_provision_workspace_clone``.
-        # Widens the agent's sandbox to the whole task instead of just
-        # this one repo; without it a review-fix agent that finishes the
-        # comment's repo has no filesystem access to a sibling repo the
-        # SAME task also needs (the "stuck under one repo scope" bug).
+        # The task's whole workspace folder — stashed by
+        # ``_provision_workspace_clone``. Widens the agent's sandbox to
+        # the whole task instead of just this one repo; without it a
+        # review-fix agent that finishes the comment's repo has no
+        # filesystem access to a sibling repo the SAME task also needs
+        # (the "stuck under one repo scope" bug), and a repo attached to
+        # the task AFTER the session spawned stays invisible too, since
+        # an enumerated repo list can't cover something added later.
         additional_dirs = list(
             getattr(repository, self._ADDITIONAL_TASK_REPO_DIRS_ATTR, ()) or ()
         ) if repository is not None else []
@@ -819,23 +821,12 @@ class ReviewCommentService(Service):
         return last_execution
 
     # Attribute stashed on the repository returned by
-    # ``_provision_workspace_clone`` — the local paths of every OTHER
-    # repo the task touches. Read by ``_call_fix_review_comments_or_fanout``
-    # to widen the review-fix agent's sandbox to the whole task instead of
-    # just the repo the triggering comment happens to live on.
+    # ``_provision_workspace_clone`` — the task's whole workspace folder
+    # (not an enumerated repo list; see that method's docstring for why).
+    # Read by ``_call_fix_review_comments_or_fanout`` to widen the
+    # review-fix agent's sandbox to the whole task instead of just the
+    # repo the triggering comment happens to live on.
     _ADDITIONAL_TASK_REPO_DIRS_ATTR = 'kato_review_fix_additional_dirs'
-
-    @staticmethod
-    def _sibling_local_paths(repositories, primary) -> list[str]:
-        primary_path = normalized_text(getattr(primary, 'local_path', '') or '')
-        seen = {primary_path} if primary_path else set()
-        paths: list[str] = []
-        for candidate in repositories or []:
-            path = normalized_text(getattr(candidate, 'local_path', '') or '')
-            if path and path not in seen:
-                paths.append(path)
-                seen.add(path)
-        return paths
 
     def _provision_workspace_clone(self, repository, review_context):
         """Return a copy of ``repository`` re-pointed at the per-task clone.
@@ -860,14 +851,23 @@ class ReviewCommentService(Service):
         manager is configured — preserves the legacy single-repo
         behaviour for setups that never opted into workspaces.
 
-        Also stashes the OTHER cloned repos' local paths on the
-        returned object (see ``_ADDITIONAL_TASK_REPO_DIRS_ATTR``) so
-        the caller can widen the agent's sandbox to every repo the
-        task touches, not just this one. Without this, a review-fix
-        agent that finishes editing the repo tied to the triggering
-        comment has no filesystem access to a sibling repo the SAME
-        task also needs — even though the initial task-implementation
-        session for that same task had access to every attached repo.
+        Also stashes the task's WHOLE workspace folder (see
+        ``_ADDITIONAL_TASK_REPO_DIRS_ATTR``) on the returned object so
+        the caller can widen the agent's sandbox to the entire task,
+        not just this one repo. Without this, a review-fix agent that
+        finishes editing the repo tied to the triggering comment has
+        no filesystem access to a sibling repo the SAME task also
+        needs — even though the initial task-implementation session
+        for that same task had access to every attached repo.
+
+        Deliberately the TASK FOLDER, not an enumerated list of the
+        currently-resolved repos: if the operator attaches another
+        repo to the task mid-conversation, it clones into the same
+        task folder. A session's ``--add-dir`` set is baked in at
+        spawn time and never widened for an already-running session,
+        so an enumerated repo list would need a respawn to see the
+        addition — scoping to the whole task folder covers it
+        immediately, with no respawn needed.
         """
         if self._workspace_manager is None:
             return repository
@@ -921,7 +921,7 @@ class ReviewCommentService(Service):
             setattr(
                 result,
                 self._ADDITIONAL_TASK_REPO_DIRS_ATTR,
-                self._sibling_local_paths(provisioned or task_repositories, result),
+                [str(self._workspace_manager.workspace_path(review_context.task_id))],
             )
             return result
         except Exception:

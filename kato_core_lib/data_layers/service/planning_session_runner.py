@@ -199,15 +199,24 @@ class PlanningSessionRunner(object):
         if not normalized_message:
             raise ValueError('message is required to resume a chat session')
         # When we have a saved session id, ``start_session`` will pass
-        # ``--resume <id>`` to Claude — the prior conversation (workspace
-        # inventory, continuity, forbidden-repo guardrails, every prior
-        # turn) is already loaded by the CLI. Wrapping the user's
-        # follow-up in another inventory/continuity block was making
-        # Claude treat each respawn as a fresh task and re-explore the
-        # workspace from scratch.
+        # ``--resume <id>`` to Claude — the prior conversation
+        # (continuity, forbidden-repo guardrails, every prior turn) is
+        # already loaded by the CLI. Wrapping the user's follow-up in
+        # another FULL inventory/continuity block was making Claude
+        # treat each respawn as a fresh task and re-explore the
+        # workspace from scratch — so the full block below is still
+        # first-spawn-only.
         #
-        # Only inject the chat-workspace context on the FIRST spawn for
-        # this task — when there's no session id to resume from.
+        # The repo-scope reminder is the one exception: it is re-sent
+        # on EVERY turn, resumed or not. A task's scope can widen after
+        # the underlying Claude session was first spawned — the
+        # operator attaches another repo mid-conversation, or an older
+        # task's very first turn baked in a narrower scope than what
+        # kato now resolves — and that first turn's history can never
+        # be edited after the fact. A short, clearly-informational repo
+        # list (no "read first" / continuity framing, so it does not
+        # reproduce the "treat as fresh" regression above) keeps every
+        # turn honest about what is actually in scope right now.
         existing_record = (
             self._session_manager.get_record(normalized_task_id)
             if self._session_manager is not None
@@ -215,7 +224,14 @@ class PlanningSessionRunner(object):
         )
         resume_session_id = read_session_id_from(existing_record)
         if resume_session_id:
-            initial_prompt = normalized_message
+            scope_reminder = agent_prompt_utils.workspace_inventory_block(
+                cwd, additional_dirs,
+            )
+            initial_prompt = (
+                f'{scope_reminder}\n\n{normalized_message}'
+                if scope_reminder
+                else normalized_message
+            )
         else:
             initial_prompt = agent_prompt_utils.prepend_chat_workspace_context(
                 normalized_message,

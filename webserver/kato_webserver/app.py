@@ -3720,7 +3720,7 @@ def _spawn_or_reject_chat_session(app: Flask, task_id: str, text: str):
     manager = app.config['SESSION_MANAGER']
     workspace_manager = app.config.get('WORKSPACE_MANAGER')
     cwd, summary = _chat_resume_context(manager, workspace_manager, task_id)
-    additional_dirs = _chat_additional_dirs(workspace_manager, task_id, cwd)
+    additional_dirs = _chat_additional_dirs(workspace_manager, task_id)
     overrides = app.config.get('TASK_MODEL_OVERRIDES') or {}
     model_override = overrides.get(task_id, '')
     effort_overrides = app.config.get('TASK_EFFORT_OVERRIDES') or {}
@@ -3874,17 +3874,18 @@ def _chat_resume_context(session_manager, workspace_manager, task_id: str) -> tu
     return cwd, summary
 
 
-def _chat_additional_dirs(workspace_manager, task_id: str, cwd: str) -> list[str]:
-    """Sibling-repo ``--add-dir`` paths for the chat spawn.
+def _chat_additional_dirs(workspace_manager, task_id: str) -> list[str]:
+    """Task-workspace-folder ``--add-dir`` path for the chat spawn.
 
     Thin alias over the shared ``sibling_repository_dirs`` helper so the
-    chat-send route and the comment-run respawn surface the SAME repo set
-    (a multi-repo task's agent must reach every repo, not just ``cwd``).
+    chat-send route and the comment-run respawn surface the SAME scope
+    (a multi-repo task's agent must reach every repo, not just ``cwd`` —
+    including a repo attached to the task after this session spawned).
     """
     from kato_core_lib.helpers.workspace_repo_utils import (
         sibling_repository_dirs,
     )
-    return sibling_repository_dirs(workspace_manager, task_id, cwd)
+    return sibling_repository_dirs(workspace_manager, task_id)
 
 
 def _resolve_writable_session(manager, task_id: str):

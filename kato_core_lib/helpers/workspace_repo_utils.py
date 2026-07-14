@@ -11,14 +11,21 @@ the cross-repo "that repo is forbidden" refusal).
 from __future__ import annotations
 
 
-def sibling_repository_dirs(workspace_manager, task_id: str, cwd: str) -> list[str]:
-    """Repo clone paths for ``task_id`` EXCEPT ``cwd`` — for ``--add-dir``.
+def sibling_repository_dirs(workspace_manager, task_id: str) -> list[str]:
+    """The task's whole workspace folder, for ``--add-dir`` beyond ``cwd``.
 
-    Workspace mode: every repo folder under ``~/.kato/workspaces/<task>/``
-    is surfaced so a multi-repo task's agent can read across repos (skip
-    the ``cwd`` one — Claude already has it as its working directory).
-    Empty list when there's no workspace (e.g. adopted-cwd tasks pointing
-    at the dev's own checkout); we never probe parent dirs blindly.
+    Workspace mode: returns ``<workspace_root>/<task_id>`` — the single
+    parent folder every one of the task's repo clones lives under —
+    rather than enumerating each currently-known ``repository_id``.
+    The operator can attach another repo to the task mid-conversation;
+    it clones into this SAME folder. A session's ``--add-dir`` set is
+    baked in at spawn time and never widened later, so an enumerated
+    repo list would miss a repo added after spawn until the session
+    is respawned — scoping to the whole task folder covers it
+    immediately (the "attach a new repo and kato still can't see it"
+    bug). Empty list when there's no workspace (e.g. adopted-cwd tasks
+    pointing at the dev's own checkout); we never probe parent dirs
+    blindly.
     """
     if workspace_manager is None or not task_id:
         return []
@@ -28,21 +35,10 @@ def sibling_repository_dirs(workspace_manager, task_id: str, cwd: str) -> list[s
         return []
     if workspace is None:
         return []
-    repository_ids = list(getattr(workspace, 'repository_ids', None) or [])
-    normalized_cwd = str(cwd or '').strip().rstrip('/\\')
-    extras: list[str] = []
-    seen: set[str] = set()
-    for repo_id in repository_ids:
-        try:
-            repo_path = str(workspace_manager.repository_path(task_id, repo_id))
-        except Exception:
-            continue
-        if not repo_path:
-            continue
-        normalized_repo = repo_path.rstrip('/\\')
-        # Skip the cwd entry (Claude already has it) and dupes.
-        if normalized_repo == normalized_cwd or normalized_repo in seen:
-            continue
-        seen.add(normalized_repo)
-        extras.append(normalized_repo)
-    return extras
+    try:
+        task_root = str(workspace_manager.workspace_path(task_id))
+    except Exception:
+        return []
+    if not task_root:
+        return []
+    return [task_root]
