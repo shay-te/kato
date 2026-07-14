@@ -73,9 +73,28 @@ class BitbucketClient(PullRequestClientBase):
             response.raise_for_status()
             payload = response.json() or {}
             all_comments.extend(self._normalize_comments(payload, pull_request_id))
-            url = payload.get('next') or ''
+            url = self._relative_next_page_path(payload.get('next') or '')
             params = {}
         return all_comments
+
+    def _relative_next_page_path(self, next_url: str) -> str:
+        """Bitbucket's ``next`` field is always a FULLY QUALIFIED URL, not
+        a relative path — unlike every other path this client builds.
+        The underlying HTTP layer's URL builder always prepends
+        ``base_url`` and has no "already absolute" check, so passing
+        ``next`` straight through produced a doubled, always-404ing URL
+        (``.../2.0/https://api.bitbucket.org/2.0/...``) that silently
+        dropped every PR comment past page 1, on every scan cycle, for
+        every PR with more than ``BITBUCKET_PAGE_LENGTH`` comments.
+        Strip the base URL back off so the loop's next iteration passes
+        a plain relative path like every other call in this client.
+        """
+        if not next_url:
+            return ''
+        prefix = self.base_url.rstrip('/') + '/'
+        if next_url.startswith(prefix):
+            return next_url[len(prefix):]
+        return next_url
 
     def find_pull_requests(
         self,

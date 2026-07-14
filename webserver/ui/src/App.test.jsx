@@ -158,16 +158,30 @@ vi.mock('./components/RightPane.jsx', () => ({
   default: ({ activeTaskId, onOpenFile }) => (
     <div data-testid="right-pane">
       {activeTaskId ? (
-        <button
-          type="button"
-          onClick={() => onOpenFile({
-            absolutePath: `/ws/${activeTaskId}/repo/src/${activeTaskId}.js`,
-            relativePath: `src/${activeTaskId}.js`,
-            repoId: 'repo',
-          })}
-        >
-          open-file-{activeTaskId}
-        </button>
+        <>
+          <button
+            type="button"
+            onClick={() => onOpenFile({
+              absolutePath: `/ws/${activeTaskId}/repo/src/${activeTaskId}.js`,
+              relativePath: `src/${activeTaskId}.js`,
+              repoId: 'repo',
+            })}
+          >
+            open-file-{activeTaskId}
+          </button>
+          {/* Second, distinct file for the same task — lets multi-tab
+              tests open two files without needing a second task. */}
+          <button
+            type="button"
+            onClick={() => onOpenFile({
+              absolutePath: `/ws/${activeTaskId}/repo/src/other-${activeTaskId}.js`,
+              relativePath: `src/other-${activeTaskId}.js`,
+              repoId: 'repo',
+            })}
+          >
+            open-other-file-{activeTaskId}
+          </button>
+        </>
       ) : null}
     </div>
   ),
@@ -333,6 +347,143 @@ describe('App — tab selection', () => {
 
     expect(screen.getByTestId('editor-pane').textContent)
       .toContain('position=44');
+  });
+});
+
+
+describe('App — file tab strip (VS Code-style multi-file tabs)', () => {
+  test('opening a second file APPENDS a new tab — does not replace the first', () => {
+    useSessions.mockReturnValue({
+      sessions: [{ task_id: 'T1' }],
+      refresh: vi.fn(),
+    });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open-other-file-T1' }));
+
+    // Both tabs exist in the strip...
+    expect(screen.getByTitle('repo/src/T1.js')).toBeTruthy();
+    expect(screen.getByTitle('repo/src/other-T1.js')).toBeTruthy();
+    // ...and the most-recently-opened one is the active editor content.
+    expect(screen.getByTestId('editor-pane').textContent)
+      .toContain('file=src/other-T1.js');
+  });
+
+  test('clicking an inactive tab switches the centre pane to that file', () => {
+    useSessions.mockReturnValue({
+      sessions: [{ task_id: 'T1' }],
+      refresh: vi.fn(),
+    });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open-other-file-T1' }));
+    expect(screen.getByTestId('editor-pane').textContent)
+      .toContain('file=src/other-T1.js');
+
+    fireEvent.click(screen.getByTitle('repo/src/T1.js'));
+    expect(screen.getByTestId('editor-pane').textContent)
+      .toContain('file=src/T1.js');
+  });
+
+  test('re-opening an already-open file focuses its tab instead of duplicating it', () => {
+    useSessions.mockReturnValue({
+      sessions: [{ task_id: 'T1' }],
+      refresh: vi.fn(),
+    });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open-other-file-T1' }));
+    // Re-open the FIRST file — must focus it, not add a third tab.
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
+
+    expect(screen.getAllByTitle('repo/src/T1.js')).toHaveLength(1);
+    expect(screen.getByTestId('editor-pane').textContent)
+      .toContain('file=src/T1.js');
+  });
+
+  test('closing the active tab falls back to its left neighbor', () => {
+    useSessions.mockReturnValue({
+      sessions: [{ task_id: 'T1' }],
+      refresh: vi.fn(),
+    });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open-other-file-T1' }));
+    // "other-T1.js" is active; close it.
+    fireEvent.click(screen.getByRole('button', { name: /Close other-T1\.js/i }));
+
+    expect(screen.queryByTitle('repo/src/other-T1.js')).toBeNull();
+    expect(screen.getByTitle('repo/src/T1.js')).toBeTruthy();
+    expect(screen.getByTestId('editor-pane').textContent)
+      .toContain('file=src/T1.js');
+  });
+
+  test('closing every tab returns the centre pane to the empty state', () => {
+    useSessions.mockReturnValue({
+      sessions: [{ task_id: 'T1' }],
+      refresh: vi.fn(),
+    });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
+    fireEvent.click(screen.getByRole('button', { name: /Close T1\.js/i }));
+
+    expect(screen.queryByTitle('repo/src/T1.js')).toBeNull();
+    expect(screen.getByTestId('editor-pane').textContent).toContain('file=none');
+  });
+
+  test('switching tasks restores the FULL set of open tabs, not just one', () => {
+    useSessions.mockReturnValue({
+      sessions: [{ task_id: 'T1' }, { task_id: 'T2' }],
+      refresh: vi.fn(),
+    });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open-other-file-T1' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'T2' }));
+    expect(screen.queryByTitle('repo/src/T1.js')).toBeNull();
+    expect(screen.queryByTitle('repo/src/other-T1.js')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+    expect(screen.getByTitle('repo/src/T1.js')).toBeTruthy();
+    expect(screen.getByTitle('repo/src/other-T1.js')).toBeTruthy();
+    // The tab that was active when we left ("other-T1.js") is still active.
+    expect(screen.getByTestId('editor-pane').textContent)
+      .toContain('file=src/other-T1.js');
+  });
+
+  test('each open tab keeps its OWN remembered scroll/cursor position', () => {
+    // Regression: a naive per-task (not per-tab) remembered-view-state
+    // map would let tab B's scroll position bleed into tab A's, or
+    // overwrite it, the moment you switch between them.
+    useSessions.mockReturnValue({
+      sessions: [{ task_id: 'T1' }],
+      refresh: vi.fn(),
+    });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'save-editor-position' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open-other-file-T1' }));
+    // The second file has no saved position of its own yet.
+    expect(screen.getByTestId('editor-pane').textContent).toContain('position=none');
+
+    // Switch back to the first tab — its position must still be there.
+    fireEvent.click(screen.getByTitle('repo/src/T1.js'));
+    expect(screen.getByTestId('editor-pane').textContent).toContain('position=44');
   });
 });
 

@@ -19,6 +19,15 @@ class RetryingClientBase(ClientBase):
         self.max_retries = max(1, max_retries)
 
     def _abs_url(self, path: str) -> str:
+        # Some providers (Bitbucket's pagination ``next`` field) hand back
+        # an already-fully-qualified URL for the next page, not a relative
+        # path. Blindly prepending ``base_url`` to that produced a doubled,
+        # 404-ing URL like
+        # ``https://api.bitbucket.org/2.0/https://api.bitbucket.org/2.0/...``
+        # — every PR with more than one page of comments silently lost all
+        # comments past page 1 on every scan cycle.
+        if path.startswith(('http://', 'https://')):
+            return path
         return f'{self.base_url.rstrip("/")}/{path.lstrip("/")}'
 
     def _request_with_retry(self, method: str, verb_callable, path: str, **kwargs):

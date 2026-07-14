@@ -9,6 +9,7 @@ import Layout from './components/Layout.jsx';
 import OrchestratorActivityFeed from './components/OrchestratorActivityFeed.jsx';
 import PlanPane from './components/PlanPane.jsx';
 import RightPane from './components/RightPane.jsx';
+import FileTabStrip from './components/FileTabStrip.jsx';
 import SafetyBanner from './components/SafetyBanner.jsx';
 import SetupModeGate from './components/SetupModeGate.jsx';
 import AgentVersionBanner from './components/AgentVersionBanner.jsx';
@@ -38,6 +39,7 @@ import { usePlanWatch } from './hooks/usePlanWatch.js';
 import { CLAUDE_EVENT } from './constants/claudeEvent.js';
 import { agentStatusStore } from './stores/agentStatusStore.js';
 import { mergePendingPermissionTaskIds } from './utils/sessionAttention.js';
+import { closeTab, patchTab, upsertTab } from './utils/fileTabs.js';
 
 const RIGHT_PANE_DEFAULT_WIDTH = 380;
 const RIGHT_PANE_MIN_WIDTH = 220;
@@ -187,15 +189,22 @@ export default function App() {
     setForgetCandidate(null);
   }, []);
 
-  // Currently-open file for the middle Monaco editor pane. Lifted
-  // to App so FilesTab (rendered on the left) and EditorPane
-  // (rendered in the centre) can talk through a single source of
-  // truth without coupling them directly. One view is remembered
-  // per task so tab switches restore the operator's last file/diff
-  // position instead of dropping the centre pane back to empty.
-  const [openFile, setOpenFile] = useState(null);
+  // Open files for the middle pane, VS Code-tab style: every file the
+  // operator opens gets its OWN tab (never replaces another tab's
+  // content) via utils/fileTabs.js. Lifted to App so FilesTab
+  // (rendered on the left) and EditorPane/DiffPane (rendered in the
+  // centre) can talk through a single source of truth without
+  // coupling them directly. The full tab list + which one is active
+  // is remembered per task so switching tasks restores the operator's
+  // whole set of open tabs instead of dropping the centre pane back
+  // to empty.
+  const [openTabs, setOpenTabs] = useState([]);
+  const [activeTabKey, setActiveTabKey] = useState(null);
+  const [planOpen, setPlanOpen] = useState(false);
   const [fileTreeFocusTarget, setFileTreeFocusTarget] = useState(null);
-  const openFileRef = useRef(null);
+  const openTabsRef = useRef([]);
+  const activeTabKeyRef = useRef(null);
+  // Per task: { tabs, activeKey }. Restored wholesale on task switch.
   const fileViewByTaskRef = useRef({});
   const openFileRequestRef = useRef(0);
   const fileTreeFocusRequestRef = useRef(0);
@@ -234,9 +243,11 @@ export default function App() {
       userPickedTabRef.current = false;
     }
     delete fileViewByTaskRef.current[taskId];
-    if (openFileRef.current?.taskId === taskId) {
-      openFileRef.current = null;
-      setOpenFile(null);
+    if (openTabsRef.current.some((tab) => tab.taskId === taskId)) {
+      openTabsRef.current = [];
+      activeTabKeyRef.current = null;
+      setOpenTabs([]);
+      setActiveTabKey(null);
     }
     refresh();
     toast.show({
@@ -398,14 +409,20 @@ export default function App() {
     const remembered = activeTaskId
       ? fileViewByTaskRef.current[activeTaskId] || null
       : null;
-    const restored = remembered ? { ...remembered, restoreViewState: true } : null;
-    openFileRef.current = restored;
-    setOpenFile(restored);
+    const tabs = remembered
+      ? remembered.tabs.map((tab) => ({ ...tab, restoreViewState: true }))
+      : [];
+    const restoredActiveKey = remembered ? remembered.activeKey : null;
+    openTabsRef.current = tabs;
+    activeTabKeyRef.current = restoredActiveKey;
+    setOpenTabs(tabs);
+    setActiveTabKey(restoredActiveKey);
+    setPlanOpen(false);
     setFileTreeFocusTarget(null);
   }, [activeTaskId]);
-  function rememberFileView(file) {
-    if (!file || !file.taskId) { return; }
-    fileViewByTaskRef.current[file.taskId] = file;
+  function rememberTabsView(taskId, tabs, activeKey) {
+    if (!taskId) { return; }
+    fileViewByTaskRef.current[taskId] = { tabs, activeKey };
   }
   const handleOpenFile = useCallback((info) => {
     // ``info`` shape from FilesTab: { absolutePath, relativePath, repoId }.
@@ -417,64 +434,81 @@ export default function App() {
       if (activeTaskId) {
         delete fileViewByTaskRef.current[activeTaskId];
       }
-      openFileRef.current = null;
-      setOpenFile(null);
+      openTabsRef.current = [];
+      activeTabKeyRef.current = null;
+      setOpenTabs([]);
+      setActiveTabKey(null);
       return;
     }
     // Opening a file must take over the centre column. If the
-    // operator had the orchestrator-activity feed open (via the
-    // status pill), close it so the file actually shows instead of
-    // staying hidden behind the feed.
+    // operator had the orchestrator-activity feed (or the plan) open,
+    // close it so the file actually shows instead of staying hidden
+    // behind it.
     setOrchestratorOpen(false);
+    setPlanOpen(false);
     openFileRequestRef.current += 1;
-    const nextOpenFile = {
-      taskId: activeTaskId,
-      absolutePath: info.absolutePath,
-      relativePath: info.relativePath || info.absolutePath,
-      repoId: info.repoId || '',
-      openRequestId: openFileRequestRef.current,
-      // 'diff' = the round diff button on a changed tree row; the
-      // centre column then renders DiffPane instead of EditorPane.
-      view: info.view === 'diff' ? 'diff' : 'file',
-      // Set when the operator clicked a file's comment badge (not the
-      // name): DiffPane scrolls to the file's first comment thread,
-      // not just the top of the file section.
-      focusComment: !!info.focusComment,
-      // The changed-file kind ('delete' | 'add' | …) when the click came
-      // from a changed-tree row — lets the tree highlight the exact row
-      // of a delete+add pair sharing one display path.
-      kind: String(info.kind || ''),
-    };
-    openFileRef.current = nextOpenFile;
-    rememberFileView(nextOpenFile);
-    setOpenFile(nextOpenFile);
+    // Every open either focuses an ALREADY-open tab for this repo+path
+    // (same file, possibly toggling file<->diff view) or appends a
+    // brand new tab right after the current one — it never replaces a
+    // DIFFERENT file's tab (VS Code-style multi-file tabs).
+    const { tabs, activeKey } = upsertTab(
+      openTabsRef.current,
+      activeTabKeyRef.current,
+      { ...info, openRequestId: openFileRequestRef.current },
+      activeTaskId,
+    );
+    openTabsRef.current = tabs;
+    activeTabKeyRef.current = activeKey;
+    rememberTabsView(activeTaskId, tabs, activeKey);
+    setOpenTabs(tabs);
+    setActiveTabKey(activeKey);
   }, [activeTaskId]);
-  // Open the agent's plan in the centre pane (a ``view: 'plan'`` openFile
-  // that EditorPane/DiffPane ignore). Deliberately NOT persisted via
-  // ``rememberFileView`` — the plan view is ephemeral, so a reload won't
-  // re-yank the centre pane onto a plan the operator already dismissed.
+  // Switch which already-open tab is active (file-tab-strip click).
+  // Flushes openTabsRef into state first: view-state patches
+  // (handleFileViewStateChange, below) only touch the ref between
+  // renders, so a tab switch is the point where the ref's latest
+  // scroll/cursor position needs to actually become visible state.
+  const handleSelectFileTab = useCallback((key) => {
+    setOrchestratorOpen(false);
+    setPlanOpen(false);
+    activeTabKeyRef.current = key;
+    rememberTabsView(activeTaskId, openTabsRef.current, key);
+    setOpenTabs(openTabsRef.current);
+    setActiveTabKey(key);
+  }, [activeTaskId]);
+  const handleCloseFileTab = useCallback((key) => {
+    const { tabs, activeKey } = closeTab(openTabsRef.current, activeTabKeyRef.current, key);
+    openTabsRef.current = tabs;
+    activeTabKeyRef.current = activeKey;
+    rememberTabsView(activeTaskId, tabs, activeKey);
+    setOpenTabs(tabs);
+    setActiveTabKey(activeKey);
+  }, [activeTaskId]);
+  // Open the agent's plan in the centre pane, replacing whatever file/diff
+  // tab was showing (the tab strip + its tabs stay intact underneath — this
+  // only sets a display flag, it doesn't touch openTabs at all). Deliberately
+  // NOT persisted — the plan view is ephemeral, so a reload / task switch
+  // won't re-yank the centre pane onto a plan the operator already dismissed.
   const handleOpenPlan = useCallback(() => {
     if (!activeTaskId) { return; }
     setOrchestratorOpen(false);
-    openFileRequestRef.current += 1;
-    const next = {
-      taskId: activeTaskId,
-      view: 'plan',
-      openRequestId: openFileRequestRef.current,
-    };
-    openFileRef.current = next;
-    setOpenFile(next);
+    setPlanOpen(true);
   }, [activeTaskId]);
   const { content: planContent, available: planAvailable } = usePlanWatch(
     activeTaskId, handleOpenPlan,
   );
   const handleFileViewStateChange = useCallback((viewState) => {
-    const current = openFileRef.current;
-    if (!current || !current.taskId || !viewState) { return; }
-    const nextOpenFile = { ...current, ...viewState };
-    openFileRef.current = nextOpenFile;
-    rememberFileView(nextOpenFile);
-  }, []);
+    const key = activeTabKeyRef.current;
+    if (!key || !viewState) { return; }
+    // Ref-only update (no setOpenTabs) — this fires on every Monaco
+    // scroll/cursor tick, so triggering a re-render here would be
+    // wasteful. The value is only ever read back on tab-switch or
+    // task-switch restore (both of which read the ref / the
+    // remembered-per-task map fresh), never directly from render state.
+    const tabs = patchTab(openTabsRef.current, key, viewState);
+    openTabsRef.current = tabs;
+    rememberTabsView(activeTaskId, tabs, key);
+  }, [activeTaskId]);
   const handleFocusFileInTree = useCallback((target) => {
     const relativePath = String(target?.relativePath || target?.absolutePath || '').trim();
     if (!relativePath) { return; }
@@ -491,7 +525,14 @@ export default function App() {
   // re-renders on every App render — including the wasteful ones
   // that fire on tab focus changes / poll ticks.
   const composerContextValue = useMemo(() => ({ appendToInput }), [appendToInput]);
-  const activeOpenFile = openFile?.taskId === activeTaskId ? openFile : null;
+  // Guards against a stale previous task's tabs flashing into view during
+  // the one render between activeTaskId changing and the restore effect
+  // (above) committing the new task's tabs.
+  const tabsForActiveTask = useMemo(
+    () => openTabs.filter((tab) => tab.taskId === activeTaskId),
+    [openTabs, activeTaskId],
+  );
+  const activeOpenFile = tabsForActiveTask.find((tab) => tab.key === activeTabKey) || null;
   let centerPane;
   if (orchestratorOpen) {
     centerPane = (
@@ -500,10 +541,10 @@ export default function App() {
         onClose={toggleOrchestrator}
       />
     );
-  } else if (activeOpenFile?.view === 'plan') {
+  } else if (planOpen) {
     centerPane = <PlanPane content={planContent} />;
-  } else if (activeOpenFile?.view === 'diff') {
-    centerPane = (
+  } else {
+    const filePane = activeOpenFile?.view === 'diff' ? (
       <DiffPane
         openFile={activeOpenFile}
         workspaceVersion={activeWorkspaceVersion}
@@ -513,15 +554,24 @@ export default function App() {
         onViewStateChange={handleFileViewStateChange}
         onOpenFile={handleOpenFile}
       />
-    );
-  } else {
-    centerPane = (
+    ) : (
       <EditorPane
         openFile={activeOpenFile}
         onCommentSpawned={handleCommentSpawned}
         onViewStateChange={handleFileViewStateChange}
         onOpenFile={handleOpenFile}
       />
+    );
+    centerPane = (
+      <div className="center-pane-with-tabs">
+        <FileTabStrip
+          tabs={tabsForActiveTask}
+          activeKey={activeTabKey}
+          onSelect={handleSelectFileTab}
+          onClose={handleCloseFileTab}
+        />
+        {filePane}
+      </div>
     );
   }
   const layout = (

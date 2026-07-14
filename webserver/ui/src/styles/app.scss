@@ -3632,6 +3632,116 @@ code {
   color: $C-RED-89;
 }
 
+/* ───── middle pane — VS Code-style open-file tab strip + Monaco editor ───── */
+
+// Grid item (Layout's ``center`` slot) now wraps the tab strip + the
+// active pane, instead of the pane being the grid item directly — this
+// flex column gives the strip its natural height and the pane the rest.
+.center-pane-with-tabs {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+}
+
+.center-pane-with-tabs > #editor-pane,
+.center-pane-with-tabs > .diff-pane {
+  flex: 1;
+  min-height: 0;
+}
+
+.file-tab-strip {
+  flex-shrink: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  // Same gradient as the adjacent .editor-pane-header, immediately
+  // below this strip — reads as one continuous toolbar area instead
+  // of introducing a new background tone.
+  background: linear-gradient(180deg,
+      $C-NEUTRAL-11-A62 0%,
+      $C-NEUTRAL-07-A75 100%);
+  border-bottom: 1px solid $C-NEUTRAL-16;
+}
+
+.file-tab-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: stretch;
+}
+
+.file-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: $SPACE-6;
+  padding: $SPACE-8 $SPACE-10 $SPACE-8 $SPACE-12;
+  border-right: 1px solid $C-NEUTRAL-16;
+  border-bottom: 2px solid transparent;
+  color: $C-NEUTRAL-96-A65;
+  font-size: $TEXT-12;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  max-width: 220px;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.file-tab svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.file-tab:hover {
+  background: $C-NEUTRAL-100-A06;
+  color: $C-NEUTRAL-96-A85;
+}
+
+.file-tab.active {
+  background: $C-NEUTRAL-16;
+  border-bottom-color: $C-CYAN-52;
+  color: $C-NEUTRAL-96;
+}
+
+.file-tab:focus {
+  outline: none;
+}
+
+.file-tab-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-tab-close-btn {
+  background: transparent;
+  border: none;
+  color: $C-NEUTRAL-96-A42;
+  cursor: pointer;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: $RADIUS-CIRCLE;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.file-tab-close-btn svg {
+  width: 9px;
+  height: 9px;
+}
+
+.file-tab-close-btn:hover {
+  background: $C-NEUTRAL-100-A10;
+  color: $C-NEUTRAL-96;
+}
+
 /* ───── middle pane — Monaco editor (read-only file preview) ───── */
 #editor-pane {
   display: flex;

@@ -452,8 +452,51 @@ class BitbucketClientTests(unittest.TestCase):
         self.assertEqual(comments[0].comment_id, '1')
         self.assertEqual(comments[1].comment_id, '2')
         self.assertEqual(mock_get.call_count, 2)
-        # Second call uses the full URL from 'next' with no extra params
-        mock_get.assert_any_call('https://bitbucket.example/page2', params={})
+        # Second call strips the base URL back off 'next' before handing
+        # it to _get_with_retry — the real HTTP layer's URL builder
+        # always prepends base_url with no "already absolute" check, so
+        # passing the full 'next' URL straight through would double it
+        # into an always-404ing URL (see
+        # test_list_pull_request_comments_next_page_reaches_the_correct_real_url
+        # for the end-to-end reproduction). No extra params on page 2+.
+        mock_get.assert_any_call('page2', params={})
+
+    def test_list_pull_request_comments_next_page_reaches_the_correct_real_url(
+        self,
+    ) -> None:
+        # End-to-end regression: mocks ONLY session.get (the lowest HTTP
+        # layer), so this exercises the REAL url-building path for page
+        # 2, not just what gets passed to `_get`. The earlier
+        # "follows_next_page_link" test mocks `_get` directly and
+        # therefore never catches a doubled-URL bug introduced downstream
+        # of it — which is exactly how this bug shipped unnoticed.
+        client = BitbucketClient('https://api.bitbucket.org/2.0', 'bb-token')
+        page1 = mock_response(json_data={
+            'values': [{'id': 1, 'content': {'raw': 'page 1'}, 'user': {'display_name': 'reviewer'}}],
+            'next': (
+                'https://api.bitbucket.org/2.0/repositories/workspace/repo/'
+                'pullrequests/17/comments?pagelen=50&sort=created_on&page=2'
+            ),
+        })
+        page2 = mock_response(json_data={
+            'values': [{'id': 2, 'content': {'raw': 'page 2'}, 'user': {'display_name': 'reviewer'}}],
+        })
+
+        with patch.object(
+            client.session, 'get', side_effect=[page1, page2],
+        ) as mock_get:
+            comments = client.list_pull_request_comments('workspace', 'repo', '17')
+
+        self.assertEqual(len(comments), 2)
+        self.assertEqual(mock_get.call_count, 2)
+        # The URL actually sent for page 2 — NOT doubled.
+        second_call_url = mock_get.call_args_list[1].args[0]
+        self.assertEqual(
+            second_call_url,
+            'https://api.bitbucket.org/2.0/repositories/workspace/repo/'
+            'pullrequests/17/comments?pagelen=50&sort=created_on&page=2',
+        )
+        self.assertNotIn('2.0/https://', second_call_url)
 
     def test_find_pull_requests_filters_open_pull_requests_by_branch_and_title_prefix(self) -> None:
         client = BitbucketClient('https://bitbucket.example', 'bb-token')

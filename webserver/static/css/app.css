@@ -3578,6 +3578,107 @@ code {
   color: #fecaca;
 }
 
+/* ───── middle pane — VS Code-style open-file tab strip + Monaco editor ───── */
+.center-pane-with-tabs {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+}
+
+.center-pane-with-tabs > #editor-pane,
+.center-pane-with-tabs > .diff-pane {
+  flex: 1;
+  min-height: 0;
+}
+
+.file-tab-strip {
+  flex-shrink: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: linear-gradient(180deg, rgba(28, 28, 30, 0.62) 0%, rgba(16, 16, 18, 0.75) 100%);
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.file-tab-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: stretch;
+}
+
+.file-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 8px 12px;
+  border-right: 1px solid #2a2a2a;
+  border-bottom: 2px solid transparent;
+  color: rgba(245, 245, 247, 0.65);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  max-width: 220px;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.file-tab svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.file-tab:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(245, 245, 247, 0.85);
+}
+
+.file-tab.active {
+  background: #2a2a2a;
+  border-bottom-color: #0a84ff;
+  color: #f5f5f7;
+}
+
+.file-tab:focus {
+  outline: none;
+}
+
+.file-tab-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-tab-close-btn {
+  background: transparent;
+  border: none;
+  color: rgba(245, 245, 247, 0.42);
+  cursor: pointer;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 50%;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.file-tab-close-btn svg {
+  width: 9px;
+  height: 9px;
+}
+
+.file-tab-close-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #f5f5f7;
+}
+
 /* ───── middle pane — Monaco editor (read-only file preview) ───── */
 #editor-pane {
   display: flex;
