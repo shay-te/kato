@@ -348,6 +348,10 @@ class FilesDiffContractTests(unittest.TestCase):
         # /file echoes the absolute path back — tempdir-specific.
         if isinstance(file_payload.get('path'), str):
             file_payload['path'] = '/__fixture__/' + self.repo_id + '/src/app.py'
+        # mtime is the real on-disk stat() timestamp — different on
+        # every machine/run, same as sha/epoch above.
+        if 'mtime' in file_payload:
+            file_payload['mtime'] = '__FIXTURE_MTIME__'
         return {
             'files': files_payload,
             'diff': diff_payload,

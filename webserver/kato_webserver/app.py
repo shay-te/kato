@@ -1989,9 +1989,27 @@ def _register_http_routes(app: Flask) -> None:
         if not resolved.is_file():
             return jsonify({'error': 'file not found'}), 404
         try:
-            size = resolved.stat().st_size
+            stat_result = resolved.stat()
         except OSError as exc:
             return jsonify({'error': f'stat failed: {exc}'}), 500
+        size = stat_result.st_size
+        # Stable string form (not the raw float) so the client can send
+        # it straight back for an EXACT match — see below. The client
+        # caches file content across task-tab switches; a background
+        # branch sync, merge, or an operator editing the file directly
+        # can all change it without any SSE event the frontend would
+        # ever see, so re-verifying against the server's OWN stat() on
+        # every read (not a client-side "has anything happened?" guess)
+        # is what makes that cache safe rather than a staleness risk.
+        mtime = str(stat_result.st_mtime)
+        known_mtime = (request.args.get('known_mtime') or '').strip()
+        if known_mtime and known_mtime == mtime:
+            return jsonify({
+                'path': str(resolved),
+                'size': size,
+                'mtime': mtime,
+                'unchanged': True,
+            })
         # 1 MB cap — Monaco's perf cliff is around 5MB but file
         # diffs that big are pathological and rarely useful for a
         # read-only preview.
@@ -2009,6 +2027,7 @@ def _register_http_routes(app: Flask) -> None:
             return jsonify({
                 'path': str(resolved),
                 'size': size,
+                'mtime': mtime,
                 'binary': True,
             })
         try:
@@ -2018,6 +2037,7 @@ def _register_http_routes(app: Flask) -> None:
         return jsonify({
             'path': str(resolved),
             'size': size,
+            'mtime': mtime,
             'binary': False,
             'content': content,
         })

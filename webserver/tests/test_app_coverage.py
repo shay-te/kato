@@ -758,6 +758,79 @@ class SessionFileEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 500)
         self.assertIn('read failed', response.get_json()['error'])
 
+    def test_response_always_includes_mtime(self):
+        # The client caches on (content, mtime) — every content-bearing
+        # response must carry a usable mtime for a future known_mtime
+        # round trip, or the cache could never be verified/refreshed.
+        with tempfile.TemporaryDirectory() as workspace:
+            f = Path(workspace) / 'hello.py'
+            f.write_text('print("hi")\n', encoding='utf-8')
+            manager = _FakeManager(records=[
+                _FakeRecord(task_id='T-1', cwd=workspace),
+            ])
+            app = create_app(session_manager=manager)
+            response = app.test_client().get(
+                '/api/sessions/T-1/file?path=hello.py',
+            )
+        payload = response.get_json()
+        self.assertTrue(payload['mtime'])
+
+    def test_matching_known_mtime_returns_unchanged_without_content(self):
+        # SAFETY case for the client's file-content cache: a file that
+        # hasn't changed on disk since the client last fetched it must
+        # skip re-reading + re-transferring the content, verified by
+        # the SERVER's own stat() — never trusted from the client alone.
+        with tempfile.TemporaryDirectory() as workspace:
+            f = Path(workspace) / 'hello.py'
+            f.write_text('print("hi")\n', encoding='utf-8')
+            manager = _FakeManager(records=[
+                _FakeRecord(task_id='T-1', cwd=workspace),
+            ])
+            app = create_app(session_manager=manager)
+            first = app.test_client().get('/api/sessions/T-1/file?path=hello.py')
+            mtime = first.get_json()['mtime']
+            second = app.test_client().get(
+                f'/api/sessions/T-1/file?path=hello.py&known_mtime={mtime}',
+            )
+        self.assertEqual(second.status_code, 200)
+        payload = second.get_json()
+        self.assertTrue(payload['unchanged'])
+        self.assertNotIn('content', payload)
+
+    def test_stale_known_mtime_returns_fresh_content_not_unchanged(self):
+        # The file changed on disk (a background merge, another
+        # process, an operator edit) between the client's last fetch
+        # and this one — a STALE known_mtime must NOT short-circuit to
+        # `unchanged`; the client's cache would silently keep showing
+        # the old content forever otherwise.
+        with tempfile.TemporaryDirectory() as workspace:
+            f = Path(workspace) / 'hello.py'
+            f.write_text('print("hi")\n', encoding='utf-8')
+            manager = _FakeManager(records=[
+                _FakeRecord(task_id='T-1', cwd=workspace),
+            ])
+            app = create_app(session_manager=manager)
+            response = app.test_client().get(
+                '/api/sessions/T-1/file?path=hello.py&known_mtime=0.0',
+            )
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertNotIn('unchanged', payload)
+        self.assertIn('hi', payload['content'])
+
+    def test_binary_response_also_includes_mtime(self):
+        with tempfile.TemporaryDirectory() as workspace:
+            f = Path(workspace) / 'bin.dat'
+            f.write_bytes(b'\x00\x01\x02 binary content')
+            manager = _FakeManager(records=[
+                _FakeRecord(task_id='T-1', cwd=workspace),
+            ])
+            app = create_app(session_manager=manager)
+            response = app.test_client().get(
+                '/api/sessions/T-1/file?path=bin.dat',
+            )
+        self.assertTrue(response.get_json()['mtime'])
+
 
 # ---------------------------------------------------------------------------
 # /api/sessions/<task_id>/base-file — multiple branches

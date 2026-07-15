@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Editor from '@monaco-editor/react';
 import { fetchFileContent } from '../api.js';
+import { readCachedFileContent, writeCachedFileContent } from '../utils/fileContentCache.js';
 import { commentStore } from '../stores/commentStore.js';
 import { useTaskComments } from '../hooks/useTaskComments.js';
 import {
@@ -455,18 +456,45 @@ export default function EditorPane({
       });
       return undefined;
     }
+    const { taskId, absolutePath } = openFile;
     let cancelled = false;
-    setState((prev) => ({ ...prev, loading: true, error: '' }));
-    fetchFileContent(openFile.taskId, openFile.absolutePath)
+    // Show a cached copy INSTANTLY (no loading spinner) if we have one
+    // for this exact file — e.g. re-opening a tab after switching tasks
+    // away and back. This is only a display optimization, never trusted
+    // as correct on its own: the fetch below still always runs and
+    // sends the cached mtime back for the SERVER to verify against its
+    // own stat() — a background branch sync, merge, or a direct edit
+    // outside kato can change the file with no SSE event the client
+    // would ever see, so only the server confirming the mtime still
+    // matches can justify skipping the full re-read.
+    const cached = readCachedFileContent(taskId, absolutePath);
+    if (cached) {
+      setState({
+        loading: false, error: '',
+        content: cached.content, binary: cached.binary, tooLarge: cached.tooLarge,
+      });
+    } else {
+      setState((prev) => ({ ...prev, loading: true, error: '' }));
+    }
+    fetchFileContent(taskId, absolutePath, cached?.mtime || '')
       .then((body) => {
         if (cancelled) { return; }
-        setState({
-          loading: false,
-          error: '',
+        if (body?.unchanged) {
+          // Server confirmed the mtime we sent still matches — the
+          // cached copy already showing is correct, nothing to update.
+          return;
+        }
+        const next = {
           content: body?.content || '',
           binary: !!body?.binary,
           tooLarge: !!body?.too_large,
-        });
+        };
+        setState({ loading: false, error: '', ...next });
+        // too_large responses carry no content and no reliable mtime
+        // to key a future skip-fetch on — never cache those.
+        if (!next.tooLarge && body?.mtime) {
+          writeCachedFileContent(taskId, absolutePath, { ...next, mtime: body.mtime });
+        }
       })
       .catch((err) => {
         if (cancelled) { return; }

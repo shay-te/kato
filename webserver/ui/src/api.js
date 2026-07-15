@@ -581,11 +581,22 @@ export function recheckRepositoryPush(taskId, repoId) {
  * Load a single tracked file's contents from the task workspace.
  * Server-side guards: path-traversal, 1MB cap, binary detection.
  * Returns ``{ ok, body }`` where body has either ``content`` (text),
- * ``binary: true`` (NUL bytes seen), or ``too_large: true``.
+ * ``binary: true`` (NUL bytes seen), ``too_large: true``, or (when
+ * ``knownMtime`` is passed AND still matches the file's current mtime
+ * on disk) ``unchanged: true`` with no ``content`` — the caller already
+ * has it cached under that same mtime. ``knownMtime`` is always
+ * VERIFIED against the server's own stat() on every call, never
+ * trusted as-is — a background branch sync, merge, or a direct edit
+ * outside kato can change the file with no SSE event the client would
+ * ever see, so only the server confirming the mtime still matches
+ * makes it safe to reuse cached content.
  */
-export function fetchFileContent(taskId, absolutePath) {
-  const url = `/api/sessions/${encodeURIComponent(taskId)}/file`
+export function fetchFileContent(taskId, absolutePath, knownMtime = '') {
+  let url = `/api/sessions/${encodeURIComponent(taskId)}/file`
     + `?path=${encodeURIComponent(absolutePath)}`;
+  if (knownMtime) {
+    url += `&known_mtime=${encodeURIComponent(knownMtime)}`;
+  }
   return fetchJson(url);
 }
 

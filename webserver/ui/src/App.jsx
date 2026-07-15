@@ -31,6 +31,7 @@ import { useSessions } from './hooks/useSessions.js';
 import { clearTaskStreamCache } from './hooks/useSessionStream.js';
 import { forgetQueuedMessages } from './utils/queuedMessagesStore.js';
 import { clearImageDraft } from './utils/composerImageDraft.js';
+import { clearFileContentCacheForTask } from './utils/fileContentCache.js';
 import { useStatusFeed } from './hooks/useStatusFeed.js';
 import { useTaskAttention } from './hooks/useTaskAttention.js';
 import { useTaskTabShortcuts } from './hooks/useTaskTabShortcuts.js';
@@ -238,6 +239,10 @@ export default function App() {
     // behind in IndexedDB. Best-effort; never throws.
     forgetQueuedMessages(taskId);
     clearImageDraft(taskId);
+    // A forgotten task's workspace is gone; a later re-adopt reuses the
+    // same task id but a FRESH clone, so any file content cached under
+    // this id must not survive to be served for the new clone.
+    clearFileContentCacheForTask(taskId);
     if (activeTaskId === taskId) {
       setActiveTaskIdState('');
       userPickedTabRef.current = false;

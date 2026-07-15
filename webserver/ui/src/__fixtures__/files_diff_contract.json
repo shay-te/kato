@@ -49,6 +49,7 @@
   "file": {
     "binary": false,
     "content": "def main():\n    print('hello, fixed')\n    return 0\n",
+    "mtime": "__FIXTURE_MTIME__",
     "path": "/__fixture__/client/src/app.py",
     "size": 51
   },
