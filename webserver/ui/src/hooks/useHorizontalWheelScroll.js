@@ -1,21 +1,46 @@
-import { useEffect } from 'react';
+import { useCallback, useRef } from 'react';
 
-// Maps a "mostly vertical" wheel event to horizontal scroll on
-// ``ref.current``. A plain (non-trackpad) mouse wheel emits deltaY
-// only by default; inside a horizontally-scrolling strip that would
-// scroll the PAGE instead of the strip's own content, leaving the
-// operator no way to reach an off-screen tab except dragging the
-// scrollbar thumb by hand. Trackpad gestures (which already carry
-// deltaX) are passed through untouched — this only intervenes when
-// the event is overwhelmingly vertical.
+// Maps a "mostly vertical" wheel event to horizontal scroll on the
+// element this hook's returned ref is attached to. A plain
+// (non-trackpad) mouse wheel emits deltaY only by default; inside a
+// horizontally-scrolling strip that would scroll the PAGE instead of
+// the strip's own content, leaving the operator no way to reach an
+// off-screen tab except dragging the scrollbar thumb by hand.
+// Trackpad gestures (which already carry deltaX) are passed through
+// untouched — this only intervenes when the event is overwhelmingly
+// vertical.
+//
+// Returns a CALLBACK ref, not a plain useRef — deliberately. A plain
+// ``useRef`` + ``useEffect(() => { attach to ref.current }, [ref])``
+// only runs that effect ONCE, at mount, because ``ref`` (the object
+// useRef returns) never changes identity across renders. If the
+// scrollable element isn't mounted yet on that very first render
+// (task tabs render an empty-state placeholder before sessions load;
+// file tabs render nothing before any file is open), ref.current is
+// null when the effect fires, and the listener never attaches even
+// after the real element shows up moments later — click-and-drag
+// still works (native browser behavior needs no JS) but the wheel
+// silently does nothing forever. A callback ref fires exactly when
+// the DOM node attaches or detaches, so there is no timing gap to
+// miss.
+//
+// ``externalRef`` is optional — pass an existing ``useRef()`` object
+// when the caller ALSO needs ``.current`` for its own purposes (e.g.
+// TabList's chevron-scroll / hold-to-scroll logic); this hook keeps
+// it in sync as a side effect of the same callback.
 //
 // Shared by every horizontally-scrolling tab strip (task tabs, file
 // tabs, …) so the wheel-remap behavior — and its Windows/Firefox
 // deltaMode normalisation — lives in exactly one place.
-export function useHorizontalWheelScroll(ref) {
-  useEffect(() => {
-    const node = ref.current;
-    if (!node) { return undefined; }
+export function useHorizontalWheelScroll(externalRef = null) {
+  const cleanupRef = useRef(null);
+  return useCallback((node) => {
+    if (externalRef) { externalRef.current = node; }
+    if (cleanupRef.current) {
+      cleanupRef.current();
+      cleanupRef.current = null;
+    }
+    if (!node) { return; }
     const onWheel = (event) => {
       if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) {
         return;
@@ -43,6 +68,6 @@ export function useHorizontalWheelScroll(ref) {
       node.scrollLeft += step;
     };
     node.addEventListener('wheel', onWheel, { passive: false });
-    return () => node.removeEventListener('wheel', onWheel);
-  }, [ref]);
+    cleanupRef.current = () => node.removeEventListener('wheel', onWheel);
+  }, [externalRef]);
 }

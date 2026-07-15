@@ -152,4 +152,33 @@ describe('FileTabStrip', () => {
     expect(icons[0].getAttribute('data-icon')).toBe('file');
     expect(icons[1].getAttribute('data-icon')).toBe('code-compare');
   });
+
+  test('THE REGRESSION: wheel scroll still works after the FIRST tab opens (component starts with zero tabs)', () => {
+    // The real-world sequence every time: FileTabStrip renders `null`
+    // (no tabs open yet) BEFORE the operator opens their first file —
+    // it never starts already populated. A plain useRef + useEffect
+    // hook only runs its attach-effect once, on that first (empty,
+    // no DOM node) render, and never re-runs once the strip actually
+    // mounts — so the wheel listener silently never attached. This is
+    // the exact transition that must be exercised, not just "render
+    // with tabs already present" (which happened to mask the bug).
+    const { container, rerender } = render(
+      <FileTabStrip tabs={[]} activeKey={null} onSelect={() => {}} onClose={() => {}} />,
+    );
+    expect(container.querySelector('.file-tab-strip')).toBeNull();
+
+    rerender(
+      <FileTabStrip tabs={[tab()]} activeKey={null} onSelect={() => {}} onClose={() => {}} />,
+    );
+    const strip = container.querySelector('.file-tab-strip');
+    Object.defineProperty(strip, 'scrollLeft', { value: 0, writable: true });
+    Object.defineProperty(strip, 'clientWidth', { value: 100 });
+    Object.defineProperty(strip, 'scrollWidth', { value: 500 });
+    const event = new WheelEvent('wheel', {
+      deltaY: 50, deltaX: 0, bubbles: true, cancelable: true,
+    });
+    strip.dispatchEvent(event);
+    expect(strip.scrollLeft).toBe(50);
+    expect(event.defaultPrevented).toBe(true);
+  });
 });

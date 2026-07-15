@@ -306,4 +306,37 @@ describe('TabList — pinned tab ordering', () => {
     expect(scroller.scrollLeft).toBe(10);
     expect(wheel.defaultPrevented).toBe(false);
   });
+
+  test('THE REGRESSION: wheel scroll still works after the FIRST session loads (starts on the empty-state placeholder)', () => {
+    // The real-world sequence on every app load: sessions start as []
+    // (before the initial /api/sessions fetch resolves), so TabList
+    // renders the empty-state placeholder — no .tabs-scroller exists
+    // yet. A plain useRef + useEffect hook only runs its attach-effect
+    // once, on that first (no scroller) render, and never re-runs once
+    // sessions actually populate and the real strip mounts — so the
+    // wheel listener silently never attached. This is the exact
+    // transition that must be exercised, not just "render with
+    // sessions already present" (which happened to mask the bug).
+    const { container, rerender } = render(
+      <TabList sessions={[]} onSelect={() => {}} />,
+    );
+    expect(container.querySelector('.tabs-scroller')).toBeNull();
+
+    rerender(
+      <TabList
+        sessions={[_session('A-1'), _session('A-2'), _session('A-3')]}
+        onSelect={() => {}}
+      />,
+    );
+    const scroller = container.querySelector('.tabs-scroller');
+    Object.defineProperty(scroller, 'clientWidth', { value: 100, configurable: true });
+    Object.defineProperty(scroller, 'scrollWidth', { value: 500, configurable: true });
+    scroller.scrollLeft = 0;
+    const wheel = new WheelEvent('wheel', {
+      deltaY: 50, deltaX: 0, bubbles: true, cancelable: true,
+    });
+    scroller.dispatchEvent(wheel);
+    expect(scroller.scrollLeft).toBe(50);
+    expect(wheel.defaultPrevented).toBe(true);
+  });
 });

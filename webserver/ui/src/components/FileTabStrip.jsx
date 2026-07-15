@@ -1,4 +1,3 @@
-import { useRef } from 'react';
 import { cx } from '../utils/cx.js';
 import { basenameOf } from '../utils/basenameOf.js';
 import { useHorizontalWheelScroll } from '../hooks/useHorizontalWheelScroll.js';
@@ -13,11 +12,14 @@ import Icon from './Icon.jsx';
 // wheel-scroll remap (a mouse wheel would otherwise scroll the page,
 // not this strip) plus native drag-the-thumb scrolling for overflow.
 export default function FileTabStrip({ tabs, activeKey, onSelect, onClose }) {
-  const scrollRef = useRef(null);
-  useHorizontalWheelScroll(scrollRef);
+  // Callback ref, not useRef + useEffect — this component returns
+  // null (no DOM node at all) whenever tabs is empty, which a plain
+  // useEffect-on-a-stable-ref-object would miss the very first time
+  // a tab actually opens (see the hook for the full explanation).
+  const wheelRef = useHorizontalWheelScroll();
   if (!tabs || tabs.length === 0) { return null; }
   return (
-    <nav className="file-tab-strip" aria-label="Open files" ref={scrollRef}>
+    <nav className="file-tab-strip" aria-label="Open files" ref={wheelRef}>
       <ul className="file-tab-list">
         {tabs.map((tab) => (
           <FileTab

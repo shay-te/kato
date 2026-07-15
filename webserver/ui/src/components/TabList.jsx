@@ -100,8 +100,11 @@ export default function TabList({
   }, [recomputeScrollState]);
   // Vertical-mouse-wheel-to-horizontal-scroll remap — shared with
   // every other horizontally-scrolling tab strip (see the hook for
-  // the Windows/Firefox deltaMode normalisation this fixes).
-  useHorizontalWheelScroll(scrollRef);
+  // the Windows/Firefox deltaMode normalisation this fixes, and why
+  // this is a CALLBACK ref rather than a plain useRef + useEffect —
+  // the empty-state branch below means .tabs-scroller isn't mounted
+  // on the very first render, which a plain useEffect would miss).
+  const wheelRef = useHorizontalWheelScroll(scrollRef);
 
   // No auto-scroll-into-view on tab selection: the operator's own
   // scroll position is intentional and must not be fought. With many
@@ -290,7 +293,7 @@ export default function TabList({
       >
         <Icon name="chevron-left" />
       </button>
-      <div className="tabs-scroller" ref={scrollRef}>
+      <div className="tabs-scroller" ref={wheelRef}>
         <ul id="tab-list" ref={listRef}>
           {tabs}
         </ul>
