@@ -50,12 +50,19 @@ class _FakeManager:
 
 
 class _FakeSessionEvent:
-    def __init__(self, event_type):
+    def __init__(self, event_type, request_id=''):
         self.event_type = event_type
-        self.raw = {'type': event_type}
+        self._request_id = str(request_id or '')
+        self.raw = self._build_raw()
+
+    def _build_raw(self):
+        raw = {'type': self.event_type}
+        if self._request_id:
+            raw['request_id'] = self._request_id
+        return raw
 
     def to_dict(self):
-        return {'raw': {'type': self.event_type}, 'received_at_epoch': 1.0}
+        return {'raw': self._build_raw(), 'received_at_epoch': 1.0}
 
 
 class _RaceyLiveSession:
@@ -722,6 +729,59 @@ class WebserverAppTests(unittest.TestCase):
         joined = ''.join(frames)
         self.assertIn('"type": "control_request"', joined)
         self.assertEqual(replayed_count, 2)
+
+    def test_backlog_drops_an_already_answered_control_request(self):
+        # Regression: switching back to a task's tab reconnects the SSE and
+        # replays the backlog. An ALREADY-ANSWERED control_request must NOT be
+        # re-emitted — it re-pops the permission modal for a decision the
+        # operator already made, every time they switch to the task, even
+        # when the session is idle. A STILL-pending ask must still replay.
+        class _SessionWithOneAnsweredOnePending:
+            def recent_events(self):
+                return [
+                    _FakeSessionEvent('system'),
+                    _FakeSessionEvent('control_request', request_id='answered-1'),
+                    _FakeSessionEvent('control_request', request_id='pending-2'),
+                ]
+
+            def pending_control_requests(self):
+                # 'answered-1' was popped when the operator answered it; only
+                # 'pending-2' is still waiting.
+                return [{
+                    'type': 'control_request',
+                    'request_id': 'pending-2',
+                    'request': {},
+                }]
+
+        frames = []
+        gen = _replay_session_backlog(_SessionWithOneAnsweredOnePending())
+        try:
+            while True:
+                frames.append(next(gen))
+        except StopIteration as exc:
+            replayed_count = exc.value
+
+        joined = ''.join(frames)
+        self.assertIn('pending-2', joined)        # still-pending ask IS replayed
+        self.assertNotIn('answered-1', joined)    # answered ask is dropped
+        self.assertEqual(replayed_count, 3)       # count reflects full backlog
+
+    def test_backlog_replays_control_request_when_session_cannot_report_pending(self):
+        # Fail-open: a session with no ``pending_control_requests`` (older
+        # transports, test stubs) must NOT have its control_request suppressed —
+        # dropping a genuinely-pending ask the operator never sees is worse.
+        class _SessionNoPendingApi:
+            def recent_events(self):
+                return [_FakeSessionEvent('control_request', request_id='x-1')]
+
+        frames = []
+        gen = _replay_session_backlog(_SessionNoPendingApi())
+        try:
+            while True:
+                frames.append(next(gen))
+        except StopIteration:
+            pass
+        self.assertIn('x-1', ''.join(frames))
 
     def test_live_stream_does_not_skip_event_created_between_backlog_and_follow(self):
         session = _RaceyLiveSession()

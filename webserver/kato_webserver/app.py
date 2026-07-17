@@ -4115,6 +4115,45 @@ def _maybe_auto_resolve_live_event(app, session, task_id: str, event) -> bool:
         return False
 
 
+def _pending_control_request_ids(session):
+    """The request_ids of control asks STILL awaiting an answer for this
+    session (a resolved/answered ask is ``pop``'d from the session's pending
+    map, so it won't appear here), or ``None`` when the session can't report.
+
+    ``None`` is the fail-OPEN signal — the caller must then NOT suppress any
+    ask, because dropping a genuinely-pending permission (the operator never
+    sees it) is far worse than replaying an already-answered one."""
+    probe = getattr(session, 'pending_control_requests', None)
+    if not callable(probe):
+        return None
+    try:
+        pending = probe() or []
+    except Exception:
+        return None
+    return {
+        str((item or {}).get('request_id') or '')
+        for item in pending
+        if isinstance(item, dict)
+    }
+
+
+def _control_request_already_answered(raw, pending_ids) -> bool:
+    """True when ``raw`` is a ``control_request`` whose ask has ALREADY been
+    answered — i.e. we have a definitive pending set and its request_id is not
+    in it. Replaying such an event on reconnect (the operator switching back to
+    the task's tab) re-pops the permission modal for a decision they already
+    made, even on an idle session. ``pending_ids is None`` (can't tell) or a
+    non-control_request event → False (replay it, never suppress)."""
+    if pending_ids is None:
+        return False
+    if not isinstance(raw, dict) or raw.get('type') != CLAUDE_EVENT_CONTROL_REQUEST:
+        return False
+    request_id = str(raw.get('request_id') or '')
+    if not request_id:
+        return False
+    return request_id not in pending_ids
+
+
 def _replay_session_backlog(session, agent_service=None, task_id='', app=None):
     """Catch a freshly-connecting browser up on everything seen so far.
 
@@ -4128,9 +4167,21 @@ def _replay_session_backlog(session, agent_service=None, task_id='', app=None):
     fallback (``advance_finished_comment_runs``), both of which run while
     the session is idle and attach the comment's OWN result. ``agent_service``
     / ``task_id`` are accepted for call-site symmetry but intentionally unused.
+
+    Already-ANSWERED ``control_request`` events are dropped from the replay:
+    the backlog keeps the original ask, so without this switching back to a
+    task's tab re-pops the permission modal for a decision the operator
+    already made (even when the session is idle) — the "it asks for all the
+    permissions again every time I switch to the task" report. A still-pending
+    ask IS replayed so a genuinely-unanswered permission still surfaces.
     """
     backlog = session.recent_events()
+    pending_ids = _pending_control_request_ids(session)
     for event in backlog:
+        payload = event.to_dict()
+        raw = payload.get('raw') if isinstance(payload, dict) else None
+        if _control_request_already_answered(raw, pending_ids):
+            continue
         if _maybe_auto_resolve_live_event(app, session, task_id, event):
             continue
         yield _session_event_frame(event, session)
