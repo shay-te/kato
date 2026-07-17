@@ -34,6 +34,10 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
           line
           originalLine
           comments(first: 100) {
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
             nodes {
               databaseId
               body
@@ -47,6 +51,38 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
                 oid
               }
             }
+          }
+        }
+      }
+    }
+  }
+}
+'''.strip()
+    # Follow-up page(s) of ONE thread's comments — the thread query caps the
+    # inner ``comments`` connection at 100, so a thread with >100 replies
+    # dropped the newest ones (the latest operator instruction could be
+    # invisible to the fix/answer flow). Same GraphQL protocol, keyed by the
+    # thread's node id.
+    _THREAD_COMMENTS_QUERY = '''
+query($threadId: ID!, $cursor: String) {
+  node(id: $threadId) {
+    ... on PullRequestReviewThread {
+      comments(first: 100, after: $cursor) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          databaseId
+          body
+          author {
+            login
+          }
+          commit {
+            oid
+          }
+          originalCommit {
+            oid
           }
         }
       }
@@ -285,7 +321,52 @@ mutation($threadId: ID!) {
             cursor = page_info.get('endCursor')
             if not cursor:
                 break
+        self._fill_all_thread_comments(all_nodes)
         return all_nodes
+
+    # Safety cap mirroring the issue-comment paginator: bounds a thread whose
+    # comment connection keeps reporting hasNextPage (5000 replies is already
+    # far past any real review thread).
+    _MAX_THREAD_COMMENT_PAGES = 50
+
+    def _fill_all_thread_comments(self, all_nodes: list[object]) -> None:
+        """Fill in any thread whose comments were truncated at the query's
+        inner ``first: 100`` — otherwise a comment past #100 (e.g. the newest
+        operator instruction on a long thread) is invisible to the fix/answer
+        flow (``_thread_id_for_comment`` scans these nodes)."""
+        for thread in all_nodes:
+            if isinstance(thread, dict):
+                self._fill_remaining_thread_comments(thread)
+
+    def _fill_remaining_thread_comments(self, thread: dict) -> None:
+        """Append every comment page past the first 100 onto ``thread``'s
+        in-place comment nodes, following the inner connection's cursor."""
+        comments = thread.get('comments')
+        if not isinstance(comments, dict):
+            return
+        page_info = dict_from_mapping(comments, 'pageInfo')
+        if not page_info.get('hasNextPage'):
+            return
+        thread_id = text_from_mapping(thread, 'id')
+        cursor = page_info.get('endCursor')
+        if not thread_id or not cursor:
+            return
+        nodes = list(list_from_mapping(comments, 'nodes'))
+        pages = 0
+        while cursor and pages < self._MAX_THREAD_COMMENT_PAGES:
+            payload = self._graphql_with_retry(
+                self._THREAD_COMMENTS_QUERY,
+                {'threadId': thread_id, 'cursor': cursor},
+            )
+            node = dict_from_mapping(payload.get('data') or {}, 'node')
+            page_comments = dict_from_mapping(node, 'comments')
+            nodes.extend(list_from_mapping(page_comments, 'nodes'))
+            pages += 1
+            inner_info = dict_from_mapping(page_comments, 'pageInfo')
+            if not inner_info.get('hasNextPage'):
+                break
+            cursor = inner_info.get('endCursor')
+        comments['nodes'] = nodes
 
     def _thread_id_for_comment(
         self,

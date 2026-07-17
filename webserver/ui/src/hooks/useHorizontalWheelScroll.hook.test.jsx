@@ -152,4 +152,40 @@ describe('useHorizontalWheelScroll', () => {
     result.current(null);
     expect(externalRef.current).toBe(null);
   });
+
+  test('onAttach runs when the node attaches LATER, so TabList scroll/resize listeners survive the empty→populated remount', () => {
+    // #11: the chevron scroll/resize listeners used to be a one-shot
+    // useEffect that fired before the strip existed and never re-ran. Riding
+    // onAttach means they wire up exactly when the node attaches.
+    const attaches = [];
+    const cleanups = [];
+    const onAttach = (node) => {
+      attaches.push(node);
+      const cleanup = () => cleanups.push(node);
+      return cleanup;
+    };
+    const { result } = renderHook(() => useHorizontalWheelScroll(null, onAttach));
+    const refCallback = result.current;
+
+    refCallback(null);  // empty-state render: nothing attaches
+    expect(attaches).toEqual([]);
+
+    const el = scrollableNode();
+    refCallback(el);  // strip mounts once sessions load
+    expect(attaches).toEqual([el]);
+
+    refCallback(null);  // unmount → the caller's cleanup runs
+    expect(cleanups).toEqual([el]);
+  });
+
+  test('onAttach cleanup runs when re-attaching to a different node (no leak)', () => {
+    const cleanups = [];
+    const onAttach = (node) => () => cleanups.push(node);
+    const { result } = renderHook(() => useHorizontalWheelScroll(null, onAttach));
+    const first = scrollableNode();
+    const second = scrollableNode();
+    result.current(first);
+    result.current(second);  // swapping nodes must clean up the first
+    expect(cleanups).toEqual([first]);
+  });
 });

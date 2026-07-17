@@ -20,13 +20,46 @@ export default function PermissionModal({
 
   useEffect(() => { setRationale(''); }, [requestId]);
 
-  if (!raw) { return null; }
-
   // Command-keyed tools (Bash) remember the command's PROGRAM (e.g. `mvn`),
   // not the tool and not the verbatim line — so "Allow always" on
   // `mvn verify` covers future `mvn` runs (in any task folder) but never
   // auto-allows `docker`. The modal still shows the real command below.
   const command = decisionCommandFor(toolName, toolInput);
+  // Detected up here (not just before its render branch) so the keyboard
+  // shortcuts below can skip the AskUserQuestion form, which has its own
+  // controls. See the ``if (askQuestions)`` branch further down.
+  const askQuestions = extractAnswerableQuestions(toolInput);
+  // Out-of-task asks AND high-risk Action Guard categories never offer the
+  // remembered ("Allow always") scope — a persisted grant for those is exactly
+  // what must never be one click (or keystroke) away.
+  const withholdAllowAlways = outsideSandbox || isHighRiskActionGuard(actionGuard);
+
+  // Keyboard shortcuts: Esc = Deny, Enter = Allow once, Shift+Enter = Allow
+  // always (falls back to Allow once when the remembered scope is withheld).
+  // Skipped while typing in the rationale textarea (Enter must stay a newline
+  // there) and for the AskUserQuestion form. Capture phase + preventDefault so
+  // a focused button's native Enter-activation can't ALSO fire — exactly one
+  // decision per keypress.
+  useEffect(() => {
+    if (!raw || askQuestions) { return undefined; }
+    function onKeyDown(event) {
+      const inRationale = event.target && event.target.id === 'permission-rationale';
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onDecide({ allow: false, rationale, remember: false, requestId, toolName, command });
+      } else if (event.key === 'Enter' && !inRationale) {
+        event.preventDefault();
+        onDecide({
+          allow: true, rationale, remember: event.shiftKey && !withholdAllowAlways,
+          requestId, toolName, command,
+        });
+      }
+    }
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [raw, askQuestions, withholdAllowAlways, rationale, requestId, toolName, command, onDecide]);
+
+  if (!raw) { return null; }
 
   // Out-of-task asks (a file path or an escaping command like docker —
   // flagged by the backend's outside_sandbox) get the loud red warning and
@@ -35,9 +68,9 @@ export default function PermissionModal({
   const fields = renderFields(toolInput);
   const sandboxWarning = renderSandboxWarning(outsideSandbox, outsidePath, toolName);
   const actionGuardBanner = renderActionGuardBanner(actionGuard);
-  const denyTooltip = `Deny this ${toolName} request. Claude will see your rationale (if any) and decide what to do next.`;
-  const allowOnceTitle = `Approve this ${toolName} request only — kato will ask again next time.`;
-  const allowAlwaysTitle = `Approve and remember ${toolName} — kato won't ask again, even after a kato or browser restart, until you clear it from settings.`;
+  const denyTooltip = `Deny this ${toolName} request (Esc). Claude will see your rationale (if any) and decide what to do next.`;
+  const allowOnceTitle = `Approve this ${toolName} request only (Enter) — kato will ask again next time.`;
+  const allowAlwaysTitle = `Approve and remember ${toolName} (Shift+Enter) — kato won't ask again, even after a kato or browser restart, until you clear it from settings.`;
   function handleRationaleChange(event) {
     setRationale(event.target.value);
   }
@@ -50,11 +83,6 @@ export default function PermissionModal({
   function handleAllowAlways() {
     onDecide({ allow: true, rationale, remember: true, requestId, toolName, command });
   }
-  // Out-of-task asks AND high-risk Action Guard categories (credential read,
-  // exfil, remote-exec, sandbox escape) never offer the remembered ("Allow
-  // always") scope — a persisted grant for those is exactly what must never
-  // be one click away. Built here so the JSX stays logic-free.
-  const withholdAllowAlways = outsideSandbox || isHighRiskActionGuard(actionGuard);
   const allowAlwaysButton = renderAllowAlwaysButton(
     withholdAllowAlways, allowAlwaysTitle, handleAllowAlways,
   );
@@ -97,11 +125,10 @@ export default function PermissionModal({
 
   // A "question to answer" tool call (Claude's AskUserQuestion, or any backend
   // emitting the same questions shape) isn't a permission to grant — it's a
-  // question to answer. Detect it by SHAPE so the form is backend-agnostic, and
-  // render the options as a real answer form; the selection goes back as the
-  // response message (a "deny" carrying the answer, since an "allow" would make
-  // the headless CLI try to open a TTY picker that doesn't exist).
-  const askQuestions = extractAnswerableQuestions(toolInput);
+  // question to answer (detected as ``askQuestions`` above). Render the options
+  // as a real answer form; the selection goes back as the response message (a
+  // "deny" carrying the answer, since an "allow" would make the headless CLI
+  // try to open a TTY picker that doesn't exist).
   if (askQuestions) {
     return (
       <DialogShell

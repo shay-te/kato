@@ -86,11 +86,34 @@ const NOISE_PROGRAMS = new Set(['cd', 'pushd', 'popd', 'export']);
 // was silently re-prompting every time (operator report: approved
 // `python -m pytest …` once, the next turn appended `| head -30` and the
 // remembered decision no longer matched). Deliberately a SHORT, hand-picked
-// allowlist of read-only, side-effect-free utilities — NOT a general
-// "trust anything after a pipe" rule. Never add anything here that can
-// affect program behavior or exfiltrate data (grep, curl, xargs, tee,
-// sh -c, eval, nc, …); those must keep re-prompting.
-const OUTPUT_SHAPING_PROGRAMS = new Set(['head', 'tail', 'wc', 'sort', 'uniq']);
+// allowlist of programs that ONLY read stdin and print to stdout — NOT a
+// general "trust anything after a pipe" rule. Never add anything here that
+// can affect program behavior, WRITE A FILE, or exfiltrate data. In
+// particular `sort` (`-o FILE`, `--compress-program=PROG`) and `uniq`
+// (`uniq IN OUT`) can write files / run programs, so they are NOT here —
+// folding them let `<approved> && sort -o .git/hooks/pre-commit payload`
+// ride an already-remembered signature with no re-prompt. Likewise
+// grep/curl/xargs/tee/sh -c/eval/nc must keep re-prompting.
+const OUTPUT_SHAPING_PROGRAMS = new Set(['head', 'tail', 'wc']);
+
+// Benign wrapper programs that RUN another program (their inner argument) —
+// mirror of command_introspection.py's _WRAPPER_PROGRAMS. Stepped through so
+// `timeout 300 npm test` keys on `npm`, not the bare `timeout`; otherwise
+// every `timeout <x>` collapsed to one `timeout` key and a single remembered
+// `timeout` grant rode `timeout bash evil.sh`. NOT escape wrappers — sudo/doas
+// ARE escapes and are folded with their target instead (TARGET_FOLDING).
+const WRAPPER_PROGRAMS = new Set([
+  'env', 'xargs', 'command', 'nohup', 'time', 'nice', 'timeout',
+  'stdbuf', 'setsid', 'ionice',
+]);
+
+// Escalation-wrapper option flags that take a SEPARATE argument (a principal,
+// not a program): `sudo -u root`, `sudo --group wheel`. Skipped (with their
+// argument) so `sudo -u root bash` folds to `sudo bash`, not the
+// collapse-prone `sudo -u` that blessed running ANY program as ANY user.
+const ESCALATION_ARG_FLAGS = new Set(['-u', '--user', '-g', '--group']);
+const ESCALATION_ARG_FLAG_EQ = /^(-u=|--user=|-g=|--group=)/;
+const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
 // Privilege-escalation wrappers — the OPPOSITE problem from NOISE_PROGRAMS:
 // dropping these would be wrong (unlike `cd`, running AS root is exactly the
@@ -119,28 +142,61 @@ function _cleanToken(token) {
   return token.replace(/[)`]+$/, '').replace(/^.*\//, '');
 }
 
+// Index of the token naming the program a segment actually invokes, from
+// `start` — stepping over leading `VAR=val` env assignments AND benign wrapper
+// programs (env/xargs/timeout/…) plus their own flags/numeric args, so
+// `timeout 10 docker` resolves to `docker`'s token. Returns tokens.length when
+// only wrappers remain. Mirror of command_introspection.py:program_token_index.
+function _programTokenIndex(tokens, start = 0) {
+  let index = Math.max(0, start | 0);
+  while (index < tokens.length) {
+    if (ENV_ASSIGNMENT.test(tokens[index])) { index += 1; continue; }
+    const program = tokens[index].replace(/^.*\//, '');
+    if (!WRAPPER_PROGRAMS.has(program)) { return index; }
+    index += 1;
+    while (index < tokens.length && (
+      tokens[index].startsWith('-')
+      || /^\d+$/.test(tokens[index])
+      || ENV_ASSIGNMENT.test(tokens[index])
+    )) { index += 1; }
+  }
+  return tokens.length;
+}
+
+// The cleaned target-program token folded onto an escalation wrapper
+// (sudo/doas/pkexec/su/source/.), or '' when there is none. Skips the
+// wrapper's principal-taking flags (`-u root`, `--group wheel`) so
+// `sudo -u root bash` folds to `sudo bash` (not the collapse-prone `sudo -u`),
+// then steps through any benign wrapper. Mirror of _escalation_target_token.
+function _escalationTargetToken(tokens, wrapperIndex) {
+  let j = wrapperIndex + 1;
+  while (j < tokens.length) {
+    const token = tokens[j];
+    if (ESCALATION_ARG_FLAGS.has(token)) { j += 2; continue; }
+    if (ESCALATION_ARG_FLAG_EQ.test(token)) { j += 1; continue; }
+    break;
+  }
+  const index = _programTokenIndex(tokens, j);
+  if (index >= tokens.length) { return ''; }
+  return _cleanToken(tokens[index]);
+}
+
 // The program a single shell segment invokes, basename-only:
 //   "JAVA_HOME=/x mvn -B verify" → "mvn"   "/usr/local/bin/docker ps" → "docker"
-//   "./gradlew build"            → "gradlew"
+//   "./gradlew build"            → "gradlew"   "timeout 300 npm test" → "npm"
 //   "sudo npm install"           → "sudo npm" (see PRIVILEGE_ESCALATION_PROGRAMS)
 function _programOfSegment(segment) {
   // Strip leading subshell openers / backticks so `(cd /x && mvn)`, `$(mvn)`
   // and `` `mvn` `` resolve to the real program, not a `(cd` / `$(mvn` token.
   const tokens = String(segment).replace(/^[\s($`]+/, '')
     .split(/\s+/).filter(Boolean);
-  let i = 0;
-  // Skip leading env-var assignments (FOO=bar) — they prefix, not invoke.
-  while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) { i += 1; }
-  const rawProg = tokens[i];
-  if (!rawProg) { return ''; }
-  const prog = _cleanToken(rawProg);
-  if (TARGET_FOLDING_PROGRAMS.has(prog) && tokens[i + 1]) {
-    // Not maximally precise about which token is a flag vs. the real
-    // target (sudo's own flags can take arguments, e.g. `-u root`) — but
-    // ANY additional token narrows the key vs. the bare wrapper name,
-    // which is what actually matters: it makes the remembered grant
-    // specific to (roughly) this target, not to "sudo, unconditionally".
-    return `${prog} ${_cleanToken(tokens[i + 1])}`;
+  // Steps env assignments + benign wrappers (timeout/env/…) to the real program.
+  const i = _programTokenIndex(tokens);
+  if (i >= tokens.length) { return ''; }
+  const prog = _cleanToken(tokens[i]);
+  if (TARGET_FOLDING_PROGRAMS.has(prog)) {
+    const target = _escalationTargetToken(tokens, i);
+    if (target) { return `${prog} ${target}`; }
   }
   return prog;
 }

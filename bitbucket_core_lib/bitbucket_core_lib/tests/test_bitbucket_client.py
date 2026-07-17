@@ -452,14 +452,13 @@ class BitbucketClientTests(unittest.TestCase):
         self.assertEqual(comments[0].comment_id, '1')
         self.assertEqual(comments[1].comment_id, '2')
         self.assertEqual(mock_get.call_count, 2)
-        # Second call strips the base URL back off 'next' before handing
-        # it to _get_with_retry — the real HTTP layer's URL builder
-        # always prepends base_url with no "already absolute" check, so
-        # passing the full 'next' URL straight through would double it
-        # into an always-404ing URL (see
-        # test_list_pull_request_comments_next_page_reaches_the_correct_real_url
-        # for the end-to-end reproduction). No extra params on page 2+.
-        mock_get.assert_any_call('page2', params={})
+        # The absolute 'next' URL is handed straight to _get_with_retry — the
+        # HTTP layer's _abs_url leaves an already-absolute URL untouched (every
+        # verb routes through it), so there is no doubling and no prefix-strip
+        # dance. See test_list_pull_request_comments_next_page_reaches_the_
+        # correct_real_url for the end-to-end (session.get) proof. No extra
+        # params on page 2+.
+        mock_get.assert_any_call('https://bitbucket.example/page2', params={})
 
     def test_list_pull_request_comments_next_page_reaches_the_correct_real_url(
         self,

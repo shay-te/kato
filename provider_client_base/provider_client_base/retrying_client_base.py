@@ -30,6 +30,33 @@ class RetryingClientBase(ClientBase):
             return path
         return f'{self.base_url.rstrip("/")}/{path.lstrip("/")}'
 
+    # EVERY verb builds its URL through ``_abs_url`` (not ``ClientBase.__build_url``,
+    # which has no "already absolute" check). ``ClientBase`` only wired that
+    # check into ``_patch`` before, so GET/POST/PUT/DELETE — the verbs that
+    # actually paginate — would double an absolute ``next`` URL and 404; only a
+    # provider-side prefix-strip (Bitbucket's ``_relative_next_page_path``) hid
+    # it, and its fallback branch still doubled. Overriding all verbs here is
+    # the single guard, so callers can hand any verb an absolute URL safely.
+    def _send(self, verb_callable, path: str, *args, **kwargs):
+        return verb_callable(
+            self._abs_url(path), *args, **self.process_kwargs(**kwargs),
+        )
+
+    def _get(self, path: str, *args, **kwargs):
+        return self._send(self.session.get, path, *args, **kwargs)
+
+    def _post(self, path: str, *args, **kwargs):
+        return self._send(self.session.post, path, *args, **kwargs)
+
+    def _put(self, path: str, *args, **kwargs):
+        return self._send(self.session.put, path, *args, **kwargs)
+
+    def _patch(self, path: str, *args, **kwargs):
+        return self._send(self.session.patch, path, *args, **kwargs)
+
+    def _delete(self, path: str, *args, **kwargs):
+        return self._send(self.session.delete, path, *args, **kwargs)
+
     def _request_with_retry(self, method: str, verb_callable, path: str, **kwargs):
         return run_with_retry(
             lambda: verb_callable(path, **kwargs),
@@ -45,9 +72,6 @@ class RetryingClientBase(ClientBase):
 
     def _put_with_retry(self, path: str, **kwargs):
         return self._request_with_retry('PUT', self._put, path, **kwargs)
-
-    def _patch(self, path: str, **kwargs):
-        return self.session.patch(self._abs_url(path), **self.process_kwargs(**kwargs))
 
     def _patch_with_retry(self, path: str, **kwargs):
         return self._request_with_retry('PATCH', self._patch, path, **kwargs)

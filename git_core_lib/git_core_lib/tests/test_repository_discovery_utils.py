@@ -288,6 +288,29 @@ class RemoteWebBaseUrlTests(unittest.TestCase):
             'https://github.com',
         )
 
+    def test_ssh_scheme_url_forces_https_not_the_ssh_scheme(self) -> None:
+        # A ``ssh://`` remote must derive an HTTPS API base — keeping the ``ssh``
+        # scheme produced the unusable ``ssh://gitlab.com/api/v4`` (every call
+        # 404s). GitLab cloud has no hardcoded-host shortcut, so this broke it.
+        self.assertEqual(
+            remote_web_base_url('ssh://git@gitlab.com/org/repo.git'),
+            'https://gitlab.com',
+        )
+
+    def test_ssh_scheme_url_drops_the_ssh_port(self) -> None:
+        # A self-hosted ``ssh://…:2222`` carries the SSH port, which is NEVER
+        # the HTTPS/API port — drop it so the derived base is reachable.
+        self.assertEqual(
+            remote_web_base_url('ssh://git@gitlab.corp:2222/team/app.git'),
+            'https://gitlab.corp',
+        )
+
+    def test_git_scheme_url_forces_https(self) -> None:
+        self.assertEqual(
+            remote_web_base_url('git://ghe.corp/team/app.git'),
+            'https://ghe.corp',
+        )
+
     def test_returns_empty_when_ssh_unparsable(self) -> None:
         # Line 176: re.match returns None → ''.
         self.assertEqual(remote_web_base_url('garbage'), '')

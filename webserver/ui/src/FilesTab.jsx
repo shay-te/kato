@@ -447,7 +447,12 @@ export default function FilesTab({
     'files-tab-text-btn',
     showAllFiles ? 'active' : '',
   ].filter(Boolean).join(' ');
-  const allFilesToggle = hasChangedFiles ? (
+  // Always offered — NOT gated on ``hasChangedFiles``. When nothing has
+  // changed yet, every repo shows "Nothing changed yet." and switching to the
+  // all-files view is the ONLY way to browse the workspace — hiding the toggle
+  // exactly then trapped the operator with no way to see any files (the
+  // "the 'All' button is missing" report).
+  const allFilesToggle = (
     <button
       type="button"
       className={allFilesButtonClass}
@@ -458,7 +463,7 @@ export default function FilesTab({
     >
       All
     </button>
-  ) : null;
+  );
 
   const toolbar = (
     <span className="files-tab-toolbar">

@@ -184,6 +184,47 @@ class IssueClientBase(RetryingClientBase):
             payload = payload.get(items_key, [])
         return list(payload) if isinstance(payload, list) else []
 
+    # Safety cap so a provider that keeps returning a (self-referential or
+    # cyclic) "next page" ref can't loop forever. 50 * 100/page = 5000 items,
+    # far past any realistic assigned-issue / issue-comment count.
+    _MAX_PAGINATION_PAGES = 50
+
+    def _paginate_items(
+        self,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        items_key: str = '',
+        next_ref,
+    ) -> list[dict[str, Any]]:
+        """Accumulate ``items_key`` items across ALL pages, following the
+        provider's own pagination via ``next_ref(response, path, params,
+        page_items)`` -> the next ``(path, params)`` or ``None`` at the last
+        page. Fetching only page 1 (the old behaviour) silently dropped every
+        assigned issue past 100 and every issue comment past 100. Bounded by
+        ``_MAX_PAGINATION_PAGES`` — a hit is logged, never a silent truncation."""
+        items: list[dict[str, Any]] = []
+        current_path = path
+        current_params = dict(params or {})
+        pages = 0
+        while current_path:
+            response = self._get_with_retry(current_path, params=current_params)
+            response.raise_for_status()
+            page_items = self._json_items(response, items_key=items_key)
+            items.extend(page_items)
+            pages += 1
+            if pages >= self._MAX_PAGINATION_PAGES:
+                self.logger.warning(
+                    'pagination hit the %d-page cap for %s; later pages skipped',
+                    self._MAX_PAGINATION_PAGES, current_path,
+                )
+                break
+            nxt = next_ref(response, current_path, current_params, page_items)
+            if not nxt:
+                break
+            current_path, current_params = nxt
+        return items
+
     def _best_effort_response_items(
         self,
         issue_id: str,
@@ -192,8 +233,13 @@ class IssueClientBase(RetryingClientBase):
         path: str,
         params: dict[str, Any] | None = None,
         items_key: str = '',
+        next_ref=None,
     ) -> list[dict[str, Any]]:
         try:
+            if next_ref is not None:
+                return self._paginate_items(
+                    path, params=params, items_key=items_key, next_ref=next_ref,
+                )
             response = self._get_with_retry(path, params=params)
             response.raise_for_status()
             return self._json_items(response, items_key=items_key)

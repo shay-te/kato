@@ -163,11 +163,38 @@ class DrainFinishedFuturesTests(unittest.TestCase):
         result = _drain_finished_futures([unfinished, finished])
         self.assertEqual(result, [{'status': 'done'}])
 
-    def test_re_raises_future_exceptions(self) -> None:
+    def test_failed_future_is_skipped_not_re_raised(self) -> None:
+        # One worker that RAISED must NOT abort the drain: re-raising here
+        # dropped every OTHER finished task's result AND skipped the entire
+        # review-comment dispatch for the tick. The failing future is logged
+        # + notified per-future and skipped; the healthy result still returns.
         failing = Future()
         failing.set_exception(RuntimeError('boom'))
-        with self.assertRaisesRegex(RuntimeError, 'boom'):
-            _drain_finished_futures([failing])
+        healthy = Future()
+        healthy.set_result({'task_id': 'T2', 'status': 'done'})
+        result = _drain_finished_futures([failing, healthy])
+        self.assertEqual(result, [{'task_id': 'T2', 'status': 'done'}])
+
+    def test_failed_future_notifies_the_service(self) -> None:
+        # When a service is wired, the per-future failure is surfaced through
+        # its notification_service (best-effort) instead of vanishing.
+        notified: list[tuple[str, Exception]] = []
+
+        class _Notifier:
+            def notify_failure(self, operation_name, error, *rest):
+                notified.append((operation_name, error))
+
+        class _Service:
+            notification_service = _Notifier()
+
+        boom = RuntimeError('git index.lock held')
+        failing = Future()
+        failing.set_exception(boom)
+        result = _drain_finished_futures([failing], _Service())
+        self.assertEqual(result, [])
+        self.assertEqual(len(notified), 1)
+        self.assertEqual(notified[0][0], 'process_assigned_task')
+        self.assertIs(notified[0][1], boom)
 
     def test_skips_none_results(self) -> None:
         future = Future()
@@ -323,6 +350,25 @@ class DispatchReviewCommentsParallelTests(unittest.TestCase):
 
         release.set()
         self.assertTrue(_wait_for(lambda: not self.runner.is_in_flight('T1')))
+
+    def test_parallel_path_defers_when_local_comment_owns_the_clone(self) -> None:
+        # #8: a review-fix batch must NOT start while an operator's local
+        # diff-comment agent is mid-run on the SAME task workspace clone (the
+        # two dispatch paths use different locks). The task is NOT in the
+        # runner (a local comment run doesn't go through it), so the batch is
+        # gated on ``has_local_comment_in_progress`` instead.
+        comment = make_review_comment(comment_id='c1', body='please fix')
+        service = _RealScanService(
+            runner=self.runner,
+            review_comments=[comment],
+            review_batch_result=[{'comment': 'c1'}],
+            task_id_for_comment_fn=lambda c: 'T1',
+            local_comment_active=True,
+        )
+        result = _dispatch_review_comments(service)
+        self.assertEqual(result, [])
+        self.assertEqual(service.batch_calls, [])  # deferred, never invoked
+        self.assertFalse(self.runner.is_in_flight('T1'))  # not submitted either
 
 
 class DrainFinishedReviewBatchesTests(unittest.TestCase):

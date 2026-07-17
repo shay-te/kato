@@ -86,13 +86,20 @@ export default function TabList({
     recomputeScrollState();
   }, [sessions, recomputeScrollState]);
 
-  useEffect(() => {
-    const node = scrollRef.current;
-    if (!node) { return undefined; }
+  // Scroll/resize listeners that keep the chevron enabled-state live. These
+  // MUST attach when the ``.tabs-scroller`` node attaches — a plain
+  // ``useEffect`` reading ``scrollRef.current`` fires on the FIRST render,
+  // when the empty-state branch means the strip isn't mounted yet, and never
+  // re-runs (its deps don't change), so the listeners never attached after
+  // sessions loaded and the chevrons only refreshed on the next poll. Riding
+  // the wheel hook's callback ref (same node, same attach/detach lifecycle)
+  // fixes that with no second ref competing for the one ref slot.
+  const attachScrollTracking = useCallback((node) => {
     const onScroll = () => recomputeScrollState();
     const onResize = () => recomputeScrollState();
     node.addEventListener('scroll', onScroll, { passive: true });
     window.addEventListener('resize', onResize);
+    recomputeScrollState();  // initial compute now that the node exists
     return () => {
       node.removeEventListener('scroll', onScroll);
       window.removeEventListener('resize', onResize);
@@ -103,8 +110,9 @@ export default function TabList({
   // the Windows/Firefox deltaMode normalisation this fixes, and why
   // this is a CALLBACK ref rather than a plain useRef + useEffect —
   // the empty-state branch below means .tabs-scroller isn't mounted
-  // on the very first render, which a plain useEffect would miss).
-  const wheelRef = useHorizontalWheelScroll(scrollRef);
+  // on the very first render, which a plain useEffect would miss). The
+  // scroll/resize tracking rides the same callback ref via onAttach.
+  const wheelRef = useHorizontalWheelScroll(scrollRef, attachScrollTracking);
 
   // No auto-scroll-into-view on tab selection: the operator's own
   // scroll position is intentional and must not be fought. With many

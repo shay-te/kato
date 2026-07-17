@@ -516,6 +516,34 @@ describe('FilesTab — render shell', () => {
     });
   });
 
+  test('the All toggle is offered even when NOTHING has changed yet', async () => {
+    // Regression ("the 'All' button is missing"): the toggle used to hide when
+    // no files were changed — exactly when switching to the all-files view is
+    // the only way to browse the workspace, trapping the operator on the
+    // "Nothing changed yet." view with no button to leave it.
+    fetchFileTree.mockResolvedValue({
+      trees: [{
+        repo_id: 'client', cwd: '/tmp/client',
+        tree: [{
+          name: 'src', path: '/tmp/client/src',
+          children: [{ name: 'Unchanged.js', path: '/tmp/client/src/Unchanged.js' }],
+        }],
+        changed_files: [], conflicted_files: [],
+      }],
+    });
+    fetchDiff.mockResolvedValue({ diffs: [] });
+    render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+
+    const allBtn = await screen.findByRole('button', { name: 'Show all files' });
+    expect(allBtn).toBeInTheDocument();
+    // ...and it actually reveals the (unchanged) files.
+    fireEvent.click(allBtn);
+    fireEvent.click(await screen.findByText('src'));
+    await waitFor(() => {
+      expect(screen.getByText('Unchanged.js')).toBeInTheDocument();
+    });
+  });
+
   test('file-title focus signal selects and scrolls the changed file row', async () => {
     const originalScrollIntoView = window.HTMLElement.prototype.scrollIntoView;
     window.HTMLElement.prototype.scrollIntoView = vi.fn();

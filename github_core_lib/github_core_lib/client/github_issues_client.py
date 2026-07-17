@@ -77,7 +77,7 @@ class GitHubIssuesClient(IssueClientBase):
         assignee: str,
         states: list[str],
     ) -> list[IssueRecord]:
-        response = self._get_with_retry(
+        issues = self._paginate_items(
             f'/repos/{self._owner}/{self._repo}/issues',
             params={
                 'assignee': assignee,
@@ -86,11 +86,11 @@ class GitHubIssuesClient(IssueClientBase):
                 'direction': 'desc',
                 'per_page': 100,
             },
+            next_ref=self._next_page_ref,
         )
-        response.raise_for_status()
         allowed_states = self._normalized_allowed_states(states)
         return self._normalize_issue_records(
-            self._json_items(response),
+            issues,
             to_record=self._to_record,
             include=lambda issue: (
                 not issue.get(GitHubIssueFields.PULL_REQUEST)
@@ -162,7 +162,20 @@ class GitHubIssuesClient(IssueClientBase):
             item_label='comments',
             path=f'/repos/{self._owner}/{self._repo}/issues/{issue_id}/comments',
             params={'per_page': 100},
+            next_ref=self._next_page_ref,
         )
+
+    @staticmethod
+    def _next_page_ref(_response, path, params, page_items):
+        """GitHub REST paginates by ``page`` + ``per_page``. A page that comes
+        back SHORT (fewer than ``per_page`` items) is the last one; otherwise
+        ask for the next page number. ``None`` at the end. (Page-count based,
+        not Link-header parsing — same result, one fewer moving part.)"""
+        per_page = int(params.get('per_page', 0) or 0)
+        if per_page <= 0 or len(page_items) < per_page:
+            return None
+        next_page = int(params.get('page', 1) or 1) + 1
+        return (path, {**params, 'page': next_page})
 
     def _task_comment_entries(
         self, comments: list[dict[str, Any]]

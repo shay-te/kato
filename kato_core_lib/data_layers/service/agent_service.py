@@ -1379,8 +1379,6 @@ class AgentService(MissionStepLoggerMixin, Service):
         source platform on every turn; the operator's explicit
         "Mark addressed" / Resolve still drives any remote reply.
         """
-        from kato_core_lib.comment_core_lib import KatoCommentStatus
-
         # Hard invariant: a comment must NEVER be marked addressed while
         # Claude is still working — it stays on the WORKING badge. A
         # result can reach this method that does NOT belong to the
@@ -1401,6 +1399,55 @@ class AgentService(MissionStepLoggerMixin, Service):
         store = self._comment_store_for(task_id)
         if store is None:
             return []
+        # Serialize the whole read→reply→status-flip against the SAME per-task
+        # lock the dispatch path uses. This method runs once PER SSE connection
+        # (``_follow_live_session`` tails events per browser tab) AND from the
+        # scan-loop fallback (``advance_finished_comment_runs``) — all on the
+        # same live RESULT. Without the lock two callers both read the comment
+        # as IN_PROGRESS and each post a reply (+ a double ``mark_comment_
+        # addressed``), the "he answered my comment twice" report. Re-listing
+        # INSIDE the lock means the second caller sees the first's flip and
+        # skips. The drain stays OUTSIDE the lock — it acquires this same
+        # non-reentrant lock itself (``_maybe_trigger_comment_run``).
+        with self._comment_dispatch_lock_for(task_id):
+            completed = self._complete_in_progress_comments_locked(
+                store, task_id, success,
+                result_text=result_text,
+                result_received_at_epoch=result_received_at_epoch,
+            )
+        # Chain straight to the next queued comment the instant this turn
+        # finishes, instead of stranding it on the slow scan-loop fallback
+        # — the operator's "the next comment takes ages, and the last one
+        # never runs" report. The turn we just completed left the session
+        # idle, so starting the next one is safe; it is a no-op when the
+        # queue is empty. Runs after success OR failure so a failed
+        # comment never blocks the rest of the queue.
+        if completed:
+            try:
+                self.drain_next_queued_task_comment(task_id)
+            except Exception:
+                self.logger.exception(
+                    'failed to chain to next queued comment for task %s',
+                    task_id,
+                )
+        return completed
+
+    def _complete_in_progress_comments_locked(
+        self,
+        store,
+        task_id: str,
+        success: bool,
+        *,
+        result_text: str = '',
+        result_received_at_epoch: float = 0.0,
+    ) -> list[dict[str, object]]:
+        """The critical section of ``complete_in_progress_task_comments``,
+        run under the per-task dispatch lock: list IN_PROGRESS comments and
+        complete the one(s) this turn's result belongs to. Lists INSIDE the
+        lock so a second concurrent RESULT consumer sees the first's status
+        flip and can't post a duplicate reply."""
+        from kato_core_lib.comment_core_lib import KatoCommentStatus
+
         try:
             comments = store.list()
         except Exception:
@@ -1467,21 +1514,6 @@ class AgentService(MissionStepLoggerMixin, Service):
                 'comment_id': comment.id,
                 'kato_status': new_status,
             })
-        # Chain straight to the next queued comment the instant this turn
-        # finishes, instead of stranding it on the slow scan-loop fallback
-        # — the operator's "the next comment takes ages, and the last one
-        # never runs" report. The turn we just completed left the session
-        # idle, so starting the next one is safe; it is a no-op when the
-        # queue is empty. Runs after success OR failure so a failed
-        # comment never blocks the rest of the queue.
-        if completed:
-            try:
-                self.drain_next_queued_task_comment(task_id)
-            except Exception:
-                self.logger.exception(
-                    'failed to chain to next queued comment for task %s',
-                    task_id,
-                )
         return completed
 
     def _comment_expects_answer_only(self, task_id: str, comment) -> bool:
@@ -2166,6 +2198,21 @@ class AgentService(MissionStepLoggerMixin, Service):
             return None
         return LocalCommentStore(workspace_dir)
 
+    def has_local_comment_in_progress(self, task_id: str) -> bool:
+        """True when a local diff-comment agent run currently owns this task's
+        workspace clone. The review-comment dispatch (which runs through the
+        parallel runner's per-task key) checks this so it never starts a
+        review-fix batch while a local comment agent is mid-run on the SAME
+        on-disk checkout — the two dispatch paths otherwise use different
+        locks (see ``_task_has_active_local_comment`` in the scan job)."""
+        store = self._comment_store_for(task_id)
+        if store is None:
+            return False
+        try:
+            return self._task_has_in_progress_comment(store)
+        except Exception:
+            return False
+
     def _comment_dispatch_lock_for(self, task_id: str):
         """Return the per-task lock that serializes comment dispatch."""
         with self._comment_dispatch_locks_lock:
@@ -2204,6 +2251,20 @@ class AgentService(MissionStepLoggerMixin, Service):
         record = store.get(comment_id)
         if record is None:
             return False
+        # A review-fix batch (or the task's implementation run) may be actively
+        # operating this task's workspace clone via the parallel runner. That
+        # path uses a DIFFERENT lock than ``_comment_dispatch_lock_for`` here,
+        # so spawning a local comment agent now would run concurrent git ops on
+        # the SAME on-disk checkout. Stay QUEUED; the scan-loop drain
+        # redispatches once the runner frees the task.
+        runner = self._parallel_task_runner
+        if runner is not None:
+            try:
+                in_flight = runner.is_in_flight(task_id)
+            except Exception:
+                in_flight = False
+            if in_flight:
+                return False
         with self._comment_dispatch_lock_for(task_id):
             # Strict one-at-a-time: never dispatch a comment while another
             # is already IN_PROGRESS for this task. The session busy-checks
@@ -2338,9 +2399,19 @@ class AgentService(MissionStepLoggerMixin, Service):
     ) -> bool:
         """Reject stale results that predate the comment run dispatch."""
         run_marker = str(getattr(comment, 'kato_run_marker', '') or '')
-        if run_marker and require_marker:
-            return run_marker in str(result_text or '')
-
+        if run_marker and require_marker and run_marker in str(result_text or ''):
+            # Marker echoed back: this result DEFINITIVELY belongs to the run.
+            return True
+        # Marker set but NOT echoed on a successful turn: LLMs don't reliably
+        # append the sentinel (output truncation, a tool-ended turn, plain
+        # non-compliance). Returning False here left the comment IN_PROGRESS
+        # forever — and ``_task_has_in_progress_comment`` then blocked the
+        # WHOLE task's queue until a kato restart. Fall through to the same
+        # time / result-count staleness guard pre-marker comments use: a fresh
+        # turn's result (received AFTER dispatch, or a new result event since
+        # dispatch) still completes the comment, while a genuinely stale /
+        # replayed result is still rejected. The dispatch stamps started_at +
+        # result_count_before alongside the marker, so this guard has real data.
         started_at = float(
             getattr(comment, 'kato_run_started_at_epoch', 0.0) or 0.0,
         )

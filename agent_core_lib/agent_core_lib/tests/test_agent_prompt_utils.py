@@ -67,6 +67,24 @@ class WorkspaceInventoryBlockBranchTests(unittest.TestCase):
         self.assertIn('- /wks/PROJ/repo-a', block)
         self.assertIn('- /wks/PROJ/repo-b', block)
 
+    def test_multi_folder_frees_the_agent_from_the_cwd_repo(self) -> None:
+        # The agent tended to stay anchored in the (cwd) repo and never touch a
+        # sibling — so a multi-repo task got worked in only one repo. When more
+        # than one folder is present, the inventory must explicitly free it to
+        # work across all of them.
+        block = workspace_inventory_block(
+            cwd='/wks/PROJ/repo-a', additional_dirs=['/wks/PROJ'],
+        )
+        self.assertIn('only where your shell starts', block)
+        self.assertIn('does NOT', block)
+        self.assertIn('sibling', block)
+
+    def test_single_folder_omits_the_cross_repo_note(self) -> None:
+        # With only the cwd (single repo) there is nowhere else to move; the
+        # "work across folders" note would be noise, so it is omitted.
+        block = workspace_inventory_block(cwd='/wks/PROJ/repo-a', additional_dirs=None)
+        self.assertNotIn('only where your shell starts', block)
+
 
 class WorkspaceScopeBlockBranchTests(unittest.TestCase):
     def test_skips_paths_that_normalize_to_dot_or_blank(self) -> None:

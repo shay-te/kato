@@ -309,6 +309,7 @@ class _RealScanService(object):
         process_result=None,
         review_batch_result: list | None = None,
         task_id_for_comment_fn=None,
+        local_comment_active: bool = False,
     ) -> None:
         self.parallel_task_runner = runner
         self._assigned_tasks = list(assigned_tasks or [])
@@ -316,6 +317,7 @@ class _RealScanService(object):
         self._process_result = process_result
         self._review_batch_result = list(review_batch_result or [])
         self._task_id_for_comment_fn = task_id_for_comment_fn
+        self._local_comment_active = bool(local_comment_active)
         # Counters so tests can assert real call counts without
         # having to wrap with Mock.
         self.process_calls: list = []
@@ -338,6 +340,12 @@ class _RealScanService(object):
         if callable(self._task_id_for_comment_fn):
             return self._task_id_for_comment_fn(comment)
         return str(getattr(comment, 'task_id', '') or '')
+
+    def has_local_comment_in_progress(self, task_id) -> bool:
+        # Real predicate the review dispatch consults so it never runs a
+        # review-fix batch while an operator's local diff-comment agent owns
+        # the same workspace clone.
+        return self._local_comment_active
 
     def process_review_comment_batch(self, comments) -> list:
         self.batch_calls.append(list(comments))

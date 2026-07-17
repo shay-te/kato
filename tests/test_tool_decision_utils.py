@@ -65,9 +65,9 @@ class CommandSignatureOfTests(unittest.TestCase):
         # Operator report: "Allow always" a pytest run once, then the next
         # turn Claude appends `| head -30` to truncate output — a DIFFERENT
         # signature, so the remembered decision silently stopped matching.
-        # head/tail/wc/sort/uniq change nothing about what the command
-        # DOES (unlike test_chain_keeps_every_program's `rm -rf`), so they
-        # fold into noise like `cd` instead of forcing a re-prompt.
+        # head/tail/wc only READ stdin and print to stdout (unlike
+        # test_chain_keeps_every_program's `rm -rf`), so they fold into
+        # noise like `cd` instead of forcing a re-prompt.
         base = command_signature_of('python -m pytest tests/test_x.py -q')
         self.assertEqual(base, 'python')
         self.assertEqual(
@@ -81,9 +81,46 @@ class CommandSignatureOfTests(unittest.TestCase):
         self.assertEqual(
             command_signature_of('git log --oneline | wc -l'), 'git',
         )
-        self.assertEqual(
-            command_signature_of('ls -la | sort | uniq'), 'ls',
+
+    def test_sort_and_uniq_are_NOT_output_shaping_they_can_write_files(self) -> None:
+        # `sort -o FILE` / `sort --compress-program=PROG` / `uniq IN OUT`
+        # write files / run programs, so they must NOT fold into noise. If
+        # they did, `<approved> && sort -o <path> payload` would ride an
+        # already-remembered signature with no re-prompt — the exact
+        # re-approval bypass the "every program in a chain counts" rule
+        # exists to prevent. Each must therefore CHANGE the signature.
+        base = command_signature_of('python -m pytest -q')
+        self.assertEqual(base, 'python')
+        self.assertNotEqual(
+            command_signature_of('python -m pytest -q && sort -o .git/hooks/pre-commit p'),
+            base,
         )
+        self.assertEqual(
+            command_signature_of('python -m pytest -q && sort -o x p'), 'python sort',
+        )
+        self.assertNotEqual(
+            command_signature_of('ls | uniq /etc/hosts'),
+            command_signature_of('ls'),
+        )
+        self.assertEqual(command_signature_of('ls -la | sort | uniq'), 'ls sort uniq')
+
+    def test_benign_wrappers_key_on_the_inner_program_not_the_wrapper(self) -> None:
+        # `timeout`/`env`/`nice`/… only RUN the inner program, so the
+        # signature must key on that program (matching the Action Guard's
+        # own `segment_program`). Otherwise `timeout 300 npm test` keyed on
+        # the bare `timeout`, and one remembered `timeout` grant then rode
+        # `timeout 5 bash /workspace/evil.sh` with no re-prompt.
+        self.assertEqual(command_signature_of('timeout 300 python -m pytest'), 'python')
+        self.assertEqual(command_signature_of('env FOO=bar python app.py'), 'python')
+        self.assertEqual(command_signature_of('nice -n 5 npm test'), 'npm')
+        self.assertEqual(command_signature_of('nohup mvn verify'), 'mvn')
+        # The whole point: a DIFFERENT inner program is a DIFFERENT key, so a
+        # remembered `timeout npm` grant can't ride `timeout bash evil.sh`.
+        self.assertNotEqual(
+            command_signature_of('timeout 5 npm test'),
+            command_signature_of('timeout 5 bash /workspace/evil.sh'),
+        )
+        self.assertEqual(command_signature_of('timeout 5 npm test'), 'npm')
 
     def test_output_shaping_program_alone_still_keys_on_itself(self) -> None:
         # Mirrors test_navigation_only_command_keys_on_navigation_verb: a
@@ -128,6 +165,25 @@ class CommandSignatureOfTests(unittest.TestCase):
         self.assertNotEqual(
             command_signature_of('npm install'), command_signature_of('sudo npm install'),
         )
+
+    def test_sudo_principal_flags_fold_the_real_target_not_the_flag(self) -> None:
+        # Regression: `sudo -u <user>` blindly folded the FLAG token, so
+        # `sudo -u root bash evil.sh` and `sudo -u postgres psql` BOTH keyed
+        # on the collapse-prone `sudo -u` — approving one blessed running ANY
+        # program as ANY user. Skip the principal flag + its argument and fold
+        # the REAL target program instead.
+        self.assertEqual(command_signature_of('sudo -u root bash evil.sh'), 'sudo bash')
+        self.assertEqual(command_signature_of('sudo -u postgres psql'), 'sudo psql')
+        self.assertEqual(command_signature_of('sudo --user root systemctl restart x'),
+                         'sudo systemctl')
+        self.assertEqual(command_signature_of('sudo --group=wheel id'), 'sudo id')
+        self.assertNotEqual(
+            command_signature_of('sudo -u root bash evil.sh'),
+            command_signature_of('sudo -u postgres psql'),
+        )
+        # A benign wrapper AFTER the principal is still stepped through.
+        self.assertEqual(command_signature_of('sudo -u root timeout 10 bash s.sh'),
+                         'sudo bash')
 
     def test_source_and_dot_fold_their_target_never_collapse_to_a_bare_key(self) -> None:
         # Regression: `source`/`.` execute arbitrary file content in the

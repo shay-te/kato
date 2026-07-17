@@ -62,7 +62,12 @@ def split_command_segments(command: str) -> list[str]:
     return _SEGMENT_SPLIT.split(str(command or ''))
 
 
-_ENV_ASSIGNMENT = re.compile(r'^[A-Za-z_]\w*=')
+# ASCII-only on purpose: a shell env-var name is POSIX ``[A-Za-z_][A-Za-z0-9_]*``
+# (bash rejects non-ASCII identifiers), and the permission-signature mirror in
+# ``permissionEnvelope.js`` matches with the ASCII class ``[A-Za-z_][A-Za-z0-9_]*``
+# too — keeping this ASCII keeps the two in lockstep (a Unicode ``\w`` here made
+# the Python and JS signatures diverge on a non-ASCII assignment token).
+_ENV_ASSIGNMENT = re.compile(r'^[A-Za-z_]\w*=', re.ASCII)
 # Benign wrapper programs that RUN another program (their last/inner argument);
 # we step transparently through them so ``env docker``, ``xargs docker``,
 # ``time docker``, ``timeout 10 docker`` don't hide a program behind the
@@ -74,20 +79,26 @@ _WRAPPER_PROGRAMS = frozenset({
 })
 
 
-def segment_program(segment: str) -> str:
-    """The basename of the program a command segment actually invokes — stepping
-    over leading ``VAR=val`` env assignments AND benign wrapper programs
-    (``env``/``xargs``/``time``/``nice``/``timeout``…) plus their own flags/
-    numeric args, so ``env docker`` resolves to ``docker``. '' when none."""
-    tokens = [t for t in str(segment or '').strip().split() if t]
-    index = 0
+def program_token_index(tokens: list[str], start: int = 0) -> int:
+    """Index of the token naming the program a command segment actually
+    invokes, starting the scan at ``start`` — stepping over leading
+    ``VAR=val`` env assignments AND benign wrapper programs
+    (``env``/``xargs``/``time``/``nice``/``timeout``…) plus their own
+    flags / numeric args, so ``env docker`` and ``timeout 10 docker``
+    both resolve to ``docker``'s token. Returns ``len(tokens)`` when the
+    scan runs off the end (only wrappers, e.g. a bare ``env``).
+
+    Shared by ``segment_program`` (the Action Guard's program classifier)
+    and the remembered-permission signature builder so the two agree on
+    exactly what "the program" is behind a wrapper."""
+    index = max(0, int(start or 0))
     while index < len(tokens):
         if _ENV_ASSIGNMENT.match(tokens[index]):
             index += 1
             continue
         program = tokens[index].rsplit('/', 1)[-1]
         if program not in _WRAPPER_PROGRAMS:
-            return program
+            return index
         # Step over the wrapper and any of ITS option flags / numeric args
         # (``nice -n 5 docker``, ``timeout 10 docker``) to reach the inner cmd.
         index += 1
@@ -97,7 +108,19 @@ def segment_program(segment: str) -> str:
             or _ENV_ASSIGNMENT.match(tokens[index])
         ):
             index += 1
-    return ''
+    return len(tokens)
+
+
+def segment_program(segment: str) -> str:
+    """The basename of the program a command segment actually invokes — stepping
+    over leading ``VAR=val`` env assignments AND benign wrapper programs
+    (``env``/``xargs``/``time``/``nice``/``timeout``…) plus their own flags/
+    numeric args, so ``env docker`` resolves to ``docker``. '' when none."""
+    tokens = [t for t in str(segment or '').strip().split() if t]
+    index = program_token_index(tokens)
+    if index >= len(tokens):
+        return ''
+    return tokens[index].rsplit('/', 1)[-1]
 
 
 # Commands that operate OUTSIDE the task sandbox by nature, regardless of which

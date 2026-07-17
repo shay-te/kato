@@ -71,7 +71,7 @@ class GitLabIssuesClient(IssueClientBase):
         assignee: str,
         states: list[str],
     ) -> list[IssueRecord]:
-        response = self._get_with_retry(
+        issues = self._paginate_items(
             f'/projects/{self._project}/issues',
             params={
                 'assignee_username': assignee,
@@ -80,11 +80,11 @@ class GitLabIssuesClient(IssueClientBase):
                 'sort': 'desc',
                 'per_page': 100,
             },
+            next_ref=self._next_page_ref,
         )
-        response.raise_for_status()
         allowed_states = self._normalized_allowed_states(states)
         return self._normalize_issue_records(
-            self._json_items(response),
+            issues,
             to_record=self._to_record,
             include=lambda issue: self._matches_allowed_state(
                 issue.get(GitLabIssueFields.STATE),
@@ -155,7 +155,23 @@ class GitLabIssuesClient(IssueClientBase):
             item_label='comments',
             path=f'/projects/{self._project}/issues/{issue_id}/notes',
             params={'per_page': 100},
+            next_ref=self._next_page_ref,
         )
+
+    @staticmethod
+    def _next_page_ref(response, path, params, _page_items):
+        """GitLab paginates via the ``X-Next-Page`` response header (the next
+        page NUMBER, empty at the last page) — mirrors GitLabClient's MR-comment
+        loop so issue listing/comments no longer stop at 100."""
+        headers = getattr(response, 'headers', None) or {}
+        next_page = str(headers.get('X-Next-Page', '') or '').strip()
+        if not next_page:
+            return None
+        try:
+            page_num = int(next_page)
+        except (TypeError, ValueError):
+            return None
+        return (path, {**params, 'page': page_num})
 
     def _task_comment_entries(
         self, comments: list[dict[str, Any]]

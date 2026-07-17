@@ -371,6 +371,18 @@ class CachedFindPullRequestsTests(unittest.TestCase):
         self.assertEqual(out, [{'url': 'http://pr/old'}])
 
 
+class _InFlightRunner(object):
+    """Minimal real ParallelTaskRunner stand-in: reports a fixed set of task
+    ids as in-flight. A real object with real behavior (no Mock) so the
+    dispatch guard is exercised for real."""
+
+    def __init__(self, in_flight) -> None:
+        self._in_flight = set(in_flight)
+
+    def is_in_flight(self, task_id) -> bool:
+        return task_id in self._in_flight
+
+
 class CompleteInProgressTaskCommentsTests(unittest.TestCase):
     """End-of-turn pipeline transition. Real store, real status writes."""
 
@@ -560,6 +572,110 @@ class CompleteInProgressTaskCommentsTests(unittest.TestCase):
             self.service.complete_in_progress_task_comments('T1', success=True)
         drain.assert_not_called()
 
+    def test_concurrent_completion_posts_exactly_one_reply(self) -> None:
+        # #5: complete_in_progress_task_comments runs once PER SSE connection
+        # (``_follow_live_session`` tails per browser tab) AND from the
+        # scan-loop fallback, all on the SAME live RESULT. Two of them racing
+        # used to each read the comment as IN_PROGRESS and BOTH post a reply
+        # (+ double mark-addressed). The per-task dispatch lock + re-list
+        # inside the lock must collapse that to exactly ONE reply. Real store,
+        # real threads, real lock — no mocks.
+        import threading
+
+        ids, store = self._seed('T1', ['in_progress'])
+        barrier = threading.Barrier(2)
+
+        def worker() -> None:
+            barrier.wait()  # release both threads into the critical section together
+            self.service.complete_in_progress_task_comments(
+                'T1', success=True, result_text='done, pushed',
+            )
+
+        threads = [threading.Thread(target=worker) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        replies = [c for c in store.list() if c.parent_id == ids[0]]
+        self.assertEqual(len(replies), 1)
+        self.assertEqual(
+            store.get(ids[0]).kato_status, KatoCommentStatus.ADDRESSED.value,
+        )
+
+    def test_marker_absent_on_fresh_turn_still_completes(self) -> None:
+        # #6: a successful turn whose final message OMITS the run marker
+        # (LLMs don't reliably echo the sentinel) must still complete via the
+        # time/count staleness guard — not wedge the comment IN_PROGRESS
+        # forever and block the whole task's queue until a restart.
+        ids, store = self._seed('T1', ['in_progress'])
+        started = time.time()
+        store.start_kato_run(
+            ids[0], started_at_epoch=started,
+            result_count_before=0, run_marker='<<<KATO-RUN-abc123>>>',
+        )
+
+        out = self.service.complete_in_progress_task_comments(
+            'T1', success=True,
+            result_text='done — but I forgot to print the marker',
+            result_received_at_epoch=started + 5.0,  # arrived AFTER dispatch
+        )
+
+        self.assertEqual([o['comment_id'] for o in out], [ids[0]])
+        self.assertEqual(
+            store.get(ids[0]).kato_status, KatoCommentStatus.ADDRESSED.value,
+        )
+        replies = [c for c in store.list() if c.parent_id == ids[0]]
+        self.assertEqual(len(replies), 1)
+        self.assertIn('forgot to print the marker', replies[0].body)
+
+    def test_marker_absent_stale_result_is_still_rejected(self) -> None:
+        # The #6 fallthrough must NOT let a genuinely stale / replayed result
+        # (received BEFORE this run started) complete the comment.
+        ids, store = self._seed('T1', ['in_progress'])
+        started = time.time()
+        store.start_kato_run(
+            ids[0], started_at_epoch=started,
+            result_count_before=0, run_marker='<<<KATO-RUN-xyz789>>>',
+        )
+
+        out = self.service.complete_in_progress_task_comments(
+            'T1', success=True,
+            result_text='stale answer from a previous turn',
+            result_received_at_epoch=started - 5.0,  # predates dispatch
+        )
+
+        self.assertEqual(out, [])
+        self.assertEqual(
+            store.get(ids[0]).kato_status, KatoCommentStatus.IN_PROGRESS.value,
+        )
+        self.assertEqual([c for c in store.list() if c.parent_id == ids[0]], [])
+
+    def test_local_comment_defers_while_runner_owns_the_task(self) -> None:
+        # #8: a review-fix batch (or the task's implementation run) held by the
+        # parallel runner owns the workspace clone. A local diff-comment agent
+        # must NOT spawn concurrently on the SAME checkout — it stays QUEUED
+        # until the runner frees the task.
+        ids, store = self._seed('T1', ['queued'])
+        self.service._parallel_task_runner = _InFlightRunner({'T1'})
+
+        started = self.service._maybe_trigger_comment_run('T1', ids[0])
+
+        self.assertFalse(started)
+        self.assertEqual(
+            store.get(ids[0]).kato_status, KatoCommentStatus.QUEUED.value,
+        )
+
+    def test_has_local_comment_in_progress_reflects_the_store(self) -> None:
+        # #8: the public predicate the review dispatch consults to defer.
+        ids, store = self._seed('T1', ['queued'])
+        self.assertFalse(self.service.has_local_comment_in_progress('T1'))
+        store.start_kato_run(
+            ids[0], started_at_epoch=time.time(),
+            result_count_before=0, run_marker='<<<KATO-RUN-run1>>>',
+        )
+        self.assertTrue(self.service.has_local_comment_in_progress('T1'))
+
     def _attach_session(self, **session_attrs):
         session = SimpleNamespace(**session_attrs)
         mgr = MagicMock()
@@ -617,25 +733,32 @@ class CompleteInProgressTaskCommentsTests(unittest.TestCase):
         self.assertEqual(out[0]['kato_status'], KatoCommentStatus.ADDRESSED.value)
 
     def test_run_marker_rejects_stale_resume_result(self) -> None:
+        # A genuinely stale --resume result is rejected by BOTH the marker
+        # miss AND the time/count staleness guard. The dispatch stamps
+        # ``started_at`` AFTER the resume replay (see _maybe_trigger_comment_run:
+        # the send/respawn precedes ``start_kato_run``), so a real stale result
+        # always carries a ``received_at`` from BEFORE the run started and its
+        # count does not advance past ``result_count_before`` — this models
+        # that realistic ordering rather than a marker check in isolation.
         ids, store = self._seed('T1', ['in_progress'])
         marker = 'KATO_LOCAL_COMMENT_RUN:abc123'
-        started_at = time.time() - 1.0
+        started_at = time.time()
         store.start_kato_run(
             ids[0],
             started_at_epoch=started_at,
-            result_count_before=0,
+            result_count_before=5,
             run_marker=marker,
         )
         self._attach_session(
             is_alive=True, is_working=False,
-            user_messages_sent=1, result_events_received=1,
+            user_messages_sent=1, result_events_received=5,
         )
 
         out = self.service.complete_in_progress_task_comments(
             'T1',
             success=True,
             result_text='stale prior turn result',
-            result_received_at_epoch=time.time(),
+            result_received_at_epoch=started_at - 10.0,  # predates the run
         )
 
         self.assertEqual(out, [])

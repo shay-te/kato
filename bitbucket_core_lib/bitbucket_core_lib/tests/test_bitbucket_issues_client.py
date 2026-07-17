@@ -1,6 +1,9 @@
 import unittest
 from unittest.mock import patch
 
+from bitbucket_core_lib.bitbucket_core_lib.client.bitbucket_client import (
+    BITBUCKET_PAGE_LENGTH,
+)
 from bitbucket_core_lib.bitbucket_core_lib.client.bitbucket_issues_client import (
     BitbucketIssuesClient,
 )
@@ -838,3 +841,42 @@ class BitbucketMentionFilterWiringTests(unittest.TestCase):
     def test_extract_mentions_empty_body(self) -> None:
         client = self._make_client()
         self.assertEqual(client._extract_comment_mentions(None), [])
+
+
+class BitbucketIssuesPaginationTests(unittest.TestCase):
+    """#14: issue listing + comments now follow Bitbucket's ``next`` link
+    instead of stopping at the first page."""
+
+    def test_next_page_ref_follows_the_body_next_url(self) -> None:
+        nxt = BitbucketIssuesClient._next_page_ref(
+            mock_response(json_data={
+                'next': 'https://api.bitbucket.org/2.0/issues?page=2',
+            }),
+            '/issues', {'pagelen': 50}, [{'id': 1}],
+        )
+        self.assertEqual(nxt, ('https://api.bitbucket.org/2.0/issues?page=2', {}))
+
+    def test_next_page_ref_stops_when_there_is_no_next(self) -> None:
+        self.assertIsNone(
+            BitbucketIssuesClient._next_page_ref(
+                mock_response(json_data={'values': []}), '/issues', {}, [],
+            ),
+        )
+
+    def test_get_assigned_tasks_uses_the_shared_page_length_not_hardcoded_100(self) -> None:
+        # #16: the /issues endpoint rejects pagelen=100 ("Invalid pagelen") the
+        # same way the PR endpoints do, so both must use the proven, single-
+        # source BITBUCKET_PAGE_LENGTH (=50) — never a hardcoded 100 that would
+        # hard-fail get_assigned_tasks and stop task pickup on some workspaces.
+        self.assertEqual(BITBUCKET_PAGE_LENGTH, 50)
+        client = BitbucketIssuesClient(
+            'https://api.bitbucket.org/2.0', 'bb-token', 'workspace', 'repo',
+        )
+        with patch.object(
+            client, '_get', return_value=mock_response(json_data={'values': []}),
+        ) as mock_get:
+            client.get_assigned_tasks('repo', 'reviewer', ['new'])
+        self.assertEqual(
+            mock_get.call_args_list[0].kwargs['params']['pagelen'],
+            BITBUCKET_PAGE_LENGTH,
+        )

@@ -126,6 +126,64 @@ class GitHubClientTests(unittest.TestCase):
         )
         mock_graphql.assert_called_once()
 
+    @staticmethod
+    def _thread_with_more_comments():
+        first_page = {
+            'data': {'repository': {'pullRequest': {'reviewThreads': {
+                'pageInfo': {'hasNextPage': False, 'endCursor': None},
+                'nodes': [{
+                    'id': 'thread-1', 'isResolved': False,
+                    'comments': {
+                        'pageInfo': {'hasNextPage': True, 'endCursor': 'c1'},
+                        'nodes': [{
+                            'databaseId': 99, 'body': 'first',
+                            'author': {'login': 'reviewer'},
+                        }],
+                    },
+                }],
+            }}}},
+        }
+        followup = {
+            'data': {'node': {'comments': {
+                'pageInfo': {'hasNextPage': False, 'endCursor': None},
+                'nodes': [{
+                    'databaseId': 100, 'body': 'the newest instruction',
+                    'author': {'login': 'reviewer'},
+                }],
+            }}},
+        }
+        return first_page, followup
+
+    def test_review_thread_comments_paginate_past_the_first_100(self) -> None:
+        # #15: the thread query caps inner comments at first:100. A thread with
+        # more must follow the inner connection's cursor, or the newest reply
+        # (e.g. the latest operator instruction) is invisible.
+        client = GitHubClient('https://api.github.com', 'gh-token')
+        first_page, followup = self._thread_with_more_comments()
+        with patch.object(
+            client, '_graphql_with_retry', side_effect=[first_page, followup],
+        ) as mock_gql:
+            nodes = client._review_thread_nodes('owner', 'repo', '17')
+        self.assertEqual(mock_gql.call_count, 2)  # thread page + follow-up page
+        comment_ids = [c['databaseId'] for c in nodes[0]['comments']['nodes']]
+        self.assertEqual(comment_ids, [99, 100])
+        # The follow-up is keyed by the thread's node id + the inner cursor.
+        self.assertEqual(
+            mock_gql.call_args_list[1].args[1],
+            {'threadId': 'thread-1', 'cursor': 'c1'},
+        )
+
+    def test_thread_id_for_comment_finds_a_comment_past_the_first_100(self) -> None:
+        # The concrete payoff: resolving/replying to comment #100+ now works
+        # instead of raising "thread not found".
+        client = GitHubClient('https://api.github.com', 'gh-token')
+        first_page, followup = self._thread_with_more_comments()
+        with patch.object(
+            client, '_graphql_with_retry', side_effect=[first_page, followup],
+        ):
+            thread_id = client._thread_id_for_comment('owner', 'repo', '17', '100')
+        self.assertEqual(thread_id, 'thread-1')
+
     def test_list_pull_request_comments_skips_resolved_threads(self) -> None:
         client = GitHubClient('https://api.github.com', 'gh-token')
         payload = {

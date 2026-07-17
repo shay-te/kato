@@ -281,6 +281,83 @@ describe('PermissionModal — onDecide dispatch', () => {
 });
 
 
+describe('PermissionModal — keyboard shortcuts', () => {
+
+  test('Escape → Deny (allow=false, remember=false)', () => {
+    const onDecide = vi.fn();
+    render(<PermissionModal raw={_raw()} onDecide={onDecide} />);
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(onDecide).toHaveBeenCalledTimes(1);
+    expect(onDecide.mock.calls[0][0]).toMatchObject({
+      allow: false, remember: false, requestId: 'req-1', toolName: 'Edit',
+    });
+  });
+
+  test('Enter → Allow once (allow=true, remember=false)', () => {
+    const onDecide = vi.fn();
+    render(<PermissionModal raw={_raw()} onDecide={onDecide} />);
+    fireEvent.keyDown(document.body, { key: 'Enter' });
+    expect(onDecide.mock.calls[0][0]).toMatchObject({ allow: true, remember: false });
+  });
+
+  test('Shift+Enter → Allow always (allow=true, remember=true)', () => {
+    const onDecide = vi.fn();
+    render(<PermissionModal raw={_raw()} onDecide={onDecide} />);
+    fireEvent.keyDown(document.body, { key: 'Enter', shiftKey: true });
+    expect(onDecide.mock.calls[0][0]).toMatchObject({ allow: true, remember: true });
+  });
+
+  test('Enter INSIDE the rationale textarea does not decide (stays a newline)', () => {
+    const onDecide = vi.fn();
+    render(<PermissionModal raw={_raw()} onDecide={onDecide} />);
+    fireEvent.keyDown(screen.getByPlaceholderText(/rationale/i), { key: 'Enter' });
+    expect(onDecide).not.toHaveBeenCalled();
+  });
+
+  test('Escape forwards the typed rationale with the Deny', () => {
+    const onDecide = vi.fn();
+    render(<PermissionModal raw={_raw()} onDecide={onDecide} />);
+    fireEvent.change(screen.getByPlaceholderText(/rationale/i), {
+      target: { value: 'nope' },
+    });
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(onDecide.mock.calls[0][0]).toMatchObject({ allow: false, rationale: 'nope' });
+  });
+
+  test('Shift+Enter falls back to Allow once when the remembered scope is withheld', () => {
+    // A high-risk Action Guard category withholds "Allow always"; Shift+Enter
+    // must not silently persist a grant that isn't even offered as a button.
+    const onDecide = vi.fn();
+    render(
+      <PermissionModal
+        raw={_raw({ action_guard: { category: 'credential_read' } })}
+        onDecide={onDecide}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: /allow always/i })).toBeNull();
+    fireEvent.keyDown(document.body, { key: 'Enter', shiftKey: true });
+    expect(onDecide.mock.calls[0][0]).toMatchObject({ allow: true, remember: false });
+  });
+
+  test('no shortcut listener for the AskUserQuestion form (Enter does nothing)', () => {
+    const onDecide = vi.fn();
+    render(
+      <PermissionModal
+        raw={_raw({
+          request: {
+            request_id: 'q1', tool_name: 'AskUserQuestion',
+            input: { questions: [{ question: 'Which?', options: [{ label: 'A' }] }] },
+          },
+        })}
+        onDecide={onDecide}
+      />,
+    );
+    fireEvent.keyDown(document.body, { key: 'Enter' });
+    expect(onDecide).not.toHaveBeenCalled();
+  });
+});
+
+
 describe('PermissionModal — AskUserQuestion', () => {
   function _askRaw() {
     return _raw({

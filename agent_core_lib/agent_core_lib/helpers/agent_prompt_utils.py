@@ -97,6 +97,22 @@ def workspace_inventory_block(cwd: str, additional_dirs) -> str:
         'it does not, ask the operator for clarification rather than '
         'declaring the work blocked by a forbidden repository.'
     )
+    if cwd_text and extra_paths:
+        # The agent tended to anchor itself to the (cwd) repository and never
+        # ``cd`` into a sibling — so a multi-repo task got worked in only one
+        # of its repos. The (cwd) is just where the shell starts; make it
+        # explicit that EVERY listed folder is fair game so cross-repo work
+        # actually happens.
+        lines.append('')
+        lines.append(
+            'The (cwd) folder is only where your shell starts — it does NOT '
+            'confine your work. You may read and edit files in ANY folder '
+            'listed above, and ``cd`` freely into a sibling folder (or the '
+            'task folder that contains them all) whenever the task calls for '
+            'it. When the work spans more than one of these folders, treat the '
+            'whole list as your working area rather than staying in the (cwd) '
+            'repository.'
+        )
     return '\n'.join(lines)
 
 

@@ -50,7 +50,7 @@ def _dispatch_assigned_tasks(service) -> list[dict]:
         )
         if future is not None:
             submitted_futures.append(future)
-    return _drain_finished_futures(submitted_futures)
+    return _drain_finished_futures(submitted_futures, service)
 
 
 def _runner_has_real_concurrency(runner) -> bool:
@@ -78,12 +78,17 @@ def _process_inline(service, assigned_tasks) -> list[dict]:
     return results
 
 
-def _drain_finished_futures(futures) -> list[dict]:
+def _drain_finished_futures(futures, service=None) -> list[dict]:
     """Return results for futures that already completed; let others keep running.
 
     The scan loop ticks every ~30s, so a long task that's still running
-    just gets reported next cycle. Failures bubble out as exceptions
-    here so the caller's existing error-handling can log + notify.
+    just gets reported next cycle. A worker that RAISED is logged + notified
+    PER future and then skipped — re-raising here aborted the whole drain,
+    dropping every other finished task's result AND skipping the entire
+    review-comment dispatch (``collect_processing_results`` never reached
+    ``_dispatch_review_comments``) for the tick, just because one task hit a
+    transient git/API error. The failing task's side effects already ran
+    inside ``process_assigned_task``; it retries on the next scan cycle.
     """
     results: list[dict] = []
     for future in futures:
@@ -91,13 +96,29 @@ def _drain_finished_futures(futures) -> list[dict]:
             continue
         try:
             result = future.result(timeout=0)
-        except Exception:
-            # Surface so log_and_notify_failure handles it consistently
-            # with the legacy path.
-            raise
+        except Exception as exc:
+            _notify_future_failure(service, exc)
+            continue
         if result is not None:
             results.append(result)
     return results
+
+
+def _notify_future_failure(service, exc: Exception) -> None:
+    """Log + best-effort notify a single failed scan-cycle worker without
+    aborting the drain. ``service`` may be ``None`` (legacy/test path) — the
+    notification is best-effort and simply logs when no service is wired."""
+    logger = configure_logger(__name__)
+    log_and_notify_failure(
+        logger=logger,
+        notification_service=getattr(service, 'notification_service', None),
+        operation_name='process_assigned_task',
+        error=exc,
+        failure_log_message='a task worker failed during the scan cycle',
+        notification_failure_log_message=(
+            'failed to send failure notification for a scan-cycle task worker'
+        ),
+    )
 
 
 def _process_review_comment_batch_best_effort(service, comments) -> list[dict]:
@@ -206,22 +227,30 @@ def _dispatch_review_comments(service) -> list[dict]:
             continue
         if runner.is_in_flight(task_id):
             continue
+        if _task_has_active_local_comment(service, task_id):
+            # An operator-added local diff-comment agent run currently owns
+            # this task's workspace clone. Its dispatch path uses a DIFFERENT
+            # lock than the runner's per-task key, so submitting a review-fix
+            # batch now would run concurrent git ops on the SAME on-disk
+            # checkout (index.lock collision, branch flip mid-op). Skip this
+            # tick; the comment is re-polled next scan.
+            continue
         future = runner.submit(
             task_id,
             (lambda b=batch: _process_review_comment_batch_best_effort(service, b)),
         )
         if future is not None:  # pragma: no branch - TOCTOU guard; is_in_flight check above already filters
             submitted_futures.append(future)
-    return _drain_finished_review_batches(submitted_futures)
+    return _drain_finished_review_batches(submitted_futures, service)
 
 
-def _drain_finished_review_batches(futures) -> list[dict]:
+def _drain_finished_review_batches(futures, service=None) -> list[dict]:
     """Drain futures whose result is ``list[dict]`` (one per comment).
 
     The runner returns futures wrapping the batch result list; flatten
     so the caller's per-comment counting / logging stays unchanged.
     """
-    drained = _drain_finished_futures(futures)
+    drained = _drain_finished_futures(futures, service)
     flat: list[dict] = []
     for entry in drained:
         if isinstance(entry, list):
@@ -229,6 +258,21 @@ def _drain_finished_review_batches(futures) -> list[dict]:
         elif entry is not None:  # pragma: no branch - _drain_finished_futures already filters None
             flat.append(entry)
     return flat
+
+
+def _task_has_active_local_comment(service, task_id: str) -> bool:
+    """True only when ``service`` really reports a local diff-comment run in
+    progress for ``task_id``. Defensive against test-stub services (a
+    ``MagicMock`` returns another Mock, not ``True``) — the ``is True``
+    identity check keeps this a no-op for those, same style as
+    ``_runner_has_real_concurrency``'s ``isinstance`` guard."""
+    checker = getattr(service, 'has_local_comment_in_progress', None)
+    if not callable(checker):
+        return False
+    try:
+        return checker(task_id) is True
+    except Exception:
+        return False
 
 
 def _completed_future(value):

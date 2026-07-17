@@ -13,6 +13,10 @@ from __future__ import annotations
 
 import re
 
+from agent_core_lib.agent_core_lib.helpers.command_introspection import (
+    program_token_index,
+)
+
 # Tools whose remembered decision is keyed by the COMMAND, not the tool
 # name — so "Allow always" on `mvn ...` does NOT silently allow `docker ...`.
 COMMAND_KEYED_TOOLS = frozenset({'Bash'})
@@ -38,11 +42,15 @@ _NOISE_PROGRAMS = frozenset({'cd', 'pushd', 'popd', 'export'})
 # was silently re-prompting every time (operator report: approved
 # `python -m pytest ...` once, the next turn appended `| head -30` and
 # the remembered decision no longer matched). Deliberately a SHORT,
-# hand-picked allowlist of read-only, side-effect-free utilities — NOT
-# a general "trust anything after a pipe" rule. Do not add anything here
-# that can affect program behavior or exfiltrate data (grep, curl, xargs,
-# tee, sh -c, eval, nc, ...); those must keep re-prompting.
-_OUTPUT_SHAPING_PROGRAMS = frozenset({'head', 'tail', 'wc', 'sort', 'uniq'})
+# hand-picked allowlist of programs that ONLY read stdin and print to
+# stdout — NOT a general "trust anything after a pipe" rule. Do not add
+# anything here that can affect program behavior, WRITE A FILE, or
+# exfiltrate data. In particular `sort` (`-o FILE`, `--compress-program=PROG`)
+# and `uniq` (`uniq IN OUT`) can write files / run programs, so they are
+# NOT here — folding them let `<approved> && sort -o .git/hooks/pre-commit
+# payload` ride an already-remembered signature with no re-prompt. Likewise
+# grep/curl/xargs/tee/sh -c/eval/nc must keep re-prompting.
+_OUTPUT_SHAPING_PROGRAMS = frozenset({'head', 'tail', 'wc'})
 
 # Privilege-escalation wrappers -- the OPPOSITE problem from _NOISE_PROGRAMS:
 # dropping these would be wrong (running AS root is exactly the part that
@@ -64,9 +72,20 @@ _SOURCE_EXECUTION_PROGRAMS = frozenset({'source', '.'})
 _TARGET_FOLDING_PROGRAMS = _PRIVILEGE_ESCALATION_PROGRAMS | _SOURCE_EXECUTION_PROGRAMS
 
 _LEADING_WRAPPER_RE = re.compile(r'^[\s($`]+')
-_ENV_ASSIGNMENT_RE = re.compile(r'^[A-Za-z_]\w*=')
 _TRAILING_WRAPPER_RE = re.compile(r'[)`]+$')
 _PATH_PREFIX_RE = re.compile(r'^.*/')
+# ASCII heredoc-terminator char class, mirroring permissionEnvelope.js's
+# ``/[A-Za-z0-9_]/`` exactly (see _match_heredoc_start).
+_HEREDOC_TERM_CHAR = re.compile(r'\w', re.ASCII)
+
+# Escalation-wrapper option flags that take a SEPARATE argument (a principal,
+# not a program): ``sudo -u root``, ``sudo --group wheel``. Blindly folding
+# the wrapper with ``tokens[i+1]`` made ``sudo -u root bash evil.sh`` and
+# ``sudo -u postgres psql`` BOTH key on the collapse-prone ``sudo -u`` — so
+# approving one blessed running ANY program as ANY user. We skip these flags
+# (and their argument) to reach the REAL target program instead.
+_ESCALATION_ARG_FLAGS = frozenset({'-u', '--user', '-g', '--group'})
+_ESCALATION_ARG_FLAG_EQ = ('-u=', '--user=', '-g=', '--group=')
 
 
 def is_command_keyed_tool(tool_name: str) -> bool:
@@ -84,27 +103,51 @@ def _clean_token(token: str) -> str:
     return _PATH_PREFIX_RE.sub('', _TRAILING_WRAPPER_RE.sub('', token))
 
 
+def _escalation_target_token(tokens: list[str], wrapper_index: int) -> str:
+    """The cleaned target-program token folded onto an escalation wrapper
+    (``sudo``/``doas``/``pkexec``/``su``/``source``/``.``), or ``''`` when the
+    wrapper has no target. Skips the wrapper's own principal-taking flags
+    (``-u root``, ``--group wheel``) so ``sudo -u root bash`` folds to
+    ``sudo bash`` (not the collapse-prone ``sudo -u``), then steps through any
+    benign wrapper (``sudo -u root timeout 10 bash`` → ``sudo bash``) via the
+    shared ``program_token_index``."""
+    j = wrapper_index + 1
+    while j < len(tokens):
+        token = tokens[j]
+        if token in _ESCALATION_ARG_FLAGS:
+            j += 2  # skip the flag AND its separate argument (the principal)
+            continue
+        if token.startswith(_ESCALATION_ARG_FLAG_EQ):
+            j += 1  # `--user=root` — one token, skip it whole
+            continue
+        break
+    index = program_token_index(tokens, j)
+    if index >= len(tokens):
+        return ''
+    return _clean_token(tokens[index])
+
+
 def _program_of_segment(segment: str) -> str:
-    """The program a single shell segment invokes, basename-only. A
-    privilege-escalation wrapper (``sudo``, ...) is folded together with
-    its target program (e.g. ``sudo npm``) rather than returned bare --
-    see _PRIVILEGE_ESCALATION_PROGRAMS."""
+    """The program a single shell segment invokes, basename-only. Leading
+    ``VAR=val`` env assignments and benign wrapper programs
+    (``env``/``timeout``/``nice``/…) are stepped through via the shared
+    ``program_token_index`` so ``timeout 300 python`` keys on ``python`` (the
+    Action Guard classifies the same command the same way) — otherwise every
+    ``timeout <x>`` collapsed to the bare ``timeout`` key and one remembered
+    ``timeout`` grant rode ``timeout bash evil.sh``. A privilege-escalation
+    wrapper (``sudo``, ...) is folded together with its REAL target program
+    (e.g. ``sudo npm``) rather than returned bare -- see
+    _PRIVILEGE_ESCALATION_PROGRAMS / _escalation_target_token."""
     stripped = _LEADING_WRAPPER_RE.sub('', str(segment))
     tokens = [token for token in re.split(r'\s+', stripped) if token]
-    i = 0
-    while i < len(tokens) and _ENV_ASSIGNMENT_RE.match(tokens[i]):
-        i += 1
+    i = program_token_index(tokens)
     if i >= len(tokens):
         return ''
     prog = _clean_token(tokens[i])
-    if prog in _TARGET_FOLDING_PROGRAMS and i + 1 < len(tokens):
-        # Not maximally precise about which token is a flag vs. the real
-        # target (sudo's own flags can take arguments, e.g. `-u root`) --
-        # but ANY additional token narrows the key vs. the bare wrapper
-        # name, which is what actually matters: it makes the remembered
-        # grant specific to (roughly) this target, not to "sudo,
-        # unconditionally".
-        return f'{prog} {_clean_token(tokens[i + 1])}'
+    if prog in _TARGET_FOLDING_PROGRAMS:
+        target = _escalation_target_token(tokens, i)
+        if target:
+            return f'{prog} {target}'
     return prog
 
 
@@ -135,7 +178,11 @@ def _match_heredoc_start(command: str, i: int):
         j += 1
     else:
         start = j
-        while j < length and (command[j].isalnum() or command[j] == '_'):
+        # ASCII ``[A-Za-z0-9_]`` (not Unicode ``str.isalnum``) so this matches
+        # the JS mirror's ``/[A-Za-z0-9_]/`` heredoc-terminator scan exactly —
+        # a Unicode-aware check made the two compute different signatures for a
+        # terminator carrying a non-ASCII letter.
+        while j < length and _HEREDOC_TERM_CHAR.match(command[j]):
             j += 1
         term = command[start:j]
     return (term, strip, j) if term else None

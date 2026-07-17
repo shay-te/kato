@@ -18,28 +18,74 @@ function info(overrides = {}) {
 }
 
 
-test('tabKeyFor combines repoId and relativePath', () => {
-  assert.equal(tabKeyFor(info()), 'client::src/auth.py');
+test('tabKeyFor keys on the absolute path (the identity every opener shares)', () => {
+  assert.equal(tabKeyFor(info()), '/wks/T1/client/src/auth.py');
 });
 
-test('tabKeyFor falls back to absolutePath when relativePath is missing', () => {
-  assert.equal(
-    tabKeyFor({ repoId: 'client', absolutePath: '/wks/T1/client/x.py' }),
-    'client::/wks/T1/client/x.py',
-  );
+test('tabKeyFor ignores repoId/relativePath differences for the same physical file', () => {
+  // The file tree opens with {absolutePath, relativePath, repoId}; the chat
+  // event-log "reveal" opens the SAME file with only {absolutePath}. Both must
+  // yield the SAME key so they focus one tab instead of duplicating it.
+  const fromTree = tabKeyFor(info());
+  const fromEventLog = tabKeyFor({ absolutePath: '/wks/T1/client/src/auth.py' });
+  assert.equal(fromTree, fromEventLog);
 });
 
-test('tabKeyFor treats a blank repoId consistently (no repo attached)', () => {
+test('tabKeyFor trims a trailing separator so …/x and …/x/ do not split', () => {
+  assert.equal(tabKeyFor({ absolutePath: '/wks/T1/client/x.py/' }), '/wks/T1/client/x.py');
+});
+
+test('tabKeyFor falls back to repoId::relativePath only when no absolute path', () => {
   assert.equal(tabKeyFor({ relativePath: 'README.md' }), '::README.md');
 });
 
 test('upsertTab appends the first tab and makes it active', () => {
   const { tabs, activeKey } = upsertTab([], null, info({ openRequestId: 1 }), 'T1');
   assert.equal(tabs.length, 1);
-  assert.equal(tabs[0].key, 'client::src/auth.py');
+  assert.equal(tabs[0].key, '/wks/T1/client/src/auth.py');
   assert.equal(tabs[0].view, 'file');
   assert.equal(tabs[0].taskId, 'T1');
-  assert.equal(activeKey, 'client::src/auth.py');
+  assert.equal(activeKey, '/wks/T1/client/src/auth.py');
+});
+
+test('upsertTab: tree-open then event-log reveal of the same file → ONE tab, not two', () => {
+  // #10 regression: the reveal button opens with only {absolutePath}. It used
+  // to key differently (::absolutePath) than the tree ({repoId::relativePath})
+  // and append a SECOND, degraded tab for one physical file.
+  const tree = upsertTab([], null, info({ openRequestId: 1 }), 'T1');
+  const revealed = upsertTab(
+    tree.tabs, tree.activeKey,
+    { absolutePath: '/wks/T1/client/src/auth.py', openRequestId: 2 },
+    'T1',
+  );
+  assert.equal(revealed.tabs.length, 1);
+  // ...and the reveal (no repoId/relativePath) must NOT degrade the good tab.
+  assert.equal(revealed.tabs[0].repoId, 'client');
+  assert.equal(revealed.tabs[0].relativePath, 'src/auth.py');
+});
+
+test('upsertTab: event-log reveal first, then tree open UPGRADES the tab', () => {
+  // Opened first from the chat log (absolute path only), then from the tree
+  // with the full shape — the single tab gains repoId/relativePath.
+  const revealed = upsertTab(
+    [], null,
+    { absolutePath: '/wks/T1/client/src/auth.py', openRequestId: 1 },
+    'T1',
+  );
+  assert.equal(revealed.tabs[0].repoId, '');
+  const tree = upsertTab(revealed.tabs, revealed.activeKey, info({ openRequestId: 2 }), 'T1');
+  assert.equal(tree.tabs.length, 1);
+  assert.equal(tree.tabs[0].repoId, 'client');
+  assert.equal(tree.tabs[0].relativePath, 'src/auth.py');
+});
+
+test('upsertTab clears a stale restoreViewState on an explicit open (one-shot)', () => {
+  // #9: task-switch restore stamps restoreViewState:true on every tab; an
+  // explicit open/focus is never a restore, so the merge must clear it or it
+  // lingers and suppresses DiffPane's scroll-to-comment.
+  const restored = [{ ...info(), key: tabKeyFor(info()), restoreViewState: true }];
+  const reopened = upsertTab(restored, restored[0].key, info({ openRequestId: 9 }), 'T1');
+  assert.equal(reopened.tabs[0].restoreViewState, false);
 });
 
 test('upsertTab opening a second, different file APPENDS a new tab — never replaces', () => {

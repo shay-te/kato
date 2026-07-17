@@ -181,12 +181,12 @@ test('signature: pipes count as separate programs', function () {
   assert.equal(commandSignatureOf('cat log | grep ERROR'), 'cat grep');
 });
 
-test('signature: output-shaping pipes (head/tail/wc/sort/uniq) are treated as noise', function () {
+test('signature: output-shaping pipes (head/tail/wc) are treated as noise', function () {
   // Operator report: "Allow always" a pytest run once, then the next turn
   // Claude appends `| head -30` to truncate output — a DIFFERENT signature,
-  // so the remembered decision silently stopped matching. These utilities
-  // change nothing about what the command DOES, so they fold into noise
-  // like `cd` instead of forcing a re-prompt.
+  // so the remembered decision silently stopped matching. head/tail/wc only
+  // READ stdin and print to stdout, so they fold into noise like `cd`
+  // instead of forcing a re-prompt.
   const base = commandSignatureOf('python -m pytest tests/test_x.py -q');
   assert.equal(base, 'python');
   assert.equal(
@@ -196,7 +196,37 @@ test('signature: output-shaping pipes (head/tail/wc/sort/uniq) are treated as no
     commandSignatureOf('python -m pytest tests/test_x.py -q | tail -20'), base,
   );
   assert.equal(commandSignatureOf('git log --oneline | wc -l'), 'git');
-  assert.equal(commandSignatureOf('ls -la | sort | uniq'), 'ls');
+});
+
+test('signature: sort/uniq are NOT output-shaping — they can write files', function () {
+  // `sort -o FILE` / `sort --compress-program=PROG` / `uniq IN OUT` write
+  // files / run programs, so they must NOT fold into noise. Folding them let
+  // `<approved> && sort -o <path> payload` ride an already-remembered
+  // signature with no re-prompt. Each must therefore CHANGE the signature.
+  const base = commandSignatureOf('python -m pytest -q');
+  assert.equal(base, 'python');
+  assert.notEqual(
+    commandSignatureOf('python -m pytest -q && sort -o .git/hooks/pre-commit p'), base,
+  );
+  assert.equal(commandSignatureOf('python -m pytest -q && sort -o x p'), 'python sort');
+  assert.notEqual(commandSignatureOf('ls | uniq /etc/hosts'), commandSignatureOf('ls'));
+  assert.equal(commandSignatureOf('ls -la | sort | uniq'), 'ls sort uniq');
+});
+
+test('signature: benign wrappers key on the inner program, not the wrapper', function () {
+  // `timeout`/`env`/`nice`/… only RUN the inner program, so the signature
+  // keys on that program (matching the Action Guard's segment_program).
+  // Otherwise `timeout 300 npm test` keyed on the bare `timeout`, and one
+  // remembered `timeout` grant rode `timeout 5 bash /workspace/evil.sh`.
+  assert.equal(commandSignatureOf('timeout 300 python -m pytest'), 'python');
+  assert.equal(commandSignatureOf('env FOO=bar python app.py'), 'python');
+  assert.equal(commandSignatureOf('nice -n 5 npm test'), 'npm');
+  assert.equal(commandSignatureOf('nohup mvn verify'), 'mvn');
+  assert.notEqual(
+    commandSignatureOf('timeout 5 npm test'),
+    commandSignatureOf('timeout 5 bash /workspace/evil.sh'),
+  );
+  assert.equal(commandSignatureOf('timeout 5 npm test'), 'npm');
 });
 
 test('signature: an output-shaping program alone still keys on itself', function () {
@@ -241,6 +271,22 @@ test('signature: privilege-escalation wrappers never collapse to a bare key', fu
   // DIFFERENT signature — running under sudo is materially more
   // dangerous and must not ride on a non-sudo grant, or vice versa.
   assert.notEqual(commandSignatureOf('npm install'), commandSignatureOf('sudo npm install'));
+});
+
+test('signature: sudo principal flags fold the real target, not the flag', function () {
+  // Regression: `sudo -u <user>` blindly folded the FLAG token, so
+  // `sudo -u root bash evil.sh` and `sudo -u postgres psql` BOTH keyed on the
+  // collapse-prone `sudo -u` — approving one blessed running ANY program as
+  // ANY user. Skip the principal flag + its argument, fold the REAL target.
+  assert.equal(commandSignatureOf('sudo -u root bash evil.sh'), 'sudo bash');
+  assert.equal(commandSignatureOf('sudo -u postgres psql'), 'sudo psql');
+  assert.equal(commandSignatureOf('sudo --user root systemctl restart x'), 'sudo systemctl');
+  assert.equal(commandSignatureOf('sudo --group=wheel id'), 'sudo id');
+  assert.notEqual(
+    commandSignatureOf('sudo -u root bash evil.sh'),
+    commandSignatureOf('sudo -u postgres psql'),
+  );
+  assert.equal(commandSignatureOf('sudo -u root timeout 10 bash s.sh'), 'sudo bash');
 });
 
 test('signature: source/. fold their target, never collapse to a bare key', function () {

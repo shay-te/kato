@@ -894,3 +894,32 @@ class GitHubIssuesClientFlowTests(unittest.TestCase):
         mock_post.assert_called_once()
         mock_delete.assert_called_once()
         self.assertIn('in-progress', mock_delete.call_args.args[0])
+
+
+class GitHubIssuesPaginationTests(unittest.TestCase):
+    """#14: issue listing + comments now page through GitHub REST results
+    instead of stopping at the first 100."""
+
+    def test_next_page_ref_asks_for_the_next_page_when_the_page_is_full(self) -> None:
+        full_page = [{'id': 1}, {'id': 2}]
+        self.assertEqual(
+            GitHubIssuesClient._next_page_ref(
+                None, '/repos/o/r/issues', {'per_page': 2}, full_page,
+            ),
+            ('/repos/o/r/issues', {'per_page': 2, 'page': 2}),
+        )
+
+    def test_next_page_ref_stops_on_a_short_final_page(self) -> None:
+        self.assertIsNone(
+            GitHubIssuesClient._next_page_ref(
+                None, '/x', {'per_page': 2}, [{'id': 1}],
+            ),
+        )
+
+    def test_next_page_ref_increments_from_the_current_page_number(self) -> None:
+        self.assertEqual(
+            GitHubIssuesClient._next_page_ref(
+                None, '/x', {'per_page': 1, 'page': 4}, [{'id': 1}],
+            ),
+            ('/x', {'per_page': 1, 'page': 5}),
+        )

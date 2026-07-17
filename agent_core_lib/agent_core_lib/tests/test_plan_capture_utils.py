@@ -80,6 +80,43 @@ class ExtractPlanFromEventsTests(unittest.TestCase):
         events = [_exit_plan(plan='')]
         self.assertEqual(extract_plan_from_events(events), '')
 
+    def test_plan_captured_from_a_plans_file_write(self) -> None:
+        # Newer CLIs persist the finalized plan by writing it to
+        # ``~/.claude/plans/<slug>.md`` instead of the ExitPlanMode input —
+        # the "made the plan but the host never shows it" report. Capture it.
+        ev = _event('assistant', [
+            {'type': 'tool_use', 'name': 'Write', 'input': {
+                'file_path': '/Users/x/.claude/plans/zazzy-sprout.md',
+                'content': '# Plan\n1. Build run-server.sh',
+            }},
+        ])
+        self.assertEqual(extract_plan_from_events([ev]), '# Plan\n1. Build run-server.sh')
+
+    def test_windows_plans_path_write_is_captured(self) -> None:
+        ev = _event('assistant', [
+            {'type': 'tool_use', 'name': 'create_file', 'input': {
+                'file_path': 'C:\\Users\\shubh\\.claude\\plans\\x.md',
+                'content': '# Windows plan',
+            }},
+        ])
+        self.assertEqual(extract_plan_from_events([ev]), '# Windows plan')
+
+    def test_a_non_plans_md_write_is_not_treated_as_a_plan(self) -> None:
+        ev = _event('assistant', [
+            {'type': 'tool_use', 'name': 'Write', 'input': {
+                'file_path': '/wks/repo/src/notes.md', 'content': 'not a plan',
+            }},
+        ])
+        self.assertEqual(extract_plan_from_events([ev]), '')
+
+    def test_exit_plan_mode_still_wins_over_a_plans_file_write(self) -> None:
+        ev = _event('assistant', [
+            {'type': 'tool_use', 'name': 'Write', 'input': {
+                'file_path': '/x/.claude/plans/a.md', 'content': 'file plan'}},
+            {'type': 'tool_use', 'name': 'ExitPlanMode', 'input': {'plan': 'inline plan'}},
+        ])
+        self.assertEqual(extract_plan_from_events([ev]), 'inline plan')
+
 
 if __name__ == '__main__':
     unittest.main()

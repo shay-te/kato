@@ -832,3 +832,36 @@ class GitLabIssuesClientFlowTests(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].id, '55')
         self.assertEqual(records[0].summary, 'Task A')
+
+
+class GitLabIssuesPaginationTests(unittest.TestCase):
+    """#14: issue listing + comments now follow GitLab's ``X-Next-Page``
+    header instead of stopping at the first 100."""
+
+    def _resp_with_next_page(self, next_page):
+        resp = mock_response(json_data=[])
+        resp.headers = {'X-Next-Page': next_page}
+        return resp
+
+    def test_next_page_ref_follows_the_x_next_page_header(self) -> None:
+        self.assertEqual(
+            GitLabIssuesClient._next_page_ref(
+                self._resp_with_next_page('3'), '/projects/1/issues',
+                {'per_page': 100}, [],
+            ),
+            ('/projects/1/issues', {'per_page': 100, 'page': 3}),
+        )
+
+    def test_next_page_ref_stops_on_an_empty_header(self) -> None:
+        self.assertIsNone(
+            GitLabIssuesClient._next_page_ref(
+                self._resp_with_next_page(''), '/x', {}, [],
+            ),
+        )
+
+    def test_next_page_ref_stops_on_a_non_numeric_header(self) -> None:
+        self.assertIsNone(
+            GitLabIssuesClient._next_page_ref(
+                self._resp_with_next_page('not-a-number'), '/x', {}, [],
+            ),
+        )

@@ -186,8 +186,19 @@ def remote_web_base_url(remote_url: str) -> str:
         parsed = urlparse(remote_url)
         if not parsed.hostname:
             return ''
-        scheme = parsed.scheme or 'https'
-        port = f':{parsed.port}' if parsed.port else ''
+        # Derive a WEB base for the provider's API. An ``ssh://`` / ``git://``
+        # remote (or a scheme-relative ``//host`` one) must NOT carry its
+        # transport scheme forward — ``ssh://gitlab.com`` yields the unusable
+        # API base ``ssh://gitlab.com/api/v4`` and every call 404s. Force
+        # https for those, and DROP the port too: an SSH port (``:2222``) is
+        # never the HTTPS/API port. An explicit http/https keeps BOTH its own
+        # scheme and its port (e.g. a self-hosted ``https://host:8443``).
+        if parsed.scheme in ('http', 'https'):
+            scheme = parsed.scheme
+            port = f':{parsed.port}' if parsed.port else ''
+        else:
+            scheme = 'https'
+            port = ''
         return f'{scheme}://{parsed.hostname}{port}'
 
     scp_host, _ = _split_remote(remote_url)

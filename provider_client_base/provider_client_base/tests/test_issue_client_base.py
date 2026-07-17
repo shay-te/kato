@@ -225,6 +225,76 @@ class BuildCommentEntriesTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# _paginate_items — the shared multi-page follow loop (issue listing +
+# issue comments used to fetch ONLY page 1, silently dropping everything
+# past 100). Driven through the REAL _get_with_retry -> _abs_url ->
+# session.get chain with a recording fake session (no network).
+# ---------------------------------------------------------------------------
+
+class _SeqSession(object):
+    """A real (non-mock) requests.Session stand-in that hands back a queued
+    sequence of responses and records the URLs it was asked for."""
+
+    def __init__(self, responses) -> None:
+        self._responses = list(responses)
+        self.urls: list[str] = []
+
+    def get(self, url, *args, **kwargs):
+        self.urls.append(url)
+        # Repeat the last response once exhausted (for the self-referential
+        # safety-cap test, which asks far more times than it queues).
+        if len(self._responses) > 1:
+            return self._responses.pop(0)
+        return self._responses[0]
+
+
+class PaginateItemsTests(unittest.TestCase):
+    def test_accumulates_items_across_every_page_following_next_ref(self) -> None:
+        client = _make_client()
+        client.session = _SeqSession([
+            mock_response(json_data={'values': [{'id': 1}, {'id': 2}]}),
+            mock_response(json_data={'values': [{'id': 3}]}),
+        ])
+        # next_ref: page 1 -> a second path, then stop.
+        refs = iter([('/issues?page=2', {}), None])
+        items = client._paginate_items(
+            '/issues', params={'per_page': 2}, items_key='values',
+            next_ref=lambda *_a: next(refs),
+        )
+        self.assertEqual([i['id'] for i in items], [1, 2, 3])
+        # The absolute-vs-relative building is real: base_url got prepended.
+        self.assertEqual(client.session.urls, [
+            'https://api.example.com/issues',
+            'https://api.example.com/issues?page=2',
+        ])
+
+    def test_single_page_when_next_ref_returns_none(self) -> None:
+        client = _make_client()
+        client.session = _SeqSession([
+            mock_response(json_data={'values': [{'id': 1}]}),
+        ])
+        items = client._paginate_items(
+            '/issues', items_key='values', next_ref=lambda *_a: None,
+        )
+        self.assertEqual(items, [{'id': 1}])
+        self.assertEqual(len(client.session.urls), 1)
+
+    def test_safety_cap_stops_a_self_referential_next(self) -> None:
+        # A provider that ALWAYS returns a next ref must not loop forever.
+        client = _make_client()
+        client.session = _SeqSession([
+            mock_response(json_data={'values': [{'id': 1}]}),
+        ])
+        with self.assertLogs(client.logger, level='WARNING'):
+            items = client._paginate_items(
+                '/issues', items_key='values',
+                next_ref=lambda *_a: ('/issues', {}),
+            )
+        self.assertEqual(len(client.session.urls), IssueClientBase._MAX_PAGINATION_PAGES)
+        self.assertEqual(len(items), IssueClientBase._MAX_PAGINATION_PAGES)
+
+
+# ---------------------------------------------------------------------------
 # state filtering / tags
 # ---------------------------------------------------------------------------
 

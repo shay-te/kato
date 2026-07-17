@@ -16,9 +16,22 @@
 // returns new ones, so this is testable without jsdom (same pattern
 // as pinnedTabs.js).
 
+// A file's stable identity is its absolute workspace path — the ONE field
+// EVERY opener supplies (``handleOpenFile`` requires it). Keying on it means
+// the file tree, content search, the diff pane, AND the chat event-log
+// "reveal" button (which only knows the absolute path, not repoId /
+// relativePath) all resolve to the SAME tab instead of opening a duplicate
+// for one physical file. repoId / relativePath stay ON the tab (comment
+// lookup + header) but no longer fork the key. Trailing separators are
+// trimmed so ``…/repo`` and ``…/repo/`` don't split.
 export function tabKeyFor(info) {
+  const absolutePath = String((info && info.absolutePath) || '')
+    .trim().replace(/[/\\]+$/, '');
+  if (absolutePath) { return absolutePath; }
+  // Defensive fallback for a malformed open with no absolute path (should
+  // not happen — handleOpenFile requires absolutePath).
   const repoId = String(info && info.repoId || '').trim();
-  const path = String((info && (info.relativePath || info.absolutePath)) || '').trim();
+  const path = String((info && info.relativePath) || '').trim();
   return repoId + '::' + path;
 }
 
@@ -41,16 +54,33 @@ export function upsertTab(tabs, activeKey, info, taskId) {
   const list = Array.isArray(tabs) ? tabs : [];
   const key = tabKeyFor(info);
   const existingIndex = list.findIndex((tab) => tab.key === key);
+  const existing = existingIndex >= 0 ? list[existingIndex] : null;
+  // When an opener omits repoId / relativePath (the event-log "reveal" button
+  // only knows the absolute path), keep the values an earlier FULL open (file
+  // tree / content search) already recorded rather than clobbering them with
+  // the absolute-path fallback — so re-revealing a file never DEGRADES a good
+  // tab's comment lookup / header down to the raw absolute path.
+  const repoId = String(info.repoId || (existing && existing.repoId) || '');
+  const relativePath = String(
+    info.relativePath || (existing && existing.relativePath) || info.absolutePath || '',
+  );
   const patch = {
     key,
     taskId,
     absolutePath: info.absolutePath,
-    relativePath: info.relativePath || info.absolutePath,
-    repoId: info.repoId || '',
+    relativePath,
+    repoId,
     view: info.view === 'diff' ? 'diff' : 'file',
     focusComment: !!info.focusComment,
     kind: String(info.kind || ''),
     openRequestId: info.openRequestId,
+    // An explicit open/focus is NEVER a task-switch restore. Clear the
+    // one-shot ``restoreViewState`` flag (stamped on every tab when a task's
+    // saved tab-set is restored) so it can't linger on a tab and later
+    // suppress DiffPane's scroll-to-comment when the operator clicks a
+    // comment badge on an already-open file (it merges in place and would
+    // otherwise keep the stale ``true``).
+    restoreViewState: false,
   };
   if (existingIndex >= 0) {
     const next = [...list];

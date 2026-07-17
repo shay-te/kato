@@ -4,6 +4,13 @@ import re
 from typing import Any, Callable
 
 from bitbucket_core_lib.bitbucket_core_lib.client.auth import bitbucket_basic_auth_header
+# One source of truth for Bitbucket's page size — the issues endpoints
+# rejected ``pagelen=100`` ("Invalid pagelen") the same way the PR endpoints
+# did, so both must use the proven ``BITBUCKET_PAGE_LENGTH`` (=50), not a
+# hardcoded 100 that hard-fails ``get_assigned_tasks`` on some workspaces.
+from bitbucket_core_lib.bitbucket_core_lib.client.bitbucket_client import (
+    BITBUCKET_PAGE_LENGTH,
+)
 from bitbucket_core_lib.bitbucket_core_lib.data.fields import (
     BitbucketIssueCommentFields,
     BitbucketIssueFields,
@@ -108,15 +115,16 @@ class BitbucketIssuesClient(IssueClientBase):
         assignee: str,
         states: list[str],
     ) -> list[IssueRecord]:
-        response = self._get_with_retry(
+        issues = self._paginate_items(
             f'/repositories/{self._workspace}/{self._repo_slug}/issues',
-            params={'pagelen': 100},
+            params={'pagelen': BITBUCKET_PAGE_LENGTH},
+            items_key='values',
+            next_ref=self._next_page_ref,
         )
-        response.raise_for_status()
         allowed_states = self._normalized_allowed_states(states)
         normalized_assignee = str(assignee or '').strip().lower()
         return self._normalize_issue_records(
-            self._json_items(response, items_key='values'),
+            issues,
             to_record=self._to_record,
             include=lambda issue: (
                 (
@@ -209,9 +217,19 @@ class BitbucketIssuesClient(IssueClientBase):
             issue_id,
             item_label='comments',
             path=f'/repositories/{self._workspace}/{self._repo_slug}/issues/{issue_id}/comments',
-            params={'pagelen': 100},
+            params={'pagelen': BITBUCKET_PAGE_LENGTH},
             items_key='values',
+            next_ref=self._next_page_ref,
         )
+
+    @staticmethod
+    def _next_page_ref(response, _path, _params, _page_items):
+        """Bitbucket paginates via a fully-qualified ``next`` URL in the body;
+        pass it straight through (``_abs_url`` leaves an absolute URL untouched)
+        with no more query params. ``None`` at the last page (no ``next``)."""
+        payload = response.json() or {}
+        next_url = str(payload.get('next') or '') if isinstance(payload, dict) else ''
+        return (next_url, {}) if next_url else None
 
     def _task_comment_entries(self, comments: list[dict[str, Any]]) -> list[dict[str, str]]:
         def extract_body(c: dict) -> str:

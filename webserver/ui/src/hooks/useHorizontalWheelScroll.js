@@ -29,16 +29,28 @@ import { useCallback, useRef } from 'react';
 // TabList's chevron-scroll / hold-to-scroll logic); this hook keeps
 // it in sync as a side effect of the same callback.
 //
+// ``onAttach`` is optional — a ``(node) => cleanup`` the caller runs when
+// the node attaches, to add its OWN listeners (e.g. TabList's scroll/resize
+// tracking that drives the chevron enabled-state). It shares this callback
+// ref's attach/detach lifecycle because an element has only ONE ref slot, so
+// those listeners ALSO survive the empty→populated remount instead of a
+// one-shot ``useEffect`` firing before the strip exists and never re-running.
+//
 // Shared by every horizontally-scrolling tab strip (task tabs, file
 // tabs, …) so the wheel-remap behavior — and its Windows/Firefox
 // deltaMode normalisation — lives in exactly one place.
-export function useHorizontalWheelScroll(externalRef = null) {
+export function useHorizontalWheelScroll(externalRef = null, onAttach = null) {
   const cleanupRef = useRef(null);
+  const extraCleanupRef = useRef(null);
   return useCallback((node) => {
     if (externalRef) { externalRef.current = node; }
     if (cleanupRef.current) {
       cleanupRef.current();
       cleanupRef.current = null;
+    }
+    if (extraCleanupRef.current) {
+      extraCleanupRef.current();
+      extraCleanupRef.current = null;
     }
     if (!node) { return; }
     const onWheel = (event) => {
@@ -69,5 +81,9 @@ export function useHorizontalWheelScroll(externalRef = null) {
     };
     node.addEventListener('wheel', onWheel, { passive: false });
     cleanupRef.current = () => node.removeEventListener('wheel', onWheel);
-  }, [externalRef]);
+    if (typeof onAttach === 'function') {
+      const cleanup = onAttach(node);
+      extraCleanupRef.current = typeof cleanup === 'function' ? cleanup : null;
+    }
+  }, [externalRef, onAttach]);
 }
