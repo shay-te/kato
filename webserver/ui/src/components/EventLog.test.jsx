@@ -396,12 +396,19 @@ describe('EventLog — server event rendering', () => {
       message: { content: [{ type: 'text', text: longPrompt }] },
     })]} />);
     const wrap = container.querySelector('.chat-sticky-prompt-text-wrap');
+    const prompt = container.querySelector('.chat-sticky-prompt');
     const button = screen.getByRole('button', { name: 'Click to expand' });
 
     expect(wrap).toHaveClass('is-collapsed');
     expect(button).toHaveClass('bubble-tool-details-expand');
+    expect(prompt).not.toHaveClass('is-expanded');
     fireEvent.click(button);
     expect(wrap).not.toHaveClass('is-collapsed');
+    // ``is-expanded`` on the prompt drives the CSS that pins the collapse
+    // toggle to the TOP-right (the whole bar is a sticky header, so a
+    // bottom-pinned button is unreachable without scrolling the long prompt
+    // out of view).
+    expect(prompt).toHaveClass('is-expanded');
     expect(screen.getByRole('button', { name: 'Click to collapse' }))
       .toBeInTheDocument();
   });

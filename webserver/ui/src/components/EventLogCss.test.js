@@ -67,3 +67,24 @@ test('EventLog sticky prompts collapse to three lines with snippet expand button
   assertDeclaration(fadeBody, 'left', '0');
   assertDeclaration(fadeBody, 'right', '0');
 });
+
+test('expanded prompt pins the collapse toggle to the TOP, not the bottom', () => {
+  // The prompt bar is a sticky header, so while pinned only its top shows —
+  // a bottom-anchored collapse button is unreachable without scrolling the
+  // long prompt out of view. Expanded, the toggle moves to the top.
+  const expandedToggle = ruleBody(
+    '.chat-sticky-prompt.is-expanded .chat-sticky-prompt-expand',
+  );
+  assertDeclaration(expandedToggle, 'top', '6px');
+  assertDeclaration(expandedToggle, 'bottom', 'auto');
+  // Text gets top clearance so the pinned button doesn't sit on line 1.
+  const expandedText = ruleBody(
+    '.chat-sticky-prompt.is-expanded .chat-sticky-prompt-text',
+  );
+  assertDeclaration(expandedText, 'padding-top', '32px');
+  // With a top-right jump-to-comment icon present, the toggle steps left.
+  const withJump = ruleBody(
+    '.chat-sticky-prompt.is-expanded.has-comment-jump .chat-sticky-prompt-expand',
+  );
+  assertDeclaration(withJump, 'right', '40px');
+});

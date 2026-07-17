@@ -1777,11 +1777,25 @@ header .chats-menu button:not(.header-status) {
   bottom: 0;
 }
 
-/* Expanded: the "Click to collapse" button is absolutely pinned to the
- * bottom-right, so without room it sits ON the last line of the prompt. Add
- * bottom padding to the text area when expanded so the button clears it. */
-.chat-sticky-prompt.is-expanded .chat-sticky-prompt-toggle {
-  padding-bottom: 32px;
+/* Expanded: pin the "Click to collapse" toggle to the TOP-right instead of the
+ * bottom. The whole prompt bar is a sticky header (.sticky-section-header) —
+ * while it's pinned, only its TOP is on screen, so a bottom-pinned button is
+ * exactly the one the operator can't reach without scrolling the long prompt
+ * up and out of view (the reported "I have to scroll to the bottom to close
+ * it"). Top padding on the text clears the first line under the button. */
+.chat-sticky-prompt.is-expanded .chat-sticky-prompt-expand {
+  top: 6px;
+  bottom: auto;
+}
+
+.chat-sticky-prompt.is-expanded .chat-sticky-prompt-text {
+  padding-top: 32px;
+}
+
+/* Step the collapse toggle left of the top-right jump-to-comment icon
+ * (22px @ right:10px) so the two never overlap on a comment-run prompt. */
+.chat-sticky-prompt.is-expanded.has-comment-jump .chat-sticky-prompt-expand {
+  right: 40px;
 }
 
 /* Chat stream — vertical, dot-prefixed, Claude Code CLI style. Each

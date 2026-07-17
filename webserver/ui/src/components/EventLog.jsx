@@ -675,10 +675,14 @@ function StickyPrompt({ text, onOpenFile, epoch = 0 }) {
     : '';
   const lineCount = promptText.split('\n').length;
   const isCollapsible = lineCount > 3 || promptText.length > 180;
+  const hasCommentJump = !!commentRef && typeof onOpenFile === 'function';
   const promptClass = cx(
     'chat-sticky-prompt',
     expanded && 'is-expanded',
     isCollapsible && 'is-collapsible',
+    // When expanded the collapse toggle pins top-right; this lets the CSS
+    // step it left of the top-right jump-to-comment icon so they don't stack.
+    hasCommentJump && 'has-comment-jump',
   );
   const textWrapClass = cx(
     'chat-sticky-prompt-text-wrap',
@@ -696,7 +700,7 @@ function StickyPrompt({ text, onOpenFile, epoch = 0 }) {
   // alone (a11y) — e.g. "Jump to this comment in the diff · working".
   const statusSuffix = commentStatus ? ` · ${commentStatus.replace(/_/g, ' ')}` : '';
   const jumpLabel = `Jump to this comment in the diff${statusSuffix}`;
-  const jumpToComment = commentRef && typeof onOpenFile === 'function' ? (
+  const jumpToComment = hasCommentJump ? (
     <button
       type="button"
       className={cx(
