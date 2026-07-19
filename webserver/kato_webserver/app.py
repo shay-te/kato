@@ -2528,19 +2528,38 @@ def _register_http_routes(app: Flask) -> None:
 
     @app.get('/api/sessions/<task_id>/publish-state')
     def get_task_publish_state(task_id: str):
-        """UI poll: drives the disabled state of the Push / Pull request buttons."""
+        """Git-button state (workspace + local push-readiness). Local-only
+        and instant — the PR-existence check lives at ``/pull-request-state``
+        so a slow provider can never freeze these buttons."""
         agent_service = app.config.get('AGENT_SERVICE')
         if agent_service is None:
             return jsonify({
                 'has_workspace': False,
-                'has_pull_request': False,
+                'has_changes_to_push': False,
                 'task_id': task_id,
             })
         check = getattr(agent_service, 'task_publish_state', None)
         if not callable(check):
             return jsonify({
                 'has_workspace': False,
+                'has_changes_to_push': False,
+                'task_id': task_id,
+            })
+        state = check(task_id) or {}
+        state['task_id'] = task_id
+        return jsonify(state)
+
+    @app.get('/api/sessions/<task_id>/pull-request-state')
+    def get_task_pull_request_state(task_id: str):
+        """Best-effort PR-existence for the Pull-request button + "open PR"
+        link. Fetched separately from publish-state (tab-load + click, not
+        polled) so its provider retry backoff never blocks the git buttons."""
+        agent_service = app.config.get('AGENT_SERVICE')
+        check = getattr(agent_service, 'task_pull_request_state', None)
+        if not callable(check):
+            return jsonify({
                 'has_pull_request': False,
+                'pull_request_urls': [],
                 'task_id': task_id,
             })
         state = check(task_id) or {}

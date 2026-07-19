@@ -91,10 +91,6 @@ from claude_core_lib.claude_core_lib.session.streaming import (
     TURN_ACK_GRACE_SECONDS as _COMMENT_SEND_ACK_GRACE_SECONDS,
 )
 _COMMENT_RUN_MARKER_PREFIX = 'KATO_LOCAL_COMMENT_RUN:'
-# How long a PR-existence lookup is reused before re-hitting the provider.
-# The UI polls publish-state every 10s; PR existence rarely changes, so a
-# 2-minute window collapses an 8-repo task's ~48 calls/min down to ~4.
-_PR_LOOKUP_TTL_SECONDS = 120.0
 
 
 @dataclass(frozen=True)
@@ -202,16 +198,6 @@ class AgentService(MissionStepLoggerMixin, Service):
         # reply to a comment is about a completely unrelated change).
         self._comment_dispatch_locks: dict[str, _threading.Lock] = {}
         self._comment_dispatch_locks_lock = _threading.Lock()
-        # TTL cache for PR-existence lookups. ``task_publish_state`` runs
-        # one ``find_pull_requests`` per repo, and the planning UI polls
-        # it every 10s — for a multi-repo task that's a provider-API
-        # storm that trips Bitbucket 429s (and the 40-100s retry backoffs
-        # then block worker threads + stall the Approvals tab). PR
-        # existence barely changes, so we cache per (repo, branch) and
-        # serve stale-on-error so a 429 quiets itself instead of
-        # re-firing every poll. {(repo_id, branch): (epoch, result)}.
-        self._pr_lookup_cache: dict[tuple[str, str], tuple[float, list]] = {}
-        self._pr_lookup_cache_lock = _threading.Lock()
         self._state_registry = state_registry or AgentStateRegistry()
         self._review_comment_service = review_comment_service or ReviewCommentService(
             self._task_service,
@@ -4068,104 +4054,100 @@ class AgentService(MissionStepLoggerMixin, Service):
         )
         worker.start()
 
-    def _cached_find_pull_requests(self, repository, branch_name: str) -> list:
-        """PR-existence lookup with a short TTL cache + stale-on-error.
+    def _find_pull_requests_safe(self, repository, branch_name: str) -> list:
+        """Direct PR-existence lookup for the publish-state check.
 
-        Collapses the per-poll provider calls ``task_publish_state``
-        makes (one per repo, every 10s) so a multi-repo task doesn't trip
-        Bitbucket 429s. On a provider error (429, transient network) we
-        reuse the last known result — or an empty list — and CACHE it, so
-        a rate-limit storm quiets itself instead of re-firing (and
-        blocking on the 40-100s retry backoff) on every poll. One warning
-        line per failure, never a per-poll traceback.
+        ``task_publish_state`` is fetched on tab-load and after button
+        clicks (NOT polled), so a direct provider call is fine — no cache,
+        no background threads. Wrapped so a transient provider error (429,
+        network) degrades to "no PR known" instead of failing the whole
+        response: the git buttons gate on workspace presence and stay usable
+        regardless of provider health. One warning line, never a traceback.
         """
-        key = (str(getattr(repository, 'id', '') or ''), str(branch_name or ''))
-        now = time.time()
-        with self._pr_lookup_cache_lock:
-            cached = self._pr_lookup_cache.get(key)
-            if cached is not None and (now - cached[0]) < _PR_LOOKUP_TTL_SECONDS:
-                return cached[1]
         try:
-            result = self._repository_service.find_pull_requests(
+            return self._repository_service.find_pull_requests(
                 repository, source_branch=branch_name,
             ) or []
         except Exception as exc:
-            with self._pr_lookup_cache_lock:
-                stale = self._pr_lookup_cache.get(key)
-            value = stale[1] if stale is not None else []
-            # Cache the fallback so the next poll within the TTL skips the
-            # provider entirely — that's what breaks the 429 storm.
-            with self._pr_lookup_cache_lock:
-                self._pr_lookup_cache[key] = (now, value)
             self.logger.warning(
                 'PR lookup failed for repository %s (branch %s): %s — '
-                'serving %s for up to %ds',
-                key[0], key[1], exc,
-                'cached PRs' if value else 'no-PR',
-                int(_PR_LOOKUP_TTL_SECONDS),
+                'treating as no PR',
+                getattr(repository, 'id', ''), branch_name, exc,
             )
-            return value
-        with self._pr_lookup_cache_lock:
-            self._pr_lookup_cache[key] = (now, result)
-        return result
+            return []
 
     def task_publish_state(self, task_id: str) -> dict[str, object]:
-        """Workspace + push-readiness + PR-existence summary for the UI.
+        """LOCAL, INSTANT git-button state — never touches the provider.
 
-        Drives the disabled state of the planning UI's Push and Pull
-        request buttons:
+        Drives the ENABLED state of the planning UI's git buttons
+        (Push / Pull / Merge / Pull request), which only need to know
+        whether a workspace clone exists (+ whether there is local work to
+        push). Deliberately does NO provider PR lookup: that call can sleep
+        ~45-67s on a Bitbucket 429 retry backoff, and blocking a
+        button-state fetch on it hangs the whole toolbar on "server isn't
+        responding". PR existence is a SEPARATE, best-effort fetch
+        (:meth:`task_pull_request_state`) that can be slow without freezing
+        these buttons.
 
-        - ``has_workspace=False``    → no workspace on disk yet; both
-          buttons stay disabled.
-        - ``has_changes_to_push``    → the Push button is enabled when
-          *any* repo has unpushed work (dirty tree, branch never pushed,
-          or local ahead of ``origin/<branch>``); disabled when every
-          repo is in sync with its remote.
-        - ``has_pull_request``       → True only once EVERY repo on the
-          task already has an open PR (nothing left to publish) — the
-          Pull request button is disabled and the existing URL(s) are
-          surfaced as a hint. A repo added to the task after the first
-          PR round (e.g. via "Add repository" / Sync) still has no PR,
-          so this stays False and the button stays enabled until that
-          repo is covered too — a task-wide "any repo has a PR" check
-          previously left the button permanently disabled once the
-          FIRST repo was published, silently blocking PRs for repos
-          added later.
+        - ``has_workspace=False`` → no workspace on disk yet; buttons stay
+          disabled.
+        - ``has_changes_to_push`` → any repo has unpushed work (dirty tree,
+          branch never pushed, or local ahead of ``origin/<branch>``).
 
-        Best-effort: any per-repo lookup failure is ignored so a
-        transient git/API hiccup doesn't lock the UI buttons forever.
+        All local git — returns in well under a second regardless of
+        provider health. Best-effort: a per-repo push check failure is
+        ignored so a transient git hiccup doesn't lock the buttons.
         """
         normalized = str(task_id or '').strip()
         if not normalized:
-            return {
-                'has_workspace': False,
-                'has_changes_to_push': False,
-                'has_pull_request': False,
-            }
+            return {'has_workspace': False, 'has_changes_to_push': False}
         repos, _branch_name, task_obj = self._resolve_publish_context(normalized)
         if not repos:
-            return {
-                'has_workspace': False,
-                'has_changes_to_push': False,
-                'has_pull_request': False,
-            }
+            return {'has_workspace': False, 'has_changes_to_push': False}
         has_changes_to_push = False
+        for repository in repos:
+            if has_changes_to_push:
+                break
+            branch_name = self._repository_service.build_branch_name(task_obj, repository)
+            try:
+                if self._repository_service.branch_needs_push(repository, branch_name):
+                    has_changes_to_push = True
+            except Exception:
+                self.logger.exception(
+                    'branch-needs-push check failed for task %s repository %s',
+                    normalized, repository.id,
+                )
+        return {'has_workspace': True, 'has_changes_to_push': has_changes_to_push}
+
+    def task_pull_request_state(self, task_id: str) -> dict[str, object]:
+        """PR-existence for the task — a SEPARATE fetch from the git-button
+        state so a slow provider can't freeze the toolbar.
+
+        - ``has_pull_request`` → True only once EVERY repo on the task has
+          an open PR (nothing left to publish). A repo added after the
+          first PR round still has no PR, so this stays False and the Pull
+          request button stays enabled until that repo is covered too (a
+          task-wide "any repo has a PR" check previously left the button
+          permanently disabled once the FIRST repo was published).
+        - ``pull_request_urls`` → the existing PR URL(s), surfaced as the
+          "open PR" link.
+
+        Best-effort: a per-repo lookup failure degrades to "no PR"
+        (:meth:`_find_pull_requests_safe`). Fetched on tab-load and on
+        click — never polled — so its provider retry backoff never piles
+        up and, being off the git-button path, never blocks those buttons.
+        """
+        normalized = str(task_id or '').strip()
+        if not normalized:
+            return {'has_pull_request': False, 'pull_request_urls': []}
+        repos, _branch_name, task_obj = self._resolve_publish_context(normalized)
+        if not repos:
+            return {'has_pull_request': False, 'pull_request_urls': []}
         pull_request_urls: list[str] = []
         repos_missing_pull_request = 0
         for repository in repos:
             branch_name = self._repository_service.build_branch_name(task_obj, repository)
-            if not has_changes_to_push:
-                try:
-                    if self._repository_service.branch_needs_push(
-                        repository, branch_name,
-                    ):
-                        has_changes_to_push = True
-                except Exception:
-                    self.logger.exception(
-                        'branch-needs-push check failed for task %s repository %s',
-                        normalized, repository.id,
-                    )
-            existing = self._cached_find_pull_requests(repository, branch_name)
+            existing = self._find_pull_requests_safe(repository, branch_name)
             if existing:
                 first = existing[0] if isinstance(existing[0], dict) else {}
                 url = str(first.get('url', '') or '')
@@ -4174,8 +4156,6 @@ class AgentService(MissionStepLoggerMixin, Service):
             else:
                 repos_missing_pull_request += 1
         return {
-            'has_workspace': True,
-            'has_changes_to_push': has_changes_to_push,
             'has_pull_request': repos_missing_pull_request == 0,
             'pull_request_urls': pull_request_urls,
         }

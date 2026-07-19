@@ -29,6 +29,11 @@ import { refreshAgentVersion } from './hooks/useAgentVersion.js';
 import { refreshCatalogs } from './hooks/useCatalogRefresh.js';
 import { useSessions } from './hooks/useSessions.js';
 import { clearTaskStreamCache } from './hooks/useSessionStream.js';
+import {
+  setActiveTask as activateTaskCache,
+  forgetTask as forgetTaskCache,
+  registerOnEvict,
+} from './stores/taskCache/index.js';
 import { forgetQueuedMessages } from './utils/queuedMessagesStore.js';
 import { clearImageDraft } from './utils/composerImageDraft.js';
 import { clearFileContentCacheForTask } from './utils/fileContentCache.js';
@@ -60,6 +65,13 @@ const LEFT_PANE_MIN_WIDTH = 220;
 // centre/right columns still collapse gracefully at large values.
 const LEFT_PANE_MAX_WIDTH = 1200;
 const LEFT_PANE_STORAGE_KEY = 'kato.leftPaneWidth';
+
+// Govern the satellite per-task caches by the task cache's LRU: when a task is
+// evicted (fell out of the last-N viewed) OR forgotten, purge its chat-stream
+// and file-content caches too — so ONE eviction authority bounds every
+// per-task cache to the same retained set. Registered once at module load.
+registerOnEvict(clearTaskStreamCache);
+registerOnEvict(clearFileContentCacheForTask);
 
 export default function App() {
   const [activeTaskId, setActiveTaskIdState] = useState('');
@@ -170,6 +182,16 @@ export default function App() {
     refresh();
   }, [attention, refresh]);
 
+  // Drive the per-task view-data cache: whenever the viewed task changes,
+  // make it active so the cache retains the last few tasks' data (tree /
+  // diff / comments / …) in memory and revalidates in the background —
+  // switching back is then instant instead of a full refetch. Every
+  // activation path funnels through ``activeTaskId`` state, so one effect
+  // covers them all (tab click, keyboard, adopt, auto-focus).
+  useEffect(() => {
+    if (activeTaskId) { activateTaskCache(activeTaskId); }
+  }, [activeTaskId]);
+
   // Tab / Shift+Tab step through the task strip at the top (guards
   // against text fields + open dialogs so normal focus tabbing still
   // works there).
@@ -233,16 +255,16 @@ export default function App() {
       refresh();
       return;
     }
-    clearTaskStreamCache(taskId);
-    // Forget is the complete operator wipe — also drop this task's durable
-    // composer drafts so a forgotten task leaves no orphaned base64 image data
-    // behind in IndexedDB. Best-effort; never throws.
+    // Forget the task in the shared view-data cache: purges its store slices
+    // (tree / diff / comments / publish / PR) AND fans out to the registered
+    // satellite purgers (chat-stream + file-content) — one call clears every
+    // per-task cache. A later re-adopt reuses the same id but a FRESH clone,
+    // so none of it may survive.
+    forgetTaskCache(taskId);
+    // Also drop this task's durable composer drafts so a forgotten task leaves
+    // no orphaned base64 image data behind in IndexedDB. Best-effort.
     forgetQueuedMessages(taskId);
     clearImageDraft(taskId);
-    // A forgotten task's workspace is gone; a later re-adopt reuses the
-    // same task id but a FRESH clone, so any file content cached under
-    // this id must not survive to be served for the new clone.
-    clearFileContentCacheForTask(taskId);
     if (activeTaskId === taskId) {
       setActiveTaskIdState('');
       userPickedTabRef.current = false;

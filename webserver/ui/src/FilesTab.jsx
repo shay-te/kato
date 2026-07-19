@@ -3,15 +3,11 @@ import {
 } from 'react';
 import { Tree } from 'react-arborist';
 import {
-  fetchFileTree,
   fetchRepoCommits,
   recheckRepositoryPush,
   syncTaskRepositories,
 } from './api.js';
-import { commentStore } from './stores/commentStore.js';
-import { useTaskComments } from './hooks/useTaskComments.js';
-import { diffStore } from './stores/diffStore.js';
-import { useTaskDiff } from './hooks/useTaskDiff.js';
+import { useTaskDiff, useTaskComments, useTaskTree, revalidate } from './stores/taskCache/index.js';
 import AddRepositoryModal from './components/AddRepositoryModal.jsx';
 import CommitDiffModal from './components/CommitDiffModal.jsx';
 import ContentSearchResults from './components/ContentSearchResults.jsx';
@@ -35,7 +31,6 @@ import {
   countRepoComments,
   folderContainsChange,
   matchTreeNode,
-  normalizeTrees,
   repoCommentStatus,
 } from './FilesTabHelpers.js';
 import { cssEscapeAttr } from './utils/dom.js';
@@ -54,7 +49,6 @@ import { useClampedPointMenu } from './hooks/useClampedPointMenu.js';
 // with disk when files change outside of Claude's tool flow (manual
 // edits, pulls, syncs). Honors document visibility so a background
 // kato tab doesn't keep hammering the server.
-const AUTO_POLL_INTERVAL_MS = 5000;
 // Depth-0 left inset (px) for the full (arborist) tree, so its top-level
 // chevron aligns with the repo header chevron and the Changes tree.
 const TREE_ROW_DEPTH0_INSET = 10;
@@ -100,11 +94,11 @@ export default function FilesTab({
   onOpenFile,
 }) {
   const { appendToInput } = useChatComposer();
-  const [state, setState] = useState({
-    status: 'loading',
-    trees: [],
-    error: '',
-  });
+  // The file tree comes from the shared per-task cache (single source of
+  // truth) — retained across switches so returning to a task shows its tree
+  // instantly instead of blanking + refetching. Deduped + polled by the cache;
+  // this component keeps only its own view state (scroll / filter / focus).
+  const { trees, status, error } = useTaskTree(taskId);
   // Comment badges read from the shared ``commentStore`` (single source
   // of truth) — the same always-current list the diff pane's inline
   // threads read. So deleting the last comment on a file clears its 💬
@@ -142,11 +136,10 @@ export default function FilesTab({
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [showAllFiles, setShowAllFiles] = useState(false);
   const [pathMenu, setPathMenu] = useState(null);
-  const inFlightRef = useRef(false);
   const containerRef = useRef(null);
   const filterInputRef = useRef(null);
   // Last scroll offset the operator left the tree at. The 5s auto-poll
-  // and the ~1.2s workspace-version bump both replace ``state.trees``
+  // and the ~1.2s workspace-version bump both replace ``trees``
   // with fresh objects; the commit that follows can momentarily drop
   // the scroll container's content height and the browser clamps
   // ``scrollTop`` back to 0, snapping the tree to the top mid-read. We
@@ -154,19 +147,12 @@ export default function FilesTab({
   // effect (below) after each data-driven render, before paint.
   const scrollTopRef = useRef(0);
   // Last focus-request id this effect acted on. The focus effect below
-  // depends on data-refresh values (state.trees / diffMeta) so it
+  // depends on data-refresh values (trees / diffMeta) so it
   // re-fires on every 5s poll + 1.2s workspace bump; without this guard
   // it cleared the search and re-expanded the repo every few seconds
   // (the operator's "the tree changes/scrolls by itself" report). Only
   // act when the operator actually clicks a new file (a new requestId).
   const handledFilesFocusRef = useRef(0);
-  // Signature of the last file-tree/diff/comments payload committed.
-  // The fetch effect re-runs every 5s (poll) + ~1.2s (workspaceVersion
-  // bump) and used to rebuild + replace the whole tree state each time —
-  // re-cloning every node (attachIds), re-sorting the changed tree
-  // (buildDiffFileTree) and re-rendering every row — even when nothing
-  // on disk changed. Skip the rebuild + setState when the bytes match.
-  const fetchSigRef = useRef('');
   const [size, setSize] = useState({ width: 320, height: 480 });
 
   // Cmd/Ctrl+P from the parent flips the right pane to Files (already
@@ -191,7 +177,7 @@ export default function FilesTab({
   }, [taskId]);
 
   useEffect(() => {
-    if (!focusFileTarget || state.status !== 'ready') { return; }
+    if (!focusFileTarget || status !== 'ready') { return; }
     // Skip re-fires from background refreshes (same request already
     // handled) — only a fresh operator click bumps requestId. The
     // data-refresh deps stay so a click that lands before the tree is
@@ -199,10 +185,10 @@ export default function FilesTab({
     if (focusFileTarget.requestId === handledFilesFocusRef.current) { return; }
     const targetPath = String(focusFileTarget.relativePath || '').trim();
     if (!targetPath) { return; }
-    for (const repoTree of state.trees) {
+    for (const repoTree of trees) {
       const repoKey = repoTree.repo_id || repoTree.cwd;
       const diffMeta = diffMetaByRepo.get(repoKey) || EMPTY_DIFF_META;
-      if (!focusTargetMatchesRepo(focusFileTarget, repoTree, state.trees.length)) {
+      if (!focusTargetMatchesRepo(focusFileTarget, repoTree, trees.length)) {
         continue;
       }
       if (!diffMeta.has(targetPath)) { continue; }
@@ -217,102 +203,24 @@ export default function FilesTab({
       });
       break;
     }
-  }, [focusFileTarget, state.status, state.trees, diffMetaByRepo]);
+  }, [focusFileTarget, status, trees, diffMetaByRepo]);
 
-  useEffect(() => {
-    if (!taskId) { return; }
-    let cancelled = false;
-    inFlightRef.current = true;
-    // Only flip to ``loading`` on the FIRST fetch for this taskId.
-    // Subsequent refetches (driven by workspaceVersion bumps every 1.2s
-    // during active tool use, or the auto-poll every 5s, or the
-    // refresh button) keep the existing tree visible until the new
-    // payload arrives — otherwise the tab body flashes "Loading…"
-    // between every turn.
-    setState((prev) => (
-      prev.status === 'ready' || prev.status === 'error'
-        ? prev
-        : { status: 'loading', trees: [], error: '' }
-    ));
-    // Fetch the file TREE only. The diff (per-file add/delete badges) and
-    // comments both live in their shared stores now (``diffStore`` /
-    // ``commentStore``) and drive the badges via the memos above — so this
-    // effect owns just the tree endpoint.
-    fetchFileTree(taskId)
-      .then((payload) => {
-        if (cancelled) { return; }
-        // Unchanged bytes → keep the existing state object (and every
-        // per-repo Map/Set identity) so the tree's useMemos and child
-        // rows bail instead of re-cloning + re-rendering on an idle poll.
-        const sig = JSON.stringify(payload);
-        if (sig === fetchSigRef.current) { return; }
-        fetchSigRef.current = sig;
-        setState({
-          status: 'ready',
-          trees: normalizeTrees(payload),
-          error: '',
-        });
-      })
-      .catch((err) => {
-        if (cancelled) { return; }
-        setState((prev) => ({
-          status: 'error',
-          trees: prev.trees,
-          error: String(err),
-        }));
-      })
-      .finally(() => {
-        if (cancelled) { return; }
-        inFlightRef.current = false;
-      });
-    return () => { cancelled = true; };
-  }, [taskId, workspaceVersion, syncTick]);
-
-  // Auto-poll while the tab is mounted so external changes (manual
-  // edits, pulls, the sync button on a different kato tab) appear
-  // without waiting for a Claude tool event to bump
-  // ``workspaceVersion``. Visibility-aware so a background tab
-  // doesn't keep churning the file walker on the server.
-  useEffect(() => {
-    if (!taskId || typeof window === 'undefined') { return undefined; }
-    let timerId = null;
-    function tick() {
-      if (typeof document !== 'undefined' && document.hidden) { return; }
-      if (inFlightRef.current) { return; }
-      setSyncTick((n) => n + 1);
-    }
-    timerId = window.setInterval(tick, AUTO_POLL_INTERVAL_MS);
-    return () => {
-      if (timerId !== null) { window.clearInterval(timerId); }
-    };
-  }, [taskId]);
-
-
-  // Blank state on task switch so we don't show stale data while
-  // the new fetch is in flight. Also drop the saved scroll offset —
-  // a different task's tree must open at the top, not wherever the
-  // previous one was left.
+  // A different task's tree must open at the top, not wherever the previous
+  // one was left. The tree DATA is retained by the shared cache (no blank on
+  // switch) — only this view concern resets.
   useEffect(() => {
     scrollTopRef.current = 0;
-    // Drop the payload signature so the new task always rebuilds, even in
-    // the unlikely event its first payload byte-matches the old task's.
-    fetchSigRef.current = '';
-    setState({
-      status: 'loading',
-      trees: [],
-      error: '',
-    });
   }, [taskId]);
 
-  // A Claude turn / repo sync (workspaceVersion or syncTick bump) can add
-  // or re-status comments AND change the diff outside a UI mutation —
-  // reconcile the shared stores so the badges reflect it without waiting
-  // for their 5s poll. Coalesced by each store's single-flight guard; a
-  // no-op payload emits nothing.
+  // A Claude turn / repo sync (workspaceVersion or syncTick bump) can change
+  // the tree, diff, and comments outside a UI mutation — reconcile the shared
+  // cache so the tree + badges reflect it without waiting for the 5s poll.
+  // Coalesced by each child's single-flight guard; a no-op payload emits
+  // nothing. (The 5s auto-poll itself is now owned by the cache's one poller,
+  // so this component no longer runs its own interval.)
   useEffect(() => {
     if (taskId) {
-      commentStore.poke(taskId);
-      diffStore.poke(taskId);
+      revalidate(taskId, ['comments', 'diff', 'tree']);
     }
   }, [taskId, workspaceVersion, syncTick]);
 
@@ -327,7 +235,7 @@ export default function FilesTab({
     if (saved > 0 && node.scrollTop !== saved) {
       node.scrollTop = saved;
     }
-  }, [state.trees, diffMetaByRepo, commentMetaByRepo]);
+  }, [trees, diffMetaByRepo, commentMetaByRepo]);
 
   useEffect(() => {
     const node = containerRef.current;
@@ -345,8 +253,8 @@ export default function FilesTab({
   }, []);
 
   const repoIds = useMemo(() => {
-    return state.trees.map((entry) => entry.repo_id || entry.cwd);
-  }, [state.trees]);
+    return trees.map((entry) => entry.repo_id || entry.cwd);
+  }, [trees]);
 
   function toggleRepo(repoKey) {
     setCollapsed((prev) => {
@@ -431,12 +339,12 @@ export default function FilesTab({
   // extra fetch needed.
   const attachedRepoIds = useMemo(() => {
     const set = new Set();
-    for (const tree of state.trees) {
+    for (const tree of trees) {
       const id = String(tree?.repo_id || '').trim();
       if (id) { set.add(id.toLowerCase()); }
     }
     return set;
-  }, [state.trees]);
+  }, [trees]);
   const hasChangedFiles = useMemo(() => {
     for (const fileMeta of diffMetaByRepo.values()) {
       if (fileMeta.size > 0) { return true; }
@@ -523,11 +431,11 @@ export default function FilesTab({
   );
 
   let body;
-  if (state.status === 'loading') {
+  if (status === 'loading') {
     body = <p className="files-tab-message">Loading files…</p>;
-  } else if (state.status === 'error') {
-    body = <p className="files-tab-message error">{state.error}</p>;
-  } else if (state.trees.length === 0) {
+  } else if (status === 'error') {
+    body = <p className="files-tab-message error">{error}</p>;
+  } else if (trees.length === 0) {
     body = <p className="files-tab-message">No tracked files in this task.</p>;
   } else {
     // Which repo's tree shows the selection. With an explicit repoId the
@@ -537,9 +445,9 @@ export default function FilesTab({
     // tree and the centre pane agree, and so only ONE repo ever highlights
     // (the multi-repo double-highlight this derivation exists to prevent).
     const selectionRepoKey = resolveSelectionRepoKey(
-      openFile, state.trees, diffMetaByRepo,
+      openFile, trees, diffMetaByRepo,
     );
-    body = state.trees.map((repoTree) => {
+    body = trees.map((repoTree) => {
       const repoKey = repoTree.repo_id || repoTree.cwd;
       const diffMeta = diffMetaByRepo.get(repoKey) || EMPTY_DIFF_META;
       const commentMeta = commentMetaByRepo.get(repoTree.repo_id)

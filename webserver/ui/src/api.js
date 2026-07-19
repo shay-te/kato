@@ -1,16 +1,31 @@
 import { AGENT_SESSION_ID } from './constants/sessionFields.js';
 
-async function fetchJson(url) {
-  const response = await fetch(url, { cache: 'no-store' });
-  if (!response.ok) {
-    let message = `${response.status} ${response.statusText}`;
-    try {
-      const body = await response.json();
-      if (body && body.error) { message = body.error; }
-    } catch (_) { /* fall through with status text */ }
-    throw new Error(message);
+async function fetchJson(url, { timeoutMs = 0 } = {}) {
+  // Optional hard timeout: without it a hung endpoint keeps the promise
+  // pending forever, and any caller keyed on "have I loaded yet?" (e.g. the
+  // publish-state poll behind the git buttons) gets stuck showing a loading
+  // state indefinitely instead of surfacing an error and retrying.
+  const controller = timeoutMs > 0 && typeof AbortController !== 'undefined'
+    ? new AbortController() : null;
+  const timer = controller && typeof window !== 'undefined'
+    ? window.setTimeout(() => controller.abort(), timeoutMs) : null;
+  try {
+    const response = await fetch(url, {
+      cache: 'no-store',
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+    if (!response.ok) {
+      let message = `${response.status} ${response.statusText}`;
+      try {
+        const body = await response.json();
+        if (body && body.error) { message = body.error; }
+      } catch (_) { /* fall through with status text */ }
+      throw new Error(message);
+    }
+    return await response.json();
+  } finally {
+    if (timer) { window.clearTimeout(timer); }
   }
-  return response.json();
 }
 
 // Standard envelope: ``{ ok, status, body }`` on a completed request,
@@ -206,11 +221,33 @@ export function approveTaskPush(taskId) {
 export function fetchTaskPublishState(taskId) {
   if (!taskId) {
     return Promise.resolve({
-      has_workspace: false, has_pull_request: false,
+      has_workspace: false, has_changes_to_push: false,
+    });
+  }
+  // Bounded: drives the git buttons' enabled state, so it must never hang
+  // "loading…" forever — on timeout it rejects and the UI shows the error.
+  // Local-only on the backend (no provider call), so this is fast; the PR
+  // check is a SEPARATE fetch (fetchTaskPullRequestState).
+  return fetchJson(
+    `/api/sessions/${encodeURIComponent(taskId)}/publish-state`,
+    { timeoutMs: 8000 },
+  );
+}
+
+// PR-existence for the task's Pull-request button + "open PR" link. A
+// SEPARATE fetch from publish-state so a slow provider (429 retry backoff)
+// can never freeze the git buttons — worst case only the PR button/link is
+// briefly stale. Bounded; the caller keeps the git buttons usable even if
+// this rejects.
+export function fetchTaskPullRequestState(taskId) {
+  if (!taskId) {
+    return Promise.resolve({
+      has_pull_request: false, pull_request_urls: [],
     });
   }
   return fetchJson(
-    `/api/sessions/${encodeURIComponent(taskId)}/publish-state`,
+    `/api/sessions/${encodeURIComponent(taskId)}/pull-request-state`,
+    { timeoutMs: 8000 },
   );
 }
 

@@ -19,7 +19,15 @@ function encodeOldLine(n) { return -(n + OLD_LINE_OFFSET); }
 function decodeOldLine(encoded) { return (-encoded) - OLD_LINE_OFFSET; }
 function isOldSideEncoded(n) { return n < -(OLD_LINE_OFFSET); }
 import { fetchBaseFileContent } from '../api.js';
-import { commentStore } from '../stores/commentStore.js';
+import {
+  createComment,
+  resolveComment,
+  reopenComment,
+  retryComment,
+  removeComment,
+  editComment,
+  markCommentAddressed,
+} from '../stores/taskCache/index.js';
 import { toast } from '../stores/toastStore.js';
 import { diffDisplayPath } from '../diffModel.js';
 import { copyRepoRelativePath } from '../utils/clipboard.js';
@@ -324,7 +332,7 @@ function DiffFileWithComments({
   async function onSubmit(line, body, parentId = '') {
     const trimmed = String(body || '').trim();
     if (!trimmed) { return false; }
-    const result = await commentStore.create(taskId, {
+    const result = await createComment(taskId, {
       repo: repoId,
       file_path: path,
       line,
@@ -360,7 +368,7 @@ function DiffFileWithComments({
   }
 
   async function onResolve(commentId) {
-    const result = await commentStore.resolve(taskId, commentId);
+    const result = await resolveComment(taskId, commentId);
     if (!result.ok) {
       toast.errorFromResult(result, { title: 'Resolve failed', durationMs: 5000 });
       return;
@@ -393,7 +401,7 @@ function DiffFileWithComments({
   }
 
   async function onReopen(commentId) {
-    const result = await commentStore.reopen(taskId, commentId);
+    const result = await reopenComment(taskId, commentId);
     if (!result.ok) {
       toast.errorFromResult(result, { title: 'Reopen failed', durationMs: 5000 });
       return;
@@ -412,7 +420,7 @@ function DiffFileWithComments({
   }
 
   async function onRetry(commentId) {
-    const result = await commentStore.retry(taskId, commentId);
+    const result = await retryComment(taskId, commentId);
     if (!result.ok) {
       toast.errorFromResult(result, { title: 'Retry failed', durationMs: 5000 });
       return;
@@ -434,7 +442,7 @@ function DiffFileWithComments({
     if (!window.confirm('Delete this comment? Replies will be removed too.')) {
       return;
     }
-    const result = await commentStore.remove(taskId, commentId);
+    const result = await removeComment(taskId, commentId);
     if (!result.ok) {
       toast.errorFromResult(result, { title: 'Delete failed', durationMs: 5000 });
       return;
@@ -443,7 +451,7 @@ function DiffFileWithComments({
   }
 
   async function onEdit(commentId, { body, katoStatus } = {}) {
-    const result = await commentStore.edit(taskId, commentId, { body, katoStatus });
+    const result = await editComment(taskId, commentId, { body, katoStatus });
     // Surface BOTH layers: HTTP failure (404 if the route isn't
     // registered yet — i.e. kato hasn't been restarted since this
     // feature landed) AND envelope-level ``{ok: false}`` (the service
@@ -459,7 +467,7 @@ function DiffFileWithComments({
   }
 
   async function onMarkAddressed(commentId, addressedSha = '') {
-    const result = await commentStore.markAddressed(taskId, commentId, addressedSha);
+    const result = await markCommentAddressed(taskId, commentId, addressedSha);
     if (!result.ok) {
       toast.errorFromResult(result, {
         title: 'Mark addressed failed', durationMs: 5000,

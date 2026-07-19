@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { subscribeCatalogRefresh } from './useCatalogRefresh.js';
+import { loadCatalog } from '../stores/catalogStore.js';
 
 // Per-session option selector state, shared by the model picker and
 // the effort picker in SessionDetail. Both pickers follow the exact
@@ -40,7 +41,11 @@ export function useSessionOption(taskId, {
   // (bypassing the version-label cache) — used by the on-demand refresh so a
   // just-upgraded CLI's labels show without a reload.
   const loadOptions = useCallback((force) => {
-    fetchOptions(force).then((result) => {
+    // Cached at module level (keyed by ``optionsKey``) so a task switch — which
+    // remounts this hook and resets ``loadedRef`` — reads the catalogue from
+    // cache instead of re-hitting /models + /effort-levels every time. ``force``
+    // (the header Refresh) bypasses + replaces the cache.
+    loadCatalog(optionsKey, fetchOptions, force).then((result) => {
       if (result && Array.isArray(result[optionsKey])) {
         setOptions(result[optionsKey]);
       }

@@ -1229,7 +1229,7 @@ class PublishStateEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertFalse(payload['has_workspace'])
-        self.assertFalse(payload['has_pull_request'])
+        self.assertFalse(payload['has_changes_to_push'])
         self.assertEqual(payload['task_id'], 'T-1')
 
     def test_returns_false_state_when_method_missing(self):
@@ -1247,7 +1247,7 @@ class PublishStateEndpointTests(unittest.TestCase):
         # The route always overlays ``task_id`` on top of the agent's
         # payload so the UI doesn't have to track it separately.
         agent = _agent(task_publish_state=lambda t: {
-            'has_workspace': True, 'has_pull_request': False,
+            'has_workspace': True, 'has_changes_to_push': False,
         })
         app = create_app(
             session_manager=_FakeManager(),
@@ -1257,6 +1257,50 @@ class PublishStateEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertTrue(payload['has_workspace'])
+        self.assertEqual(payload['task_id'], 'T-7')
+
+
+# ---------------------------------------------------------------------------
+# /api/sessions/<task_id>/pull-request-state — SEPARATE PR-existence fetch,
+# kept off the git-button path so a slow provider can't freeze the buttons
+# ---------------------------------------------------------------------------
+
+
+class PullRequestStateEndpointTests(unittest.TestCase):
+    def test_returns_false_state_without_agent_service(self):
+        app = create_app(session_manager=_FakeManager())
+        response = app.test_client().get('/api/sessions/T-1/pull-request-state')
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertFalse(payload['has_pull_request'])
+        self.assertEqual(payload['pull_request_urls'], [])
+        self.assertEqual(payload['task_id'], 'T-1')
+
+    def test_returns_false_state_when_method_missing(self):
+        app = create_app(
+            session_manager=_FakeManager(),
+            agent_service=_agent(),
+        )
+        response = app.test_client().get('/api/sessions/T-1/pull-request-state')
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertFalse(payload['has_pull_request'])
+        self.assertEqual(payload['pull_request_urls'], [])
+
+    def test_returns_agent_pr_state_with_task_id_overlay(self):
+        agent = _agent(task_pull_request_state=lambda t: {
+            'has_pull_request': True,
+            'pull_request_urls': ['https://example/pr/1'],
+        })
+        app = create_app(
+            session_manager=_FakeManager(),
+            agent_service=agent,
+        )
+        response = app.test_client().get('/api/sessions/T-7/pull-request-state')
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['has_pull_request'])
+        self.assertEqual(payload['pull_request_urls'], ['https://example/pr/1'])
         self.assertEqual(payload['task_id'], 'T-7')
 
 

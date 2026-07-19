@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { buildCommentStatusByLocation } from '../utils/commentStatus.js';
-import { useTaskComments } from './useTaskComments.js';
+import { useTaskComments } from '../stores/taskCache/index.js';
 
 const EMPTY_STATUS_MAP = new Map();
 

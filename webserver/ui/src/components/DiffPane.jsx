@@ -5,10 +5,7 @@ import {
   isFileConflicted,
 } from '../diffModel.js';
 import { useChatComposer } from '../contexts/ChatComposerContext.jsx';
-import { commentStore } from '../stores/commentStore.js';
-import { useTaskComments } from '../hooks/useTaskComments.js';
-import { diffStore } from '../stores/diffStore.js';
-import { useTaskDiff } from '../hooks/useTaskDiff.js';
+import { useTaskDiff, useTaskComments, revalidate } from '../stores/taskCache/index.js';
 import DiffFileWithComments from './DiffFileWithComments.jsx';
 
 const EMPTY_COMMENTS = [];
@@ -85,7 +82,7 @@ export default function DiffPane({
   // the poll cadence — reconcile the shared store now. Coalesced by its
   // single-flight guard; an unchanged payload emits nothing.
   useEffect(() => {
-    if (taskId) { diffStore.poke(taskId); }
+    if (taskId) { revalidate(taskId, ['diff']); }
   }, [taskId, workspaceVersion]);
 
   const totalFiles = useMemo(
@@ -140,7 +137,7 @@ export default function DiffPane({
   // store so the threads reflect it. Coalesced by the store's
   // single-flight guard; a no-op payload emits nothing.
   useEffect(() => {
-    if (taskId) { commentStore.poke(taskId); }
+    if (taskId) { revalidate(taskId, ['comments']); }
   }, [taskId, workspaceVersion]);
 
   const bumpComments = useCallback(() => {

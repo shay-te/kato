@@ -792,6 +792,9 @@ class TaskPublishStateTests(unittest.TestCase):
         self.assertTrue(result['has_changes_to_push'])
         # only the first repo triggered branch_needs_push.
         branch_needs_push.assert_called_once()
+        # publish-state is LOCAL-ONLY now — it must not hit the provider.
+        self.assertNotIn('has_pull_request', result)
+        service._repository_service.find_pull_requests.assert_not_called()
 
     def test_pr_without_url_not_appended(self) -> None:
         # 3373->3346: existing PR has no url -> the url-append is skipped
@@ -808,10 +811,32 @@ class TaskPublishStateTests(unittest.TestCase):
             return_value=[{'id': '5'}]  # no 'url' key
         )
 
-        result = service.task_publish_state('PROJ-1')
+        result = service.task_pull_request_state('PROJ-1')
 
         self.assertTrue(result['has_pull_request'])
-        self.assertFalse(result['has_changes_to_push'])
+        self.assertEqual(result['pull_request_urls'], [])
+
+    def test_provider_error_degrades_to_no_pull_request(self) -> None:
+        # A transient provider error (429/network) on the DIRECT lookup must
+        # NOT fail the whole publish-state response — it degrades to "no PR
+        # known" so the git buttons (which gate on workspace presence) stay
+        # usable regardless of provider health.
+        repo1 = SimpleNamespace(id='repo-a')
+        service = self._service_with_publish_context([repo1])
+        service._repository_service.build_branch_name = MagicMock(
+            return_value='feature/proj-1'
+        )
+        service._repository_service.branch_needs_push = MagicMock(
+            return_value=True
+        )
+        service._repository_service.find_pull_requests = MagicMock(
+            side_effect=RuntimeError('429 Too Many Requests')
+        )
+
+        result = service.task_pull_request_state('PROJ-1')
+
+        # Endpoint still returns; PR treated as absent (no exception raised).
+        self.assertFalse(result['has_pull_request'])
         self.assertEqual(result['pull_request_urls'], [])
 
 

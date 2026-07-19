@@ -5,10 +5,15 @@
 //
 // Mirrors the useAgentVersion pub/sub: callers subscribe, a single
 // refreshCatalogs() bump notifies them all to re-fetch (forced).
+import { clearCatalogCache } from '../stores/catalogStore.js';
+
 const _subs = new Set();
 
 // Notify every subscribed picker to re-fetch its catalogue (bypassing caches).
+// Drop the module cache first so even a catalogue whose picker isn't currently
+// mounted is re-fetched fresh on its next use.
 export function refreshCatalogs() {
+  clearCatalogCache();
   for (const cb of _subs) { cb(); }
 }
 

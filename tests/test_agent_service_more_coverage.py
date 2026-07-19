@@ -327,50 +327,6 @@ class RequeueOrphanedInProgressCommentsTests(unittest.TestCase):
             self.assertEqual(service.requeue_orphaned_in_progress_comments(), [])
 
 
-class CachedFindPullRequestsTests(unittest.TestCase):
-    """PR-lookup TTL cache: collapse per-poll provider calls + serve
-    stale-on-error so a Bitbucket 429 storm quiets itself."""
-
-    def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory(prefix='kato-prcache-')
-        self.addCleanup(self._tmp.cleanup)
-        self.service, _ = build_real_agent_service(Path(self._tmp.name))
-
-    def _repo_service(self, **kwargs):
-        rs = MagicMock()
-        for key, val in kwargs.items():
-            setattr(rs.find_pull_requests, key, val)
-        self.service._repository_service = rs
-        return rs
-
-    def test_second_call_within_ttl_hits_cache_not_provider(self) -> None:
-        rs = self._repo_service(return_value=[{'url': 'http://pr/1'}])
-        repo = SimpleNamespace(id='r1')
-        first = self.service._cached_find_pull_requests(repo, 'b')
-        second = self.service._cached_find_pull_requests(repo, 'b')
-        self.assertEqual(first, [{'url': 'http://pr/1'}])
-        self.assertEqual(second, first)
-        rs.find_pull_requests.assert_called_once()
-
-    def test_provider_error_serves_empty_and_caches_it(self) -> None:
-        rs = self._repo_service(side_effect=RuntimeError('429'))
-        repo = SimpleNamespace(id='r1')
-        self.assertEqual(self.service._cached_find_pull_requests(repo, 'b'), [])
-        # Cached → the next poll within the TTL does NOT re-hit the
-        # provider (this is what breaks the 429 storm).
-        self.service._cached_find_pull_requests(repo, 'b')
-        rs.find_pull_requests.assert_called_once()
-
-    def test_provider_error_serves_stale_result_when_available(self) -> None:
-        rs = self._repo_service(side_effect=RuntimeError('429'))
-        repo = SimpleNamespace(id='r1')
-        # Seed an EXPIRED entry (epoch 0) → re-fetch attempted → errors →
-        # stale value served.
-        self.service._pr_lookup_cache[('r1', 'b')] = (0.0, [{'url': 'http://pr/old'}])
-        out = self.service._cached_find_pull_requests(repo, 'b')
-        self.assertEqual(out, [{'url': 'http://pr/old'}])
-
-
 class _InFlightRunner(object):
     """Minimal real ParallelTaskRunner stand-in: reports a fixed set of task
     ids as in-flight. A real object with real behavior (no Mock) so the
@@ -1885,7 +1841,7 @@ class TaskPublishStateTests(unittest.TestCase):
         with patch.object(service, '_resolve_publish_context',
                           return_value=([repo_obj], 'T1',
                                         SimpleNamespace(id='T1'))):
-            result = service.task_publish_state('T1')
+            result = service.task_pull_request_state('T1')
         self.assertTrue(result['has_pull_request'])
 
     def test_pull_request_button_stays_enabled_when_a_repo_still_needs_one(self) -> None:
@@ -1910,7 +1866,7 @@ class TaskPublishStateTests(unittest.TestCase):
         with patch.object(service, '_resolve_publish_context',
                           return_value=([published_repo, new_repo], 'T1',
                                         SimpleNamespace(id='T1'))):
-            result = service.task_publish_state('T1')
+            result = service.task_pull_request_state('T1')
         self.assertFalse(result['has_pull_request'])
         self.assertEqual(result['pull_request_urls'], ['https://example.com/pr/17'])
 
@@ -1941,13 +1897,26 @@ class TaskPublishStateTests(unittest.TestCase):
         with patch.object(service, '_resolve_publish_context',
                           return_value=([repo_obj], 'T1',
                                         SimpleNamespace(id='T1'))):
-            result = service.task_publish_state('T1')
+            result = service.task_pull_request_state('T1')
         self.assertFalse(result['has_pull_request'])
-        # The cache helper swallows the provider error and logs ONE
-        # warning (no per-poll traceback) — that's what tames the 429
-        # storm. has_pull_request stays False (no PR known).
+        # ``_find_pull_requests_safe`` swallows the provider error and logs
+        # ONE warning (no traceback) — has_pull_request stays False.
         service.logger.warning.assert_called()
         service.logger.exception.assert_not_called()
+
+    def test_pull_request_state_default_for_blank_task_id(self) -> None:
+        service = AgentService(**_kwargs())
+        result = service.task_pull_request_state('')
+        self.assertFalse(result['has_pull_request'])
+        self.assertEqual(result['pull_request_urls'], [])
+
+    def test_pull_request_state_default_when_no_workspace_context(self) -> None:
+        service = AgentService(**_kwargs())
+        with patch.object(service, '_resolve_publish_context',
+                          return_value=([], '', None)):
+            result = service.task_pull_request_state('T1')
+        self.assertFalse(result['has_pull_request'])
+        self.assertEqual(result['pull_request_urls'], [])
 
 
 class ResolvePublishContextTests(unittest.TestCase):

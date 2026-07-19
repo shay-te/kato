@@ -3,8 +3,15 @@ import { createPortal } from 'react-dom';
 import Editor from '@monaco-editor/react';
 import { fetchFileContent } from '../api.js';
 import { readCachedFileContent, writeCachedFileContent } from '../utils/fileContentCache.js';
-import { commentStore } from '../stores/commentStore.js';
-import { useTaskComments } from '../hooks/useTaskComments.js';
+import {
+  useTaskComments,
+  createComment,
+  resolveComment,
+  reopenComment,
+  removeComment,
+  editComment,
+  markCommentAddressed,
+} from '../stores/taskCache/index.js';
 import {
   CommentForm,
   CommentThread,
@@ -150,7 +157,7 @@ export default function EditorPane({
 
   async function onCommentSubmit(line, body, parentId = '') {
     if (!body.trim()) { return false; }
-    const result = await commentStore.create(taskId, {
+    const result = await createComment(taskId, {
       repo: repoId,
       file_path: filePath,
       line,
@@ -183,7 +190,7 @@ export default function EditorPane({
   }
 
   async function onResolve(comment) {
-    const result = await commentStore.resolve(taskId, comment.id);
+    const result = await resolveComment(taskId, comment.id);
     if (!result.ok) {
       toast.errorFromResult(result, {
         title: 'Resolve failed', fallback: 'resolve failed', durationMs: 5000,
@@ -191,7 +198,7 @@ export default function EditorPane({
     }
   }
   async function onReopen(comment) {
-    const result = await commentStore.reopen(taskId, comment.id);
+    const result = await reopenComment(taskId, comment.id);
     if (!result.ok) {
       toast.errorFromResult(result, {
         title: 'Reopen failed', fallback: 'reopen failed', durationMs: 5000,
@@ -210,7 +217,7 @@ export default function EditorPane({
     }
   }
   async function onDelete(comment) {
-    const result = await commentStore.remove(taskId, comment.id);
+    const result = await removeComment(taskId, comment.id);
     if (!result.ok) {
       toast.errorFromResult(result, {
         title: 'Delete failed', fallback: 'delete failed', durationMs: 5000,
@@ -218,7 +225,7 @@ export default function EditorPane({
     }
   }
   async function onEdit(commentId, { body, katoStatus } = {}) {
-    const result = await commentStore.edit(taskId, commentId, { body, katoStatus });
+    const result = await editComment(taskId, commentId, { body, katoStatus });
     // Check HTTP error AND envelope-level ``{ok: false}`` (validation
     // rejects). See the matching handler in DiffFileWithComments for
     // the rationale.
@@ -231,7 +238,7 @@ export default function EditorPane({
     return true;
   }
   async function onMarkAddressed(comment) {
-    const result = await commentStore.markAddressed(taskId, comment.id, '');
+    const result = await markCommentAddressed(taskId, comment.id, '');
     if (!result.ok) {
       toast.errorFromResult(result, {
         title: 'Mark addressed failed',

@@ -1,6 +1,6 @@
 // Tests for useTaskPublish — drives the Push / Pull / PR buttons.
 // Contract:
-//   - No taskId → all flags false, no polling.
+//   - No taskId → all flags false, no fetching.
 //   - With taskId → fetches publish state, exposes flags.
 //   - push/pull/createPullRequest set their busy flag, call api,
 //     then refresh.
@@ -13,6 +13,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 vi.mock('../api.js', () => ({
   createTaskPullRequest: vi.fn(),
   fetchTaskPublishState: vi.fn(),
+  fetchTaskPullRequestState: vi.fn(),
   pullTask: vi.fn(),
   pushTask: vi.fn(),
 }));
@@ -22,6 +23,7 @@ vi.mock('../stores/toastStore.js', () => ({ toastResult: vi.fn() }));
 import {
   createTaskPullRequest,
   fetchTaskPublishState,
+  fetchTaskPullRequestState,
   pullTask,
   pushTask,
 } from '../api.js';
@@ -31,6 +33,12 @@ import { useTaskPublish } from './useTaskPublish.js';
 
 beforeEach(() => {
   fetchTaskPublishState.mockReset();
+  fetchTaskPullRequestState.mockReset();
+  // Benign PR-state default so tests that only care about the git buttons
+  // (publish-state) don't have to mock the SEPARATE PR fetch.
+  fetchTaskPullRequestState.mockResolvedValue({
+    has_pull_request: false, pull_request_urls: [],
+  });
   createTaskPullRequest.mockReset();
   pullTask.mockReset();
   pushTask.mockReset();
@@ -97,6 +105,7 @@ describe('useTaskPublish — without taskId', () => {
   test('no fetching when taskId is null', () => {
     renderHook(() => useTaskPublish(null));
     expect(fetchTaskPublishState).not.toHaveBeenCalled();
+    expect(fetchTaskPullRequestState).not.toHaveBeenCalled();
   });
 
   test('all flags false initially', () => {
@@ -126,20 +135,53 @@ describe('useTaskPublish — with taskId', () => {
     fetchTaskPublishState.mockResolvedValue({
       has_workspace: true,
       has_changes_to_push: true,
-      has_pull_request: false,
-      pull_request_urls: [],
     });
 
     const { result } = renderHook(() => useTaskPublish('T1'));
 
     await waitFor(() => expect(result.current.hasWorkspace).toBe(true));
     expect(result.current.hasChangesToPush).toBe(true);
+    expect(result.current.hasPullRequest).toBe(false);  // from the PR fetch (default)
+  });
+
+  test('a failing PR fetch never disables the git buttons', async () => {
+    // The PR check is a SEPARATE, best-effort fetch. If it fails (slow
+    // provider / 429) the git buttons must stay ready — publishStateError
+    // stays false and hasWorkspace stays true.
+    fetchTaskPublishState.mockResolvedValue({ has_workspace: true });
+    fetchTaskPullRequestState.mockRejectedValue(new Error('429'));
+
+    const { result } = renderHook(() => useTaskPublish('T1'));
+
+    await waitFor(() => expect(result.current.publishStateReady).toBe(true));
+    expect(result.current.hasWorkspace).toBe(true);
+    expect(result.current.publishStateError).toBe(false);  // PR failure ignored
     expect(result.current.hasPullRequest).toBe(false);
   });
 
+  test('publishStateReady flips true only AFTER a successful fetch', async () => {
+    // Distinguishes "haven't checked yet" from a real "no workspace" so the
+    // UI never claims "no workspace" during the initial load.
+    fetchTaskPublishState.mockResolvedValue({ has_workspace: true });
+    const { result } = renderHook(() => useTaskPublish('T1'));
+    expect(result.current.publishStateReady).toBe(false);  // before the fetch returns
+    await waitFor(() => expect(result.current.publishStateReady).toBe(true));
+    expect(result.current.publishStateError).toBe(false);
+  });
+
+  test('a FAILED fetch sets publishStateError and never fakes a workspace', async () => {
+    // A persistent fetch error must be distinguishable from a real
+    // "no workspace" (both otherwise leave hasWorkspace=false).
+    fetchTaskPublishState.mockRejectedValue(new Error('network down'));
+    const { result } = renderHook(() => useTaskPublish('T1'));
+    await waitFor(() => expect(result.current.publishStateError).toBe(true));
+    expect(result.current.publishStateReady).toBe(false);  // never got a confirmed state
+    expect(result.current.hasWorkspace).toBe(false);
+  });
+
   test('exposes pull_request_urls (filtered to truthy)', async () => {
-    fetchTaskPublishState.mockResolvedValue({
-      has_workspace: true,
+    fetchTaskPublishState.mockResolvedValue({ has_workspace: true });
+    fetchTaskPullRequestState.mockResolvedValue({
       has_pull_request: true,
       pull_request_urls: ['https://example/pr/1', '', null, 'https://example/pr/2'],
     });
@@ -152,7 +194,10 @@ describe('useTaskPublish — with taskId', () => {
     });
   });
 
-  test('polls every 10s', async () => {
+  test('checks on tab load (mount), NOT on a timer', async () => {
+    // The old 10s poll hammered the provider PR lookup and hung the
+    // endpoint. Now we fetch once on tab load; advancing time must NOT
+    // trigger another fetch.
     vi.useFakeTimers();
     try {
       fetchTaskPublishState
@@ -162,32 +207,32 @@ describe('useTaskPublish — with taskId', () => {
       const { result } = renderHook(() => useTaskPublish('T1'));
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
       expect(result.current.hasWorkspace).toBe(false);
+      expect(fetchTaskPublishState).toHaveBeenCalledTimes(1);
 
-      await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
-      expect(result.current.hasWorkspace).toBe(true);
+      // No polling — a full minute passes and there is still only one fetch.
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(fetchTaskPublishState).toHaveBeenCalledTimes(1);
+      expect(result.current.hasWorkspace).toBe(false);  // never re-fetched
     } finally {
       vi.useRealTimers();
     }
   });
 
-  test('fetch errors keep last-known state', async () => {
-    vi.useFakeTimers();
-    try {
-      fetchTaskPublishState
-        .mockResolvedValueOnce({ has_workspace: true, has_changes_to_push: true })
-        .mockRejectedValueOnce(new Error('network'));
+  test('a failed re-check keeps the last-known state', async () => {
+    // A manual re-check (e.g. after a click) that FAILS must keep the last
+    // known flags and just flag the error — not fake a "no workspace".
+    fetchTaskPublishState
+      .mockResolvedValueOnce({ has_workspace: true, has_changes_to_push: true })
+      .mockRejectedValueOnce(new Error('network'));
 
-      const { result } = renderHook(() => useTaskPublish('T1'));
-      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-      expect(result.current.hasWorkspace).toBe(true);
+    const { result } = renderHook(() => useTaskPublish('T1'));
+    await waitFor(() => expect(result.current.hasWorkspace).toBe(true));
 
-      await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
-      // Last-known state retained.
-      expect(result.current.hasWorkspace).toBe(true);
-      expect(result.current.hasChangesToPush).toBe(true);
-    } finally {
-      vi.useRealTimers();
-    }
+    await act(async () => { await result.current.refresh(); });
+
+    expect(result.current.hasWorkspace).toBe(true);
+    expect(result.current.hasChangesToPush).toBe(true);
+    expect(result.current.publishStateError).toBe(true);
   });
 });
 

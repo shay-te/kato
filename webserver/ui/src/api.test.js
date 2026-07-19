@@ -5,6 +5,8 @@ import {
   adoptAgentSession,
   fetchBaseFileContent,
   fetchClaudeSessions,
+  fetchTaskPublishState,
+  fetchTaskPullRequestState,
   postChatMessage,
 } from './api.js';
 import { AGENT_SESSION_ID } from './constants/sessionFields.js';
@@ -51,6 +53,51 @@ test('fetchClaudeSessions URL-encodes the query string', async function () {
   });
   await fetchClaudeSessions('auth flow');
   assert.equal(calls[0].url, '/api/claude/sessions?q=auth%20flow');
+});
+
+test('fetchTaskPublishState resolves the publish-state body from the task route', async function () {
+  const calls = _stubFetch({
+    ok: true,
+    json: () => Promise.resolve({ has_workspace: true, has_pull_request: false }),
+  });
+  const body = await fetchTaskPublishState('T1');
+  assert.deepEqual(body, { has_workspace: true, has_pull_request: false });
+  assert.match(calls[0].url, /\/api\/sessions\/T1\/publish-state$/);
+});
+
+test('fetchTaskPublishState rejects when the request fails (abort/timeout/network)', async function () {
+  // The bounded fetch aborts on timeout → rejects; the caller (useTaskPublish)
+  // turns that into the "server isn't responding" state instead of a stuck
+  // "loading…" forever.
+  globalThis.fetch = function () { return Promise.reject(new Error('aborted')); };
+  await assert.rejects(() => fetchTaskPublishState('T1'), /aborted/);
+});
+
+test('fetchTaskPublishState short-circuits an empty taskId without a request', async function () {
+  const calls = _stubFetch({ ok: true, json: () => Promise.resolve({}) });
+  const body = await fetchTaskPublishState('');
+  assert.equal(body.has_workspace, false);
+  assert.equal(calls.length, 0);
+});
+
+test('fetchTaskPullRequestState resolves PR state from its own task route', async function () {
+  const calls = _stubFetch({
+    ok: true,
+    json: () => Promise.resolve({ has_pull_request: true, pull_request_urls: ['u'] }),
+  });
+  const body = await fetchTaskPullRequestState('T1');
+  assert.deepEqual(body, { has_pull_request: true, pull_request_urls: ['u'] });
+  // SEPARATE endpoint from publish-state so a slow provider can't freeze
+  // the git buttons.
+  assert.match(calls[0].url, /\/api\/sessions\/T1\/pull-request-state$/);
+});
+
+test('fetchTaskPullRequestState short-circuits an empty taskId without a request', async function () {
+  const calls = _stubFetch({ ok: true, json: () => Promise.resolve({}) });
+  const body = await fetchTaskPullRequestState('');
+  assert.equal(body.has_pull_request, false);
+  assert.deepEqual(body.pull_request_urls, []);
+  assert.equal(calls.length, 0);
 });
 
 test('fetchClaudeSessions throws when the response is not ok', async function () {

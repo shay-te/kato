@@ -86,6 +86,8 @@ function _defaultTaskPublish(overrides = {}) {
     hasChangesToPush: false,
     hasPullRequest: false,
     pullRequestUrls: [],
+    publishStateReady: true,
+    publishStateError: false,
     pushBusy: false,
     pullBusy: false,
     prBusy: false,
@@ -101,6 +103,9 @@ function _defaultTaskPublish(overrides = {}) {
 beforeEach(() => {
   usePushApproval.mockReturnValue(_defaultPushApproval());
   useTaskPublish.mockReturnValue(_defaultTaskPublish());
+  // The action tooltips read the last-run time from localStorage — start each
+  // test with a clean slate so "not …ed from here yet" is deterministic.
+  try { localStorage.clear(); } catch (_) { /* jsdom always has it */ }
 });
 
 
@@ -399,30 +404,101 @@ describe('SessionHeader — Approve push banner', () => {
 
 describe('SessionHeader — Push / Pull / PR buttons', () => {
 
-  test('Push button disabled when hasChangesToPush=false', () => {
+  test('Push / Merge / Pull are ENABLED when kato + repos are ready and idle', () => {
+    // Unified gate: enabled whenever the state is loaded, a clone exists, and
+    // no git op is running — NO "is there anything to do?" pre-check, so even
+    // with nothing to push the button stays clickable (a no-op is fine).
     useTaskPublish.mockReturnValue(_defaultTaskPublish({
-      hasChangesToPush: false,
+      hasWorkspace: true, hasChangesToPush: false,
     }));
     render(
-      <SessionHeader
-        session={_session()}
-        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
-      />,
-    );
-    expect(screen.getByRole('button', { name: /^push$/i })).toBeDisabled();
-  });
-
-  test('Push button enabled when hasChangesToPush=true', () => {
-    useTaskPublish.mockReturnValue(_defaultTaskPublish({
-      hasChangesToPush: true,
-    }));
-    render(
-      <SessionHeader
-        session={_session()}
-        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
-      />,
+      <SessionHeader session={_session()} streamLifecycle={SESSION_LIFECYCLE.STREAMING} />,
     );
     expect(screen.getByRole('button', { name: /^push$/i })).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: /merge default branch/i })).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: /^pull$/i })).not.toBeDisabled();
+  });
+
+  test('git buttons DISABLED when there is no workspace clone', () => {
+    useTaskPublish.mockReturnValue(_defaultTaskPublish({ hasWorkspace: false }));
+    render(
+      <SessionHeader session={_session()} streamLifecycle={SESSION_LIFECYCLE.STREAMING} />,
+    );
+    expect(screen.getByRole('button', { name: /^push$/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /merge default branch/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^pull$/i })).toBeDisabled();
+  });
+
+  test('ONE git op at a time: a running pull disables push + merge', () => {
+    // ``pullBusy`` is in the shared ``anyGitOpBusy`` set, so no other git
+    // button can fire while it runs (can't pull-while-merging, etc.).
+    useTaskPublish.mockReturnValue(_defaultTaskPublish({
+      hasWorkspace: true, pullBusy: true,
+    }));
+    render(
+      <SessionHeader session={_session()} streamLifecycle={SESSION_LIFECYCLE.STREAMING} />,
+    );
+    expect(screen.getByRole('button', { name: /^push$/i })).toBeDisabled();
+    const merge = screen.getByRole('button', { name: /merge default branch/i });
+    expect(merge).toBeDisabled();
+    expect(merge).toHaveAttribute('data-tooltip', expect.stringMatching(/one at a time/i));
+  });
+
+  test('ONE git op at a time: a running push disables pull', () => {
+    useTaskPublish.mockReturnValue(_defaultTaskPublish({
+      hasWorkspace: true, pushBusy: true,
+    }));
+    render(
+      <SessionHeader session={_session()} streamLifecycle={SESSION_LIFECYCLE.STREAMING} />,
+    );
+    expect(screen.getByRole('button', { name: /^pull$/i })).toBeDisabled();
+  });
+
+  test('git buttons say "checking" while the publish state is still loading', () => {
+    useTaskPublish.mockReturnValue(_defaultTaskPublish({
+      hasWorkspace: false, publishStateReady: false, publishStateError: false,
+    }));
+    render(
+      <SessionHeader session={_session()} streamLifecycle={SESSION_LIFECYCLE.STREAMING} />,
+    );
+    const merge = screen.getByRole('button', { name: /merge default branch/i });
+    expect(merge).toBeDisabled();
+    expect(merge).toHaveAttribute('data-tooltip', expect.stringMatching(/loading this task's git status/i));
+    expect(merge).not.toHaveAttribute('data-tooltip', expect.stringMatching(/no git workspace/i));
+  });
+
+  test('git buttons say the server "isn\'t responding" on a failed/timed-out fetch', () => {
+    useTaskPublish.mockReturnValue(_defaultTaskPublish({
+      hasWorkspace: false, publishStateReady: false, publishStateError: true,
+    }));
+    render(
+      <SessionHeader session={_session()} streamLifecycle={SESSION_LIFECYCLE.STREAMING} />,
+    );
+    expect(screen.getByRole('button', { name: /^push$/i }))
+      .toHaveAttribute('data-tooltip', expect.stringMatching(/server isn't responding/i));
+  });
+
+  test('git buttons say "no git workspace clone" once loaded and confirmed empty', () => {
+    useTaskPublish.mockReturnValue(_defaultTaskPublish({
+      hasWorkspace: false, publishStateReady: true, publishStateError: false,
+    }));
+    render(
+      <SessionHeader session={_session()} streamLifecycle={SESSION_LIFECYCLE.STREAMING} />,
+    );
+    expect(screen.getByRole('button', { name: /merge default branch/i }))
+      .toHaveAttribute('data-tooltip', expect.stringMatching(/no git workspace clone/i));
+  });
+
+  test('a ready action tooltip shows the last-run-time hint', () => {
+    // Never run from this browser in the test → the "not … from here yet" hint.
+    useTaskPublish.mockReturnValue(_defaultTaskPublish({ hasWorkspace: true }));
+    render(
+      <SessionHeader session={_session()} streamLifecycle={SESSION_LIFECYCLE.STREAMING} />,
+    );
+    expect(screen.getByRole('button', { name: /merge default branch/i }))
+      .toHaveAttribute('data-tooltip', expect.stringMatching(/Not merged from here yet/i));
+    expect(screen.getByRole('button', { name: /^push$/i }))
+      .toHaveAttribute('data-tooltip', expect.stringMatching(/Not pushed from here yet/i));
   });
 
   test('Pull button disabled when no workspace', () => {

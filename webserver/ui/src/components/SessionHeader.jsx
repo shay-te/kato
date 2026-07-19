@@ -13,6 +13,7 @@ import { useBusyAction } from '../hooks/useBusyAction.js';
 import { usePushApproval } from '../hooks/usePushApproval.js';
 import { useTaskPublish } from '../hooks/useTaskPublish.js';
 import { cx } from '../utils/cx.js';
+import { lastActionSuffix, recordGitActionNow } from '../utils/lastGitAction.js';
 import { deriveTabStatus, tabStatusTitle } from '../utils/tabStatus.js';
 import { deriveAgentStatus } from '../utils/agentStatus.js';
 import { SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
@@ -91,6 +92,9 @@ export default function SessionHeader({
     () => mergeDefaultBranch(session.task_id),
     {
       onDone: async (result) => {
+        // Record that the operator ran a merge from here (shown in the merge
+        // tooltip) — before the refresh so the re-render reads the new time.
+        recordGitActionNow(session.task_id, 'merge');
         if (typeof taskPublish.refresh === 'function') {
           taskPublish.refresh();
         }
@@ -318,24 +322,46 @@ export default function SessionHeader({
     </button>
   );
 
-  // The Push button is *only* gated on "is there anything to push?" —
-  // not on workspace existence, not on PR existence. When everything's
-  // already on the remote we disable it (clicking would be a no-op);
-  // otherwise it's clickable and worst case the click surfaces an
-  // error the operator can act on.
-  const pushDisabled = !taskPublish.hasChangesToPush || taskPublish.pushBusy;
-  const pushTitle = pushTitleFor(taskPublish);
-  // Pull is enabled whenever there's a workspace to pull into. We
-  // can't cheaply pre-check "is the remote ahead?" without a fetch
-  // (and operators would then complain the button is mysteriously
-  // disabled), so we let the click run; the toast surfaces the
-  // outcome — already in sync, dirty tree refusal, or
-  // commits-pulled count.
-  const pullDisabled = !taskPublish.hasWorkspace || taskPublish.pullBusy;
-  const pullTitle = pullTitleFor(taskPublish);
-  const prDisabled = !taskPublish.hasWorkspace
-    || taskPublish.hasPullRequest
-    || taskPublish.prBusy;
+  // ── Git action buttons: ONE operation at a time ─────────────────────────
+  // Push / Pull / Merge share a single gate — enabled only when (1) kato has
+  // reported this task's state (ready), (2) the repos are provisioned (a
+  // clone exists), and (3) NO other git op is already running (so you can't,
+  // e.g., pull while a merge is mid-flight). Deliberately NO per-button "is
+  // there anything to do?" pre-check: the buttons stay clickable, repeat
+  // clicks are fine (a no-op just toasts "already up to date"), and each
+  // tooltip shows when you last ran it — no remote-state guessing.
+  const anyGitOpBusy = taskPublish.pushBusy || taskPublish.pullBusy
+    || taskPublish.prBusy || mergingDefault || updatingSource;
+  let gitBlockedReason = '';  // '' → ready to run a git op
+  if (!taskPublish.publishStateReady && !taskPublish.publishStateError) {
+    gitBlockedReason = "Loading this task's git status — one moment…";
+  } else if (taskPublish.publishStateError) {
+    gitBlockedReason = "Can't load this task's git status — the server isn't "
+      + 'responding. Reopen the task to retry.';
+  } else if (!taskPublish.hasWorkspace) {
+    gitBlockedReason = 'No git workspace clone for this task — nothing to act on.';
+  } else if (anyGitOpBusy) {
+    gitBlockedReason = 'Another git action is already running — only one at a time.';
+  }
+  const gitDisabled = gitBlockedReason !== '';
+  const pushTitle = gitBlockedReason
+    || 'Push this task branch to its remote (safe to click again — a no-op if '
+      + 'everything is already pushed).'
+      + lastActionSuffix(session.task_id, 'push', 'pushed');
+  const pullTitle = gitBlockedReason
+    || 'Pull the task branch from its remote into the workspace clone (safe to '
+      + 'click again — the toast reports "already in sync" if there is nothing).'
+      + lastActionSuffix(session.task_id, 'pull', 'pulled');
+  const mergeTitle = gitBlockedReason
+    || ('Merge the default branch (master/main) into this task branch. '
+      + "The agent's clone can't run git, so use this when the branch fell behind "
+      + '— on conflict the markers are left in place and Claude is told (with the '
+      + 'file list) to resolve them. Safe to click again ("already up to date" if '
+      + 'nothing new).'
+      + lastActionSuffix(session.task_id, 'merge', 'merged'));
+  // PR + Update-source also honour "one git op at a time" (gitDisabled), on
+  // top of their own guards (PR: skip when every repo already has one).
+  const prDisabled = gitDisabled || taskPublish.hasPullRequest;
   const prTitle = prTitleFor(taskPublish);
   const prUrls = Array.isArray(taskPublish.pullRequestUrls)
     ? taskPublish.pullRequestUrls.filter(Boolean) : [];
@@ -372,7 +398,9 @@ export default function SessionHeader({
   const pushButtonLabel = taskPublish.pushBusy ? 'Pushing…' : 'Push';
   const pullButtonLabel = taskPublish.pullBusy ? 'Pulling…' : 'Pull';
   const prButtonLabel = taskPublish.prBusy ? 'Opening PR…' : 'Pull request';
-  const updateSourceDisabled = updatingSource || !taskPublish.hasWorkspace;
+  // Update-source pushes the task branch then pulls each source repo — also a
+  // git op, so it honours the same one-at-a-time gate.
+  const updateSourceDisabled = gitDisabled;
   const updateSourceTitle = !taskPublish.hasWorkspace
     ? 'No workspace for this task — workspace must be provisioned before source can be updated.'
     : 'Update source — push the task branch, then for each repo under REPOSITORY_ROOT_PATH: fetch, checkout the task branch, and pull. Lets you test the task on your live running system. Refuses if a source repo has uncommitted changes.';
@@ -465,7 +493,7 @@ export default function SessionHeader({
             className="session-action tooltip-below"
             data-tooltip={pushTitle}
             onClick={taskPublish.push}
-            disabled={pushDisabled}
+            disabled={gitDisabled}
             aria-label={pushButtonLabel}
           >
             <BusyIcon busy={taskPublish.pushBusy} idle="arrow-up" />
@@ -474,9 +502,9 @@ export default function SessionHeader({
             id="session-merge-default"
             type="button"
             className="session-action tooltip-below"
-            data-tooltip="Merge the default branch (master/main) into this task branch. The agent's clone can't run git, so use this when the branch fell behind — on conflict the markers are left in place and Claude is told (with the file list) to resolve them."
+            data-tooltip={mergeTitle}
             onClick={onMergeDefault}
-            disabled={mergingDefault || !taskPublish.hasWorkspace}
+            disabled={gitDisabled}
             aria-label={mergingDefault ? 'Merging…' : 'Merge default branch'}
           >
             <BusyIcon busy={mergingDefault} idle="merge" />
@@ -487,7 +515,7 @@ export default function SessionHeader({
             className="session-action tooltip-below"
             data-tooltip={pullTitle}
             onClick={onPull}
-            disabled={pullDisabled}
+            disabled={gitDisabled}
             aria-label={pullButtonLabel}
           >
             <BusyIcon busy={taskPublish.pullBusy} idle="arrow-down" />
@@ -622,25 +650,6 @@ export function SessionHeaderPlaceholder() {
       </div>
     </header>
   );
-}
-
-function pullTitleFor(state) {
-  if (state.pullBusy) { return 'Pull in progress…'; }
-  if (!state.hasWorkspace) {
-    return 'Nothing to pull — kato has not provisioned a workspace for this task yet.';
-  }
-  return 'Fast-forward the workspace clone(s) from origin. Refuses if the working tree is dirty.';
-}
-
-function pushTitleFor(state) {
-  if (state.pushBusy) { return 'Push in progress…'; }
-  if (!state.hasWorkspace) {
-    return 'Nothing to push — kato has not provisioned a workspace for this task yet.';
-  }
-  if (!state.hasChangesToPush) {
-    return 'Nothing to push — every repository is already in sync with its remote.';
-  }
-  return 'Push the current branch to its remote (no PR opened).';
 }
 
 function prTitleFor(state) {

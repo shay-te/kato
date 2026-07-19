@@ -83,6 +83,7 @@ names. A lib's tests test only that lib; only `kato_core_lib`'s own tests may sa
 
 ## Testing
 
+- **Real data, real tests — mocks are the LAST resort.** Default to exercising the actual code against real inputs: real git repos/branches/commits (see `tests/test_repository_service_real_git.py` — a real bare origin + clones, real `git` subprocess), real on-disk `WorkspaceService` + `LocalCommentStore` (see `tests.chaos_lib`), real files, real payloads. A test that `MagicMock`s the very method under test (or its key dependency) proves nothing — it asserts the mock, not the code. Only stub the genuinely-unreachable boundary (outbound network / provider APIs), and stub only THAT boundary, never the logic you're testing. When you find yourself reaching for `MagicMock`/`SimpleNamespace`, stop and ask "can I make this real?" — usually you can (a tempdir, a real object, a real git init). If a whole class of behavior can only be tested by mocking it, that's a design smell to fix, not to paper over.
 - Write tests for new behavior when possible.
 - Prefer focused unit tests close to the changed behavior.
 - Run the relevant tests before opening a pull request.
