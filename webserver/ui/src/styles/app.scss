@@ -2945,6 +2945,75 @@ header .chats-menu button:not(.header-status) {
   outline-offset: -10px;
 }
 
+/* @-mention file picker. The textarea sits in a relative wrap so the dropdown
+ * floats directly above it — the composer is pinned to the bottom of the chat,
+ * so the menu opens UPWARD. Styling mirrors .files-tab-context-menu. */
+.composer-input-wrap {
+  position: relative;
+}
+
+.composer-mention-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + #{$SPACE-6});
+  max-height: 240px;
+  overflow-y: auto;
+  padding: $SPACE-5;
+  border: 1px solid $C-NEUTRAL-100-A10;
+  border-radius: $RADIUS-8;
+  background: $C-NEUTRAL-16;
+  box-shadow: $SHADOW-25;
+  z-index: 20;
+}
+
+.composer-mention-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.composer-mention-item {
+  display: flex;
+  align-items: baseline;
+  gap: $SPACE-8;
+  padding: $SPACE-6 $SPACE-10;
+  border-radius: $RADIUS-6;
+  cursor: pointer;
+}
+
+.composer-mention-item.is-active {
+  background: $C-CYAN-68-A18;
+}
+
+.composer-mention-name {
+  flex: 0 0 auto;
+  color: $C-NEUTRAL-96;
+  font: 600 12px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.composer-mention-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: $C-NEUTRAL-64;
+  font: 400 11px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.composer-mention-repo {
+  flex: 0 0 auto;
+  color: $C-NEUTRAL-45;
+  font: 500 10px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.composer-mention-empty {
+  padding: $SPACE-8 $SPACE-10;
+  color: $C-NEUTRAL-64;
+  font: 400 12px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
 /* Bottom toolbar inside the capsule (Claude-style): textarea on
  * top (full-width, grows/shrinks), action row underneath with
  * attach pinned left and model + send pinned right. The textarea
@@ -8011,6 +8080,11 @@ body.kato-resizing #left-pane-resizer::before {
 }
 
 .settings-drawer-panel-head {
+  /* Title stacks ABOVE its description — never side-by-side, regardless of any
+     parent grid/flex. */
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   margin: 0 0 $SPACE-14 0;
 }
 
@@ -8187,6 +8261,14 @@ body.kato-resizing #left-pane-resizer::before {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 360px;
+}
+
+/* "×N" count when consecutive identical Action-Guard decisions are collapsed. */
+.settings-audit-count {
+  margin-left: $SPACE-4;
+  font-size: $TEXT-11;
+  font-weight: 600;
+  color: $C-NEUTRAL-45;
 }
 
 .settings-drawer-action-secondary {

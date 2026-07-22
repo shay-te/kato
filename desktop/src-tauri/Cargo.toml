@@ -1,0 +1,33 @@
+[package]
+name = "kato-desktop"
+version = "0.1.0"
+description = "Kato desktop shell"
+authors = ["Kato"]
+edition = "2021"
+rust-version = "1.77"
+
+# Native binary — nothing here is shipped as a runtime; it compiles away into
+# the app executable. See ../README.md.
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"       # spawn + pipe the Python sidecar
+tauri-plugin-updater = "2"     # built-in signed auto-update (VS Code model)
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+# Tauri's default custom-protocol feature for release builds.
+custom-protocol = ["tauri/custom-protocol"]
+
+# Smallest possible native shell: optimize for size, strip symbols, drop
+# unwinding tables. (Rust compiles away entirely — nothing here ships as a
+# runtime; this just shrinks the app executable.)
+[profile.release]
+opt-level = "z"     # optimize for size
+lto = true          # link-time optimization
+codegen-units = 1   # maximize cross-module optimization
+panic = "abort"     # no unwind tables
+strip = true        # strip symbols

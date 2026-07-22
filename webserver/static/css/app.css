@@ -2896,6 +2896,75 @@ header .chats-menu button:not(.header-status) {
   outline-offset: -10px;
 }
 
+/* @-mention file picker. The textarea sits in a relative wrap so the dropdown
+ * floats directly above it — the composer is pinned to the bottom of the chat,
+ * so the menu opens UPWARD. Styling mirrors .files-tab-context-menu. */
+.composer-input-wrap {
+  position: relative;
+}
+
+.composer-mention-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: #2a2a2a;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.45);
+  z-index: 20;
+}
+
+.composer-mention-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.composer-mention-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.composer-mention-item.is-active {
+  background: rgba(96, 165, 250, 0.18);
+}
+
+.composer-mention-name {
+  flex: 0 0 auto;
+  color: #f5f5f7;
+  font: 600 12px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.composer-mention-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #a3a3a3;
+  font: 400 11px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.composer-mention-repo {
+  flex: 0 0 auto;
+  color: #737373;
+  font: 500 10px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.composer-mention-empty {
+  padding: 8px 10px;
+  color: #a3a3a3;
+  font: 400 12px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
 /* Bottom toolbar inside the capsule (Claude-style): textarea on
  * top (full-width, grows/shrinks), action row underneath with
  * attach pinned left and model + send pinned right. The textarea
@@ -7844,6 +7913,11 @@ body.kato-resizing #left-pane-resizer::before {
 }
 
 .settings-drawer-panel-head {
+  /* Title stacks ABOVE its description — never side-by-side, regardless of any
+     parent grid/flex. */
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   margin: 0 0 14px 0;
 }
 
@@ -8016,6 +8090,14 @@ body.kato-resizing #left-pane-resizer::before {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 360px;
+}
+
+/* "×N" count when consecutive identical Action-Guard decisions are collapsed. */
+.settings-audit-count {
+  margin-left: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #737373;
 }
 
 .settings-drawer-action-secondary {

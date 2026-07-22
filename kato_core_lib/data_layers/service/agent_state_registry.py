@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+import threading
+
 from agent_core_lib.agent_core_lib.helpers.session_id_utils import fix_session_id
 from kato_core_lib.data_layers.data.fields import ImplementationFields, PullRequestFields, StatusFields, TaskFields
+from kato_core_lib.helpers.processed_review_comments_store import (
+    read_processed_map,
+    write_processed_map,
+)
 from kato_core_lib.helpers.pull_request_context_utils import (
     build_pull_request_context,
     pull_request_context_key,
@@ -10,11 +16,23 @@ from kato_core_lib.helpers.text_utils import normalized_text
 
 
 class AgentStateRegistry(object):
-    def __init__(self) -> None:
+    def __init__(self, processed_review_comments_path: object = None) -> None:
         self.pull_request_context_map: dict[str, list[dict[str, str]]] = {}
         self.pull_request_task_map: dict[tuple[str, str], str] = {}
         self.processed_task_map: dict[str, dict[str, object]] = {}
-        self.processed_review_comment_map: dict[tuple[str, str], set[str]] = {}
+        # processed_review_comment_map is PERSISTED across restarts when a path
+        # is supplied (the app wires ~/.kato/processed_review_comments.json at
+        # boot). Without it a restart re-works every still-open review comment
+        # (they're deliberately left unresolved for the reviewer) — the "same
+        # comment answered in a loop" bug. Default None → in-memory only, so
+        # tests never read/write real ~/.kato state.
+        self._processed_review_comments_path = processed_review_comments_path
+        self._processed_review_comments_lock = threading.Lock()
+        self.processed_review_comment_map: dict[tuple[str, str], set[str]] = (
+            read_processed_map(processed_review_comments_path)
+            if processed_review_comments_path
+            else {}
+        )
 
     def remember_pull_request_context(
         self,
@@ -94,7 +112,23 @@ class AgentStateRegistry(object):
         comment_id: str,
     ) -> None:
         key = (str(repository_id), str(pull_request_id))
-        self.processed_review_comment_map.setdefault(key, set()).add(str(comment_id))
+        with self._processed_review_comments_lock:
+            self.processed_review_comment_map.setdefault(key, set()).add(str(comment_id))
+            self._persist_processed_review_comments_locked()
+
+    def _persist_processed_review_comments_locked(self) -> None:
+        """Write the processed-comment map to disk (no-op without a path).
+
+        Caller MUST hold ``_processed_review_comments_lock``. Copies the map so
+        the store iterates a stable snapshot, not the live dict.
+        """
+        if not self._processed_review_comments_path:
+            return
+        snapshot = {
+            key: set(value)
+            for key, value in self.processed_review_comment_map.items()
+        }
+        write_processed_map(self._processed_review_comments_path, snapshot)
 
     def tracked_task_ids(self) -> set[str]:
         """Return all task IDs that have tracked pull-request contexts."""
@@ -125,10 +159,33 @@ class AgentStateRegistry(object):
         return session_ids
 
     def forget_task(self, task_id: str) -> None:
-        """Remove all registry entries associated with the given task."""
+        """Remove all registry entries associated with the given task.
+
+        Also drops the task's PERSISTED processed-review-comment marks, so
+        deleting a task leaves nothing behind in
+        ~/.kato/processed_review_comments.json — the file never accumulates
+        marks for pull requests that no longer belong to any task.
+        """
         normalized = str(task_id or '').strip()
         if not normalized:
             return
+
+        # Collect the task's (repository_id, pull_request_id) keys BEFORE we
+        # tear the maps down — from the context map (which carries the repo id
+        # per PR) and the task map — so we can drop its processed-comment marks.
+        task_pull_request_keys: set[tuple[str, str]] = set()
+        for pr_id, contexts in self.pull_request_context_map.items():
+            for ctx in contexts:
+                if str(ctx.get(TaskFields.ID, '') or '').strip() != normalized:
+                    continue
+                repository_id = str(
+                    ctx.get(PullRequestFields.REPOSITORY_ID, '') or '',
+                ).strip()
+                if repository_id:
+                    task_pull_request_keys.add((repository_id, str(pr_id).strip()))
+        for (repo_id, pr_id), tid in self.pull_request_task_map.items():
+            if str(tid or '').strip() == normalized:
+                task_pull_request_keys.add((str(repo_id).strip(), str(pr_id).strip()))
 
         # Remove PR context entries that belong exclusively to this task.
         pr_ids_to_remove: list[str] = []
@@ -151,6 +208,29 @@ class AgentStateRegistry(object):
         ]
         for key in stale_keys:
             del self.pull_request_task_map[key]
+
+        self._forget_processed_review_comments(task_pull_request_keys)
+
+    def _forget_processed_review_comments(
+        self,
+        pull_request_keys: set[tuple[str, str]],
+    ) -> None:
+        """Drop (and re-persist) processed marks for the given PR keys.
+
+        So a re-adopted task re-engages its comments, and the on-disk file
+        never keeps marks for a deleted task's pull requests.
+        """
+        if not pull_request_keys:
+            return
+        with self._processed_review_comments_lock:
+            removed = False
+            for key in list(self.processed_review_comment_map.keys()):
+                normalized_key = (str(key[0]).strip(), str(key[1]).strip())
+                if normalized_key in pull_request_keys:
+                    del self.processed_review_comment_map[key]
+                    removed = True
+            if removed:
+                self._persist_processed_review_comments_locked()
 
     def task_id_for_pull_request(
         self,

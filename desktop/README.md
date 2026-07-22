@@ -1,99 +1,106 @@
-# Kato desktop
+# Kato Desktop (Tauri)
 
-Electron wrapper that launches kato and opens the planning UI in a
-native desktop window. **Optional** — `./kato up` from a terminal
-keeps working exactly as before; this folder just adds a
-double-clickable alternative.
+A native desktop app that wraps Kato: a tiny **Tauri** (Rust + OS-webview) shell
+that spawns a **bundled, frozen Python `kato` sidecar**, waits for its Flask
+webserver, and opens the planning UI in its own window — with **built-in signed
+auto-update**.
 
-## What it does
+**Everything desktop/installer-related lives under this `desktop/` folder.**
+Nothing here is imported by Kato; the build only *reads* the Kato repo as input.
 
-1. On launch, spawns `./kato up` (the existing bash wrapper at the
-   repo root) as a child process.
-2. Polls `https://127.0.0.1:5050/` until the Flask webserver kato
-   boots inside its own process is reachable (up to 60s). kato serves
-   HTTPS by default with a certificate signed by its own local CA (a
-   loopback address can't get one from a real public CA). On macOS
-   kato installs that CA into your login Keychain on first run (a
-   one-time Keychain prompt), after which Electron trusts the
-   certificate the normal way; as a fallback the launcher also pins
-   the exact leaf certificate by fingerprint itself, never a blanket
-   "skip verification" — see `KATO_WEBSERVER_HTTPS` below to opt out.
-3. Opens a BrowserWindow on that URL. The Electron process owns
-   the window; kato owns the orchestrator + webserver.
-4. When the window closes, sends SIGTERM to the kato child so the
-   port doesn't stay bound.
+> Reality check: Kato orchestrates host tools — **`git`, Docker, and an agent CLI
+> (Claude/Codex/OpenHands) must be installed on the machine.** The app bundles the
+> Python runtime (no Python/pip setup for the user); it does **not** — and cannot —
+> bundle those external tools.
 
-External links (PR URLs, ticket URLs) open in the operator's real
-browser instead of inside the window.
+---
 
-## Run from source
+## Who creates the `.exe` / `.dmg` / `.AppImage`, and when?
 
-```bash
-cd desktop
-npm install
-npm start
-```
+**Not this repo checkout, and not automatically.** The installers are produced by
+running `tauri build`, which requires the toolchains below **on a machine of each
+target OS** (Tauri can't cross-compile installers). Two steps per OS:
 
-`npm install` pulls Electron (~250 MB) into `node_modules/`.
+1. **Freeze the sidecar** — PyInstaller packs `kato` into a standalone binary.
+2. **`tauri build`** — compiles the Rust shell, embeds the sidecar + icons, and
+   emits the platform installer.
 
-The launcher reuses your existing kato install — `pip install -e .`
-must have been run from the repo root at least once, and any
-secrets in `<repo>/.env` apply unchanged.
-
-## Build a redistributable app
-
-`electron-builder` is wired in `package.json`. To produce a
-`.dmg` (macOS), `.exe` installer (Windows), or `.AppImage`
-(Linux):
-
-```bash
-cd desktop
-npm install
-npm run build
-# Output lands in desktop/dist/
-```
-
-The build copies the repo's Python source into
-`Contents/Resources/kato-repo` (see `extraResources` in
-`package.json`) so the launcher can find `./kato` at runtime. The
-target machine still needs **Python 3.11+** and `pip install` of
-kato's dependencies — the bundle is the launcher + the kato source
-tree, not a frozen Python runtime. Adding PyInstaller or
-`python-build-standalone` to produce a fully sealed binary is a
-follow-up.
-
-## Configuration
-
-The launcher honours the same env vars as the CLI flow:
-
-| Env var | Default | Meaning |
+| Target | Built on | Output |
 |---|---|---|
-| `KATO_WEBSERVER_HOST` | `127.0.0.1` | Address kato binds + Electron loads |
-| `KATO_WEBSERVER_PORT` | `5050`      | Port for the same |
-| `KATO_WEBSERVER_HTTPS` | `1` (on) | Serve/load over HTTPS with a self-signed cert. Set `0`/`false` to use plain HTTP instead (both kato and the launcher must agree — set it before spawning either). |
-| `KATO_TLS_DIR` | `~/.kato/tls` | Where the self-signed cert/key live — the launcher reads the same path to know which certificate to trust. |
-| `KATO_WEBSERVER_DISABLED` | unset | If set, kato won't start the webserver — the launcher won't be able to reach it and will error out |
+| `.dmg` (+ `.app`) | **macOS** | `src-tauri/target/release/bundle/dmg/` |
+| `.msi` / NSIS `.exe` | **Windows** | `src-tauri/target/release/bundle/{msi,nsis}/` |
+| `.AppImage` / `.deb` | **Linux** | `src-tauri/target/release/bundle/{appimage,deb}/` |
 
-Put these in `<repo>/.env` (the existing kato file) so both the
-desktop launcher and `./kato up` see the same values.
+**Recommended: let CI make them.** `ci/release.yml` is a GitHub Actions matrix
+(macOS + Windows + Ubuntu runners) that builds the sidecar + runs `tauri build`
+per OS on a version tag, and also emits the **updater feed**. Copy it to
+`.github/workflows/desktop-release.yml` at the repo root to enable it (GitHub only
+runs workflows from there — it's the one file that can't physically live under
+`desktop/`). Then: **push a tag → CI produces all three installers + the update
+feed.** Locally you can `npm run build` for *your own* OS to smoke-test.
 
-## Troubleshooting
+---
 
-* **"Kato failed to start" dialog** — read the last 2 KB of kato's
-  stdout/stderr in the dialog, then run `./kato up` directly from
-  a terminal to see the full log. The launcher's healthcheck times
-  out at 60s.
-* **"port already in use"** — a previous kato is still alive. Run
-  `pkill -f 'kato_core_lib.main'` (or close the existing
-  `./kato up` terminal) and relaunch.
-* **Browser shows the planning UI but nothing else** — the kato
-  scan loop hasn't found tasks yet. Wait one scan cycle (default
-  30s) or click "Refresh" in the top bar.
+## Prerequisites (only on machines that BUILD)
 
-## Why not bundle Python too?
+- **Rust** (stable) — `https://rustup.rs`
+- **Node** ≥ 18 (for the Tauri CLI) — `npm install` here
+- **Python 3.11** + Kato installed editable in a venv (`pip install -e .` at repo root)
+- **PyInstaller** — `pip install pyinstaller`
+- Platform bits: macOS Xcode CLT; Windows WebView2 (preinstalled on Win10/11) + MSVC; Linux `libwebkit2gtk-4.1-dev`, `build-essential`, etc.
 
-Kato pulls in hydra-core, docker, git tooling, and per-OS sandbox
-glue. Freezing all of that into a single binary (PyInstaller,
-shiv, py2app) works for greenfield apps; for kato it would mean
-re-validating sandbox + Docker paths every release. We chose the
-"launcher" pattern instead — small to ship, easy to debug.
+## Build (local, your OS only)
+
+```bash
+cd desktop
+npm install                 # Tauri CLI
+npm run icon                # one-time: generate icons/* from icon.png
+npm run sidecar             # PyInstaller → src-tauri/binaries/kato-sidecar-<triple>
+npm run build               # tauri build → installer in src-tauri/target/release/bundle/
+# dev loop (no installer): npm run dev
+```
+
+## Auto-update setup (once)
+
+1. Generate a signing keypair: `npm run tauri signer generate -- -w ~/.kato-updater.key`
+2. Put the **public** key in `src-tauri/tauri.conf.json` → `plugins.updater.pubkey`.
+3. Set `plugins.updater.endpoints` to where you'll host the feed (S3 / GitHub
+   Releases / any static host).
+4. In CI, sign the build with the **private** key (`TAURI_SIGNING_PRIVATE_KEY`
+   secret) and publish `latest.json` + the signed bundles. Installed apps then
+   check → download → verify → **install on restart** (the VS-Code model).
+
+## Bundle size (tuned light)
+
+The spec + Rust profile are set for the smallest realistic bundle:
+- **UI source maps stripped** (`*.map`, ~40 MB) — never shipped.
+- **Optional security scanners excluded by default** (`INCLUDE_SECURITY_SCANNERS = False` in the spec) — each runner degrades gracefully if missing, so this is safe; ~20-40 MB saved. Flip to `True` to ship in-app scans.
+- **Symbols stripped** (PyInstaller `strip=True`, Cargo `strip = true`) + **size-optimized Rust** (`opt-level="z"`, `lto`, `panic="abort"`) + Python `-OO`.
+
+Realistic result: **~60-80 MB per OS**, dominated by the frozen Python + `cryptography`. UPX would shave more but **breaks macOS codesigning/notarization**, so it's off. The Rust shell + OS webview add only a few MB (no Chromium).
+
+## Data continuity (shares state with your CLI)
+
+The app runs the SAME frozen `kato up`, and the shell **does not override `HOME`/`KATO_HOME`** — so it reads/writes the SAME `~/.kato` (settings.json, tasks, workspaces) and `~/.claude` (sessions) as your terminal `kato`. **Nothing is lost**; the desktop app and CLI share one state dir.
+
+Because a Finder/Dock launch doesn't load your shell profile, `src-tauri/src/main.rs` **augments `PATH`** (Homebrew + common bin dirs) so the app still finds `git` / Docker / the agent CLI. If you point kato at a custom home via a shell env var, pass it explicitly — a GUI launch won't inherit it.
+
+## Layout
+
+```
+desktop/
+├── icon.png                     source icon (→ tauri icon)
+├── package.json                 Tauri CLI + scripts
+├── sidecar/
+│   ├── kato_sidecar.py          entry: runs `kato up`
+│   ├── kato-sidecar.spec        PyInstaller spec (hidden-imports for lazy factories)
+│   └── build-sidecar.sh         freeze → src-tauri/binaries/
+├── src-tauri/
+│   ├── Cargo.toml  build.rs  tauri.conf.json
+│   ├── src/main.rs              spawn sidecar → wait for server → open window
+│   ├── capabilities/default.json
+│   ├── loading/index.html       splash shown until the server is up
+│   ├── icons/                   generated (gitignored)
+│   └── binaries/                sidecar output (gitignored)
+└── ci/release.yml               GH Actions matrix (copy to .github/workflows/)
+```

@@ -144,6 +144,7 @@ class ComputeRepoDiffTests(unittest.TestCase):
     def test_empty_task_id_does_not_checkout_branch(self):
         with patch.object(app_module, 'ensure_branch_checked_out') as checkout, \
                 patch.object(app_module, '_resolve_diff_base', return_value='main'), \
+                patch.object(app_module, 'resolve_base_ref', return_value=('origin/main', False)), \
                 patch.object(app_module, 'current_branch', return_value='task-br'), \
                 patch.object(app_module, 'diff_against_base', return_value='DIFF'), \
                 patch.object(app_module, 'conflicted_paths', return_value=[]):
@@ -563,6 +564,35 @@ class ForgetWorkspaceBranchTests(unittest.TestCase):
         app.config['SESSION_MANAGER'] = None
         response = app.test_client().delete('/api/sessions/T-1/workspace')
         # workspace_dir resolves to None -> no "still exists" error.
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()['forgotten'])
+
+    def test_delete_drops_registry_state_via_agent_service(self):
+        workspace = MagicMock()
+        workspace.delete.return_value = None
+        workspace.workspace_path.return_value = Path(self._tmp.name) / 'gone'
+        app = create_app(session_manager=_Manager(), workspace_manager=workspace)
+        app.config['SESSION_MANAGER'] = None
+        agent_service = MagicMock()
+        app.config['AGENT_SERVICE'] = agent_service
+        response = app.test_client().delete('/api/sessions/T-9/workspace')
+        self.assertEqual(response.status_code, 200)
+        # Deleting a task drops its registry state (PR contexts + persisted
+        # processed-review-comment marks) so ~/.kato doesn't keep stale marks.
+        agent_service.forget_task_state.assert_called_once_with('T-9')
+
+    def test_delete_survives_forget_task_state_failure(self):
+        workspace = MagicMock()
+        workspace.delete.return_value = None
+        workspace.workspace_path.return_value = Path(self._tmp.name) / 'gone'
+        app = create_app(session_manager=_Manager(), workspace_manager=workspace)
+        app.config['SESSION_MANAGER'] = None
+        agent_service = MagicMock()
+        agent_service.forget_task_state.side_effect = RuntimeError('boom')
+        app.config['AGENT_SERVICE'] = agent_service
+        response = app.test_client().delete('/api/sessions/T-9/workspace')
+        # Best-effort: a registry-cleanup failure must NOT block the delete —
+        # workspace/session removal is the point, and the task is already forgotten.
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()['forgotten'])
 
@@ -1172,6 +1202,9 @@ class AssetUrlTests(unittest.TestCase):
 class ChangedFilesForRepoTests(unittest.TestCase):
     def test_returns_changed_paths_when_base_resolves(self):
         with patch.object(app_module, '_resolve_diff_base', return_value='main'), \
+                patch.object(
+                    app_module, 'resolve_base_ref', return_value=('origin/main', False),
+                ), \
                 patch.object(
                     app_module, 'changed_paths', return_value=['a.py', 'b.py'],
                 ) as changed:

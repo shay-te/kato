@@ -388,6 +388,17 @@ class AgentService(MissionStepLoggerMixin, Service):
         """
         return str(value or '').strip().lower()
 
+    def forget_task_state(self, task_id: str) -> None:
+        """Drop the registry state for a task the operator deleted.
+
+        Removes the task's PR contexts / task-map entries AND its PERSISTED
+        processed-review-comment marks, so deleting a task also cleans
+        ~/.kato/processed_review_comments.json instead of leaving marks for a
+        task that no longer exists. Called by the DELETE workspace endpoint;
+        the autonomous done-task sweep already calls the same registry hook.
+        """
+        self._state_registry.forget_task(task_id)
+
     def _cleanup_done_task_conversations(self) -> None:
         """Delete conversation containers for tasks no longer in the review state.
 

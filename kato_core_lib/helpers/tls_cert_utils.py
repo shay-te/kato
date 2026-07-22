@@ -67,7 +67,7 @@ def ca_paths() -> tuple[Path, Path]:
 def cert_paths() -> tuple[Path, Path]:
     """``(cert_path, key_path)`` for the LEAF/server cert (not
     guaranteed to exist). This is the pair passed to Flask's
-    ``ssl_context`` and the one Electron pins by fingerprint."""
+    ``ssl_context`` and the one the desktop shell pins by fingerprint."""
     tls_dir = _tls_dir()
     return tls_dir / _CERT_FILENAME, tls_dir / _KEY_FILENAME
 

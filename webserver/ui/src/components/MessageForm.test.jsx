@@ -58,6 +58,13 @@ vi.mock('../hooks/useAgentVersion.js', () => ({
   resetAgentVersionCacheForTests: () => {},
 }));
 
+// Seedable workspace file tree for the @-mention picker. MessageForm reads the
+// tree via useTaskTree; here we stub it so a test can hand it real repos.
+const { _trees } = vi.hoisted(() => ({ _trees: { value: [] } }));
+vi.mock('../stores/taskCache/index.js', () => ({
+  useTaskTree: () => ({ trees: _trees.value, status: 'ready', error: null }),
+}));
+
 import MessageForm from './MessageForm.jsx';
 import { DRAFT_STORAGE_PREFIX, ULTRACODE_STORAGE_PREFIX } from '../utils/composerDraft.js';
 import { IMAGE_DRAFT_PREFIX, clearImageDraft } from '../utils/composerImageDraft.js';
@@ -816,5 +823,74 @@ describe('MessageForm — server draft persistence (.kato-prompts.json)', () => 
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+
+describe('MessageForm — @ file mention picker', () => {
+  beforeEach(() => {
+    _trees.value = [{
+      repo_id: 'client',
+      cwd: '/ws/client',
+      tree: [{
+        path: '/ws/client/src',
+        name: 'src',
+        children: [
+          { path: '/ws/client/src/app.js', name: 'app.js' },
+          { path: '/ws/client/src/util.js', name: 'util.js' },
+        ],
+      }],
+    }];
+  });
+
+  // caret defaults to end-of-value (jsdom resets it there on a value set anyway).
+  function typeAt(textarea, value) {
+    fireEvent.change(textarea, { target: { value, selectionStart: value.length } });
+  }
+
+  test('typing @ opens the picker; picking inserts the repo-scoped reference', async () => {
+    renderForm({ taskId: 'T-at' });
+    const textarea = screen.getByRole('textbox');
+    typeAt(textarea, '@app');
+
+    const option = await screen.findByText('app.js');
+    expect(option).toBeInTheDocument();
+    // The menu uses onMouseDown so the textarea never blurs first.
+    fireEvent.mouseDown(option);
+
+    await waitFor(() => expect(textarea.value).toContain('`client/src/app.js`'));
+  });
+
+  test('the picker filters by the query after @', async () => {
+    renderForm({ taskId: 'T-at2' });
+    const textarea = screen.getByRole('textbox');
+    typeAt(textarea, '@util');
+
+    expect(await screen.findByText('util.js')).toBeInTheDocument();
+    expect(screen.queryByText('app.js')).not.toBeInTheDocument();
+  });
+
+  test('Escape dismisses the picker without sending', async () => {
+    const onSubmit = vi.fn();
+    renderForm({ taskId: 'T-at3', onSubmit });
+    const textarea = screen.getByRole('textbox');
+    typeAt(textarea, '@app');
+    expect(await screen.findByText('app.js')).toBeInTheDocument();
+
+    fireEvent.keyDown(textarea, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByText('app.js')).not.toBeInTheDocument());
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  test('Enter picks the highlighted file instead of sending', async () => {
+    const onSubmit = vi.fn();
+    renderForm({ taskId: 'T-at4', onSubmit });
+    const textarea = screen.getByRole('textbox');
+    typeAt(textarea, '@app');
+    expect(await screen.findByText('app.js')).toBeInTheDocument();
+
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+    await waitFor(() => expect(textarea.value).toContain('`client/src/app.js`'));
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 });

@@ -37,3 +37,6 @@ mount_docker_data
 build/kato/
 
 node_modules/
+
+
+.venv-empty-DELETE-ME/

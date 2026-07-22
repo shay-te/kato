@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kato</title>
+    <style>
+      :root { color-scheme: light dark; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        display: grid; place-items: center;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: #0f1115; color: #e6e6e6;
+      }
+      .wrap { text-align: center; width: 260px; }
+      .logo {
+        width: 96px; height: 96px; object-fit: contain;
+        display: block; margin: 0 auto 18px; border-radius: 22px;
+      }
+      .name { font-size: 28px; font-weight: 600; letter-spacing: 0.5px; }
+      .sub { margin-top: 10px; opacity: 0.6; font-size: 14px; min-height: 18px; }
+      .progress {
+        margin: 24px auto 0; width: 100%; height: 4px;
+        background: rgba(255, 255, 255, 0.12);
+        border-radius: 999px; overflow: hidden;
+      }
+      .progress-fill {
+        height: 100%; width: 6%;
+        background: rgba(255, 255, 255, 0.78);
+        border-radius: 999px; transition: width 0.5s ease;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Shown instantly on launch; main.rs navigates this window to the local
+         Kato UI once the bundled sidecar's webserver is accepting connections. -->
+    <div class="wrap">
+      <img class="logo" src="logo.png" alt="Kato" />
+      <div class="name">Kato</div>
+      <div class="sub">Starting the local server</div>
+      <div class="progress"><div class="progress-fill" id="progress-fill"></div></div>
+    </div>
+    <script>
+      // main.rs emits a "kato-log" event per boot line; we map it to a friendly
+      // step label and advance a progress bar. No text animation — the bar is
+      // the progress indicator. The Tauri event API is exposed on
+      // window.__TAURI__ via app.withGlobalTauri in tauri.conf.json.
+      (function () {
+        var sub = document.querySelector('.sub');
+        var fill = document.getElementById('progress-fill');
+        if (!sub) { return; }
+
+        // kato boot-log line → [label, progress %], ordered by boot sequence.
+        var STEPS = [
+          [/security posture|Action Guard/i, 'Initializing', 12],
+          [/agent backend/i, 'Starting up', 18],
+          [/Validating connection.*repositor/i, 'Checking repositories', 28],
+          [/Validating connection.*youtrack/i, 'Connecting to YouTrack', 36],
+          [/Validating connection.*jira/i, 'Connecting to Jira', 36],
+          [/Validating connection.*bitbucket/i, 'Connecting to Bitbucket', 40],
+          [/Validating connection.*(github|gitlab)/i, 'Connecting to your repos', 40],
+          [/Validating connection.*claude/i, 'Connecting to Claude', 48],
+          [/model access validation/i, 'Validating Claude access', 62],
+          [/Starting kato agent/i, 'Starting the agent', 74],
+          [/session id|known Claude session/i, 'Loading sessions', 80],
+          [/workspace|in review|assigned/i, 'Loading tasks', 84],
+          [/warm|Waiting .* before scanning|scan loop/i, 'Warming up', 90],
+          [/webserver|Serving Flask|healthz|listening/i, 'Loading interface', 96],
+        ];
+
+        var maxPct = 6;  // keep the bar monotonic (never jumps backward)
+
+        var api = window.__TAURI__;
+        if (!api || !api.event) { return; }
+        api.event.listen('kato-log', function (event) {
+          var line = (event && event.payload ? String(event.payload) : '').trim();
+          if (!line || /^[=\-\s]+$/.test(line)) { return; }
+          // Surface genuine fatal errors verbatim so a failure is visible.
+          // Specific patterns so a benign "errored state from a previous run"
+          // note doesn't trip it.
+          if (/traceback|errno|read-only file system|failed to execute script|error executing job|hydra_full_error/i.test(line)) {
+            sub.textContent = line;
+            return;
+          }
+          for (var i = 0; i < STEPS.length; i++) {
+            if (STEPS[i][0].test(line)) {
+              sub.textContent = STEPS[i][1];
+              var pct = STEPS[i][2];
+              if (fill && pct > maxPct) { maxPct = pct; fill.style.width = pct + '%'; }
+              return;
+            }
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>

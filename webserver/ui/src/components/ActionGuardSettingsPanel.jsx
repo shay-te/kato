@@ -166,11 +166,33 @@ function formatTs(iso) {
 // Built outside JSX (AGENTS.md "no logic inside JSX"). Shows a loading note
 // until the first fetch resolves, an empty note when nothing is logged, else
 // the decisions table.
+// Collapse CONSECUTIVE identical decisions into one row with a ×N count. The
+// agent logs one audit entry per attempt, so retrying the same blocked/denied
+// command back-to-back fills the table with duplicates. Only ADJACENT matches
+// merge, so the same command blocked again later still shows as its own row.
+function collapseAuditEntries(entries) {
+  const out = [];
+  for (const entry of entries) {
+    const prev = out[out.length - 1];
+    if (prev
+      && prev.task_id === entry.task_id
+      && prev.category === entry.category
+      && prev.decision === entry.decision
+      && prev.command_preview === entry.command_preview
+      && prev.answered_by === entry.answered_by) {
+      prev.count += 1;
+    } else {
+      out.push({ ...entry, count: 1 });
+    }
+  }
+  return out;
+}
+
 function renderAuditRows(audit) {
   if (!audit) {
     return <p className="settings-drawer-message">Loading history…</p>;
   }
-  const entries = Array.isArray(audit.entries) ? audit.entries : [];
+  const entries = collapseAuditEntries(Array.isArray(audit.entries) ? audit.entries : []);
   if (entries.length === 0) {
     return <p className="settings-drawer-message">No decisions recorded yet.</p>;
   }
@@ -188,7 +210,10 @@ function renderAuditRows(audit) {
             <td>{formatTs(e.timestamp)}</td>
             <td>{e.task_id || ''}</td>
             <td>{String(e.category || '').replace(/_/g, ' ')}</td>
-            <td>{e.decision || ''}</td>
+            <td>
+              {e.decision || ''}
+              {e.count > 1 && <span className="settings-audit-count"> ×{e.count}</span>}
+            </td>
             <td><code className="settings-perm-command">{e.command_preview || ''}</code></td>
             <td>{e.answered_by || ''}</td>
           </tr>

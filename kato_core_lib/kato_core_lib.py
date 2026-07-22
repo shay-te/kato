@@ -16,6 +16,9 @@ from claude_core_lib.claude_core_lib import ClaudeSessionManager
 from kato_core_lib.data_layers.data_access.task_data_access import TaskDataAccess
 from kato_core_lib.data_layers.service.agent_service import AgentService
 from kato_core_lib.data_layers.service.agent_state_registry import AgentStateRegistry
+from kato_core_lib.helpers.processed_review_comments_store import (
+    default_path as processed_review_comments_default_path,
+)
 from kato_core_lib.data_layers.service.implementation_service import (
     ImplementationService,
 )
@@ -357,7 +360,13 @@ class KatoCoreLib(CoreLib):
         task_state_service = TaskStateService(ticket_cfg, task_data_access)
         repository_service = RepositoryService(open_cfg, retry_cfg.max_retries)
         notification_service = self._build_notification_service(open_cfg)
-        state_registry = AgentStateRegistry()
+        # Persist processed-review-comment marks to ~/.kato so a restart does
+        # not re-work every still-open PR comment (they're left unresolved for
+        # the reviewer by design). Tests build the registry without a path
+        # (in-memory only), so they never touch real ~/.kato state.
+        state_registry = AgentStateRegistry(
+            processed_review_comments_path=processed_review_comments_default_path(),
+        )
         repository_connections_validator = RepositoryConnectionsValidator(repository_service)
         startup_validator = StartupDependencyValidator(
             repository_connections_validator,

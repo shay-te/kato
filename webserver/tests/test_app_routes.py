@@ -257,6 +257,10 @@ class DiffEndpointTests(unittest.TestCase):
                 'kato_webserver.app.detect_default_branch',
                 return_value='master',
             ), patch(
+                # Base ref resolves (not a local HEAD fallback) → real base reported.
+                'kato_webserver.app.resolve_base_ref',
+                return_value=('origin/master', False),
+            ), patch(
                 'kato_webserver.app.current_branch',
                 return_value='PROJ-1',
             ), patch(
@@ -320,6 +324,11 @@ class CommitsEndpointTests(unittest.TestCase):
                 'kato_webserver.app.detect_default_branch',
                 return_value='main',
             ), patch(
+                # The base ref resolves (origin/main exists) → not a local
+                # fallback, so the endpoint reports the real base.
+                'kato_webserver.app.resolve_base_ref',
+                return_value=('origin/main', False),
+            ), patch(
                 'kato_webserver.app.current_branch',
                 return_value='PROJ-1',
             ), patch(
@@ -334,14 +343,18 @@ class CommitsEndpointTests(unittest.TestCase):
         self.assertEqual(payload['commits'], [{'sha': 'abc', 'subject': 'fix it'}])
 
     def test_returns_empty_commits_with_error_when_no_base(self):
-        # Configured agent returns '' AND git auto-detect returns '' →
-        # 200 + an ``error`` field so the UI can render the empty state.
+        # Configured agent returns '' AND git auto-detect returns '', on a clone
+        # that DOES have an origin remote (so origin/<base> was the expected
+        # base) → 200 + an ``error`` field so the UI can render the empty state.
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / '.git').mkdir()
             client = self._build(repo_paths={('PROJ-1', 'client'): tmp})
             with patch(
                 'kato_webserver.app.detect_default_branch',
                 return_value='',
+            ), patch(
+                'kato_webserver.app.has_origin_remote',
+                return_value=True,
             ):
                 response = client.get('/api/sessions/PROJ-1/commits?repo=client')
         self.assertEqual(response.status_code, 200)

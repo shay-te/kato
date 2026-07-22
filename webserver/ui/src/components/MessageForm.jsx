@@ -3,10 +3,20 @@ import {
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
 import { useAgentVersion } from '../hooks/useAgentVersion.js';
+import { useTaskTree } from '../stores/taskCache/index.js';
+import ComposerMentionMenu from './ComposerMentionMenu.jsx';
+import {
+  applyMention,
+  detectMentionQuery,
+  filterMentionFiles,
+  flattenTreeFiles,
+  referenceFor,
+} from '../utils/composerMentions.js';
 import {
   collectImageParts,
   IMAGE_REJECT_REASON,
@@ -57,6 +67,11 @@ import { fetchDraft, saveDraft } from '../api.js';
 // draft back out — matches VS Code's per-tab draft behaviour.
 // Submit / clear / mount-on-empty all wipe the key.
 const SINGLE_LINE_TEXTAREA_HEIGHT = 'calc(1.4em + 16px)';
+
+// Composer @-mention (workspace file picker) — closed state + dropdown cap so a
+// huge repo never renders thousands of rows.
+const MENTION_CLOSED = { active: false, query: '', start: -1, index: 0 };
+const MENTION_LIMIT = 50;
 
 const MessageForm = forwardRef(function MessageForm({
   taskId,
@@ -124,6 +139,21 @@ const MessageForm = forwardRef(function MessageForm({
   const textareaRef = useRef(null);
   const formRef = useRef(null);
   const pendingCaretRef = useRef(null);
+
+  // @-mention file picker: typing "@" in the composer opens a dropdown of
+  // workspace files. The tree is the SAME data the Files tab shows (cached in
+  // the task store), so opening the picker never triggers a fetch; we just
+  // flatten it to a file list once per tree change.
+  const [mention, setMention] = useState(MENTION_CLOSED);
+  const { trees } = useTaskTree(taskId);
+  const mentionFiles = useMemo(() => flattenTreeFiles(trees), [trees]);
+  const mentionMatches = useMemo(
+    () => (mention.active
+      ? filterMentionFiles(mentionFiles, mention.query, MENTION_LIMIT)
+      : []),
+    [mention.active, mention.query, mentionFiles],
+  );
+  const mentionMenuOpen = mention.active && mentionMatches.length > 0;
 
   // "Live state now owns the draft." Set after any local mutation that
   // supersedes the server draft (clear, send, paste-images, remove-image):
@@ -290,6 +320,7 @@ const MessageForm = forwardRef(function MessageForm({
     const sentText = value;
     const sentAttachments = attachments;
     markDraftSettled();
+    setMention(MENTION_CLOSED);
     setValue('');
     setAttachments([]);
     writeDraft(taskId, '');
@@ -330,14 +361,68 @@ const MessageForm = forwardRef(function MessageForm({
     submitTitle = 'Send your message to Claude (or press Enter).';
   }
 
+  // Recompute the @-mention state from the live text + caret. Resets the
+  // highlighted row to the top only when the query actually changes, so arrowing
+  // through the menu (which doesn't change the text) keeps your place.
+  function syncMention(text, caret) {
+    const detected = detectMentionQuery(text, caret);
+    setMention((prev) => {
+      if (!detected.active) {
+        return prev.active ? MENTION_CLOSED : prev;
+      }
+      if (prev.active && prev.query === detected.query && prev.start === detected.start) {
+        return prev;
+      }
+      return { active: true, query: detected.query, start: detected.start, index: 0 };
+    });
+  }
+
+  function closeMention() {
+    setMention((prev) => (prev.active ? MENTION_CLOSED : prev));
+  }
+
+  // Insert the picked file's repo-scoped reference in place of the "@query"
+  // (same format as a Files-tab click), then restore the caret after it.
+  function selectMention(file) {
+    if (!file) { return; }
+    const to = mention.start + 1 + mention.query.length;
+    const next = applyMention(value, mention.start, to, referenceFor(file));
+    markDraftSettled(); // live state owns the draft; block a late hydrate
+    pendingCaretRef.current = next.caret;
+    setValue(next.text);
+    setMention(MENTION_CLOSED);
+  }
+
   function handleChange(event) {
     // The operator is editing — a still-in-flight server read must not clobber
     // this, and the draft is now safe to write back to the server.
     draftEditedRef.current = true;
     draftSyncReadyRef.current = true;
     setValue(event.target.value);
+    syncMention(event.target.value, event.target.selectionStart);
   }
   function handleKeyDown(event) {
+    // While the @-file picker is open it OWNS arrow/enter/tab/escape so they
+    // navigate + pick instead of moving the caret or sending the message.
+    if (mention.active && event.key === 'Escape') {
+      event.preventDefault();
+      closeMention();
+      return;
+    }
+    if (mentionMenuOpen) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        const n = mentionMatches.length;
+        const delta = event.key === 'ArrowDown' ? 1 : -1;
+        setMention((m) => ({ ...m, index: (m.index + delta + n) % n }));
+        return;
+      }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault();
+        selectMention(mentionMatches[mention.index] || mentionMatches[0]);
+        return;
+      }
+    }
     if (event.key === 'Enter' && !event.shiftKey) {
       submit(event);
     }
@@ -493,18 +578,29 @@ const MessageForm = forwardRef(function MessageForm({
           ))}
         </div>
       )}
-      <textarea
-        ref={textareaRef}
-        id="message-input"
-        placeholder={placeholder}
-        rows={1}
-        title="Shift+Enter for newline. Paste or drop images to attach."
-        value={value || ''}
-        disabled={disabled}
-        onChange={handleChange}
-        onKeyDown={handleKeyDown}
-        onPaste={handlePaste}
-      />
+      <div className="composer-input-wrap">
+        {mention.active && (
+          <ComposerMentionMenu
+            items={mentionMatches}
+            activeIndex={Math.min(mention.index, Math.max(0, mentionMatches.length - 1))}
+            onSelect={selectMention}
+            onHover={(index) => setMention((m) => ({ ...m, index }))}
+          />
+        )}
+        <textarea
+          ref={textareaRef}
+          id="message-input"
+          placeholder={placeholder}
+          rows={1}
+          title="Shift+Enter for newline. Type @ to tag a workspace file. Paste or drop images to attach."
+          value={value || ''}
+          disabled={disabled}
+          onChange={handleChange}
+          onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
+          onBlur={closeMention}
+        />
+      </div>
       <div className="composer-toolbar">
         <div className="composer-toolbar-left">
           <button

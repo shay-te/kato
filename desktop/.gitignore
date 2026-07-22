@@ -1,5 +1,21 @@
+# Node / Tauri CLI
 node_modules/
-dist/
-out/
-*.log
-package-lock.json
+
+# Rust / Tauri build output
+src-tauri/target/
+src-tauri/gen/
+
+# Generated at build time (see README)
+src-tauri/icons/            # `npm run icon` regenerates from ../icon.png
+src-tauri/binaries/         # `npm run sidecar` (PyInstaller) output
+
+# PyInstaller sidecar build
+sidecar/build/
+sidecar/dist/
+sidecar/__pycache__/
+sidecar/*.pyc
+outputs/
+
+# Rust build output
+target/
+src-tauri/target/

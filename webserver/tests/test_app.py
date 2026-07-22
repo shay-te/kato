@@ -1054,6 +1054,10 @@ class MultiRepoEndpointShapeTests(unittest.TestCase):
             'kato_webserver.app.detect_default_branch',
             return_value='master',
         ), patch(
+            # Base resolves (not a local HEAD fallback) → real base reported.
+            'kato_webserver.app.resolve_base_ref',
+            return_value=('origin/master', False),
+        ), patch(
             'kato_webserver.app.current_branch',
             return_value='UNA-1',
         ), patch(
@@ -1080,9 +1084,21 @@ class MultiRepoEndpointShapeTests(unittest.TestCase):
         def _branch_for(cwd: str) -> str:
             return 'master' if cwd == str(self.repo_a) else ''
 
+        # Mirror resolve_base_ref's real contract: a known base resolves (not a
+        # local fallback); an empty base falls back to HEAD (is_local). On a
+        # clone WITH an origin remote, that fallback is the "no base" error case.
+        def _resolve_ref(cwd, base):  # noqa: ARG001
+            return (f'origin/{base}', False) if base else ('HEAD', True)
+
         with patch(
             'kato_webserver.app.detect_default_branch',
             side_effect=_branch_for,
+        ), patch(
+            'kato_webserver.app.resolve_base_ref',
+            side_effect=_resolve_ref,
+        ), patch(
+            'kato_webserver.app.has_origin_remote',
+            return_value=True,
         ), patch(
             'kato_webserver.app.current_branch',
             return_value='UNA-1',

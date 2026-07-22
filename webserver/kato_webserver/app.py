@@ -47,6 +47,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -104,6 +105,12 @@ from kato_webserver.prompt_draft_store import read_draft, write_draft
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 KATO_REPO_ROOT = REPO_ROOT.parent
+if getattr(sys, 'frozen', False):
+    # Desktop sidecar only (PyInstaller one-file): bundled assets unpack under
+    # sys._MEIPASS, where the freeze ships static/, templates/ and kato.png at
+    # the root. Anchor both roots there so /static, /templates and the
+    # /logo.png + /favicon.png routes resolve. No effect on a normal run.
+    REPO_ROOT = KATO_REPO_ROOT = Path(sys._MEIPASS)
 
 # Browser-driven SSE stream cadence. The follow loop polls the
 # session for new events and yields them as they arrive. We tried a
@@ -2630,6 +2637,20 @@ def _register_http_routes(app: Flask) -> None:
         from kato_core_lib.helpers.plan_mode_store import set_plan_mode
         set_plan_mode(task_id, False)
         _set_task_override(app, 'TASK_PLAN_MODE_OVERRIDES', task_id, '')
+        # Drop the task's registry state — PR contexts AND its persisted
+        # processed-review-comment marks — so ~/.kato/processed_review_comments.json
+        # never keeps marks for a task that no longer exists. Best-effort: this
+        # secondary cleanup never blocks the workspace/session removal that IS the
+        # point of DELETE (and the task is already marked forgotten above).
+        agent_service = app.config.get('AGENT_SERVICE')
+        if agent_service is not None:
+            try:
+                agent_service.forget_task_state(task_id)
+            except Exception:
+                app.logger.warning(
+                    'failed to drop registry state for deleted task %s '
+                    '(workspace/session removal still applies)', task_id,
+                )
         # 2. Wipe the per-task workspace clone(s). ``delete``
         #    silently swallows ``OSError``; we VERIFY after.
         try:

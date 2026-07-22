@@ -1,13 +1,19 @@
+import shutil
+import tempfile
 import unittest
+from pathlib import Path
 
 from kato_core_lib.data_layers.data.fields import (
     ImplementationFields,
     PullRequestFields,
-    ReviewCommentFields,
     StatusFields,
     TaskFields,
 )
 from kato_core_lib.data_layers.service.agent_state_registry import AgentStateRegistry
+from kato_core_lib.helpers.processed_review_comments_store import (
+    read_processed_map,
+    write_processed_map,
+)
 
 
 class AgentStateRegistryTests(unittest.TestCase):
@@ -252,3 +258,80 @@ class AgentStateRegistryTests(unittest.TestCase):
             self.registry.task_id_for_pull_request('17', 'client'),
             'PROJ-1',
         )
+
+
+class AgentStateRegistryPersistenceTests(unittest.TestCase):
+    """Processed-review-comment marks survive a restart and are dropped on
+    forget — the fix for a still-open comment being re-worked every restart,
+    without leaving deleted-task state behind in ~/.kato.
+    """
+
+    def setUp(self) -> None:
+        self._dir = tempfile.mkdtemp()
+        self.path = Path(self._dir) / 'processed_review_comments.json'
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self._dir, ignore_errors=True)
+
+    def test_mark_persists_and_survives_restart(self) -> None:
+        registry = AgentStateRegistry(processed_review_comments_path=self.path)
+        registry.mark_review_comment_processed('client', '17', 'c-1')
+        self.assertTrue(self.path.is_file())
+
+        # A brand-new registry on the same path IS a kato restart.
+        restarted = AgentStateRegistry(processed_review_comments_path=self.path)
+        self.assertTrue(restarted.is_review_comment_processed('client', '17', 'c-1'))
+        # An unrelated comment is still new — only handled ones are suppressed.
+        self.assertFalse(restarted.is_review_comment_processed('client', '17', 'c-2'))
+
+    def test_default_no_path_is_in_memory_only(self) -> None:
+        registry = AgentStateRegistry()
+        registry.mark_review_comment_processed('client', '17', 'c-1')
+        self.assertTrue(registry.is_review_comment_processed('client', '17', 'c-1'))
+        self.assertFalse(self.path.exists())  # nothing written to disk
+
+    def test_forget_task_clears_persisted_marks(self) -> None:
+        registry = AgentStateRegistry(processed_review_comments_path=self.path)
+        registry.remember_pull_request_context(
+            {PullRequestFields.ID: '17', PullRequestFields.REPOSITORY_ID: 'client'},
+            'feature/proj-1',
+            task_id='PROJ-1',
+        )
+        registry.mark_review_comment_processed('client', '17', 'c-1')
+
+        registry.forget_task('PROJ-1')
+
+        self.assertFalse(registry.is_review_comment_processed('client', '17', 'c-1'))
+        # The on-disk file no longer holds the deleted task's marks.
+        self.assertEqual(read_processed_map(self.path), {})
+        # And a restart does not resurrect them.
+        restarted = AgentStateRegistry(processed_review_comments_path=self.path)
+        self.assertFalse(restarted.is_review_comment_processed('client', '17', 'c-1'))
+
+    def test_forget_task_keeps_other_tasks_marks(self) -> None:
+        registry = AgentStateRegistry(processed_review_comments_path=self.path)
+        for task_id, pr_id in (('PROJ-1', '17'), ('PROJ-2', '18')):
+            registry.remember_pull_request_context(
+                {PullRequestFields.ID: pr_id, PullRequestFields.REPOSITORY_ID: 'client'},
+                'feature/' + task_id.lower(),
+                task_id=task_id,
+            )
+            registry.mark_review_comment_processed('client', pr_id, 'c-' + pr_id)
+
+        registry.forget_task('PROJ-1')
+
+        self.assertFalse(registry.is_review_comment_processed('client', '17', 'c-17'))
+        self.assertTrue(registry.is_review_comment_processed('client', '18', 'c-18'))
+
+    def test_read_processed_map_tolerates_missing_and_malformed(self) -> None:
+        self.assertEqual(read_processed_map(self.path), {})   # missing file
+        self.assertEqual(read_processed_map(None), {})        # no path
+        self.path.write_text('not json{{', encoding='utf-8')
+        self.assertEqual(read_processed_map(self.path), {})   # corrupt json
+        self.path.write_text('{"not": "a list"}', encoding='utf-8')
+        self.assertEqual(read_processed_map(self.path), {})   # wrong shape
+
+    def test_store_round_trip(self) -> None:
+        original = {('client', '17'): {'c-1', 'c-2'}, ('server', '3'): {'c-9'}}
+        write_processed_map(self.path, original)
+        self.assertEqual(read_processed_map(self.path), original)

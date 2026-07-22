@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Kato desktop shell capabilities. The sidecar + updater are driven from Rust (main.rs), not the web UI, so this stays minimal.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "shell:default",
+    "updater:default"
+  ]
+}
