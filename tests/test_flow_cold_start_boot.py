@@ -8,25 +8,24 @@ A-Z scenario:
     3. ``KatoInstance.init(cfg)`` constructs the service graph and
        runs the parallel startup dependency validators (repo + task
        client + impl + testing).
-    4. Boot helpers run, in order:
-        a. ``_recover_orphan_workspaces`` — folders on disk that lost
-           their session record.
-        b. ``_reconcile_workspace_branches`` — git heads vs expected
-           branch name (== task id).
-        c. ``_reset_stuck_workspace_statuses`` — PROVISIONING → ACTIVE
-           when ``.git`` exists.
-    5. **NO auto-spawn of past sessions** (Bug 1 fix).
-    6. ``_start_planning_webserver_if_enabled`` brings the UI up.
-    7. Queued local-comment work is dispatched only after the UI has
-       had first shot at loading.
-    8. Shutdown hook registered.
-    9. ``_warm_up_repository_inventory`` kicks off the background disk
-       walk for repo discovery.
-    10. ``_run_task_scan_loop`` starts the 30s polling cycle.
+    4. **UI-FIRST**: ``_load_hooks_or_refuse`` (local, fail-closed) then
+       ``_start_planning_webserver_if_enabled`` bring the UI up in ~seconds —
+       BEFORE the network-bound connection validation, not after.
+    5. A background finalize thread (``_finalize_configured_boot``) then:
+        a. validates connections (retrying + surfacing the error in the UI
+           instead of exiting on failure),
+        b. runs ``_run_boot_reconciliation`` — orphan recovery, branch
+           reconcile, stuck-status reset, comment requeue, done-task cleanup,
+        c. marks the webserver fully configured,
+        d. starts the post-boot workers (incl. ``_warm_up_repository_inventory``),
+        e. sets ``ready_event`` to release the scan loop.
+    6. **NO auto-spawn of past sessions** (Bug 1 fix).
+    7. ``_run_task_scan_loop`` waits on ``ready_event`` before its first tick.
 
-The order matters: orphan recovery must happen BEFORE the webserver
-comes up (otherwise the UI flashes empty), but the no-auto-spawn
-must remain enforced (Bug 1 territory). Both pinned below.
+The order matters: the webserver must come up BEFORE validation (that is the
+whole UI-first point — the desktop splash no longer waits the ~minute
+validation tail), reconciliation must finish before the scan loop is released,
+and the no-auto-spawn must remain enforced (Bug 1 territory). All pinned below.
 
 What this file does NOT do: instantiate the real ``KatoInstance`` or
 ``KatoCoreLib`` with their full service graph — that requires a real
@@ -57,15 +56,20 @@ class FlowColdStartBootMainSourceTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.src = inspect.getsource(kato_main.main)
+        # The reconciliation / worker steps moved into helpers on the UI-first
+        # boot; inspect those too.
+        self.recon = inspect.getsource(kato_main._run_boot_reconciliation)
+        self.workers = inspect.getsource(kato_main._start_post_boot_workers)
+        self.finalize = inspect.getsource(kato_main._finalize_configured_boot)
 
     def test_flow_boot_calls_orphan_recovery(self) -> None:
-        self.assertIn('_recover_orphan_workspaces(app)', self.src)
+        self.assertIn('_recover_orphan_workspaces(app)', self.recon)
 
     def test_flow_boot_calls_branch_reconciliation(self) -> None:
-        self.assertIn('_reconcile_workspace_branches(app)', self.src)
+        self.assertIn('_reconcile_workspace_branches(app)', self.recon)
 
     def test_flow_boot_calls_stuck_status_reset(self) -> None:
-        self.assertIn('_reset_stuck_workspace_statuses(app)', self.src)
+        self.assertIn('_reset_stuck_workspace_statuses(app)', self.recon)
 
     def test_flow_boot_does_not_call_resume_streaming_sessions(self) -> None:
         # Bug 1's smoking gun. If THIS test fails, kato is auto-spawning
@@ -87,54 +91,65 @@ class FlowColdStartBootMainSourceTests(unittest.TestCase):
     def test_flow_boot_warms_up_repository_inventory(self) -> None:
         # Without warm-up, the FIRST task pickup pays the disk-walk
         # cost (can be seconds on a large workspaces root). Warm-up
-        # runs the walk in background.
-        self.assertIn('_warm_up_repository_inventory(app)', self.src)
+        # runs the walk in background — now part of the post-boot workers.
+        self.assertIn('_warm_up_repository_inventory(app)', self.workers)
 
     def test_flow_boot_runs_task_scan_loop(self) -> None:
         self.assertIn('_run_task_scan_loop(', self.src)
 
-    def test_flow_boot_orphan_recovery_runs_before_webserver(self) -> None:
-        # Order matters: if the webserver comes up FIRST, the UI
-        # shows an empty tab list for a moment then tabs pop in as
-        # recovery completes. The operator-visible flicker is worth
-        # avoiding.
-        recovery_idx = self.src.index('_recover_orphan_workspaces(app)')
-        # rindex → the FULL-BOOT webserver call. Setup mode adds an earlier
-        # textual occurrence (UI-only boot for an unconfigured operator);
-        # this ordering invariant is about the configured boot path.
+    def test_flow_boot_webserver_starts_before_validation(self) -> None:
+        # UI-FIRST contract: the configured boot serves the webserver BEFORE
+        # the background finalize that validates connections — so the desktop
+        # splash appears in ~seconds instead of after the ~minute validation
+        # tail. rindex → the fast-path serve (setup mode has earlier ones);
+        # match the actual finalize spawn call, not the comment referencing it.
         webserver_idx = self.src.rindex('_start_planning_webserver_if_enabled(app)')
+        finalize_idx = self.src.index('_finalize_configured_boot(app')
         self.assertLess(
-            recovery_idx, webserver_idx,
-            'webserver starts before orphan recovery — UI flickers '
-            'empty-then-populated on boot',
+            webserver_idx, finalize_idx,
+            'validation runs before the webserver — the UI-first win is lost',
+        )
+
+    def test_flow_boot_reconcile_finishes_before_scan_release(self) -> None:
+        # The finalize runs the full reconciliation and starts the post-boot
+        # workers before it sets ready_event (which releases the scan loop),
+        # so no autonomous scan ever runs against a half-reconciled state.
+        self.assertLess(
+            self.finalize.index('_run_boot_reconciliation(app)'),
+            self.finalize.index('ready_event.set()'),
+        )
+        self.assertLess(
+            self.finalize.index('_start_post_boot_workers(app)'),
+            self.finalize.index('ready_event.set()'),
         )
 
     def test_flow_boot_branch_reconcile_runs_after_orphan_recovery(self) -> None:
         # Branch reconcile assumes the workspace records exist —
         # orphan recovery is what creates them. Reversing the order
         # leaves real workspaces with their branches not reconciled.
-        recovery_idx = self.src.index('_recover_orphan_workspaces(app)')
-        reconcile_idx = self.src.index('_reconcile_workspace_branches(app)')
+        recovery_idx = self.recon.index('_recover_orphan_workspaces(app)')
+        reconcile_idx = self.recon.index('_reconcile_workspace_branches(app)')
         self.assertLess(recovery_idx, reconcile_idx)
 
-    def test_flow_boot_validation_runs_before_recovery(self) -> None:
-        # ``KatoInstance.init`` runs the startup-dependency validators
-        # in parallel. Boot must NOT proceed to recovery / webserver
-        # if validation failed (the early-return inside the try is
-        # what guarantees this — recovery comes AFTER init).
-        # ``KatoInstance.init(cfg, setup_mode=setup_mode)`` — match the
-        # call prefix so the assertion survives the setup_mode kwarg.
+    def test_flow_boot_validation_deferred_but_service_built_at_init(self) -> None:
+        # ``KatoInstance.init`` builds the service with defer_validation=True:
+        # the service graph exists (so the webserver has something to serve)
+        # but the network connection checks are left for the background
+        # finalize — the mechanism that lets the UI come up first.
+        self.assertIn('defer_validation=True', self.src)
         init_idx = self.src.index('KatoInstance.init(cfg')
-        recovery_idx = self.src.index('_recover_orphan_workspaces(app)')
-        self.assertLess(init_idx, recovery_idx)
+        finalize_idx = self.src.index('_finalize_configured_boot(app')
+        self.assertLess(init_idx, finalize_idx)
 
     def test_flow_boot_warm_up_runs_before_scan_loop(self) -> None:
-        # Warm-up is fire-and-forget background — but it must be
-        # KICKED OFF before the scan loop's first tick or the loop
-        # waits on a cold cache.
-        warm_idx = self.src.index('_warm_up_repository_inventory(app)')
-        loop_idx = self.src.index('_run_task_scan_loop(')
-        self.assertLess(warm_idx, loop_idx)
+        # Warm-up is fire-and-forget background — but it must be KICKED OFF
+        # before the scan loop's first tick or the loop waits on a cold cache.
+        # It now runs inside the finalize's post-boot workers, which complete
+        # before ready_event releases the loop.
+        self.assertLess(
+            self.finalize.index('_start_post_boot_workers(app)'),
+            self.finalize.index('ready_event.set()'),
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -101,6 +101,7 @@ import { ENTRY_SOURCE } from '../constants/entrySource.js';
 import { CLAUDE_EVENT, CLAUDE_SYSTEM_SUBTYPE } from '../constants/claudeEvent.js';
 import { BUBBLE_KIND } from '../constants/bubbleKind.js';
 import { _resetQueuedMessagesStore, forgetQueuedMessages, readQueuedMessages } from '../utils/queuedMessagesStore.js';
+import { writeSteerWhileWorking, _resetSteerWhileWorkingPref } from '../utils/composerSteerPref.js';
 import { toast } from '../stores/toastStore.js';
 
 
@@ -385,6 +386,10 @@ describe('SessionDetail — outgoing message queue', () => {
   beforeEach(() => {
     _resetQueuedMessagesStore();
     _idbMem.clear();
+    // Default the composer "steer while working" pref back on so every case
+    // starts from the queue-on-mid-turn behavior unless it opts out.
+    try { localStorage.clear(); } catch (_) { /* jsdom */ }
+    _resetSteerWhileWorkingPref();
   });
 
   function _stream(overrides = {}) {
@@ -432,6 +437,27 @@ describe('SessionDetail — outgoing message queue', () => {
     expect(screen.getByText('hello')).toBeInTheDocument();
     expect(screen.getByRole('list', { name: /queued messages/i }))
       .toBeInTheDocument();
+  });
+
+  test('mid-turn with steer OFF: a sent message is delivered IMMEDIATELY, not queued', async () => {
+    // "Send immediately" mode (Settings → Chat) — like Claude Code in VS Code:
+    // a message sent while Claude is working goes straight to the live session
+    // mid-turn instead of waiting in the queue.
+    postChatMessage.mockClear();
+    writeSteerWhileWorking(false);
+    const stream = _stream({ turnInFlight: true });
+    useSessionStream.mockReturnValue(stream);
+    render(<SessionDetail session={{ task_id: 'T1' }} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));
+
+    // Delivered right away despite the turn being in flight...
+    await waitFor(() => {
+      expect(postChatMessage).toHaveBeenCalledWith('T1', 'hello', []);
+    });
+    // ...and NOT parked in the queue list.
+    expect(screen.queryByRole('list', { name: /queued messages/i }))
+      .not.toBeInTheDocument();
   });
 
   test('clicking Remove drops a queued message without sending it', async () => {

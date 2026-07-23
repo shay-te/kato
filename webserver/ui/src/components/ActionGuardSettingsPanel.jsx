@@ -134,9 +134,10 @@ export default function ActionGuardSettingsPanel() {
       )}
 
       <div className="settings-action-guard-audit">
-        <SettingsPanelHead title="Recent decisions">
+        <SettingsPanelHead title="Activity log">
           <p>
-            What the agent tried and how the guard ruled — newest first, from{' '}
+            A read-only history of every action the agent attempted and how the
+            guard ruled — newest first. Saved to{' '}
             <code>~/.kato/action-guard-audit.log</code>.
           </p>
         </SettingsPanelHead>

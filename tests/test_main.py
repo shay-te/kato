@@ -51,17 +51,28 @@ class MainTests(unittest.TestCase):
         ) as mock_init, patch(
             'kato_core_lib.main.KatoInstance.get',
             return_value=app,
+        ), patch(
+            # The configured boot spawns this in a background thread; stub it
+            # so the test doesn't leak a real validation-retry loop.
+            'kato_core_lib.main._finalize_configured_boot',
         ), patch('kato_core_lib.main._run_task_scan_loop') as mock_run_loop:
             result = main(self.cfg)
 
         self.assertEqual(result, 0)
         mock_collect_config_errors.assert_called_once_with(mode='all')
-        mock_init.assert_called_once_with(self.cfg, setup_mode=False)
+        # UI-first boot: the service is built WITHOUT inline validation
+        # (defer_validation=True); validation runs in the background finalize.
+        mock_init.assert_called_once_with(
+            self.cfg, setup_mode=False, defer_validation=True,
+        )
+        # The scan loop is gated on the background finalize via ready_event so
+        # no scan runs until connections are validated + reconciliation is done.
         mock_run_loop.assert_called_once_with(
             app,
             startup_delay_seconds=30.0,
             scan_interval_seconds=60.0,
             force_scan_event=ANY,
+            ready_event=ANY,
         )
         app.logger.info.assert_any_call('Starting kato agent')
 
@@ -78,6 +89,8 @@ class MainTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.main.KatoInstance.get',
             return_value=app,
+        ), patch(
+            'kato_core_lib.main._finalize_configured_boot',
         ), patch('kato_core_lib.main._run_task_scan_loop'):
             main(self.cfg)
 
@@ -484,7 +497,9 @@ class MainTests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         mocks['collect'].assert_called_once_with(mode='all')
-        mocks['init'].assert_called_once_with(self.cfg, setup_mode=True)
+        mocks['init'].assert_called_once_with(
+            self.cfg, setup_mode=True, defer_validation=True,
+        )
         # The operator gets a running UI to configure from...
         mocks['webserver'].assert_called_once_with(app)
         mocks['shutdown_hook'].assert_called_once_with(app)
@@ -517,17 +532,22 @@ class MainTests(unittest.TestCase):
         mocks['run_loop'].assert_called_once()
 
     def test_ui_leaves_setup_mode_only_after_boot_reconciliation(self) -> None:
-        # Source-order guard: on the fall-through, the gate must stay up
-        # while the boot reconciliation steps run — flipping earlier lets
-        # the operator race branch checkouts / comment requeue with chat
-        # sends the moment the gate closes.
+        # Source-order guard: on the setup fall-through, the gate must stay up
+        # while the boot reconciliation runs — flipping earlier lets the
+        # operator race branch checkouts / comment requeue with chat sends the
+        # moment the gate closes. The reconciliation steps now live in
+        # ``_run_boot_reconciliation``; the setup branch calls it before
+        # ``_mark_webserver_configured`` and before the scan loop.
         import inspect
         from kato_core_lib import main as main_module
         src = inspect.getsource(main_module.main)
         mark_idx = src.index('_mark_webserver_configured(app)')
-        self.assertLess(src.index('_recover_orphan_workspaces(app)'), mark_idx)
-        self.assertLess(src.index('_requeue_stuck_comments(app)'), mark_idx)
+        self.assertLess(src.index('_run_boot_reconciliation(app)'), mark_idx)
         self.assertLess(mark_idx, src.index('_run_task_scan_loop('))
+        # And the reconciliation helper actually runs the recover/requeue steps.
+        recon = inspect.getsource(main_module._run_boot_reconciliation)
+        self.assertIn('_recover_orphan_workspaces(app)', recon)
+        self.assertIn('_requeue_stuck_comments(app)', recon)
 
     def test_docker_mode_on_runs_sandbox_preflight(self) -> None:
         """``KATO_CLAUDE_DOCKER=true`` must run the sandbox daemon checks.
@@ -549,6 +569,8 @@ class MainTests(unittest.TestCase):
             'kato_core_lib.main.KatoInstance.init'
         ), patch(
             'kato_core_lib.main.KatoInstance.get', return_value=app,
+        ), patch(
+            'kato_core_lib.main._finalize_configured_boot'
         ), patch(
             'kato_core_lib.main._run_task_scan_loop'
         ), patch(
@@ -591,6 +613,8 @@ class MainTests(unittest.TestCase):
             'kato_core_lib.main.KatoInstance.init'
         ), patch(
             'kato_core_lib.main.KatoInstance.get', return_value=app,
+        ), patch(
+            'kato_core_lib.main._finalize_configured_boot'
         ), patch(
             'kato_core_lib.main._run_task_scan_loop'
         ), patch(
@@ -665,6 +689,8 @@ class MainTlsPinIntegrationTests(unittest.TestCase):
             'kato_core_lib.main.KatoInstance.init'
         ), patch(
             'kato_core_lib.main.KatoInstance.get', return_value=app,
+        ), patch(
+            'kato_core_lib.main._finalize_configured_boot'
         ), patch(
             'kato_core_lib.main._run_task_scan_loop'
         ):
@@ -766,6 +792,8 @@ class MainReadOnlyToolsIntegrationTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.main.KatoInstance.get', return_value=app,
         ), patch(
+            'kato_core_lib.main._finalize_configured_boot'
+        ), patch(
             'kato_core_lib.main._run_task_scan_loop'
         ):
             return main(self.cfg)
@@ -850,19 +878,26 @@ class CleanupDoneTasksAtBootTests(unittest.TestCase):
         _cleanup_done_tasks_at_boot(app)  # must NOT raise — boot continues
         app.logger.exception.assert_called()
 
-    def test_runs_before_the_planning_webserver_starts(self) -> None:
-        # Ordering guard: a restart must prune BEFORE the webserver
-        # serves the tab list, otherwise the done tab flashes back.
+    def test_runs_in_boot_reconciliation_before_scan_release(self) -> None:
+        # UI-FIRST boot contract (intentional change): the configured boot
+        # now serves the webserver FIRST and runs the done-task prune in the
+        # background finalize — so a restart may briefly show a done tab for a
+        # few seconds until reconciliation completes. The prune is part of
+        # ``_run_boot_reconciliation``, which the finalize runs before
+        # ``_mark_webserver_configured`` and before it releases the scan loop.
         import inspect
         from kato_core_lib import main as kato_main
-        src = inspect.getsource(kato_main.main)
-        boot_idx = src.index('_cleanup_done_tasks_at_boot(app)')
-        # rindex → the FULL-BOOT webserver call. Setup mode adds an
-        # earlier textual occurrence (it starts the UI to configure from),
-        # but this invariant is about the configured boot path where the
-        # done-task prune must run before the tab list is served.
-        web_idx = src.rindex('_start_planning_webserver_if_enabled(app)')
-        self.assertLess(boot_idx, web_idx)
+        recon = inspect.getsource(kato_main._run_boot_reconciliation)
+        self.assertIn('_cleanup_done_tasks_at_boot(app)', recon)
+        finalize = inspect.getsource(kato_main._finalize_configured_boot)
+        self.assertLess(
+            finalize.index('_run_boot_reconciliation(app)'),
+            finalize.index('ready_event.set()'),
+        )
+        self.assertLess(
+            finalize.index('_run_boot_reconciliation(app)'),
+            finalize.index('_mark_webserver_configured(app)'),
+        )
 
 
 class ResetStuckWorkspaceStatusesTests(unittest.TestCase):
@@ -1047,14 +1082,21 @@ class RequeueStuckCommentsBootTests(unittest.TestCase):
     def test_boot_order_requeue_runs_before_scan_loop(self) -> None:
         import inspect
         from kato_core_lib import main as main_module
-        src = inspect.getsource(main_module.main)
-        requeue_idx = src.index('_requeue_stuck_comments(app)')
-        reset_idx = src.index('_reset_stuck_workspace_statuses(app)')
-        scan_idx = src.index('_run_task_scan_loop(')
-        # Requeue after the workspace status reset (so workspaces are
-        # ACTIVE) and before the scan loop that drains the queue.
-        self.assertLess(reset_idx, requeue_idx)
-        self.assertLess(requeue_idx, scan_idx)
+        # The reconciliation ordering now lives in ``_run_boot_reconciliation``:
+        # requeue runs after the workspace status reset (so workspaces are
+        # ACTIVE first).
+        recon = inspect.getsource(main_module._run_boot_reconciliation)
+        self.assertLess(
+            recon.index('_reset_stuck_workspace_statuses(app)'),
+            recon.index('_requeue_stuck_comments(app)'),
+        )
+        # And the configured finalize runs the whole reconciliation before it
+        # releases the scan loop (ready_event), so nothing scans a stale queue.
+        finalize = inspect.getsource(main_module._finalize_configured_boot)
+        self.assertLess(
+            finalize.index('_run_boot_reconciliation(app)'),
+            finalize.index('ready_event.set()'),
+        )
 
 
 class StartPendingCommentWorkBootTests(unittest.TestCase):
@@ -1109,17 +1151,32 @@ class StartPendingCommentWorkBootTests(unittest.TestCase):
     def test_boot_order_dispatch_is_deferred_until_after_webserver_start(self) -> None:
         import inspect
         from kato_core_lib import main as main_module
+        # UI-first boot: the webserver starts in main() BEFORE the background
+        # finalize thread that runs reconciliation + the post-boot workers, so
+        # comment resume work can never delay the planning page.
         src = inspect.getsource(main_module.main)
-        requeue_idx = src.index('_requeue_stuck_comments(app)')
-        webserver_idx = src.index('_start_planning_webserver_if_enabled(app)')
-        start_idx = src.index('_start_pending_comment_work_after_ui(app)')
-        scan_idx = src.index('_run_task_scan_loop(')
-        # Stale IN_PROGRESS → QUEUED must happen before the deferred
-        # dispatch, but the UI is started first so comment resume work
-        # cannot delay the planning page.
-        self.assertLess(requeue_idx, start_idx)
-        self.assertLess(webserver_idx, start_idx)
-        self.assertLess(start_idx, scan_idx)
+        # rindex → the fast-path serve (the setup branch has earlier ones);
+        # match the actual spawn call, not the comment that references it.
+        self.assertLess(
+            src.rindex('_start_planning_webserver_if_enabled(app)'),
+            src.index('_finalize_configured_boot(app'),
+        )
+        # Inside the finalize, the stale IN_PROGRESS → QUEUED requeue (part of
+        # reconciliation) runs before the deferred dispatch (part of the
+        # post-boot workers), which runs before the scan loop is released.
+        finalize = inspect.getsource(main_module._finalize_configured_boot)
+        self.assertLess(
+            finalize.index('_run_boot_reconciliation(app)'),
+            finalize.index('_start_post_boot_workers(app)'),
+        )
+        self.assertLess(
+            finalize.index('_start_post_boot_workers(app)'),
+            finalize.index('ready_event.set()'),
+        )
+        workers = inspect.getsource(main_module._start_post_boot_workers)
+        self.assertIn('_start_pending_comment_work_after_ui(app)', workers)
+        recon = inspect.getsource(main_module._run_boot_reconciliation)
+        self.assertIn('_requeue_stuck_comments(app)', recon)
 
     def test_deferred_dispatch_runs_in_background_thread(self) -> None:
         app = types.SimpleNamespace(logger=Mock())

@@ -124,7 +124,12 @@ def _export_agent_env_from_kato_config() -> None:
 
 
 class KatoCoreLib(CoreLib):
-    def __init__(self, cfg: DictConfig, setup_mode: bool = False) -> None:
+    def __init__(
+        self,
+        cfg: DictConfig,
+        setup_mode: bool = False,
+        defer_validation: bool = False,
+    ) -> None:
         CoreLib.__init__(self)
         self.config = cfg
         _export_agent_env_from_kato_config()
@@ -161,7 +166,14 @@ class KatoCoreLib(CoreLib):
                 self.service.finish_task_planning_session,
                 KATO_TASK_DONE_SENTINEL,
             )
-        self.service.validate_connections()
+        # ``defer_validation``: build the service but SKIP the network
+        # connection checks here so the caller can serve the planning UI
+        # first and validate in the background (the UI-first boot in
+        # ``main``). When False (the CLI / embedded default) validation runs
+        # inline exactly as before, so a bad config still fails the boot
+        # loudly and synchronously.
+        if not defer_validation:
+            self.service.validate_connections()
 
     def _build_setup_mode_managers(self, open_cfg: DictConfig) -> None:
         """Setup-boot manager build, tolerant of a broken agent-backend value.

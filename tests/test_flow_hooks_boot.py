@@ -116,13 +116,19 @@ class FlowHooksBootTests(unittest.TestCase):
             os.unlink(path)
 
     def test_main_calls_load_hooks_before_recover_orphans(self) -> None:
-        # Source-inspection guard: the guard runs BEFORE workspace
-        # recovery so a missing runner stops boot before side-effects.
+        # Source-inspection guard: the hooks gate runs BEFORE workspace
+        # recovery so a missing/invalid runner stops boot before side-effects.
+        # On the UI-first boot, recovery moved into the background
+        # ``_run_boot_reconciliation`` (spawned via ``_finalize_configured_boot``);
+        # the hooks gate still runs earlier in main() than that spawn, and
+        # recovery lives in the reconciliation helper.
         import inspect
         src = inspect.getsource(kato_main.main)
         load_idx = src.index('_load_hooks_or_refuse(app, logger)')
-        recover_idx = src.index('_recover_orphan_workspaces(app)')
-        self.assertLess(load_idx, recover_idx)
+        finalize_idx = src.index('_finalize_configured_boot(app')
+        self.assertLess(load_idx, finalize_idx)
+        recon = inspect.getsource(kato_main._run_boot_reconciliation)
+        self.assertIn('_recover_orphan_workspaces(app)', recon)
 
 
 if __name__ == '__main__':

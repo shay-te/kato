@@ -193,6 +193,39 @@ fn login_shell_path() -> Option<String> {
     }
 }
 
+/// Resolve the login-shell PATH, cached so we don't pay the shell-profile
+/// sourcing cost (`$SHELL -ilc`, measured at ~0.8s) on EVERY launch — it sat
+/// synchronously before the sidecar spawn, delaying the whole boot.
+///
+/// The cache lives at `~/.kato/.login-shell-path`. On a hit we return the
+/// cached value immediately and refresh it in the background so a PATH change
+/// (a newly installed tool) propagates on the NEXT launch. On a miss (first
+/// ever launch) we compute it synchronously and persist it. Best-effort
+/// throughout: any read/write failure just falls back to recomputing.
+#[cfg(not(windows))]
+fn cached_login_shell_path() -> Option<String> {
+    let home = std::env::var("HOME").ok()?;
+    let cache = std::path::PathBuf::from(format!("{home}/.kato/.login-shell-path"));
+    if let Ok(contents) = std::fs::read_to_string(&cache) {
+        let cached = contents.trim().to_string();
+        if !cached.is_empty() {
+            // Refresh for next launch off the hot path (best-effort).
+            let cache_bg = cache.clone();
+            std::thread::spawn(move || {
+                if let Some(fresh) = login_shell_path() {
+                    let _ = std::fs::write(&cache_bg, fresh);
+                }
+            });
+            return Some(cached);
+        }
+    }
+    // Cache miss (first launch / empty cache): compute now and persist.
+    let resolved = login_shell_path()?;
+    let _ = std::fs::create_dir_all(format!("{home}/.kato"));
+    let _ = std::fs::write(&cache, &resolved);
+    Some(resolved)
+}
+
 /// Build a PATH that a Finder/Dock-launched app can actually use to find the
 /// host tools kato shells out to (git / docker / node / the agent CLI). A GUI
 /// launch doesn't load your shell profile, so we FIRST ask the login shell for
@@ -212,9 +245,10 @@ fn augmented_path() -> String {
         let mut parts: Vec<String> = Vec::new();
         // The user's real login-shell PATH — where nvm/fnm/asdf/homebrew put
         // git, node, docker and the `claude` CLI. Without this a Dock launch
-        // can't find those tools and kato's boot hangs. Duplicates below are
-        // harmless (the OS uses the first match).
-        if let Some(login) = login_shell_path() {
+        // can't find those tools and kato's boot hangs. Cached so the ~0.8s
+        // profile-sourcing cost is paid once, not every launch. Duplicates
+        // below are harmless (the OS uses the first match).
+        if let Some(login) = cached_login_shell_path() {
             parts.push(login);
         }
         for p in [

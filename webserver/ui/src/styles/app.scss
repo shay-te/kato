@@ -8101,6 +8101,69 @@ body.kato-resizing #left-pane-resizer::before {
   line-height: 1.5;
 }
 
+/* Settings → Chat: the "steer vs send immediately" choice. Two stacked
+ * radio cards; the selected one gets an accent border so the active mode
+ * reads at a glance. */
+.chat-settings-fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-10;
+}
+
+.chat-settings-legend {
+  padding: 0;
+  margin: 0 0 $SPACE-6 0;
+  font-size: $TEXT-12;
+  color: $C-NEUTRAL-64;
+}
+
+.chat-settings-option {
+  display: flex;
+  align-items: flex-start;
+  gap: $SPACE-12;
+  padding: $SPACE-12;
+  border: 1px solid $C-NEUTRAL-100-A10;
+  border-radius: $RADIUS-8;
+  background: $C-NEUTRAL-100-A06;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+
+  &:hover {
+    background: $C-NEUTRAL-100-A10;
+  }
+
+  /* Selected mode — accent border driven by the real radio's :checked. */
+  &:has(input[type=radio]:checked) {
+    border-color: $C-BLUE-53;
+  }
+
+  input[type=radio] {
+    margin-top: $SPACE-2;
+    flex: 0 0 auto;
+    accent-color: $C-BLUE-53;
+  }
+}
+
+.chat-settings-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-4;
+}
+
+.chat-settings-option-label {
+  font-size: $TEXT-13;
+  color: $C-NEUTRAL-96;
+}
+
+.chat-settings-option-hint {
+  font-size: $TEXT-12;
+  color: $C-NEUTRAL-64;
+  line-height: 1.5;
+}
+
 .settings-drawer-panel-head code {
   background: $C-NEUTRAL-100-A06;
   padding: $SPACE-1 $SPACE-5;

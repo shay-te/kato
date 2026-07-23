@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import ActionGuardSettingsPanel from './ActionGuardSettingsPanel.jsx';
+import ChatSettingsPanel from './ChatSettingsPanel.jsx';
 import ClaudePermissionsSettingsPanel from './ClaudePermissionsSettingsPanel.jsx';
 import PromptsSettingsPanel from './PromptsSettingsPanel.jsx';
 import GitProvidersSettingsPanel from './GitProvidersSettingsPanel.jsx';
@@ -29,6 +30,7 @@ const TAB_PROMPTS = 'prompts';
 const TAB_TASK_PROVIDER = 'task-provider';
 const TAB_GIT_PROVIDER = 'git-provider';
 const TAB_NOTIFICATIONS = 'notifications';
+const TAB_CHAT = 'chat';
 
 // The action_guard schema section is rendered by its OWN bespoke tab below,
 // so it's excluded from the auto-generated schema tabs to avoid a duplicate.
@@ -44,6 +46,7 @@ const BESPOKE_TABS = [
   { id: TAB_TASK_PROVIDER, label: 'Task provider' },
   { id: TAB_GIT_PROVIDER, label: 'Git provider' },
   { id: TAB_NOTIFICATIONS, label: 'Notifications' },
+  { id: TAB_CHAT, label: 'Chat' },
 ];
 
 export default function SettingsDrawer({
@@ -116,6 +119,8 @@ export default function SettingsDrawer({
     panel = <GitProvidersSettingsPanel />;
   } else if (tab === TAB_NOTIFICATIONS) {
     panel = <NotificationsSettingsPanel {...(notificationProps || {})} />;
+  } else if (tab === TAB_CHAT) {
+    panel = <ChatSettingsPanel />;
   } else if (tab.startsWith('schema:')) {
     const sectionId = tab.slice('schema:'.length);
     panel = (

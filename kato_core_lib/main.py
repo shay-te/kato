@@ -59,10 +59,18 @@ class _ProcessAssignedTasksJobProxy:
 
 class _KatoInstanceProxy:
     @staticmethod
-    def init(core_lib_cfg: DictConfig, setup_mode: bool = False) -> None:
+    def init(
+        core_lib_cfg: DictConfig,
+        setup_mode: bool = False,
+        defer_validation: bool = False,
+    ) -> None:
         from kato_core_lib.kato_instance import KatoInstance as _KatoInstance
 
-        _KatoInstance.init(core_lib_cfg, setup_mode=setup_mode)
+        _KatoInstance.init(
+            core_lib_cfg,
+            setup_mode=setup_mode,
+            defer_validation=defer_validation,
+        )
 
     @staticmethod
     def get():
@@ -173,7 +181,14 @@ def main(cfg: DictConfig) -> int:
     print_security_posture()
     print_action_guard_posture()
     try:
-        KatoInstance.init(cfg, setup_mode=setup_mode)
+        # ``defer_validation=True``: build the agent service but DON'T run the
+        # network connection checks inside __init__. On a configured boot those
+        # checks (providers + agent CLI) used to sit on the critical path
+        # BEFORE the planning webserver bound — the desktop splash waited the
+        # full ~minute for them. We now serve the UI first and validate in a
+        # background thread (see ``_finalize_configured_boot``). Setup-mode is
+        # unaffected (it never validates in __init__; complete_setup does).
+        KatoInstance.init(cfg, setup_mode=setup_mode, defer_validation=True)
     except RuntimeError as exc:
         if str(exc).startswith('startup dependency validation failed:') or str(exc).startswith('[Error] '):
             logger.error('%s', exc)
@@ -196,43 +211,167 @@ def main(cfg: DictConfig) -> int:
         )
         if not _wait_until_configured_then_finish_setup(app):
             return 0
-        # Fall through: the agent service is live now. Continue the normal
-        # boot below — the webserver helper is guarded against double-start,
-        # so the already-serving Flask thread is reused.
+        # Fall through: the agent service is live AND already validated
+        # (complete_setup ran validate_connections). The webserver has been
+        # serving the whole time, so we finish the boot synchronously here —
+        # there is no UI to keep waiting on. The reconciliation steps must run
+        # BEFORE the UI leaves setup mode so a restart never renders a
+        # half-reconciled workspace list.
+        _load_hooks_or_refuse(app, logger)
+        _run_boot_reconciliation(app)
+        _start_planning_webserver_if_enabled(app)  # no-op, already serving
+        _mark_webserver_configured(app)
+        _start_post_boot_workers(app)
+        _register_shutdown_hook(app)
+        startup_delay_seconds, scan_interval_seconds = _task_scan_settings(cfg)
+        _run_task_scan_loop(
+            app,
+            startup_delay_seconds=startup_delay_seconds,
+            scan_interval_seconds=scan_interval_seconds,
+            force_scan_event=_FORCE_SCAN_EVENT,
+        )
+        return 0
+    # --- Configured-at-boot: UI-FIRST fast path ---------------------------
+    # Hooks are a local, fail-closed config gate (bad hook schema must abort
+    # the boot loudly), so they load BEFORE we serve. Everything network-bound
+    # (connection validation, done-task cleanup) and every disk-walk
+    # reconciliation moves into a background thread so the planning webserver
+    # binds in ~seconds instead of after the ~minute validation tail.
     _load_hooks_or_refuse(app, logger)
+    _start_planning_webserver_if_enabled(app)
+    _register_shutdown_hook(app)
+    boot_ready_event = threading.Event()
+    threading.Thread(
+        target=lambda: _finalize_configured_boot(app, boot_ready_event),
+        name='kato-boot-finalize',
+        daemon=True,
+    ).start()
+    startup_delay_seconds, scan_interval_seconds = _task_scan_settings(cfg)
+    # The scan loop waits on ``boot_ready_event`` before its first tick, so no
+    # autonomous scan runs until connections are validated and reconciliation
+    # is done. If validation never succeeds the event never fires: the main
+    # thread parks there, the webserver keeps serving, and the UI shows the
+    # validation error (see ``_finalize_configured_boot``) — the UI-first
+    # replacement for the old fail-closed process exit.
+    _run_task_scan_loop(
+        app,
+        startup_delay_seconds=startup_delay_seconds,
+        scan_interval_seconds=scan_interval_seconds,
+        force_scan_event=_FORCE_SCAN_EVENT,
+        ready_event=boot_ready_event,
+    )
+    return 0
+
+
+def _run_boot_reconciliation(app) -> None:
+    """The best-effort, idempotent boot-time reconciliation steps.
+
+    Grouped so both the setup→running fall-through (runs them synchronously,
+    the UI is already up) and the configured UI-first boot (runs them in the
+    background finalize thread) share one ordering. Every step is
+    self-correcting on the next scan tick, so a background run only means a
+    freshly-restarted UI may briefly show a not-yet-reconciled workspace/tab
+    for the few seconds before this completes.
+
+    Sessions stay lazy after restart: opening a tab replays the disk JSONL via
+    SSE so history shows immediately; Claude is re-spawned (``--resume``) only
+    when the operator sends a follow-up — same UX as VS Code Claude Code.
+    """
     _recover_orphan_workspaces(app)
     _reconcile_workspace_branches(app)
     _reset_stuck_workspace_statuses(app)
     _requeue_stuck_comments(app)
     _log_known_session_ids(app)
     _cleanup_done_tasks_at_boot(app)
-    # Sessions are lazy after restart: opening a tab replays the disk
-    # JSONL via SSE so the conversation history is visible immediately.
-    # Claude is re-spawned (with ``--resume <id>``) only when the operator
-    # actually sends a follow-up message — same UX as VS Code Claude Code.
-    # The old autoresume sent ``_RESUME_CONTINUE_PROMPT`` to every active
-    # workspace at boot, which burned tokens and made the chat look like
-    # Claude was starting over.
-    _start_planning_webserver_if_enabled(app)
-    # Setup→running fall-through: the webserver has been live the whole
-    # time — only NOW (after the reconciliation steps above, the same point
-    # a configured boot first serves) does the UI leave setup mode. On a
-    # configured boot this is an idempotent no-op (create_app already got
-    # the live service and NEEDS_CONFIG=False).
-    _mark_webserver_configured(app)
+
+
+def _start_post_boot_workers(app) -> None:
+    """Start the always-on background workers + inventory warm-up.
+
+    These need the agent service to exist but not to be reachable, and none
+    block the boot: queued-comment dispatch waits for the UI healthz itself,
+    the two watchers are best-effort, and the inventory warm-up runs off-thread.
+    """
     _start_pending_comment_work_after_ui(app)
     _start_resume_prompt_watcher(app)
     _start_comment_run_watcher(app)
-    _register_shutdown_hook(app)
-    startup_delay_seconds, scan_interval_seconds = _task_scan_settings(cfg)
     _warm_up_repository_inventory(app)
-    _run_task_scan_loop(
-        app,
-        startup_delay_seconds=startup_delay_seconds,
-        scan_interval_seconds=scan_interval_seconds,
-        force_scan_event=_FORCE_SCAN_EVENT,
-    )
-    return 0
+
+
+# How long the configured UI-first boot waits between failed connection-
+# validation attempts. The webserver is already serving and showing the error
+# the whole time; a shorter interval just re-hits the providers more often.
+_CONFIGURED_BOOT_VALIDATION_RETRY_SECONDS = 30.0
+
+
+def _finalize_configured_boot(
+    app,
+    ready_event: threading.Event,
+    *,
+    sleep_fn=time.sleep,
+    max_attempts: int | None = None,
+) -> None:
+    """Validate connections + reconcile in the background, then release the
+    scan loop.
+
+    Runs off the main thread on a configured boot so the planning webserver is
+    already serving. Connection validation is retried (the UI shows the error
+    banner between attempts) instead of exiting the process — the UI-first
+    replacement for the old fail-closed boot. Once validation passes, the
+    reconciliation steps run, the webserver is flipped fully live, the
+    background workers start, and ``ready_event`` is set so the scan loop's
+    first tick fires.
+
+    ``max_attempts`` is a test escape hatch; production passes ``None`` (retry
+    until the providers come back or the operator fixes Settings).
+    """
+    attempt = 0
+    while max_attempts is None or attempt < max_attempts:
+        attempt += 1
+        try:
+            app.service.validate_connections()
+        except Exception as exc:
+            # Surface ANY validation failure and keep serving — the whole point
+            # of the UI-first boot is that a bad token / unreachable provider
+            # shows in the UI instead of killing the process.
+            message = str(exc)
+            app.logger.error(
+                'connection validation failed; the planning UI is up and '
+                'showing the error — retrying in %ss: %s',
+                _CONFIGURED_BOOT_VALIDATION_RETRY_SECONDS, message,
+            )
+            _flag_boot_validation_error(app, message[:500])
+            try:
+                sleep_fn(_CONFIGURED_BOOT_VALIDATION_RETRY_SECONDS)
+            except (KeyboardInterrupt, SystemExit):
+                return
+            continue
+        break
+    else:
+        return
+    _run_boot_reconciliation(app)
+    # Clears the error banner + NEEDS_CONFIG from any failed attempt above and
+    # publishes the live service to the webserver config.
+    _mark_webserver_configured(app)
+    _start_post_boot_workers(app)
+    ready_event.set()
+    app.logger.info('kato is fully started — autonomous scanning enabled')
+
+
+def _flag_boot_validation_error(app, message: str) -> None:
+    """Surface a configured-boot validation failure in the planning UI.
+
+    Publishes the error and flips the LIVE Flask app into the "needs config"
+    surface so the onboarding/error banner renders it — a configured boot
+    starts with ``NEEDS_CONFIG=False``, so without this the wizard that shows
+    ``setup_error`` would never appear. ``_mark_webserver_configured`` clears
+    both again once validation finally succeeds.
+    """
+    flask_app = getattr(app, 'planning_flask_app', None)
+    if flask_app is None:
+        return
+    flask_app.config['SETUP_ERROR'] = message
+    flask_app.config['NEEDS_CONFIG'] = True
 
 
 # How often the setup-mode wait loop re-checks the layered config. Short
@@ -1371,6 +1510,16 @@ def _task_scan_settings(cfg: DictConfig) -> tuple[float, float]:
     )
 
 
+def _wait_for_boot_ready(
+    ready_event: threading.Event, *, poll_seconds: float = 1.0,
+) -> None:
+    """Block until ``ready_event`` is set, polling so the main thread stays
+    responsive to SIGINT/SIGTERM (the shutdown handler runs on this thread)
+    instead of blocking uninterruptibly on a bare ``wait()``."""
+    while not ready_event.wait(timeout=poll_seconds):
+        continue
+
+
 def _run_task_scan_loop(
     app,
     *,
@@ -1379,6 +1528,7 @@ def _run_task_scan_loop(
     sleep_fn=time.sleep,
     max_cycles: int | None = None,
     force_scan_event: threading.Event | None = None,
+    ready_event: threading.Event | None = None,
 ) -> None:
     job = ProcessAssignedTasksJob()
     job.initialized(app)
@@ -1406,7 +1556,14 @@ def _run_task_scan_loop(
             scan_interval_seconds,
         )
         return
-    if startup_delay_seconds > 0:
+    if ready_event is not None:
+        # UI-first boot: block until the background finalize (connection
+        # validation + reconciliation) is done before the first scan. If it
+        # never completes we park here indefinitely — the webserver keeps
+        # serving and the UI shows the validation error. Validation already
+        # served as the warm-up, so the startup delay below is skipped here.
+        _wait_for_boot_ready(ready_event)
+    elif startup_delay_seconds > 0:
         if supports_inline_status():
             sleep_with_warmup_countdown(
                 startup_delay_seconds,

@@ -42,7 +42,7 @@ class ProxyClassesTests(unittest.TestCase):
         ):
             main_module._KatoInstanceProxy.init('fake-cfg')
         fake_module.KatoInstance.init.assert_called_once_with(
-            'fake-cfg', setup_mode=False,
+            'fake-cfg', setup_mode=False, defer_validation=False,
         )
 
     def test_kato_instance_proxy_init_forwards_setup_mode(self) -> None:
@@ -54,7 +54,7 @@ class ProxyClassesTests(unittest.TestCase):
         ):
             main_module._KatoInstanceProxy.init('fake-cfg', setup_mode=True)
         fake_module.KatoInstance.init.assert_called_once_with(
-            'fake-cfg', setup_mode=True,
+            'fake-cfg', setup_mode=True, defer_validation=False,
         )
 
     def test_kato_instance_proxy_get_delegates(self) -> None:
@@ -1663,6 +1663,153 @@ class WaitForPlanningUiHealthzTests(unittest.TestCase):
         app.logger.warning.assert_called_once()
         msg = app.logger.warning.call_args[0][0]
         self.assertIn('did not answer', msg)
+
+
+class UiFirstBootTests(unittest.TestCase):
+    """The configured UI-first boot: serve the webserver first, validate +
+    reconcile in the background, release the scan loop only when ready, and
+    surface a validation failure in the UI instead of exiting."""
+
+    def _app(self, validate=None):
+        service = MagicMock()
+        if validate is not None:
+            service.validate_connections = validate
+        return SimpleNamespace(service=service, logger=MagicMock())
+
+    def test_finalize_success_reconciles_marks_and_releases(self) -> None:
+        app = self._app(validate=MagicMock())
+        ready = threading.Event()
+        with patch.object(main_module, '_run_boot_reconciliation') as reconcile, \
+             patch.object(main_module, '_mark_webserver_configured') as mark, \
+             patch.object(main_module, '_start_post_boot_workers') as workers:
+            main_module._finalize_configured_boot(app, ready, max_attempts=1)
+        app.service.validate_connections.assert_called_once_with()
+        reconcile.assert_called_once_with(app)
+        mark.assert_called_once_with(app)
+        workers.assert_called_once_with(app)
+        self.assertTrue(ready.is_set())
+
+    def test_finalize_validation_failure_flags_ui_and_never_releases(self) -> None:
+        app = self._app(validate=MagicMock(side_effect=RuntimeError(
+            'startup dependency validation failed: bad token',
+        )))
+        ready = threading.Event()
+        sleeps: list[float] = []
+        with patch.object(main_module, '_flag_boot_validation_error') as flag, \
+             patch.object(main_module, '_run_boot_reconciliation') as reconcile:
+            main_module._finalize_configured_boot(
+                app, ready, sleep_fn=sleeps.append, max_attempts=3,
+            )
+        # Retried the configured number of times, each surfacing the error.
+        self.assertEqual(app.service.validate_connections.call_count, 3)
+        self.assertEqual(flag.call_count, 3)
+        self.assertIn('bad token', flag.call_args[0][1])
+        # Never reconciled, never released the scan loop.
+        reconcile.assert_not_called()
+        self.assertFalse(ready.is_set())
+        # Slept between attempts (not after the last one is fine either way).
+        self.assertTrue(sleeps)
+
+    def test_finalize_recovers_after_a_transient_failure(self) -> None:
+        app = self._app(validate=MagicMock(side_effect=[
+            RuntimeError('provider blip'), None,
+        ]))
+        ready = threading.Event()
+        with patch.object(main_module, '_flag_boot_validation_error'), \
+             patch.object(main_module, '_run_boot_reconciliation') as reconcile, \
+             patch.object(main_module, '_mark_webserver_configured'), \
+             patch.object(main_module, '_start_post_boot_workers'):
+            main_module._finalize_configured_boot(
+                app, ready, sleep_fn=lambda _s: None, max_attempts=5,
+            )
+        self.assertEqual(app.service.validate_connections.call_count, 2)
+        reconcile.assert_called_once_with(app)
+        self.assertTrue(ready.is_set())
+
+    def test_finalize_returns_cleanly_on_shutdown_during_retry(self) -> None:
+        app = self._app(validate=MagicMock(side_effect=RuntimeError('down')))
+        ready = threading.Event()
+
+        def _sleep(_s):
+            raise KeyboardInterrupt
+
+        with patch.object(main_module, '_flag_boot_validation_error'):
+            # Must not propagate — a shutdown during the retry sleep just ends
+            # the finalize thread.
+            main_module._finalize_configured_boot(
+                app, ready, sleep_fn=_sleep, max_attempts=5,
+            )
+        self.assertFalse(ready.is_set())
+
+    def test_flag_boot_validation_error_sets_ui_config(self) -> None:
+        flask_app = SimpleNamespace(config={})
+        app = SimpleNamespace(planning_flask_app=flask_app)
+        main_module._flag_boot_validation_error(app, 'bad token')
+        self.assertEqual(flask_app.config['SETUP_ERROR'], 'bad token')
+        self.assertTrue(flask_app.config['NEEDS_CONFIG'])
+
+    def test_flag_boot_validation_error_noop_without_flask_app(self) -> None:
+        app = SimpleNamespace(planning_flask_app=None)
+        # Must not raise when the webserver is disabled.
+        main_module._flag_boot_validation_error(app, 'bad token')
+
+    def test_run_boot_reconciliation_runs_all_steps(self) -> None:
+        app = SimpleNamespace(logger=MagicMock())
+        step_names = [
+            '_recover_orphan_workspaces', '_reconcile_workspace_branches',
+            '_reset_stuck_workspace_statuses', '_requeue_stuck_comments',
+            '_log_known_session_ids', '_cleanup_done_tasks_at_boot',
+        ]
+        from unittest.mock import DEFAULT
+        with patch.multiple(
+            main_module, **{name: DEFAULT for name in step_names},
+        ) as mocks:
+            main_module._run_boot_reconciliation(app)
+        for name in step_names:
+            mocks[name].assert_called_once_with(app)
+
+    def test_wait_for_boot_ready_returns_once_set(self) -> None:
+        ready = threading.Event()
+        ready.set()  # Already set — returns immediately.
+        main_module._wait_for_boot_ready(ready, poll_seconds=0.01)
+
+    def test_scan_loop_waits_for_ready_event_before_first_scan(self) -> None:
+        # With a pre-set ready_event the loop skips the startup delay and scans.
+        app = MagicMock()
+        app.logger = MagicMock()
+        ready = threading.Event()
+        ready.set()
+        with patch.object(main_module, 'ProcessAssignedTasksJob') as job_cls, \
+             patch.object(main_module, 'sleep_with_warmup_countdown') as warmup:
+            job = MagicMock()
+            job_cls.return_value = job
+            main_module._run_task_scan_loop(
+                app,
+                startup_delay_seconds=999,  # would hang if not skipped
+                scan_interval_seconds=0.01,
+                sleep_fn=lambda _s: None,
+                max_cycles=1,
+                ready_event=ready,
+            )
+        job.run.assert_called_once_with()
+        # ready_event path skips the startup warm-up delay entirely.
+        warmup.assert_not_called()
+
+
+class DeferValidationTests(unittest.TestCase):
+    """``KatoCoreLib(defer_validation=True)`` builds the service but leaves the
+    network validation for the caller (the UI-first boot)."""
+
+    def test_defer_validation_skips_inline_connection_checks(self) -> None:
+        from tests.utils import build_test_cfg
+        from kato_core_lib.kato_core_lib import KatoCoreLib
+        cfg = build_test_cfg()
+        with patch('kato_core_lib.kato_core_lib.EmailCoreLib'), patch(
+            'kato_core_lib.kato_core_lib.AgentService.validate_connections',
+        ) as validate:
+            app = KatoCoreLib(cfg, defer_validation=True)
+        self.assertIsNotNone(app.service)
+        validate.assert_not_called()
 
 
 if __name__ == '__main__':

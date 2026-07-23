@@ -19,6 +19,7 @@ import {
   persistQueuedMessages,
   hydrateQueuedMessages,
 } from '../utils/queuedMessagesStore.js';
+import { readSteerWhileWorking } from '../utils/composerSteerPref.js';
 import { useSessionOption } from '../hooks/useSessionOption.js';
 import { permissionStore } from '../stores/permissionStore.js';
 import { usePendingPermissions } from '../hooks/usePendingPermissions.js';
@@ -355,16 +356,18 @@ export default function SessionDetail({
     return false;
   }
 
-  // Composer entry point. While Claude is mid-turn, HOLD the message
-  // in the queue and let it fly when the turn finishes (the flush
-  // effect below). When Claude is idle, deliver immediately.
-  //
-  // The queue is visible above the composer via <QueuedMessageList>;
-  // the operator can remove individual items or click "Steer" to
-  // promote a queued item to fire immediately mid-turn (overrides
-  // the default hold-until-idle behavior).
+  // Composer entry point. When Claude is idle, always deliver immediately.
+  // While Claude is mid-turn, the behavior depends on the operator's
+  // "steer while working" preference (Settings → Chat):
+  //   * steer ON (default) — HOLD the message in the queue and let it fly
+  //     when the turn finishes (the flush effect below). The queue is visible
+  //     via <QueuedMessageList>; the operator can remove/edit items or click
+  //     "Steer" to promote one mid-turn.
+  //   * steer OFF — deliver it to the live session IMMEDIATELY, mid-turn,
+  //     exactly like Claude Code in VS Code (Claude reads it on its next pump
+  //     while still working). No queue, no wait.
   async function onSendMessage(text, images = []) {
-    if (stream.turnInFlight) {
+    if (stream.turnInFlight && readSteerWhileWorking()) {
       commitQueue((prev) => [
         ...prev,
         { id: _newQueuedId(), text, images, queuedAt: Date.now() },
@@ -374,6 +377,7 @@ export default function SessionDetail({
       // button) replace the earlier transient "queued" bubble.
       return true;
     }
+    // Idle, or steer disabled → send now (mid-turn injection when working).
     return deliverMessage(text, images);
   }
 

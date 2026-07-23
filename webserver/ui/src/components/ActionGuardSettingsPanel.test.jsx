@@ -124,7 +124,7 @@ describe('ActionGuardSettingsPanel', () => {
     await waitFor(() => {
       expect(screen.getByText('cat ~/.ssh/id_***')).toBeInTheDocument();
     });
-    expect(screen.getByText('Recent decisions')).toBeInTheDocument();
+    expect(screen.getByText('Activity log')).toBeInTheDocument();
   });
 
   test('flags a tampered audit log', async () => {
