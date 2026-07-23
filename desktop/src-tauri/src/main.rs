@@ -29,11 +29,32 @@ const DEFAULT_PORT: u16 = 5050;
 const READY_TIMEOUT: Duration = Duration::from_secs(180);
 
 fn main() {
+    // Shared handle to the sidecar child so the exit handler can kill it.
+    // Otherwise the frozen kato process keeps running on port 5050 and the NEXT
+    // launch connects to that STALE sidecar (serving the OLD UI bundle) instead
+    // of spawning a fresh one — the "rebuilt app still shows the old UI" bug.
+    let sidecar: std::sync::Arc<
+        std::sync::Mutex<Option<tauri_plugin_shell::process::CommandChild>>,
+    > = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let sidecar_setup = sidecar.clone();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .setup(|app| {
+        .setup(move |app| {
             let app_handle = app.handle().clone();
+
+            // Kill any LEFTOVER kato-sidecar (from a prior crash / force-quit
+            // that skipped the exit handler) BEFORE spawning ours, so this
+            // launch's sidecar owns the port and serves THIS bundle — not a
+            // stale process's old one. Runs before our own spawn, so it only
+            // hits stragglers. Best-effort; a no-op on Windows.
+            #[cfg(not(windows))]
+            {
+                let _ = std::process::Command::new("/usr/bin/pkill")
+                    .args(["-9", "-f", "kato-sidecar"])
+                    .status();
+            }
 
             // 1) Spawn the frozen kato sidecar with no args — its entry
             // (kato_sidecar.py) loads ~/.kato/settings.json into the env and
@@ -49,19 +70,35 @@ fn main() {
             // PATH: a Finder/Dock-launched app inherits a minimal PATH (it does
             // NOT load your shell profile), so it would fail to find git /
             // docker / the agent CLI. We prepend the usual tool locations.
-            let (mut rx, _child) = app
+            let (mut rx, child) = app
                 .shell()
                 .sidecar("kato-sidecar")
                 .expect("kato-sidecar was not bundled (run `npm run sidecar`)")
                 .env("PATH", augmented_path())
                 .spawn()
                 .expect("failed to spawn kato sidecar");
+            // Hold the child so the RunEvent::Exit handler can kill it on quit.
+            if let Ok(mut guard) = sidecar_setup.lock() {
+                *guard = Some(child);
+            }
 
             // 2) Pipe sidecar output to this console AND onto the splash window,
             // so a slow first boot (agent-CLI validation can take ~a minute)
             // reads as live progress instead of a frozen spinner.
             let log_handle = app.handle().clone();
+            // Tee the sidecar output to ~/.kato/kato-desktop.log so a FINDER
+            // launch failure (whose stdout goes to /dev/null) is diagnosable —
+            // truncated each launch so it holds only the latest boot.
+            let mut boot_log = std::env::var("HOME").ok().and_then(|home| {
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(format!("{home}/.kato/kato-desktop.log"))
+                    .ok()
+            });
             tauri::async_runtime::spawn(async move {
+                use std::io::Write;
                 while let Some(event) = rx.recv().await {
                     let line = match event {
                         CommandEvent::Stdout(bytes) | CommandEvent::Stderr(bytes) => {
@@ -70,6 +107,10 @@ fn main() {
                         _ => continue,
                     };
                     print!("[kato] {line}");
+                    if let Some(file) = boot_log.as_mut() {
+                        let _ = file.write_all(line.as_bytes());
+                        let _ = file.flush();
+                    }
                     let trimmed = line.trim();
                     if !trimmed.is_empty() {
                         // Best-effort: the splash listens for "kato-log" and shows
@@ -90,7 +131,17 @@ fn main() {
                     // Loopback HTTP. If you run Kato's webserver with its
                     // self-signed HTTPS, either disable TLS for the desktop
                     // loopback case or add cert-pinning here (see README).
-                    let url = format!("http://{HOST}:{port}");
+                    //
+                    // Cache-bust the index: WKWebView keeps a PERSISTENT cache
+                    // keyed on the app identifier, so after an app update it can
+                    // serve the STALE index (→ old app.js/app.css) and the new
+                    // UI never appears. A per-launch nonce forces a fresh index
+                    // fetch; kato's own ?v=<mtime> on the bundles does the rest.
+                    let nonce = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis())
+                        .unwrap_or(0);
+                    let url = format!("http://{HOST}:{port}/?_={nonce}");
                     if let Some(win) = app_handle.get_webview_window("main") {
                         let _ = win.navigate(url.parse().expect("invalid url"));
                     }
@@ -101,8 +152,20 @@ fn main() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Kato desktop");
+        .build(tauri::generate_context!())
+        .expect("error while building Kato desktop")
+        .run(move |_app_handle, event| {
+            // Kill the sidecar when the app exits so it never lingers on the
+            // port for the next launch to collide with (which would make the
+            // next launch serve this stale process's OLD bundle).
+            if let tauri::RunEvent::Exit = event {
+                if let Ok(mut guard) = sidecar.lock() {
+                    if let Some(child) = guard.take() {
+                        let _ = child.kill();
+                    }
+                }
+            }
+        });
 }
 
 /// Ask the user's LOGIN shell for its real PATH.

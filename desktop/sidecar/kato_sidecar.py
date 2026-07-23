@@ -84,6 +84,9 @@ def _wire_desktop_defaults() -> None:
     """
     os.environ.setdefault("KATO_WEBSERVER_HTTPS", "0")
     os.environ.setdefault("KATO_OPEN_BROWSER", "0")
+    # Full hydra tracebacks (not just the "set HYDRA_FULL_ERROR=1" footer) so a
+    # boot failure is fully diagnosable in the desktop log, not a one-liner.
+    os.environ.setdefault("HYDRA_FULL_ERROR", "1")
 
 
 def _prepare_working_dir() -> list[str]:
@@ -105,7 +108,11 @@ def _prepare_working_dir() -> list[str]:
             break
         except Exception:
             continue
-    run_dir = Path(tempfile.gettempdir()) / "kato-desktop-hydra"
+    # UNIQUE per-launch run dir (mkdtemp) so two sidecars — e.g. a leftover from
+    # a crash/force-quit overlapping a fresh launch — never collide on the same
+    # hydra output dir (that collision surfaced as a hydra boot error).
+    # output_subdir=null skips the ``.hydra`` config dump.
+    run_dir = tempfile.mkdtemp(prefix="kato-desktop-hydra-")
     return [f"hydra.run.dir={run_dir}", "hydra.output_subdir=null"]
 
 
