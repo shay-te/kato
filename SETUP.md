@@ -87,7 +87,7 @@ Pick the runtime that matches your `KATO_AGENT_BACKEND`:
 | `claude` | `make run` | `python scripts\run_local.py` | Same as `compose-up` for the Claude backend — alias for muscle memory. |
 | `openhands` | `make compose-up-docker` | `docker compose --profile openhands up --build` | Brings up kato + OpenHands containers via `docker compose`. |
 
-The first scan tick fires after a short delay (default 5s, configurable via `OPENHANDS_TASK_SCAN_STARTUP_DELAY_SECONDS`). After that kato scans every 60s.
+The first scan tick fires as soon as kato has finished starting up. After that kato scans every 60s.
 
 ---
 

@@ -16,59 +16,182 @@
       .logo {
         width: 96px; height: 96px; object-fit: contain;
         display: block; margin: 0 auto 18px; border-radius: 22px;
+        animation: breathe 2.4s ease-in-out infinite;
+      }
+      /* A slow pulse on the logo so the very first moment (before the bar has
+         anything to show) already reads as "alive", not frozen. */
+      @keyframes breathe {
+        0%, 100% { transform: scale(1); opacity: 1; }
+        50% { transform: scale(1.04); opacity: 0.92; }
       }
       .name { font-size: 28px; font-weight: 600; letter-spacing: 0.5px; }
-      .sub { margin-top: 10px; opacity: 0.6; font-size: 14px; min-height: 18px; }
+      .sub {
+        margin-top: 10px; opacity: 0.6; font-size: 14px; min-height: 18px;
+        transition: opacity 0.3s ease;
+      }
+      .sub.swap { opacity: 0; }
       .progress {
+        position: relative;
         margin: 24px auto 0; width: 100%; height: 4px;
         background: rgba(255, 255, 255, 0.12);
         border-radius: 999px; overflow: hidden;
       }
       .progress-fill {
-        height: 100%; width: 6%;
-        background: rgba(255, 255, 255, 0.78);
-        border-radius: 999px; transition: width 0.5s ease;
+        position: relative;
+        height: 100%; width: 4%;
+        background: rgba(255, 255, 255, 0.82);
+        border-radius: 999px;
+        /* Short transition so the frequent small trickle steps blend into one
+           continuous glide instead of visible hops. */
+        transition: width 0.35s cubic-bezier(0.25, 0.8, 0.35, 1);
+      }
+      /* A travelling sheen over the filled portion — motion even when the
+         width itself is momentarily static (e.g. a long silent import). */
+      .progress-fill::after {
+        content: ""; position: absolute; inset: 0;
+        background: linear-gradient(
+          90deg,
+          transparent 0%,
+          rgba(255, 255, 255, 0.55) 50%,
+          transparent 100%
+        );
+        transform: translateX(-100%);
+        animation: sheen 1.6s ease-in-out infinite;
+      }
+      @keyframes sheen {
+        0% { transform: translateX(-100%); }
+        100% { transform: translateX(300%); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .logo { animation: none; }
+        .progress-fill::after { animation: none; }
       }
     </style>
   </head>
   <body>
     <!-- Shown instantly on launch; main.rs navigates this window to the local
-         Kato UI once the bundled sidecar's webserver is accepting connections. -->
+         Kato UI once the bundled sidecar's webserver is accepting connections.
+
+         The sidecar's frozen-Python import produces NO log output for its first
+         ~10-18s, so a purely log-driven bar would sit frozen through the
+         longest phase. Instead the bar TRICKLES on a time curve (always moving,
+         decelerating toward a ceiling it never reaches on its own) and the
+         label rotates through reassuring stages; real boot-log lines then snap
+         both forward to the true milestone. Same wall-clock, but it reads as
+         continuous progress instead of a stall. -->
     <div class="wrap">
       <img class="logo" src="logo.png" alt="Kato" />
       <div class="name">Kato</div>
-      <div class="sub">Starting the local server</div>
+      <div class="sub" id="sub">Starting Kato</div>
       <div class="progress"><div class="progress-fill" id="progress-fill"></div></div>
     </div>
     <script>
-      // main.rs emits a "kato-log" event per boot line; we map it to a friendly
-      // step label and advance a progress bar. No text animation — the bar is
-      // the progress indicator. The Tauri event API is exposed on
-      // window.__TAURI__ via app.withGlobalTauri in tauri.conf.json.
       (function () {
-        var sub = document.querySelector('.sub');
+        var sub = document.getElementById('sub');
         var fill = document.getElementById('progress-fill');
-        if (!sub) { return; }
+        if (!sub || !fill) { return; }
 
-        // kato boot-log line → [label, progress %], ordered by boot sequence.
-        var STEPS = [
-          [/security posture|Action Guard/i, 'Initializing', 12],
-          [/agent backend/i, 'Starting up', 18],
-          [/Validating connection.*repositor/i, 'Checking repositories', 28],
-          [/Validating connection.*youtrack/i, 'Connecting to YouTrack', 36],
-          [/Validating connection.*jira/i, 'Connecting to Jira', 36],
-          [/Validating connection.*bitbucket/i, 'Connecting to Bitbucket', 40],
-          [/Validating connection.*(github|gitlab)/i, 'Connecting to your repos', 40],
-          [/Validating connection.*claude/i, 'Connecting to Claude', 48],
-          [/model access validation/i, 'Validating Claude access', 62],
-          [/Starting kato agent/i, 'Starting the agent', 74],
-          [/session id|known Claude session/i, 'Loading sessions', 80],
-          [/workspace|in review|assigned/i, 'Loading tasks', 84],
-          [/warm|Waiting .* before scanning|scan loop/i, 'Warming up', 90],
-          [/webserver|Serving Flask|healthz|listening/i, 'Loading interface', 96],
+        // --- The boot as ONE ordered sequence of fine-grained steps, each with
+        // a target %. A ticker advances through it continuously (~1/sec) so the
+        // label changes on every small step and the bar always moves — even
+        // through the sidecar's long silent import. Real boot-log lines don't
+        // drive the label directly; they only ACCELERATE the pointer forward
+        // (map a log line to a step index and jump ahead if we're behind), so
+        // real progress pulls the sequence along without ever regressing it.
+        var SEQ = [
+          'Starting Kato',
+          'Loading runtime',
+          'Unpacking components',
+          'Loading modules',
+          'Initializing engine',
+          'Reading settings',
+          'Applying security posture',
+          'Checking permissions',
+          'Starting services',
+          'Resolving repositories',       // idx 9  ~ repositories log
+          'Connecting to your tracker',   // idx 10 ~ youtrack/jira/etc
+          'Connecting to code host',      // idx 11 ~ bitbucket/github/gitlab
+          'Connecting to Claude',         // idx 12 ~ claude
+          'Validating Claude access',     // idx 13 ~ model access validation
+          'Starting the agent',           // idx 14 ~ Starting kato agent
+          'Loading sessions',             // idx 15 ~ session ids
+          'Loading tasks',                // idx 16 ~ workspaces / assigned
+          'Reconciling workspaces',
+          'Warming up',                   // idx 18 ~ scan / warm
+          'Loading interface',            // idx 19 ~ webserver listening
         ];
+        // A log line matching a regex jumps the pointer to AT LEAST this index.
+        var LOG_TO_IDX = [
+          [/security posture|Action Guard/i, 6],
+          [/agent backend/i, 8],
+          [/Validating connection.*repositor/i, 9],
+          [/Validating connection.*(youtrack|jira)/i, 10],
+          [/Validating connection.*(bitbucket|github|gitlab)/i, 11],
+          [/Validating connection.*claude/i, 12],
+          [/model access validation/i, 13],
+          [/Starting kato agent/i, 14],
+          [/session id|known Claude session/i, 15],
+          [/workspace|in review|assigned/i, 16],
+          [/realign|reconcil|orphan/i, 17],
+          [/warm|Waiting .* before scanning|scan loop|fully started/i, 18],
+          [/webserver|Serving Flask|healthz|listening/i, 19],
+        ];
+        // Each step's target % (last step ~99; finish() drives it to 100).
+        function pctFor(i) { return 6 + (93 * i) / (SEQ.length - 1); }
 
-        var maxPct = 6;  // keep the bar monotonic (never jumps backward)
+        var idx = 0;                 // current step pointer
+        var pct = 4;                 // displayed %
+        var done = false;
+
+        function setLabel(text) {
+          if (sub.textContent === text) { return; }
+          sub.classList.add('swap');
+          setTimeout(function () {
+            sub.textContent = text;
+            sub.classList.remove('swap');
+          }, 140);
+        }
+
+        function showStep() {
+          setLabel(SEQ[idx]);
+          if (idx >= SEQ.length - 1) { finish(); }
+        }
+
+        // Bar trickle — every 120ms glide toward the current step's target %,
+        // so movement is continuous between the ~1s label changes.
+        var bar = setInterval(function () {
+          if (done) { return; }
+          var target = pctFor(idx);
+          if (pct < target) {
+            pct += (target - pct) * 0.18;   // ease toward the step target
+            fill.style.width = pct.toFixed(1) + '%';
+          }
+        }, 120);
+
+        // Label ticker — advance one small step per second so the text is
+        // always changing. Stops one short of the end; the final step only
+        // shows when boot actually reaches it (a real log or finish()).
+        var ticker = setInterval(function () {
+          if (done) { return; }
+          if (idx < SEQ.length - 2) { idx += 1; showStep(); }
+        }, 1000);
+
+        function jumpTo(i) {
+          if (i > idx) { idx = Math.min(i, SEQ.length - 1); showStep(); }
+        }
+
+        function finish() {
+          if (done) { return; }
+          done = true;
+          clearInterval(bar);
+          clearInterval(ticker);
+          idx = SEQ.length - 1;
+          setLabel(SEQ[idx]);
+          pct = 100;
+          fill.style.width = '100%';
+        }
+
+        setLabel(SEQ[0]);
 
         var api = window.__TAURI__;
         if (!api || !api.event) { return; }
@@ -79,16 +202,12 @@
           // Specific patterns so a benign "errored state from a previous run"
           // note doesn't trip it.
           if (/traceback|errno|read-only file system|failed to execute script|error executing job|hydra_full_error/i.test(line)) {
-            sub.textContent = line;
+            clearInterval(ticker);
+            setLabel(line);
             return;
           }
-          for (var i = 0; i < STEPS.length; i++) {
-            if (STEPS[i][0].test(line)) {
-              sub.textContent = STEPS[i][1];
-              var pct = STEPS[i][2];
-              if (fill && pct > maxPct) { maxPct = pct; fill.style.width = pct + '%'; }
-              return;
-            }
+          for (var i = 0; i < LOG_TO_IDX.length; i++) {
+            if (LOG_TO_IDX[i][0].test(line)) { jumpTo(LOG_TO_IDX[i][1]); return; }
           }
         });
       })();

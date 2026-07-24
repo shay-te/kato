@@ -481,10 +481,6 @@ SETTINGS_SCHEMA: list[dict] = [
             ('OPENHANDS_MAX_POLL_ATTEMPTS', 'number', 'Max poll attempts',
              'Maximum number of status polls before kato declares '
              'the task timed out.', {}),
-            ('OPENHANDS_TASK_SCAN_STARTUP_DELAY_SECONDS', 'number',
-             'Scan startup delay (s)',
-             'Seconds kato waits after boot before the first task '
-             'scan, giving services time to initialise.', {}),
             ('OPENHANDS_TASK_SCAN_INTERVAL_SECONDS', 'number',
              'Scan interval (s)',
              'How often the OpenHands task-scan loop checks for new '

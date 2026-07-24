@@ -179,7 +179,6 @@ kato:
     # restarting kato. Empty falls back to ``KATO_WORKSPACES_ROOT/lessons.md``.
     lessons_path: ${oc.env:KATO_LESSONS_PATH,""}
   task_scan:
-    startup_delay_seconds: ${oc.decode:${oc.env:OPENHANDS_TASK_SCAN_STARTUP_DELAY_SECONDS,"5"}}
     # 180s (3 min) is the sweet spot for the autonomous scan: slow
     # enough that the per-(task × repo) PR-lookups don't trip
     # Bitbucket/GitHub/GitLab per-IP rate windows (the 30s default

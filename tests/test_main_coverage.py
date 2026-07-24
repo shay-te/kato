@@ -717,18 +717,16 @@ class TaskScanSettingsTests(unittest.TestCase):
         cfg = SimpleNamespace(kato=SimpleNamespace(
             get=lambda key, default=None: default,
         ))
-        startup, scan = main_module._task_scan_settings(cfg)
-        self.assertEqual(startup, 5.0)
+        scan = main_module._task_scan_settings(cfg)
         self.assertEqual(scan, 180.0)
 
     def test_reads_settings_from_config(self) -> None:
         cfg = SimpleNamespace(kato=SimpleNamespace(
             get=lambda key, default=None:
-                {'startup_delay_seconds': 10, 'scan_interval_seconds': 60}
+                {'scan_interval_seconds': 60}
                 if key == 'task_scan' else default,
         ))
-        startup, scan = main_module._task_scan_settings(cfg)
-        self.assertEqual(startup, 10.0)
+        scan = main_module._task_scan_settings(cfg)
         self.assertEqual(scan, 60.0)
 
 
@@ -748,31 +746,11 @@ class RunTaskScanLoopTests(unittest.TestCase):
             job_cls.return_value = job
             main_module._run_task_scan_loop(
                 app,
-                startup_delay_seconds=0,
                 scan_interval_seconds=0.01,
                 sleep_fn=lambda _s: None,
                 max_cycles=2,
             )
         self.assertEqual(job.run.call_count, 2)
-
-    def test_logs_warmup_message_for_non_tty(self) -> None:
-        # Lines 674-679: non-TTY → plain log + sleep.
-        app = MagicMock()
-        app.logger = MagicMock()
-        sleeper = MagicMock()
-        with patch.object(main_module, 'ProcessAssignedTasksJob') as job_cls, \
-             patch.object(main_module, 'supports_inline_status',
-                          return_value=False):
-            job_cls.return_value = MagicMock()
-            main_module._run_task_scan_loop(
-                app,
-                startup_delay_seconds=2.0,
-                scan_interval_seconds=0.01,
-                sleep_fn=sleeper,
-                max_cycles=1,
-            )
-        # The warmup sleep was issued.
-        self.assertTrue(sleeper.called)
 
     def test_swallows_job_run_exception(self) -> None:
         # Lines 690-694: scan failure → warn + continue.
@@ -784,7 +762,6 @@ class RunTaskScanLoopTests(unittest.TestCase):
             job_cls.return_value = job
             main_module._run_task_scan_loop(
                 app,
-                startup_delay_seconds=0,
                 scan_interval_seconds=0.01,
                 sleep_fn=lambda _s: None,
                 max_cycles=1,
@@ -802,7 +779,6 @@ class RunTaskScanLoopTests(unittest.TestCase):
             job_cls.return_value = job
             main_module._run_task_scan_loop(
                 app,
-                startup_delay_seconds=0,
                 scan_interval_seconds=0,
                 sleep_fn=lambda _s: None,
                 max_cycles=5,  # ignored — guard short-circuits
@@ -856,27 +832,6 @@ class IdleWithHeartbeatTests(unittest.TestCase):
                 heartbeat_seconds=1.0, force_scan_event=event,
             )
         event.wait.assert_called()
-
-
-class FormattedDurationTextTests(unittest.TestCase):
-    def test_singular_second(self) -> None:
-        self.assertEqual(
-            main_module._formatted_duration_text(1.0),
-            '1 second',
-        )
-
-    def test_plural_seconds(self) -> None:
-        self.assertEqual(
-            main_module._formatted_duration_text(5.0),
-            '5 seconds',
-        )
-
-    def test_fractional_seconds(self) -> None:
-        # Line 774.
-        self.assertEqual(
-            main_module._formatted_duration_text(2.5),
-            '2.5 seconds',
-        )
 
 
 class MainBodyTests(unittest.TestCase):
@@ -1473,7 +1428,6 @@ class ScanLoopExitConditionTests(unittest.TestCase):
             job_cls.return_value = MagicMock()
             main_module._run_task_scan_loop(
                 app,
-                startup_delay_seconds=0,
                 scan_interval_seconds=0.01,
                 sleep_fn=lambda _s: None,
                 max_cycles=1,
@@ -1774,26 +1728,23 @@ class UiFirstBootTests(unittest.TestCase):
         main_module._wait_for_boot_ready(ready, poll_seconds=0.01)
 
     def test_scan_loop_waits_for_ready_event_before_first_scan(self) -> None:
-        # With a pre-set ready_event the loop skips the startup delay and scans.
+        # With a pre-set ready_event the loop proceeds straight to the first
+        # scan (the ready_event is what gates it now).
         app = MagicMock()
         app.logger = MagicMock()
         ready = threading.Event()
         ready.set()
-        with patch.object(main_module, 'ProcessAssignedTasksJob') as job_cls, \
-             patch.object(main_module, 'sleep_with_warmup_countdown') as warmup:
+        with patch.object(main_module, 'ProcessAssignedTasksJob') as job_cls:
             job = MagicMock()
             job_cls.return_value = job
             main_module._run_task_scan_loop(
                 app,
-                startup_delay_seconds=999,  # would hang if not skipped
                 scan_interval_seconds=0.01,
                 sleep_fn=lambda _s: None,
                 max_cycles=1,
                 ready_event=ready,
             )
         job.run.assert_called_once_with()
-        # ready_event path skips the startup warm-up delay entirely.
-        warmup.assert_not_called()
 
 
 class DeferValidationTests(unittest.TestCase):

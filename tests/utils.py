@@ -225,7 +225,6 @@ def build_test_cfg() -> DictConfig:
                     'testing_llm_base_url': '',
                 },
                 'task_scan': {
-                    'startup_delay_seconds': 30,
                     'scan_interval_seconds': 60,
                 },
                 'repository': {

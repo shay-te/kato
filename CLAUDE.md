@@ -185,7 +185,6 @@ scan → get_new_pull_request_comments() on PRs in "In Review"
 ```yaml
 kato:
   task_scan:
-    startup_delay_seconds: 5    # default
     scan_interval_seconds: 180  # default (3 min — a 30s cadence tripped provider rate limits)
 ```
 

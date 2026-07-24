@@ -79,10 +79,6 @@ class DeploymentFilesTests(unittest.TestCase):
             compose_text,
         )
         self.assertIn(
-            'OPENHANDS_TASK_SCAN_STARTUP_DELAY_SECONDS: ${OPENHANDS_TASK_SCAN_STARTUP_DELAY_SECONDS:-30}',
-            compose_text,
-        )
-        self.assertIn(
             'OPENHANDS_TASK_SCAN_INTERVAL_SECONDS: ${OPENHANDS_TASK_SCAN_INTERVAL_SECONDS:-60}',
             compose_text,
         )
@@ -302,7 +298,6 @@ class DeploymentFilesTests(unittest.TestCase):
         self.assertIn('OPENHANDS_TESTING_LLM_BASE_URL=', env_example_text)
         self.assertIn('OPENHANDS_POLL_INTERVAL_SECONDS=', env_example_text)
         self.assertIn('OPENHANDS_MAX_POLL_ATTEMPTS=', env_example_text)
-        self.assertIn('OPENHANDS_TASK_SCAN_STARTUP_DELAY_SECONDS=', env_example_text)
         self.assertIn('OPENHANDS_TASK_SCAN_INTERVAL_SECONDS=', env_example_text)
         self.assertIn('OPENHANDS_LOG_LEVEL=', env_example_text)
         self.assertIn('OH_SECRET_KEY=', env_example_text)

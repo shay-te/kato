@@ -239,7 +239,7 @@ That separation matters because the service flow should read like the real agent
 2. Environment validation runs before the application is built. Missing required values fail fast.
 3. `KatoCoreLib` builds the active issue-platform client, repository service, OpenHands implementation service, OpenHands testing service, notification service, task publisher, preflight service, and review-comment service.
 4. Startup dependency validation checks repository connections, the active issue-platform connection, the main OpenHands connection, and the testing OpenHands connection unless `OPENHANDS_SKIP_TESTING=true`.
-5. After startup succeeds, the job loop waits for `OPENHANDS_TASK_SCAN_STARTUP_DELAY_SECONDS`.
+5. After startup succeeds, the job loop begins scanning immediately (the UI is already served; no artificial startup delay).
 6. Each loop cycle runs task processing first and review-comment processing second.
 7. If a cycle fails, the error is logged and the loop retries after `OPENHANDS_TASK_SCAN_INTERVAL_SECONDS`.
 

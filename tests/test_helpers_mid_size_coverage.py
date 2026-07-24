@@ -628,40 +628,6 @@ class ShellStatusUtilsTests(unittest.TestCase):
         # The explicit countdown value appears in the spinner output.
         self.assertIn('42', tty.getvalue())
 
-    def test_sleep_with_warmup_countdown_short_circuits(self) -> None:
-        # Line 95: ``if total_seconds <= 0: return``.
-        from kato_core_lib.helpers.shell_status_utils import (
-            sleep_with_warmup_countdown,
-        )
-        sleeper = MagicMock()
-        sleep_with_warmup_countdown(0, sleep_fn=sleeper)
-        sleeper.assert_not_called()
-
-    def test_sleep_with_warmup_countdown_non_tty(self) -> None:
-        # Lines 97-100: non-TTY → plain sleep.
-        from kato_core_lib.helpers.shell_status_utils import (
-            sleep_with_warmup_countdown,
-        )
-        sleeper = MagicMock()
-        non_tty = io.StringIO()
-        sleep_with_warmup_countdown(1.0, sleep_fn=sleeper, stream=non_tty)
-        sleeper.assert_called_once_with(1.0)
-
-    def test_sleep_with_warmup_countdown_renders_seconds_label(self) -> None:
-        # Lines 102-122: the spinner. Hits both singular (1 second)
-        # and plural (>1 second) branches by spanning ~1.5 → 0.
-        from kato_core_lib.helpers.shell_status_utils import (
-            sleep_with_warmup_countdown,
-        )
-        tty = _TtyStream()
-        sleep_with_warmup_countdown(
-            1.5, sleep_fn=lambda _s: None, stream=tty,
-        )
-        out = tty.getvalue()
-        self.assertIn('Waiting', out)
-        self.assertIn('Kato', out)
-
-
 # --------------------------------------------------------------------------
 # lessons_data_access — read/write fail-safes + path validation
 # --------------------------------------------------------------------------

@@ -77,29 +77,6 @@ def sleep_with_countdown_spinner(
     )
 
 
-def sleep_with_warmup_countdown(
-    total_seconds: float,
-    *,
-    sleep_fn=time.sleep,
-    stream=None,
-) -> None:
-    def render(frame, remaining_seconds, frame_index):
-        countdown_seconds = max(1, int(ceil(remaining_seconds)))
-        seconds_label = 'second' if countdown_seconds == 1 else 'seconds'
-        return (
-            f'Waiting {countdown_seconds} {seconds_label} for Kato to warm up '
-            f'before scanning tasks {frame}'
-        )
-
-    _sleep_with_inline_spinner(
-        total_seconds,
-        render_frame=render,
-        clear_text='Waiting 999 seconds for Kato to warm up before scanning tasks /',
-        sleep_fn=sleep_fn,
-        stream=stream,
-    )
-
-
 def supports_inline_status(stream=None) -> bool:
     output_stream = sys.stderr if stream is None else stream
     isatty = getattr(output_stream, 'isatty', None)

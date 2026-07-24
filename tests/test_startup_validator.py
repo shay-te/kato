@@ -143,7 +143,11 @@ class StartupDependencyValidatorTests(unittest.TestCase):
             ],
         )
 
-    def test_validate_uses_agent_backend_label_for_implementation_steps(self) -> None:
+    def test_validate_uses_agent_backend_label_and_skips_redundant_claude_testing(self) -> None:
+        # Claude's testing client is the SAME local CLI as the implementation
+        # client, so the ``claude_testing`` probe is redundant and skipped even
+        # with skip_testing=False — leaving 3 steps, not 4. The implementation
+        # step still carries the backend label ('claude', not 'openhands').
         validator = StartupDependencyValidator(
             self.repository_connections_validator,
             self.task_service,
@@ -160,12 +164,48 @@ class StartupDependencyValidatorTests(unittest.TestCase):
             [
                 unittest.mock.call(
                     '%s',
-                    'Validating connection (1/4): repositories (client, backend)',
+                    'Validating connection (1/3): repositories (client, backend)',
                 ),
-                unittest.mock.call('%s', 'Validating connection (2/4): youtrack'),
-                unittest.mock.call('%s', 'Validating connection (3/4): claude'),
-                unittest.mock.call('%s', 'Validating connection (4/4): claude_testing'),
+                unittest.mock.call('%s', 'Validating connection (2/3): youtrack'),
+                unittest.mock.call('%s', 'Validating connection (3/3): claude'),
             ],
+        )
+        # The redundant duplicate probe never ran.
+        self.testing_service.validate_connection.assert_not_called()
+
+    def test_validate_skips_redundant_testing_for_codex_backend(self) -> None:
+        # Codex is also a single-binary local CLI — same skip as Claude.
+        validator = StartupDependencyValidator(
+            self.repository_connections_validator,
+            self.task_service,
+            self.implementation_service,
+            self.testing_service,
+            skip_testing=False,
+            agent_backend='codex',
+        )
+
+        validator.validate(self.logger)
+
+        self.testing_service.validate_connection.assert_not_called()
+        self.logger.info.assert_any_call('%s', 'Validating connection (3/3): codex')
+
+    def test_validate_keeps_testing_step_for_openhands_backend(self) -> None:
+        # OpenHands has a SEPARATE testing endpoint/container, so its testing
+        # probe is NOT redundant and must still run.
+        validator = StartupDependencyValidator(
+            self.repository_connections_validator,
+            self.task_service,
+            self.implementation_service,
+            self.testing_service,
+            skip_testing=False,
+            agent_backend='openhands',
+        )
+
+        validator.validate(self.logger)
+
+        self.testing_service.validate_connection.assert_called_once_with()
+        self.logger.info.assert_any_call(
+            '%s', 'Validating connection (4/4): openhands_testing',
         )
 
     def test_validate_surfaces_claude_binary_missing_with_backend_label(self) -> None:

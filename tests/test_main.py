@@ -69,7 +69,6 @@ class MainTests(unittest.TestCase):
         # no scan runs until connections are validated + reconciliation is done.
         mock_run_loop.assert_called_once_with(
             app,
-            startup_delay_seconds=30.0,
             scan_interval_seconds=60.0,
             force_scan_event=ANY,
             ready_event=ANY,
@@ -96,7 +95,10 @@ class MainTests(unittest.TestCase):
 
         self.assertIs(app.logger, configured_logger)
 
-    def test_run_task_scan_loop_waits_before_first_scan_and_sleeps_between_cycles(self) -> None:
+    def test_run_task_scan_loop_scans_immediately_and_sleeps_between_cycles(self) -> None:
+        # The vestigial OpenHands warm-up delay is gone: the first scan fires
+        # right away (the UI is already served), and the only sleeps are the
+        # heartbeat chunks between ticks.
         app = types.SimpleNamespace(logger=Mock())
         job = Mock()
         job.run.side_effect = [None, None]
@@ -107,7 +109,6 @@ class MainTests(unittest.TestCase):
         ), patch('kato_core_lib.main.time.sleep') as mock_sleep:
             _run_task_scan_loop(
                 app,
-                startup_delay_seconds=30.0,
                 scan_interval_seconds=60.0,
                 sleep_fn=mock_sleep,
                 max_cycles=2,
@@ -116,46 +117,13 @@ class MainTests(unittest.TestCase):
         mock_job_cls.assert_called_once_with()
         job.initialized.assert_called_once_with(app)
         self.assertEqual(job.run.call_count, 2)
-        # The first sleep is the 30s startup delay. After each scan tick
-        # the loop divides the 60s scan interval into 5s heartbeat chunks
-        # (so the planning UI status bar gets a live countdown). Total
-        # sleep between ticks must still sum to 60s.
+        # No startup sleep — all sleeps are the between-tick heartbeat chunks
+        # (the 60s interval split into 5s chunks) for the single inter-cycle gap.
         sleep_durations = [call_obj.args[0] for call_obj in mock_sleep.call_args_list]
-        self.assertEqual(sleep_durations[0], 30.0)
-        between_ticks = sleep_durations[1:]
-        # 12 chunks of 5s = 60s total. Allow either-or since the loop
-        # may emit slightly fewer chunks if the deadline elapses early.
-        self.assertAlmostEqual(sum(between_ticks), 60.0, delta=5.0)
-        app.logger.info.assert_any_call(
-            'Waiting %s before scanning tasks while Kato warms up',
-            '30 seconds',
-        )
-
-    def test_run_task_scan_loop_uses_warmup_countdown_when_inline_status_is_supported(self) -> None:
-        app = types.SimpleNamespace(logger=Mock())
-        job = Mock()
-        job.run.side_effect = [None]
-
-        with patch('kato_core_lib.main.ProcessAssignedTasksJob', return_value=job), patch(
-            'kato_core_lib.main.supports_inline_status',
-            return_value=True,
-        ), patch(
-            'kato_core_lib.main.sleep_with_warmup_countdown'
-        ) as mock_warmup_countdown:
-            _run_task_scan_loop(
-                app,
-                startup_delay_seconds=30.0,
-                # Any positive value keeps the loop running — ``<=0``
-                # is the manual-only sentinel that short-circuits.
-                scan_interval_seconds=0.01,
-                max_cycles=1,
-            )
-
-        mock_warmup_countdown.assert_called_once_with(30.0, sleep_fn=unittest.mock.ANY)
-        # Each scan tick now logs the start/end so the planning UI status
-        # bar reflects what kato is doing in real time.
-        app.logger.info.assert_any_call('Scanning for new tasks and reviews')
-        app.logger.info.assert_any_call('Scan complete')
+        self.assertAlmostEqual(sum(sleep_durations), 60.0, delta=5.0)
+        # The old "while Kato warms up" line must be gone.
+        for call_obj in app.logger.info.call_args_list:
+            self.assertNotIn('warms up', str(call_obj))
 
     def test_run_task_scan_loop_continues_after_failure(self) -> None:
         app = types.SimpleNamespace(logger=Mock())
@@ -167,7 +135,6 @@ class MainTests(unittest.TestCase):
         ) as mock_sleep:
             _run_task_scan_loop(
                 app,
-                startup_delay_seconds=0.0,
                 scan_interval_seconds=60.0,
                 sleep_fn=mock_sleep,
                 max_cycles=2,

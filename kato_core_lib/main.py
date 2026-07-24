@@ -15,7 +15,6 @@ from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.shell_status_utils import (
     sleep_with_countdown_spinner,
     supports_inline_status,
-    sleep_with_warmup_countdown,
 )
 from kato_core_lib.helpers.status_broadcaster_utils import (
     StatusBroadcaster,
@@ -223,10 +222,9 @@ def main(cfg: DictConfig) -> int:
         _mark_webserver_configured(app)
         _start_post_boot_workers(app)
         _register_shutdown_hook(app)
-        startup_delay_seconds, scan_interval_seconds = _task_scan_settings(cfg)
+        scan_interval_seconds = _task_scan_settings(cfg)
         _run_task_scan_loop(
             app,
-            startup_delay_seconds=startup_delay_seconds,
             scan_interval_seconds=scan_interval_seconds,
             force_scan_event=_FORCE_SCAN_EVENT,
         )
@@ -246,7 +244,7 @@ def main(cfg: DictConfig) -> int:
         name='kato-boot-finalize',
         daemon=True,
     ).start()
-    startup_delay_seconds, scan_interval_seconds = _task_scan_settings(cfg)
+    scan_interval_seconds = _task_scan_settings(cfg)
     # The scan loop waits on ``boot_ready_event`` before its first tick, so no
     # autonomous scan runs until connections are validated and reconciliation
     # is done. If validation never succeeds the event never fires: the main
@@ -255,7 +253,6 @@ def main(cfg: DictConfig) -> int:
     # replacement for the old fail-closed process exit.
     _run_task_scan_loop(
         app,
-        startup_delay_seconds=startup_delay_seconds,
         scan_interval_seconds=scan_interval_seconds,
         force_scan_event=_FORCE_SCAN_EVENT,
         ready_event=boot_ready_event,
@@ -1497,17 +1494,13 @@ def _start_comment_run_watcher(app) -> None:
         )
 
 
-def _task_scan_settings(cfg: DictConfig) -> tuple[float, float]:
+def _task_scan_settings(cfg: DictConfig) -> float:
     task_scan_cfg = cfg.kato.get('task_scan', {}) or {}
-    return (
-        float(task_scan_cfg.get('startup_delay_seconds', 5.0)),
-        # Default 180s (3 min) matches the yaml. Slow enough that
-        # parallel PR-lookups across (task × repo) don't trip
-        # Bitbucket / GitHub / GitLab rate limits; fast enough that
-        # review-comment pickup feels responsive. ``0`` disables the
-        # autonomous loop (operator must manually trigger scans).
-        float(task_scan_cfg.get('scan_interval_seconds', 180.0)),
-    )
+    # Default 180s (3 min) matches the yaml. Slow enough that parallel
+    # PR-lookups across (task × repo) don't trip Bitbucket / GitHub / GitLab
+    # rate limits; fast enough that review-comment pickup feels responsive.
+    # ``0`` disables the autonomous loop (operator must manually trigger scans).
+    return float(task_scan_cfg.get('scan_interval_seconds', 180.0))
 
 
 def _wait_for_boot_ready(
@@ -1523,7 +1516,6 @@ def _wait_for_boot_ready(
 def _run_task_scan_loop(
     app,
     *,
-    startup_delay_seconds: float,
     scan_interval_seconds: float,
     sleep_fn=time.sleep,
     max_cycles: int | None = None,
@@ -1560,21 +1552,8 @@ def _run_task_scan_loop(
         # UI-first boot: block until the background finalize (connection
         # validation + reconciliation) is done before the first scan. If it
         # never completes we park here indefinitely — the webserver keeps
-        # serving and the UI shows the validation error. Validation already
-        # served as the warm-up, so the startup delay below is skipped here.
+        # serving and the UI shows the validation error.
         _wait_for_boot_ready(ready_event)
-    elif startup_delay_seconds > 0:
-        if supports_inline_status():
-            sleep_with_warmup_countdown(
-                startup_delay_seconds,
-                sleep_fn=sleep_fn,
-            )
-        else:
-            app.logger.info(
-                'Waiting %s before scanning tasks while Kato warms up',
-                _formatted_duration_text(startup_delay_seconds),
-            )
-            sleep_fn(startup_delay_seconds)
 
     cycles = 0
     while True:
@@ -1660,15 +1639,6 @@ def _idle_with_heartbeat(
             else:
                 sleep_fn(chunk)
         remaining -= chunk
-
-
-def _formatted_duration_text(seconds: float) -> str:
-    normalized_seconds = float(seconds)
-    rounded_seconds = int(normalized_seconds)
-    if normalized_seconds == rounded_seconds:
-        seconds_label = 'second' if rounded_seconds == 1 else 'seconds'
-        return f'{rounded_seconds} {seconds_label}'
-    return f'{normalized_seconds:.1f} seconds'
 
 
 if __name__ == '__main__':

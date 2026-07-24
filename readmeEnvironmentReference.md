@@ -77,7 +77,6 @@ The list below catalogs every environment key kato reads (set them in the Settin
 | `KATO_WORKFLOW_LOG_LEVEL` | Log level for workflow-specific logs. |
 | `OPENHANDS_POLL_INTERVAL_SECONDS` | Delay between Kato conversation polling attempts. |
 | `OPENHANDS_MAX_POLL_ATTEMPTS` | Maximum number of times the agent waits for an Kato conversation result. |
-| `OPENHANDS_TASK_SCAN_STARTUP_DELAY_SECONDS` | Delay before the agent starts scanning for tasks after startup. |
 | `OPENHANDS_TASK_SCAN_INTERVAL_SECONDS` | Delay between task scan cycles. |
 | `KATO_FAILURE_EMAIL_ENABLED` | Enables failure notification emails. |
 | `KATO_FAILURE_EMAIL_TEMPLATE_ID` | Template id used for failure notification emails. |

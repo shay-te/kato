@@ -104,8 +104,22 @@ datas += _tree(REPO / "tools", "tools")        # kato shells to these
 datas += _tree(REPO / "scripts", "scripts")
 
 # --- Excludes: never-used stacks (+ the scanners when off).
+#
+# STARTUP COST: the frozen app's launch time is dominated by dlopen-ing +
+# code-signature-validating every bundled C-extension dylib (and, for the
+# one-file build, re-extracting them all each launch). PyInstaller's static
+# analysis greedily pulls in heavy transitive packages that kato NEVER imports
+# — django (+ its 14 MB admin static tree and a runtime hook that does
+# ``import django.utils.autoreload`` on EVERY startup), numpy, shapely, PIL,
+# psycopg2, pandas. Excluding them (verified unused: kato is a Flask app, grep
+# finds zero imports) trims ~60 MB and a big chunk of the pre-main startup time.
+# Any of these is still ImportError-safe to drop: kato's own code never imports
+# them, and the only consumers are optional/try-except paths in third-party deps
+# kato doesn't exercise. If a future dep genuinely needs one, remove it here.
 _excludes = ["tkinter", "matplotlib", "PyQt5", "PyQt6", "PySide2", "PySide6",
-             "pytest", "IPython", "notebook", "jupyter", "sphinx"]
+             "pytest", "IPython", "notebook", "jupyter", "sphinx",
+             "django", "numpy", "shapely", "PIL", "Pillow", "psycopg2",
+             "psycopg2-binary", "pandas"]
 if not INCLUDE_SECURITY_SCANNERS:
     _excludes += _SCANNERS
 

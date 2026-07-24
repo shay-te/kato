@@ -17,6 +17,18 @@ if TYPE_CHECKING:
     from kato_core_lib.data_layers.service.testing_service import TestingService
 
 
+# Backends whose "testing" agent client is the SAME local CLI as the
+# implementation client (Claude, Codex go through the shared ``_build_cli_agent``
+# with only the model smoke-test disabled). For these, the ``{backend}_testing``
+# validation step just re-runs the identical ``<cli> --version`` probe the
+# ``implementation`` step already ran — a redundant subprocess on the boot
+# validation path, so it is skipped. OpenHands is NOT in this set: its testing
+# client resolves a SEPARATE base_url/container (``resolved_openhands_base_url(
+# ..., testing=True)``), so its testing step validates a genuinely different
+# endpoint and must still run.
+_SINGLE_BINARY_BACKENDS = frozenset({'claude', 'codex'})
+
+
 @dataclass(frozen=True)
 class DependencyValidationStep(object):
     service_name: str
@@ -99,7 +111,11 @@ class StartupDependencyValidator(ValidationBase):
                 self._implementation_service.max_retries,
             ),
         ]
-        if not self._skip_testing:
+        # Skip the testing-connection probe when it would just re-validate the
+        # same local CLI the implementation step already checked (Claude/Codex);
+        # keep it for OpenHands, whose testing client hits a separate endpoint.
+        redundant_for_backend = self._agent_backend in _SINGLE_BINARY_BACKENDS
+        if not self._skip_testing and not redundant_for_backend:
             steps.append(
                 DependencyValidationStep(
                     f'{backend_label}_testing',
