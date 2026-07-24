@@ -26,8 +26,18 @@ INCLUDE_SECURITY_SCANNERS = False
 _SCANNERS = ["bandit", "safety", "detect_secrets"]
 
 # --- Hidden imports: the lazily-loaded provider/transport libs + dynamic frameworks.
+# NOTE: ``openhands_core_lib`` is intentionally NOT collected here. The OpenHands
+# backend runs the agent in a remote Docker container (docker-compose), which the
+# desktop app does not provide — and the Claude CLI client even refuses to run
+# inside Docker — so OpenHands is not a usable backend from the desktop bundle.
+# Collecting it dragged in its whole dependency tree (botocore, sqlalchemy,
+# redis, pymongo, neo4j, eventlet, moto, …), which dominated the frozen-app
+# startup time (every bundled C-extension dylib is dlopen'd + signature-checked
+# on launch). Dropping it — and excluding that tree below — is the single
+# biggest startup + size win. A desktop operator who sets KATO_AGENT_BACKEND=
+# openhands gets a clear ImportError; that config needs the docker-compose stack.
 _LAZY_LIBS = [
-    "claude_core_lib", "codex_core_lib", "openhands_core_lib",         # agent transports
+    "claude_core_lib", "codex_core_lib",                              # agent transports (CLI)
     "github_core_lib", "gitlab_core_lib", "bitbucket_core_lib",        # PR providers
     "youtrack_core_lib", "jira_core_lib",                             # task providers
     "agent_backend_core_lib", "agent_core_lib", "sandbox_core_lib",   # factories + bases
@@ -119,7 +129,14 @@ datas += _tree(REPO / "scripts", "scripts")
 _excludes = ["tkinter", "matplotlib", "PyQt5", "PyQt6", "PySide2", "PySide6",
              "pytest", "IPython", "notebook", "jupyter", "sphinx",
              "django", "numpy", "shapely", "PIL", "Pillow", "psycopg2",
-             "psycopg2-binary", "pandas"]
+             "psycopg2-binary", "pandas",
+             # The OpenHands backend + its heavy dependency tree — not usable
+             # from the desktop app (needs the docker-compose container stack),
+             # and grep-verified unused by the Claude/Codex path. This is the
+             # bulk of the frozen-startup cost. ``moto`` is a test-only AWS
+             # mock that PyInstaller was bundling into production.
+             "openhands_core_lib", "moto", "botocore", "boto3", "s3transfer",
+             "sqlalchemy", "alembic", "redis", "pymongo", "neo4j", "eventlet"]
 if not INCLUDE_SECURITY_SCANNERS:
     _excludes += _SCANNERS
 
