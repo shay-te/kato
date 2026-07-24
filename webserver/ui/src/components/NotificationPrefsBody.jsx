@@ -17,6 +17,7 @@ const KIND_LABELS = {
   [NOTIFICATION_KIND.ATTENTION]: 'Approval needed (chat / push)',
   [NOTIFICATION_KIND.ERROR]: 'Task failed / errored',
   [NOTIFICATION_KIND.REPLY]: 'Claude replied',
+  [NOTIFICATION_KIND.SOURCE_UPDATE]: 'Source update finished',
 };
 
 export default function NotificationPrefsBody({

@@ -94,6 +94,23 @@ const PATTERNS = [
       };
     },
   },
+  {
+    // "Update source" (push + shift local clones to the task branch) finished.
+    // Emitted by AgentService.update_source_for_task. Groups: task,
+    // updated-count, skipped-count, failed-count.
+    re: /^Mission (\S+): source update finished \((\d+) updated, (\d+) skipped, (\d+) failed\)/,
+    build: (m) => {
+      const updated = Number(m[2]);
+      const failed = Number(m[4]);
+      const failedSuffix = failed > 0 ? `, ${failed} failed` : '';
+      return {
+        title: failed > 0 ? 'Source update finished (with errors)' : 'Source updated',
+        body: `${m[1]}: ${updated} repo(s) updated${failedSuffix}`,
+        taskId: m[1],
+        kind: NOTIFICATION_KIND.SOURCE_UPDATE,
+      };
+    },
+  },
 ];
 
 export function classifyStatusEntry(entry) {

@@ -28,6 +28,8 @@ export const DEFAULT_KIND_PREFS = Object.freeze({
   [NOTIFICATION_KIND.ATTENTION]: true,
   [NOTIFICATION_KIND.ERROR]: true,
   [NOTIFICATION_KIND.REPLY]: false,
+  // On by default — it's a completion event the operator explicitly waits on.
+  [NOTIFICATION_KIND.SOURCE_UPDATE]: true,
 });
 
 export function defaultKindPrefs() {

@@ -468,6 +468,24 @@ class UpdateSourceForTaskOrchestrationTests(unittest.TestCase):
         self.assertEqual(set(result['updated_repositories']), {'client', 'backend'})
         self.assertEqual(result['failed_repositories'], [])
 
+    def test_logs_one_completion_line_for_the_ui_notification(self) -> None:
+        # A single "Mission <task>: source update finished (...)" line is
+        # root-logged so the planning UI's status feed can fire the "Source
+        # updated" OS notification when the operator is on another window.
+        with patch.object(self.agent, 'push_task', return_value={'pushed': True}):
+            self.agent.update_source_for_task('UNA-1234')
+        completion = [
+            c for c in self.agent.logger.info.call_args_list
+            if c.args and 'source update finished' in str(c.args[0])
+        ]
+        self.assertEqual(len(completion), 1)
+        fmt, *args = completion[0].args
+        self.assertEqual(
+            fmt % tuple(args),
+            'Mission UNA-1234: source update finished '
+            '(2 updated, 0 skipped, 0 failed)',
+        )
+
     def test_partial_failure_reports_per_repo(self) -> None:
         # Source-update succeeds for client, fails for backend.
         rs = self.agent._repository_service

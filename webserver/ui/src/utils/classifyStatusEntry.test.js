@@ -193,3 +193,36 @@ test('classifyStatusEntry: similar-but-different messages do NOT match', functio
     null,
   );
 });
+
+// ---------------------------------------------------------------------------
+// Source-update completion (drives the "Source updated" OS notification).
+// ---------------------------------------------------------------------------
+
+test('classifyStatusEntry: source update finished → SOURCE_UPDATE notification', function () {
+  const r = classifyStatusEntry(
+    _entry('Mission UNA-2794: source update finished (3 updated, 1 skipped, 0 failed)'),
+  );
+  assert.equal(r.kind, NOTIFICATION_KIND.SOURCE_UPDATE);
+  assert.equal(r.title, 'Source updated');
+  assert.equal(r.taskId, 'UNA-2794');
+  assert.match(r.body, /3 repo\(s\) updated/);
+  assert.doesNotMatch(r.body, /failed/);
+});
+
+test('classifyStatusEntry: source update WITH failures flags the error variant', function () {
+  const r = classifyStatusEntry(
+    _entry('Mission UNA-9: source update finished (1 updated, 0 skipped, 2 failed)'),
+  );
+  assert.equal(r.kind, NOTIFICATION_KIND.SOURCE_UPDATE);
+  assert.equal(r.title, 'Source update finished (with errors)');
+  assert.match(r.body, /1 repo\(s\) updated, 2 failed/);
+});
+
+test('classifyStatusEntry: a partial source-update line does NOT match', function () {
+  // Per-repo progress lines ("update-source for task X: ...") must NOT fire a
+  // notification — only the single completion summary does.
+  assert.equal(
+    classifyStatusEntry(_entry('update-source for task UNA-1: client @ /x now on UNA-1')),
+    null,
+  );
+});

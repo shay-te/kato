@@ -5,8 +5,12 @@ import App from './App.jsx';
 // and points @monaco-editor/react at our in-bundle monaco
 // instance (no CDN dependency). See utils/monacoSetup.js.
 import './utils/monacoSetup.js';
+import { installTauriExternalLinks } from './utils/tauriLinks.js';
 
 function bootstrap() {
+  // Desktop shell only: route external links to the system browser (no-op in
+  // a normal browser). Installed before render so it catches every link.
+  installTauriExternalLinks();
   const mountPoint = document.getElementById('root');
   if (!mountPoint) {
     return;

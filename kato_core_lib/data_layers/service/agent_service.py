@@ -2948,6 +2948,16 @@ class AgentService(MissionStepLoggerMixin, Service):
                     'repository_id': repository.id,
                     'error': str(exc),
                 })
+        # A single completion line (root-logged → the planning UI's status
+        # feed) so the UI can fire an OS "Source updated" notification when the
+        # operator is on another window. Big / multi-repo updates take a while;
+        # this is the "it's done" ping. Uses the ``Mission <task>:`` convention
+        # the frontend's classifyStatusEntry matches.
+        self.logger.info(
+            'Mission %s: source update finished (%d updated, %d skipped, %d failed)',
+            normalized, len(updated_repositories), len(skipped_repositories),
+            len(failed_repositories),
+        )
         return {
             'updated': bool(updated_repositories),
             'task_id': normalized,

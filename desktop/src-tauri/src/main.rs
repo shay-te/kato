@@ -41,6 +41,10 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // Lets the web UI open external links (Claude output, docs, PR URLs)
+        // in the system default browser instead of trying to navigate the
+        // app's own webview. Driven from the frontend via utils/tauriLinks.js.
+        .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
             let app_handle = app.handle().clone();
 
@@ -142,9 +146,54 @@ fn main() {
                         .map(|d| d.as_millis())
                         .unwrap_or(0);
                     let url = format!("http://{HOST}:{port}/?_={nonce}");
-                    if let Some(win) = app_handle.get_webview_window("main") {
-                        let _ = win.navigate(url.parse().expect("invalid url"));
-                    }
+                    // Open a FRESH window pointed straight at the local server,
+                    // then close the splash — instead of navigate()-ing the
+                    // existing splash webview to the external URL. Navigating an
+                    // already-shown (and, on a relaunch, macOS-restored) webview
+                    // to an external site is exactly the path that comes up
+                    // blank white on the 2nd and later launches: it works the
+                    // very first time, then not. A brand-new window that loads
+                    // the URL from creation paints reliably every launch — the
+                    // normal way a Tauri app loads its content. No resize /
+                    // hide-show / sleep hacks. Window creation must run on the
+                    // main thread.
+                    let ui_handle = app_handle.clone();
+                    let _ = app_handle.run_on_main_thread(move || {
+                        let built = tauri::WebviewWindowBuilder::new(
+                            &ui_handle,
+                            "app",
+                            tauri::WebviewUrl::External(
+                                url.parse().expect("invalid url"),
+                            ),
+                        )
+                        .title("Kato")
+                        .inner_size(1280.0, 860.0)
+                        .min_inner_size(900.0, 600.0)
+                        .build();
+                        match built {
+                            Ok(_) => {
+                                if let Some(splash) =
+                                    ui_handle.get_webview_window("main")
+                                {
+                                    let _ = splash.close();
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "[kato] failed to open app window: {e}"
+                                );
+                                // Fallback to the old navigate path so the app
+                                // isn't left with no content at all.
+                                if let Some(splash) =
+                                    ui_handle.get_webview_window("main")
+                                {
+                                    let _ = splash.navigate(
+                                        url.parse().expect("invalid url"),
+                                    );
+                                }
+                            }
+                        }
+                    });
                 } else {
                     eprintln!("[kato] webserver did not become ready within timeout");
                 }
