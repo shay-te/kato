@@ -37,7 +37,10 @@
     ],
     "externalBin": ["binaries/kato-sidecar"],
     "resources": [],
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": true,
+    "macOS": {
+      "entitlements": "entitlements.plist"
+    }
   },
   "plugins": {
     "updater": {

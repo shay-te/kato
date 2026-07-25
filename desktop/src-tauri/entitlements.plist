@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- The bundled PyInstaller sidecar (kato-sidecar) extracts and loads its own
+       Python framework, which is signed with a DIFFERENT Team ID than this app.
+       Notarization requires the hardened runtime, and the hardened runtime
+       refuses to load libraries whose code signature has a different Team ID
+       ("mapping process and mapped file have different Team IDs") — which kills
+       the sidecar on launch and hangs the splash. Disabling library validation
+       permits the sidecar's differently-signed dylibs to load. This entitlement
+       is notarization-compatible. -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <!-- The frozen Python sidecar JIT/execs its own bootloader-extracted code. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+</dict>
+</plist>

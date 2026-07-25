@@ -66,6 +66,13 @@
         .logo { animation: none; }
         .progress-fill::after { animation: none; }
       }
+      /* Fatal-error state: the label turns red and wraps so the real error is
+         readable — never leave it saying "loading" when boot has failed. */
+      .sub.error {
+        color: #ff6a6a; font-weight: 600; white-space: normal;
+        max-width: 82vw; margin: 0 auto; font-size: 12.5px; line-height: 1.45;
+      }
+      .progress-fill.error { background: #ff6a6a; }
     </style>
   </head>
   <body>
@@ -191,19 +198,39 @@
           fill.style.width = '100%';
         }
 
+        // Fatal path: the label must NEVER keep saying "loading" once boot has
+        // actually failed. Stop all animation, turn the label + bar red, and
+        // show the real error.
+        var failed = false;
+        function showFatal(msg) {
+          if (failed) { return; }
+          failed = true;
+          done = true;
+          clearInterval(bar);
+          clearInterval(ticker);
+          sub.classList.remove('swap');
+          sub.classList.add('error');
+          sub.textContent = msg;
+          fill.classList.add('error');
+        }
+
         setLabel(SEQ[0]);
 
         var api = window.__TAURI__;
         if (!api || !api.event) { return; }
         api.event.listen('kato-log', function (event) {
           var line = (event && event.payload ? String(event.payload) : '').trim();
-          if (!line || /^[=\-\s]+$/.test(line)) { return; }
-          // Surface genuine fatal errors verbatim so a failure is visible.
-          // Specific patterns so a benign "errored state from a previous run"
-          // note doesn't trip it.
-          if (/traceback|errno|read-only file system|failed to execute script|error executing job|hydra_full_error/i.test(line)) {
-            clearInterval(ticker);
-            setLabel(line);
+          if (!line || /^[=\-\s]+$/.test(line) || failed) { return; }
+          // Explicit fatal marker from main.rs (sidecar process died before
+          // ever serving the UI).
+          if (/^KATO-FATAL:/i.test(line)) {
+            showFatal('Kato couldn’t start — ' + line.replace(/^KATO-FATAL:\s*/i, ''));
+            return;
+          }
+          // Frozen-Python / code-signing / traceback crashes: surface them
+          // instead of pretending to keep loading.
+          if (/traceback|errno|read-only file system|failed to execute script|error executing job|hydra_full_error|failed to load (the )?python|not valid for use in process|different team ids|code signature|\bdlopen\b|\[PYI-\d/i.test(line)) {
+            showFatal('Kato couldn’t start: ' + line.slice(0, 220));
             return;
           }
           for (var i = 0; i < LOG_TO_IDX.length; i++) {

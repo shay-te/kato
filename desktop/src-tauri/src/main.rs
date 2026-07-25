@@ -108,6 +108,19 @@ fn main() {
                         CommandEvent::Stdout(bytes) | CommandEvent::Stderr(bytes) => {
                             String::from_utf8_lossy(&bytes).into_owned()
                         }
+                        // The sidecar process exited before it ever served the UI.
+                        // Emit a fatal marker so the splash shows an error instead
+                        // of spinning "loading" forever.
+                        CommandEvent::Terminated(payload) => {
+                            format!(
+                                "KATO-FATAL: the Kato service exited (code {:?}) before it \
+                                 could start. Open ~/.kato/kato-desktop.log for details.",
+                                payload.code
+                            )
+                        }
+                        CommandEvent::Error(err) => {
+                            format!("KATO-FATAL: could not run the Kato service: {err}")
+                        }
                         _ => continue,
                     };
                     print!("[kato] {line}");
