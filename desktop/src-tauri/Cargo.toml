@@ -12,7 +12,13 @@ rust-version = "1.77"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# `devtools` is enabled in RELEASE too (not just debug): on macOS the
+# devtools-enabled WKWebView uses a compositing path that paints reliably on
+# every launch, while the release default goes blank-white on the 2nd and later
+# launches (works the first time, then not). Debug builds already proved the
+# devtools path renders. Kato's audience is developers, so an inspectable
+# webview is acceptable (VS Code ships the same way). See ../README.md.
+tauri = { version = "2", features = ["devtools"] }
 tauri-plugin-shell = "2"       # spawn + pipe the Python sidecar
 tauri-plugin-updater = "2"     # built-in signed auto-update (VS Code model)
 tauri-plugin-opener = "2"      # open external links in the system browser
