@@ -238,7 +238,7 @@ That separation matters because the service flow should read like the real agent
 1. `python -m kato_core_lib.main`, `kato up`, or the Docker entrypoint loads Hydra config and values from `.env`.
 2. Environment validation runs before the application is built. Missing required values fail fast.
 3. `KatoCoreLib` builds the active issue-platform client, repository service, OpenHands implementation service, OpenHands testing service, notification service, task publisher, preflight service, and review-comment service.
-4. Startup dependency validation checks repository connections, the active issue-platform connection, the main OpenHands connection, and the testing OpenHands connection unless `OPENHANDS_SKIP_TESTING=true`.
+4. Startup dependency validation checks repository connections, the active issue-platform connection, and the agent-backend (implementation) connection. A separate testing connection is validated **only for the OpenHands backend** (which has a distinct testing container/base_url), and only unless `OPENHANDS_SKIP_TESTING=true`. For the single-binary CLI backends (**Claude, Codex**) the testing client is the same local CLI as the implementation client, so that redundant `<cli> --version` probe is skipped. Validation now runs in the background (UI-first boot) — the webserver is already serving before it starts.
 5. After startup succeeds, the job loop begins scanning immediately (the UI is already served; no artificial startup delay).
 6. Each loop cycle runs task processing first and review-comment processing second.
 7. If a cycle fails, the error is logged and the loop retries after `OPENHANDS_TASK_SCAN_INTERVAL_SECONDS`.

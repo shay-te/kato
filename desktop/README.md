@@ -75,9 +75,10 @@ npm run build               # tauri build → installer in src-tauri/target/rele
 The spec + Rust profile are set for the smallest realistic bundle:
 - **UI source maps stripped** (`*.map`, ~40 MB) — never shipped.
 - **Optional security scanners excluded by default** (`INCLUDE_SECURITY_SCANNERS = False` in the spec) — each runner degrades gracefully if missing, so this is safe; ~20-40 MB saved. Flip to `True` to ship in-app scans.
+- **The OpenHands backend + its dependency tree are excluded** (`_excludes` in the spec: `openhands_core_lib`, `botocore`, `sqlalchemy`, `redis`, `pymongo`, `neo4j`, `eventlet`, the test-only `moto`, …). OpenHands runs the agent in a docker-compose container stack the desktop app doesn't provide, so it is **not a usable backend from the desktop bundle** — use `kato up` / the CLI (or docker-compose) for OpenHands. The desktop app runs **Claude / Codex** (local CLIs). Also excluded: heavy transitive packages the Claude/Codex path never imports (`django`, `numpy`, `shapely`, `PIL`, `psycopg2`, `pandas`). This is the single biggest size + frozen-startup win — every bundled C-extension dylib is `dlopen`'d + signature-checked on launch.
 - **Symbols stripped** (PyInstaller `strip=True`, Cargo `strip = true`) + **size-optimized Rust** (`opt-level="z"`, `lto`, `panic="abort"`) + Python `-OO`.
 
-Realistic result: **~60-80 MB per OS**, dominated by the frozen Python + `cryptography`. UPX would shave more but **breaks macOS codesigning/notarization**, so it's off. The Rust shell + OS webview add only a few MB (no Chromium).
+Realistic result (macOS, after the excludes above): the frozen sidecar is **~23 MB** and the `.app` **~28 MB**, dominated by the frozen Python + `cryptography`. UPX would shave more but **breaks macOS codesigning/notarization**, so it's off. The Rust shell + OS webview add only a few MB (no Chromium).
 
 ## Data continuity (shares state with your CLI)
 

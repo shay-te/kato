@@ -117,7 +117,7 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService): ...
 
 | File | What it does |
 |------|-------------|
-| `kato_core_lib/main.py` | Entry point, scan loop (30s interval, 5s startup delay) |
+| `kato_core_lib/main.py` | Entry point; UI-first boot (serve webserver, then validate + reconcile in a background thread); scan loop (180s interval, no startup delay) |
 | `kato_core_lib/jobs/process_assigned_tasks.py` | Each scan cycle: dispatch tasks + review comments |
 | `kato_core_lib/data_layers/service/agent_service.py` | Top-level service object — owns all sub-services |
 | `kato_core_lib/data_layers/service/task_preflight_service.py` | Pre-flight: resolve repos, clone workspaces, prep branches |
@@ -126,7 +126,7 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService): ...
 | `kato_core_lib/data_layers/service/repository_inventory_service.py` | Repo config loading + auto-discovery of `.git` folders |
 | `kato_core_lib/data_layers/service/task_publisher.py` | Push branch, open PR, move task to "In Review" |
 | `kato_core_lib/data_layers/service/review_comment_service.py` | Fix or answer PR review comments |
-| `kato_core_lib/validation/startup_dependency_validator.py` | All connections validated in parallel at boot |
+| `kato_core_lib/validation/startup_dependency_validator.py` | Connections validated in parallel (in the background finalize, not blocking the UI); `{backend}_testing` probe skipped for claude/codex |
 | `kato_core_lib/validation/repository_connections.py` | Per-repo git connectivity check |
 | `kato_core_lib/helpers/review_comment_utils.py` | `is_question_comment()` heuristic + reply body builders |
 | `git_core_lib/git_core_lib/client/git_client.py` | `GitClientMixin` — every `git` subprocess call |
@@ -137,13 +137,22 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService): ...
 
 ## Flows
 
-### Startup
+### Startup (UI-first)
 ```
-main() → KatoInstance.init(cfg)
-       → validate_connections()          ← repos + task + impl + testing ALL validated in parallel
-       → warm_up_repository_inventory()  ← background thread starts disk walk immediately
-       → _run_task_scan_loop()           ← every 30s
+main() → KatoInstance.init(cfg, defer_validation=True)  ← builds the service, does NOT validate yet
+       → _load_hooks_or_refuse()                        ← local, fail-closed
+       → _start_planning_webserver_if_enabled()         ← the UI is served NOW, in ~seconds
+       → background _finalize_configured_boot():        ← off the critical path
+             validate_connections()                     ← repos + task + impl (+ testing ONLY for openhands)
+             _run_boot_reconciliation()                 ← orphan/branch/status/comment/done-task steps
+             _start_post_boot_workers()                 ← incl. warm_up_repository_inventory (disk walk)
+             ready_event.set()                          ← releases the scan loop
+       → _run_task_scan_loop(ready_event)               ← waits for ready_event; then every 180s
 ```
+Validation no longer blocks the UI. On a configured boot the webserver binds before any
+network validation; a validation failure retries + surfaces in the UI banner instead of
+exiting. The `{backend}_testing` probe is skipped for the single-binary CLI backends
+(claude/codex — same local CLI as the implementation client); only openhands keeps it.
 
 ### Task pickup
 ```
