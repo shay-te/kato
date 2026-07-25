@@ -1412,6 +1412,12 @@ class ClaudeCliClient(object):
         """
         for token in ('%~dp0', '%dp0%'):
             ref = ref.replace(token + '\\', '').replace(token + '/', '').replace(token, '')
+        # The shim uses Windows backslash separators. Normalize them to '/'
+        # so the target resolves regardless of the host doing the parsing
+        # (on real Windows pathlib accepts '/' too, so this is a no-op there)
+        # — without this, a nested '...\\bin\\claude.exe' ref is read as one
+        # literal filename on a non-Windows host and never matches the file.
+        ref = ref.replace('\\', '/')
         target = (shim_dir / ref).resolve()
         if not target.is_file():
             return None
