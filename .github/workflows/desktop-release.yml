@@ -14,6 +14,10 @@ on:
   push:
     tags: ["desktop-v*"]
 
+# tauri-action creates the GitHub Release, which needs write access to contents.
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -67,6 +71,8 @@ jobs:
       - name: Build + sign the Tauri app (emits installers + updater feed)
         uses: tauri-apps/tauri-action@v0
         env:
+          # tauri-action needs this to create/upload the Release.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Generate once: `npm run tauri signer generate` — store the private
           # key + password as repo secrets. The PUBLIC key goes in tauri.conf.json.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
