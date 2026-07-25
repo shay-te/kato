@@ -1,0 +1,72 @@
+# Kato Desktop — build the installers (.dmg / .msi / .AppImage) + updater feed
+# on a version tag. THIS is what actually produces the downloadable files.
+#
+# ▶ To enable: copy to  .github/workflows/desktop-release.yml  at the REPO ROOT.
+#   GitHub only runs workflows from .github/workflows, so this one file can't
+#   physically live under desktop/ — it's kept here as the source of truth.
+#
+# On a tag like `desktop-v0.1.0`, each OS runner installs kato + PyInstaller,
+# freezes the sidecar, then runs the Tauri action to build + sign the installer
+# and publish the signed bundles + `latest.json` (the update feed) to a Release.
+name: desktop-release
+
+on:
+  push:
+    tags: ["desktop-v*"]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest,   note: "arm64 .dmg" }
+          - { os: windows-latest, note: ".msi / nsis .exe" }
+          - { os: ubuntu-22.04,   note: ".AppImage / .deb" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux webkit + build deps
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+
+      - name: Install kato + PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pyinstaller
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+
+      - name: Tauri CLI + icons + sidecar
+        working-directory: desktop
+        run: |
+          npm install
+          npm run icon
+          npm run sidecar
+
+      - name: Build + sign the Tauri app (emits installers + updater feed)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          # Generate once: `npm run tauri signer generate` — store the private
+          # key + password as repo secrets. The PUBLIC key goes in tauri.conf.json.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS notarization (optional but needed for a warning-free install):
+          # APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
+          # APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
+        with:
+          projectPath: desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: "Kato Desktop ${{ github.ref_name }}"
+          releaseDraft: true
+          prerelease: false

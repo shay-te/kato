@@ -42,7 +42,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://REPLACE-WITH-YOUR-RELEASE-HOST/desktop/{{target}}/{{arch}}/{{current_version}}"
+        "https://github.com/shay-te/kato/releases/latest/download/latest.json"
       ],
       "pubkey": "REPLACE_WITH_YOUR_TAURI_SIGNER_PUBLIC_KEY"
     }
