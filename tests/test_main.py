@@ -1,4 +1,5 @@
 import os
+import sys
 import tempfile
 import types
 import unittest
@@ -1411,7 +1412,12 @@ class WaitUntilConfiguredTests(unittest.TestCase):
         itself instead of telling the operator to run a command."""
         from kato_core_lib.errors import AgentBackendChangedError
         from kato_core_lib.main import _wait_until_configured_then_finish_setup
-        self._write_settings({'KATO_AGENT_BACKEND': 'claude'})
+        self._write_settings({
+            'KATO_AGENT_BACKEND': 'claude',
+            # Satisfy the claude-CLI presence check without a real binary on
+            # PATH (CI has none); this test is about the backend-change restart.
+            'KATO_CLAUDE_BINARY': sys.executable,
+        })
         app = self._app(Mock(side_effect=AgentBackendChangedError(
             'agent backend changed (openhands → claude) …',
         )))
@@ -1431,7 +1437,10 @@ class WaitUntilConfiguredTests(unittest.TestCase):
     def test_backend_change_falls_back_to_setup_error_when_exec_fails(self) -> None:
         from kato_core_lib.errors import AgentBackendChangedError
         from kato_core_lib.main import _wait_until_configured_then_finish_setup
-        self._write_settings({'KATO_AGENT_BACKEND': 'claude'})
+        self._write_settings({
+            'KATO_AGENT_BACKEND': 'claude',
+            'KATO_CLAUDE_BINARY': sys.executable,
+        })
         app = self._app(Mock(side_effect=AgentBackendChangedError('changed')))
 
         with patch(

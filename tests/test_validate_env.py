@@ -1,3 +1,4 @@
+import sys
 import unittest
 from pathlib import Path
 import tempfile
@@ -46,6 +47,11 @@ class ValidateEnvTests(unittest.TestCase):
         from kato_core_lib.validate_env import collect_config_errors
         configured = {
             'KATO_ISSUE_PLATFORM': 'bitbucket', 'KATO_AGENT_BACKEND': 'claude',
+            # Point at an existing absolute binary so the claude-CLI presence
+            # check is satisfied without the runner needing Claude on PATH
+            # (CI has none) — this test is about config completeness, not the
+            # binary probe.
+            'KATO_CLAUDE_BINARY': sys.executable,
             'BITBUCKET_API_BASE_URL': 'x', 'BITBUCKET_WORKSPACE': 'w',
             'BITBUCKET_REPO_SLUG': 'r', 'BITBUCKET_ASSIGNEE': 'a',
             'BITBUCKET_API_EMAIL': 'e@x', 'BITBUCKET_API_TOKEN': 't',
