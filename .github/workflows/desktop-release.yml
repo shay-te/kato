@@ -44,10 +44,6 @@ jobs:
       - name: Install kato + PyInstaller
         shell: bash
         run: |
-          # Use the same installer as the test CI (ci.yml). A bare
-          # `pip install -e .` hits ResolutionImpossible because core-lib 0.2.2
-          # pins hydra-core==1.2 while kato needs >=1.3.2; this script installs
-          # core-lib first, then hydra-core/omegaconf with --no-deps, then kato.
           python scripts/install_python_deps.py python editable
           python -m pip install pyinstaller
 
@@ -59,9 +55,6 @@ jobs:
         working-directory: desktop
         shell: bash
         env:
-          # CI installs kato into the runner's system Python (no .venv), so point
-          # the freeze script at it instead of its local-dev .venv/bin/python
-          # default. `python` is on PATH via actions/setup-python.
           KATO_PYTHON: python
         run: |
           npm install
@@ -71,15 +64,15 @@ jobs:
       - name: Build + sign the Tauri app (emits installers + updater feed)
         uses: tauri-apps/tauri-action@v0
         env:
-          # tauri-action needs this to create/upload the Release.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Generate once: `npm run tauri signer generate` — store the private
-          # key + password as repo secrets. The PUBLIC key goes in tauri.conf.json.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # macOS notarization (optional but needed for a warning-free install):
-          # APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
-          # APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           projectPath: desktop
           tagName: ${{ github.ref_name }}
