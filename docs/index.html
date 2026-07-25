@@ -61,6 +61,31 @@
   .btn-ghost:hover { border-color: var(--allow); }
   .run { font-family: var(--mono); font-size: 12.5px; color: var(--faint); }
 
+  /* Download section */
+  .dl-sec { padding: 74px 0; border-top: 1px solid var(--line); background: var(--bg-2); }
+  .dl-lede { color: var(--muted); font-size: 16px; max-width: 620px; margin: 14px 0 0; }
+  .dl-lede code, .dl-req code { font-family: var(--mono); font-size: 0.86em; color: var(--ink); background: var(--allow-soft); padding: 1px 6px; border-radius: 5px; }
+  .dl-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 30px; }
+  @media (max-width: 720px) { .dl-grid { grid-template-columns: 1fr; } }
+  .dl-card { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 5px;
+    padding: 24px; border: 1px solid var(--line-2); border-radius: 13px; background: var(--panel);
+    transition: transform .14s, border-color .15s, box-shadow .15s; }
+  .dl-card:hover { transform: translateY(-3px); border-color: var(--allow); }
+  .dl-card svg { width: 30px; height: 30px; fill: var(--ink); margin-bottom: 8px; }
+  .dl-os { font-weight: 700; font-size: 17px; }
+  .dl-ext { font-family: var(--mono); font-size: 12.5px; color: var(--faint); }
+  .dl-go { margin-top: 10px; font-family: var(--mono); font-size: 12.5px; font-weight: 600; color: var(--allow); }
+  .dl-card.is-rec { border-color: var(--allow); box-shadow: 0 0 0 1px var(--allow), 0 14px 34px -16px rgba(55,217,157,0.5); }
+  .dl-card.is-rec svg { fill: var(--allow); }
+  .dl-rec { display: none; position: absolute; top: 14px; right: 14px; font-family: var(--mono);
+    font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: #052018;
+    background: var(--allow); padding: 3px 8px; border-radius: 6px; }
+  .dl-card.is-rec .dl-rec { display: inline-block; }
+  .dl-note { margin-top: 22px; font-family: var(--mono); font-size: 12.5px; color: var(--faint); line-height: 1.9; }
+  .dl-note a { color: var(--allow); }
+  .dl-note a:hover { text-decoration: underline; }
+  .dl-req { color: var(--faint); }
+
   /* one-screen product mock — shows the value: everything in one place */
   .screen { margin-top: 52px; border: 1px solid var(--line-2); border-radius: 16px; overflow: hidden; background: linear-gradient(180deg, var(--panel), var(--bg-2)); box-shadow: 0 0 0 1px rgba(55,217,157,0.05), 0 30px 70px -34px rgba(55,217,157,0.28); }
   .screen .top { display: flex; align-items: center; gap: 7px; padding: 11px 14px; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 11.5px; color: var(--faint); }
@@ -156,7 +181,7 @@
       <h1 style="margin-top:16px">Run all your coding, tasks, and approvals <span class="a">from a single place</span>.</h1>
       <p class="lede">Kato is the single cockpit for your coding agents: <b>every ticket in one tabbed UI</b>, <b>every approval in one popup</b> so they never stall, and <b>git locked behind your click</b> — a whole fleet working while you stay in control.</p>
       <div class="cta">
-        <a class="btn btn-primary" href="https://github.com/shay-te/kato/releases/latest" rel="noopener">Download the app →</a>
+        <a class="btn btn-primary" href="#download">Download the app →</a>
         <a class="btn btn-ghost" href="https://github.com/shay-te/kato" rel="noopener">View on GitHub</a>
         <span class="run">$ pip install -e .&nbsp; · &nbsp;kato up</span>
       </div>
@@ -176,6 +201,37 @@
           <div class="row"><span class="chip allow"></span><span class="k">Ship</span><span class="m">push branch + open pull request</span><span class="r">on your click</span></div>
         </div>
       </div>
+    </div>
+  </section>
+
+  <section id="download" class="dl-sec">
+    <div class="wrap">
+      <div class="sec-head"><span class="eyebrow">Download</span><h2>Get the desktop app.</h2></div>
+      <p class="dl-lede">Native app for your OS — bundles the runtime, shares your <code>~/.kato</code> state with the CLI, and <b>auto-updates</b> as new versions ship.</p>
+      <div class="dl-grid">
+        <a class="dl-card" data-os="mac" href="https://github.com/shay-te/kato/releases/latest" rel="noopener">
+          <span class="dl-rec">Your OS</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.365 1.43c0 1.14-.42 2.2-1.13 2.99-.79.87-2.08 1.55-3.14 1.46-.13-1.1.42-2.28 1.08-3.02.75-.85 2.11-1.48 3.19-1.43zM20.5 17.06c-.53 1.22-.78 1.76-1.46 2.84-.95 1.51-2.29 3.39-3.95 3.4-1.47.01-1.85-.96-3.85-.95-2 .01-2.41.97-3.88.95-1.66-.01-2.93-1.71-3.88-3.22-2.66-4.23-2.94-9.19-1.3-11.83.94-1.51 2.42-2.4 3.81-2.4 1.42 0 2.31.78 3.48.78 1.14 0 1.83-.78 3.47-.78 1.24 0 2.55.67 3.49 1.83-3.07 1.68-2.57 6.06.97 7.38z"/></svg>
+          <span class="dl-os">macOS</span>
+          <span class="dl-ext">.dmg · Apple Silicon</span>
+          <span class="dl-go">Download →</span>
+        </a>
+        <a class="dl-card" data-os="windows" href="https://github.com/shay-te/kato/releases/latest" rel="noopener">
+          <span class="dl-rec">Your OS</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4.6l7.6-1.04v8.02H3zM11.55 3.43L21 2.14v9.44h-9.45zM3 12.58h7.6v8.02L3 19.44zM11.55 12.58H21v9.44l-9.45-1.29z"/></svg>
+          <span class="dl-os">Windows</span>
+          <span class="dl-ext">.exe installer</span>
+          <span class="dl-go">Download →</span>
+        </a>
+        <a class="dl-card" data-os="linux" href="https://github.com/shay-te/kato/releases/latest" rel="noopener">
+          <span class="dl-rec">Your OS</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2c-2.05 0-3.5 1.7-3.5 4 0 .95.08 1.66.08 2.3-.5.8-2.2 3.3-2.66 5.15-.46 1.85.1 2.5.66 2.35.28.86.86 1.66 1.7 2.24-.18.28-.28.58-.28.9 0 .8 1.8 1.4 4 1.4s4-.6 4-1.4c0-.32-.1-.62-.28-.9.84-.58 1.42-1.38 1.7-2.24.56.15 1.12-.5.66-2.35-.46-1.85-2.16-4.35-2.66-5.15 0-.64.08-1.35.08-2.3 0-2.3-1.45-4-3.5-4zm-1.6 4.35a.7.7 0 110 1.4.7.7 0 010-1.4zm3.2 0a.7.7 0 110 1.4.7.7 0 010-1.4zM12 9.3c.7 0 1.5.5 1.5.9 0 .3-.9.6-1.5.6s-1.5-.3-1.5-.6c0-.4.8-.9 1.5-.9z"/></svg>
+          <span class="dl-os">Linux</span>
+          <span class="dl-ext">.AppImage</span>
+          <span class="dl-go">Download →</span>
+        </a>
+      </div>
+      <p class="dl-note">Latest <span id="dl-ver">release</span> · <a href="https://github.com/shay-te/kato/releases" rel="noopener">All versions &amp; release notes →</a><br><span class="dl-req">Requires <code>git</code>, Docker, and an agent CLI (Claude / Codex) on your machine.</span></p>
     </div>
   </section>
 
@@ -242,7 +298,7 @@
         <p>Kato — the masked sidekick who did the hard work — now runs your coding agents. One place, one approval popup, git only through you.</p>
         <p class="tagline">Kato will help you kick all your tasks.</p>
         <div class="cta">
-          <a class="btn btn-primary" href="https://github.com/shay-te/kato/releases/latest" rel="noopener">Download the app →</a>
+          <a class="btn btn-primary" href="#download">Download the app →</a>
           <a class="btn btn-ghost" href="https://github.com/shay-te/kato" rel="noopener">View on GitHub</a>
           <span class="run">github.com/shay-te/kato</span>
         </div>
@@ -257,3 +313,41 @@
     <span><a href="https://github.com/shay-te/kato" rel="noopener">GitHub</a> · <a href="#why">Why Kato</a> · <a href="#security">Security</a></span>
   </div>
 </footer>
+
+<script>
+  // Highlight the visitor's OS, and (on the live site) turn each card into a
+  // direct download of the newest signed installer from the latest GitHub Release.
+  (function () {
+    var REPO = 'shay-te/kato';
+    var ua = navigator.userAgent || '';
+    var os = 'mac';
+    if (/Windows/i.test(ua)) os = 'windows';
+    else if (/Linux|X11/i.test(ua) && !/Android/i.test(ua)) os = 'linux';
+    else if (/Mac|iPhone|iPad/i.test(ua)) os = 'mac';
+
+    var cards = {};
+    document.querySelectorAll('.dl-card').forEach(function (c) {
+      cards[c.dataset.os] = c;
+      c.classList.toggle('is-rec', c.dataset.os === os);
+    });
+    // Float the recommended OS to the front of the row.
+    if (cards[os] && cards[os].parentNode) cards[os].parentNode.prepend(cards[os]);
+
+    // Direct per-OS links need the exact asset names, which embed the version —
+    // so we read them from the Releases API. Falls back to the releases page if
+    // the request is blocked (e.g. artifact preview CSP) or rate-limited.
+    fetch('https://api.github.com/repos/' + REPO + '/releases/latest')
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
+      .then(function (rel) {
+        var ver = (rel.tag_name || '').replace(/^desktop-/, '');
+        if (ver) document.getElementById('dl-ver').textContent = ver;
+        var pick = function (rx) {
+          var a = (rel.assets || []).find(function (x) { return rx.test(x.name); });
+          return a && a.browser_download_url;
+        };
+        var urls = { mac: pick(/\.dmg$/i), windows: pick(/\.(exe|msi)$/i), linux: pick(/\.AppImage$/i) };
+        Object.keys(urls).forEach(function (k) { if (urls[k] && cards[k]) cards[k].href = urls[k]; });
+      })
+      .catch(function () { /* keep the releases/latest fallback hrefs */ });
+  })();
+</script>
