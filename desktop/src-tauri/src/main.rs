@@ -60,6 +60,22 @@ fn main() {
                     .status();
             }
 
+            // Clearing a straggler is async — the OS takes a beat to release the
+            // socket. WAIT for the port to be genuinely free before spawning the
+            // new sidecar; otherwise the new one races the dying one for the
+            // bind, fails, and the window lands on a half-dead server (the
+            // blank-white-on-2nd-launch bug). Bounded so a genuinely-stuck port
+            // can't hang boot forever.
+            if let Ok(addr) = format!("{HOST}:{DEFAULT_PORT}").parse::<SocketAddr>() {
+                let mut waited_ms = 0u64;
+                while waited_ms < 4000
+                    && TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok()
+                {
+                    std::thread::sleep(Duration::from_millis(150));
+                    waited_ms += 150;
+                }
+            }
+
             // 1) Spawn the frozen kato sidecar with no args — its entry
             // (kato_sidecar.py) loads ~/.kato/settings.json into the env and
             // runs kato's real app (kato_core_lib.main) DIRECTLY, bypassing the
@@ -182,6 +198,11 @@ fn main() {
                         .title("Kato")
                         .inner_size(1280.0, 860.0)
                         .min_inner_size(900.0, 600.0)
+                        .focused(true)
+                        // Match the splash background (#0f1115) so there's no
+                        // white flash between the splash closing and the UI
+                        // painting — the native window bg shows during that gap.
+                        .background_color(tauri::window::Color(15, 17, 21, 255))
                         .build();
                         match built {
                             Ok(_) => {
@@ -223,6 +244,17 @@ fn main() {
             if let tauri::RunEvent::Exit = event {
                 if let Ok(mut guard) = sidecar.lock() {
                     if let Some(child) = guard.take() {
+                        // PyInstaller onefile forks a Python child that actually
+                        // binds the port; killing only the parent leaks it (the
+                        // zombie the next launch then collides with → white
+                        // screen). Kill the child's children first, then the
+                        // parent, so the port is fully released on quit.
+                        #[cfg(not(windows))]
+                        {
+                            let _ = std::process::Command::new("/usr/bin/pkill")
+                                .args(["-9", "-P", &child.pid().to_string()])
+                                .status();
+                        }
                         let _ = child.kill();
                     }
                 }
