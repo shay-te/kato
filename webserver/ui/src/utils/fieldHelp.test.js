@@ -43,7 +43,9 @@ describe('fieldPlaceholder', () => {
 describe('fieldInfo', () => {
   test('always ends with the environment variable name', () => {
     const info = fieldInfo('YOUTRACK_API_TOKEN');
-    assert.ok(info.includes('security settings'));
+    // The menu path comes from credentialGuides (see its test file) —
+    // here we only pin that the token info names WHERE it is created.
+    assert.ok(info.includes('Create one at:'));
     assert.ok(info.endsWith('Environment variable: YOUTRACK_API_TOKEN'));
   });
 

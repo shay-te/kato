@@ -175,6 +175,16 @@ export function updateTaskProvider(payload) {
   return postEnvelope('/api/task-providers', payload || {});
 }
 
+// Credentials for `provider` that already exist on this machine (gh/glab
+// login, git credential helper, env var) — so the operator can connect
+// without minting and pasting an API token. Never returns the token
+// itself, only which sources work.
+export function fetchCredentialSources(provider) {
+  return requestEnvelope(
+    `/api/credential-sources?provider=${encodeURIComponent(provider || '')}`,
+  );
+}
+
 // Git hosts — credentials kato uses to clone / push / open PRs.
 // NO active selector (host inferred from repo remote URLs).
 export function fetchGitProviders() {

@@ -9,7 +9,15 @@ import {
 } from '../api.js';
 import { isSecretKey } from '../utils/providerFields.js';
 import { humanizeFieldKey, fieldPlaceholder, fieldInfo } from '../utils/fieldHelp.js';
+import { credentialGuideFor } from '../utils/credentialGuides.js';
 import FieldInfoTip from './settings/FieldInfoTip.jsx';
+import CredentialGuide from './settings/CredentialGuide.jsx';
+import CredentialSourcePicker, { PASTED_SOURCE } from './settings/CredentialSourcePicker.jsx';
+import {
+  credentialKeysFor,
+  isCredentialSourceKey,
+  usesDiscoveredCredential,
+} from '../utils/credentialSourceFields.js';
 import FolderBrowser from './FolderBrowser.jsx';
 import { toast } from '../stores/toastStore.js';
 
@@ -201,14 +209,25 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
   // too — for all platforms, without duplicating the catalog client-side.
   // Required connection fields come first and gate the save; the rest are
   // optional (kato has built-in defaults for them).
+  // Which credential source the operator picked (or '' before discovery
+  // answers). A discovered source means kato resolves the token itself, so
+  // the token input is neither shown nor required.
+  const credentialKeys = credentialKeysFor(platform);
+  const chosenSource = (ticketDraft[credentialKeys.source] || '').trim();
+  const skipsTokenField = usesDiscoveredCredential(chosenSource);
+
   const displayedKeys = useMemo(() => {
     const serverKeys = Object.keys(fields);
     return [
       ...requiredKeys,
       ...serverKeys.filter((key) => !requiredKeys.includes(key)),
-    ];
+    ].filter((key) => (
+      // The source key is picker-owned, never typed.
+      !isCredentialSourceKey(key)
+      && !(skipsTokenField && key === credentialKeys.token)
+    ));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [platform, providers]);
+  }, [platform, providers, skipsTokenField]);
 
   // Re-seed the ticket draft whenever the selected platform (or the loaded
   // server values) change. Non-secret fields pre-fill so the operator can
@@ -237,7 +256,9 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
   }, [platform, providers]);
 
   const canSaveTicket = requiredKeys.length > 0 && requiredKeys.every(
-    (key) => (ticketDraft[key] || '').trim() || serverHasValue(key),
+    (key) => (skipsTokenField && key === credentialKeys.token)
+      || (ticketDraft[key] || '').trim()
+      || serverHasValue(key),
   );
 
   const agent = AGENT_CHOICES.find((choice) => choice.id === agentChoice) || null;
@@ -322,6 +343,9 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
       const value = (ticketDraft[key] || '').trim();
       if (value) { payloadFields[key] = value; }
     }
+    // The credential source is picker-owned (never in displayedKeys), so it
+    // has to be added here or the choice silently wouldn't persist.
+    if (chosenSource) { payloadFields[credentialKeys.source] = chosenSource; }
     const ok = await runSave(() => updateTaskProvider({
       active: platform, provider: platform, fields: payloadFields,
     }));
@@ -406,6 +430,10 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
           serverHasValue={serverHasValue}
           canSave={canSaveTicket}
           saving={saving}
+          credentialSource={chosenSource}
+          onCredentialSource={(id) => setTicketDraft((current) => ({
+            ...current, [credentialKeys.source]: id,
+          }))}
           onBack={() => setStep(0)}
           onSave={onSaveTicket}
         />
@@ -573,10 +601,14 @@ function StepPickSystem({ platform, onPick, onNext, loadError }) {
 }
 
 function StepTicketDetails({
-  platform, displayedKeys, requiredKeys, draft, setDraft,
-  serverHasValue, canSave, saving, onBack, onSave,
+  platform, displayedKeys, requiredKeys, draft, setDraft, serverHasValue,
+  canSave, saving, credentialSource, onCredentialSource, onBack, onSave,
 }) {
   const label = TICKET_SYSTEMS.find((s) => s.id === platform)?.label || platform;
+  // The token guide is for people who have to MAKE a token. Once kato has
+  // found a login to reuse, those steps are noise — show them only on the
+  // paste path (or when there was nothing to discover).
+  const isPasting = !usesDiscoveredCredential(credentialSource);
   return (
     <div className="setup-wizard-body">
       <h3 className="setup-wizard-heading">Connect {label}</h3>
@@ -586,6 +618,18 @@ function StepTicketDetails({
         {' '}<code>~/.kato/settings.json</code> — kato&apos;s only config
         file.
       </p>
+      <CredentialSourcePicker
+        provider={platform}
+        providerLabel={label}
+        value={credentialSource}
+        onChange={onCredentialSource}
+      />
+      {/* "Where do I even get an API key?" was the first thing a new
+          operator got stuck on — the steps live right above the field
+          that needs them, open by default on first run. */}
+      {isPasting && (
+        <CredentialGuide guide={credentialGuideFor(platform)} defaultOpen />
+      )}
       <WizardFieldList
         keys={displayedKeys}
         requiredSet={new Set(requiredKeys)}
@@ -653,6 +697,15 @@ function StepAgentDetails({
   agent, keys, requiredSet, draft, setDraft, serverHasValue, canSave,
   saving, onBack, onSave,
 }) {
+  // The agent step can ask for credentials from two different places at
+  // once: an OpenRouter-flavored setup needs the OpenHands server key AND
+  // the OpenRouter model key, and a bedrock/… model swaps the LLM key for
+  // AWS credentials. One card per source beats one card that hedges.
+  const guideIds = [
+    agent.backend === 'openhands' && agent.id !== 'openhands' ? 'openhands' : '',
+    agent.id,
+    keys.includes('AWS_BEARER_TOKEN_BEDROCK') ? 'bedrock' : '',
+  ].filter(Boolean);
   return (
     <div className="setup-wizard-body">
       <h3 className="setup-wizard-heading">Connect {agent.label}</h3>
@@ -661,6 +714,13 @@ function StepAgentDetails({
           || 'Enter the details kato needs to drive this agent — optional '
              + 'fields have sensible defaults.'}
       </p>
+      {guideIds.map((id, index) => (
+        <CredentialGuide
+          key={id}
+          guide={credentialGuideFor(id)}
+          defaultOpen={index === 0}
+        />
+      ))}
       {keys.length > 0 && (
         <WizardFieldList
           keys={keys}

@@ -1,0 +1,122 @@
+# Kato Desktop — build the installers (.dmg / .msi / .AppImage) + updater feed
+# on a version tag. THIS is what actually produces the downloadable files.
+#
+# ▶ To enable: copy to  .github/workflows/desktop-release.yaml  at the REPO ROOT.
+#   GitHub only runs workflows from .github/workflows, so this one file can't
+#   physically live under desktop/ — it's kept here as the source of truth.
+#
+# On a tag like `desktop-v0.1.0`, each OS runner installs kato + PyInstaller,
+# freezes the sidecar, then runs the Tauri action to build + sign the installer
+# and publish the signed bundles + `latest.json` (the update feed) to a Release.
+name: desktop-release
+
+on:
+  push:
+    tags: ["desktop-v*"]
+
+# tauri-action creates the GitHub Release, which needs write access to contents.
+permissions:
+  contents: write
+
+jobs:
+  # The Windows installer ships the LINUX backend binary too, so it can push it
+  # into the operator's WSL2 distro at runtime (see desktop/src-tauri/src/wsl.rs).
+  # Tauri can't cross-compile it, so a Linux runner freezes it first and the
+  # Windows job downloads the artifact before bundling. Without this the Windows
+  # build still succeeds — and then fails at runtime with "the Linux backend is
+  # missing from this install", which is why the download step is not `continue-on-error`.
+  linux-sidecar:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Install kato + PyInstaller
+        shell: bash
+        run: |
+          python scripts/install_python_deps.py python editable
+          python -m pip install pyinstaller
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Freeze the Linux sidecar
+        working-directory: desktop
+        shell: bash
+        env:
+          KATO_PYTHON: python
+        run: bash sidecar/build-sidecar.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kato-sidecar-linux
+          path: desktop/src-tauri/binaries/kato-sidecar-x86_64-unknown-linux-gnu
+          if-no-files-found: error
+
+  build:
+    needs: linux-sidecar
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest,   note: "arm64 .dmg" }
+          - { os: windows-latest, note: ".msi / nsis .exe" }
+          - { os: ubuntu-22.04,   note: ".AppImage / .deb" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux webkit + build deps
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+
+      - name: Install kato + PyInstaller
+        shell: bash
+        run: |
+          python scripts/install_python_deps.py python editable
+          python -m pip install pyinstaller
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+
+      - name: Tauri CLI + icons + sidecar
+        working-directory: desktop
+        shell: bash
+        env:
+          KATO_PYTHON: python
+        run: |
+          npm install
+          npm run icon
+          npm run sidecar
+
+      # Windows only: the Linux backend that gets pushed into the WSL2 distro at
+      # runtime. Lands next to the Windows sidecar; tauri.windows.conf.json lists
+      # it under bundle.resources so it ends up inside the installer.
+      - name: Fetch the Linux backend for the WSL target
+        if: matrix.os == 'windows-latest'
+        uses: actions/download-artifact@v4
+        with:
+          name: kato-sidecar-linux
+          path: desktop/src-tauri/binaries
+
+      - name: Build + sign the Tauri app (emits installers + updater feed)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: "Kato Desktop ${{ github.ref_name }}"
+          releaseDraft: true
+          prerelease: false

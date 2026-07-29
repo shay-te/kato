@@ -15,12 +15,16 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod wsl;
+
 use std::net::{SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
 
 use tauri::{Emitter, Manager};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
+
+use wsl::BackendTarget;
 
 const HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 5050;
@@ -37,6 +41,11 @@ fn main() {
         std::sync::Mutex<Option<tauri_plugin_shell::process::CommandChild>>,
     > = std::sync::Arc::new(std::sync::Mutex::new(None));
     let sidecar_setup = sidecar.clone();
+    // Which side the backend ended up on — the exit handler needs it too,
+    // because a WSL backend has to be killed from inside the distro.
+    let target_state: std::sync::Arc<std::sync::Mutex<BackendTarget>> =
+        std::sync::Arc::new(std::sync::Mutex::new(BackendTarget::Native));
+    let target_setup = target_state.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -45,19 +54,44 @@ fn main() {
         // in the system default browser instead of trying to navigate the
         // app's own webview. Driven from the frontend via utils/tauriLinks.js.
         .plugin(tauri_plugin_opener::init())
+        // Native OS notifications. The UI calls this through
+        // utils/tauriNotifications.js; the web Notification API it uses in a
+        // browser is inert inside the desktop webview (see Cargo.toml).
+        .plugin(tauri_plugin_notification::init())
         .setup(move |app| {
             let app_handle = app.handle().clone();
+
+            // WHERE does the backend run? Native everywhere except Windows,
+            // which prefers a WSL2 distro because that is the only place the
+            // Docker sandbox works. Decided (and remembered) before anything
+            // is spawned — see wsl.rs for the defaulting rules.
+            let (target, target_note) = wsl::resolve_target();
+            if !target_note.is_empty() {
+                println!("[kato] {target_note}");
+                let _ = app.handle().emit("kato-log", target_note.clone());
+            }
+            if let Ok(mut guard) = target_setup.lock() {
+                *guard = target.clone();
+            }
 
             // Kill any LEFTOVER kato-sidecar (from a prior crash / force-quit
             // that skipped the exit handler) BEFORE spawning ours, so this
             // launch's sidecar owns the port and serves THIS bundle — not a
             // stale process's old one. Runs before our own spawn, so it only
-            // hits stragglers. Best-effort; a no-op on Windows.
-            #[cfg(not(windows))]
-            {
-                let _ = std::process::Command::new("/usr/bin/pkill")
-                    .args(["-9", "-f", "kato-sidecar"])
-                    .status();
+            // hits stragglers. Best-effort.
+            match &target {
+                // The Windows-side wsl.exe is only a relay — killing it does
+                // NOT kill the Linux process on the port, so the straggler has
+                // to be cleared from INSIDE the distro.
+                BackendTarget::Wsl { distro } => wsl::kill_stragglers(distro),
+                BackendTarget::Native => {
+                    #[cfg(not(windows))]
+                    {
+                        let _ = std::process::Command::new("/usr/bin/pkill")
+                            .args(["-9", "-f", "kato-sidecar"])
+                            .status();
+                    }
+                }
             }
 
             // Clearing a straggler is async — the OS takes a beat to release the
@@ -90,11 +124,44 @@ fn main() {
             // PATH: a Finder/Dock-launched app inherits a minimal PATH (it does
             // NOT load your shell profile), so it would fail to find git /
             // docker / the agent CLI. We prepend the usual tool locations.
-            let (mut rx, child) = app
-                .shell()
-                .sidecar("kato-sidecar")
-                .expect("kato-sidecar was not bundled (run `npm run sidecar`)")
-                .env("PATH", augmented_path())
+            //
+            // WSL TARGET: instead of the host sidecar we push the bundled
+            // LINUX binary into the distro (version-keyed, like
+            // ~/.vscode-server) and exec it through wsl.exe. The operator
+            // never installs or updates kato inside the distro by hand — the
+            // shell's own signed update carries the matching backend.
+            let command = match &target {
+                BackendTarget::Native => app
+                    .shell()
+                    .sidecar("kato-sidecar")
+                    .expect("kato-sidecar was not bundled (run `npm run sidecar`)")
+                    // A GUI launch has no shell profile, so PATH is rebuilt for
+                    // the host case. NOT applied to wsl.exe: WSL derives the
+                    // distro's PATH itself, and forcing Windows paths onto it
+                    // would corrupt the Linux environment (the login shell in
+                    // spawn_args does that job instead).
+                    .env("PATH", augmented_path()),
+                BackendTarget::Wsl { distro } => {
+                    let binary = wsl::sidecar_binary_name();
+                    match prepare_wsl_backend(app.handle(), distro, &binary) {
+                        Ok(()) => app
+                            .shell()
+                            .command("wsl.exe")
+                            .args(wsl::spawn_args(distro, &binary)),
+                        Err(message) => {
+                            // Fail LOUDLY on the splash rather than spinning:
+                            // a missing tool inside the distro is a fixable
+                            // setup problem, and silence is what made the
+                            // original "stuck on the splash" bug so opaque.
+                            let fatal = format!("KATO-FATAL: {message}");
+                            eprintln!("[kato] {fatal}");
+                            let _ = app.handle().emit("kato-log", fatal);
+                            return Ok(());
+                        }
+                    }
+                }
+            };
+            let (mut rx, child) = command
                 .spawn()
                 .expect("failed to spawn kato sidecar");
             // Hold the child so the RunEvent::Exit handler can kill it on quit.
@@ -242,6 +309,14 @@ fn main() {
             // port for the next launch to collide with (which would make the
             // next launch serve this stale process's OLD bundle).
             if let tauri::RunEvent::Exit = event {
+                // A WSL backend outlives the wsl.exe relay we spawned, so it
+                // has to be killed inside the distro or the next launch
+                // collides with it on port 5050.
+                if let Ok(guard) = target_state.lock() {
+                    if let BackendTarget::Wsl { distro } = &*guard {
+                        wsl::kill_stragglers(distro);
+                    }
+                }
                 if let Ok(mut guard) = sidecar.lock() {
                     if let Some(child) = guard.take() {
                         // PyInstaller onefile forks a Python child that actually
@@ -260,6 +335,47 @@ fn main() {
                 }
             }
         });
+}
+
+/// Make `distro` ready to run the backend: push the bundled Linux binary in,
+/// then check the tools kato shells out to are present.
+///
+/// The push is the whole point of the WSL target — the operator must never
+/// `pip install` or `git pull` inside the distro. The Windows installer carries
+/// the Linux binary; this copies it to `~/.kato/bin/kato-sidecar-<version>` and
+/// skips the copy when that version is already there, so it costs nothing after
+/// the first launch on a given version.
+///
+/// Returns a message fit to show the operator, because every failure here is
+/// something they can fix: a missing resource means a broken install, a missing
+/// `git` means one apt-get away.
+fn prepare_wsl_backend(
+    app: &tauri::AppHandle,
+    distro: &str,
+    binary: &str,
+) -> Result<(), String> {
+    let source = app
+        .path()
+        .resolve(wsl::LINUX_SIDECAR_RESOURCE, tauri::path::BaseDirectory::Resource)
+        .map_err(|e| format!("the Linux backend is missing from this install ({e})"))?;
+    let source_text = source
+        .to_str()
+        .ok_or_else(|| "the Linux backend path is not valid text".to_string())?;
+    wsl::install_sidecar(distro, source_text, binary)?;
+
+    // git + the agent CLI are the operator's install inside the distro — kato
+    // drives them as subprocesses and cannot bundle them (VS Code doesn't ship
+    // your compilers either). Name them now instead of stalling later.
+    let missing = wsl::preflight_missing_tools(distro, &["git", "claude"]);
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "{} is not installed inside {distro}. Kato runs its agent there, so install it \
+         in that distribution (a Windows-side install is a different machine as far as \
+         kato is concerned), then reopen Kato.",
+        missing.join(" and "),
+    ))
 }
 
 /// Ask the user's LOGIN shell for its real PATH.

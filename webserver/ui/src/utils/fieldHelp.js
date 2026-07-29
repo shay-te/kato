@@ -3,6 +3,8 @@
 // environment-variable name is NEVER printed next to a label — it lives on
 // the last line of the info text (FieldInfoTip) instead.
 
+import { credentialLocationForKey } from './credentialGuides.js';
+
 // "YOUTRACK_API_BASE_URL" → "API base URL" (drop the platform prefix, keep
 // well-known acronyms readable) so a first-comer sees friendly labels.
 export function humanizeFieldKey(key, platform) {
@@ -76,8 +78,13 @@ const SUFFIX_RULES = [
     (key) => `Base URL of the ${serviceName(key)} API kato talks to.`],
   ['BASE_URL', () => 'https://…',
     (key) => `Base URL of the ${serviceName(key)} API kato talks to.`],
+  // The menu path comes from credentialGuides so the tooltip and the
+  // guide card can't drift. (The old text said "your account's security
+  // settings" — a menu that exists on none of these providers, which is
+  // exactly what stalled the first install.)
   ['API_TOKEN', () => 'paste your API token',
-    (key) => `API token kato authenticates with. Create one in your ${serviceName(key)} account's security settings.`],
+    (key) => `API token kato authenticates with. Create one at: ${
+      credentialLocationForKey(key) || `your ${serviceName(key)} account settings`}.`],
   ['API_EMAIL', () => 'bot@company.com',
     () => 'Email address of the account the API token belongs to.'],
   ['EMAIL', () => 'bot@company.com',

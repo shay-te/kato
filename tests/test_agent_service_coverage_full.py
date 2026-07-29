@@ -566,6 +566,82 @@ class SpawnCommentAgentWorkspaceSummaryTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------
+# _warn_if_comment_has_no_resumable_session — operator ask: "make sure
+# it's always the same session." The respawn path already resumes via the
+# task's persisted agent_session_id whenever one exists (test_flow_multi_
+# turn_continuity.py covers that machinery). What was missing was a signal
+# for the one case that IS a real context loss — no session on file at
+# all — so it can be told apart, in the logs, from a resumed-but-vague
+# prompt (the case the snippet/guardrail fix above actually addresses).
+# --------------------------------------------------------------------------
+
+
+class WarnIfCommentHasNoResumableSessionTests(unittest.TestCase):
+    def test_no_session_manager_is_silent(self) -> None:
+        service = _bare_service(session_manager=None)
+        service.logger = MagicMock()
+        service._warn_if_comment_has_no_resumable_session(
+            'PROJ-1', SimpleNamespace(id='c1'),
+        )
+        service.logger.warning.assert_not_called()
+
+    def test_no_record_on_file_warns(self) -> None:
+        session_manager = SimpleNamespace(get_record=MagicMock(return_value=None))
+        service = _bare_service(session_manager=session_manager)
+        service.logger = MagicMock()
+        service._warn_if_comment_has_no_resumable_session(
+            'PROJ-1', SimpleNamespace(id='c1'),
+        )
+        service.logger.warning.assert_called_once()
+        args = service.logger.warning.call_args.args
+        self.assertIn('no prior agent session', args[0])
+
+    def test_record_with_no_session_id_warns(self) -> None:
+        record = SimpleNamespace(agent_session_id='')
+        session_manager = SimpleNamespace(get_record=MagicMock(return_value=record))
+        service = _bare_service(session_manager=session_manager)
+        service.logger = MagicMock()
+        service._warn_if_comment_has_no_resumable_session(
+            'PROJ-1', SimpleNamespace(id='c1'),
+        )
+        service.logger.warning.assert_called_once()
+
+    def test_record_with_a_session_id_is_silent(self) -> None:
+        # The common case: conversation history exists on disk. No warning.
+        record = SimpleNamespace(agent_session_id='sess-123')
+        session_manager = SimpleNamespace(get_record=MagicMock(return_value=record))
+        service = _bare_service(session_manager=session_manager)
+        service.logger = MagicMock()
+        service._warn_if_comment_has_no_resumable_session(
+            'PROJ-1', SimpleNamespace(id='c1'),
+        )
+        service.logger.warning.assert_not_called()
+
+    def test_lookup_failure_is_swallowed_not_raised(self) -> None:
+        session_manager = SimpleNamespace(
+            get_record=MagicMock(side_effect=RuntimeError('disk error')),
+        )
+        service = _bare_service(session_manager=session_manager)
+        service.logger = MagicMock()
+        service._warn_if_comment_has_no_resumable_session(
+            'PROJ-1', SimpleNamespace(id='c1'),
+        )  # must not raise
+        service.logger.warning.assert_not_called()
+
+    def test_spawn_comment_agent_checks_before_dispatch(self) -> None:
+        # Wired into the real dispatch path, not just callable standalone.
+        runner = SimpleNamespace(resume_session_for_chat=MagicMock())
+        session_manager = SimpleNamespace(get_record=MagicMock(return_value=None))
+        service = _bare_service(
+            planning_session_runner=runner, session_manager=session_manager,
+        )
+        service.logger = MagicMock()
+        service._comment_agent_cwd = MagicMock(return_value='')
+        service._spawn_comment_agent('PROJ-1', SimpleNamespace(id='c1'), 'prompt')
+        service.logger.warning.assert_called_once()
+
+
+# --------------------------------------------------------------------------
 # _comment_thread_replies  (lines 2032, 2038-2039)
 # --------------------------------------------------------------------------
 

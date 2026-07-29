@@ -24,6 +24,20 @@ After editing `.env`, run:
 kato doctor
 ```
 
+## Where the API token comes from
+
+Kato authenticates as one bot/user account: it reads the tickets assigned to that account, moves them between workflow states, comments on them, and — where the repository lives on the same host — pushes the branch and opens the pull request. It can do nothing that account cannot do. The token is stored on your machine in `~/.kato/settings.json` and sent only to that provider.
+
+The first-run wizard shows these steps inline (Settings → credentials repeats them), but for reference:
+
+| Platform | Where to create the token | Scopes / permissions |
+|---|---|---|
+| YouTrack | avatar → Profile → **Account Security** → Authentication → New token… — [docs](https://www.jetbrains.com/help/youtrack/devportal/Manage-Permanent-Token.html) | YouTrack scope |
+| Jira | [id.atlassian.com](https://id.atlassian.com/manage-profile/security/api-tokens) → Security → Create and manage API tokens — [docs](https://support.atlassian.com/atlassian-account/docs/manage-api-tokens-for-your-atlassian-account/) | token + the account email (`JIRA_EMAIL`) |
+| GitHub | avatar → Settings → **Developer settings** (bottom of the sidebar — there is no "Security" menu) → Personal access tokens → [Fine-grained tokens](https://github.com/settings/personal-access-tokens/new) — [docs](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens) | Contents RW, Pull requests RW, Issues RW, Metadata R (classic token: `repo`) |
+| GitLab | avatar → Edit profile → [Access tokens](https://gitlab.com/-/user_settings/personal_access_tokens) → Add new token — [docs](https://docs.gitlab.com/user/profile/personal_access_tokens/) | `api` |
+| Bitbucket | [id.atlassian.com](https://id.atlassian.com/manage-profile/security/api-tokens) → Security → API tokens (Bitbucket Cloud authenticates through Atlassian) — [docs](https://support.atlassian.com/bitbucket-cloud/docs/using-api-tokens/) | repositories / pull requests / issues RW, plus `BITBUCKET_USERNAME` and `BITBUCKET_API_EMAIL` |
+
 ## Setting Up YouTrack
 
 Use this when tasks are coming from YouTrack:

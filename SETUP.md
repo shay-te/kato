@@ -186,3 +186,35 @@ Every operator-facing entry point is a Python script under `scripts/`; the `.sh`
 | Clean Docker resources | `./clean.sh` | `python scripts\clean.py` |
 
 `make` is convenient on POSIX systems but adds nothing the Python scripts don't already do. Don't install Make on Windows just for kato — call the Python scripts directly.
+
+### Windows: native or WSL2?
+
+WSL (Windows Subsystem for Linux) is Microsoft's built-in way to run a real Linux distribution — Ubuntu, Debian — inside Windows. WSL2 runs an actual Linux kernel in a lightweight Hyper-V VM, so from kato's point of view a WSL2 distro simply *is* Linux.
+
+Both paths work; pick by whether you want the Docker sandbox:
+
+| | Native Windows | Inside WSL2 |
+|---|---|---|
+| `kato up`, the planning UI, git, the Claude/Codex CLI | Works | Works |
+| `KATO_CLAUDE_DOCKER=true` (sandboxed agent) | **Refused** — the sandbox image is Linux, the workspace path validation assumes POSIX semantics, and `fcntl.flock` for the audit chain does not exist on Windows | Works, via Docker Desktop's WSL2 backend |
+| `KATO_CLAUDE_BYPASS_PERMISSIONS=true` | Refused (it requires Docker) | Works |
+| Sandbox layers | n/a | All of them as on Linux native, except gVisor — Docker Desktop cannot run it, so set `KATO_SANDBOX_ALLOW_NO_GVISOR=true`; the Hyper-V VM boundary is the substitute. See [SANDBOX_PROTECTIONS.md](sandbox_core_lib/SANDBOX_PROTECTIONS.md) |
+
+Running under WSL2 needs no kato-specific configuration — install Python 3.11+, the agent CLI and kato *inside* the distro, then `kato up`. The UI is reachable from a Windows browser at the usual `127.0.0.1:5050`; WSL2 forwards localhost, so you get the planning UI in a normal Windows window with no GUI plumbing at all. This is the path to recommend.
+
+**Which install, though?** The one that matters is: everything kato shells out to must live on the *same side* of the boundary. `git`, the agent CLI and the `docker` CLI are spawned as subprocesses from kato's own environment, so a Windows-side install of them is a different machine as far as kato is concerned.
+
+- **Inside WSL2, headless (recommended):** `pip install -e .` + `kato up` in the distro, browser on the Windows side. No desktop app involved. The window is a real Windows window, so this is also the best way to *evaluate* kato on Windows — the desktop app adds a bundled Python runtime and auto-update, neither of which changes the product you are judging.
+- **Inside WSL2, desktop app:** the **Linux** build (`.AppImage` / `.deb`) installed in the distro. It works, but it is a GTK/WebKit app rendered through WSLg (built into Windows 11; Windows 10 needs an X server), so it looks and behaves like a Linux window pasted onto Windows — not native. Prefer the headless option above.
+- **The trap:** installing the Windows `.msi` on the Windows side and expecting it to drive a CLI installed in WSL. It cannot see it — and that is the native-Windows path that refuses `KATO_CLAUDE_DOCKER=true` (see the table above).
+
+> **Also available: the desktop app's WSL target.** The Windows app can run its backend inside a WSL2 distribution while the window stays native — the VS Code Remote-WSL model. You never install or update kato inside the distro: the installer carries the Linux backend and pushes it in, version-keyed, so the app's own signed update covers both halves. On a fresh install it picks your default WSL2 distro automatically; an existing native install is left alone. Still yours to install *inside* the distro: `git`, the agent CLI, and Docker Desktop's WSL integration. See [desktop/README.md → Windows: the WSL target](desktop/README.md).
+
+The desktop app bundles the Python runtime, but never `git`, Docker, or the agent CLI — those are always installed by the operator, on whichever side kato runs.
+
+Two things to get right inside WSL2:
+
+- Keep `REPOSITORY_ROOT_PATH` on the **Linux** filesystem (`~/projects`), not on `/mnt/c/...`. Cross-filesystem git is slow and drags in Windows permission/line-ending quirks.
+- Docker Desktop must have WSL integration enabled for that distro (Settings → Resources → WSL integration), otherwise `docker` is not on the PATH kato sees.
+
+CI runs kato's test suite on Linux only; native-Windows behavior is verified by hand (see [WINDOWS_VERIFICATION.md](WINDOWS_VERIFICATION.md)).

@@ -12,6 +12,7 @@ vi.mock('../api.js', () => ({
   updateTaskProvider: vi.fn(),
   fetchGitProviders: vi.fn(),
   updateGitProvider: vi.fn(),
+  fetchCredentialSources: vi.fn(),
 }));
 vi.mock('../stores/toastStore.js', () => ({
   toast: { show: vi.fn(), errorFromResult: vi.fn() },
@@ -21,7 +22,7 @@ import TaskProviderSettingsPanel from './TaskProviderSettingsPanel.jsx';
 import GitProvidersSettingsPanel from './GitProvidersSettingsPanel.jsx';
 import {
   fetchTaskProviders, updateTaskProvider,
-  fetchGitProviders, updateGitProvider,
+  fetchGitProviders, updateGitProvider, fetchCredentialSources,
 } from '../api.js';
 import { toast } from '../stores/toastStore.js';
 
@@ -58,6 +59,9 @@ beforeEach(() => {
   fetchTaskProviders.mockReset();
   updateTaskProvider.mockReset();
   fetchGitProviders.mockReset();
+  // Nothing discoverable by default — the panel keeps its paste form.
+  fetchCredentialSources.mockReset();
+  fetchCredentialSources.mockResolvedValue({ ok: true, body: { sources: [] } });
   updateGitProvider.mockReset();
   toast.show.mockReset();
 });

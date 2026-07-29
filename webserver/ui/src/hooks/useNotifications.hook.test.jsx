@@ -322,6 +322,124 @@ describe('useNotifications — notify() gates', () => {
 });
 
 
+// Operator report: "the desktop notification is not working on windows."
+// Cause — the desktop shell can't deliver web notifications (WebView2 drops
+// them, WKWebView lacks the API), so inside the shell we must route through
+// the native plugin instead. These pin that routing.
+describe('useNotifications — desktop shell (Tauri) path', () => {
+  let invoked;
+
+  function installTauri({ granted = false } = {}) {
+    invoked = [];
+    globalThis.window.__TAURI__ = {
+      core: {
+        invoke: async (command, payload) => {
+          invoked.push({ command, payload });
+          if (command === 'plugin:notification|is_permission_granted') {
+            return granted;
+          }
+          if (command === 'plugin:notification|request_permission') {
+            return granted ? 'granted' : 'denied';
+          }
+          return null;
+        },
+      },
+    };
+  }
+
+  afterEach(() => { delete globalThis.window.__TAURI__; });
+
+  test('supported=true inside the shell even with no web Notification API', () => {
+    // macOS WKWebView has no Notification at all — the toggle must still
+    // be offered, because the native plugin can deliver.
+    delete globalThis.Notification;
+    installTauri();
+    const { result } = renderHook(() => useNotifications({ activeTaskId: null }));
+    expect(result.current.supported).toBe(true);
+  });
+
+  test('adopts an already-granted OS permission and restores "on"', async () => {
+    installTauri({ granted: true });
+    window.localStorage.setItem(ENABLED_STORAGE_KEY, 'on');
+    const { result } = renderHook(() => useNotifications({ activeTaskId: null }));
+    await waitFor(() => expect(result.current.permission).toBe('granted'));
+    expect(result.current.enabled).toBe(true);
+  });
+
+  test('toggle requests OS permission and enables when granted', async () => {
+    installTauri({ granted: true });
+    const { result } = renderHook(() => useNotifications({ activeTaskId: null }));
+    await act(async () => { await result.current.toggle(); });
+    expect(result.current.enabled).toBe(true);
+    expect(window.localStorage.getItem(ENABLED_STORAGE_KEY)).toBe('on');
+  });
+
+  test('toggle stays disabled when the OS denies', async () => {
+    installTauri({ granted: false });
+    const { result } = renderHook(() => useNotifications({ activeTaskId: null }));
+    await act(async () => { await result.current.toggle(); });
+    expect(result.current.enabled).toBe(false);
+    expect(result.current.permission).toBe('denied');
+  });
+
+  test('notify goes to the native plugin, NOT the inert web API', async () => {
+    // The actual bug: this used to construct a web Notification inside the
+    // desktop webview, which silently displayed nothing on Windows.
+    installTauri({ granted: true });
+    window.localStorage.setItem(ENABLED_STORAGE_KEY, 'on');
+    Object.defineProperty(document, 'hidden', { value: true, configurable: true });
+    const { result } = renderHook(() => useNotifications({ activeTaskId: null }));
+    await waitFor(() => expect(result.current.enabled).toBe(true));
+
+    act(() => {
+      result.current.notify({
+        title: 'Approval needed', body: 'T1', taskId: 'T1', kind: 'attention',
+      });
+    });
+
+    const sent = invoked.filter((c) => c.command === 'plugin:notification|notify');
+    expect(sent).toHaveLength(1);
+    expect(sent[0].payload.options.title).toBe('Approval needed');
+    expect(sent[0].payload.options.body).toBe('T1');
+    // The web path must NOT also fire — one notification, not two.
+    expect(FakeNotification.instances).toHaveLength(0);
+  });
+
+  test('desktop notify still respects the per-kind opt-out', async () => {
+    installTauri({ granted: true });
+    window.localStorage.setItem(ENABLED_STORAGE_KEY, 'on');
+    window.localStorage.setItem(
+      KIND_STORAGE_KEY, JSON.stringify({ reply: false }),
+    );
+    Object.defineProperty(document, 'hidden', { value: true, configurable: true });
+    const { result } = renderHook(() => useNotifications({ activeTaskId: null }));
+    await waitFor(() => expect(result.current.enabled).toBe(true));
+
+    act(() => {
+      result.current.notify({ title: 'Reply', taskId: 'T1', kind: 'reply' });
+    });
+
+    expect(invoked.filter((c) => c.command === 'plugin:notification|notify'))
+      .toHaveLength(0);
+  });
+
+  test('desktop notify is suppressed for the visible active task', async () => {
+    installTauri({ granted: true });
+    window.localStorage.setItem(ENABLED_STORAGE_KEY, 'on');
+    Object.defineProperty(document, 'hidden', { value: false, configurable: true });
+    const { result } = renderHook(() => useNotifications({ activeTaskId: 'T1' }));
+    await waitFor(() => expect(result.current.enabled).toBe(true));
+
+    act(() => {
+      result.current.notify({ title: 'Reply', taskId: 'T1', kind: 'reply' });
+    });
+
+    expect(invoked.filter((c) => c.command === 'plugin:notification|notify'))
+      .toHaveLength(0);
+  });
+});
+
+
 describe('useNotifications — setKindEnabled persists per-kind prefs', () => {
 
   test('setKindEnabled writes the new pref to localStorage', () => {

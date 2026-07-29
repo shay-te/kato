@@ -12,6 +12,8 @@ Focuses on:
 
 from __future__ import annotations
 
+import os
+import tempfile
 import time
 import unittest
 from types import SimpleNamespace
@@ -1187,6 +1189,77 @@ class AddTaskCommentTests(unittest.TestCase):
         self.assertIn('fix this', prompt)
         self.assertIn('no, do it differently', prompt)
         self.assertIn('Operator:', prompt)
+
+    # Operator report this covers: kato reverted an ENTIRE file when asked
+    # to revert one commented line. Root cause — the in-app diff-comment
+    # prompt gave the agent a bare file/line NUMBER and no instruction to
+    # stay narrow, so even a session with full conversation history had
+    # nothing precise to anchor "this" to. These pin the fix: the prompt
+    # must show the code actually at that line, and must tell the agent
+    # to make the smallest possible change.
+    def test_comment_prompt_inlines_the_code_at_the_commented_line(self) -> None:
+        from kato_core_lib.comment_core_lib import CommentRecord
+
+        workspace_manager = MagicMock()
+        with tempfile.TemporaryDirectory() as repo_dir:
+            workspace_manager.repository_path.return_value = repo_dir
+            file_path = os.path.join(repo_dir, 'f.py')
+            with open(file_path, 'w', encoding='utf-8') as handle:
+                handle.write('\n'.join(f'line {n}' for n in range(1, 11)))
+            service = AgentService(**_kwargs(workspace_manager=workspace_manager))
+            root = CommentRecord(
+                id='c0', body='revert this', repo_id='r1', author='operator',
+                source='local', parent_id='', file_path='f.py', line=5,
+            )
+            store = MagicMock()
+            store.list.return_value = [root]
+            with patch.object(service, '_comment_store_for', return_value=store):
+                prompt = service._comment_agent_prompt('T1', root)
+        # The line the comment anchors to is actually shown to the agent...
+        self.assertIn('line 5', prompt)
+        # ...framed as untrusted repo content, same as the PR-review path.
+        self.assertIn('repo-file:f.py', prompt)
+        # ...and the agent is told not to over-scope the fix.
+        self.assertIn('Make the smallest possible change', prompt)
+        self.assertIn('Prefer editing only the exact lines or blocks', prompt)
+
+    def test_comment_prompt_always_carries_the_narrow_edit_guardrail(self) -> None:
+        # Even with no resolvable file (no workspace_manager, no repo
+        # clone) the agent must still be told to stay narrow — the
+        # guardrail is not conditional on the snippet being available.
+        from kato_core_lib.comment_core_lib import CommentRecord
+
+        service = AgentService(**_kwargs())
+        root = CommentRecord(
+            id='c0', body='revert this', repo_id='r1', author='operator',
+            source='local', parent_id='', file_path='f.py', line=5,
+        )
+        store = MagicMock()
+        store.list.return_value = [root]
+        with patch.object(service, '_comment_store_for', return_value=store):
+            prompt = service._comment_agent_prompt('T1', root)
+        self.assertIn('Make the smallest possible change', prompt)
+        self.assertNotIn('repo-file:', prompt)
+
+    def test_comment_prompt_skips_snippet_for_a_file_level_comment(self) -> None:
+        # line=-1 means "not anchored to a specific line" — nothing to
+        # inline, and review_comment_code_snippet must not be asked to
+        # read line -1 of anything.
+        from kato_core_lib.comment_core_lib import CommentRecord
+
+        workspace_manager = MagicMock()
+        workspace_manager.repository_path.return_value = '/tmp/should-not-be-read'
+        service = AgentService(**_kwargs(workspace_manager=workspace_manager))
+        root = CommentRecord(
+            id='c0', body='general note', repo_id='r1', author='operator',
+            source='local', parent_id='', file_path='f.py', line=-1,
+        )
+        store = MagicMock()
+        store.list.return_value = [root]
+        with patch.object(service, '_comment_store_for', return_value=store):
+            prompt = service._comment_agent_prompt('T1', root)
+        self.assertNotIn('repo-file:', prompt)
+        workspace_manager.repository_path.assert_not_called()
 
 
 class ResolveTaskCommentTests(unittest.TestCase):

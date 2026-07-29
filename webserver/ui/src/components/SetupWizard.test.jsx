@@ -15,6 +15,7 @@ vi.mock('../api.js', () => ({
   fetchAllSettings: vi.fn(),
   updateAllSettings: vi.fn(),
   fetchDirectoryListing: vi.fn(),
+  fetchCredentialSources: vi.fn(),
 }));
 
 import {
@@ -25,6 +26,7 @@ import {
   fetchAllSettings,
   updateAllSettings,
   fetchDirectoryListing,
+  fetchCredentialSources,
 } from '../api.js';
 import SetupWizard from './SetupWizard.jsx';
 import { humanizeFieldKey } from '../utils/fieldHelp.js';
@@ -59,6 +61,10 @@ beforeEach(() => {
   updateSettings.mockResolvedValue({ ok: true, body: {} });
   fetchAllSettings.mockReset();
   updateAllSettings.mockReset();
+  // Default: nothing discoverable, so the wizard shows the paste form —
+  // the behavior every pre-existing test was written against.
+  fetchCredentialSources.mockReset();
+  fetchCredentialSources.mockResolvedValue({ ok: true, body: { sources: [] } });
   fetchAllSettings.mockResolvedValue({ ok: true, body: { sections: [] } });
   updateAllSettings.mockResolvedValue({ ok: true, body: {} });
 });
@@ -74,16 +80,20 @@ async function pickClaudeAndGoToRepoStep() {
   await screen.findByText('Where are your repositories?');
 }
 
-async function pickJiraAndGoToDetails() {
+async function pickSystemAndGoToDetails(choice, heading) {
   render(
     <SetupWizard status={UNCONFIGURED} onRefreshStatus={vi.fn()} />,
   );
   await waitFor(() => {
     expect(fetchTaskProviders).toHaveBeenCalled();
   });
-  fireEvent.click(screen.getByRole('radio', { name: /Jira/ }));
+  fireEvent.click(screen.getByRole('radio', { name: choice }));
   fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-  await screen.findByText('Connect Jira');
+  await screen.findByText(heading);
+}
+
+async function pickJiraAndGoToDetails() {
+  await pickSystemAndGoToDetails(/Jira/, 'Connect Jira');
 }
 
 function fillAllJiraFields(container) {
@@ -109,6 +119,119 @@ describe('SetupWizard step 1 — pick the ticket system', () => {
     await pickJiraAndGoToDetails();
     // Step 2 heading is on screen; step 1's choices are gone.
     expect(screen.queryByRole('radio', { name: /YouTrack/ })).toBeNull();
+  });
+});
+
+// The install feedback that produced this block: "I don't know where I get
+// the API key from — this isn't something I usually do, and there is no
+// SECURITY menu." So every credential step must say WHY the key is needed
+// and link out to the provider's own instructions.
+describe('SetupWizard — credential guidance', () => {
+  test('the ticket step says why the key is needed and how to get it', async () => {
+    await pickJiraAndGoToDetails();
+    expect(screen.getByText('Why kato needs this')).toBeInTheDocument();
+    expect(
+      screen.getByText(/Where do I get a Jira API token\?/),
+    ).toBeInTheDocument();
+    // Steps are visible on first run (details open by default) — the menu
+    // path appears both as the summary line and inside the steps.
+    expect(screen.getAllByText(/Create and manage API tokens/).length)
+      .toBeGreaterThan(0);
+    // And the provider's own documentation is one click away.
+    const docs = screen.getByRole('link', { name: /Atlassian: manage API tokens/ });
+    expect(docs).toHaveAttribute(
+      'href',
+      'https://support.atlassian.com/atlassian-account/docs/manage-api-tokens-for-your-atlassian-account/',
+    );
+    expect(docs).toHaveAttribute('target', '_blank');
+    expect(screen.getByRole('link', { name: /Create an Atlassian API token/ }))
+      .toHaveAttribute('href', 'https://id.atlassian.com/manage-profile/security/api-tokens');
+  });
+
+  test('GitHub sends the operator to Developer settings, not a Security menu', async () => {
+    await pickSystemAndGoToDetails(/GitHub Issues/, 'Connect GitHub Issues');
+    expect(screen.getAllByText(/Developer settings/).length).toBeGreaterThan(0);
+    expect(screen.getByRole('link', { name: /Create a token on GitHub/ }))
+      .toHaveAttribute('href', 'https://github.com/settings/personal-access-tokens/new');
+  });
+
+  test('the agent step explains the Claude CLI login (nothing to paste)', async () => {
+    await pickJiraAndGoToDetails();
+    fillAllJiraFields(document.body);
+    fireEvent.click(screen.getByRole('button', { name: 'Save & continue' }));
+    await screen.findByText('Which AI agent does the work?');
+    fireEvent.click(screen.getByRole('radio', { name: /Claude agent/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByText('Connect Claude agent');
+    expect(screen.getByText(/Nothing to paste here/)).toBeInTheDocument();
+    // No "stored in settings.json" claim for a credential kato never holds.
+    expect(screen.queryByText(/Stored on this machine/)).toBeNull();
+    expect(screen.getByRole('link', { name: /Claude Code: install & sign in/ }))
+      .toHaveAttribute('href', 'https://docs.claude.com/en/docs/claude-code/overview');
+  });
+});
+
+// Follow-up feedback on the same screen: "api key is prehistoric." So when a
+// login already exists on the machine, the wizard must OFFER it and drop the
+// paste requirement entirely — while keeping paste as a first-class choice.
+describe('SetupWizard — connect without pasting a token', () => {
+  const CLI_SOURCE = {
+    id: 'cli',
+    label: 'gh CLI login',
+    account: 'octocat',
+    detail: 'Signed in as octocat',
+  };
+
+  async function goToGitHubWithDiscoveredLogin() {
+    fetchCredentialSources.mockResolvedValue({
+      ok: true, body: { provider: 'github', sources: [CLI_SOURCE] },
+    });
+    await pickSystemAndGoToDetails(/GitHub Issues/, 'Connect GitHub Issues');
+    await screen.findByRole('radio', { name: /gh CLI login/ });
+  }
+
+  test('offers the existing login and hides the token field entirely', async () => {
+    await goToGitHubWithDiscoveredLogin();
+    expect(screen.getByText('octocat')).toBeInTheDocument();
+    // No token input, and no "how to create a token" steps to wade through.
+    expect(screen.queryByText('API token')).toBeNull();
+    expect(screen.queryByText('Why kato needs this')).toBeNull();
+  });
+
+  test('saves the SOURCE, never a token, and needs no paste to continue', async () => {
+    await goToGitHubWithDiscoveredLogin();
+    fillAllJiraFields(document.body);   // the 4 remaining non-token fields
+    const save = screen.getByRole('button', { name: 'Save & continue' });
+    expect(save).not.toBeDisabled();
+    fireEvent.click(save);
+
+    await screen.findByText('Which AI agent does the work?');
+    const payload = updateTaskProvider.mock.calls[0][0];
+    expect(payload.fields.GITHUB_API_TOKEN_SOURCE).toBe('cli');
+    expect(payload.fields.GITHUB_API_TOKEN).toBeUndefined();
+  });
+
+  test('"paste a token instead" brings back the field and the steps', async () => {
+    await goToGitHubWithDiscoveredLogin();
+    fireEvent.click(screen.getByRole('radio', { name: /Paste a token instead/ }));
+    expect(screen.getByText('API token')).toBeInTheDocument();
+    expect(screen.getByText('Why kato needs this')).toBeInTheDocument();
+    // ...and the token is required again before the step can be saved.
+    expect(screen.getByRole('button', { name: 'Save & continue' })).toBeDisabled();
+  });
+
+  test('nothing discoverable → the form is exactly as it was', async () => {
+    fetchCredentialSources.mockResolvedValue({ ok: true, body: { sources: [] } });
+    await pickSystemAndGoToDetails(/GitHub Issues/, 'Connect GitHub Issues');
+    expect(screen.queryByRole('radio', { name: /CLI login/ })).toBeNull();
+    expect(screen.getByText('API token')).toBeInTheDocument();
+    expect(screen.getByText('Why kato needs this')).toBeInTheDocument();
+  });
+
+  test('a failed probe never blocks setup', async () => {
+    fetchCredentialSources.mockRejectedValue(new Error('gh exploded'));
+    await pickSystemAndGoToDetails(/GitHub Issues/, 'Connect GitHub Issues');
+    expect(screen.getByText('API token')).toBeInTheDocument();
   });
 });
 
@@ -264,8 +387,9 @@ describe('SetupWizard AI agent steps — every boot-mandatory key is asked here'
     fireEvent.click(screen.getByRole('radio', { name: /Claude agent/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     await screen.findByText('Connect Claude agent');
-    // The CLI note explains the one non-env prerequisite.
-    expect(screen.getByText(/claude login/)).toBeInTheDocument();
+    // The CLI note explains the one non-env prerequisite (the credential
+    // guide below it repeats the command, hence getAllByText).
+    expect(screen.getAllByText(/claude login/).length).toBeGreaterThan(0);
     const save = screen.getByRole('button', { name: 'Save & continue' });
     expect(save).not.toBeDisabled();
     fireEvent.click(save);

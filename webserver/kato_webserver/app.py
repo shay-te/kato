@@ -354,6 +354,7 @@ _TASK_PROVIDER_FIELDS: dict[str, tuple[str, ...]] = {
     'github': (
         'GITHUB_API_BASE_URL',
         'GITHUB_API_TOKEN',
+        'GITHUB_API_TOKEN_SOURCE',
         'GITHUB_OWNER',
         'GITHUB_REPO',
         'GITHUB_ASSIGNEE',
@@ -366,6 +367,7 @@ _TASK_PROVIDER_FIELDS: dict[str, tuple[str, ...]] = {
     'gitlab': (
         'GITLAB_API_BASE_URL',
         'GITLAB_API_TOKEN',
+        'GITLAB_API_TOKEN_SOURCE',
         'GITLAB_PROJECT',
         'GITLAB_ASSIGNEE',
         'GITLAB_PROGRESS_STATE_FIELD',
@@ -377,6 +379,7 @@ _TASK_PROVIDER_FIELDS: dict[str, tuple[str, ...]] = {
     'bitbucket': (
         'BITBUCKET_API_BASE_URL',
         'BITBUCKET_API_TOKEN',
+        'BITBUCKET_API_TOKEN_SOURCE',
         'BITBUCKET_USERNAME',
         'BITBUCKET_API_EMAIL',
         'BITBUCKET_WORKSPACE',
@@ -400,6 +403,7 @@ _GIT_HOST_FIELDS: dict[str, tuple[str, ...]] = {
     'bitbucket': (
         'BITBUCKET_API_BASE_URL',
         'BITBUCKET_API_TOKEN',
+        'BITBUCKET_API_TOKEN_SOURCE',
         'BITBUCKET_USERNAME',
         'BITBUCKET_API_EMAIL',
         'BITBUCKET_WORKSPACE',
@@ -408,12 +412,14 @@ _GIT_HOST_FIELDS: dict[str, tuple[str, ...]] = {
     'github': (
         'GITHUB_API_BASE_URL',
         'GITHUB_API_TOKEN',
+        'GITHUB_API_TOKEN_SOURCE',
         'GITHUB_OWNER',
         'GITHUB_REPO',
     ),
     'gitlab': (
         'GITLAB_API_BASE_URL',
         'GITLAB_API_TOKEN',
+        'GITLAB_API_TOKEN_SOURCE',
         'GITLAB_PROJECT',
     ),
 }
@@ -1419,6 +1425,41 @@ def _register_http_routes(app: Flask) -> None:
             field_values = {key: _resolve_setting(key) for key in fields}
             out[name] = {'fields': field_values}
         return out
+
+    @app.get('/api/credential-sources')
+    def list_credential_sources():
+        """Credentials for ``?provider=`` that are ALREADY on this machine.
+
+        Powers the wizard's "use my gh CLI login" option so a first-comer
+        never has to mint and paste a token — operator feedback was, in
+        full, "api key is prehistoric". Probes the provider CLI, git's
+        credential helper and the conventional env vars.
+
+        Returns only ``{id, label, detail, account}`` per source — the
+        token itself NEVER crosses to the browser; picking a source
+        stores the source name, and kato resolves the live token
+        server-side at boot.
+
+        Unknown / non-discoverable providers (Jira, YouTrack: trackers
+        with no CLI and no git credential) return an empty list, and the
+        UI falls back to the paste form.
+        """
+        provider = str(request.args.get('provider', '') or '').strip().lower()
+        if not provider:
+            return jsonify({'error': 'provider is required'}), 400
+        try:
+            from kato_core_lib.helpers.credential_sources import (
+                base_url_key,
+                discover_credential_sources,
+            )
+            base_url = _resolve_setting(base_url_key(provider))['value']
+            sources = discover_credential_sources(provider, base_url)
+        except Exception:
+            # A wedged CLI must not break the setup screen — the paste
+            # form is always the fallback.
+            app.logger.exception('credential source discovery failed')
+            sources = []
+        return jsonify({'provider': provider, 'sources': sources})
 
     @app.get('/api/task-providers')
     def list_task_providers():

@@ -108,15 +108,38 @@ def write_kato_settings(updates: dict[str, str]) -> dict[str, str]:
         return current
 
 
+def _settings_with_resolved_credentials() -> dict[str, str]:
+    """``read_kato_settings()`` plus any token resolved from a credential
+    SOURCE (``<PROVIDER>_API_TOKEN_SOURCE``) instead of a pasted value.
+
+    Kept private and used by BOTH consumers below so the boot env and the
+    "is kato configured yet" check can never disagree about whether a
+    provider has a usable token. Import is local: credential_sources
+    shells out to ``gh``/``git``, and nothing should pay for that just by
+    importing the settings store.
+    """
+    settings = read_kato_settings()
+    try:
+        from kato_core_lib.helpers.credential_sources import resolved_credential_env
+        settings.update(resolved_credential_env(settings))
+    except Exception:  # noqa: BLE001 - discovery must never break config load
+        pass
+    return settings
+
+
 def load_kato_settings_into_environ() -> int:
     """Inject ``~/.kato/settings.json`` into ``os.environ``.
 
     Real shell env vars win — a key already present in
     ``os.environ`` is NOT overwritten. Returns the count of keys
     actually inserted, for diagnostics.
+
+    A provider set to use a discovered credential source (the operator
+    picked "use my gh CLI login" instead of pasting a token) has its
+    token resolved HERE, at boot, from the live source.
     """
     added = 0
-    for key, value in read_kato_settings().items():
+    for key, value in _settings_with_resolved_credentials().items():
         if key in os.environ:
             continue
         os.environ[key] = value
@@ -139,7 +162,7 @@ def effective_config_env() -> dict[str, str]:
     without a restart — and the two checks can never drift apart.
     """
     merged: dict[str, str] = {}
-    for source in (read_kato_settings(), dict(os.environ)):
+    for source in (_settings_with_resolved_credentials(), dict(os.environ)):
         for key, value in source.items():
             if value:
                 merged[key] = value

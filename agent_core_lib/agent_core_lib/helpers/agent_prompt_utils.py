@@ -505,3 +505,23 @@ def review_comment_location_text(comment) -> str:
     if commit_sha:
         location = f'{location}\nCommit: {commit_sha}'
     return location
+
+
+# The "stay narrow" guardrail every fix-mode prompt gives the agent, so a
+# vague instruction (a one-line review comment, an in-app "revert this")
+# can't be read as license to rewrite a whole file. Was hand-duplicated
+# per call site (implementation / testing / singular review-fix / batch
+# review-fix prompts) with only the "needed ___" clause differing; a NEW
+# call site (the in-app diff-comment prompt) that skipped it entirely was
+# exactly how an agent with full conversation history still over-scoped a
+# one-line "revert this" into a whole-file rewrite — the comment gave it
+# no signal to stay narrow. One shared helper now backs every site.
+def narrow_edit_guardrails_text(purpose: str, *, bulleted: bool = False) -> str:
+    lines = [
+        f'Make the smallest possible change needed {purpose}.',
+        'Prefer editing only the exact lines or blocks that need to change.',
+        'Do not change indentation, formatting, or unrelated lines when a narrow edit is enough.',
+    ]
+    if bulleted:
+        lines = [f'- {line}' for line in lines]
+    return '\n'.join(lines) + '\n'

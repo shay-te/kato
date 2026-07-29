@@ -9237,6 +9237,150 @@ body.kato-resizing #left-pane-resizer::before {
 }
 
 // ---------------------------------------------------------------------------
+// CredentialSourcePicker — "use the login already on this machine" choices,
+// shown above the credential form when discovery found something. Same option
+// shape as the wizard's other radio groups so the whole flow reads as one.
+// ---------------------------------------------------------------------------
+.credential-source {
+  margin: 0 0 $SPACE-16;
+}
+
+.credential-source__lead {
+  margin: 0 0 $SPACE-8;
+  font-size: $TEXT-12;
+  line-height: 1.5;
+  color: $C-NEUTRAL-64;
+}
+
+.credential-source__options {
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-6;
+}
+
+.credential-source__option {
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-2;
+  padding: $SPACE-10 $SPACE-12;
+  text-align: left;
+  background: $C-NEUTRAL-100-A06;
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-8;
+  color: $C-NEUTRAL-96;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.credential-source__option:hover {
+  border-color: $C-NEUTRAL-32;
+}
+
+.credential-source__option.is-selected {
+  border-color: $C-CYAN-52;
+  background: $C-CYAN-52-A18;
+}
+
+.credential-source__option-label {
+  display: flex;
+  align-items: center;
+  gap: $SPACE-6;
+  font-size: $TEXT-13;
+}
+
+.credential-source__account {
+  padding: 0 $SPACE-6;
+  border-radius: var(--radius-pill);
+  background: $C-NEUTRAL-100-A10;
+  font-size: $TEXT-11;
+  color: $C-NEUTRAL-79;
+}
+
+.credential-source__option-detail {
+  font-size: $TEXT-11_5;
+  line-height: 1.5;
+  color: $C-NEUTRAL-64;
+}
+
+// ---------------------------------------------------------------------------
+// CredentialGuide — "why kato needs this key + where you get it" card, above
+// the credential fields in the first-run wizard and in Settings. Shares the
+// wizard/drawer surface colors so it reads as part of the form, not a banner.
+// ---------------------------------------------------------------------------
+.credential-guide {
+  margin: 0 0 $SPACE-16;
+  padding: $SPACE-12 $SPACE-14;
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-8;
+  // The wizard panel AND the settings drawer are both $C-NEUTRAL-04, so a
+  // card in that same color would read as a plain outline. The existing
+  // subtle-lift alpha separates it without adding a palette entry.
+  background: $C-NEUTRAL-100-A06;
+  font-size: $TEXT-12;
+  line-height: 1.6;
+  color: $C-NEUTRAL-64;
+}
+
+.credential-guide__why {
+  margin: 0;
+}
+
+.credential-guide__why-label {
+  display: block;
+  color: $C-NEUTRAL-96;
+  font-weight: 600;
+}
+
+.credential-guide__privacy {
+  margin: $SPACE-6 0 0;
+  color: $C-NEUTRAL-45;
+}
+
+.credential-guide__how {
+  margin-top: $SPACE-10;
+}
+
+.credential-guide__summary {
+  cursor: pointer;
+  color: $C-NEUTRAL-96;
+  list-style-position: outside;
+}
+
+.credential-guide__location {
+  margin: $SPACE-8 0 0;
+  color: $C-NEUTRAL-96;
+}
+
+.credential-guide__steps {
+  margin: $SPACE-6 0 0;
+  padding-left: $SPACE-18;
+}
+
+.credential-guide__steps li {
+  margin-bottom: $SPACE-4;
+}
+
+.credential-guide__note {
+  margin: $SPACE-6 0 0;
+}
+
+.credential-guide__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $SPACE-12;
+  margin-top: $SPACE-10;
+}
+
+.credential-guide__link {
+  color: $C-CYAN-52;
+  text-decoration: none;
+}
+
+.credential-guide__link:hover {
+  text-decoration: underline;
+}
+
+// ---------------------------------------------------------------------------
 // FolderBrowser — the inline directory picker behind "Browse…" (wizard +
 // Settings → Repositories). Inline, not a modal, so it works inside the
 // setup gate without stacking-context games.

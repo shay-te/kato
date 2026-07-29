@@ -15,6 +15,43 @@ Nothing here is imported by Kato; the build only *reads* the Kato repo as input.
 
 ---
 
+## Windows: the WSL target
+
+On Windows the app can run its backend **inside a WSL2 distribution** while the
+window stays native — the VS Code Remote-WSL model. This is not cosmetic: with a
+native-Windows backend the Docker sandbox (`KATO_CLAUDE_DOCKER=true`) is
+**refused outright** (Linux image, POSIX path validation, no `fcntl.flock`).
+Inside WSL2 every sandbox layer applies as on Linux.
+
+**The operator never installs or updates Kato inside the distro.** The Windows
+installer carries the Linux backend binary; on launch the shell pushes it to
+`~/.kato/bin/kato-sidecar-<version>` in the distro, keyed by version, and skips
+the copy when that version is already there — exactly how VS Code manages
+`~/.vscode-server`. The signed updater therefore covers both halves at once:
+shell updates → next launch pushes the matching backend → no version skew, no
+`pip install`, no `git pull`.
+
+Which side is used, and why ([`src/wsl.rs`](src-tauri/src/wsl.rs) →
+`choose_target`, unit-tested):
+
+| Situation | Backend | Reason |
+|---|---|---|
+| A remembered choice exists | as chosen | Switching sides switches `~/.kato`; never re-decided silently |
+| A Windows-side `~/.kato/settings.json` exists | native | An existing install must not be moved by an update |
+| Fresh install, a WSL2 distro present | that distro | The only place the sandbox runs |
+| WSL absent, or WSL1 only | native | Works fine, just no sandbox — the splash says how to enable it |
+
+The choice is remembered in `%USERPROFILE%\.kato\desktop-target.json` — on the
+**Windows** side, because it must be known before any backend exists. Each side
+has its own `~/.kato`, so the splash always states which one is live.
+
+Still the operator's job inside the distro: **`git`, the agent CLI, and Docker
+Desktop's WSL integration.** Kato drives those as subprocesses and cannot bundle
+them (VS Code doesn't install your compilers either); `preflight_missing_tools`
+names them on the splash instead of stalling.
+
+---
+
 ## Who creates the `.exe` / `.dmg` / `.AppImage`, and when?
 
 **Not this repo checkout, and not automatically.** The installers are produced by
@@ -31,10 +68,10 @@ target OS** (Tauri can't cross-compile installers). Two steps per OS:
 | `.msi` / NSIS `.exe` | **Windows** | `src-tauri/target/release/bundle/{msi,nsis}/` |
 | `.AppImage` / `.deb` | **Linux** | `src-tauri/target/release/bundle/{appimage,deb}/` |
 
-**Recommended: let CI make them.** `ci/release.yml` is a GitHub Actions matrix
+**Recommended: let CI make them.** `ci/release.yaml` is a GitHub Actions matrix
 (macOS + Windows + Ubuntu runners) that builds the sidecar + runs `tauri build`
 per OS on a version tag, and also emits the **updater feed**. Copy it to
-`.github/workflows/desktop-release.yml` at the repo root to enable it (GitHub only
+`.github/workflows/desktop-release.yaml` at the repo root to enable it (GitHub only
 runs workflows from there — it's the one file that can't physically live under
 `desktop/`). Then: **push a tag → CI produces all three installers + the update
 feed.** Locally you can `npm run build` for *your own* OS to smoke-test.
@@ -98,10 +135,12 @@ desktop/
 │   └── build-sidecar.sh         freeze → src-tauri/binaries/
 ├── src-tauri/
 │   ├── Cargo.toml  build.rs  tauri.conf.json
+│   ├── tauri.windows.conf.json  Windows-only: bundles the Linux backend for WSL
 │   ├── src/main.rs              spawn sidecar → wait for server → open window
+│   ├── src/wsl.rs               Windows: run the backend inside WSL2 (+ its tests)
 │   ├── capabilities/default.json
 │   ├── loading/index.html       splash shown until the server is up
 │   ├── icons/                   generated (gitignored)
 │   └── binaries/                sidecar output (gitignored)
-└── ci/release.yml               GH Actions matrix (copy to .github/workflows/)
+└── ci/release.yaml               GH Actions matrix (copy to .github/workflows/)
 ```

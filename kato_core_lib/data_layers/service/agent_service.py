@@ -1,4 +1,5 @@
 from __future__ import annotations
+from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
 from agent_core_lib.agent_core_lib.helpers.text_utils import text_from_mapping
 
 import copy
@@ -10,6 +11,9 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 from core_lib.data_layers.service.service import Service
+from sandbox_core_lib.sandbox_core_lib.workspace_delimiter import (
+    wrap_untrusted_workspace_content,
+)
 
 from kato_core_lib.data_layers.service.agent_state_registry import AgentStateRegistry
 from kato_core_lib.data_layers.service.task_failure_handler import TaskFailureHandler
@@ -2569,6 +2573,34 @@ class AgentService(MissionStepLoggerMixin, Service):
                 'failed to terminate stalled session for task %s', task_id,
             )
 
+    def _warn_if_comment_has_no_resumable_session(self, task_id: str, record) -> None:
+        """Flag a comment respawn that will carry ZERO prior conversation.
+
+        The respawn path (``resume_session_for_chat``) already resumes via
+        the task's persisted ``agent_session_id`` whenever one is on file —
+        this only covers the one case that's genuinely a context loss: no
+        record, or a record with no session id, meaning the agent that
+        answers this comment has never seen the task's implementation
+        history at all. Diagnostic only — never blocks the run — but a
+        report of kato "not aware of what happened before" should show up
+        HERE in the logs, distinguishable from a resumed-but-under-specified
+        prompt (the case the snippet/guardrail above actually fixes).
+        """
+        if self._session_manager is None:
+            return
+        try:
+            record_on_file = self._session_manager.get_record(task_id)
+        except Exception:
+            return
+        if record_on_file is not None and getattr(record_on_file, 'agent_session_id', ''):
+            return
+        self.logger.warning(
+            'comment %s on task %s: no prior agent session on file — this '
+            'respawn starts with NO conversation history from the task\'s '
+            'implementation or earlier comments',
+            getattr(record, 'id', '<unknown>'), task_id,
+        )
+
     def _spawn_comment_agent(self, task_id: str, record, prompt: str) -> bool:
         """Respawn Claude for a queued local diff comment when no subprocess is alive."""
         runner = self._planning_session_runner
@@ -2584,6 +2616,7 @@ class AgentService(MissionStepLoggerMixin, Service):
                 getattr(record, 'id', '<unknown>'), task_id,
             )
             return False
+        self._warn_if_comment_has_no_resumable_session(task_id, record)
         cwd = self._comment_agent_cwd(task_id, record)
         summary = ''
         if self._workspace_manager is not None:
@@ -2662,6 +2695,26 @@ class AgentService(MissionStepLoggerMixin, Service):
             if file_path and line > 0
             else (file_path or '(no file specified)')
         )
+        # Inline the code CURRENTLY at the commented line. Without this, a
+        # bare "revert this" gives the agent nothing but a file/line NUMBER
+        # to work from — even a session with full conversation history has
+        # to guess which of possibly several past edits to that file "this"
+        # means, and a guess under-specified that way tends to overshoot
+        # into rewriting the whole file rather than the few lines the
+        # comment actually targets. Reuses the same snippet reader (and the
+        # same untrusted-content wrapping — this is repo file content,
+        # exactly as plantable by anyone with commit access) that the
+        # PR-review-comment prompt already relies on for the same reason.
+        snippet_block = ''
+        if file_path and line > 0:
+            cwd = self._comment_agent_cwd(task_id, record)
+            snippet = agent_prompt_utils.review_comment_code_snippet(
+                SimpleNamespace(file_path=file_path, line_number=line), cwd,
+            ) if cwd else ''
+            if snippet:
+                snippet_block = wrap_untrusted_workspace_content(
+                    snippet, source_path=f'repo-file:{file_path}',
+                ) + '\n\n'
         # Include the thread's follow-up replies so a re-engaged run sees
         # the operator's latest pushback (e.g. "no, do it differently")
         # instead of re-doing the original comment blind. Empty for a
@@ -2688,13 +2741,15 @@ class AgentService(MissionStepLoggerMixin, Service):
         return (
             'Operator-added review comment from the kato diff tab.\n\n'
             f'File: {location_hint}\n'
+            f'{snippet_block}'
             f'Comment: {body}'
             f'{conversation}\n\n'
-            'Address this comment, commit the fix on the current task '
-            'branch when a code change is needed. Your final response '
-            'is copied into this comment thread as Claude\'s reply, so '
-            'write it directly to the reviewer. If the comment is a '
-            'question rather than a fix request, answer the question '
+            'Address this comment. If a code change is needed:\n'
+            f'{agent_prompt_utils.narrow_edit_guardrails_text("to address this comment", bulleted=True)}'
+            'Commit the fix on the current task branch. Your final '
+            'response is copied into this comment thread as Claude\'s '
+            'reply, so write it directly to the reviewer. If the comment '
+            'is a question rather than a fix request, answer the question '
             f'without committing.{marker_instruction}'
         )
 

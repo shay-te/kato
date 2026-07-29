@@ -22,6 +22,11 @@ tauri = { version = "2", features = ["devtools"] }
 tauri-plugin-shell = "2"       # spawn + pipe the Python sidecar
 tauri-plugin-updater = "2"     # built-in signed auto-update (VS Code model)
 tauri-plugin-opener = "2"      # open external links in the system browser
+# NATIVE OS notifications. The web `Notification` API does not work inside the
+# desktop shell — WebView2 (Windows) drops web notifications unless the host
+# handles NotificationReceived, and WKWebView (macOS) doesn't implement the API
+# at all — so "approval needed" pings silently never appeared in the app.
+tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

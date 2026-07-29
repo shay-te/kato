@@ -5,14 +5,29 @@ import {
   writeEnabled,
   writeKindPrefs,
 } from '../utils/notificationsStorage.js';
+import {
+  isTauriPermissionGranted,
+  isTauriShell,
+  requestTauriPermission,
+  sendTauriNotification,
+} from '../utils/tauriNotifications.js';
 
 export function useNotifications({ activeTaskId, onTaskClick }) {
-  const supported = typeof window !== 'undefined' && 'Notification' in window;
+  // Two delivery paths. The web API is the browser one; inside the desktop
+  // shell it is inert (WebView2 drops it, WKWebView lacks it — the "desktop
+  // notifications don't work on Windows" report), so the shell routes through
+  // the native notification plugin instead. See utils/tauriNotifications.js.
+  const webSupported = typeof window !== 'undefined' && 'Notification' in window;
+  const desktopShell = isTauriShell();
+  const supported = webSupported || desktopShell;
   const [permission, setPermission] = useState(
-    supported ? Notification.permission : 'denied',
+    // The desktop permission is only knowable asynchronously (see the effect
+    // below); start pessimistic so nothing fires before the answer lands.
+    webSupported && !desktopShell ? Notification.permission : 'denied',
   );
   const [enabled, setEnabled] = useState(() => (
-    supported && permission === 'granted' && readEnabled()
+    webSupported && !desktopShell && Notification.permission === 'granted'
+    && readEnabled()
   ));
   const [kindPrefs, setKindPrefs] = useState(() => readKindPrefs());
   const onTaskClickRef = useRef(onTaskClick);
@@ -35,9 +50,32 @@ export function useNotifications({ activeTaskId, onTaskClick }) {
     });
   }, []);
 
+  // Adopt the OS's answer on the desktop side. Permission there is an async
+  // plugin call, so unlike the web path it can't be read during the initial
+  // render — which is why ``enabled`` is re-derived here rather than seeded
+  // in useState.
+  useEffect(() => {
+    if (!desktopShell) { return undefined; }
+    let cancelled = false;
+    isTauriPermissionGranted().then((granted) => {
+      if (cancelled) { return; }
+      setPermission(granted ? 'granted' : 'default');
+      if (granted && readEnabled()) { setEnabled(true); }
+    });
+    return () => { cancelled = true; };
+  }, [desktopShell]);
+
   const toggle = useCallback(async () => {
     if (!supported) { return; }
     if (enabled) { persistEnabled(false); return; }
+    if (desktopShell) {
+      const granted = (await isTauriPermissionGranted())
+        || (await requestTauriPermission()) === 'granted';
+      setPermission(granted ? 'granted' : 'denied');
+      if (!granted) { return; }
+      persistEnabled(true);
+      return;
+    }
     if (Notification.permission === 'denied') { return; }
     if (Notification.permission === 'default') {
       const result = await Notification.requestPermission();
@@ -45,15 +83,22 @@ export function useNotifications({ activeTaskId, onTaskClick }) {
       if (result !== 'granted') { return; }
     }
     persistEnabled(true);
-  }, [enabled, persistEnabled, supported]);
+  }, [desktopShell, enabled, persistEnabled, supported]);
 
   const notify = useCallback(({ title, body, taskId, kind }) => {
-    if (!enabled || !supported || Notification.permission !== 'granted') { return; }
+    if (!enabled || !supported) { return; }
+    // Only the web path can consult Notification.permission synchronously;
+    // on the desktop the granted-check already gated ``enabled`` above.
+    if (!desktopShell && Notification.permission !== 'granted') { return; }
     if (!document.hidden && taskId && taskId === activeTaskIdRef.current) { return; }
     // Per-kind opt-out. Unknown kinds are allowed by default so a new
     // notification surface doesn't get silently swallowed.
     const kindKey = kind || 'info';
     if (kindPrefsRef.current[kindKey] === false) { return; }
+    if (desktopShell) {
+      sendTauriNotification({ title, body: body || '' });
+      return;
+    }
     try {
       const notification = new Notification(title, {
         body: body || '',
@@ -68,10 +113,13 @@ export function useNotifications({ activeTaskId, onTaskClick }) {
         notification.close();
       };
     } catch (_) { /* stricter browser policies — degrade silently */ }
-  }, [enabled, supported]);
+  }, [desktopShell, enabled, supported]);
 
   useEffect(() => {
-    if (!supported) { return; }
+    // Web-only: polls for a permission revoked in browser settings. Guarded on
+    // ``webSupported`` (not ``supported``) so the desktop shell, where
+    // ``Notification`` may not exist at all, never dereferences it.
+    if (!webSupported || desktopShell) { return; }
     const id = setInterval(() => {
       if (Notification.permission !== permission) {
         setPermission(Notification.permission);
@@ -81,7 +129,7 @@ export function useNotifications({ activeTaskId, onTaskClick }) {
       }
     }, 5000);
     return () => clearInterval(id);
-  }, [enabled, permission, persistEnabled, supported]);
+  }, [desktopShell, enabled, permission, persistEnabled, webSupported]);
 
   return {
     supported,

@@ -4,7 +4,15 @@ import { useRestartingSave } from '../hooks/useRestartingSave.js';
 import { isSecretKey, buildDraftFor } from '../utils/providerFields.js';
 import { sourceLabel } from '../utils/settingsSource.js';
 import { humanizeFieldKey, fieldPlaceholder, fieldInfo } from '../utils/fieldHelp.js';
+import { credentialGuideFor } from '../utils/credentialGuides.js';
+import {
+  credentialKeysFor,
+  isCredentialSourceKey,
+  usesDiscoveredCredential,
+} from '../utils/credentialSourceFields.js';
 import FieldInfoTip from './settings/FieldInfoTip.jsx';
+import CredentialGuide from './settings/CredentialGuide.jsx';
+import CredentialSourcePicker from './settings/CredentialSourcePicker.jsx';
 import SettingsPanelBody from './settings/SettingsPanelBody.jsx';
 import SettingsPanelHead from './settings/SettingsPanelHead.jsx';
 import SettingsActions from './settings/SettingsActions.jsx';
@@ -75,6 +83,13 @@ export default function ProviderCredentialsPanel({
   );
 
   const fields = meta.providers?.[selected]?.fields || {};
+  // The credential source is picker-owned, never a typed input; and the
+  // token input only appears when the operator chose to paste one.
+  const credentialKeys = credentialKeysFor(selected);
+  const isPasting = !usesDiscoveredCredential(draft[credentialKeys.source]);
+  const visibleFieldKeys = Object.keys(fields).filter((key) => (
+    !isCredentialSourceKey(key) && !(!isPasting && key === credentialKeys.token)
+  ));
 
   return (
     <div className="settings-drawer-panel">
@@ -106,8 +121,30 @@ export default function ProviderCredentialsPanel({
 
           <div className="settings-drawer-divider" />
 
+          {/* Reuse an existing login instead of a pasted token — same
+              picker as the wizard, so a token can also be swapped for a
+              CLI login later without re-running setup. */}
+          <CredentialSourcePicker
+            provider={selected}
+            providerLabel={labels[selected] || selected}
+            value={draft[credentialKeys.source] || ''}
+            onChange={(id) => setDraft((current) => ({
+              ...current, [credentialKeys.source]: id,
+            }))}
+          />
+
+          {/* Same "why + where do I get it" card the first-run wizard
+              shows — collapsed here, because rotating a token months
+              later is exactly when the menu path is forgotten again. */}
+          {isPasting && (
+            <CredentialGuide
+              guide={credentialGuideFor(selected)}
+              settingsFilePath={meta.settingsFilePath}
+            />
+          )}
+
           <div className="settings-drawer-fields">
-            {Object.keys(fields).map((key) => {
+            {visibleFieldKeys.map((key) => {
               const f = fields[key] || {};
               const isSecret = isSecretKey(key);
               const placeholder = isSecret && f.value
