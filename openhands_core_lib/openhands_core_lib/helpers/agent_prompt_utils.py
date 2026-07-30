@@ -6,6 +6,7 @@ from __future__ import annotations
 # importing here keeps future prompt-wording improvements in sync for every
 # agent transport instead of silently drifting again.
 from agent_core_lib.agent_core_lib.helpers.agent_prompt_utils import (
+    narrow_edit_guardrails_text,
     workspace_scope_block,
 )
 from agent_core_lib.agent_core_lib.helpers.text_utils import text_from_mapping
@@ -22,7 +23,7 @@ from openhands_core_lib.openhands_core_lib.helpers.text_utils import (
 # than dead code) when the name is listed here — this doesn't restrict
 # direct ``from ...agent_prompt_utils import <name>`` access to anything
 # else in this module, it only documents what ``import *`` would pull in.
-__all__ = ['workspace_scope_block']
+__all__ = ['narrow_edit_guardrails_text', 'workspace_scope_block']
 
 IGNORED_REPOSITORY_FOLDERS_ENV = 'AGENT_IGNORED_REPOSITORY_FOLDERS'
 

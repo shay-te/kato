@@ -2687,13 +2687,20 @@ class AgentService(MissionStepLoggerMixin, Service):
             return ''
 
     def _comment_agent_prompt(self, task_id, record, run_marker: str = '') -> str:
-        file_path = str(getattr(record, 'file_path', '') or '')
-        line = int(getattr(record, 'line', -1) or -1)
+        # Local import to match how the rest of this module defers
+        # review_comment_utils; same constant the review path filters with.
+        from kato_core_lib.helpers.review_comment_utils import (
+            KATO_SELF_REPLY_PREFIXES,
+        )
+
         body = str(getattr(record, 'body', '') or '')
-        location_hint = (
-            f'`{file_path}` (line {line})'
-            if file_path and line > 0
-            else (file_path or '(no file specified)')
+        # Shared localization vocabulary — 'File: path:line' — so the agent is
+        # told where a comment lives the SAME way whether it came from the
+        # diff tab or a provider review. This used to be hand-rolled here as
+        # a backticked path plus '(line N)', which carried neither the
+        # line-type nor the commit and had to be maintained separately.
+        location_block = agent_prompt_utils.review_comment_location_text(
+            record, missing_label='File: (no file specified)',
         )
         # Inline the code CURRENTLY at the commented line. Without this, a
         # bare "revert this" gives the agent nothing but a file/line NUMBER
@@ -2701,36 +2708,45 @@ class AgentService(MissionStepLoggerMixin, Service):
         # to guess which of possibly several past edits to that file "this"
         # means, and a guess under-specified that way tends to overshoot
         # into rewriting the whole file rather than the few lines the
-        # comment actually targets. Reuses the same snippet reader (and the
-        # same untrusted-content wrapping — this is repo file content,
-        # exactly as plantable by anyone with commit access) that the
-        # PR-review-comment prompt already relies on for the same reason.
-        snippet_block = ''
-        if file_path and line > 0:
-            cwd = self._comment_agent_cwd(task_id, record)
-            snippet = agent_prompt_utils.review_comment_code_snippet(
-                SimpleNamespace(file_path=file_path, line_number=line), cwd,
-            ) if cwd else ''
-            if snippet:
-                snippet_block = wrap_untrusted_workspace_content(
-                    snippet, source_path=f'repo-file:{file_path}',
-                ) + '\n\n'
+        # comment actually targets. Same shared builder the PR-review prompt
+        # uses, so the two can't drift on how a comment gets localized.
+        snippet_block = agent_prompt_utils.commented_code_block(
+            record,
+            self._comment_agent_cwd(task_id, record),
+            wrap=wrap_untrusted_workspace_content,
+            trailing='\n\n',
+        )
         # Include the thread's follow-up replies so a re-engaged run sees
         # the operator's latest pushback (e.g. "no, do it differently")
         # instead of re-doing the original comment blind. Empty for a
         # first run, so the common path is unchanged.
-        thread = self._comment_thread_replies(task_id, getattr(record, 'id', ''))
-        conversation = ''
-        if thread:
-            lines = []
-            for reply in thread:
-                who = 'Claude' if str(getattr(reply, 'author', '')) == 'claude' else 'Operator'
-                lines.append(f'{who}: {str(getattr(reply, "body", "") or "").strip()}')
-            conversation = (
+        #
+        # Rendered by the SHARED thread renderer, which brings two safety
+        # behaviours this hand-rolled loop never had:
+        #  * drop_prefixes — kato's own posted replies are filtered out
+        #    instead of being fed back as though a human wrote them.
+        #  * wrap — the thread is framed as untrusted content. That matters
+        #    most here: ``sync_remote_comments`` upserts PROVIDER comments
+        #    into this same local store, and the replies are labelled
+        #    "Operator:" regardless of source, so a third party's mirrored PR
+        #    reply used to arrive as raw, unframed text inside a prompt that
+        #    says "address the LATEST operator reply". Framing it removes the
+        #    "trusted operator instruction" reading.
+        # The speaker labels and header stay HERE — they are kato product
+        # text and must not move into a core-lib.
+        conversation = agent_prompt_utils.comment_thread_text(
+            self._comment_thread_replies(task_id, getattr(record, 'id', '')),
+            header=(
                 '\n\nThread so far (oldest to newest) — address the '
                 'LATEST operator reply, which supersedes earlier turns:\n'
-                + '\n'.join(lines)
-            )
+            ),
+            label_for=lambda reply: (
+                'Claude' if str(getattr(reply, 'author', '')) == 'claude'
+                else 'Operator'
+            ),
+            drop_prefixes=KATO_SELF_REPLY_PREFIXES,
+            wrap=wrap_untrusted_workspace_content,
+        )
         marker_instruction = ''
         marker = str(run_marker or '').strip()
         if marker:
@@ -2740,7 +2756,7 @@ class AgentService(MissionStepLoggerMixin, Service):
             )
         return (
             'Operator-added review comment from the kato diff tab.\n\n'
-            f'File: {location_hint}\n'
+            f'{location_block}\n'
             f'{snippet_block}'
             f'Comment: {body}'
             f'{conversation}\n\n'

@@ -31,8 +31,12 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from kato_core_lib.helpers.review_comment_utils import (
+    KATO_SELF_REPLY_PREFIXES,
     ReviewReplyTemplate,
     review_comment_reply_body,
+)
+from kato_core_lib.helpers.workspace_refusal_guidance import (
+    KATO_WORKSPACE_REFUSAL_GUIDANCE,
 )
 
 
@@ -157,12 +161,18 @@ class FlowReviewCommentFixModeSpawnTests(unittest.TestCase):
             repository_local_path='/tmp/T1/repo',
         )
 
-        # Compare against the canonical singular builder.
+        # Compare against the canonical singular builder — including the
+        # product params the runner is REQUIRED to forward. Omitting them here
+        # would let the runner silently stop passing them again: that is the
+        # exact defect where kato's own review replies leaked back into its
+        # prompts (see tests/test_comment_self_reply_hygiene.py).
         expected = ClaudeCliClient._build_review_prompt(
             _comment('Add a null check.'),
             'feature/T1',
             workspace_path='/tmp/T1/repo',
             mode='fix',
+            workspace_refusal_guidance=KATO_WORKSPACE_REFUSAL_GUIDANCE,
+            self_reply_prefixes=KATO_SELF_REPLY_PREFIXES,
         )
         self.assertEqual(captured_prompts[0], expected)
 
@@ -191,6 +201,8 @@ class FlowReviewCommentFixModeSpawnTests(unittest.TestCase):
 
         expected = ClaudeCliClient._build_review_comments_batch_prompt(
             comments, 'feature/T1', workspace_path='/tmp/T1/repo', mode='fix',
+            workspace_refusal_guidance=KATO_WORKSPACE_REFUSAL_GUIDANCE,
+            self_reply_prefixes=KATO_SELF_REPLY_PREFIXES,
         )
         self.assertEqual(captured[0], expected)
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from typing import Any, Callable
 
 from bitbucket_core_lib.bitbucket_core_lib.client.auth import bitbucket_basic_auth_header
@@ -19,15 +18,7 @@ from provider_client_base.provider_client_base.client.issue_client_base import (
     IssueClientBase,
 )
 from provider_client_base.provider_client_base.data.issue_record import IssueRecord
-from provider_client_base.provider_client_base.helpers.mention_utils import (
-    extract_mention_logins,
-)
 from provider_client_base.provider_client_base.helpers.text_utils import normalized_text
-
-# Bitbucket Cloud raw-markup mention, e.g. ``@{557058:f58131cb-…}`` or
-# ``@{uuid}``. The braces are the mention delimiter, so the captured
-# group is the bare account_id / uuid.
-_BITBUCKET_BRACE_MENTION = re.compile(r'@\{([^}]+)\}')
 
 
 class BitbucketIssuesClient(IssueClientBase):
@@ -87,20 +78,10 @@ class BitbucketIssuesClient(IssueClientBase):
             )
             return ()
 
-    def _extract_comment_mentions(self, body: object) -> list:
-        """Mention identities from a Bitbucket raw comment body.
-
-        Bitbucket Cloud writes mentions as ``@{account_id}`` (which the
-        plain ``@login`` regex can't see because of the brace), so extract
-        those explicitly and also fall back to plain ``@nickname`` text.
-        """
-        text = str(body or '')
-        mentions = [
-            match.group(1).strip().strip('{}')
-            for match in _BITBUCKET_BRACE_MENTION.finditer(text)
-        ]
-        mentions.extend(extract_mention_logins(text))
-        return mentions
+    # Bitbucket writes mentions as ``@{account_id}``. That used to need a
+    # hand-rolled override here; IssueClientBase._extract_comment_mentions
+    # now extracts both the brace and plain forms for every platform, so
+    # the override (and its duplicate regex) are gone.
 
     def validate_connection(self, project: str, assignee: str, states: list[str]) -> None:
         response = self._get_with_retry(

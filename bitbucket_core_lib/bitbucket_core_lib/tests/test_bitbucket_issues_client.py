@@ -832,10 +832,15 @@ class BitbucketMentionFilterWiringTests(unittest.TestCase):
     # ----- _extract_comment_mentions -----
 
     def test_extract_mentions_combines_brace_and_plain(self) -> None:
+        # Both encodings must be seen. Compared as a SET: the extraction
+        # order carries no meaning (the caller does a set-disjoint check),
+        # and pinning it here only recorded which encoding the old
+        # Bitbucket-specific override happened to scan first — that
+        # override is gone now that IssueClientBase extracts both.
         client = self._make_client()
         self.assertEqual(
-            client._extract_comment_mentions('hi @{alice-id} and @bob_jr'),
-            ['alice-id', 'bob_jr'],
+            set(client._extract_comment_mentions('hi @{alice-id} and @bob_jr')),
+            {'alice-id', 'bob_jr'},
         )
 
     def test_extract_mentions_empty_body(self) -> None:

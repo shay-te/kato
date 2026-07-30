@@ -38,6 +38,26 @@ KATO_REVIEW_COMMENT_NO_CHANGES_PREFIX = (
     'and left the working tree clean.'
 )
 
+# EVERY body prefix kato's bot uses for a reply it posts on a review thread.
+#
+# Two independent consumers must agree on this exact set or kato starts
+# talking to itself:
+#   * the review prompt's ``self_reply_prefixes`` — drops kato's own past
+#     replies from the thread context instead of feeding them back to the
+#     agent as if a reviewer had written them.
+#   * ``is_kato_review_comment_reply`` — recognises kato's own reply so the
+#     scan loop doesn't re-poll it as an unaddressed comment forever.
+#
+# It lived only as an inline tuple at the agent-client wiring site, so the
+# STREAMING review-fix path (the one the UI uses) built its prompts with no
+# prefixes at all. One named constant, both consumers.
+KATO_SELF_REPLY_PREFIXES: tuple[str, ...] = (
+    KATO_REVIEW_COMMENT_FIXED_PREFIX,
+    KATO_REVIEW_COMMENT_REPLY_PREFIX,
+    KATO_REVIEW_COMMENT_ANSWER_PREFIX,
+    KATO_REVIEW_COMMENT_NO_CHANGES_PREFIX,
+)
+
 
 class ReviewReplyTemplate:
     """Template fragments for the auto-reply kato posts on a review

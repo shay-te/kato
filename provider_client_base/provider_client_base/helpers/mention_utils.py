@@ -145,6 +145,36 @@ def mentions_include_identity(mention_tokens: object, bot_identities: object) ->
     return not identities.isdisjoint(tokens)
 
 
+# Configured assignee values that are QUERY ALIASES, not real mention handles.
+# A platform accepts them when searching for issues ("assign to the calling
+# user") but they can never appear as a literal ``@mention`` in a comment, so
+# treating one as an identity is worse than having no identity at all: an
+# identity set that holds only junk still counts as "non-empty", which flips
+# identity-aware callers off their safe empty-set fallback onto a comparison
+# that can never match. One definition, so every path drops the same values.
+BOT_IDENTITY_ALIASES: frozenset = frozenset({'me', 'currentuser()'})
+
+
+def normalize_bot_identities(candidates: object) -> tuple[str, ...]:
+    """Lowercase/strip identities, drop blanks + query aliases, de-dupe.
+
+    Accepts a bare string or any iterable. Order is preserved so callers that
+    care about precedence (primary login before secondary) keep it.
+
+    Every path that builds a bot-identity set should use this: hand-rolled
+    copies had each learned about a DIFFERENT subset of the aliases, which is
+    how ``currentuser()`` survived normalization on one path and not another.
+    """
+    if candidates is None or isinstance(candidates, str):
+        candidates = (candidates,)
+    out: list[str] = []
+    for candidate in candidates:
+        token = str(candidate or '').strip().lower()
+        if token and token not in BOT_IDENTITY_ALIASES and token not in out:
+            out.append(token)
+    return tuple(out)
+
+
 def _normalize_bot_login(bot_login: object) -> str:
     """Lowercase and strip the bot login; treat ``"me"`` as unset.
 

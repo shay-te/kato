@@ -1242,9 +1242,13 @@ class AddTaskCommentTests(unittest.TestCase):
         self.assertNotIn('repo-file:', prompt)
 
     def test_comment_prompt_skips_snippet_for_a_file_level_comment(self) -> None:
-        # line=-1 means "not anchored to a specific line" — nothing to
-        # inline, and review_comment_code_snippet must not be asked to
-        # read line -1 of anything.
+        # line=-1 means "not anchored to a specific line" — there is nothing
+        # to inline, and no file must be read looking for line -1.
+        #
+        # The workspace cwd IS resolved either way now (it's an argument to the
+        # shared commented_code_block helper, which owns the line guard). That
+        # is a local path join, not I/O, so what matters is the OUTPUT: no
+        # snippet and no untrusted-file marker in the prompt.
         from kato_core_lib.comment_core_lib import CommentRecord
 
         workspace_manager = MagicMock()
@@ -1259,7 +1263,9 @@ class AddTaskCommentTests(unittest.TestCase):
         with patch.object(service, '_comment_store_for', return_value=store):
             prompt = service._comment_agent_prompt('T1', root)
         self.assertNotIn('repo-file:', prompt)
-        workspace_manager.repository_path.assert_not_called()
+        self.assertNotIn('Code at line', prompt)
+        # ...and the narrow-edit guardrail is still there, snippet or not.
+        self.assertIn('Make the smallest possible change', prompt)
 
 
 class ResolveTaskCommentTests(unittest.TestCase):

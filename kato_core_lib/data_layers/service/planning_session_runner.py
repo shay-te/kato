@@ -377,15 +377,45 @@ class PlanningSessionRunner(object):
                 'log_label': 'review-fix session',
             })
         workspace = normalized_text(repository_local_path)
+        # These two product params MUST be passed here, not just on the
+        # one-shot client path. This is the STREAMING path — the one the UI
+        # actually uses — and it was calling the builders without them:
+        #
+        #  * self_reply_prefixes: without it, ``review_comment_context_text``
+        #    does no filtering, so kato's OWN "…addressed review comment…"
+        #    replies are rendered back into the "Review comment context"
+        #    block as though a reviewer had written them. The agent then
+        #    re-reads its own past replies as fresh instructions — a direct,
+        #    mechanical cause of the "kato comes to the comment like a noob /
+        #    isn't connected to what happened before" report.
+        #  * workspace_refusal_guidance: kato's product-specific
+        #    out-of-sandbox refusal text silently vanished from every
+        #    streaming review-fix prompt.
+        #
+        # Resolved from the configured client so there is ONE source of truth
+        # rather than duplicating the literals here.
+        # Imported here (not at module scope) to match how the rest of this
+        # file defers kato-product imports, and read from the SAME constants
+        # the one-shot client path is wired with.
+        from kato_core_lib.helpers.review_comment_utils import (
+            KATO_SELF_REPLY_PREFIXES,
+        )
+        from kato_core_lib.helpers.workspace_refusal_guidance import (
+            KATO_WORKSPACE_REFUSAL_GUIDANCE,
+        )
+        prompt_params = {
+            'workspace_refusal_guidance': KATO_WORKSPACE_REFUSAL_GUIDANCE,
+            'self_reply_prefixes': KATO_SELF_REPLY_PREFIXES,
+        }
         prompt = (
             ClaudeCliClient._build_review_prompt(
                 comments[0], branch_name, workspace_path=workspace, mode=mode,
-                additional_dirs=additional_dirs,
+                additional_dirs=additional_dirs, **prompt_params,
             )
             if len(comments) == 1
             else ClaudeCliClient._build_review_comments_batch_prompt(
                 comments, branch_name, workspace_path=workspace, mode=mode,
-                additional_dirs=additional_dirs,
+                additional_dirs=additional_dirs, **prompt_params,
             )
         )
         return self._run_to_terminal(

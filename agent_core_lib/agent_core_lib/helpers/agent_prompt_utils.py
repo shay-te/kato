@@ -374,34 +374,93 @@ def review_conversation_title(
     return f'Fix review comment {getattr(comment, "comment_id", "")}'
 
 
-def review_comment_context_text(comment, self_reply_prefixes=()) -> str:
-    """Render prior comments on a review thread for the fix prompt.
+def _comment_entry_fields(entry) -> tuple:
+    """``(author, body)`` from a thread entry, mapping OR object.
 
-    ``self_reply_prefixes`` is a product-agnostic injection point: the host
-    passes the body prefixes its OWN bot uses for the replies it posts (e.g.
-    a "<bot> addressed review comment …" prefix), so those self-replies are
-    dropped from the context instead of being fed back to the agent. Empty
-    (the default) means no filtering — this base hardcodes no product's bot name.
+    Provider threads arrive as ``{'author':…, 'body':…}`` mappings while the
+    in-app comment store yields record objects; accepting both here is what
+    lets one renderer serve every comment surface.
     """
-    all_comments = getattr(comment, 'all_comments', [])
-    if not isinstance(all_comments, list) or len(all_comments) <= 1:
-        return ''
-    prefixes = tuple(prefix for prefix in (self_reply_prefixes or ()) if prefix)
+    if isinstance(entry, dict):
+        return text_from_mapping(entry, 'author'), text_from_mapping(entry, 'body')
+    return (
+        normalized_text(getattr(entry, 'author', '')),
+        normalized_text(getattr(entry, 'body', '')),
+    )
+
+
+def comment_thread_text(
+    entries,
+    *,
+    header: str,
+    label_for=None,
+    default_label: str = 'reviewer',
+    drop_prefixes=(),
+    wrap=None,
+) -> str:
+    """Render a comment thread's prior turns for a prompt. '' when nothing survives.
+
+    ONE renderer for every comment surface, because the copies had each
+    acquired a different subset of the safety behaviour below:
+
+    * ``drop_prefixes`` — body prefixes the caller's OWN bot uses for replies
+      it posts. Dropping them is what stops the agent being handed its own
+      previous output as though a human wrote it (it re-reads its own replies
+      as fresh instructions otherwise). Product-agnostic injection point: this
+      lib hardcodes no bot's name.
+    * ``wrap`` — frames the rendered thread as untrusted content. Thread text
+      is written by whoever can comment, so it is data, never instructions.
+      Injected rather than imported because this lib may not depend on
+      another core-lib.
+    * ``label_for`` — ``callable(entry) -> str`` for callers that name
+      speakers themselves; otherwise the entry's ``author``, else
+      ``default_label``.
+
+    ``entries`` items may be mappings (``author``/``body``) or objects with
+    those attributes, so both the provider ``all_comments`` shape and the
+    in-app comment store's records work without an adapter.
+
+    Returns '' — no orphaned header — when every entry is filtered out.
+    """
+    prefixes = tuple(prefix for prefix in (drop_prefixes or ()) if prefix)
     lines: list[str] = []
-    for item in all_comments:
-        if not isinstance(item, dict):
-            continue
-        author = text_from_mapping(item, 'author')
-        body = text_from_mapping(item, 'body')
+    for entry in (entries or ()):
+        author, body = _comment_entry_fields(entry)
         if not body:
             continue
         if prefixes and body.startswith(prefixes):
             continue
-        label = author if author else 'reviewer'
+        label = label_for(entry) if callable(label_for) else (author or default_label)
         lines.append(f'- {label}: {body}')
     if not lines:
         return ''
-    return '\n\nReview comment context:\n' + '\n'.join(lines)
+    rendered = '\n'.join(lines)
+    if wrap:
+        rendered = wrap(rendered, source_path='comment-thread')
+    return f'{header}{rendered}'
+
+
+def review_comment_context_text(comment, self_reply_prefixes=()) -> str:
+    """Prior comments on a review thread, for the fix prompt.
+
+    Thin adapter over :func:`comment_thread_text` for the provider
+    ``all_comments`` shape — the shared renderer owns the filtering rules.
+
+    NOTE the ``<= 1`` guard: a thread whose only entry is the comment being
+    addressed has no PRIOR context to add, so it renders nothing rather than a
+    header echoing the comment back. Kept deliberately — several suites pin it.
+
+    Not wrapped here: the callers frame this block themselves (and the OG9a
+    guard checks for that call textually in each builder's own source).
+    """
+    all_comments = getattr(comment, 'all_comments', [])
+    if not isinstance(all_comments, list) or len(all_comments) <= 1:
+        return ''
+    return comment_thread_text(
+        all_comments,
+        header='\n\nReview comment context:\n',
+        drop_prefixes=self_reply_prefixes,
+    )
 
 
 def review_repository_context(comment) -> str:
@@ -460,7 +519,34 @@ def review_comment_code_snippet(
     return 'Code at line ' + str(line_int) + ':\n' + '\n'.join(rendered)
 
 
-def review_comments_batch_text(comments, workspace_path: str = '') -> str:
+def _indented_batch_snippet(comment, workspace_path: str, wrap) -> str:
+    """One batch entry's code snippet: framed as untrusted, then indented.
+
+    '' when there is nothing to inline. Framing happens BEFORE indenting so
+    the delimiter markers sit at the same depth as the code they enclose.
+    """
+    snippet = review_comment_code_snippet(comment, workspace_path)
+    if not snippet:
+        return ''
+    if wrap:
+        file_path = normalized_text(getattr(comment, 'file_path', '')) or 'unknown'
+        snippet = wrap(snippet, source_path=f'repo-file:{file_path}')
+    return '\n'.join(f'   {line}' for line in snippet.split('\n'))
+
+
+def review_comments_batch_text(comments, workspace_path: str = '', *, wrap=None) -> str:
+    """Render 2+ comments on one pull request as a numbered list.
+
+    ``wrap`` frames each inlined code snippet as untrusted content. It is a
+    parameter (not an import) because this lib may not depend on the sandbox
+    lib, and it defaults to None only so existing non-prompt callers keep
+    working — every PROMPT builder must pass it.
+
+    Why it exists: the singular review prompt has always framed its snippet,
+    while this batch renderer inlined the identical repo file content raw. So
+    the prompt-injection defense silently disappeared for every 2-or-more
+    comment batch — the exact case where the most repo content is pasted in.
+    """
     if not comments:
         return ''
     lines: list[str] = []
@@ -475,31 +561,53 @@ def review_comments_batch_text(comments, workspace_path: str = '') -> str:
         else:
             lines.append(f'{header} (no file/line — PR-level comment)')
         if workspace_path:
-            snippet = review_comment_code_snippet(comment, workspace_path)
-            if snippet:
-                indented_snippet = '\n'.join(
-                    f'   {line}' for line in snippet.split('\n')
-                )
+            indented_snippet = _indented_batch_snippet(comment, workspace_path, wrap)
+            if indented_snippet:
                 lines.append(indented_snippet)
         lines.append(f'   Comment by {author}: {body}')
         lines.append('')
     return '\n'.join(lines).rstrip() + '\n'
 
 
-def review_comment_location_text(comment) -> str:
+def comment_target_line(comment) -> int:
+    """The 1-based commented line, from either record shape. 0 when absent.
+
+    Provider review comments carry ``line_number``; the in-app comment store
+    carries ``line`` (with ``-1`` meaning "file-level, not a specific line").
+    One reader so no caller re-does the two-shape dance.
+    """
+    raw = getattr(comment, 'line_number', None)
+    if raw is None or normalized_text(raw) == '':
+        raw = getattr(comment, 'line', None)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 0
+    return value if value > 0 else 0
+
+
+def review_comment_location_text(comment, *, missing_label: str = '') -> str:
+    """``File: <path>:<line> (<type>)`` [+ ``Commit: <sha>``] for a comment.
+
+    ONE localization vocabulary for every comment surface. The in-app
+    diff-comment prompt used to hand-roll its own — backticked path plus
+    ``(line N)``, no line-type, no commit — so the agent was told where a
+    comment lived in two different formats depending on which surface it
+    arrived from, and only one of them was maintained.
+
+    ``missing_label`` is emitted when the comment has no file at all. Default
+    '' keeps the provider behaviour (render nothing); the in-app caller passes
+    its own "(no file specified)" affordance.
+    """
     file_path = normalized_text(getattr(comment, 'file_path', ''))
-    raw_line = getattr(comment, 'line_number', '')
+    if not file_path:
+        return missing_label
     line_type = normalized_text(getattr(comment, 'line_type', ''))
     commit_sha = normalized_text(getattr(comment, 'commit_sha', ''))
-    if not file_path:
-        return ''
     location = f'File: {file_path}'
-    try:
-        line_int = int(raw_line)
-        if line_int > 0:
-            location = f'{location}:{line_int}'
-    except (TypeError, ValueError):
-        pass
+    line = comment_target_line(comment)
+    if line:
+        location = f'{location}:{line}'
     if line_type:
         location = f'{location} ({line_type})'
     if commit_sha:
@@ -515,7 +623,74 @@ def review_comment_location_text(comment) -> str:
 # call site (the in-app diff-comment prompt) that skipped it entirely was
 # exactly how an agent with full conversation history still over-scoped a
 # one-line "revert this" into a whole-file rewrite — the comment gave it
-# no signal to stay narrow. One shared helper now backs every site.
+# no signal to stay narrow.
+#
+# NOT yet universal: the claude transport and the in-app diff-comment prompt
+# call this, but codex_core_lib and openhands_core_lib still carry hardcoded
+# copies of the same sentences. Editing the text here therefore improves only
+# some transports — repoint those two before trusting this as the single
+# source of truth.
+def commented_code_block(
+    comment,
+    workspace_path: str,
+    *,
+    wrap=None,
+    trailing: str = '\n',
+) -> str:
+    """The code at a comment's line, framed and ready to drop into a prompt.
+
+    Returns ``''`` when there is nothing to show (no file, no line, no
+    workspace, unreadable file) so a caller can interpolate it blindly.
+
+    THE WHOLE POINT: a comment that says only "revert this" carries no
+    information without the line it points at. Handing the agent a file path
+    and a line NUMBER makes it guess which change "this" means, and a guess
+    under-specified that way overshoots — the reported case rewrote an entire
+    file. Every comment-driven prompt therefore needs this block, and it was
+    hand-assembled per prompt builder (guard, read, frame, spacing) with the
+    copies quietly diverging.
+
+    ``comment`` is duck-typed: ``file_path`` plus either ``line_number``
+    (provider review comments) or ``line`` (the in-app comment store), so both
+    record shapes work without an adapter at the call site.
+
+    ``wrap`` frames the snippet as untrusted content — it is repo file text,
+    plantable by anyone with commit access, so it must be marked as data
+    rather than instructions. It is INJECTED rather than imported because
+    this lib is not allowed to depend on any other core-lib (the framing
+    helper lives in the sandbox lib); callers pass their wrapper. Omitting it
+    yields an unframed snippet, which is only appropriate when the caller
+    frames the whole prompt section itself.
+    """
+    file_path = normalized_text(getattr(comment, 'file_path', ''))
+    if not file_path or not normalized_text(workspace_path):
+        return ''
+    line = comment_target_line(comment)
+    if not line:
+        return ''
+    snippet = review_comment_code_snippet(
+        _CommentedLine(file_path, line), workspace_path,
+    )
+    if not snippet:
+        return ''
+    framed = wrap(snippet, source_path=f'repo-file:{file_path}') if wrap else snippet
+    return f'{framed}{trailing}' if framed else ''
+
+
+class _CommentedLine(object):
+    """Minimal (file_path, line_number) view for ``review_comment_code_snippet``.
+
+    Lets ``commented_code_block`` accept either record shape without making
+    every caller build a throwaway namespace.
+    """
+
+    __slots__ = ('file_path', 'line_number')
+
+    def __init__(self, file_path: str, line_number: int) -> None:
+        self.file_path = file_path
+        self.line_number = line_number
+
+
 def narrow_edit_guardrails_text(purpose: str, *, bulleted: bool = False) -> str:
     lines = [
         f'Make the smallest possible change needed {purpose}.',

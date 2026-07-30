@@ -21,7 +21,7 @@ from provider_client_base.provider_client_base.data.issue_record import (
     IssueRecord,
 )
 from provider_client_base.provider_client_base.helpers.mention_utils import (
-    extract_mention_logins,
+    extract_all_mention_tokens,
     is_addressed_elsewhere_from_mentions,
 )
 from provider_client_base.provider_client_base.helpers.retry_utils import run_with_retry
@@ -328,11 +328,24 @@ class IssueClientBase(RetryingClientBase):
     def _extract_comment_mentions(self, body: object) -> list:
         """Mention identities found in a comment body.
 
-        Default: plain ``@login`` text extraction. Providers whose comment
-        bodies encode mentions differently (jira ADF nodes, bitbucket
-        ``@{account_id}``) override this.
+        Default: EVERY text encoding of a mention — plain ``@login`` and the
+        brace ``@{account_id}`` / ``@{Full Name}`` form.
+
+        This used to be plain-``@login``-only, which made the filter
+        FAIL-OPEN on any brace-encoded mention: no mention was extracted, so
+        ``_comment_addressed_elsewhere`` saw a "mention-free" comment, kept
+        it, and the agent went and worked a comment that tagged a human
+        teammate. That is the recurring "the agent takes on comments where
+        I tagged another developer" report — the review-comment path had
+        already moved to the union extractor, and Bitbucket had hand-rolled
+        it, but YouTrack / GitHub / GitLab issues were still on the narrow
+        one, so the bug kept coming back on those platforms after being
+        "fixed" elsewhere. Both paths now share one extractor.
+
+        Providers whose bodies aren't plain text at all (jira ADF nodes)
+        still override to add their encoding on top.
         """
-        return extract_mention_logins(body)
+        return extract_all_mention_tokens(body)
 
     def _comment_addressed_elsewhere(self, body: object) -> bool:
         """Whether a comment @-mentions humans OTHER than the bot.

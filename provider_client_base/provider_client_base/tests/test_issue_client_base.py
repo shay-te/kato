@@ -638,5 +638,51 @@ class CommentAddressedElsewhereTests(unittest.TestCase):
             self.assertFalse(client._comment_addressed_elsewhere('@alice ping'))
 
 
+class BraceEncodedMentionTests(unittest.TestCase):
+    """The recurring "the agent works comments where I tagged a teammate" bug.
+
+    The default extractor was plain-``@login``-only, so a brace-encoded
+    mention (``@{Full Name}`` / ``@{account_id}``) extracted NOTHING. The
+    filter then saw a mention-free comment and FAILED OPEN — the agent went
+    and worked a comment addressed to a human. It kept reappearing because
+    the fix had only landed on the review-comment path and in Bitbucket's
+    own override, leaving YouTrack / GitHub / GitLab issues exposed.
+    """
+
+    def test_brace_mention_of_a_human_is_extracted(self) -> None:
+        client = _make_client()
+        self.assertEqual(
+            client._extract_comment_mentions('@{Dave Smith} please look'),
+            ['dave smith'],
+        )
+
+    def test_brace_mention_of_a_human_is_dropped(self) -> None:
+        client = _make_client()
+        client._configure_bot_login('bot_user')
+        self.assertTrue(
+            client._comment_addressed_elsewhere('@{Dave Smith} please look'))
+        self.assertTrue(
+            client._comment_addressed_elsewhere('@{557058:dave-uuid} look'))
+
+    def test_brace_mention_of_the_bot_is_kept(self) -> None:
+        client = _make_client()
+        client._configure_bot_login('bot_user')
+        self.assertFalse(client._comment_addressed_elsewhere('@{bot_user} fix'))
+
+    def test_both_encodings_together(self) -> None:
+        client = _make_client()
+        client._configure_bot_login('bot_user')
+        # Tagging the bot alongside a human is still the bot's to answer.
+        self.assertFalse(
+            client._comment_addressed_elsewhere('@{Dave Smith} and @bot_user'))
+
+    def test_code_annotations_are_still_not_mentions(self) -> None:
+        # The denylist must survive the switch to the union extractor.
+        client = _make_client()
+        client._configure_bot_login('bot_user')
+        self.assertFalse(
+            client._comment_addressed_elsewhere('should this use @Override?'))
+
+
 if __name__ == '__main__':
     unittest.main()

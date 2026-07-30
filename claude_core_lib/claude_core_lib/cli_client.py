@@ -616,8 +616,13 @@ class ClaudeCliClient(object):
                 commit_sha=comment.commit_sha,
             )
             wrapped_comments.append(shadow)
+        # ``wrap=`` frames each inlined code snippet. Without it the batch
+        # renderer pasted repo file content in raw, so the prompt-injection
+        # defense the singular builder has vanished for every 2+-comment
+        # batch — the case that inlines the MOST repo content.
         batch_text = agent_prompt_utils.review_comments_batch_text(
             wrapped_comments, workspace_path=workspace_path,
+            wrap=wrap_untrusted_workspace_content,
         )
         # Per-PR review context comes from any one comment — they
         # share the thread. Skip when empty so we don't emit blank
@@ -705,13 +710,17 @@ class ClaudeCliClient(object):
             comment, self_reply_prefixes,
         )
         location_text = agent_prompt_utils.review_comment_location_text(comment)
-        # Inline the code snippet around the commented line when we
-        # can read it from the workspace. Saves a Read tool call per
-        # inline comment (typically several KB of file content).
-        snippet_text = (
-            agent_prompt_utils.review_comment_code_snippet(comment, workspace_path)
-            if workspace_path
-            else ''
+        # Inline the code at the commented line when we can read it from the
+        # workspace: it saves a Read tool call per inline comment, and without
+        # it a terse comment ("revert this") gives the agent only a line
+        # NUMBER to reason from. Shared with the in-app diff-comment prompt —
+        # the guard/read/frame/spacing boilerplate used to be copied per
+        # builder, and the copies drifted. The snippet is repo file content
+        # (plantable by any past contributor with merge access), so it is
+        # framed as untrusted: unwrapped, a poisoned code comment near the
+        # reviewed line rides in on the back of routine reviewer feedback.
+        snippet_block = agent_prompt_utils.commented_code_block(
+            comment, workspace_path, wrap=wrap_untrusted_workspace_content,
         )
         # OG9a: ``comment.body`` is whatever a human (or bot) typed
         # on the pull request — wholly untrusted. Wrap it so a
@@ -732,17 +741,7 @@ class ClaudeCliClient(object):
             if review_context
             else ''
         )
-        # OG9a: the snippet is real repo file content — potentially planted
-        # by ANY past contributor with merge access, same untrusted status
-        # as the comment body above. Unwrapped, a poisoned code comment
-        # near the reviewed line rides in on the back of any unrelated,
-        # routine reviewer comment.
-        wrapped_snippet_text = wrap_untrusted_workspace_content(
-            snippet_text,
-            source_path=f'repo-file:{getattr(comment, "file_path", "") or "unknown"}',
-        )
         location_block = f'{location_text}\n' if location_text else ''
-        snippet_block = f'{wrapped_snippet_text}\n' if wrapped_snippet_text else ''
         scope_block = agent_prompt_utils.workspace_scope_block(
             ([workspace_path] if workspace_path else []) + list(additional_dirs or []),
             extra_refusal_guidance=workspace_refusal_guidance,

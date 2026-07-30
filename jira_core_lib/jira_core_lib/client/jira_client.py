@@ -8,7 +8,7 @@ from provider_client_base.provider_client_base.client.issue_client_base import (
 )
 from provider_client_base.provider_client_base.data.issue_record import IssueRecord
 from provider_client_base.provider_client_base.helpers.mention_utils import (
-    extract_mention_logins,
+    extract_all_mention_tokens,
 )
 from provider_client_base.provider_client_base.helpers.text_utils import (
     normalized_text,
@@ -142,7 +142,13 @@ class JiraClient(IssueClientBase):
         """
         mentions = list(self._adf_mention_ids(body))
         flattened = self._adf_to_text(body)
-        mentions.extend(extract_mention_logins(flattened))
+        # Union extractor (plain @login + brace @{...}), matching the base
+        # class. Using the plain-only one here meant this override silently
+        # opted Jira OUT of the brace-mention fix applied to every other
+        # platform — the exact "fixed on one path, still broken on another"
+        # shape that made this bug recur. Caught by
+        # tests/test_comment_mention_cross_path.py.
+        mentions.extend(extract_all_mention_tokens(flattened))
         mentions.extend(
             match.group(1) for match in _JIRA_WIKI_MENTION.finditer(flattened)
         )

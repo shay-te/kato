@@ -15,6 +15,7 @@ from provider_client_base.provider_client_base.data.review_comment import Review
 from provider_client_base.provider_client_base.helpers.mention_utils import (
     extract_all_mention_tokens,
     mentions_include_identity,
+    normalize_bot_identities,
 )
 from kato_core_lib.data_layers.service.agent_state_registry import AgentStateRegistry
 from kato_core_lib.data_layers.service.implementation_service import ImplementationService
@@ -605,14 +606,19 @@ class ReviewCommentService(Service):
             task_login = ''
         if task_login:
             identities.append(task_login)
-        # Normalise: lowercase, drop blanks and the YouTrack ``me`` query alias
-        # (never a real ``@mention`` handle), de-dupe, preserve order.
-        normalized: list[str] = []
-        for identity in identities:
-            token = identity.strip().lower()
-            if token and token != 'me' and token not in normalized:
-                normalized.append(token)
-        return tuple(normalized)
+        # Normalise via the SHARED helper: lowercase, drop blanks and every
+        # query alias that can never be a literal ``@mention`` handle, de-dupe,
+        # preserve order.
+        #
+        # This used to hand-roll the rule and knew only about YouTrack's
+        # ``me`` — so a Jira ``assignee: currentUser()`` setup produced the
+        # identity tuple ``('currentuser()',)``. That is strictly WORSE than an
+        # empty tuple: ``is_kato_review_comment_reply`` treats an empty set as
+        # "trust the prefix alone" and returns True, but a non-empty set makes
+        # it compare kato's real PR author name against the junk, which can
+        # never match — so kato stopped recognising its own replies and
+        # re-processed them as fresh reviewer comments.
+        return normalize_bot_identities(identities)
 
     @staticmethod
     def _review_comment_targets_someone_else(
