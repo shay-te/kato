@@ -7,6 +7,7 @@ from __future__ import annotations
 # agent transport instead of silently drifting again.
 from agent_core_lib.agent_core_lib.helpers.agent_prompt_utils import (
     narrow_edit_guardrails_text,
+    review_comments_batch_text,
     workspace_scope_block,
 )
 from agent_core_lib.agent_core_lib.helpers.text_utils import text_from_mapping
@@ -23,7 +24,11 @@ from openhands_core_lib.openhands_core_lib.helpers.text_utils import (
 # than dead code) when the name is listed here — this doesn't restrict
 # direct ``from ...agent_prompt_utils import <name>`` access to anything
 # else in this module, it only documents what ``import *`` would pull in.
-__all__ = ['narrow_edit_guardrails_text', 'workspace_scope_block']
+__all__ = [
+    'narrow_edit_guardrails_text',
+    'review_comments_batch_text',
+    'workspace_scope_block',
+]
 
 IGNORED_REPOSITORY_FOLDERS_ENV = 'AGENT_IGNORED_REPOSITORY_FOLDERS'
 
@@ -213,32 +218,6 @@ def review_comment_code_snippet(
     if not rendered:
         return ''
     return 'Code at line ' + str(line_int) + ':\n' + '\n'.join(rendered)
-
-
-def review_comments_batch_text(comments, workspace_path: str = '') -> str:
-    if not comments:
-        return ''
-    lines: list[str] = []
-    for index, comment in enumerate(comments, start=1):
-        author = normalized_text(getattr(comment, 'author', '')) or 'reviewer'
-        body = str(getattr(comment, 'body', '') or '').strip()
-        localization = review_comment_location_text(comment)
-        header = f'{index}.'
-        if localization:
-            indented = '\n'.join(f'   {line}' for line in localization.split('\n'))
-            lines.append(f'{header} {indented.lstrip()}')
-        else:
-            lines.append(f'{header} (no file/line — PR-level comment)')
-        if workspace_path:
-            snippet = review_comment_code_snippet(comment, workspace_path)
-            if snippet:
-                indented_snippet = '\n'.join(
-                    f'   {line}' for line in snippet.split('\n')
-                )
-                lines.append(indented_snippet)
-        lines.append(f'   Comment by {author}: {body}')
-        lines.append('')
-    return '\n'.join(lines).rstrip() + '\n'
 
 
 def review_comment_context_text(comment, self_reply_prefixes=()) -> str:

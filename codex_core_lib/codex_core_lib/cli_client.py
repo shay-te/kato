@@ -546,8 +546,13 @@ class CodexCliClient(object):
                 commit_sha=comment.commit_sha,
             )
             wrapped_comments.append(shadow)
+        # ``wrap=`` frames each inlined code snippet as untrusted. Without it
+        # the batch renderer pastes repo file content in raw, losing the
+        # prompt-injection defense the singular builder has — and losing it
+        # precisely where the most repo content is inlined.
         batch_text = agent_prompt_utils.review_comments_batch_text(
             wrapped_comments, workspace_path=workspace_path,
+            wrap=wrap_untrusted_workspace_content,
         )
         review_context = agent_prompt_utils.review_comment_context_text(
             first, self_reply_prefixes,

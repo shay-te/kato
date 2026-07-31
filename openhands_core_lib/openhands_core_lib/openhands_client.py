@@ -263,8 +263,13 @@ class OpenHandsClient(RetryingClientBase):
             )
             for comment in comments
         ]
+        # ``wrap=`` frames each inlined code snippet as untrusted, matching
+        # the singular builder. The batch path used to inline repo file
+        # content raw — losing the defense exactly where the most content is
+        # pasted in.
         batch_text = agent_prompt_utils.review_comments_batch_text(
             wrapped_comments, workspace_path=workspace_path,
+            wrap=wrap_untrusted_workspace_content,
         )
         review_context = cls._review_comment_context_text(first, self_reply_prefixes)
         wrapped_review_context = (
