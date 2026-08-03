@@ -25,7 +25,7 @@ from repository_core_lib.repository_core_lib.helpers.provider_utils import (
     provider_from_url_string,
 )
 from repository_core_lib.repository_core_lib.repository_core_lib import RepositoryCoreLib
-from kato_core_lib.helpers.text_utils import (
+from utils_core_lib.utils_core_lib.text_utils import (
     normalized_lower_text,
     normalized_text,
     text_from_attr,

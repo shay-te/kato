@@ -20,7 +20,7 @@ import json
 import threading
 from pathlib import Path
 
-from kato_core_lib.helpers.atomic_json_utils import atomic_write_json
+from utils_core_lib.utils_core_lib.atomic_write import atomic_write_json
 from kato_core_lib.helpers.kato_paths_utils import kato_home_path
 
 _ENV_KEY = 'KATO_READ_ONLY_REPOS_PATH'

@@ -18,7 +18,7 @@ from provider_client_base.provider_client_base.client.issue_client_base import (
     IssueClientBase,
 )
 from provider_client_base.provider_client_base.data.issue_record import IssueRecord
-from provider_client_base.provider_client_base.helpers.text_utils import normalized_text
+from utils_core_lib.utils_core_lib.text_utils import normalized_text
 
 
 class BitbucketIssuesClient(IssueClientBase):

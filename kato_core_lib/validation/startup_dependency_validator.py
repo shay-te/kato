@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from kato_core_lib.validation.base import ValidationBase
-from kato_core_lib.helpers.retry_utils import is_retryable_exception
+from provider_client_base.provider_client_base.helpers.retry_utils import is_retryable_exception
 
 if TYPE_CHECKING:
     from kato_core_lib.data_layers.service.implementation_service import ImplementationService

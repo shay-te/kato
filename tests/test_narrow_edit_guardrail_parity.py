@@ -25,10 +25,22 @@ import unittest
 from agent_core_lib.agent_core_lib.helpers.agent_prompt_utils import (
     narrow_edit_guardrails_text,
 )
+from agent_core_lib.agent_core_lib.helpers.comment_prompt import (
+    build_comment_prompt_context,
+)
 
 # The sentence that opens the guardrail. Any module holding this as a literal
 # is carrying its own copy instead of calling the helper.
 LITERAL_MARKER = 'Make the smallest possible change needed'
+
+# The two supported ways a prompt module can reach the guardrail: call the
+# helper directly, or go through the comment-prompt interface (which always
+# populates ``guardrails``). Derived from the real callables rather than
+# written as literals, so renaming either one can never leave this test
+# quietly asserting a name that no longer exists.
+GUARDRAIL_HELPER = narrow_edit_guardrails_text.__name__
+COMMENT_PROMPT_INTERFACE = build_comment_prompt_context.__name__
+GUARDRAIL_ROUTES = (GUARDRAIL_HELPER, COMMENT_PROMPT_INTERFACE)
 
 # Every module that builds an agent prompt asking for code changes.
 PROMPT_MODULES = (
@@ -77,28 +89,32 @@ class NoTransportCarriesItsOwnCopyTests(unittest.TestCase):
             for match in re.finditer(re.escape(LITERAL_MARKER), source):
                 line_start = source.rfind('\n', 0, match.start()) + 1
                 line = source[line_start:source.find('\n', match.start())]
-                if 'narrow_edit_guardrails_text' not in line:
+                if GUARDRAIL_HELPER not in line:
                     offenders.append(f'{dotted}: {line.strip()[:80]}')
         self.assertEqual(
             offenders, [],
             'These modules carry their own copy of the narrow-edit guardrail '
-            'instead of calling narrow_edit_guardrails_text(). Editing the '
+            f'instead of calling {GUARDRAIL_HELPER}(). Editing the '
             'shared helper would silently leave them behind — which is how the '
             '"agent rewrote the whole file" guardrail came to be missing from '
             'one builder in the first place.\n' + '\n'.join(offenders),
         )
 
-    def test_every_prompt_module_actually_calls_the_helper(self) -> None:
+    def test_every_prompt_module_actually_reaches_the_guardrail(self) -> None:
         # The mirror of the test above: absence of a literal is only good news
-        # if the module calls the helper instead of dropping the guardrail.
+        # if the module still REACHES the guardrail. Two legitimate routes —
+        # calling the helper directly, or going through the comment-prompt
+        # interface, which always populates ``guardrails``.
         missing = [
             dotted for dotted in PROMPT_MODULES
-            if 'narrow_edit_guardrails_text' not in _module_source(dotted)
+            if not any(
+                route in _module_source(dotted) for route in GUARDRAIL_ROUTES
+            )
         ]
         self.assertEqual(
             missing, [],
-            'These prompt modules reference the guardrail helper nowhere at '
-            'all — the narrowing instruction is simply absent: ' + str(missing),
+            'These prompt modules reach the narrow-edit guardrail by neither '
+            'route — the narrowing instruction is simply absent: ' + str(missing),
         )
 
 

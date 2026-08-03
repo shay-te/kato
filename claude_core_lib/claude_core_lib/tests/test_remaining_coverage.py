@@ -117,6 +117,7 @@ class ReviewCommentsBatchSnippetTests(unittest.TestCase):
             )
             text = review_comments_batch_text(
                 [comment], workspace_path=str(workspace),
+            wrap=None,
             )
         # Snippet was appended (line 372).
         self.assertIn('→ 5 | line 5', text)

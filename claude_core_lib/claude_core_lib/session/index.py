@@ -39,7 +39,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from agent_core_lib.agent_core_lib.helpers.session_id_utils import fix_session_id
-from agent_core_lib.agent_core_lib.helpers.text_utils import text_from_mapping
+from utils_core_lib.utils_core_lib.text_utils import text_from_mapping
 CLAUDE_SESSIONS_ROOT_ENV_KEY = 'CLAUDE_SESSIONS_ROOT'
 # Cap on per-transcript bytes scanned for first/last user message
 # previews. Claude transcripts grow without bound; reading the whole

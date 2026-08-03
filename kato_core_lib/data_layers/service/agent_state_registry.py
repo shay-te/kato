@@ -12,7 +12,7 @@ from kato_core_lib.helpers.pull_request_context_utils import (
     build_pull_request_context,
     pull_request_context_key,
 )
-from kato_core_lib.helpers.text_utils import normalized_text
+from utils_core_lib.utils_core_lib.text_utils import normalized_text
 
 
 class AgentStateRegistry(object):

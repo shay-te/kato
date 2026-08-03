@@ -4,7 +4,7 @@ from __future__ import annotations
 from urllib.parse import urlparse
 
 from git_core_lib.git_core_lib.helpers.repository_discovery_utils import remote_web_base_url
-from git_core_lib.git_core_lib.helpers.text_utils import text_from_attr
+from utils_core_lib.utils_core_lib.text_utils import text_from_attr
 
 
 def provider_from_url_string(url: str) -> str:

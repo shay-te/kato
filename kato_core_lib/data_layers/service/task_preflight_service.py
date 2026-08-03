@@ -5,7 +5,7 @@ from collections.abc import Callable
 
 from core_lib.data_layers.service.service import Service
 
-from kato_core_lib.client.ticket_client_base import TicketClientBase
+from kato_core_lib.helpers import agent_comment_classification
 from kato_core_lib.data_layers.data.fields import TaskCommentFields
 from kato_core_lib.data_layers.data.task import Task
 from kato_core_lib.data_layers.service.repository_service import RepositoryService
@@ -710,15 +710,15 @@ class TaskPreflightService(MissionStepLoggerMixin, Service):
 
     @staticmethod
     def _blocking_comment_kind(blocking_comment: str) -> str:
-        if TicketClientBase.is_completion_comment(blocking_comment):
+        if agent_comment_classification.is_completion_comment(blocking_comment):
             return 'completion'
-        if TicketClientBase.is_pre_start_blocking_comment(blocking_comment):
+        if agent_comment_classification.is_pre_start_blocking_comment(blocking_comment):
             return 'pre-start'
         return 'unknown'
 
     @staticmethod
     def _can_retry_without_explicit_override(blocking_comment: str) -> bool:
-        return TicketClientBase.is_pre_start_blocking_comment(blocking_comment)
+        return agent_comment_classification.is_pre_start_blocking_comment(blocking_comment)
 
     def _skip_blocked_task_result(
         self,
@@ -868,4 +868,4 @@ class TaskPreflightService(MissionStepLoggerMixin, Service):
     @staticmethod
     def _active_execution_blocking_comment(task: Task) -> str:
         comments = getattr(task, TaskCommentFields.ALL_COMMENTS, [])
-        return TicketClientBase.active_execution_blocking_comment(comments)
+        return agent_comment_classification.active_execution_blocking_comment(comments)

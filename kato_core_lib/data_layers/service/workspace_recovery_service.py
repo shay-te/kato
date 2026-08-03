@@ -41,7 +41,7 @@ from kato_core_lib.data_layers.service.workspace_manager import (
     WorkspaceRecord,
 )
 from kato_core_lib.helpers.logging_utils import configure_logger
-from kato_core_lib.helpers.text_utils import normalized_text
+from utils_core_lib.utils_core_lib.text_utils import normalized_text
 from workspace_core_lib.workspace_core_lib.data_layers.data_access.workspace_data_access import (
     DEFAULT_METADATA_FILENAME,
 )

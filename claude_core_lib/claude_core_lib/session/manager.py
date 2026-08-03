@@ -23,7 +23,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from agent_core_lib.agent_core_lib.helpers.atomic_write import atomic_write_json
+from utils_core_lib.utils_core_lib.atomic_write import atomic_write_json
 from agent_core_lib.agent_core_lib.helpers.logging_utils import configure_logger
 from agent_core_lib.agent_core_lib.helpers.session_id_utils import (
     AGENT_SESSION_ID,
@@ -33,7 +33,7 @@ from agent_core_lib.agent_core_lib.helpers.session_id_utils import (
     read_session_id_from_mapping,
     same_session_id,
 )
-from agent_core_lib.agent_core_lib.helpers.text_utils import (
+from utils_core_lib.utils_core_lib.text_utils import (
     normalized_text,
     text_from_mapping,
 )

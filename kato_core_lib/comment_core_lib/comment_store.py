@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 import threading
@@ -17,50 +16,9 @@ from kato_core_lib.comment_core_lib.comment_record import (
     KatoCommentStatus,
 )
 from kato_core_lib.helpers.logging_utils import configure_logger
-
-# Cross-platform file locking. POSIX has fcntl; Windows has msvcrt.
-try:
-    import fcntl                            # type: ignore[import-not-found]
-except ImportError:                          # pragma: no cover — Windows
-    fcntl = None                            # type: ignore[assignment]
-try:
-    import msvcrt                           # type: ignore[import-not-found]
-except ImportError:                          # POSIX
-    msvcrt = None                           # type: ignore[assignment]
-
+from utils_core_lib.utils_core_lib.file_lock import exclusive_file_lock
 
 _STORE_FILENAME = '.kato-comments.json'
-
-
-@contextlib.contextmanager
-def _process_safe_write_lock(store_path: Path):
-    """Cross-process exclusive lock for the store's read-modify-write."""
-    lock_path = store_path.with_suffix(store_path.suffix + '.lock')
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    if fcntl is not None:
-        with lock_path.open('a+') as handle:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        return
-    if msvcrt is not None:
-        with lock_path.open('a+b') as handle:
-            handle.seek(0)
-            while True:
-                try:
-                    msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
-                    break
-                except OSError:
-                    continue
-            try:
-                yield
-            finally:
-                handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-        return
-    yield
 
 
 class LocalCommentStore(object):
@@ -137,7 +95,7 @@ class LocalCommentStore(object):
             raise ValueError('comment repo_id must be non-empty')
         # flock wraps the WHOLE RMW so a sibling process can't load the
         # same baseline and clobber us on rename.
-        with self._lock, _process_safe_write_lock(self._path):
+        with self._lock, exclusive_file_lock(self._path):
             if record.parent_id:
                 parent = next(
                     (r for r in self._load_all(force=True)
@@ -169,7 +127,7 @@ class LocalCommentStore(object):
             )
         if not record.remote_id:
             raise ValueError('remote_id is required to upsert a remote comment')
-        with self._lock, _process_safe_write_lock(self._path):
+        with self._lock, exclusive_file_lock(self._path):
             existing = list(self._load_all(force=True))
             for index, current in enumerate(existing):
                 if (
@@ -197,7 +155,7 @@ class LocalCommentStore(object):
         the full list, and returns the mutated record. Returns ``None`` when
         no record matches. Shared scaffold for the status mutators.
         """
-        with self._lock, _process_safe_write_lock(self._path):
+        with self._lock, exclusive_file_lock(self._path):
             existing = list(self._load_all(force=True))
             for index, current in enumerate(existing):
                 if current.id != comment_id:
@@ -302,7 +260,7 @@ class LocalCommentStore(object):
 
     def delete(self, comment_id: str) -> bool:
         """Remove a comment (and any direct replies). Returns True on hit."""
-        with self._lock, _process_safe_write_lock(self._path):
+        with self._lock, exclusive_file_lock(self._path):
             existing = list(self._load_all(force=True))
             removed = False
             kept: list[CommentRecord] = []

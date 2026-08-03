@@ -9,6 +9,7 @@ import {
   readPermissionSoundPrefs,
   writePermissionSoundPrefs,
   maybePlayPermissionChime,
+  _resetPermissionSoundPrefs,
 } from './permissionSound.js';
 
 // --- minimal browser shims -------------------------------------------------
@@ -53,7 +54,10 @@ function installShims({ focused = true, visible = true } = {}) {
 beforeEach(() => {
   _store = {};
   _plays = 0;
-  // Reset the module's cached prefs by writing a known value each test.
+  // Clear the module-level pref cache and the chime dedupe map. Every case
+  // used to have to write a known value first, because there was no way to
+  // reset — a case that only READ inherited the previous case's prefs.
+  _resetPermissionSoundPrefs();
 });
 
 afterEach(() => {

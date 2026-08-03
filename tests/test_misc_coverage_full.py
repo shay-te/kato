@@ -12,11 +12,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from kato_core_lib.client.ticket_client_base import TicketClientBase
 from kato_core_lib.data_layers.data_access.lessons_data_access import (
     LessonsDataAccess,
 )
-from kato_core_lib.helpers.atomic_json_utils import atomic_write_json
 from kato_core_lib.data_layers.service.comment_run_watcher import (
     CommentRunWatcher,
     build_and_start_comment_run_watcher,
@@ -27,28 +25,6 @@ from kato_core_lib.data_layers.service.repository_service import (
 )
 from kato_core_lib.helpers import forgotten_tasks_store
 from tests.utils import build_test_cfg
-
-
-# --------------------------------------------------------------------------
-# ticket_client_base.py:137 — _comment_lines skips agent-operational comments
-# --------------------------------------------------------------------------
-class CommentLinesSkipsAgentCommentTests(unittest.TestCase):
-    def test_agent_operational_comment_is_dropped(self) -> None:
-        # A human comment is kept; an agent-operational comment (body
-        # starting with a known kato prefix) is skipped via the
-        # ``continue`` on line 137 — only the human line survives.
-        comments = [
-            {'author': 'alice', 'body': 'Please fix the null check.'},
-            {'author': 'kato', 'body': 'Kato agent started working on this task now.'},
-        ]
-        lines = TicketClientBase._comment_lines(comments)
-        self.assertEqual(lines, ['- alice: Please fix the null check.'])
-
-    def test_only_agent_comment_yields_no_lines(self) -> None:
-        comments = [
-            {'author': 'kato', 'body': 'Kato completed task ABC-1 successfully.'},
-        ]
-        self.assertEqual(TicketClientBase._comment_lines(comments), [])
 
 
 # --------------------------------------------------------------------------
@@ -65,46 +41,6 @@ class LessonsStateDirPropertyTests(unittest.TestCase):
 # --------------------------------------------------------------------------
 # atomic_json_utils.py:58 — raise_on_error re-raises the OSError
 # --------------------------------------------------------------------------
-class AtomicWriteRaiseOnErrorTests(unittest.TestCase):
-    def test_raise_on_error_reraises_oserror(self) -> None:
-        path = MagicMock(spec=Path)
-        tmp_path = MagicMock(spec=Path)
-        path.with_name.return_value = tmp_path
-        boom = OSError('disk full')
-        tmp_path.write_text.side_effect = boom
-
-        logger = MagicMock()
-        with self.assertRaises(OSError) as ctx:
-            atomic_write_json(
-                path,
-                {'k': 'v'},
-                logger=logger,
-                label='settings',
-                raise_on_error=True,
-            )
-        self.assertIs(ctx.exception, boom)
-        # The warning is still emitted before the re-raise.
-        logger.warning.assert_called_once()
-
-    def test_swallows_oserror_and_returns_false_without_raise_flag(self) -> None:
-        path = MagicMock(spec=Path)
-        tmp_path = MagicMock(spec=Path)
-        path.with_name.return_value = tmp_path
-        tmp_path.write_text.side_effect = OSError('nope')
-        # No logger, no raise: returns False (the False branch / line 59).
-        self.assertFalse(atomic_write_json(path, {'k': 'v'}))
-
-    def test_trailing_newline_appends_final_newline(self) -> None:
-        path = MagicMock(spec=Path)
-        tmp_path = MagicMock(spec=Path)
-        path.with_name.return_value = tmp_path
-        ok = atomic_write_json(path, {'k': 'v'}, trailing_newline=True)
-        self.assertTrue(ok)
-        written = tmp_path.write_text.call_args[0][0]
-        self.assertTrue(written.endswith('}\n'))
-        tmp_path.replace.assert_called_once_with(path)
-
-
 # --------------------------------------------------------------------------
 # comment_run_watcher.py:87-90 — _run_loop swallows a bad tick
 # comment_run_watcher.py:134->136 — builder with autostart=False

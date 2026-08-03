@@ -36,7 +36,7 @@ from workspace_core_lib.workspace_core_lib import (  # noqa: F401 — public re-
     WorkspaceService,
 )
 
-from kato_core_lib.helpers.text_utils import normalized_text
+from utils_core_lib.utils_core_lib.text_utils import normalized_text
 
 
 _KATO_METADATA_FILENAME = '.kato-meta.json'

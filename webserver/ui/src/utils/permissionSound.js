@@ -11,52 +11,45 @@
 // the app's CSP blocks external media and bundling audio is overkill for a
 // two-note chime.
 
+import { createPreferenceStore } from './createPreferenceStore.js';
+
 const STORAGE_KEY = 'kato.permissionSound.v1';
 const DEFAULTS = { enabled: true, onlyWhenUnfocused: true };
 // Collapse the SSE + status-feed double-emit of the same ask (and reconnect
 // backlog bursts) into one chime.
 const DEDUPE_WINDOW_MS = 2000;
 
-let _cache = null;
-const _listeners = new Set();
+const _store = createPreferenceStore({
+  key: STORAGE_KEY,
+  defaults: DEFAULTS,
+  coerce: (parsed, defaults) => ({
+    enabled: parsed.enabled === undefined ? defaults.enabled : !!parsed.enabled,
+    onlyWhenUnfocused: parsed.onlyWhenUnfocused === undefined
+      ? defaults.onlyWhenUnfocused : !!parsed.onlyWhenUnfocused,
+  }),
+});
+
 const _recent = new Map(); // key -> last-played epoch ms
 
 export function readPermissionSoundPrefs() {
-  if (_cache) { return _cache; }
-  try {
-    const raw = typeof localStorage !== 'undefined'
-      ? localStorage.getItem(STORAGE_KEY) : null;
-    const parsed = raw ? JSON.parse(raw) : {};
-    _cache = {
-      enabled: parsed.enabled === undefined ? DEFAULTS.enabled : !!parsed.enabled,
-      onlyWhenUnfocused: parsed.onlyWhenUnfocused === undefined
-        ? DEFAULTS.onlyWhenUnfocused : !!parsed.onlyWhenUnfocused,
-    };
-  } catch (_) {
-    _cache = { ...DEFAULTS };
-  }
-  return _cache;
+  return _store.read();
 }
 
 export function writePermissionSoundPrefs(next) {
-  _cache = {
-    enabled: !!(next && next.enabled),
-    onlyWhenUnfocused: !!(next && next.onlyWhenUnfocused),
-  };
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(_cache));
-    }
-  } catch (_) { /* private mode / quota — keep the in-memory value */ }
-  for (const fn of _listeners) {
-    try { fn(_cache); } catch (_) { /* isolate a throwing subscriber */ }
-  }
-  return _cache;
+  return _store.write(next);
 }
 
 export function subscribePermissionSoundPrefs(fn) {
-  _listeners.add(fn);
-  return () => { _listeners.delete(fn); };
+  return _store.subscribe(fn);
+}
+
+// Test-only: the cache + listeners are module-level, so tests must reset
+// between cases for isolation. This module previously had NO reset while its
+// twin did — a module-level cache with no way to clear it leaks between test
+// cases and shows up as an unrelated test going red later.
+export function _resetPermissionSoundPrefs() {
+  _store.reset();
+  _recent.clear();
 }
 
 // True when the kato tab/window is the operator's focus. Hidden tab or a

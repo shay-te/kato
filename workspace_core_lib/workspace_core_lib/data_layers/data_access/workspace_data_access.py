@@ -33,9 +33,7 @@ from core_lib.data_layers.data_access.data_access import DataAccess
 from workspace_core_lib.workspace_core_lib.data_layers.data.workspace_record import (
     WorkspaceRecord,
 )
-from workspace_core_lib.workspace_core_lib.helpers.atomic_write_utils import (
-    atomic_write_json,
-)
+from utils_core_lib.utils_core_lib.atomic_write import atomic_write_json
 
 
 DEFAULT_METADATA_FILENAME = '.workspace-meta.json'

@@ -1,7 +1,7 @@
 """Git working-tree status parsing and artifact detection utilities."""
 from __future__ import annotations
 
-from git_core_lib.git_core_lib.helpers.text_utils import normalized_text
+from utils_core_lib.utils_core_lib.text_utils import normalized_text
 
 
 GENERATED_ARTIFACT_ROOTS = {'build', 'dist', 'out', 'coverage', 'target'}

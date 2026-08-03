@@ -846,7 +846,7 @@ class PlanningSessionRunnerTests(unittest.TestCase):
     def test_coerce_optional_int_handles_none_and_blank(self) -> None:
         # Lines 38-39: ``None`` / '' → None.
         from kato_core_lib.data_layers.service.planning_session_runner import (
-            _coerce_optional_int,
+            _positive_int_or_none as _coerce_optional_int,
         )
         self.assertIsNone(_coerce_optional_int(None))
         self.assertIsNone(_coerce_optional_int(''))
@@ -854,7 +854,7 @@ class PlanningSessionRunnerTests(unittest.TestCase):
     def test_coerce_optional_int_handles_typeerror(self) -> None:
         # Lines 40-44: TypeError/ValueError → None.
         from kato_core_lib.data_layers.service.planning_session_runner import (
-            _coerce_optional_int,
+            _positive_int_or_none as _coerce_optional_int,
         )
         self.assertIsNone(_coerce_optional_int('not a number'))
         self.assertIsNone(_coerce_optional_int(object()))

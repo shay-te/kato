@@ -14,9 +14,7 @@ from __future__ import annotations
 
 import os
 import subprocess
-import tempfile
 import unittest
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -24,12 +22,8 @@ from agent_core_lib.agent_core_lib.data.fields import ImplementationFields
 from codex_core_lib.codex_core_lib.cli_client import (
     CodexCliClient,
     _extract_error_text,
-    _read_shim_text,
     _readable_message_from_envelope,
     _repository_local_paths,
-    _resolve_node_binary,
-    _resolve_shim_js_path,
-    _resolve_windows_node_invocation_impl,
     _unwrap_backend_error_envelope,
 )
 from provider_client_base.provider_client_base.data.review_comment import ReviewComment
@@ -1277,147 +1271,41 @@ class RepositoryLocalPathsTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Windows shim — exercised by mocking os.name + the shim text
+# Windows shim bypass — wiring only; the parsing is shared and tested once
 # ---------------------------------------------------------------------------
 
 class WindowsShimTests(unittest.TestCase):
-    """Cover the Windows-shim helper branches without patching
-    ``os.name`` (patching that to ``'nt'`` on a Mac/Linux host
-    breaks ``pathlib``'s ``WindowsPath`` instantiation).
+    """``_host_binary_argv`` consults the shared Windows shim bypass.
 
-    Strategy: the gate-level method ``_resolve_windows_node_invocation``
-    just delegates to a module-level impl ``_resolve_windows_node_invocation_impl``
-    that has NO ``os.name`` check, so tests call the impl directly
-    with real temp files for the shim / cli.js / node.exe fixtures.
+    This transport used to carry its OWN copy of the shim parser, and the copy
+    handled strictly less than the Claude one: it never recognised the
+    native-binary (``.exe``) shim shape, never handled the ``%dp0%`` prefix
+    newer npm emits, and never resolved a nested ``a\\b\\cli.js`` reference.
+    Codex ships a native binary through npm, so the ``.exe`` shape it missed
+    is the one its own installer writes — every Windows spawn quietly fell
+    back to ``cmd.exe`` and lost the resume flags.
+
+    The parser now lives in ``agent_core_lib.helpers.cli_shim_utils`` and is
+    pinned there for every shape. What remains here is the wiring.
     """
 
-    def test_non_windows_gate_returns_none(self) -> None:
-        # The gate fires on a non-Windows host — default test
-        # environment. This covers the gate branch.
-        result = CodexCliClient._resolve_windows_node_invocation('/anywhere/codex')
-        self.assertIsNone(result)
+    BYPASS = (
+        'agent_core_lib.agent_core_lib.cli_agent_shared'
+        '.resolve_windows_cli_invocation'
+    )
 
-    def test_non_cmd_extension_returns_none(self) -> None:
-        result = _resolve_windows_node_invocation_impl('C:/codex.exe')
-        self.assertIsNone(result)
-
-    def test_unreadable_shim_returns_none(self) -> None:
-        # ``cmd_path`` ends in .cmd but the file doesn't actually exist,
-        # so ``read_text`` raises OSError → bails.
-        result = _resolve_windows_node_invocation_impl(
-            '/nonexistent/path/codex.cmd',
-        )
-        self.assertIsNone(result)
-
-    def test_shim_without_js_reference_returns_none(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            shim = Path(tmp) / 'codex.cmd'
-            shim.write_text('echo no js here', encoding='utf-8')
-            result = _resolve_windows_node_invocation_impl(str(shim))
-        self.assertIsNone(result)
-
-    def test_shim_with_missing_js_file_returns_none(self) -> None:
-        # Shim text references a .js file but the .js doesn't exist.
-        with tempfile.TemporaryDirectory() as tmp:
-            shim = Path(tmp) / 'codex.cmd'
-            shim.write_text('node "%~dp0\\cli.js" "$@"', encoding='utf-8')
-            result = _resolve_windows_node_invocation_impl(str(shim))
-        self.assertIsNone(result)
-
-    def test_shim_resolves_to_node_argv_pair_when_local_node(self) -> None:
-        # Happy path: shim text has a .js reference, the .js file
-        # exists, and node.exe lives next to it.
-        with tempfile.TemporaryDirectory() as tmp:
-            shim_dir = Path(tmp)
-            shim = shim_dir / 'codex.cmd'
-            shim.write_text('node "%~dp0\\cli.js" "$@"', encoding='utf-8')
-            (shim_dir / 'cli.js').write_text('// codex entry', encoding='utf-8')
-            (shim_dir / 'node.exe').write_text('fake node', encoding='utf-8')
-            result = _resolve_windows_node_invocation_impl(str(shim))
-        self.assertIsNotNone(result)
-        self.assertEqual(len(result), 2)
-        self.assertTrue(result[0].endswith('node.exe'))
-        self.assertTrue(result[1].endswith('cli.js'))
-
-    def test_shim_falls_back_to_path_node_when_no_local(self) -> None:
-        # node.exe NOT next to the shim → fall back to shutil.which('node').
-        with tempfile.TemporaryDirectory() as tmp:
-            shim_dir = Path(tmp)
-            shim = shim_dir / 'codex.cmd'
-            shim.write_text('node "%~dp0\\cli.js" "$@"', encoding='utf-8')
-            (shim_dir / 'cli.js').write_text('// codex entry', encoding='utf-8')
-            # NO node.exe next to the shim.
-            with patch('codex_core_lib.codex_core_lib.cli_client.shutil.which',
-                       return_value='/usr/local/bin/node'):
-                result = _resolve_windows_node_invocation_impl(str(shim))
-        self.assertIsNotNone(result)
-        self.assertEqual(len(result), 2)
-        self.assertEqual(result[0], '/usr/local/bin/node')
-        self.assertTrue(result[1].endswith('cli.js'))
-
-    def test_shim_returns_none_when_no_node_anywhere(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            shim_dir = Path(tmp)
-            shim = shim_dir / 'codex.cmd'
-            shim.write_text('node "%~dp0\\cli.js" "$@"', encoding='utf-8')
-            (shim_dir / 'cli.js').write_text('// codex entry', encoding='utf-8')
-            with patch('codex_core_lib.codex_core_lib.cli_client.shutil.which',
-                       return_value=None):
-                result = _resolve_windows_node_invocation_impl(str(shim))
-        self.assertIsNone(result)
-
-    def test_read_shim_text_oserror_returns_none(self) -> None:
-        self.assertIsNone(_read_shim_text(Path('/no/such/file.cmd')))
-
-    def test_resolve_shim_js_path_no_match_returns_none(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            shim = Path(tmp) / 'codex.cmd'
-            shim.write_text('plain text', encoding='utf-8')
-            self.assertIsNone(_resolve_shim_js_path(shim, shim.read_text()))
-
-    def test_resolve_node_binary_local_wins(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            shim_dir = Path(tmp)
-            (shim_dir / 'node.exe').write_text('fake', encoding='utf-8')
-            result = _resolve_node_binary(shim_dir)
-        self.assertIsNotNone(result)
-        self.assertTrue(str(result).endswith('node.exe'))
-
-    def test_host_binary_argv_uses_node_invocation_when_available(self) -> None:
+    def test_host_binary_argv_uses_the_bypass_when_it_resolves(self) -> None:
         client = CodexCliClient(binary='codex')
-        with patch.object(CodexCliClient, '_resolve_windows_node_invocation',
-                          return_value=['/path/node', '/path/cli.js']):
+        with patch(self.BYPASS, return_value=['/path/node', '/path/cli.js']):
             argv = client._host_binary_argv()
         self.assertEqual(argv, ['/path/node', '/path/cli.js'])
 
     def test_host_binary_argv_falls_back_to_resolved_when_no_shim(self) -> None:
         client = CodexCliClient(binary='codex')
         client._binary_path = '/usr/local/bin/codex'
-        with patch.object(CodexCliClient, '_resolve_windows_node_invocation',
-                          return_value=None):
+        with patch(self.BYPASS, return_value=None):
             argv = client._host_binary_argv()
         self.assertEqual(argv, ['/usr/local/bin/codex'])
-
-    def test_windows_gate_delegates_to_impl_when_host_is_windows(self) -> None:
-        # Patch the indirection helper so the gate thinks the host is
-        # Windows, then verify it forwards to the impl. Avoids
-        # patching ``os.name`` (which breaks pathlib on Mac/Linux).
-        with patch(
-            'codex_core_lib.codex_core_lib.cli_client._is_windows_host',
-            return_value=True,
-        ), patch(
-            'codex_core_lib.codex_core_lib.cli_client._resolve_windows_node_invocation_impl',
-            return_value=['/node', '/cli.js'],
-        ) as mock_impl:
-            result = CodexCliClient._resolve_windows_node_invocation('C:/codex.cmd')
-        mock_impl.assert_called_once_with('C:/codex.cmd')
-        self.assertEqual(result, ['/node', '/cli.js'])
-
-    def test_is_windows_host_returns_false_on_non_windows(self) -> None:
-        # On the macOS/Linux test host, the indirection helper
-        # returns False — covers the canonical path.
-        from codex_core_lib.codex_core_lib.cli_client import _is_windows_host
-        self.assertFalse(_is_windows_host())
 
 
 # ---------------------------------------------------------------------------

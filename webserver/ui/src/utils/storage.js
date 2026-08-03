@@ -12,6 +12,17 @@ export function resolveStorage() {
   if (typeof window !== 'undefined' && window.localStorage) {
     return window.localStorage;
   }
+  // Fall back to the global binding. In a browser this IS
+  // ``window.localStorage`` (``globalThis === window``), so this changes
+  // nothing there. It matters outside one: a bare ``localStorage`` global is
+  // what the node test runner shims and what several preference modules were
+  // written against, and a resolver that missed it made every write in those
+  // environments a silent no-op — persistence "worked" until you reloaded.
+  // That gap is why those modules hand-rolled their own storage access
+  // instead of using this file.
+  if (typeof globalThis !== 'undefined' && globalThis.localStorage) {
+    return globalThis.localStorage;
+  }
   return null;
 }
 

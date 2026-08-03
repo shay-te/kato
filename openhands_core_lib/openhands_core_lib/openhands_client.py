@@ -10,10 +10,10 @@ from provider_client_base.provider_client_base.data.review_comment import Review
 from provider_client_base.provider_client_base.helpers.retry_utils import run_with_retry
 from provider_client_base.provider_client_base.retrying_client_base import RetryingClientBase
 from openhands_core_lib.openhands_core_lib.data.fields import ImplementationFields
-from openhands_core_lib.openhands_core_lib.helpers import agent_prompt_utils
-from openhands_core_lib.openhands_core_lib.helpers.logging_utils import configure_logger
-from openhands_core_lib.openhands_core_lib.helpers.result_utils import build_openhands_result
-from openhands_core_lib.openhands_core_lib.helpers.text_utils import (
+from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
+from agent_core_lib.agent_core_lib.helpers.logging_utils import configure_logger
+from agent_core_lib.agent_core_lib.helpers.result_utils import build_openhands_result
+from utils_core_lib.utils_core_lib.text_utils import (
     condensed_text,
     normalized_lower_text,
     normalized_text,
@@ -85,6 +85,15 @@ class OpenHandsClient(RetryingClientBase):
         self_reply_prefixes: tuple = (),
     ) -> None:
         super().__init__(base_url, api_key, timeout=300, max_retries=max_retries)
+        # Re-home the logger onto the shared AGENT namespace, matching the
+        # other two transports. RetryingClientBase (a provider-HTTP base) hands
+        # out a FLAT ``OpenHandsClient`` logger, which is right for a provider
+        # client but wrong for a transport: claude and codex log under
+        # ``agent.workflow.*``, which the host re-roots to its own workflow
+        # namespace so transport logs pick up the operator's workflow log level
+        # and reach the status broadcaster. OpenHands was the only transport
+        # sitting outside that namespace, so its logs silently missed both.
+        self.logger = configure_logger(self.__class__.__name__)
         self._session_api_key = api_key
         self._llm_settings = dict(llm_settings or {})
         self._poll_interval_seconds = max(0.1, float(poll_interval_seconds or 0))
@@ -226,7 +235,7 @@ class OpenHandsClient(RetryingClientBase):
         Returns empty string when not set — the prompt builder skips
         the snippet block in that case, no harm done.
         """
-        from openhands_core_lib.openhands_core_lib.helpers.text_utils import normalized_text, text_from_attr
+        from utils_core_lib.utils_core_lib.text_utils import normalized_text, text_from_attr
 
         return normalized_text(text_from_attr(comment, 'repository_local_path'))
 
@@ -285,7 +294,7 @@ class OpenHandsClient(RetryingClientBase):
             extra_refusal_guidance=workspace_refusal_guidance,
         )
         scope_prefix = f'{scope_block}\n' if scope_block else ''
-        from openhands_core_lib.openhands_core_lib.helpers.agents_instruction_utils import (
+        from agent_core_lib.agent_core_lib.helpers.agents_instruction_utils import (
             agents_instructions_for_path,
         )
         agents_text = agents_instructions_for_path(
@@ -503,7 +512,7 @@ class OpenHandsClient(RetryingClientBase):
             extra_refusal_guidance=workspace_refusal_guidance,
         )
         scope_prefix = f'{scope_block}\n' if scope_block else ''
-        from openhands_core_lib.openhands_core_lib.helpers.agents_instruction_utils import (
+        from agent_core_lib.agent_core_lib.helpers.agents_instruction_utils import (
             agents_instructions_for_path,
         )
         agents_text = agents_instructions_for_path(

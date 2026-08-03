@@ -29,6 +29,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from agent_core_lib.agent_core_lib.cli_agent_shared import CliAgentSharedBehaviour
 from agent_core_lib.agent_core_lib.data.fields import ImplementationFields
 from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
 from agent_core_lib.agent_core_lib.helpers.architecture_doc_utils import read_architecture_doc
@@ -38,7 +39,7 @@ from agent_core_lib.agent_core_lib.helpers.credential_scan import (
 )
 from agent_core_lib.agent_core_lib.helpers.logging_utils import configure_logger
 from agent_core_lib.agent_core_lib.helpers.result_utils import build_openhands_result
-from agent_core_lib.agent_core_lib.helpers.text_utils import (
+from utils_core_lib.utils_core_lib.text_utils import (
     condensed_text,
     normalized_text,
     text_from_attr,
@@ -49,7 +50,7 @@ from sandbox_core_lib.sandbox_core_lib.workspace_delimiter import (
 )
 
 
-class CodexCliClient(object):
+class CodexCliClient(CliAgentSharedBehaviour):
     """Drive OpenAI's Codex CLI as the implementation/testing backend.
 
     The public methods (``validate_connection``, ``implement_task``,
@@ -244,9 +245,6 @@ class CodexCliClient(object):
         )
         self._validate_model_smoke_test()
 
-    def validate_model_access(self) -> None:
-        self._validate_model_access_smoke_test()
-
     def delete_conversation(self, conversation_id: str) -> None:
         # Codex sessions live on disk under ``$CODEX_HOME``; nothing
         # to clean up remotely. Matches the Claude backend's no-op contract.
@@ -255,54 +253,6 @@ class CodexCliClient(object):
     def stop_all_conversations(self) -> None:
         # No remote agent-server containers exist for the Codex CLI backend.
         return
-
-    def implement_task(
-        self,
-        task: Any,
-        agent_session_id: str = '',
-        prepared_task: Any | None = None,
-    ) -> dict[str, str | bool]:
-        self.logger.info('requesting implementation for task %s', task.id)
-        prompt = self._build_implementation_prompt(task, prepared_task)
-        cwd, additional_dirs = self._working_directories(prepared_task)
-        result = self._run_prompt_result(
-            prompt=prompt,
-            cwd=cwd,
-            additional_dirs=additional_dirs,
-            branch_name=agent_prompt_utils.task_branch_name(task, prepared_task),
-            default_commit_message=f'Implement {task.id}',
-            agent_session_id=agent_session_id,
-            log_label=agent_prompt_utils.task_conversation_title(task),
-            task_id=str(task.id),
-        )
-        self.logger.info(
-            'implementation finished for task %s with success=%s',
-            task.id,
-            result[ImplementationFields.SUCCESS],
-        )
-        return result
-
-    def test_task(
-        self,
-        task: Any,
-        prepared_task: Any | None = None,
-    ) -> dict[str, str | bool]:
-        self.logger.info('requesting testing validation for task %s', task.id)
-        prompt = self._build_testing_prompt(task, prepared_task)
-        cwd, additional_dirs = self._working_directories(prepared_task)
-        result = self._run_prompt_result(
-            prompt=prompt,
-            cwd=cwd,
-            additional_dirs=additional_dirs,
-            log_label=agent_prompt_utils.task_conversation_title(task, suffix=' [testing]'),
-            task_id=str(task.id),
-        )
-        self.logger.info(
-            'testing validation finished for task %s with success=%s',
-            task.id,
-            result[ImplementationFields.SUCCESS],
-        )
-        return result
 
     def investigate(self, prompt: str, *, cwd: str = '') -> str:
         """Read-only single turn — used by the triage flow.
@@ -335,24 +285,6 @@ class CodexCliClient(object):
             self._bypass_permissions = original_bypass
         result_text = payload.get('result') or payload.get(ImplementationFields.MESSAGE) or ''
         return str(result_text)
-
-    def fix_review_comment(
-        self,
-        comment: ReviewComment,
-        branch_name: str,
-        agent_session_id: str = '',
-        task_id: str = '',
-        task_summary: str = '',
-        additional_dirs: list[str] | None = None,
-    ) -> dict[str, str | bool]:
-        return self.fix_review_comments(
-            [comment],
-            branch_name,
-            agent_session_id=agent_session_id,
-            task_id=task_id,
-            task_summary=task_summary,
-            additional_dirs=additional_dirs,
-        )
 
     def fix_review_comments(
         self,
@@ -1162,45 +1094,7 @@ class CodexCliClient(object):
 
     # ----- working directory resolution -----
 
-    def _working_directories(
-        self,
-        prepared_task: Any | None,
-    ) -> tuple[str, list[str]]:
-        repositories = []
-        if prepared_task is not None:
-            repositories = list(prepared_task.repositories or [])
-        repository_paths: list[str] = []
-        for repository in repositories:
-            local_path = normalized_text(text_from_attr(repository, 'local_path'))
-            if local_path and local_path not in repository_paths:
-                repository_paths.append(local_path)
-        if not repository_paths:
-            cwd = self._repository_root_path or os.getcwd()
-            return cwd, []
-        return repository_paths[0], repository_paths[1:]
-
-    def _review_comment_cwd(self, comment: ReviewComment) -> str:
-        repository_local_path = normalized_text(
-            text_from_attr(comment, 'repository_local_path')
-        )
-        if repository_local_path:
-            return repository_local_path
-        if self._repository_root_path:
-            return self._repository_root_path
-        return os.getcwd()
-
     # ----- smoke test -----
-
-    def _validate_model_smoke_test(self) -> None:
-        if not self._model_smoke_test_enabled:
-            return
-        self._validate_model_access_smoke_test()
-
-    def _validate_model_access_smoke_test(self) -> None:
-        if self._model_access_smoke_test_ran:
-            return
-        self._run_model_access_validation()
-        self._model_access_smoke_test_ran = True
 
     def _run_model_access_validation(self) -> None:
         self.logger.info('running Codex CLI model access validation')
@@ -1238,41 +1132,6 @@ class CodexCliClient(object):
             raise RuntimeError(f'Codex CLI smoke test reported an error: {detail}')
 
     # ----- helpers -----
-
-    def _host_binary(self) -> str:
-        return self._binary_path or self._binary
-
-    def _host_binary_argv(self) -> list[str]:
-        """Argv prefix for invoking Codex on the host.
-
-        Mirrors :meth:`ClaudeCliClient._host_binary_argv`. On Windows
-        the npm-installed ``codex.cmd`` is a cmd.exe shim with the
-        same 8K command-line cap as Claude's shim, so the same
-        ``node.exe + script.js`` workaround applies.
-        """
-        resolved = self._host_binary()
-        via_node = self._resolve_windows_node_invocation(resolved)
-        if via_node:
-            return via_node
-        return [resolved]
-
-    @staticmethod
-    def _resolve_windows_node_invocation(cmd_path: str) -> list[str] | None:
-        if not _is_windows_host():
-            return None
-        return _resolve_windows_node_invocation_impl(cmd_path)
-
-    @staticmethod
-    def _coerce_max_turns(value: int | str | None) -> int | None:
-        if value is None or value == '':
-            return None
-        try:
-            parsed = int(value)
-        except (TypeError, ValueError):
-            return None
-        if parsed <= 0:
-            return None
-        return parsed
 
     @classmethod
     def _coerce_effort(cls, value: str | None) -> str:
@@ -1445,69 +1304,3 @@ def _repository_local_paths(prepared_task) -> list[str]:
     return paths
 
 
-# ---------------------------------------------------------------------------
-# Windows shim helpers — split out so tests can call the inner impl
-# directly without patching ``os.name`` (which would break ``pathlib``
-# on non-Windows hosts because it tries to construct WindowsPath).
-# ---------------------------------------------------------------------------
-
-
-def _is_windows_host() -> bool:
-    """Indirection for the Windows-host check so tests can mock it
-    without patching ``os.name`` globally (which would break
-    ``pathlib`` on non-Windows hosts)."""
-    return os.name == 'nt'
-
-
-def _resolve_windows_node_invocation_impl(cmd_path: str) -> list[str] | None:
-    """Inner implementation of :meth:`CodexCliClient._resolve_windows_node_invocation`.
-
-    Same logic, minus the ``os.name == 'nt'`` gate the caller does.
-    """
-    path = Path(cmd_path)
-    if path.suffix.lower() not in ('.cmd', '.bat'):
-        return None
-    shim_text = _read_shim_text(path)
-    if shim_text is None:
-        return None
-    js_path = _resolve_shim_js_path(path, shim_text)
-    if js_path is None:
-        return None
-    node_path = _resolve_node_binary(path.parent)
-    if node_path is None:
-        return None
-    return [str(node_path), str(js_path)]
-
-
-def _read_shim_text(path: Path) -> str | None:
-    try:
-        return path.read_text(encoding='utf-8', errors='replace')
-    except OSError:
-        return None
-
-
-def _resolve_shim_js_path(shim_path: Path, shim_text: str) -> Path | None:
-    """Extract the ``"...\\foo.js"`` literal from an npm cmd-shim and
-    resolve it to an absolute Path next to the shim."""
-    import re
-    match = re.search(r'"([^"]+\.js)"', shim_text)
-    if not match:
-        return None
-    js_ref = match.group(1)
-    js_ref = js_ref.replace('%~dp0\\', '').replace('%~dp0/', '').replace('%~dp0', '')
-    js_path = (shim_path.parent / js_ref).resolve()
-    if not js_path.is_file():
-        return None
-    return js_path
-
-
-def _resolve_node_binary(shim_dir: Path) -> Path | None:
-    """Prefer the ``node.exe`` next to the npm shim; fall back to
-    whichever node is on PATH; return None if neither is found."""
-    local = shim_dir / 'node.exe'
-    if local.is_file():
-        return local
-    on_path = shutil.which('node')
-    if not on_path:
-        return None
-    return Path(on_path)

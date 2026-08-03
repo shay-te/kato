@@ -30,7 +30,7 @@ import subprocess
 from pathlib import Path
 
 from git_core_lib.git_core_lib.helpers.git_command_utils import build_safe_git_command
-from git_core_lib.git_core_lib.helpers.text_utils import normalized_text
+from utils_core_lib.utils_core_lib.text_utils import normalized_text
 
 
 CREDENTIAL_TIMEOUT_SECONDS = 10

@@ -69,50 +69,57 @@ def _safe_workspace() -> Path:
 
 
 # --------------------------------------------------------------------------
-# _exclusive_file_lock — Windows fallback (fcntl None) + flock unlock swallow
+# audit-log locking — the manager must NOT carry its own lock primitive
 # --------------------------------------------------------------------------
 
 
-class ExclusiveFileLockWindowsFallbackTests(unittest.TestCase):
-    """``_exclusive_file_lock`` must not crash on Windows where ``fcntl``
-    is unavailable. The lock becomes a no-op; audit-log writes still go
-    through (most Windows kato users are single-process anyway)."""
+class AuditLockWiringTests(unittest.TestCase):
+    """The audit log locks on every platform, including Windows.
 
-    def test_yields_none_when_fcntl_unavailable(self) -> None:
-        # Lines 57-59: ``fcntl is None`` → yield None and return without
-        # opening a lockfile. Preserves cross-OS portability per the
-        # SANDBOX_PROTECTIONS.md "Cross-OS support matrix".
-        with tempfile.TemporaryDirectory() as td:
-            target = Path(td) / 'audit.log'
-            with patch.object(manager, 'fcntl', None):
-                with manager._exclusive_file_lock(target) as fd:
-                    self.assertIsNone(fd)
-            # No .lock file should have been created.
-            self.assertFalse((target.parent / 'audit.log.lock').exists())
+    This module used to define its own ``_exclusive_file_lock`` that became a
+    NO-OP whenever ``fcntl`` was unavailable, on the reasoning that Windows
+    operators are single-process anyway. The lock serialises the ``prev_hash``
+    read and the rate-limit count against the subsequent write; without it two
+    concurrent spawns each chain off the same predecessor (the audit chain
+    then fails verification, indistinguishably from tampering) and each see
+    ``N-1`` recent spawns (the rate limit admits one extra).
 
-    def test_unlock_oserror_is_swallowed(self) -> None:
-        # Lines 67-68: flock(LOCK_UN) raising OSError must not propagate
-        # out of the context manager — the lock fd will close anyway, so
-        # the unlock failure has no operational consequence.
-        if manager.fcntl is None:
-            self.skipTest('fcntl unavailable on this platform')
-        with tempfile.TemporaryDirectory() as td:
-            target = Path(td) / 'audit.log'
-            original_flock = manager.fcntl.flock
-            calls = []
+    The shared implementation in ``utils_core_lib.file_lock`` locks via
+    ``msvcrt`` on Windows, so the degradation is gone. These tests keep it
+    gone.
+    """
 
-            def selective_flock(fd, op):
-                calls.append(op)
-                if op == manager.fcntl.LOCK_UN:
-                    raise OSError('mock unlock failure')
-                return original_flock(fd, op)
+    def test_manager_uses_the_shared_lock(self) -> None:
+        from utils_core_lib.utils_core_lib.file_lock import exclusive_file_lock
 
-            with patch.object(manager.fcntl, 'flock', selective_flock):
-                # Must not raise.
-                with manager._exclusive_file_lock(target):
-                    pass
-        # The unlock op was attempted.
-        self.assertIn(manager.fcntl.LOCK_UN, calls)
+        self.assertIs(manager.exclusive_file_lock, exclusive_file_lock)
+
+    def test_manager_defines_no_lock_primitive_of_its_own(self) -> None:
+        for primitive in ('fcntl', 'msvcrt', '_exclusive_file_lock'):
+            self.assertFalse(
+                hasattr(manager, primitive),
+                f'manager re-grew {primitive} — locking belongs to '
+                'utils_core_lib.file_lock only',
+            )
+
+    def test_spawn_rate_check_takes_the_lock(self) -> None:
+        from utils_core_lib.utils_core_lib import file_lock as shared_lock
+
+        calls = []
+
+        class _RecordingMsvcrt(object):
+            LK_LOCK = 1
+            LK_UNLCK = 2
+
+            def locking(self, fileno, mode, nbytes):
+                calls.append('LOCK' if mode == self.LK_LOCK else 'UNLCK')
+
+        # Force the Windows shape: under the old copy this recorded nothing.
+        with patch.object(shared_lock, 'fcntl', None), \
+             patch.object(shared_lock, 'msvcrt', _RecordingMsvcrt()):
+            with tempfile.TemporaryDirectory() as td:
+                manager.check_spawn_rate(audit_log_path=Path(td) / 'spawns.jsonl')
+        self.assertEqual(calls, ['LOCK', 'UNLCK'])
 
 
 # --------------------------------------------------------------------------

@@ -39,7 +39,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from agent_core_lib.agent_core_lib.helpers.session_id_utils import fix_session_id
-from agent_core_lib.agent_core_lib.helpers.text_utils import text_from_mapping
+from utils_core_lib.utils_core_lib.text_utils import text_from_mapping
 
 
 @dataclass

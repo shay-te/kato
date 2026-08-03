@@ -6,7 +6,7 @@ from urllib.parse import quote
 from provider_client_base.provider_client_base.pull_request_client_base import PullRequestClientBase
 from provider_client_base.provider_client_base.data.review_comment import ReviewComment
 from provider_client_base.provider_client_base.data.fields import PullRequestFields, ReviewCommentFields
-from provider_client_base.provider_client_base.helpers.text_utils import dict_from_mapping, list_from_mapping, normalized_text, text_from_attr, text_from_mapping
+from utils_core_lib.utils_core_lib.text_utils import dict_from_mapping, list_from_mapping, normalized_text, text_from_attr, text_from_mapping
 
 
 class GitLabClient(PullRequestClientBase):

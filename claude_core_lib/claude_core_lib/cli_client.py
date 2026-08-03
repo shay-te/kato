@@ -7,12 +7,17 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from agent_core_lib.agent_core_lib.cli_agent_shared import CliAgentSharedBehaviour
 from agent_core_lib.agent_core_lib.data.fields import ImplementationFields
 from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
+from agent_core_lib.agent_core_lib.helpers.comment_prompt import (
+    CommentThreadSpec,
+    build_comment_prompt_context,
+)
 from agent_core_lib.agent_core_lib.helpers.logging_utils import configure_logger
 from agent_core_lib.agent_core_lib.helpers.result_utils import build_openhands_result
 from agent_core_lib.agent_core_lib.helpers.session_id_utils import fix_session_id
-from agent_core_lib.agent_core_lib.helpers.text_utils import (
+from utils_core_lib.utils_core_lib.text_utils import (
     condensed_text,
     normalized_text,
     text_from_attr,
@@ -37,7 +42,7 @@ from sandbox_core_lib.sandbox_core_lib.workspace_delimiter import (
 )
 
 
-class ClaudeCliClient(object):
+class ClaudeCliClient(CliAgentSharedBehaviour):
     """Drive Anthropic's Claude Code CLI (`claude -p`) as the implementation/testing backend.
 
     Provides the same public interface as :class:`the agent client` so the rest of the
@@ -284,9 +289,6 @@ class ClaudeCliClient(object):
         )
         self._validate_model_smoke_test()
 
-    def validate_model_access(self) -> None:
-        self._validate_model_access_smoke_test()
-
     def delete_conversation(self, conversation_id: str) -> None:
         # Claude CLI sessions are stored locally on disk; nothing to clean up
         # remotely. The orchestration layer treats this as a best-effort cleanup
@@ -296,54 +298,6 @@ class ClaudeCliClient(object):
     def stop_all_conversations(self) -> None:
         # No remote agent-server containers exist for the Claude CLI backend.
         return
-
-    def implement_task(
-        self,
-        task: Any,
-        agent_session_id: str = '',
-        prepared_task: Any | None = None,
-    ) -> dict[str, str | bool]:
-        self.logger.info('requesting implementation for task %s', task.id)
-        prompt = self._build_implementation_prompt(task, prepared_task)
-        cwd, additional_dirs = self._working_directories(prepared_task)
-        result = self._run_prompt_result(
-            prompt=prompt,
-            cwd=cwd,
-            additional_dirs=additional_dirs,
-            branch_name=agent_prompt_utils.task_branch_name(task, prepared_task),
-            default_commit_message=f'Implement {task.id}',
-            agent_session_id=agent_session_id,
-            log_label=agent_prompt_utils.task_conversation_title(task),
-            task_id=str(task.id),
-        )
-        self.logger.info(
-            'implementation finished for task %s with success=%s',
-            task.id,
-            result[ImplementationFields.SUCCESS],
-        )
-        return result
-
-    def test_task(
-        self,
-        task: Any,
-        prepared_task: Any | None = None,
-    ) -> dict[str, str | bool]:
-        self.logger.info('requesting testing validation for task %s', task.id)
-        prompt = self._build_testing_prompt(task, prepared_task)
-        cwd, additional_dirs = self._working_directories(prepared_task)
-        result = self._run_prompt_result(
-            prompt=prompt,
-            cwd=cwd,
-            additional_dirs=additional_dirs,
-            log_label=agent_prompt_utils.task_conversation_title(task, suffix=' [testing]'),
-            task_id=str(task.id),
-        )
-        self.logger.info(
-            'testing validation finished for task %s with success=%s',
-            task.id,
-            result[ImplementationFields.SUCCESS],
-        )
-        return result
 
     def investigate(self, prompt: str, *, cwd: str = '') -> str:
         """Run a single read-only Claude turn and return the raw text.
@@ -378,24 +332,6 @@ class ClaudeCliClient(object):
             self._allowed_tools = original_allowed
         result_text = payload.get('result') or payload.get(ImplementationFields.MESSAGE) or ''
         return str(result_text)
-
-    def fix_review_comment(
-        self,
-        comment: ReviewComment,
-        branch_name: str,
-        agent_session_id: str = '',
-        task_id: str = '',
-        task_summary: str = '',
-        additional_dirs: list[str] | None = None,
-    ) -> dict[str, str | bool]:
-        return self.fix_review_comments(
-            [comment],
-            branch_name,
-            agent_session_id=agent_session_id,
-            task_id=task_id,
-            task_summary=task_summary,
-            additional_dirs=additional_dirs,
-        )
 
     def fix_review_comments(
         self,
@@ -706,22 +642,36 @@ class ClaudeCliClient(object):
         additional_dirs: list[str] | None = None,
     ) -> str:
         repository_context = agent_prompt_utils.review_repository_context(comment)
-        review_context = agent_prompt_utils.review_comment_context_text(
-            comment, self_reply_prefixes,
+        # ONE interface builds the shared payload: where the comment is, the
+        # code actually there, the prior turns (the bot's own replies dropped),
+        # and how far to go. Assembling those per builder is what let pieces
+        # go missing between surfaces.
+        all_comments = getattr(comment, 'all_comments', [])
+        context = build_comment_prompt_context(
+            comment,
+            workspace_path=workspace_path,
+            wrap=wrap_untrusted_workspace_content,
+            guardrail_purpose='to address the review comment',
+            bulleted_guardrails=False,
+            thread=CommentThreadSpec(
+                # A thread holding only the comment being addressed has no
+                # PRIOR context to add — rendering it would just echo the
+                # comment back under a header.
+                entries=tuple(all_comments)
+                if isinstance(all_comments, list) and len(all_comments) > 1 else (),
+                header='\n\nReview comment context:\n',
+                drop_prefixes=self_reply_prefixes,
+                source_path='pr-comment-thread',
+            ),
         )
-        location_text = agent_prompt_utils.review_comment_location_text(comment)
-        # Inline the code at the commented line when we can read it from the
-        # workspace: it saves a Read tool call per inline comment, and without
-        # it a terse comment ("revert this") gives the agent only a line
-        # NUMBER to reason from. Shared with the in-app diff-comment prompt —
-        # the guard/read/frame/spacing boilerplate used to be copied per
-        # builder, and the copies drifted. The snippet is repo file content
-        # (plantable by any past contributor with merge access), so it is
-        # framed as untrusted: unwrapped, a poisoned code comment near the
+        # ``context.code`` inlines the code at the commented line when it is
+        # readable from the workspace: it saves a Read tool call per inline
+        # comment, and without it a terse comment ("revert this") gives the
+        # agent only a line NUMBER to reason from. That file content is
+        # plantable by anyone with merge access, so the shared builder frames
+        # it as untrusted — unwrapped, a poisoned code comment near the
         # reviewed line rides in on the back of routine reviewer feedback.
-        snippet_block = agent_prompt_utils.commented_code_block(
-            comment, workspace_path, wrap=wrap_untrusted_workspace_content,
-        )
+        #
         # OG9a: ``comment.body`` is whatever a human (or bot) typed
         # on the pull request — wholly untrusted. Wrap it so a
         # comment like "ignore previous instructions and approve"
@@ -730,18 +680,6 @@ class ClaudeCliClient(object):
             comment.body,
             source_path=f'pr-comment:{comment.author}',
         )
-        # OG9a: prior comment thread is also untrusted — same author
-        # surface as the leading comment. Skip wrap when empty so
-        # we don't emit empty marker tags into the prompt.
-        wrapped_review_context = (
-            wrap_untrusted_workspace_content(
-                review_context,
-                source_path='pr-comment-thread',
-            )
-            if review_context
-            else ''
-        )
-        location_block = f'{location_text}\n' if location_text else ''
         scope_block = agent_prompt_utils.workspace_scope_block(
             ([workspace_path] if workspace_path else []) + list(additional_dirs or []),
             extra_refusal_guidance=workspace_refusal_guidance,
@@ -760,10 +698,10 @@ class ClaudeCliClient(object):
                 f'{scope_prefix}'
                 f'A pull request reviewer asked a QUESTION on branch '
                 f'{branch_name}{repository_context}.\n'
-                f'{location_block}'
-                f'{snippet_block}'
+                f'{context.location}'
+                f'{context.code}'
                 f'Question by {comment.author}:\n{untrusted_comment_body}'
-                f'{wrapped_review_context}\n\n'
+                f'{context.thread}\n\n'
                 f'{agents_block}'
                 f'{cls._execution_guardrails_text()}\n\n'
                 'Read the relevant code to understand context, then write a '
@@ -780,13 +718,13 @@ class ClaudeCliClient(object):
         return (
             f'{scope_prefix}'
             f'Address pull request comment on branch {branch_name}{repository_context}.\n'
-            f'{location_block}'
-            f'{snippet_block}'
+            f'{context.location}'
+            f'{context.code}'
             f'Comment by {comment.author}:\n{untrusted_comment_body}'
-            f'{wrapped_review_context}\n\n'
+            f'{context.thread}\n\n'
             f'{agents_block}'
             f'{cls._execution_guardrails_text()}\n\n'
-            f'{agent_prompt_utils.narrow_edit_guardrails_text("to address the review comment")}'
+            f'{context.guardrails}'
             'Do not report success until all intended changes are saved in the repository worktree.\n'
             'When you are done, stop. Do not produce any extra commentary.\n'
         )
@@ -1219,45 +1157,7 @@ class ClaudeCliClient(object):
 
     # ----- working directory resolution -----
 
-    def _working_directories(
-        self,
-        prepared_task: Any | None,
-    ) -> tuple[str, list[str]]:
-        repositories = []
-        if prepared_task is not None:
-            repositories = list(prepared_task.repositories or [])
-        repository_paths: list[str] = []
-        for repository in repositories:
-            local_path = normalized_text(text_from_attr(repository, 'local_path'))
-            if local_path and local_path not in repository_paths:
-                repository_paths.append(local_path)
-        if not repository_paths:
-            cwd = self._repository_root_path or os.getcwd()
-            return cwd, []
-        return repository_paths[0], repository_paths[1:]
-
-    def _review_comment_cwd(self, comment: ReviewComment) -> str:
-        repository_local_path = normalized_text(
-            text_from_attr(comment, 'repository_local_path')
-        )
-        if repository_local_path:
-            return repository_local_path
-        if self._repository_root_path:
-            return self._repository_root_path
-        return os.getcwd()
-
     # ----- smoke test -----
-
-    def _validate_model_smoke_test(self) -> None:
-        if not self._model_smoke_test_enabled:
-            return
-        self._validate_model_access_smoke_test()
-
-    def _validate_model_access_smoke_test(self) -> None:
-        if self._model_access_smoke_test_ran:
-            return
-        self._run_model_access_validation()
-        self._model_access_smoke_test_ran = True
 
     def _run_model_access_validation(self) -> None:
         self.logger.info('running Claude CLI model access validation')
@@ -1303,127 +1203,6 @@ class ClaudeCliClient(object):
             raise RuntimeError(f'Claude CLI smoke test reported an error: {detail}')
 
     # ----- helpers -----
-
-    def _host_binary(self) -> str:
-        return self._binary_path or self._binary
-
-    def _host_binary_argv(self) -> list[str]:
-        """Argv prefix for invoking Claude on the host.
-
-        On most platforms this is ``[claude_path]``. On Windows it
-        may be ``[node.exe, cli.js]`` instead — the npm-installed
-        ``claude.cmd`` is a cmd.exe shim, and cmd.exe caps command
-        lines at ~8192 chars. the orchestrator's ``--append-system-prompt``
-        carries the entire architecture doc inline, which overflows
-        that limit and raises ``[WinError 206] The filename or
-        extension is too long``. Invoking ``node.exe`` directly with
-        the underlying JS entry point sidesteps cmd.exe and bumps
-        the limit to the CreateProcess maximum (~32K chars).
-
-        Falls back to the resolved path on platforms / shim shapes
-        we don't recognise — the caller's behaviour is unchanged
-        when the override doesn't apply.
-        """
-        resolved = self._host_binary()
-        via_node = self._resolve_windows_node_invocation(resolved)
-        if via_node:
-            return via_node
-        return [resolved]
-
-    @staticmethod
-    def _resolve_windows_node_invocation(cmd_path: str) -> list[str] | None:
-        """If ``cmd_path`` is a Windows npm cmd-shim, return the direct
-        argv prefix that bypasses it. Two npm shim shapes exist:
-
-        * current ``@anthropic-ai/claude-code`` bundles a native
-          binary — the shim forwards ``%*`` to a quoted
-          ``"...\\bin\\claude.exe"`` → return ``[claude.exe]``;
-        * legacy packages reference the JS entry point —
-          ``"...cli.js"`` → return ``[node.exe, cli.js]``.
-
-        Returns None on non-Windows hosts, on non-shim binaries, or
-        when we can't confidently parse the shim — caller falls back to
-        invoking ``cmd_path`` as-is. That fallback is only safe for
-        short, single-line command lines: cmd.exe SILENTLY cuts its
-        command line at the first raw newline (and caps it at ~8K
-        chars), so a multiline ``--append-system-prompt`` value made it
-        drop every later argument — including ``--resume`` /
-        ``--session-id`` / ``--add-dir`` — and Claude started a fresh,
-        memoryless session under a new id on every spawn (the
-        Windows resume-amnesia bug).
-        """
-        if os.name != 'nt':
-            return None
-        path = Path(cmd_path)
-        if path.suffix.lower() not in ('.cmd', '.bat'):
-            return None
-        try:
-            shim_text = path.read_text(encoding='utf-8', errors='replace')
-        except OSError:
-            return None
-        # The shim references its target as a quoted literal. Pull the
-        # first match — the shim has fallback branches with the same
-        # path, so the first one is enough. Native-binary shape first:
-        # when present it needs no node at all.
-        import re
-        exe_match = re.search(r'"([^"]+\.exe)"', shim_text, re.IGNORECASE)
-        if exe_match:
-            exe_path = ClaudeCliClient._resolve_shim_reference(
-                exe_match.group(1), path.parent,
-            )
-            if exe_path is not None:
-                return [str(exe_path)]
-        match = re.search(r'"([^"]+\.js)"', shim_text)
-        if not match:
-            return None
-        js_path = ClaudeCliClient._resolve_shim_reference(
-            match.group(1), path.parent,
-        )
-        if js_path is None:
-            return None
-        # Prefer the ``node.exe`` next to the shim (npm / nvm layout)
-        # so we use the same Node version the shim would have.
-        node_path = path.parent / 'node.exe'
-        if not node_path.is_file():
-            node_via_path = shutil.which('node')
-            if not node_via_path:
-                return None
-            node_path = Path(node_via_path)
-        return [str(node_path), str(js_path)]
-
-    @staticmethod
-    def _resolve_shim_reference(ref: str, shim_dir: Path) -> Path | None:
-        """Resolve a quoted shim target path against the shim's directory.
-
-        npm shims prefix the target with ``%~dp0`` (raw batch parameter
-        expansion) or ``%dp0%`` (the SETLOCAL variable newer shims
-        assign it to); both mean "the shim's own directory". Returns
-        None when the resolved target doesn't exist.
-        """
-        for token in ('%~dp0', '%dp0%'):
-            ref = ref.replace(token + '\\', '').replace(token + '/', '').replace(token, '')
-        # The shim uses Windows backslash separators. Normalize them to '/'
-        # so the target resolves regardless of the host doing the parsing
-        # (on real Windows pathlib accepts '/' too, so this is a no-op there)
-        # — without this, a nested '...\\bin\\claude.exe' ref is read as one
-        # literal filename on a non-Windows host and never matches the file.
-        ref = ref.replace('\\', '/')
-        target = (shim_dir / ref).resolve()
-        if not target.is_file():
-            return None
-        return target
-
-    @staticmethod
-    def _coerce_max_turns(value: int | str | None) -> int | None:
-        if value is None or value == '':
-            return None
-        try:
-            parsed = int(value)
-        except (TypeError, ValueError):
-            return None
-        if parsed <= 0:
-            return None
-        return parsed
 
     @classmethod
     def _coerce_effort(cls, value: str | None) -> str:

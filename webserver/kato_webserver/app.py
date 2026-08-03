@@ -70,7 +70,8 @@ from agent_core_lib.agent_core_lib.helpers.session_id_utils import (
     read_session_id_from,
     same_session_id,
 )
-from agent_core_lib.agent_core_lib.helpers.text_utils import text_from_mapping
+from utils_core_lib.utils_core_lib.text_utils import text_from_mapping
+from kato_core_lib.helpers.kato_paths_utils import kato_session_state_dir
 from claude_core_lib.claude_core_lib.session.wire_protocol import (
     CLAUDE_EVENT_CONTROL_REQUEST,
     CLAUDE_EVENT_PERMISSION_REQUEST,
@@ -4749,12 +4750,10 @@ def _build_fallback_manager(fallback_state_dir: str):
 
         return _RegistryAsManager()
 
-    state_dir = (
-        fallback_state_dir
-        or os.environ.get('KATO_SESSION_STATE_DIR')
-        or str(Path.home() / '.kato' / 'sessions')
-    )
-    return ClaudeSessionManager(state_dir=state_dir)
+    # Same resolver the orchestrator uses. These two must not drift: the
+    # webserver can run without a live orchestrator, and if they disagree the
+    # UI reads session metadata from a directory the agent never writes to.
+    return ClaudeSessionManager(state_dir=kato_session_state_dir(fallback_state_dir))
 
 
 def main() -> None:

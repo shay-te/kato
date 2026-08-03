@@ -18,7 +18,7 @@ caller decides where/whether to persist it.
 """
 from __future__ import annotations
 
-from agent_core_lib.agent_core_lib.helpers.text_utils import (
+from utils_core_lib.utils_core_lib.text_utils import (
     normalized_text,
     text_from_mapping,
 )

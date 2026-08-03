@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from agent_core_lib.agent_core_lib.helpers.text_utils import (
+from utils_core_lib.utils_core_lib.text_utils import (
     condensed_text,
     normalized_text,
     text_from_attr,
@@ -397,6 +397,7 @@ def comment_thread_text(
     default_label: str = 'reviewer',
     drop_prefixes=(),
     wrap=None,
+    source_path: str = 'comment-thread',
 ) -> str:
     """Render a comment thread's prior turns for a prompt. '' when nothing survives.
 
@@ -436,7 +437,7 @@ def comment_thread_text(
         return ''
     rendered = '\n'.join(lines)
     if wrap:
-        rendered = wrap(rendered, source_path='comment-thread')
+        rendered = wrap(rendered, source_path=source_path)
     return f'{header}{rendered}'
 
 
@@ -534,13 +535,16 @@ def _indented_batch_snippet(comment, workspace_path: str, wrap) -> str:
     return '\n'.join(f'   {line}' for line in snippet.split('\n'))
 
 
-def review_comments_batch_text(comments, workspace_path: str = '', *, wrap=None) -> str:
+def review_comments_batch_text(comments, workspace_path: str = '', *, wrap) -> str:
     """Render 2+ comments on one pull request as a numbered list.
 
     ``wrap`` frames each inlined code snippet as untrusted content. It is a
     parameter (not an import) because this lib may not depend on the sandbox
-    lib, and it defaults to None only so existing non-prompt callers keep
-    working — every PROMPT builder must pass it.
+    lib, and it is REQUIRED — deliberately no default. A caller that wants raw
+    output must pass ``wrap=None`` explicitly, so the choice is visible at the
+    call site. An optional wrapper is a fail-open security control: forgetting
+    it silently removes the prompt-injection defense, which is exactly how the
+    batch path lost it in the first place.
 
     Why it exists: the singular review prompt has always framed its snippet,
     while this batch renderer inlined the identical repo file content raw. So
@@ -634,7 +638,7 @@ def commented_code_block(
     comment,
     workspace_path: str,
     *,
-    wrap=None,
+    wrap,
     trailing: str = '\n',
 ) -> str:
     """The code at a comment's line, framed and ready to drop into a prompt.

@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 from core_lib.data_layers.service.service import Service
 
-from kato_core_lib.helpers.retry_utils import retry_count
+from kato_core_lib.helpers.kato_config_utils import retry_count
 from kato_core_lib.helpers.logging_utils import configure_logger
 
 if TYPE_CHECKING:

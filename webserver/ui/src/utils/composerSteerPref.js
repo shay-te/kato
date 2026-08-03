@@ -18,53 +18,41 @@
 // touches the backend — the delivery mechanism is identical either way; only
 // the composer's default decision changes.
 
+import { createPreferenceStore } from './createPreferenceStore.js';
+
 const STORAGE_KEY = 'kato.composerSteer.v1';
 // Default TRUE: preserve the existing hold-until-idle behavior for everyone
 // who doesn't opt into immediate send, so this change is invisible until an
 // operator flips it.
 const DEFAULT_STEER_WHILE_WORKING = true;
 
-let _cache = null;
-const _listeners = new Set();
+// The store persists a record; this module's public surface is the single
+// flag inside it. See createPreferenceStore for why a bare boolean cannot be
+// the stored shape.
+const _store = createPreferenceStore({
+  key: STORAGE_KEY,
+  defaults: { steerWhileWorking: DEFAULT_STEER_WHILE_WORKING },
+  coerce: (parsed, defaults) => ({
+    steerWhileWorking: parsed.steerWhileWorking === undefined
+      ? defaults.steerWhileWorking
+      : !!parsed.steerWhileWorking,
+  }),
+});
 
 export function readSteerWhileWorking() {
-  if (_cache !== null) { return _cache; }
-  try {
-    const raw = typeof localStorage !== 'undefined'
-      ? localStorage.getItem(STORAGE_KEY) : null;
-    const parsed = raw ? JSON.parse(raw) : {};
-    _cache = parsed.steerWhileWorking === undefined
-      ? DEFAULT_STEER_WHILE_WORKING
-      : !!parsed.steerWhileWorking;
-  } catch (_) {
-    _cache = DEFAULT_STEER_WHILE_WORKING;
-  }
-  return _cache;
+  return _store.read().steerWhileWorking;
 }
 
 export function writeSteerWhileWorking(next) {
-  _cache = !!next;
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(
-        STORAGE_KEY, JSON.stringify({ steerWhileWorking: _cache }),
-      );
-    }
-  } catch (_) { /* private mode / quota — keep the in-memory value */ }
-  for (const fn of _listeners) {
-    try { fn(_cache); } catch (_) { /* isolate a throwing subscriber */ }
-  }
-  return _cache;
+  return _store.write({ steerWhileWorking: !!next }).steerWhileWorking;
 }
 
 export function subscribeSteerWhileWorking(fn) {
-  _listeners.add(fn);
-  return () => { _listeners.delete(fn); };
+  return _store.subscribe((record) => fn(record.steerWhileWorking));
 }
 
 // Test-only: the cache + listeners are module-level, so tests must reset
 // between cases for isolation.
 export function _resetSteerWhileWorkingPref() {
-  _cache = null;
-  _listeners.clear();
+  _store.reset();
 }

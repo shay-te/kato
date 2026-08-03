@@ -16,7 +16,7 @@ from __future__ import annotations
 import subprocess
 from typing import Callable
 
-from agent_core_lib.agent_core_lib.helpers.text_utils import condensed_text
+from utils_core_lib.utils_core_lib.text_utils import condensed_text
 
 
 _DEFAULT_TIMEOUT_SECONDS = 120

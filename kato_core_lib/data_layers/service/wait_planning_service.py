@@ -29,7 +29,7 @@ from kato_core_lib.data_layers.service.workspace_provisioning_service import (
 from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.task_execution_utils import skip_task_result
-from kato_core_lib.helpers.text_utils import text_from_attr
+from utils_core_lib.utils_core_lib.text_utils import text_from_attr
 
 
 # Fields the streaming runner exposes that ``start_session`` accepts.

@@ -109,7 +109,7 @@ class SnippetFramingParityTests(unittest.TestCase):
 
         comments = [_review_comment('c1', file_path='app.py', line=5)]
         bare = agent_prompt_utils.review_comments_batch_text(
-            comments, workspace_path=self.workspace,
+            comments, workspace_path=self.workspace, wrap=None,
         )
         framed = agent_prompt_utils.review_comments_batch_text(
             comments, workspace_path=self.workspace,

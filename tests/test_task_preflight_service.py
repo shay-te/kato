@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from kato_core_lib.client.ticket_client_base import TicketClientBase
+from kato_core_lib.helpers.agent_comment_classification import PRE_START_BLOCKING_PREFIXES
 from kato_core_lib.data_layers.data.fields import PullRequestFields, StatusFields
 from kato_core_lib.data_layers.service.task_preflight_service import (
     TaskPreflightService,
@@ -186,7 +186,7 @@ class TaskPreflightServiceTests(unittest.TestCase):
         with patch.object(
             self.service,
             '_active_execution_blocking_comment',
-            return_value=TicketClientBase.PRE_START_BLOCKING_PREFIXES[0],
+            return_value=PRE_START_BLOCKING_PREFIXES[0],
         ), patch.object(
             self.service,
             '_prepare_task_start',
@@ -201,7 +201,7 @@ class TaskPreflightServiceTests(unittest.TestCase):
         with patch.object(
             self.service,
             '_active_execution_blocking_comment',
-            return_value=TicketClientBase.PRE_START_BLOCKING_PREFIXES[0],
+            return_value=PRE_START_BLOCKING_PREFIXES[0],
         ), patch.object(
             self.service,
             '_prepare_task_start',

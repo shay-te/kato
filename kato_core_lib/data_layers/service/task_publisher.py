@@ -30,7 +30,7 @@ from kato_core_lib.helpers.pull_request_utils import (
     pull_request_summary_comment,
     pull_request_title,
 )
-from kato_core_lib.helpers.text_utils import text_from_mapping
+from utils_core_lib.utils_core_lib.text_utils import text_from_mapping
 from kato_core_lib.helpers.task_context_utils import PreparedTaskContext, task_started_comment
 from kato_core_lib.helpers.task_execution_utils import task_execution_report
 

@@ -1,20 +1,30 @@
-import logging
-import unittest
+"""The text helpers, pinned once — they used to be five forks with three contracts.
 
-from provider_client_base.provider_client_base.helpers.logging_utils import configure_logger
-from provider_client_base.provider_client_base.helpers.text_utils import (
+``normalized_text`` and friends were independently defined in ``agent_core_lib``,
+``git_core_lib``, ``kato_core_lib``, ``provider_client_base`` and
+``youtrack_core_lib``, and EIGHT test files re-tested them. The copies were not
+equivalent, and every difference failed quietly — see the module docstring on
+``utils_core_lib.text_utils``. ``ContractDivergenceTests`` at the bottom pins
+the specific differences, so re-narrowing any of them fails here.
+"""
+
+import unittest
+from collections.abc import Mapping
+from types import MappingProxyType, SimpleNamespace
+
+from omegaconf import OmegaConf
+
+from utils_core_lib.utils_core_lib.text_utils import (
+    alphanumeric_lower_text,
+    condensed_lower_text,
     condensed_text,
     dict_from_mapping,
     list_from_mapping,
+    normalized_lower_text,
     normalized_text,
     text_from_attr,
     text_from_mapping,
 )
-
-
-# ---------------------------------------------------------------------------
-# normalized_text
-# ---------------------------------------------------------------------------
 
 
 class NormalizedTextTests(unittest.TestCase):
@@ -57,11 +67,6 @@ class NormalizedTextTests(unittest.TestCase):
         self.assertTrue(len(result) > 0)
 
 
-# ---------------------------------------------------------------------------
-# condensed_text
-# ---------------------------------------------------------------------------
-
-
 class CondensedTextTests(unittest.TestCase):
     def test_collapses_internal_spaces(self):
         self.assertEqual(condensed_text('hello   world'), 'hello world')
@@ -89,11 +94,6 @@ class CondensedTextTests(unittest.TestCase):
 
     def test_multiline_string_condensed(self):
         self.assertEqual(condensed_text('line one\nline two\nline three'), 'line one line two line three')
-
-
-# ---------------------------------------------------------------------------
-# text_from_attr
-# ---------------------------------------------------------------------------
 
 
 class TextFromAttrTests(unittest.TestCase):
@@ -125,11 +125,6 @@ class TextFromAttrTests(unittest.TestCase):
 
     def test_none_object_missing_attr_returns_default(self):
         self.assertEqual(text_from_attr(None, 'anything'), '')
-
-
-# ---------------------------------------------------------------------------
-# text_from_mapping
-# ---------------------------------------------------------------------------
 
 
 class TextFromMappingTests(unittest.TestCase):
@@ -166,11 +161,6 @@ class TextFromMappingTests(unittest.TestCase):
         self.assertIsInstance(result, str)
 
 
-# ---------------------------------------------------------------------------
-# dict_from_mapping
-# ---------------------------------------------------------------------------
-
-
 class DictFromMappingTests(unittest.TestCase):
     def test_returns_dict_value(self):
         inner = {'a': 1}
@@ -199,11 +189,6 @@ class DictFromMappingTests(unittest.TestCase):
 
     def test_list_mapping_returns_empty_dict(self):
         self.assertEqual(dict_from_mapping([1, 2, 3], 0), {})
-
-
-# ---------------------------------------------------------------------------
-# list_from_mapping
-# ---------------------------------------------------------------------------
 
 
 class ListFromMappingTests(unittest.TestCase):
@@ -236,27 +221,123 @@ class ListFromMappingTests(unittest.TestCase):
         self.assertEqual(list_from_mapping((1, 2), 0), [])
 
 
+class NormalizedLowerTextTests(unittest.TestCase):
+    def test_lower_cased(self):
+        self.assertEqual(normalized_lower_text('HELLO'), 'hello')
+
+    def test_strips_and_lowercases(self):
+        self.assertEqual(normalized_lower_text('  WORLD  '), 'world')
+
+    def test_none_returns_empty(self):
+        self.assertEqual(normalized_lower_text(None), '')
+
+    def test_mixed_case(self):
+        self.assertEqual(normalized_lower_text('CamelCase'), 'camelcase')
+
+
+class CondensedLowerTextTests(unittest.TestCase):
+    def test_collapses_spaces(self):
+        self.assertEqual(condensed_lower_text('  hello   world  '), 'hello world')
+
+    def test_lowercases(self):
+        self.assertEqual(condensed_lower_text('Hello World'), 'hello world')
+
+    def test_none_returns_empty(self):
+        self.assertEqual(condensed_lower_text(None), '')
+
+    def test_single_word(self):
+        self.assertEqual(condensed_lower_text('  WORD  '), 'word')
+
+    def test_tabs_and_newlines_collapsed(self):
+        self.assertEqual(condensed_lower_text('a\t\nb'), 'a b')
+
+
+class AlphanumericLowerTextTests(unittest.TestCase):
+    def test_removes_punctuation(self):
+        self.assertEqual(alphanumeric_lower_text('hello-world!'), 'helloworld')
+
+    def test_lowercases(self):
+        self.assertEqual(alphanumeric_lower_text('ABC'), 'abc')
+
+    def test_none_returns_empty(self):
+        self.assertEqual(alphanumeric_lower_text(None), '')
+
+    def test_strips_spaces(self):
+        self.assertEqual(alphanumeric_lower_text('In Review'), 'inreview')
+
+    def test_digits_kept(self):
+        self.assertEqual(alphanumeric_lower_text('abc123'), 'abc123')
+
+    def test_only_special_chars(self):
+        self.assertEqual(alphanumeric_lower_text('!@#$%'), '')
+
+    def test_unicode_letters_kept(self):
+        result = alphanumeric_lower_text('Héllo')
+        self.assertIn('llo', result)
+
 # ---------------------------------------------------------------------------
-# configure_logger
+# The contract differences between the old forks. Each of these FAILS against
+# at least one copy that existed before consolidation.
 # ---------------------------------------------------------------------------
 
 
-class ConfigureLoggerTests(unittest.TestCase):
-    def test_returns_logger(self):
-        logger = configure_logger('test_logger')
-        self.assertIsInstance(logger, logging.Logger)
+class ContractDivergenceTests(unittest.TestCase):
+    def test_dict_from_mapping_accepts_a_non_dict_mapping(self) -> None:
+        # One fork gated the CONTAINER on ``isinstance(mapping, dict)``, the
+        # other on ``Mapping``. This is the only case where they disagree, and
+        # it is latent: no caller passes a non-dict Mapping today (they all
+        # walk parsed-JSON payloads). Pinned so the wider gate isn't narrowed
+        # back on the assumption that it was never doing anything.
+        proxy = MappingProxyType({'outer': {'inner': 1}})
+        self.assertIsInstance(proxy, Mapping)
+        self.assertNotIsInstance(proxy, dict)
+        self.assertEqual(dict_from_mapping(proxy, 'outer'), {'inner': 1})
 
-    def test_logger_has_correct_name(self):
-        logger = configure_logger('my_service')
-        self.assertEqual(logger.name, 'my_service')
+    def test_list_from_mapping_accepts_a_non_dict_mapping(self) -> None:
+        proxy = MappingProxyType({'items': [1, 2]})
+        self.assertEqual(list_from_mapping(proxy, 'items'), [1, 2])
 
-    def test_same_name_returns_same_instance(self):
-        logger1 = configure_logger('shared')
-        logger2 = configure_logger('shared')
-        self.assertIs(logger1, logger2)
+    def test_container_helpers_do_not_unwrap_an_omegaconf_node(self) -> None:
+        # Worth stating explicitly because it is easy to assume otherwise: the
+        # VALUE gate is ``dict``/``list``, and a nested omegaconf node is
+        # neither, so these return empty for a live config under BOTH the old
+        # gates. They are for parsed-JSON payloads. Config reads use
+        # ``text_from_mapping`` (below), which does handle DictConfig.
+        cfg = OmegaConf.create({'outer': {'inner': 1}, 'items': [1, 2]})
+        self.assertIsInstance(cfg, Mapping)
+        self.assertEqual(dict_from_mapping(cfg, 'outer'), {})
+        self.assertEqual(list_from_mapping(cfg, 'items'), [])
 
-    def test_different_names_return_different_loggers(self):
-        logger1 = configure_logger('service_a')
-        logger2 = configure_logger('service_b')
-        self.assertIsNot(logger1, logger2)
-        self.assertNotEqual(logger1.name, logger2.name)
+    def test_text_from_mapping_accepts_a_non_dict_mapping(self) -> None:
+        cfg = OmegaConf.create({'name': ' kept '})
+        self.assertEqual(text_from_mapping(cfg, 'name'), 'kept')
+
+    def test_text_from_mapping_is_duck_typed_not_mapping_gated(self) -> None:
+        # Three forks required a real Mapping, which rejected the
+        # ``SimpleNamespace(get=...)`` stand-ins tests use. Duck-typing is a
+        # strict superset: identical for dict and for omegaconf configs.
+        stand_in = SimpleNamespace(get=lambda key, default='': {'k': ' v '}.get(key, default))
+        self.assertEqual(text_from_mapping(stand_in, 'k'), 'v')
+
+    def test_text_from_mapping_rejects_an_object_without_a_callable_get(self) -> None:
+        self.assertEqual(text_from_mapping(SimpleNamespace(get='not callable'), 'k', 'fb'), 'fb')
+        self.assertEqual(text_from_mapping(object(), 'k', 'fb'), 'fb')
+
+    def test_text_from_attr_returns_empty_for_a_present_but_falsy_attribute(self) -> None:
+        # The git_core_lib fork had ``or default`` here, so a present-but-empty
+        # attribute fell back to the default. The default covers "the attribute
+        # isn't there", not "the attribute is empty".
+        self.assertEqual(text_from_attr(SimpleNamespace(name=''), 'name', 'fallback'), '')
+        self.assertEqual(text_from_attr(SimpleNamespace(name=None), 'name', 'fallback'), '')
+
+    def test_text_from_attr_uses_the_default_only_when_absent(self) -> None:
+        self.assertEqual(text_from_attr(SimpleNamespace(), 'missing', ' fallback '), 'fallback')
+
+    def test_text_from_attr_takes_the_attribute_name_by_keyword(self) -> None:
+        # The git fork named this parameter ``key``; any keyword call would
+        # have raised TypeError against one of the two copies.
+        self.assertEqual(text_from_attr(SimpleNamespace(a=' x '), attribute='a'), 'x')
+
+
+if __name__ == '__main__':
+    unittest.main()

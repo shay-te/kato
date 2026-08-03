@@ -1,6 +1,9 @@
 from __future__ import annotations
-from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
-from agent_core_lib.agent_core_lib.helpers.text_utils import text_from_mapping
+from agent_core_lib.agent_core_lib.helpers.comment_prompt import (
+    CommentThreadSpec,
+    build_comment_prompt_context,
+)
+from utils_core_lib.utils_core_lib.text_utils import text_from_mapping
 
 import copy
 import logging
@@ -2694,58 +2697,36 @@ class AgentService(MissionStepLoggerMixin, Service):
         )
 
         body = str(getattr(record, 'body', '') or '')
-        # Shared localization vocabulary — 'File: path:line' — so the agent is
-        # told where a comment lives the SAME way whether it came from the
-        # diff tab or a provider review. This used to be hand-rolled here as
-        # a backticked path plus '(line N)', which carried neither the
-        # line-type nor the commit and had to be maintained separately.
-        location_block = agent_prompt_utils.review_comment_location_text(
-            record, missing_label='File: (no file specified)',
-        )
-        # Inline the code CURRENTLY at the commented line. Without this, a
-        # bare "revert this" gives the agent nothing but a file/line NUMBER
-        # to work from — even a session with full conversation history has
-        # to guess which of possibly several past edits to that file "this"
-        # means, and a guess under-specified that way tends to overshoot
-        # into rewriting the whole file rather than the few lines the
-        # comment actually targets. Same shared builder the PR-review prompt
-        # uses, so the two can't drift on how a comment gets localized.
-        snippet_block = agent_prompt_utils.commented_code_block(
-            record,
-            self._comment_agent_cwd(task_id, record),
-            wrap=wrap_untrusted_workspace_content,
-            trailing='\n\n',
-        )
-        # Include the thread's follow-up replies so a re-engaged run sees
-        # the operator's latest pushback (e.g. "no, do it differently")
-        # instead of re-doing the original comment blind. Empty for a
-        # first run, so the common path is unchanged.
+        # ONE interface builds the payload every comment surface needs —
+        # where the comment is, the code actually there, the prior turns, and
+        # how far to go. Assembling those by hand per builder is what let
+        # pieces go missing: a prompt with no code turned "revert this" into a
+        # whole-file rewrite, and a thread that kept kato's own replies fed
+        # them back as if a human had written them.
         #
-        # Rendered by the SHARED thread renderer, which brings two safety
-        # behaviours this hand-rolled loop never had:
-        #  * drop_prefixes — kato's own posted replies are filtered out
-        #    instead of being fed back as though a human wrote them.
-        #  * wrap — the thread is framed as untrusted content. That matters
-        #    most here: ``sync_remote_comments`` upserts PROVIDER comments
-        #    into this same local store, and the replies are labelled
-        #    "Operator:" regardless of source, so a third party's mirrored PR
-        #    reply used to arrive as raw, unframed text inside a prompt that
-        #    says "address the LATEST operator reply". Framing it removes the
-        #    "trusted operator instruction" reading.
-        # The speaker labels and header stay HERE — they are kato product
-        # text and must not move into a core-lib.
-        conversation = agent_prompt_utils.comment_thread_text(
-            self._comment_thread_replies(task_id, getattr(record, 'id', '')),
-            header=(
-                '\n\nThread so far (oldest to newest) — address the '
-                'LATEST operator reply, which supersedes earlier turns:\n'
-            ),
-            label_for=lambda reply: (
-                'Claude' if str(getattr(reply, 'author', '')) == 'claude'
-                else 'Operator'
-            ),
-            drop_prefixes=KATO_SELF_REPLY_PREFIXES,
+        # Only the PRODUCT text stays here — the thread header and the
+        # Claude/Operator speaker labels are kato's, and a core-lib must not
+        # carry them.
+        context = build_comment_prompt_context(
+            record,
+            workspace_path=self._comment_agent_cwd(task_id, record),
             wrap=wrap_untrusted_workspace_content,
+            missing_location_label='File: (no file specified)',
+            guardrail_purpose='to address this comment',
+            thread=CommentThreadSpec(
+                entries=tuple(
+                    self._comment_thread_replies(task_id, getattr(record, 'id', '')),
+                ),
+                header=(
+                    '\n\nThread so far (oldest to newest) — address the '
+                    'LATEST operator reply, which supersedes earlier turns:\n'
+                ),
+                label_for=lambda reply: (
+                    'Claude' if str(getattr(reply, 'author', '')) == 'claude'
+                    else 'Operator'
+                ),
+                drop_prefixes=KATO_SELF_REPLY_PREFIXES,
+            ),
         )
         marker_instruction = ''
         marker = str(run_marker or '').strip()
@@ -2756,12 +2737,12 @@ class AgentService(MissionStepLoggerMixin, Service):
             )
         return (
             'Operator-added review comment from the kato diff tab.\n\n'
-            f'{location_block}\n'
-            f'{snippet_block}'
+            f'{context.location}'
+            f'{context.code}'
             f'Comment: {body}'
-            f'{conversation}\n\n'
+            f'{context.thread}\n\n'
             'Address this comment. If a code change is needed:\n'
-            f'{agent_prompt_utils.narrow_edit_guardrails_text("to address this comment", bulleted=True)}'
+            f'{context.guardrails}'
             'Commit the fix on the current task branch. Your final '
             'response is copied into this comment thread as Claude\'s '
             'reply, so write it directly to the reviewer. If the comment '

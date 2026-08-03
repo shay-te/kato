@@ -5,7 +5,6 @@ import logging
 import subprocess
 import unittest
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -1484,131 +1483,31 @@ class RunPromptSubprocessErrorPaths(unittest.TestCase):
 
 
 class WindowsNpmShimResolutionTests(unittest.TestCase):
-    """Lines 1248, 1262-1293: ``_resolve_windows_node_invocation`` and
-    ``_host_binary_argv`` paths exercised on non-Windows hosts by mocking
-    ``os.name``.
+    """``_host_binary_argv`` consults the Windows shim bypass.
+
+    Only the WIRING is pinned here. The shim parsing (which npm shapes are
+    recognised, ``%~dp0`` vs ``%dp0%``, nested references, Node resolution)
+    is shared with the streaming spawn path and the Codex transport, and is
+    pinned once in ``agent_core_lib/tests/test_cli_shim_utils.py``. It used
+    to be copied per transport, and the copies did NOT stay equivalent —
+    the narrower one silently fell back to the shim on the very shape its
+    own installer emits.
     """
 
-    def test_returns_none_on_non_windows(self) -> None:
-        # POSIX → early return None.
-        self.assertIsNone(
-            ClaudeCliClient._resolve_windows_node_invocation('/usr/bin/claude'),
-        )
+    BYPASS = (
+        'agent_core_lib.agent_core_lib.cli_agent_shared'
+        '.resolve_windows_cli_invocation'
+    )
 
-    # The Windows-shim path uses ``pathlib.Path``; on POSIX we patch
-    # ``cli_client.os.name`` to bypass the early POSIX-bail check, and let
-    # the rest of the function operate on PosixPath instances (the I/O
-    # methods we patch — read_text/is_file/which/resolve — behave the
-    # same regardless of platform).
-
-    def _patch_os_name_only_for_function(self):
-        """Patch only the ``os.name`` lookup inside the function under test.
-
-        We can't patch the module-global ``os.name`` because
-        ``pathlib.Path()`` then dispatches to ``WindowsPath``, which crashes
-        on POSIX. Instead we replace the module's bound ``os`` attribute
-        with a SimpleNamespace whose ``name = 'nt'``.
-        """
-        from types import SimpleNamespace
-        import claude_core_lib.claude_core_lib.cli_client as cli_mod
-        return patch.object(cli_mod, 'os', SimpleNamespace(name='nt', getcwd=lambda: '/wks', environ={}))
-
-    def test_returns_none_for_non_shim_suffix(self) -> None:
-        with self._patch_os_name_only_for_function():
-            self.assertIsNone(
-                ClaudeCliClient._resolve_windows_node_invocation(
-                    '/bin/claude.exe',
-                )
-            )
-
-    def test_returns_none_when_shim_unreadable(self) -> None:
-        with self._patch_os_name_only_for_function(), \
-             patch.object(Path, 'read_text', side_effect=OSError('locked')):
-            self.assertIsNone(
-                ClaudeCliClient._resolve_windows_node_invocation(
-                    '/bin/claude.cmd',
-                )
-            )
-
-    def test_returns_none_when_shim_does_not_match_pattern(self) -> None:
-        with self._patch_os_name_only_for_function(), \
-             patch.object(Path, 'read_text', return_value='echo nothing here'):
-            self.assertIsNone(
-                ClaudeCliClient._resolve_windows_node_invocation(
-                    '/bin/claude.cmd',
-                )
-            )
-
-    def test_returns_none_when_js_target_missing(self) -> None:
-        with self._patch_os_name_only_for_function(), \
-             patch.object(
-                 Path, 'read_text',
-                 return_value='"%~dp0/node_modules/claude/bin.js"',
-             ), patch.object(Path, 'is_file', return_value=False):
-            self.assertIsNone(
-                ClaudeCliClient._resolve_windows_node_invocation(
-                    '/bin/claude.cmd',
-                )
-            )
-
-    def test_resolves_to_node_via_path_when_local_missing(self) -> None:
-        def is_file_selective(self_path):
-            return self_path.name.endswith('.js')
-
-        with self._patch_os_name_only_for_function(), \
-             patch.object(
-                 Path, 'read_text',
-                 return_value='"%~dp0/node_modules/claude/bin.js"',
-             ), patch.object(Path, 'is_file', is_file_selective), \
-             patch(
-                 'claude_core_lib.claude_core_lib.cli_client.shutil.which',
-                 return_value='/usr/local/bin/node',
-             ):
-            result = ClaudeCliClient._resolve_windows_node_invocation(
-                '/bin/claude.cmd',
-            )
-        self.assertIsNotNone(result)
-        self.assertEqual(len(result), 2)
-
-    def test_returns_none_when_node_unavailable_anywhere(self) -> None:
-        with self._patch_os_name_only_for_function(), \
-             patch.object(
-                 Path, 'read_text',
-                 return_value='"%~dp0/node_modules/claude/bin.js"',
-             ), patch.object(
-                 Path, 'is_file', lambda self: self.name.endswith('.js'),
-             ), patch(
-                 'claude_core_lib.claude_core_lib.cli_client.shutil.which',
-                 return_value=None,
-             ):
-            self.assertIsNone(
-                ClaudeCliClient._resolve_windows_node_invocation(
-                    '/bin/claude.cmd',
-                )
-            )
-
-    def test_uses_local_node_exe_when_available(self) -> None:
-        # All paths exist → no PATH fallback needed.
-        with self._patch_os_name_only_for_function(), \
-             patch.object(
-                 Path, 'read_text',
-                 return_value='"%~dp0/node_modules/claude/bin.js"',
-             ), patch.object(Path, 'is_file', return_value=True):
-            result = ClaudeCliClient._resolve_windows_node_invocation(
-                '/bin/claude.cmd',
-            )
-        self.assertIsNotNone(result)
-        self.assertEqual(len(result), 2)
-
-    def test_host_binary_argv_uses_node_invocation_on_windows(self) -> None:
-        # Line 1248: ``via_node`` returned → use it for the argv prefix.
+    def test_host_binary_argv_uses_the_bypass_when_it_resolves(self) -> None:
         client = ClaudeCliClient(binary='claude')
-        with patch.object(
-            ClaudeCliClient, '_resolve_windows_node_invocation',
-            return_value=['node.exe', 'bin.js'],
-        ):
-            argv = client._host_binary_argv()
-        self.assertEqual(argv, ['node.exe', 'bin.js'])
+        with patch(self.BYPASS, return_value=['node.exe', 'bin.js']):
+            self.assertEqual(client._host_binary_argv(), ['node.exe', 'bin.js'])
+
+    def test_host_binary_argv_falls_back_to_the_resolved_binary(self) -> None:
+        client = ClaudeCliClient(binary='claude')
+        with patch(self.BYPASS, return_value=None):
+            self.assertEqual(client._host_binary_argv(), ['claude'])
 
 
 class BuildCommandPartialBranchTests(unittest.TestCase):

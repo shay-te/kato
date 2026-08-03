@@ -8,7 +8,6 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from git_core_lib.git_core_lib.client.git_client import GitClientMixin
@@ -415,17 +414,6 @@ class GitCleanUtilsTests(unittest.TestCase):
         self.assertNotIn('git reset --hard', result)
         self.assertIn('git checkout -f main', result)
         self.assertIn('git clean -fd', result)
-
-
-class TextUtilsTests(unittest.TestCase):
-    def test_text_from_attr_returns_default_when_attr_missing(self) -> None:
-        # Line 14: ``default`` is used when attr is missing or empty.
-        from git_core_lib.git_core_lib.helpers.text_utils import text_from_attr
-        # Object with no attr → falls back to default.
-        self.assertEqual(
-            text_from_attr(SimpleNamespace(), 'missing', 'fallback'),
-            'fallback',
-        )
 
 
 class HappyPathTests(unittest.TestCase):

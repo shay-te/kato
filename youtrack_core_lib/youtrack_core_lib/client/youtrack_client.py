@@ -10,7 +10,7 @@ from youtrack_core_lib.youtrack_core_lib.data.fields import (
     YouTrackTagFields,
 )
 from youtrack_core_lib.youtrack_core_lib.data.task import Task
-from youtrack_core_lib.youtrack_core_lib.helpers.text_utils import (
+from utils_core_lib.utils_core_lib.text_utils import (
     alphanumeric_lower_text,
     normalized_text,
     text_from_mapping,

@@ -6,7 +6,6 @@ agent_prompt_utils, wire_protocol (constants).
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import tempfile
@@ -16,14 +15,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from agent_core_lib.agent_core_lib.data.fields import ImplementationFields
-from agent_core_lib.agent_core_lib.helpers.text_utils import (
-    condensed_text,
-    normalized_text,
-    text_from_attr,
-    text_from_mapping,
-)
 from agent_core_lib.agent_core_lib.helpers.logging_utils import configure_logger
-from agent_core_lib.agent_core_lib.helpers.atomic_write import atomic_write_json
 from agent_core_lib.agent_core_lib.helpers.result_utils import (
     build_openhands_result,
     openhands_session_id,
@@ -46,7 +38,6 @@ _lessons_cache = _arch_cache
 _lessons_cache_lock = _arch_cache_lock
 from agent_core_lib.agent_core_lib.helpers.agents_instruction_utils import (
     AGENTS_FILE_NAME,
-    SKIPPED_DIRECTORIES,
     agents_instructions_for_path,
     repository_agents_instructions_text,
 )
@@ -160,78 +151,6 @@ def _repo(repo_id: str, local_path: str, destination_branch: str = '') -> Simple
 # text_utils
 # ---------------------------------------------------------------------------
 
-class NormalizedTextTests(unittest.TestCase):
-    def test_none_returns_empty(self) -> None:
-        self.assertEqual(normalized_text(None), '')
-
-    def test_empty_string_returns_empty(self) -> None:
-        self.assertEqual(normalized_text(''), '')
-
-    def test_whitespace_only_returns_empty(self) -> None:
-        self.assertEqual(normalized_text('   '), '')
-
-    def test_strips_leading_and_trailing_whitespace(self) -> None:
-        self.assertEqual(normalized_text('  hello  '), 'hello')
-
-    def test_integer_converted_to_string(self) -> None:
-        self.assertEqual(normalized_text(42), '42')
-
-    def test_list_converted_via_str(self) -> None:
-        result = normalized_text([1, 2])
-        self.assertIsInstance(result, str)
-
-
-class CondensedTextTests(unittest.TestCase):
-    def test_collapses_internal_whitespace(self) -> None:
-        self.assertEqual(condensed_text('  hello   world  '), 'hello world')
-
-    def test_newlines_and_tabs_collapsed(self) -> None:
-        self.assertEqual(condensed_text('a\n\tb'), 'a b')
-
-    def test_empty_input(self) -> None:
-        self.assertEqual(condensed_text(''), '')
-
-    def test_none_input(self) -> None:
-        self.assertEqual(condensed_text(None), '')
-
-
-class TextFromAttrTests(unittest.TestCase):
-    def test_returns_attribute_value(self) -> None:
-        obj = SimpleNamespace(name='Alice')
-        self.assertEqual(text_from_attr(obj, 'name'), 'Alice')
-
-    def test_returns_empty_when_attribute_missing(self) -> None:
-        self.assertEqual(text_from_attr(SimpleNamespace(), 'missing'), '')
-
-    def test_returns_empty_when_attribute_is_none(self) -> None:
-        obj = SimpleNamespace(name=None)
-        self.assertEqual(text_from_attr(obj, 'name'), '')
-
-    def test_strips_whitespace(self) -> None:
-        obj = SimpleNamespace(name='  Bob  ')
-        self.assertEqual(text_from_attr(obj, 'name'), 'Bob')
-
-
-class TextFromMappingTests(unittest.TestCase):
-    def test_returns_value_for_key(self) -> None:
-        self.assertEqual(text_from_mapping({'k': 'v'}, 'k'), 'v')
-
-    def test_returns_empty_for_missing_key(self) -> None:
-        self.assertEqual(text_from_mapping({'k': 'v'}, 'x'), '')
-
-    def test_none_mapping_returns_default(self) -> None:
-        self.assertEqual(text_from_mapping(None, 'k'), '')
-
-    def test_none_value_returns_empty(self) -> None:
-        self.assertEqual(text_from_mapping({'k': None}, 'k'), '')
-
-    def test_non_mapping_returns_default(self) -> None:
-        self.assertEqual(text_from_mapping('not a mapping', 'k'), '')
-
-    def test_default_returned_when_key_missing(self) -> None:
-        self.assertEqual(text_from_mapping({}, 'k', 'fallback'), 'fallback')
-
-
 # ---------------------------------------------------------------------------
 # logging_utils
 # ---------------------------------------------------------------------------
@@ -260,52 +179,6 @@ class ConfigureLoggerTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # atomic_write
 # ---------------------------------------------------------------------------
-
-class AtomicWriteJsonTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        self.base = Path(self._tmp.name)
-
-    def test_writes_json_file_on_success(self) -> None:
-        target = self.base / 'out.json'
-        result = atomic_write_json(target, {'key': 'value'})
-        self.assertTrue(result)
-        payload = json.loads(target.read_text(encoding='utf-8'))
-        self.assertEqual(payload['key'], 'value')
-
-    def test_returns_false_on_oserror_without_logger(self) -> None:
-        target = self.base / 'nonexistent_dir' / 'out.json'
-        result = atomic_write_json(target, {})
-        self.assertFalse(result)
-
-    def test_logs_warning_on_oserror_with_label(self) -> None:
-        target = self.base / 'nodir' / 'out.json'
-        logger = logging.getLogger('test.atomic_write')
-        with self.assertLogs('test.atomic_write', level='WARNING') as cm:
-            atomic_write_json(target, {}, logger=logger, label='test record')
-        self.assertIn('test record', ' '.join(cm.output))
-
-    def test_logs_warning_on_oserror_without_label(self) -> None:
-        target = self.base / 'nodir' / 'out.json'
-        logger = logging.getLogger('test.atomic_write2')
-        with self.assertLogs('test.atomic_write2', level='WARNING') as cm:
-            atomic_write_json(target, {}, logger=logger)
-        # Warning present but no label text
-        self.assertTrue(any('failed to persist' in line for line in cm.output))
-
-    def test_writes_nested_dict(self) -> None:
-        target = self.base / 'nested.json'
-        atomic_write_json(target, {'a': {'b': [1, 2, 3]}})
-        payload = json.loads(target.read_text())
-        self.assertEqual(payload['a']['b'], [1, 2, 3])
-
-    def test_overwrites_existing_file(self) -> None:
-        target = self.base / 'overwrite.json'
-        atomic_write_json(target, {'v': 1})
-        atomic_write_json(target, {'v': 2})
-        self.assertEqual(json.loads(target.read_text())['v'], 2)
-
 
 # ---------------------------------------------------------------------------
 # result_utils
@@ -1126,11 +999,11 @@ class ReviewCommentCodeSnippetTests(unittest.TestCase):
 
 class ReviewCommentsBatchTextTests(unittest.TestCase):
     def test_empty_comments_returns_empty(self) -> None:
-        self.assertEqual(review_comments_batch_text([]), '')
+        self.assertEqual(review_comments_batch_text([], wrap=None), '')
 
     def test_single_comment_formatted(self) -> None:
         comment = _comment(author='alice', body='please fix', file_path='a.py', line_number=5)
-        result = review_comments_batch_text([comment])
+        result = review_comments_batch_text([comment], wrap=None)
         self.assertIn('alice', result)
         self.assertIn('please fix', result)
         self.assertIn('a.py', result)
@@ -1140,13 +1013,13 @@ class ReviewCommentsBatchTextTests(unittest.TestCase):
             _comment(author='a', body='first'),
             _comment(author='b', body='second'),
         ]
-        result = review_comments_batch_text(comments)
+        result = review_comments_batch_text(comments, wrap=None)
         self.assertIn('1.', result)
         self.assertIn('2.', result)
 
     def test_no_file_path_shows_pr_level_comment(self) -> None:
         comment = _comment(author='reviewer', body='general feedback')
-        result = review_comments_batch_text([comment])
+        result = review_comments_batch_text([comment], wrap=None)
         self.assertIn('PR-level comment', result)
 
 

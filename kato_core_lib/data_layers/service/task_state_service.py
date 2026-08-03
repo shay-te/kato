@@ -8,7 +8,7 @@ from kato_core_lib.helpers.kato_config_utils import (
     configured_state_value,
     parse_issue_states,
 )
-from kato_core_lib.helpers.text_utils import normalized_text
+from utils_core_lib.utils_core_lib.text_utils import normalized_text
 
 
 class TaskStateService(Service):

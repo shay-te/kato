@@ -34,11 +34,17 @@ from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
 from kato_core_lib.helpers.kato_result_utils import build_openhands_result
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
-from kato_core_lib.helpers.text_utils import normalized_text
+from utils_core_lib.utils_core_lib.text_utils import normalized_text
 
 
-def _coerce_optional_int(value) -> int | None:
-    """Parse a positive int from omegaconf-style values; None on anything else."""
+def _positive_int_or_none(value) -> int | None:
+    """Parse a positive int from omegaconf-style values; None on anything else.
+
+    Named for its SENTINEL on purpose. A different helper with the same
+    ``_coerce_optional_int`` name returns ``''`` rather than ``None`` for the
+    same failures, so identical names over different contracts invited a
+    "dedupe" that would silently change what callers compare against.
+    """
     if value in (None, ''):
         return None
     try:
@@ -121,7 +127,7 @@ class PlanningSessionRunner(object):
         return cls(
             session_manager=session_manager,
             defaults=defaults,
-            max_wait_seconds=_coerce_optional_int(
+            max_wait_seconds=_positive_int_or_none(
                 getattr(claude_cfg, 'timeout_seconds', None),
             ),
             hook_runner=hook_runner,
@@ -140,7 +146,7 @@ class PlanningSessionRunner(object):
             permission_mode='bypassPermissions' if bypass else 'acceptEdits',
             allowed_tools=str(getattr(claude_cfg, 'allowed_tools', '') or ''),
             disallowed_tools=str(getattr(claude_cfg, 'disallowed_tools', '') or ''),
-            max_turns=_coerce_optional_int(getattr(claude_cfg, 'max_turns', None)),
+            max_turns=_positive_int_or_none(getattr(claude_cfg, 'max_turns', None)),
             effort=str(getattr(claude_cfg, 'effort', '') or ''),
             architecture_doc_path=str(getattr(claude_cfg, 'architecture_doc_path', '') or ''),
             lessons_path=str(getattr(claude_cfg, 'lessons_path', '') or ''),

@@ -7,7 +7,7 @@ from kato_core_lib.data_layers.data.fields import (
     PullRequestFields,
     TaskFields,
 )
-from kato_core_lib.helpers.text_utils import normalized_text, text_from_mapping
+from utils_core_lib.utils_core_lib.text_utils import normalized_text, text_from_mapping
 
 
 def build_pull_request_context(

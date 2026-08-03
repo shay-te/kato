@@ -28,7 +28,6 @@ REP (refuse all unapproved repos) keeps that safe.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 from collections.abc import Iterable
@@ -36,16 +35,6 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Lock
 from typing import Optional
-
-# Cross-platform file locking. POSIX has fcntl; Windows has msvcrt.
-try:
-    import fcntl                            # type: ignore[import-not-found]
-except ImportError:                          # pragma: no cover — Windows
-    fcntl = None                            # type: ignore[assignment]
-try:
-    import msvcrt                           # type: ignore[import-not-found]
-except ImportError:                          # POSIX
-    msvcrt = None                           # type: ignore[assignment]
 
 from core_lib.data_layers.service.service import Service
 
@@ -57,7 +46,8 @@ from kato_core_lib.data_layers.data.repository_approval import (
 )
 from kato_core_lib.helpers.kato_paths_utils import kato_home_path
 from kato_core_lib.helpers.logging_utils import configure_logger
-from kato_core_lib.helpers.text_utils import normalized_lower_text, normalized_text
+from utils_core_lib.utils_core_lib.file_lock import exclusive_file_lock
+from utils_core_lib.utils_core_lib.text_utils import normalized_lower_text, normalized_text
 
 
 APPROVED_REPOSITORIES_PATH_ENV_KEY = 'KATO_APPROVED_REPOSITORIES_PATH'
@@ -69,48 +59,6 @@ def default_storage_path() -> Path:
         'approved-repositories.json',
         env_key=APPROVED_REPOSITORIES_PATH_ENV_KEY,
     )
-
-
-@contextlib.contextmanager
-def _process_safe_write_lock(sidecar_path: Path):
-    """Cross-process exclusive lock for the sidecar's read-modify-write.
-
-    POSIX uses ``fcntl.flock``; Windows uses ``msvcrt.locking`` on a
-    sidecar lockfile.
-    """
-    lock_path = sidecar_path.with_suffix(sidecar_path.suffix + '.lock')
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    if fcntl is not None:
-        with lock_path.open('a+') as handle:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        return
-    if msvcrt is not None:
-        # msvcrt.locking is byte-range; lock a single byte at offset 0.
-        # The lockfile only ever needs to exist — we never read its bytes.
-        with lock_path.open('a+b') as handle:
-            handle.seek(0)
-            # LK_LOCK blocks for up to ~10s then raises; retry forever
-            # so a long-running sibling writer doesn't surface as a
-            # spurious approval failure.
-            while True:
-                try:
-                    msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
-                    break
-                except OSError:
-                    continue
-            try:
-                yield
-            finally:
-                handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-        return
-    # Neither — degrade to no-op (rare; only on a platform without
-    # either module). Callers still have the in-process Lock.
-    yield
 
 
 def operator_identity(env: dict | None = None) -> str:
@@ -215,7 +163,7 @@ class RepositoryApprovalService(Service):
         normalised_url = normalized_text(remote_url)
         # flock wraps the WHOLE read-modify-write so a sibling process
         # can't load the same baseline and clobber us on rename.
-        with self._write_lock, _process_safe_write_lock(self._storage_path):
+        with self._write_lock, exclusive_file_lock(self._storage_path):
             sidecar = self._read_sidecar(force=True)
             existing = next(
                 (entry for entry in sidecar.approved if entry.repository_id == normalised_id),
@@ -241,7 +189,7 @@ class RepositoryApprovalService(Service):
         normalised_id = normalized_lower_text(repository_id)
         if not normalised_id:
             return False
-        with self._write_lock, _process_safe_write_lock(self._storage_path):
+        with self._write_lock, exclusive_file_lock(self._storage_path):
             sidecar = self._read_sidecar(force=True)
             updated = tuple(
                 entry for entry in sidecar.approved if entry.repository_id != normalised_id

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from kato_core_lib.data_layers.data.fields import ImplementationFields, PullRequestFields
 from kato_core_lib.data_layers.data.task import Task
-from kato_core_lib.helpers.text_utils import text_from_mapping
+from utils_core_lib.utils_core_lib.text_utils import text_from_mapping
 
 
 def pull_request_repositories_text(pull_requests) -> str:

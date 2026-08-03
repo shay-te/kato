@@ -4,7 +4,7 @@ from core_lib.data_layers.service.service import Service
 
 from kato_core_lib.data_layers.data.fields import PullRequestFields
 from kato_core_lib.helpers.logging_utils import configure_logger
-from kato_core_lib.helpers.text_utils import normalized_text
+from utils_core_lib.utils_core_lib.text_utils import normalized_text
 
 
 class RepositoryPublicationService(Service):

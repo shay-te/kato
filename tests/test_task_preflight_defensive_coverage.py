@@ -449,7 +449,7 @@ class TaskPreflightDefensiveTests(unittest.TestCase):
         )
         # Patch retry detector so this counts as a retry.
         with patch(
-            'kato_core_lib.client.ticket_client_base.TicketClientBase.'
+            'kato_core_lib.helpers.agent_comment_classification.'
             'is_pre_start_blocking_comment',
             return_value=True,
         ):
@@ -472,11 +472,11 @@ class TaskPreflightDefensiveTests(unittest.TestCase):
         # Force a blocking comment that's pre-start retryable so the
         # retry path is taken.
         with patch(
-            'kato_core_lib.client.ticket_client_base.TicketClientBase.'
+            'kato_core_lib.helpers.agent_comment_classification.'
             'active_execution_blocking_comment',
             return_value='Kato encountered a blocking issue',
         ), patch(
-            'kato_core_lib.client.ticket_client_base.TicketClientBase.'
+            'kato_core_lib.helpers.agent_comment_classification.'
             'is_pre_start_blocking_comment',
             return_value=True,
         ):
@@ -492,7 +492,7 @@ class TaskPreflightDefensiveTests(unittest.TestCase):
         # → skip result. Called directly so we drive the inner guard.
         service, _ = _make_service()
         with patch(
-            'kato_core_lib.client.ticket_client_base.TicketClientBase.'
+            'kato_core_lib.helpers.agent_comment_classification.'
             'is_pre_start_blocking_comment',
             return_value=False,
         ):

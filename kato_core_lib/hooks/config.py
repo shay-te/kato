@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
+from kato_core_lib.helpers.kato_paths_utils import configured_path, kato_home_path
+
 
 class HookPoint(str, Enum):
     """Lifecycle points where hooks can fire.
@@ -106,7 +108,6 @@ class HookConfig(object):
 
 
 _DEFAULT_PATH_ENV = 'KATO_HOOKS_CONFIG'
-_DEFAULT_PATH = Path.home() / '.kato' / 'hooks.json'
 
 
 def _resolve_path(explicit_path: str | os.PathLike | None) -> Path | None:
@@ -115,15 +116,21 @@ def _resolve_path(explicit_path: str | os.PathLike | None) -> Path | None:
     Precedence: explicit arg → ``KATO_HOOKS_CONFIG`` env var →
     default ``~/.kato/hooks.json``. Returns ``None`` when none of
     those paths exist on disk so callers can short-circuit.
+
+    Both operator-supplied forms go through ``configured_path`` so a ``~`` in
+    them is expanded. This used to be a raw ``Path(...)``: ``~/hooks.json``
+    became a relative directory named ``~``, missed the existence check, and
+    booted as "no hooks configured" — the hook chain off, with no error.
     """
-    if explicit_path:
-        path = Path(explicit_path)
-        return path if path.exists() else None
-    env_path = os.environ.get(_DEFAULT_PATH_ENV, '').strip()
-    if env_path:
-        path = Path(env_path)
-        return path if path.exists() else None
-    return _DEFAULT_PATH if _DEFAULT_PATH.exists() else None
+    explicit = configured_path(explicit_path)
+    if explicit is not None:
+        return explicit if explicit.exists() else None
+    # env-or-``~/.kato/hooks.json``, both expanded. A configured path that
+    # does not exist stays ``None`` rather than falling back to the default —
+    # an operator who names a hooks file should never silently get a
+    # different one.
+    configured = kato_home_path('hooks.json', env_key=_DEFAULT_PATH_ENV)
+    return configured if configured.exists() else None
 
 
 def _parse_one_hook(raw: object, point: HookPoint) -> HookDefinition:

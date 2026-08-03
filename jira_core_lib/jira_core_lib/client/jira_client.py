@@ -10,7 +10,7 @@ from provider_client_base.provider_client_base.data.issue_record import IssueRec
 from provider_client_base.provider_client_base.helpers.mention_utils import (
     extract_all_mention_tokens,
 )
-from provider_client_base.provider_client_base.helpers.text_utils import (
+from utils_core_lib.utils_core_lib.text_utils import (
     normalized_text,
     text_from_mapping,
 )

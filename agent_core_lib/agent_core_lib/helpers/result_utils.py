@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from agent_core_lib.agent_core_lib.data.fields import ImplementationFields
-from agent_core_lib.agent_core_lib.helpers.text_utils import normalized_text, text_from_mapping
+from utils_core_lib.utils_core_lib.text_utils import normalized_text, text_from_mapping
 
 _TASK_SUMMARY_KEY = 'summary'
 _TASK_BRANCH_NAME_KEY = 'branch_name'

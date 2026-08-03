@@ -31,7 +31,7 @@ from kato_core_lib.data_layers.data.task import Task
 from kato_core_lib.helpers.kato_tag_utils import build_triage_tag
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.mission_logging_utils import log_mission_step
-from kato_core_lib.helpers.text_utils import normalized_text
+from utils_core_lib.utils_core_lib.text_utils import normalized_text
 
 
 # Match ``kato:triage:<level>`` anywhere in Claude's response. Both the

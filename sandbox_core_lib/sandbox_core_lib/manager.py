@@ -19,9 +19,8 @@ Three responsibilities:
 """
 
 from __future__ import annotations
-from agent_core_lib.agent_core_lib.helpers.text_utils import text_from_mapping
+from utils_core_lib.utils_core_lib.text_utils import text_from_mapping
 
-import contextlib
 import hashlib
 import json
 import logging
@@ -33,40 +32,8 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-try:
-    import fcntl  # POSIX-only; Windows callers fall back to a no-op lock
-except ImportError:                                  # pragma: no cover
-    fcntl = None  # type: ignore[assignment]
+from utils_core_lib.utils_core_lib.file_lock import exclusive_file_lock
 
-
-@contextlib.contextmanager
-def _exclusive_file_lock(path: Path):
-    """Hold an exclusive ``flock`` on ``path`` for the duration of the block.
-
-    Used to serialise audit-log writes across parallel kato spawns —
-    both the ``prev_hash`` read and the rate-limit count have to see a
-    consistent view of the log, so without this two simultaneous
-    spawns can each compute their chain link against the same
-    predecessor (one entry's ``prev_hash`` is wrong on read) and each
-    see ``N-1`` recent entries (the rate-limit briefly admits one
-    extra). On Windows ``fcntl`` is unavailable; we degrade to a
-    no-op lock since the audit log on Windows operators' boxes is
-    overwhelmingly single-process anyway.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if fcntl is None:
-        yield None
-        return
-    fd = os.open(str(path) + '.lock', os.O_RDWR | os.O_CREAT, 0o600)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        yield fd
-    finally:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-        except OSError:
-            pass
-        os.close(fd)
 
 SANDBOX_IMAGE_TAG = 'kato/claude-sandbox:latest'
 _SANDBOX_DIR = Path(__file__).resolve().parent
@@ -1464,7 +1431,7 @@ def _last_audit_chain_hash(target: Path) -> str:
 
     NOTE: callers that need the read+write to be atomic across
     parallel spawns must wrap this call (and the subsequent write)
-    in ``_exclusive_file_lock(target)``. ``record_spawn`` does that.
+    in ``exclusive_file_lock(target)``. ``record_spawn`` does that.
     """
     if not target.exists():
         return _AUDIT_GENESIS_HASH
@@ -1488,7 +1455,7 @@ def _count_recent_spawns(target: Path, *, now: datetime | None = None) -> int:
 
     Helper — does NOT take the audit lock. Callers that need the
     count to be consistent with a subsequent write must hold
-    ``_exclusive_file_lock(target)`` themselves. ``record_spawn``
+    ``exclusive_file_lock(target)`` themselves. ``record_spawn``
     does this; the standalone ``check_spawn_rate`` below also takes
     the lock for its read-only callers.
     """
@@ -1536,7 +1503,7 @@ def check_spawn_rate(
     exists for callers (UI / tooling) that want a peek without writing.
     """
     target = audit_log_path or _DEFAULT_AUDIT_LOG_PATH
-    with _exclusive_file_lock(target):
+    with exclusive_file_lock(target):
         count = _count_recent_spawns(target, now=now)
     if count >= _SPAWN_RATE_LIMIT:
         raise SandboxError(
@@ -1586,7 +1553,7 @@ def record_spawn(
     # (leaving one chain link invalid). Per-file lock via
     # ``<path>.lock``.
     try:
-        with _exclusive_file_lock(target):
+        with exclusive_file_lock(target):
             recent = _count_recent_spawns(target)
             if recent >= _SPAWN_RATE_LIMIT:
                 raise SandboxError(

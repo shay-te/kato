@@ -24,8 +24,7 @@ from kato_core_lib.comment_core_lib import (
     KatoCommentStatus,
     LocalCommentStore,
 )
-from kato_core_lib.comment_core_lib import comment_store as comment_store_module
-from kato_core_lib.helpers import atomic_json_utils
+from utils_core_lib.utils_core_lib import atomic_write as atomic_json_utils
 from kato_core_lib.helpers import kato_settings_schema_utils as schema_utils
 from kato_core_lib.helpers import kato_settings_store_utils as store_utils
 
@@ -332,44 +331,14 @@ class AtomicJsonUtilsTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
-class _RecordingMsvcrt(object):
-    """Concrete msvcrt stand-in (mirrors `test_cross_platform_lock_wiring`)."""
-
-    LK_LOCK = 1
-    LK_UNLCK = 2
-
-    def __init__(self, raise_on_lock_count: int = 0) -> None:
-        self._raise_count = raise_on_lock_count
-        self._call_count = 0
-        self.calls: list[tuple[str, int, int]] = []
-
-    def locking(self, fileno: int, mode: int, nbytes: int) -> None:
-        self._call_count += 1
-        if mode == self.LK_LOCK and self._call_count <= self._raise_count:
-            raise OSError('would block')
-        kind = 'LOCK' if mode == self.LK_LOCK else 'UNLCK'
-        self.calls.append((kind, fileno, nbytes))
-
-
 class CommentStoreCompletionTests(unittest.TestCase):
-    """Close ``comment_store.py`` gaps at lines 55-56 + 386-390."""
+    """Close ``comment_store.py`` gaps at lines 386-390.
 
-    def test_msvcrt_lock_retries_on_oserror_until_success(self) -> None:
-        """``LK_LOCK`` raises once, then succeeds. (Mirrors the
-        approval-service test for the comment-store helper.)"""
-        recorder = _RecordingMsvcrt(raise_on_lock_count=1)
-        with patch.object(comment_store_module, 'fcntl', None), \
-             patch.object(comment_store_module, 'msvcrt', recorder):
-            with tempfile.TemporaryDirectory() as td:
-                sidecar = Path(td) / 'store.json'
-                with comment_store_module._process_safe_write_lock(sidecar):
-                    # Lockfile exists while held.
-                    self.assertTrue(
-                        sidecar.with_suffix(sidecar.suffix + '.lock').is_file(),
-                    )
-        # 1 failed LOCK (not recorded) + 1 successful LOCK + 1 UNLCK.
-        kinds = [c[0] for c in recorder.calls]
-        self.assertEqual(kinds, ['LOCK', 'UNLCK'])
+    The msvcrt lock-retry case that used to live here moved with the code: the
+    store no longer carries its own lock, and the retry contract is pinned in
+    ``utils_core_lib/tests/test_file_lock.py`` alongside the one
+    implementation every call site now shares.
+    """
 
     def test_persist_oserror_logs_warning_and_returns(self) -> None:
         """``_persist`` swallows OSError + logs; cache stays

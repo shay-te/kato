@@ -5,7 +5,7 @@ import types
 import unittest
 from dataclasses import dataclass, field
 from typing import Any
-from unittest.mock import ANY, Mock, call, patch
+from unittest.mock import ANY, Mock, patch
 
 from openhands_core_lib.openhands_core_lib.openhands_client import OpenHandsClient
 from openhands_core_lib.openhands_core_lib.data.fields import ImplementationFields
@@ -13,20 +13,12 @@ from openhands_core_lib.openhands_core_lib.config_utils import (
     resolved_openhands_base_url,
     resolved_openhands_llm_settings,
 )
-from openhands_core_lib.openhands_core_lib.helpers.result_utils import (
+from agent_core_lib.agent_core_lib.helpers.result_utils import (
     build_openhands_result,
     openhands_session_id,
     openhands_success_flag,
 )
-from openhands_core_lib.openhands_core_lib.helpers.text_utils import (
-    condensed_text,
-    normalized_lower_text,
-    normalized_text,
-    text_from_attr,
-    text_from_mapping,
-)
-from openhands_core_lib.openhands_core_lib.helpers import agent_prompt_utils
-from openhands_core_lib.openhands_core_lib.helpers.agent_prompt_utils import (
+from agent_core_lib.agent_core_lib.helpers.agent_prompt_utils import (
     IGNORED_REPOSITORY_FOLDERS_ENV,
     agents_instructions_text,
     forbidden_repository_guardrails_text,
@@ -42,7 +34,7 @@ from openhands_core_lib.openhands_core_lib.helpers.agent_prompt_utils import (
     task_conversation_title,
     workspace_scope_block,
 )
-from openhands_core_lib.openhands_core_lib.helpers.agents_instruction_utils import (
+from agent_core_lib.agent_core_lib.helpers.agents_instruction_utils import (
     agents_instructions_for_path,
     repository_agents_instructions_text,
 )
@@ -1428,7 +1420,7 @@ class OpenHandsClientPromptBuilderTests(unittest.TestCase):
         client = OpenHandsClient('https://openhands.example', 'oh-token')
         self.assertEqual(
             client._task_conversation_title(build_task(task_id='', summary='   ')),
-            'Task',
+            'task',
         )
 
     def test_review_conversation_title_uses_task_id_when_present(self) -> None:
@@ -1585,36 +1577,6 @@ class ResultUtilsTests(unittest.TestCase):
 # Text utils
 # ---------------------------------------------------------------------------
 
-class TextUtilsTests(unittest.TestCase):
-    def test_normalized_text_strips_whitespace(self) -> None:
-        self.assertEqual(normalized_text('  hello  '), 'hello')
-
-    def test_normalized_text_returns_empty_for_none(self) -> None:
-        self.assertEqual(normalized_text(None), '')
-
-    def test_normalized_lower_text(self) -> None:
-        self.assertEqual(normalized_lower_text('  HELLO  '), 'hello')
-
-    def test_condensed_text_collapses_whitespace(self) -> None:
-        self.assertEqual(condensed_text('  hello   world  '), 'hello world')
-
-    def test_text_from_attr_reads_attribute(self) -> None:
-        obj = types.SimpleNamespace(name='test')
-        self.assertEqual(text_from_attr(obj, 'name'), 'test')
-
-    def test_text_from_attr_returns_empty_for_missing(self) -> None:
-        self.assertEqual(text_from_attr(types.SimpleNamespace(), 'missing'), '')
-
-    def test_text_from_mapping_reads_key(self) -> None:
-        self.assertEqual(text_from_mapping({'key': 'value'}, 'key'), 'value')
-
-    def test_text_from_mapping_returns_default_for_missing(self) -> None:
-        self.assertEqual(text_from_mapping({}, 'missing', 'default'), 'default')
-
-    def test_text_from_mapping_returns_empty_for_non_mapping(self) -> None:
-        self.assertEqual(text_from_mapping(None, 'key'), '')
-
-
 # ---------------------------------------------------------------------------
 # Agent prompt utils
 # ---------------------------------------------------------------------------
@@ -1707,7 +1669,7 @@ class AgentPromptUtilsTests(unittest.TestCase):
 
     def test_task_conversation_title_falls_back_to_task(self) -> None:
         task = build_task(task_id='', summary='')
-        self.assertEqual(task_conversation_title(task), 'Task')
+        self.assertEqual(task_conversation_title(task), 'task')
 
     def test_review_conversation_title_with_task_id(self) -> None:
         self.assertEqual(
@@ -1777,14 +1739,14 @@ class AgentPromptUtilsTests(unittest.TestCase):
 
     def test_review_comments_batch_text_formats_all_comments(self) -> None:
         comments = [build_review_comment(body='Fix typo.'), build_review_comment(body='Add docs.')]
-        text = review_comments_batch_text(comments)
+        text = review_comments_batch_text(comments, wrap=None)
         self.assertIn('1.', text)
         self.assertIn('2.', text)
         self.assertIn('Fix typo.', text)
         self.assertIn('Add docs.', text)
 
     def test_review_comments_batch_text_returns_empty_for_no_comments(self) -> None:
-        self.assertEqual(review_comments_batch_text([]), '')
+        self.assertEqual(review_comments_batch_text([], wrap=None), '')
 
 
 # ---------------------------------------------------------------------------
@@ -1807,7 +1769,7 @@ class AgentsInstructionUtilsTests(unittest.TestCase):
             with open(agents_file, 'w') as f:
                 f.write('Use pnpm for all package operations.')
             result = agents_instructions_for_path(tmpdir, repository_id='my-repo')
-        self.assertIn('Agent safety', result)
+        self.assertIn('Orchestration layer safety', result)
         self.assertIn('Use pnpm for all package operations.', result)
         self.assertIn('my-repo', result)
         self.assertNotIn('Kato', result)
@@ -1832,7 +1794,7 @@ class AgentsInstructionUtilsTests(unittest.TestCase):
             result = repository_agents_instructions_text([repo])
         self.assertIn('Run tests with pytest.', result)
         self.assertNotIn('Kato safety', result)
-        self.assertIn('Agent safety', result)
+        self.assertIn('Orchestration layer safety', result)
 
 
 # ---------------------------------------------------------------------------

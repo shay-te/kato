@@ -18,7 +18,7 @@ import unittest.mock
 from pathlib import Path
 from types import SimpleNamespace
 
-from openhands_core_lib.openhands_core_lib.helpers.agent_prompt_utils import (
+from agent_core_lib.agent_core_lib.helpers.agent_prompt_utils import (
     ignored_repository_folder_names,
     repository_scope_text,
     review_comment_code_snippet,
@@ -194,7 +194,7 @@ class ReviewCommentsBatchTextTests(unittest.TestCase):
         self.workspace = Path(self._tmp.name)
 
     def test_empty_batch(self) -> None:
-        self.assertEqual(review_comments_batch_text([]), '')
+        self.assertEqual(review_comments_batch_text([], wrap=None), '')
 
     def test_localized_header_with_workspace_snippet(self) -> None:
         # Hits lines 249-250 (localized indent) AND 254-259 (snippet inclusion).
@@ -210,7 +210,7 @@ class ReviewCommentsBatchTextTests(unittest.TestCase):
             line_type='ADDED',
             commit_sha='abc123',
         )
-        out = review_comments_batch_text([comment], str(self.workspace))
+        out = review_comments_batch_text([comment], str(self.workspace), wrap=None)
         self.assertIn('src/a.py', out)
         self.assertIn('Comment by reviewer: this is wrong', out)
         # Snippet was included
@@ -223,7 +223,7 @@ class ReviewCommentsBatchTextTests(unittest.TestCase):
             file_path='', line_number='',
             line_type='', commit_sha='',
         )
-        out = review_comments_batch_text([comment])
+        out = review_comments_batch_text([comment], wrap=None)
         self.assertIn('PR-level comment', out)
 
     def test_workspace_set_but_snippet_empty(self) -> None:
@@ -236,7 +236,7 @@ class ReviewCommentsBatchTextTests(unittest.TestCase):
             file_path='src/does_not_exist.py', line_number=3,
             line_type='ADDED', commit_sha='abc123',
         )
-        out = review_comments_batch_text([comment], str(self.workspace))
+        out = review_comments_batch_text([comment], str(self.workspace), wrap=None)
         # Location is still rendered, the comment body is present, but no
         # code snippet (no '|' line marker) was emitted.
         self.assertIn('src/does_not_exist.py:3', out)

@@ -224,7 +224,9 @@ class BatchPromptIncludesSnippetTests(unittest.TestCase):
             file_path='src/cache.py', line_number=3, line_type='added',
             body='this should be a constant',
         )
-        text = review_comments_batch_text([comment], workspace_path=str(self.workspace))
+        text = review_comments_batch_text(
+            [comment], workspace_path=str(self.workspace), wrap=None,
+        )
         self.assertIn('Code at line 3', text)
         self.assertIn('self.timeout = 3600', text)
 
@@ -234,7 +236,7 @@ class BatchPromptIncludesSnippetTests(unittest.TestCase):
             file_path='src/cache.py', line_number=3,
             body='constant please',
         )
-        text = review_comments_batch_text([comment])
+        text = review_comments_batch_text([comment], wrap=None)
         self.assertNotIn('Code at line', text)
 
     def test_claude_batch_prompt_threads_workspace_through(self) -> None:

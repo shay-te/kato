@@ -45,7 +45,7 @@ from kato_core_lib.helpers.review_comment_utils import (
     review_fix_result,
 )
 from kato_core_lib.helpers.task_lookup_utils import find_task_by_id
-from kato_core_lib.helpers.text_utils import normalized_text, text_from_attr
+from utils_core_lib.utils_core_lib.text_utils import normalized_text, text_from_attr
 
 class ReviewCommentService(Service):
     """Handle review-comment polling, fix publication, and comment resolution."""

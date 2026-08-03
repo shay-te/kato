@@ -17,7 +17,7 @@ from git_core_lib.git_core_lib.helpers.git_command_utils import (
     build_safe_git_command,
     safe_directory_args,
 )
-from git_core_lib.git_core_lib.helpers.text_utils import normalized_lower_text
+from utils_core_lib.utils_core_lib.text_utils import normalized_lower_text
 
 
 class GitClientMixin:

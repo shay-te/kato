@@ -21,7 +21,7 @@ successful tasks" — the operator approves explicitly, every time.
 """
 
 from __future__ import annotations
-from agent_core_lib.agent_core_lib.helpers.text_utils import text_from_mapping
+from utils_core_lib.utils_core_lib.text_utils import text_from_mapping
 
 import time
 from dataclasses import asdict, dataclass, field

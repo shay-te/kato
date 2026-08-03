@@ -18,7 +18,7 @@ from dataclasses import asdict, dataclass, field
 from agent_core_lib.agent_core_lib.helpers.session_id_utils import (
     read_session_id_from_mapping,
 )
-from agent_core_lib.agent_core_lib.helpers.text_utils import text_from_mapping
+from utils_core_lib.utils_core_lib.text_utils import text_from_mapping
 
 
 WORKSPACE_STATUS_PROVISIONING = 'provisioning'

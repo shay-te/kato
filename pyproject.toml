@@ -58,6 +58,7 @@ include = [
   "openrouter_core_lib*",
   "provider_client_base*",
   "workspace_core_lib*",
+  "utils_core_lib*",
 ]
 
 [tool.setuptools.package-data]

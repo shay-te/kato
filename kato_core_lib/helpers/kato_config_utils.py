@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from omegaconf import DictConfig
 
-from kato_core_lib.helpers.text_utils import normalized_lower_text, normalized_text
+from utils_core_lib.utils_core_lib.text_utils import normalized_lower_text, normalized_text
 
 
 AGENT_BACKEND_OPENHANDS = 'openhands'
@@ -112,3 +112,18 @@ def _llm_settings_from_config(
 
 def _normalized_openhands_attr(openhands_cfg: DictConfig, key: str) -> str:
     return normalized_text(getattr(openhands_cfg, key, ''))
+
+
+def retry_count(value: object, default: int = 1) -> int:
+    """Clamp a configured retry count to a usable int, floor 1.
+
+    Config-shaped, not retry-engine code: it never touches a response, a
+    backoff schedule or an exception. It lived in kato's retry_utils only
+    because that module happened to exist, and it was the one thing keeping a
+    STALE fork of the whole HTTP retry engine alive alongside the maintained
+    one in provider_client_base.
+    """
+    try:
+        return max(1, int(value))
+    except (TypeError, ValueError):
+        return max(1, int(default))

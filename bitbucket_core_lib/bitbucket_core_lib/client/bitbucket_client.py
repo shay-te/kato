@@ -6,7 +6,7 @@ from bitbucket_core_lib.bitbucket_core_lib.client.auth import bitbucket_basic_au
 from provider_client_base.provider_client_base.pull_request_client_base import PullRequestClientBase
 from provider_client_base.provider_client_base.data.fields import PullRequestFields, ReviewCommentFields
 from provider_client_base.provider_client_base.data.review_comment import ReviewComment
-from provider_client_base.provider_client_base.helpers.text_utils import (
+from utils_core_lib.utils_core_lib.text_utils import (
     dict_from_mapping,
     list_from_mapping,
     normalized_text,

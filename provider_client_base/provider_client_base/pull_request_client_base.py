@@ -5,10 +5,10 @@ from abc import ABC, abstractmethod
 from provider_client_base.provider_client_base.retrying_client_base import RetryingClientBase
 from provider_client_base.provider_client_base.data.review_comment import ReviewComment
 from provider_client_base.provider_client_base.data.fields import PullRequestFields, ReviewCommentFields
-from provider_client_base.provider_client_base.helpers.text_utils import normalized_text
+from utils_core_lib.utils_core_lib.text_utils import normalized_text
 
 
-def _coerce_line_number(value: object) -> int | str:
+def coerce_line_number(value: object) -> int | str:
     """Normalise a platform-supplied line number into an int (or '').
 
     Bitbucket / GitHub / GitLab all return integers, but JSON parsers
@@ -65,7 +65,7 @@ class PullRequestClientBase(RetryingClientBase, ABC):
             author=normalized_text(author),
             body=normalized_text(body),
             file_path=normalized_text(file_path),
-            line_number=_coerce_line_number(line_number),
+            line_number=coerce_line_number(line_number),
             line_type=normalized_text(line_type),
             commit_sha=normalized_text(commit_sha),
         )

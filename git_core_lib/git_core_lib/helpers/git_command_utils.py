@@ -15,7 +15,7 @@ without it, reopening exactly the hole this guards against.
 """
 from __future__ import annotations
 
-from git_core_lib.git_core_lib.helpers.text_utils import normalized_text
+from utils_core_lib.utils_core_lib.text_utils import normalized_text
 
 
 def safe_directory_args(local_path: str) -> list[str]:

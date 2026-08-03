@@ -58,8 +58,11 @@ from claude_core_lib.claude_core_lib.helpers.sandbox_scope import (
 )
 from claude_core_lib.claude_core_lib.session.index import parse_jsonl_dict_line
 from claude_core_lib.claude_core_lib.session.registry import kill_process_tree
+from agent_core_lib.agent_core_lib.helpers.cli_shim_utils import (
+    resolve_windows_cli_invocation,
+)
 from agent_core_lib.agent_core_lib.helpers.logging_utils import configure_logger
-from agent_core_lib.agent_core_lib.helpers.text_utils import (
+from utils_core_lib.utils_core_lib.text_utils import (
     condensed_text,
     normalized_text,
     text_from_mapping,
@@ -1066,13 +1069,7 @@ class StreamingClaudeSession(object):
         # respawn (the Windows resume-amnesia bug). Shared with the
         # one-shot client so both spawn paths bypass the shim the same
         # way.
-        from claude_core_lib.claude_core_lib.cli_client import (
-            ClaudeCliClient as _CliClient,
-        )
-        spawn_prefix = (
-            _CliClient._resolve_windows_node_invocation(binary_path)
-            or [binary_path]
-        )
+        spawn_prefix = resolve_windows_cli_invocation(binary_path) or [binary_path]
         command: list[str] = [
             *spawn_prefix,
             '-p',

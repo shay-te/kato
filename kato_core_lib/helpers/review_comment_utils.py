@@ -5,6 +5,9 @@ import re
 from dataclasses import dataclass
 
 from provider_client_base.provider_client_base.data.review_comment import ReviewComment
+from provider_client_base.provider_client_base.pull_request_client_base import (
+    coerce_line_number,
+)
 from kato_core_lib.data_layers.data.task import Task
 from kato_core_lib.data_layers.data.fields import (
     ImplementationFields,
@@ -14,7 +17,7 @@ from kato_core_lib.data_layers.data.fields import (
     TaskFields,
 )
 from kato_core_lib.helpers.task_execution_utils import task_execution_report
-from kato_core_lib.helpers.text_utils import normalized_text, text_from_mapping
+from utils_core_lib.utils_core_lib.text_utils import normalized_text, text_from_mapping
 
 KATO_REVIEW_COMMENT_FIXED_PREFIX = 'Kato addressed review comment '
 KATO_REVIEW_COMMENT_REPLY_PREFIX = 'Kato addressed this review comment'
@@ -141,7 +144,7 @@ def review_comment_from_payload(payload: dict) -> ReviewComment:
             author=str(payload[ReviewCommentFields.AUTHOR]),
             body=str(payload[ReviewCommentFields.BODY]),
             file_path=str(payload.get(ReviewCommentFields.FILE_PATH, '') or ''),
-            line_number=_coerce_optional_int(
+            line_number=coerce_line_number(
                 payload.get(ReviewCommentFields.LINE_NUMBER, ''),
             ),
             line_type=str(payload.get(ReviewCommentFields.LINE_TYPE, '') or ''),
@@ -161,18 +164,6 @@ def review_comment_from_payload(payload: dict) -> ReviewComment:
         return comment
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f'invalid review comment payload: {exc}') from exc
-
-
-def _coerce_optional_int(value: object) -> int | str:
-    if value is None or value == '':
-        return ''
-    try:
-        n = int(value)
-    except (TypeError, ValueError):
-        return ''
-    if n <= 0:
-        return ''
-    return n
 
 
 def comment_context_entry(comment: ReviewComment) -> dict[str, str]:

@@ -21,7 +21,7 @@ import re
 import shutil
 import subprocess
 
-from git_core_lib.git_core_lib.helpers.text_utils import normalized_text
+from utils_core_lib.utils_core_lib.text_utils import normalized_text
 
 
 CLI_TIMEOUT_SECONDS = 15

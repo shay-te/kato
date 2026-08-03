@@ -529,8 +529,8 @@ class ReviewCommentCodeSnippetTests(unittest.TestCase):
 class ReviewCommentsBatchTextTests(unittest.TestCase):
     def test_empty_comments_returns_empty(self) -> None:
         # Lines 412-413.
-        self.assertEqual(review_comments_batch_text([]), '')
-        self.assertEqual(review_comments_batch_text(None), '')
+        self.assertEqual(review_comments_batch_text([], wrap=None), '')
+        self.assertEqual(review_comments_batch_text(None, wrap=None), '')
 
     def test_pr_level_and_localized_headers(self) -> None:
         # Lines 414-434: a localized comment (file/line) and a PR-level
@@ -545,7 +545,7 @@ class ReviewCommentsBatchTextTests(unittest.TestCase):
             file_path='', line_number='',
             line_type='', commit_sha='',
         )
-        out = review_comments_batch_text([localized, pr_level])
+        out = review_comments_batch_text([localized, pr_level], wrap=None)
         self.assertIn('File: mod.py:4', out)
         self.assertIn('(no file/line — PR-level comment)', out)
         self.assertIn('Comment by alice: change this', out)
@@ -564,7 +564,7 @@ class ReviewCommentsBatchTextTests(unittest.TestCase):
                 file_path='mod.py', line_number=2,
                 line_type='', commit_sha='',
             )
-            out = review_comments_batch_text([comment], workspace_path=tmp)
+            out = review_comments_batch_text([comment], workspace_path=tmp, wrap=None)
             self.assertIn('Code at line 2:', out)
             self.assertIn('beta', out)
 
@@ -577,7 +577,7 @@ class ReviewCommentsBatchTextTests(unittest.TestCase):
                 file_path='', line_number='',
                 line_type='', commit_sha='',
             )
-            out = review_comments_batch_text([comment], workspace_path=tmp)
+            out = review_comments_batch_text([comment], workspace_path=tmp, wrap=None)
             self.assertNotIn('Code at line', out)
             self.assertIn('Comment by bob: general note', out)
 

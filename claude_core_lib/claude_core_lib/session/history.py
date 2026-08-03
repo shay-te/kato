@@ -18,7 +18,7 @@ from agent_core_lib.agent_core_lib.helpers.session_id_utils import (
     fix_session_id,
     read_session_id_from,
 )
-from agent_core_lib.agent_core_lib.helpers.text_utils import text_from_mapping
+from utils_core_lib.utils_core_lib.text_utils import text_from_mapping
 from claude_core_lib.claude_core_lib.session.index import (
     CLAUDE_SESSIONS_ROOT_ENV_KEY as _CLAUDE_SESSIONS_ROOT_ENV_KEY,
     default_sessions_root,

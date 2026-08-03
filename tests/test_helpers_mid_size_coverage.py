@@ -43,48 +43,6 @@ class SubprocessUtilsConstantsTests(unittest.TestCase):
 # --------------------------------------------------------------------------
 
 
-class TextUtilsMappingTests(unittest.TestCase):
-    """Lines 37-40 + 44-47: ``dict_from_mapping`` /
-    ``list_from_mapping`` must return clean empties for non-Mapping
-    input and for keys whose values aren't dict/list. Used widely as
-    a parse-safety layer for OpenHands/external payloads."""
-
-    def test_dict_from_mapping_returns_empty_for_non_mapping(self) -> None:
-        from kato_core_lib.helpers.text_utils import dict_from_mapping
-        self.assertEqual(dict_from_mapping(None, 'x'), {})
-        self.assertEqual(dict_from_mapping('not a mapping', 'x'), {})
-        self.assertEqual(dict_from_mapping(['list'], 'x'), {})
-
-    def test_dict_from_mapping_returns_empty_when_value_not_dict(self) -> None:
-        # Line 40: ``value if isinstance(value, dict) else {}`` —
-        # extracted value isn't a dict (e.g. payload corruption) → {}.
-        from kato_core_lib.helpers.text_utils import dict_from_mapping
-        self.assertEqual(dict_from_mapping({'x': 'not a dict'}, 'x'), {})
-        self.assertEqual(dict_from_mapping({'x': 42}, 'x'), {})
-
-    def test_dict_from_mapping_passes_through_dict_value(self) -> None:
-        from kato_core_lib.helpers.text_utils import dict_from_mapping
-        self.assertEqual(
-            dict_from_mapping({'x': {'inner': 1}}, 'x'),
-            {'inner': 1},
-        )
-
-    def test_list_from_mapping_returns_empty_for_non_mapping(self) -> None:
-        from kato_core_lib.helpers.text_utils import list_from_mapping
-        self.assertEqual(list_from_mapping(None, 'x'), [])
-        self.assertEqual(list_from_mapping('not a mapping', 'x'), [])
-
-    def test_list_from_mapping_returns_empty_when_value_not_list(self) -> None:
-        # Line 47: ``value if isinstance(value, list) else []``.
-        from kato_core_lib.helpers.text_utils import list_from_mapping
-        self.assertEqual(list_from_mapping({'x': 'not a list'}, 'x'), [])
-        self.assertEqual(list_from_mapping({'x': {'dict': 1}}, 'x'), [])
-
-    def test_list_from_mapping_passes_through_list_value(self) -> None:
-        from kato_core_lib.helpers.text_utils import list_from_mapping
-        self.assertEqual(list_from_mapping({'x': [1, 2, 3]}, 'x'), [1, 2, 3])
-
-
 # --------------------------------------------------------------------------
 # runtime_identity_utils — fingerprint + CLI main
 # --------------------------------------------------------------------------
@@ -163,7 +121,7 @@ class RetryUtilsTests(unittest.TestCase):
     ) -> None:
         # Line 87: when all attempts succeed but every response is
         # retryable, the function returns the LAST observed response.
-        from kato_core_lib.helpers.retry_utils import run_with_retry
+        from provider_client_base.provider_client_base.helpers.retry_utils import run_with_retry
         responses = [
             SimpleNamespace(status_code=503),
             SimpleNamespace(status_code=503),
@@ -180,7 +138,7 @@ class RetryUtilsTests(unittest.TestCase):
         # Defensive: a 0-retries configuration shouldn't crash; it
         # should just return None so callers can branch on a missing
         # response.
-        from kato_core_lib.helpers.retry_utils import run_with_retry
+        from provider_client_base.provider_client_base.helpers.retry_utils import run_with_retry
         op = MagicMock()
         result = run_with_retry(op, 0)
         self.assertIsNone(result)
@@ -191,13 +149,13 @@ class RetryUtilsTests(unittest.TestCase):
         # (no zone info in the Retry-After header), we attach UTC so
         # the subtraction below uses a consistent zone. Without this,
         # ``aware - naive`` would raise TypeError.
-        from kato_core_lib.helpers.retry_utils import _retry_after_seconds
+        from provider_client_base.provider_client_base.helpers.retry_utils import _retry_after_seconds
         # Patch parsedate_to_datetime to return a naive datetime so we
         # hit the explicit branch deterministically (the email parser's
         # behaviour for zone-free input varies across Python versions).
         future_naive = datetime.utcnow() + timedelta(seconds=5)
         with patch(
-            'kato_core_lib.helpers.retry_utils.parsedate_to_datetime',
+            'provider_client_base.provider_client_base.helpers.retry_utils.parsedate_to_datetime',
             return_value=future_naive,
         ):
             response = SimpleNamespace(
@@ -212,7 +170,7 @@ class RetryUtilsTests(unittest.TestCase):
     def test_retry_after_seconds_returns_none_for_non_429(self) -> None:
         # Line 101: only 429 carries Retry-After semantics; for other
         # retryable codes we fall through to exponential backoff.
-        from kato_core_lib.helpers.retry_utils import _retry_delay_seconds
+        from provider_client_base.provider_client_base.helpers.retry_utils import _retry_delay_seconds
         delay = _retry_delay_seconds(
             attempt=0,
             response=SimpleNamespace(status_code=503),
@@ -224,13 +182,13 @@ class RetryUtilsTests(unittest.TestCase):
     def test_retry_after_seconds_skips_when_headers_missing_get(self) -> None:
         # Line 105: headers without a .get attribute → None. Defensive
         # against odd response objects (e.g. a string instead of dict).
-        from kato_core_lib.helpers.retry_utils import _retry_after_seconds
+        from provider_client_base.provider_client_base.helpers.retry_utils import _retry_after_seconds
         response = SimpleNamespace(status_code=429, headers='not a mapping')
         self.assertIsNone(_retry_after_seconds(response))
 
     def test_retry_after_seconds_skips_blank_header(self) -> None:
         # Line 112: whitespace-only Retry-After is treated as missing.
-        from kato_core_lib.helpers.retry_utils import _retry_after_seconds
+        from provider_client_base.provider_client_base.helpers.retry_utils import _retry_after_seconds
         response = SimpleNamespace(
             status_code=429,
             headers={'Retry-After': '   '},
@@ -240,7 +198,7 @@ class RetryUtilsTests(unittest.TestCase):
     def test_retry_after_seconds_parses_http_date(self) -> None:
         # Lines 118-124: parsedate_to_datetime path. A future HTTP
         # date returns the wait-until-that-time delay.
-        from kato_core_lib.helpers.retry_utils import _retry_after_seconds
+        from provider_client_base.provider_client_base.helpers.retry_utils import _retry_after_seconds
         future = datetime.now(timezone.utc) + timedelta(seconds=5)
         # RFC-1123 format: "Thu, 14 May 2026 12:00:00 GMT"
         http_date = future.strftime('%a, %d %b %Y %H:%M:%S GMT')
@@ -258,7 +216,7 @@ class RetryUtilsTests(unittest.TestCase):
     ) -> None:
         # Line 121: ``except (TypeError, ValueError, IndexError,
         # OverflowError): return None`` — malformed date string.
-        from kato_core_lib.helpers.retry_utils import _retry_after_seconds
+        from provider_client_base.provider_client_base.helpers.retry_utils import _retry_after_seconds
         response = SimpleNamespace(
             status_code=429,
             headers={'Retry-After': 'definitely not a date'},
@@ -267,7 +225,7 @@ class RetryUtilsTests(unittest.TestCase):
 
     def test_retry_exception_summary_remote_disconnect(self) -> None:
         # Line 149: ``Remote server closed connection`` summary.
-        from kato_core_lib.helpers.retry_utils import _retry_exception_summary
+        from provider_client_base.provider_client_base.helpers.retry_utils import _retry_exception_summary
         exc = RuntimeError('Remote end closed connection without response')
         self.assertEqual(
             _retry_exception_summary(exc),
@@ -276,19 +234,19 @@ class RetryUtilsTests(unittest.TestCase):
 
     def test_retry_exception_summary_read_timeout(self) -> None:
         # Line 151: ``Request timed out`` summary.
-        from kato_core_lib.helpers.retry_utils import _retry_exception_summary
+        from provider_client_base.provider_client_base.helpers.retry_utils import _retry_exception_summary
         exc = RuntimeError('Read timed out after 60 seconds')
         self.assertEqual(_retry_exception_summary(exc), 'Request timed out')
 
     def test_retry_exception_summary_connect_timeout(self) -> None:
         # Line 153: ``Connection timed out`` summary.
-        from kato_core_lib.helpers.retry_utils import _retry_exception_summary
+        from provider_client_base.provider_client_base.helpers.retry_utils import _retry_exception_summary
         exc = RuntimeError('ConnectTimeout while opening socket')
         self.assertEqual(_retry_exception_summary(exc), 'Connection timed out')
 
     def test_retry_exception_summary_dns_failure(self) -> None:
         # Line 155: DNS resolution failure summary.
-        from kato_core_lib.helpers.retry_utils import _retry_exception_summary
+        from provider_client_base.provider_client_base.helpers.retry_utils import _retry_exception_summary
         exc = RuntimeError('Name or service not known')
         self.assertEqual(
             _retry_exception_summary(exc),
@@ -297,7 +255,7 @@ class RetryUtilsTests(unittest.TestCase):
 
     def test_retry_exception_summary_falls_back_to_class_name(self) -> None:
         # Line 158: empty error text → class name fallback.
-        from kato_core_lib.helpers.retry_utils import _retry_exception_summary
+        from provider_client_base.provider_client_base.helpers.retry_utils import _retry_exception_summary
 
         class _CustomTimeout(Exception):
             def __str__(self):
@@ -320,16 +278,16 @@ class ReviewCommentUtilsTests(unittest.TestCase):
 
     def test_coerce_optional_int_returns_empty_for_non_numeric(self) -> None:
         # Lines 131-132: TypeError/ValueError on int(...) → ''.
-        from kato_core_lib.helpers.review_comment_utils import (
-            _coerce_optional_int,
+        from provider_client_base.provider_client_base.pull_request_client_base import (
+            coerce_line_number as _coerce_optional_int,
         )
         self.assertEqual(_coerce_optional_int('not a number'), '')
         self.assertEqual(_coerce_optional_int(object()), '')
 
     def test_coerce_optional_int_returns_empty_for_non_positive(self) -> None:
         # Line 134: ``if n <= 0: return ''`` — line numbers must be 1+.
-        from kato_core_lib.helpers.review_comment_utils import (
-            _coerce_optional_int,
+        from provider_client_base.provider_client_base.pull_request_client_base import (
+            coerce_line_number as _coerce_optional_int,
         )
         self.assertEqual(_coerce_optional_int(0), '')
         self.assertEqual(_coerce_optional_int(-5), '')

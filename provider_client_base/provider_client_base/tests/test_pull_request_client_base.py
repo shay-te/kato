@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 
 from provider_client_base.provider_client_base.pull_request_client_base import (
     PullRequestClientBase,
-    _coerce_line_number,
+    coerce_line_number,
 )
 from provider_client_base.provider_client_base.retrying_client_base import RetryingClientBase
 from provider_client_base.provider_client_base.data.fields import PullRequestFields, ReviewCommentFields
@@ -336,39 +336,39 @@ class ReviewCommentFromValuesTests(unittest.TestCase):
 
 class CoerceLineNumberTests(unittest.TestCase):
     def test_none_returns_empty(self) -> None:
-        self.assertEqual(_coerce_line_number(None), '')
+        self.assertEqual(coerce_line_number(None), '')
 
     def test_empty_string_returns_empty(self) -> None:
-        self.assertEqual(_coerce_line_number(''), '')
+        self.assertEqual(coerce_line_number(''), '')
 
     def test_zero_returns_empty(self) -> None:
-        self.assertEqual(_coerce_line_number(0), '')
+        self.assertEqual(coerce_line_number(0), '')
 
     def test_negative_returns_empty(self) -> None:
-        self.assertEqual(_coerce_line_number(-1), '')
-        self.assertEqual(_coerce_line_number(-100), '')
+        self.assertEqual(coerce_line_number(-1), '')
+        self.assertEqual(coerce_line_number(-100), '')
 
     def test_positive_int_returned(self) -> None:
-        self.assertEqual(_coerce_line_number(1), 1)
-        self.assertEqual(_coerce_line_number(42), 42)
-        self.assertEqual(_coerce_line_number(9999), 9999)
+        self.assertEqual(coerce_line_number(1), 1)
+        self.assertEqual(coerce_line_number(42), 42)
+        self.assertEqual(coerce_line_number(9999), 9999)
 
     def test_string_int_coerced(self) -> None:
-        self.assertEqual(_coerce_line_number('7'), 7)
-        self.assertEqual(_coerce_line_number('100'), 100)
+        self.assertEqual(coerce_line_number('7'), 7)
+        self.assertEqual(coerce_line_number('100'), 100)
 
     def test_string_zero_returns_empty(self) -> None:
-        self.assertEqual(_coerce_line_number('0'), '')
+        self.assertEqual(coerce_line_number('0'), '')
 
     def test_non_numeric_string_returns_empty(self) -> None:
-        self.assertEqual(_coerce_line_number('abc'), '')
-        self.assertEqual(_coerce_line_number('3.7'), '')
+        self.assertEqual(coerce_line_number('abc'), '')
+        self.assertEqual(coerce_line_number('3.7'), '')
 
     def test_float_truncated_to_int(self) -> None:
-        self.assertEqual(_coerce_line_number(3.9), 3)
+        self.assertEqual(coerce_line_number(3.9), 3)
 
     def test_float_zero_returns_empty(self) -> None:
-        self.assertEqual(_coerce_line_number(0.0), '')
+        self.assertEqual(coerce_line_number(0.0), '')
 
 
 # ---------------------------------------------------------------------------

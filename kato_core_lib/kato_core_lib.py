@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 
 from omegaconf import DictConfig
 
@@ -7,7 +6,7 @@ from core_lib.core_lib import CoreLib
 
 from agent_backend_core_lib.agent_backend_core_lib import AgentBackendCoreLib
 from agent_backend_core_lib.agent_backend_core_lib.client.agent_client_factory import resolve_platform
-from agent_core_lib.agent_core_lib.helpers.text_utils import text_from_mapping
+from utils_core_lib.utils_core_lib.text_utils import text_from_mapping
 # ClaudeSessionManager is the only Claude-specific surface kato
 # still touches directly — it owns the planning UI's chat-time
 # streaming sessions, which has no equivalent in OpenHands and
@@ -77,6 +76,7 @@ from kato_core_lib.validation.startup_dependency_validator import (
     StartupDependencyValidator,
 )
 from kato_core_lib.errors import AgentBackendChangedError
+from kato_core_lib.helpers.kato_paths_utils import kato_session_state_dir
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.kato_config_utils import (
     resolved_agent_backend,
@@ -306,10 +306,7 @@ class KatoCoreLib(CoreLib):
         # as a parameter (so the lib reads no KATO_ env / no ~/.kato default).
         self.session_manager = ClaudeSessionManager.from_config(
             open_cfg, agent_backend,
-            state_dir=(
-                os.environ.get('KATO_SESSION_STATE_DIR', '').strip()
-                or str(Path.home() / '.kato' / 'sessions')
-            ),
+            state_dir=kato_session_state_dir(),
         )
         # Per-task workspace folders (one clone-set per ticket id) are
         # backend-agnostic — both Claude and OpenHands use them for isolation.

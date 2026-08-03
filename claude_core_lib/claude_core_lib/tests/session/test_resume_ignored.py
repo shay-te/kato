@@ -283,7 +283,7 @@ class StreamingResumeFlagTests(unittest.TestCase):
 
 
 class WindowsShimBypassTests(unittest.TestCase):
-    """The spawn must bypass the npm ``claude.cmd`` batch shim.
+    """The STREAMING spawn must bypass the npm ``claude.cmd`` batch shim.
 
     cmd.exe silently cuts its command line at the first raw newline
     (and caps it at ~8K chars). The caller's ``--append-system-prompt``
@@ -291,89 +291,30 @@ class WindowsShimBypassTests(unittest.TestCase):
     later argument — ``--resume``, ``--session-id``, ``--add-dir`` —
     and the CLI started a fresh, memoryless session on every respawn:
     the root cause of the Windows resume-amnesia bug.
+
+    What these two tests pin is the WIRING: that this spawn path consults
+    the bypass at all, and that it falls back cleanly when there is no shim.
+    The shim PARSING itself (native-``.exe`` shape, ``%~dp0`` vs ``%dp0%``
+    prefixes, nested references, Node resolution) is shared with the one-shot
+    client and pinned once in
+    ``agent_core_lib/tests/test_cli_shim_utils.py`` — the copies used to live
+    per transport and silently drifted apart.
     """
 
-    def _shim(self, tmp: str, body: str) -> str:
-        import os as _os
-        shim_path = _os.path.join(tmp, 'claude.cmd')
-        with open(shim_path, 'w', encoding='utf-8') as fh:
-            fh.write(body)
-        return shim_path
-
-    def test_resolves_native_exe_shim(self) -> None:
-        # Current npm package shape: the shim forwards to a bundled
-        # native binary (this is the shape on real Windows installs).
-        import os as _os
-        import tempfile as _tempfile
-        from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
-        with _tempfile.TemporaryDirectory() as tmp:
-            exe_dir = _os.path.join(
-                tmp, 'node_modules', '@anthropic-ai', 'claude-code', 'bin',
-            )
-            _os.makedirs(exe_dir)
-            exe_path = _os.path.join(exe_dir, 'claude.exe')
-            with open(exe_path, 'wb') as fh:
-                fh.write(b'MZ')
-            shim = self._shim(
-                tmp,
-                '@ECHO off\r\nSETLOCAL\r\nSET dp0=%~dp0\r\n'
-                '"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe"   %*\r\n',
-            )
-            with mock.patch(
-                'claude_core_lib.claude_core_lib.cli_client.os',
-            ) as os_mod:
-                os_mod.name = 'nt'
-                result = ClaudeCliClient._resolve_windows_node_invocation(shim)
-        self.assertIsNotNone(result)
-        self.assertEqual(len(result), 1)
-        self.assertTrue(result[0].lower().endswith('claude.exe'))
-
-    def test_tilde_dp0_prefix_also_resolves(self) -> None:
-        import os as _os
-        import tempfile as _tempfile
-        from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
-        with _tempfile.TemporaryDirectory() as tmp:
-            exe_path = _os.path.join(tmp, 'real.exe')
-            with open(exe_path, 'wb') as fh:
-                fh.write(b'MZ')
-            shim = self._shim(tmp, '"%~dp0\\real.exe" %*\r\n')
-            with mock.patch(
-                'claude_core_lib.claude_core_lib.cli_client.os',
-            ) as os_mod:
-                os_mod.name = 'nt'
-                result = ClaudeCliClient._resolve_windows_node_invocation(shim)
-        self.assertEqual(len(result), 1)
-        self.assertTrue(result[0].lower().endswith('real.exe'))
-
-    def test_missing_exe_target_returns_none(self) -> None:
-        import tempfile as _tempfile
-        from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
-        with _tempfile.TemporaryDirectory() as tmp:
-            shim = self._shim(tmp, '"%dp0%\\gone\\claude.exe" %*\r\n')
-            with mock.patch(
-                'claude_core_lib.claude_core_lib.cli_client.os',
-            ) as os_mod:
-                os_mod.name = 'nt'
-                result = ClaudeCliClient._resolve_windows_node_invocation(shim)
-        self.assertIsNone(result)
+    BYPASS = (
+        'claude_core_lib.claude_core_lib.session.streaming'
+        '.resolve_windows_cli_invocation'
+    )
 
     def test_streaming_build_command_bypasses_shim(self) -> None:
-        from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
         session = StreamingClaudeSession(task_id='T1', binary='claude')
-        with mock.patch.object(
-            ClaudeCliClient, '_resolve_windows_node_invocation',
-            return_value=['C:\\real\\claude.exe'],
-        ):
+        with mock.patch(self.BYPASS, return_value=['C:\\real\\claude.exe']):
             command = session._build_command()
         self.assertEqual(command[0], 'C:\\real\\claude.exe')
 
     def test_streaming_build_command_falls_back_to_which_result(self) -> None:
-        from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
         session = StreamingClaudeSession(task_id='T1', binary='claude')
-        with mock.patch.object(
-            ClaudeCliClient, '_resolve_windows_node_invocation',
-            return_value=None,
-        ), mock.patch(
+        with mock.patch(self.BYPASS, return_value=None), mock.patch(
             'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ):

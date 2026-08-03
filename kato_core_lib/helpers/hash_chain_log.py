@@ -7,48 +7,23 @@ are serialised with an exclusive file lock so parallel appenders never
 compute their chain link against a stale predecessor.
 
 This mirrors the audit-chain technique in ``sandbox_core_lib``'s sandbox
-spawn log. It is reimplemented here (not imported) because a black-box lib
-must not depend on ``kato_core_lib``; this generic helper lives in kato so
-kato-side logs (the Action Guard audit) can reuse one implementation.
+spawn log. The CHAIN is reimplemented here (not imported) because a black-box
+lib must not depend on ``kato_core_lib``; this generic helper lives in kato so
+kato-side logs (the Action Guard audit) can reuse one implementation. The LOCK
+is shared — see ``utils_core_lib.file_lock`` for why a Windows no-op is not an
+acceptable degradation for a chain whose only value is being verifiable.
 """
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import json
 import os
 from pathlib import Path
 
-try:
-    import fcntl
-except ImportError:  # pragma: no cover - Windows
-    fcntl = None
+from utils_core_lib.utils_core_lib.file_lock import exclusive_file_lock
 
 GENESIS_HASH = '0' * 64
-
-
-@contextlib.contextmanager
-def exclusive_file_lock(path: Path):
-    """Hold an exclusive ``flock`` on ``<path>.lock`` for the block.
-
-    On Windows (``fcntl`` unavailable) degrades to a no-op lock — these
-    logs are single-process there anyway.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if fcntl is None:
-        yield None
-        return
-    fd = os.open(str(path) + '.lock', os.O_RDWR | os.O_CREAT, 0o600)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        yield fd
-    finally:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-        except OSError:
-            pass
-        os.close(fd)
 
 
 def last_chain_hash(path: Path) -> str:

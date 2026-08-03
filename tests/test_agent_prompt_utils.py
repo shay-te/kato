@@ -567,7 +567,9 @@ class ReviewCommentsBatchTextSnippetBranches(unittest.TestCase):
             commit_sha='',
             comment_id='1',
         )
-        text = review_comments_batch_text([comment], workspace_path=str(self.workspace))
+        text = review_comments_batch_text(
+            [comment], workspace_path=str(self.workspace), wrap=None,
+        )
         # No code block — just localization header + body.
         self.assertNotIn('Code at line', text)
         self.assertIn('please rename', text)

@@ -7,12 +7,12 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from openhands_core_lib.openhands_core_lib.helpers.agents_instruction_utils import (
+from agent_core_lib.agent_core_lib.helpers.agents_instruction_utils import (
     _repository_section,
     agents_instructions_for_path,
     repository_agents_instructions_text,
 )
-from openhands_core_lib.openhands_core_lib.helpers.result_utils import (
+from agent_core_lib.agent_core_lib.helpers.result_utils import (
     openhands_success_flag,
 )
 

@@ -16,7 +16,7 @@ from kato_core_lib.data_layers.data.fields import (
     RepositoryFields,
     TaskTags,
 )
-from kato_core_lib.helpers.text_utils import normalized_text
+from utils_core_lib.utils_core_lib.text_utils import normalized_text
 
 
 def build_repository_tag(repo_id: object) -> str:

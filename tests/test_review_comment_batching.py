@@ -63,7 +63,7 @@ class BatchTextRenderingTests(unittest.TestCase):
     """``review_comments_batch_text`` produces the prompt entry list."""
 
     def test_empty_batch_renders_empty_string(self) -> None:
-        self.assertEqual(review_comments_batch_text([]), '')
+        self.assertEqual(review_comments_batch_text([], wrap=None), '')
 
     def test_single_comment_with_localization(self) -> None:
         text = review_comments_batch_text([
@@ -71,7 +71,7 @@ class BatchTextRenderingTests(unittest.TestCase):
                 comment_id='1', body='fix typo',
                 file_path='src/auth.py', line_number=42, line_type='added',
             ),
-        ])
+        ], wrap=None)
         self.assertIn('1.', text)
         self.assertIn('File: src/auth.py:42 (added)', text)
         self.assertIn('Comment by reviewer: fix typo', text)
@@ -80,7 +80,7 @@ class BatchTextRenderingTests(unittest.TestCase):
         text = review_comments_batch_text([
             _build_comment(comment_id='1', body='first'),
             _build_comment(comment_id='2', body='second'),
-        ])
+        ], wrap=None)
         self.assertIn('1.', text)
         self.assertIn('2.', text)
         # Order preserved.
@@ -89,7 +89,7 @@ class BatchTextRenderingTests(unittest.TestCase):
     def test_comment_without_localization_says_pr_level(self) -> None:
         text = review_comments_batch_text([
             _build_comment(comment_id='1', body='general thoughts'),
-        ])
+        ], wrap=None)
         self.assertIn('PR-level comment', text)
         self.assertIn('general thoughts', text)
 

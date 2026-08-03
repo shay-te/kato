@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import os
 
-from agent_core_lib.agent_core_lib.helpers.text_utils import normalized_text
+from utils_core_lib.utils_core_lib.text_utils import normalized_text
 
 
 def build_claude_subprocess_env(

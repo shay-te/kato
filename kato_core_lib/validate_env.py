@@ -10,7 +10,7 @@ from kato_core_lib.helpers.kato_config_utils import (
     is_bedrock_model,
     is_openrouter_model,
 )
-from kato_core_lib.helpers.text_utils import (
+from utils_core_lib.utils_core_lib.text_utils import (
     alphanumeric_lower_text,
     normalized_lower_text,
     normalized_text,

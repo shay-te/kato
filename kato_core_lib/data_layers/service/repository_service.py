@@ -14,7 +14,7 @@ from git_core_lib.git_core_lib.helpers.git_clean_utils import (
 )
 from kato_core_lib.data_layers.data.task import Task
 from kato_core_lib.data_layers.data.fields import RepositoryFields
-from kato_core_lib.helpers.text_utils import (
+from utils_core_lib.utils_core_lib.text_utils import (
     normalized_text,
     text_from_attr,
 )

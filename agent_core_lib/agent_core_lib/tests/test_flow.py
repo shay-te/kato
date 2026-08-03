@@ -253,6 +253,7 @@ class ReviewFixPromptFlowTests(unittest.TestCase):
         batch = review_comments_batch_text(
             [self.file_comment, self.pr_comment],
             workspace_path=self.workspace,
+        wrap=None,
         )
         # Numbered 1. and 2.
         self.assertIn('1.', batch)
@@ -295,6 +296,7 @@ class ReviewFixPromptFlowTests(unittest.TestCase):
         batch = review_comments_batch_text(
             [self.file_comment, self.pr_comment],
             workspace_path=self.workspace,
+        wrap=None,
         )
         context = review_comment_context_text(
             self.file_comment,

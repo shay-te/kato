@@ -72,6 +72,46 @@ block = workspace_scope_block(
 guardrails = security_guardrails_text()
 ```
 
+## Comment-prompt payload (use these — do not hand-roll)
+
+Anything that asks an agent to act on a **comment** — a pull-request review
+comment, a batch of them, or an in-app diff comment — must assemble its
+payload from these helpers. They were previously copy-pasted per prompt
+builder, the copies drifted, and the same operator-visible bugs recurred four
+times as a result.
+
+```python
+from agent_core_lib.agent_core_lib.helpers.agent_prompt_utils import (
+    comment_target_line,             # 1-based commented line, either record shape
+    review_comment_location_text,    # 'File: path:line (type)' [+ 'Commit: sha']
+    commented_code_block,            # the actual code at that line, framed
+    comment_thread_text,             # prior turns, self-replies dropped, framed
+    review_comments_batch_text,      # numbered list for a 2+-comment batch
+    narrow_edit_guardrails_text,     # "smallest possible change" rules
+)
+```
+
+Why each is mandatory rather than optional:
+
+- **`commented_code_block`** — a comment saying only "revert this" carries no
+  information without the line it points at. Given a file path and a line
+  *number*, an agent guesses which change is meant, and that guess overshoots:
+  the reported case rewrote an entire file.
+- **`narrow_edit_guardrails_text`** — the instruction to stay narrow. One
+  builder never had it at all, which is what made the above possible.
+- **`comment_thread_text`** — pass `drop_prefixes=` with the prefixes your bot
+  uses on its own replies, or the agent is handed its own previous output as
+  though a human wrote it and re-reads it as new instructions.
+- **`review_comment_location_text`** — one localization vocabulary, so an agent
+  is told *where* a comment lives the same way on every surface.
+
+`wrap=` is a parameter, not an import: comment threads and repo file content
+are written by whoever can comment or commit, so they must be framed as data
+rather than instructions — but the framing helper lives in the sandbox library
+and this library depends on no other core-lib. **Callers pass their wrapper.**
+Omitting it silently removes a prompt-injection defense; the batch renderer
+lost it that way for every multi-comment review.
+
 ## Agent workflow integration
 
 Use this library in the caller/workflow layer, before invoking an agent
