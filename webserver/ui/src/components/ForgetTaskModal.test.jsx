@@ -39,6 +39,49 @@ describe('ForgetTaskModal', () => {
     ).toBeInTheDocument();
   });
 
+  // The ticket id alone doesn't say WHICH work is about to be destroyed, and
+  // a mistaken forget is unrecoverable — so the human title is shown too.
+  test('shows the task title alongside the id', () => {
+    render(
+      <ForgetTaskModal
+        session={_session({ task_summary: 'Fix flaky checkout retry' })}
+        onConfirm={vi.fn()} onCancel={vi.fn()}
+      />,
+    );
+    expect(document.getElementById('forget-task-name')).toHaveTextContent('KATO-123');
+    expect(screen.getByText('Fix flaky checkout retry')).toBeInTheDocument();
+  });
+
+  test('omits the title block when the task has no summary', () => {
+    // No empty heading taking up space, and no stray whitespace where a
+    // title would be — the id-only dialog must look deliberate.
+    for (const summary of [undefined, '', '   ']) {
+      const { unmount } = render(
+        <ForgetTaskModal
+          session={_session({ task_summary: summary })}
+          onConfirm={vi.fn()} onCancel={vi.fn()}
+        />,
+      );
+      expect(document.getElementById('forget-task-summary')).toBeNull();
+      unmount();
+    }
+  });
+
+  test('a long title wraps instead of being clipped', () => {
+    // A truncated title is exactly the case where someone confirms the wrong
+    // task, so the element must not opt into ellipsis/nowrap.
+    render(
+      <ForgetTaskModal
+        session={_session({ task_summary: 'x'.repeat(300) })}
+        onConfirm={vi.fn()} onCancel={vi.fn()}
+      />,
+    );
+    const title = document.getElementById('forget-task-summary');
+    expect(title).toBeInTheDocument();
+    expect(title.textContent).toHaveLength(300);
+    expect(title.className).toContain('forget-task-title');
+  });
+
   test('confirm button is a distinct danger action and fires onConfirm', () => {
     const onConfirm = vi.fn();
     render(

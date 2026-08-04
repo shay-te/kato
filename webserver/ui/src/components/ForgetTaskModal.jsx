@@ -29,6 +29,10 @@ export default function ForgetTaskModal({ session, onConfirm, onCancel }) {
   if (!session) { return null; }
 
   const taskId = String(session.task_id || '').trim() || 'this task';
+  // The ticket id alone ("UNA-2913") does not tell the operator WHICH piece of
+  // work they are about to destroy — a mistaken forget is unrecoverable, so
+  // the confirm has to be readable without cross-referencing the tracker.
+  const taskTitle = String(session.task_summary || '').trim();
   const baseStatus = deriveTabStatus(session);
   const inReview = baseStatus === TAB_STATUS.REVIEW;
   const hasUnpushed = !!session.has_changes_pending;
@@ -43,6 +47,12 @@ export default function ForgetTaskModal({ session, onConfirm, onCancel }) {
       onClose={onCancel}
       backdropClose
     >
+        {taskTitle && (
+          <p className="forget-task-title" id="forget-task-summary">
+            {taskTitle}
+          </p>
+        )}
+
         <p className="forget-task-lead">
           This permanently deletes kato&rsquo;s local copy of{' '}
           <strong>{taskId}</strong>. It cannot be undone. Here&rsquo;s

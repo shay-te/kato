@@ -3694,6 +3694,20 @@ code {
   color: $C-NEUTRAL-96;
 }
 
+/* The ticket's human title, directly under the id. Reads as the heading of
+   the thing being destroyed, so it is the largest text in the body — the id
+   alone doesn't tell an operator which work they are about to lose. Wraps
+   rather than truncates: a clipped title is exactly the case where someone
+   confirms the wrong task. */
+.forget-task-title {
+  margin: 0;
+  font-size: $TEXT-15;
+  font-weight: 600;
+  color: $C-NEUTRAL-96;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
 .forget-task-lead {
   margin: 0;
   font-size: $TEXT-13;
