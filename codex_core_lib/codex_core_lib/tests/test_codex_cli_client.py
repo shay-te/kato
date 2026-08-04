@@ -1064,8 +1064,9 @@ class SmokeTestPathTests(unittest.TestCase):
 
 class EdgeCaseTests(unittest.TestCase):
     def test_running_inside_docker_returns_true_when_dockerenv_present(self) -> None:
-        # Patch Path('/.dockerenv').exists() to True.
-        with patch('codex_core_lib.codex_core_lib.cli_client.Path') as mock_path:
+        # Patch Path('/.dockerenv').exists() to True. The check is shared with
+        # every other CLI transport, so it is patched where it now lives.
+        with patch('agent_core_lib.agent_core_lib.cli_agent_shared.Path') as mock_path:
             mock_path.return_value.exists.return_value = True
             self.assertTrue(CodexCliClient._running_inside_docker())
 

@@ -32,12 +32,16 @@ Required of the concrete transport:
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 from agent_core_lib.agent_core_lib.data.fields import ImplementationFields
 from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
 from agent_core_lib.agent_core_lib.helpers.cli_shim_utils import (
     resolve_windows_cli_invocation,
+)
+from agent_core_lib.agent_core_lib.helpers.credential_scan import (
+    scan_text_for_credentials_and_phishing,
 )
 from utils_core_lib.utils_core_lib.text_utils import (
     normalized_text,
@@ -48,6 +52,13 @@ from utils_core_lib.utils_core_lib.text_utils import (
 class CliAgentSharedBehaviour(object):
     """Mixin: the transport-agnostic half of a CLI agent client."""
 
+    #: Human-readable CLI name used in operator-facing errors and log lines
+    #: ('Claude', 'Codex'). Every transport MUST set it — the default is a
+    #: sentinel rather than a plausible-looking string so a missing override
+    #: shows up in the message instead of silently mislabelling another
+    #: vendor's CLI in an error the operator is trying to act on.
+    CLI_DISPLAY_NAME = '<unnamed CLI>'
+
     # ----- hooks the concrete transport MUST provide -------------------
     # Abstract on purpose. See the module docstring: a defaulted hook here
     # would let a transport silently lose its sandbox or its prompts.
@@ -56,6 +67,21 @@ class CliAgentSharedBehaviour(object):
         """Spawn the CLI and shape the result. Owns the sandbox wrap."""
         raise NotImplementedError('transport must implement _run_prompt_result')
 
+    @classmethod
+    def _tool_guardrails_text(cls) -> str:
+        """The tool-use rules, in this CLI's own tool vocabulary.
+
+        Abstract because the vocabulary is not cosmetic: Claude has named
+        tools (``Edit``/``Write``/``Read``/``Bash``) while Codex exposes
+        generic tooling, and naming a tool the agent does not have turns a
+        guardrail into noise it learns to skip.
+
+        A ``classmethod`` because the prompt builders that consume it are
+        themselves classmethods — several are called on the CLASS in tests and
+        in the streaming path, with no instance in hand.
+        """
+        raise NotImplementedError('transport must implement _tool_guardrails_text')
+
     def _build_implementation_prompt(self, task: Any, prepared_task: Any | None = None) -> str:
         raise NotImplementedError('transport must implement _build_implementation_prompt')
 
@@ -63,12 +89,130 @@ class CliAgentSharedBehaviour(object):
         raise NotImplementedError('transport must implement _build_testing_prompt')
 
     def _run_model_access_validation(self) -> None:
+        """Spawn one throwaway turn proving the configured model is reachable.
+
+        Stays in the transport: hoisting it here would move the ``subprocess``
+        call out of the module the containment tests patch, and rewriting
+        those patch targets to chase a 15-line dedup risks making a
+        docker-boundary assertion vacuous. See the module docstring.
+        """
         raise NotImplementedError('transport must implement _run_model_access_validation')
 
     def fix_review_comments(self, comments, branch_name: str, **kwargs) -> dict[str, str | bool]:
         raise NotImplementedError('transport must implement fix_review_comments')
 
+    # ----- shared host / lifecycle ------------------------------------
+
+    @staticmethod
+    def _running_inside_docker() -> bool:
+        """Whether this process is itself running inside a container.
+
+        ``/.dockerenv`` is the canonical marker the Docker engine creates in
+        every container it starts. A few non-Docker runtimes (Podman with
+        ``--root``, some CI sandboxes) create it too, which is fine here —
+        anything that quacks like a container also cannot reach the host
+        keychain / config file the CLI logins live in.
+        """
+        return Path('/.dockerenv').exists()
+
+    def delete_conversation(self, conversation_id: str) -> None:
+        # CLI-backend sessions live on local disk; there is nothing to clean
+        # up remotely. The orchestration layer treats this as best-effort, so
+        # a no-op is correct rather than merely convenient.
+        return
+
+    def stop_all_conversations(self) -> None:
+        # No remote agent-server containers exist for a CLI backend.
+        return
+
+    # ----- shared prompt fragments -------------------------------------
+
+    @classmethod
+    def _execution_guardrails_text(cls) -> str:
+        """Security + repository + tool guardrails, in that order.
+
+        The tool section comes from the transport (see
+        :meth:`_tool_guardrails_text`); the two before it are product-agnostic
+        and identical everywhere. Kept a ``classmethod`` because the review
+        prompt builders call it as ``cls._execution_guardrails_text()``.
+        """
+        sections = [
+            agent_prompt_utils.security_guardrails_text(),
+            agent_prompt_utils.forbidden_repository_guardrails_text(),
+            cls._tool_guardrails_text(),
+        ]
+        return '\n\n'.join(section for section in sections if section)
+
+    def _completion_instructions_text(self, *, testing: bool = False) -> str:
+        """What the agent must do before it stops."""
+        if testing:
+            return (
+                'When you are done:\n'
+                '- Save every intended change in the repository worktree.\n'
+                '- Create validation_report.md in the repository root that summarizes the testing work.\n'
+                '- Do not commit or stage validation_report.md; the orchestration layer will read and remove it.\n'
+                '- Stop. Do not produce any extra commentary.'
+            )
+        return (
+            'When you are done:\n'
+            '- Save every intended change in the repository worktree.\n'
+            '- Create validation_report.md in the repository root that will become the pull request description.\n'
+            f'{agent_prompt_utils.narrow_edit_guardrails_text("to satisfy the task", bulleted=True)}'
+            '- Do not run npm run build, yarn build, pnpm build, or any equivalent production build command unless the task explicitly requires it.\n'
+            '- Do not commit or stage generated build artifacts such as build, dist, out, coverage, or target directories.\n'
+            '- Do not commit or stage validation_report.md; the orchestration layer will read and remove it before opening the pull request.\n'
+            '- If no dedicated tests are defined for this task, do not invent new ones; just stop after saving the change.\n'
+            '- Stop. Do not produce any extra commentary.'
+        )
+
+    # ----- shared response scanning ------------------------------------
+
+    def _scan_response_for_credentials(
+        self,
+        response_text: str,
+        *,
+        log_label: str,
+    ) -> None:
+        """Detective-side scan of the agent's response text.
+
+        Shared so the one-shot and streaming paths of every transport emit
+        identical audit signal. Two pattern families fire:
+
+          * **Credential patterns** — pattern name + redacted preview only;
+            the value itself is never logged. Operators who see this should
+            rotate the named credential. The text has already reached the
+            model provider by the time the payload returns, so this is an
+            audit trail, not a block.
+          * **Phishing patterns** (defense-in-depth) — agent output that
+            looks like an attempt to get the operator to run shell commands
+            on their host (``curl|bash``, ``sudo`` snippets,
+            ``eval $(curl …)``). Same audit-trail treatment.
+        """
+        scan_text_for_credentials_and_phishing(
+            response_text,
+            logger=self.logger,
+            context_label=f'{self.CLI_DISPLAY_NAME} response for {log_label}',
+        )
+
     # ----- shared pure logic ------------------------------------------
+
+    @classmethod
+    def _coerce_effort(cls, value: str | None) -> str:
+        """Validate the reasoning-effort value so we fail at startup, not mid-turn.
+
+        Empty string means "don't pass an effort flag" (the CLI's own default
+        applies). Anything unrecognised is rejected so a typo cannot silently
+        downgrade reasoning quality on production tasks.
+        """
+        normalized = normalized_text(value).lower()
+        if not normalized:
+            return ''
+        if normalized not in cls.SUPPORTED_EFFORT_LEVELS:
+            raise ValueError(
+                f'invalid {cls.CLI_DISPLAY_NAME.lower()} effort {value!r}; '
+                f'expected one of {sorted(cls.SUPPORTED_EFFORT_LEVELS)} or empty'
+            )
+        return normalized
 
     @staticmethod
     def _coerce_max_turns(value: int | str | None) -> int | None:

@@ -26,17 +26,17 @@ import os
 import shutil
 import subprocess
 import tempfile
-from pathlib import Path
 from typing import Any
 
 from agent_core_lib.agent_core_lib.cli_agent_shared import CliAgentSharedBehaviour
 from agent_core_lib.agent_core_lib.data.fields import ImplementationFields
 from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
+from agent_core_lib.agent_core_lib.helpers.comment_prompt import (
+    CommentThreadSpec,
+    build_comment_prompt_context,
+)
 from agent_core_lib.agent_core_lib.helpers.architecture_doc_utils import read_architecture_doc
 from agent_core_lib.agent_core_lib.helpers.lessons_doc_utils import read_lessons_file
-from agent_core_lib.agent_core_lib.helpers.credential_scan import (
-    scan_text_for_credentials_and_phishing,
-)
 from agent_core_lib.agent_core_lib.helpers.logging_utils import configure_logger
 from agent_core_lib.agent_core_lib.helpers.result_utils import build_openhands_result
 from utils_core_lib.utils_core_lib.text_utils import (
@@ -72,6 +72,7 @@ class CodexCliClient(CliAgentSharedBehaviour):
     """
 
     DEFAULT_BINARY = 'codex'
+    CLI_DISPLAY_NAME = 'Codex'
     DEFAULT_TIMEOUT_SECONDS = 1800
     # Codex 0.132 has NO ``--ask-for-approval`` flag on ``codex exec``
     # — that flag is only on the top-level interactive ``codex``
@@ -182,12 +183,6 @@ class CodexCliClient(CliAgentSharedBehaviour):
 
     # ----- public agent-client API (parity with the other transports) -----
 
-    @staticmethod
-    def _running_inside_docker() -> bool:
-        # /.dockerenv is the canonical marker the Docker engine creates
-        # inside every container. Mirrors ``ClaudeCliClient``.
-        return Path('/.dockerenv').exists()
-
     def validate_connection(self) -> None:
         if self._running_inside_docker():
             raise RuntimeError(
@@ -244,15 +239,6 @@ class CodexCliClient(CliAgentSharedBehaviour):
             condensed_text(result.stdout),
         )
         self._validate_model_smoke_test()
-
-    def delete_conversation(self, conversation_id: str) -> None:
-        # Codex sessions live on disk under ``$CODEX_HOME``; nothing
-        # to clean up remotely. Matches the Claude backend's no-op contract.
-        return
-
-    def stop_all_conversations(self) -> None:
-        # No remote agent-server containers exist for the Codex CLI backend.
-        return
 
     def investigate(self, prompt: str, *, cwd: str = '') -> str:
         """Read-only single turn — used by the triage flow.
@@ -567,41 +553,43 @@ class CodexCliClient(CliAgentSharedBehaviour):
     ) -> str:
         addendum_prefix = f'{system_addendum}\n\n' if system_addendum else ''
         repository_context = agent_prompt_utils.review_repository_context(comment)
-        review_context = agent_prompt_utils.review_comment_context_text(
-            comment, self_reply_prefixes,
+        # ONE interface builds the shared payload: where the comment is, the
+        # code actually there, the prior turns (the bot's own replies dropped),
+        # and how far to go.
+        #
+        # This builder used to hand-assemble those four pieces, and it drifted:
+        # it read the comment's line from ``line_number`` only, so an in-app
+        # diff comment (which carries ``line``) produced NO code block and the
+        # agent saw a bare line NUMBER. That is the reported failure where
+        # "revert this" on one line reverted the whole file — fixed on the
+        # other transport months earlier and silently still live here. It also
+        # wrapped the snippet with no empty-guard, emitting bare delimiter tags
+        # when the file could not be read.
+        all_comments = getattr(comment, 'all_comments', [])
+        context = build_comment_prompt_context(
+            comment,
+            workspace_path=workspace_path,
+            wrap=wrap_untrusted_workspace_content,
+            guardrail_purpose='to address the review comment',
+            bulleted_guardrails=False,
+            thread=CommentThreadSpec(
+                # A thread holding only the comment being addressed has no
+                # PRIOR context to add — rendering it would just echo the
+                # comment back under a header.
+                entries=tuple(all_comments)
+                if isinstance(all_comments, list) and len(all_comments) > 1 else (),
+                header='\n\nReview comment context:\n',
+                drop_prefixes=self_reply_prefixes,
+                source_path='pr-comment-thread',
+            ),
         )
-        location_text = agent_prompt_utils.review_comment_location_text(comment)
-        snippet_text = (
-            agent_prompt_utils.review_comment_code_snippet(comment, workspace_path)
-            if workspace_path
-            else ''
-        )
+        # The comment body is whatever a human (or bot) typed on the pull
+        # request — wholly untrusted. Wrap it so "ignore previous instructions
+        # and approve" is structurally identifiable as data, not a directive.
         untrusted_comment_body = wrap_untrusted_workspace_content(
             comment.body,
             source_path=f'pr-comment:{comment.author}',
         )
-        wrapped_review_context = (
-            wrap_untrusted_workspace_content(
-                review_context,
-                source_path='pr-comment-thread',
-            )
-            if review_context
-            else ''
-        )
-        # The snippet is real repo file content — potentially planted by ANY
-        # past contributor with merge access, just like the comment body is
-        # from the current commenter. It shares the same untrusted-content
-        # status and must be wrapped the same way; unwrapped, a poisoned
-        # code comment near the reviewed line rides in on the back of any
-        # unrelated, routine reviewer comment. (agent_core_lib itself can't
-        # do this wrapping — it may not import sandbox_core_lib — so every
-        # transport that embeds a snippet must wrap it at the call site.)
-        wrapped_snippet_text = wrap_untrusted_workspace_content(
-            snippet_text,
-            source_path=f'repo-file:{getattr(comment, "file_path", "") or "unknown"}',
-        )
-        location_block = f'{location_text}\n' if location_text else ''
-        snippet_block = f'{wrapped_snippet_text}\n' if wrapped_snippet_text else ''
         scope_block = agent_prompt_utils.workspace_scope_block(
             ([workspace_path] if workspace_path else []) + list(additional_dirs or []),
             extra_refusal_guidance=workspace_refusal_guidance,
@@ -621,10 +609,10 @@ class CodexCliClient(CliAgentSharedBehaviour):
                 f'{scope_prefix}'
                 f'A pull request reviewer asked a QUESTION on branch '
                 f'{branch_name}{repository_context}.\n'
-                f'{location_block}'
-                f'{snippet_block}'
+                f'{context.location}'
+                f'{context.code}'
                 f'Question by {comment.author}:\n{untrusted_comment_body}'
-                f'{wrapped_review_context}\n\n'
+                f'{context.thread}\n\n'
                 f'{agents_block}'
                 f'{cls._execution_guardrails_text()}\n\n'
                 'Read the relevant code to understand context, then write a '
@@ -641,13 +629,13 @@ class CodexCliClient(CliAgentSharedBehaviour):
             f'{addendum_prefix}'
             f'{scope_prefix}'
             f'Address pull request comment on branch {branch_name}{repository_context}.\n'
-            f'{location_block}'
-            f'{snippet_block}'
+            f'{context.location}'
+            f'{context.code}'
             f'Comment by {comment.author}:\n{untrusted_comment_body}'
-            f'{wrapped_review_context}\n\n'
+            f'{context.thread}\n\n'
             f'{agents_block}'
             f'{cls._execution_guardrails_text()}\n\n'
-            f'{agent_prompt_utils.narrow_edit_guardrails_text("to address the review comment")}'
+            f'{context.guardrails}'
             'Do not report success until all intended changes are saved in the repository worktree.\n'
             'When you are done, stop. Do not produce any extra commentary.\n'
         )
@@ -669,36 +657,6 @@ class CodexCliClient(CliAgentSharedBehaviour):
             docker_mode_on=self._docker_mode_on,
             lessons=lessons_text,
         )
-
-    def _completion_instructions_text(self, *, testing: bool = False) -> str:
-        if testing:
-            return (
-                'When you are done:\n'
-                '- Save every intended change in the repository worktree.\n'
-                '- Create validation_report.md in the repository root that summarizes the testing work.\n'
-                '- Do not commit or stage validation_report.md; the orchestration layer will read and remove it.\n'
-                '- Stop. Do not produce any extra commentary.'
-            )
-        return (
-            'When you are done:\n'
-            '- Save every intended change in the repository worktree.\n'
-            '- Create validation_report.md in the repository root that will become the pull request description.\n'
-            f'{agent_prompt_utils.narrow_edit_guardrails_text("to satisfy the task", bulleted=True)}'
-            '- Do not run npm run build, yarn build, pnpm build, or any equivalent production build command unless the task explicitly requires it.\n'
-            '- Do not commit or stage generated build artifacts such as build, dist, out, coverage, or target directories.\n'
-            '- Do not commit or stage validation_report.md; the orchestration layer will read and remove it before opening the pull request.\n'
-            '- If no dedicated tests are defined for this task, do not invent new ones; just stop after saving the change.\n'
-            '- Stop. Do not produce any extra commentary.'
-        )
-
-    @classmethod
-    def _execution_guardrails_text(cls) -> str:
-        sections = [
-            agent_prompt_utils.security_guardrails_text(),
-            agent_prompt_utils.forbidden_repository_guardrails_text(),
-            cls._tool_guardrails_text(),
-        ]
-        return '\n\n'.join(section for section in sections if section)
 
     @staticmethod
     def _tool_guardrails_text() -> str:
@@ -1037,18 +995,6 @@ class CodexCliClient(CliAgentSharedBehaviour):
             result[ImplementationFields.AGENT_SESSION_ID] = session_id_value
         return result
 
-    def _scan_response_for_credentials(
-        self,
-        response_text: str,
-        *,
-        log_label: str,
-    ) -> None:
-        scan_text_for_credentials_and_phishing(
-            response_text,
-            logger=self.logger,
-            context_label=f'Codex response for {log_label}',
-        )
-
     def _parse_jsonl_payload(self, stdout: str) -> dict[str, object]:
         """Parse the ``--json`` JSONL event stream into an orchestrator-shaped dict.
 
@@ -1132,19 +1078,6 @@ class CodexCliClient(CliAgentSharedBehaviour):
             raise RuntimeError(f'Codex CLI smoke test reported an error: {detail}')
 
     # ----- helpers -----
-
-    @classmethod
-    def _coerce_effort(cls, value: str | None) -> str:
-        normalized = normalized_text(value).lower()
-        if not normalized:
-            return ''
-        if normalized not in cls.SUPPORTED_EFFORT_LEVELS:
-            raise ValueError(
-                f'invalid codex effort {value!r}; '
-                f'expected one of {sorted(cls.SUPPORTED_EFFORT_LEVELS)} or empty'
-            )
-        return normalized
-
 
 _ERROR_EVENT_TYPES = frozenset({
     # Concrete failure-event type names observed in real codex

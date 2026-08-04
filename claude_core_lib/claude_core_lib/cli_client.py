@@ -4,7 +4,6 @@ import json
 import os
 import shutil
 import subprocess
-from pathlib import Path
 from typing import Any
 
 from agent_core_lib.agent_core_lib.cli_agent_shared import CliAgentSharedBehaviour
@@ -22,9 +21,6 @@ from utils_core_lib.utils_core_lib.text_utils import (
     normalized_text,
     text_from_attr,
     text_from_mapping,
-)
-from agent_core_lib.agent_core_lib.helpers.credential_scan import (
-    scan_text_for_credentials_and_phishing,
 )
 from claude_core_lib.claude_core_lib.helpers.effort_levels import (
     FALLBACK_EFFORT_LEVELS,
@@ -51,6 +47,7 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
     """
 
     DEFAULT_BINARY = 'claude'
+    CLI_DISPLAY_NAME = 'Claude'
     DEFAULT_TIMEOUT_SECONDS = 1800
     SAFE_PERMISSION_MODE = 'acceptEdits'
     BYPASS_PERMISSION_MODE = 'bypassPermissions'
@@ -213,15 +210,6 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
 
     # ----- public agent-client API (parity with the other transports) -----
 
-    @staticmethod
-    def _running_inside_docker() -> bool:
-        # /.dockerenv is the canonical marker the Docker engine creates
-        # inside every container it starts. A few non-Docker runtimes (e.g.
-        # Podman with --root, some CI sandboxes) also create it, which is
-        # fine for our purposes — anything that quacks like a container
-        # also can't reach the host's macOS Keychain or `claude login`.
-        return Path('/.dockerenv').exists()
-
     def validate_connection(self) -> None:
         if self._running_inside_docker():
             raise RuntimeError(
@@ -288,16 +276,6 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
             condensed_text(result.stdout),
         )
         self._validate_model_smoke_test()
-
-    def delete_conversation(self, conversation_id: str) -> None:
-        # Claude CLI sessions are stored locally on disk; nothing to clean up
-        # remotely. The orchestration layer treats this as a best-effort cleanup
-        # hook, so a no-op is correct.
-        return
-
-    def stop_all_conversations(self) -> None:
-        # No remote agent-server containers exist for the Claude CLI backend.
-        return
 
     def investigate(self, prompt: str, *, cwd: str = '') -> str:
         """Run a single read-only Claude turn and return the raw text.
@@ -729,36 +707,6 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
             'When you are done, stop. Do not produce any extra commentary.\n'
         )
 
-    def _completion_instructions_text(self, *, testing: bool = False) -> str:
-        if testing:
-            return (
-                'When you are done:\n'
-                '- Save every intended change in the repository worktree.\n'
-                '- Create validation_report.md in the repository root that summarizes the testing work.\n'
-                '- Do not commit or stage validation_report.md; the orchestration layer will read and remove it.\n'
-                '- Stop. Do not produce any extra commentary.'
-            )
-        return (
-            'When you are done:\n'
-            '- Save every intended change in the repository worktree.\n'
-            '- Create validation_report.md in the repository root that will become the pull request description.\n'
-            f'{agent_prompt_utils.narrow_edit_guardrails_text("to satisfy the task", bulleted=True)}'
-            '- Do not run npm run build, yarn build, pnpm build, or any equivalent production build command unless the task explicitly requires it.\n'
-            '- Do not commit or stage generated build artifacts such as build, dist, out, coverage, or target directories.\n'
-            '- Do not commit or stage validation_report.md; the orchestration layer will read and remove it before opening the pull request.\n'
-            '- If no dedicated tests are defined for this task, do not invent new ones; just stop after saving the change.\n'
-            '- Stop. Do not produce any extra commentary.'
-        )
-
-    @classmethod
-    def _execution_guardrails_text(cls) -> str:
-        sections = [
-            agent_prompt_utils.security_guardrails_text(),
-            agent_prompt_utils.forbidden_repository_guardrails_text(),
-            cls._tool_guardrails_text(),
-        ]
-        return '\n\n'.join(section for section in sections if section)
-
     @staticmethod
     def _tool_guardrails_text() -> str:
         return (
@@ -1088,38 +1036,6 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
             result[ImplementationFields.AGENT_SESSION_ID] = session_id_value
         return result
 
-    def _scan_response_for_credentials(
-        self,
-        response_text: str,
-        *,
-        log_label: str,
-    ) -> None:
-        """Detective-side scan on the agent's response text.
-
-        Delegates to the shared
-        :func:`claude_core_lib...helpers.credential_scan.
-        scan_text_for_credentials_and_phishing` so the one-shot and
-        streaming paths produce identical audit signal. Two pattern
-        families fire:
-
-          * **Credential patterns** (residual #18) — pattern name +
-            redacted preview only; the full credential value is never
-            logged. Operators who see this should rotate the named
-            credential. The agent's text has already crossed to
-            Anthropic by the time the JSON payload returns, so this
-            is an audit trail not a block.
-          * **Phishing patterns** (residual #16, defense-in-depth) —
-            agent output that looks like an attempt to trick the
-            operator into running shell commands on their host
-            (``curl|bash``, ``sudo`` snippets, ``eval $(curl …)``).
-            Same audit-trail treatment.
-        """
-        scan_text_for_credentials_and_phishing(
-            response_text,
-            logger=self.logger,
-            context_label=f'Claude response for {log_label}',
-        )
-
     def _parse_json_payload(self, stdout: str) -> dict[str, object]:
         text = (stdout or '').strip()
         if not text:
@@ -1203,26 +1119,6 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
             raise RuntimeError(f'Claude CLI smoke test reported an error: {detail}')
 
     # ----- helpers -----
-
-    @classmethod
-    def _coerce_effort(cls, value: str | None) -> str:
-        """Validate the ``--effort`` value so we fail at startup, not mid-turn.
-
-        Accepted: ``low``, ``medium``, ``high``, ``xhigh``, ``max``. Empty
-        string means "don't pass --effort" (Claude uses its default).
-        Anything else is rejected so a typo doesn't silently regress
-        reasoning quality on production tasks.
-        """
-        normalized = normalized_text(value).lower()
-        if not normalized:
-            return ''
-        if normalized not in cls.SUPPORTED_EFFORT_LEVELS:
-            raise ValueError(
-                f'invalid claude effort {value!r}; '
-                f'expected one of {sorted(cls.SUPPORTED_EFFORT_LEVELS)} or empty'
-            )
-        return normalized
-
 
 def _repository_local_paths(prepared_task) -> list[str]:
     """Pull the per-task workspace clone paths off ``prepared_task``.
