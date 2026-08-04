@@ -31,7 +31,7 @@ from kato_core_lib.data_layers.data.fields import ImplementationFields
 from provider_client_base.provider_client_base.data.review_comment import ReviewComment
 from kato_core_lib.data_layers.data.task import Task
 from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
-from kato_core_lib.helpers.kato_result_utils import build_openhands_result
+from agent_core_lib.agent_core_lib.helpers.result_utils import build_openhands_result
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
 from utils_core_lib.utils_core_lib.text_utils import normalized_text

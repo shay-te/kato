@@ -173,5 +173,48 @@ class FailureContractTests(unittest.TestCase):
             self.assertFalse(atomic_write_json(self.path, {'a': 1}))
 
 
+class CleanupIsBestEffortTests(unittest.TestCase):
+    """The ``finally`` block must never turn a write failure into a crash.
+
+    Both fallbacks below run only when the CLEANUP itself fails — closing an
+    already-invalid descriptor, or unlinking a temp file something else
+    removed first. Neither says anything about the caller's data, so raising
+    from here would replace an honest ``False`` with an unrelated OSError
+    from the cleanup path.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.path = Path(self._tmp.name) / 'state.json'
+
+    def test_a_failing_descriptor_close_is_swallowed(self) -> None:
+        # fdopen fails, so the raw descriptor is still ours to close — and
+        # that close then fails too.
+        with patch('utils_core_lib.utils_core_lib.atomic_write.os.fdopen',
+                   side_effect=OSError('fdopen failed')), \
+             patch('utils_core_lib.utils_core_lib.atomic_write.os.close',
+                   side_effect=OSError('close failed')):
+            self.assertFalse(atomic_write_json(self.path, {'a': 1}))
+
+    def test_a_failing_temp_unlink_is_swallowed(self) -> None:
+        with patch('utils_core_lib.utils_core_lib.atomic_write.os.replace',
+                   side_effect=OSError('disk full')), \
+             patch('utils_core_lib.utils_core_lib.atomic_write.os.unlink',
+                   side_effect=OSError('already gone')):
+            self.assertFalse(atomic_write_json(self.path, {'a': 1}))
+
+    def test_raise_on_error_still_propagates_the_REAL_error(self) -> None:
+        # The write failure is what the caller needs to see — not whatever
+        # the cleanup hit on its way out.
+        with patch('utils_core_lib.utils_core_lib.atomic_write.os.replace',
+                   side_effect=OSError('disk full')), \
+             patch('utils_core_lib.utils_core_lib.atomic_write.os.unlink',
+                   side_effect=OSError('already gone')):
+            with self.assertRaises(OSError) as ctx:
+                atomic_write_json(self.path, {'a': 1}, raise_on_error=True)
+        self.assertIn('disk full', str(ctx.exception))
+
+
 if __name__ == '__main__':
     unittest.main()

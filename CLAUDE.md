@@ -12,7 +12,7 @@ kato test            # run the unittest suite
 
 `kato` is the single operator entry point — `kato up | bootstrap | doctor | test | build-agent-server | sandbox <build|login|verify> | compose-docker`. There is no Makefile. The suite can also be run directly: `python -m unittest discover -s tests -p "test_*.py"`.
 
-94 pre-existing errors in `openhands_core_lib` — ignore. Zero failures expected.
+**Zero failures AND zero errors expected — everywhere.** `openhands_core_lib` used to carry 94 pre-existing errors that this file told you to ignore; that suite now runs 257 tests clean, so an error there is a real regression, not background noise. Do not reinstate a blanket "ignore" for any lib.
 
 **Keep the code redundancy-free** (full rules in AGENTS.md → "No redundancy"). Before finishing work:
 - `cd webserver/ui && npm run dedup` — frontend duplicate-code gate (jscpd; fails above 0.3%; only the 2 intentional clones are allowed).
