@@ -140,9 +140,17 @@ export function fetchAgentVersion(force = false) {
 }
 
 export function upgradeAgentCli() {
-  // Returns the standard envelope; the upgrade result is in ``body``
-  // ({ ok, message, version_before, version_after }).
+  // STARTS the upgrade and returns immediately; ``body`` is the first progress
+  // snapshot. Poll fetchAgentUpgradeStatus for the bar + live output.
   return postEnvelope('/api/agent-version/upgrade', {});
+}
+
+export function fetchAgentUpgradeStatus() {
+  // Progress snapshot of the in-flight (or last) upgrade:
+  // { state, percent, step, command, lines, ok, message, version_before,
+  //   version_after }. The job lives server-side, so this re-attaches after a
+  // reload instead of losing a run that's still going.
+  return fetchJson('/api/agent-version/upgrade');
 }
 
 // Settings drawer — currently exposes ``repository_root_path`` only.

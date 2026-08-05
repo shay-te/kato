@@ -1,45 +1,31 @@
 import { useState } from 'react';
-import { useAgentVersion, refreshAgentVersion } from '../hooks/useAgentVersion.js';
-import { upgradeAgentCli } from '../api.js';
-import { toast } from '../stores/toastStore.js';
+import { useAgentVersion } from '../hooks/useAgentVersion.js';
+import { useAgentUpgrade } from '../hooks/useAgentUpgrade.js';
 import AgentUpgradeModal from './AgentUpgradeModal.jsx';
 
-// Always-visible banner warning that the CONFIGURED agent CLI is out of date
-// (or missing). Mirrors SafetyBanner: self-contained, renders nothing in the
-// healthy case. When in-app upgrade is enabled (claude + npm, non-Docker) it
-// also offers an "Upgrade" action gated behind an explicit per-use confirm.
-// On success it re-probes so the banner + the ultracode toggle update live —
-// no page reload.
+// Always-visible banner telling the operator the CONFIGURED agent CLI is
+// behind the published release, below the recommended minimum, or missing.
+// Mirrors SafetyBanner: self-contained, renders nothing in the healthy case.
+// When in-app upgrade is available it offers an "Upgrade" action gated behind
+// an explicit per-use confirm, then shows a live progress bar. The version
+// re-probe that clears the banner (and re-enables the ultracode toggle) is
+// driven by useAgentUpgrade — no page reload.
 export default function AgentVersionBanner() {
   const info = useAgentVersion();
-  const [phase, setPhase] = useState('idle');  // idle | confirming | running
+  const { progress, start, dismiss } = useAgentUpgrade();
+  const [confirming, setConfirming] = useState(false);
   const message = bannerMessage(info);
-  if (!message) { return null; }
+  const upgrading = Boolean(progress);
+  // An upgrade started from an earlier render (or another tab, or before a
+  // reload) must keep its modal even once the banner text clears.
+  if (!message && !upgrading) { return null; }
 
   const url = String(info?.download_url || '').trim();
   const command = String(info?.upgrade_command || '');
 
-  async function runUpgrade() {
-    setPhase('running');
-    const result = await upgradeAgentCli();
-    const body = (result && result.body) || {};
-    if (body.ok) {
-      toast.show({
-        kind: 'success', title: 'Agent CLI upgraded',
-        message: body.message || 'Upgraded.', durationMs: 9000,
-      });
-      // Live update — banner clears + the ultracode toggle (re)appears with no
-      // reload. New agent runs already use the new binary.
-      await refreshAgentVersion();
-      setPhase('idle');
-    } else {
-      toast.show({
-        kind: 'error', title: 'Upgrade failed',
-        message: body.message || (result && result.error) || 'Upgrade failed.',
-        durationMs: 11000,
-      });
-      setPhase('idle');
-    }
+  function closeModal() {
+    dismiss();
+    setConfirming(false);
   }
 
   // "not found" is genuinely blocking (the backend can't run) → assertive
@@ -49,32 +35,35 @@ export default function AgentVersionBanner() {
 
   return (
     <>
-      <div
-        className={`kato-version-banner kato-version-banner--${severity}`}
-        role={role}
-        aria-live="polite"
-      >
-        <span className="kato-version-banner__icon" aria-hidden="true">
-          {severity === 'warn' ? '!' : '↑'}
-        </span>
-        {renderText(message, url)}
-        {info?.can_upgrade ? (
-          <button
-            type="button"
-            className="primary kato-version-banner__upgrade"
-            onClick={() => setPhase('confirming')}
-          >
-            Upgrade now
-          </button>
-        ) : renderBlockedReason(info)}
-      </div>
-      {/* The confirm is a popup (not crammed into the banner row). */}
-      {info?.can_upgrade && (phase === 'confirming' || phase === 'running') && (
+      {message && (
+        <div
+          className={`kato-version-banner kato-version-banner--${severity}`}
+          role={role}
+          aria-live="polite"
+        >
+          <span className="kato-version-banner__icon" aria-hidden="true">
+            {severity === 'warn' ? '!' : '↑'}
+          </span>
+          {renderText(message, url)}
+          {info?.can_upgrade ? (
+            <button
+              type="button"
+              className="primary kato-version-banner__upgrade"
+              onClick={() => setConfirming(true)}
+            >
+              Upgrade now
+            </button>
+          ) : renderBlockedReason(info)}
+        </div>
+      )}
+      {/* The confirm + progress live in a popup (not crammed into the banner
+          row). It stays open through the whole run and the outcome. */}
+      {(confirming || upgrading) && (
         <AgentUpgradeModal
           command={command}
-          running={phase === 'running'}
-          onConfirm={runUpgrade}
-          onCancel={() => setPhase('idle')}
+          progress={progress}
+          onConfirm={start}
+          onCancel={closeModal}
         />
       )}
     </>
@@ -129,12 +118,17 @@ function bannerMessage(info) {
       </>
     );
   }
-  if (info.up_to_date === false) {
+  if (info.update_available || info.up_to_date === false) {
     const ver = info.version || info.version_raw || 'unknown';
-    const min = info.recommended_min ? ` (recommended ≥ ${info.recommended_min})` : '';
+    // Prefer the CONCRETE published version over the recommended floor: "on
+    // 2.1.179, latest is 2.1.222" is actionable, "recommended ≥ 2.1.160" while
+    // sitting on 2.1.179 reads as though nothing is wrong.
+    const target = info.latest_version
+      ? ` — latest is ${info.latest_version}`
+      : (info.recommended_min ? ` (recommended ≥ ${info.recommended_min})` : '');
     return (
       <>
-        <strong>{name} CLI update available</strong> — you're on {ver}{min}.
+        <strong>{name} CLI update available</strong> — you're on {ver}{target}.
         {' '}Upgrade the <code>{info.binary}</code> CLI on the kato host for the
         latest fixes{info.backend === 'claude' ? ', subagents, and workflows/ultracode' : ''}.
       </>

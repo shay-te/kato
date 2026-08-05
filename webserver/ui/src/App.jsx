@@ -302,7 +302,7 @@ export default function App() {
   // CLI version + picker catalogues, so a CLI upgrade or settings change shows
   // in the banner / model picker with no kato restart.
   const handleHeaderRefresh = useCallback(async () => {
-    refreshAgentVersion(true);
+    refreshAgentVersion();
     refreshCatalogs();
     await refresh();
   }, [refresh]);

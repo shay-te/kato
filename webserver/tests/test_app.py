@@ -1243,22 +1243,21 @@ class ModelEndpointTests(unittest.TestCase):
         self.assertEqual([m['id'] for m in body['models'] if m.get('default')], ['sonnet'])
 
     def test_unmatched_configured_model_is_surfaced_not_silently_misflagged(self):
-        # When the configured model matches NO offered id (e.g. an older
-        # pinned fable after the catalog self-upgraded), the picker must
-        # not keep the stale discovery flag (sonnet) — that would claim a
-        # model that will not run. The configured value itself is surfaced
-        # as the flagged entry, because spawn passes it verbatim.
+        # When the configured model matches NO offered id, the picker must not
+        # keep the stale discovery flag (sonnet) — that would claim a model
+        # that will not run. The configured value itself is surfaced as the
+        # flagged entry, because spawn passes it verbatim.
         from claude_core_lib.claude_core_lib.helpers.model_catalog import reset_models_cache
         reset_models_cache()
         self.addCleanup(reset_models_cache)
         runner = SimpleNamespace(
-            _defaults=SimpleNamespace(binary='claude', model='claude-fable-99'),
+            _defaults=SimpleNamespace(binary='claude', model='some-custom-model'),
         )
         self.app.config['PLANNING_SESSION_RUNNER'] = runner
         body = self.client.get('/api/models').get_json()
         flagged = [m for m in body['models'] if m.get('default')]
         self.assertEqual(len(flagged), 1)
-        self.assertEqual(flagged[0]['id'], 'claude-fable-99')
+        self.assertEqual(flagged[0]['id'], 'some-custom-model')
         self.assertIn('(configured)', flagged[0]['label'])
         # The catalog's own entries lost their stale flag.
         self.assertNotIn(
@@ -1267,22 +1266,22 @@ class ModelEndpointTests(unittest.TestCase):
 
     def test_match_model_alias_handles_alias_full_id_and_miss(self):
         from kato_webserver.app import _match_model_alias
-        ids = ['claude-fable-5', 'opus', 'sonnet', 'haiku']
+        ids = ['fable', 'opus', 'sonnet', 'haiku']
         self.assertEqual(_match_model_alias('opus', ids), 'opus')
         self.assertEqual(_match_model_alias('OPUS', ids), 'opus')
         self.assertEqual(_match_model_alias('claude-opus-4-8', ids), 'opus')  # full id → family
         self.assertEqual(_match_model_alias('gpt-5.5', ['gpt-5.5']), 'gpt-5.5')  # codex direct
         self.assertEqual(_match_model_alias('mystery-model', ids), '')  # no match
-        # Fable: the picker offers a pinned FULL id and spawn passes the
-        # configured value verbatim, so only SAME-version variants match —
-        # a family-level fallback would highlight a model that won't run.
-        self.assertEqual(_match_model_alias('claude-fable-5', ids), 'claude-fable-5')
-        self.assertEqual(_match_model_alias('claude-fable-5[1m]', ids), 'claude-fable-5')
-        # A different concrete version must NOT be flagged as "will run".
-        self.assertEqual(_match_model_alias('claude-fable-6', ids), '')
-        # Bare 'fable' has no CLI alias — the CLI rejects it at spawn, so
-        # the picker must not legitimize it by highlighting a real model.
-        self.assertEqual(_match_model_alias('fable', ids), '')
+        # Fable is now a real CLI alias like the others ("Provide an alias for
+        # the latest model (e.g. 'fable', 'opus', or 'sonnet')"), so it matches
+        # by FAMILY — the alias genuinely runs the latest fable, whatever
+        # concrete version was configured, so this can't misreport what spawns.
+        self.assertEqual(_match_model_alias('fable', ids), 'fable')
+        self.assertEqual(_match_model_alias('claude-fable-5', ids), 'fable')
+        self.assertEqual(_match_model_alias('claude-fable-5[1m]', ids), 'fable')
+        self.assertEqual(_match_model_alias('claude-fable-6', ids), 'fable')
+        # A family the picker doesn't offer still matches nothing.
+        self.assertEqual(_match_model_alias('claude-fable-5', ['opus']), '')
 
     def test_get_openrouter_models_returns_catalog(self):
         from unittest.mock import patch

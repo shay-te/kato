@@ -6712,6 +6712,70 @@ body.kato-resizing #left-pane-resizer::before {
   overflow-x: auto;
 }
 
+/* Determinate progress bar for a running upgrade. The width is driven by the
+ * host's observed milestones, so the transition only has to smooth the steps
+ * between them — not fake motion the server never reported. */
+.agent-upgrade-progress {
+  margin: 0 0 12px;
+}
+
+.agent-upgrade-progress__track {
+  height: 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.agent-upgrade-progress__fill {
+  height: 100%;
+  border-radius: 6px;
+  background: #0a84ff;
+  transition: width 0.4s ease-out;
+}
+
+.agent-upgrade-progress__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #c8c8cd;
+}
+
+.agent-upgrade-progress__percent {
+  color: #a3a3a3;
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-upgrade-outcome {
+  margin: 0 0 12px;
+  line-height: 1.5;
+}
+
+.agent-upgrade-outcome--ok {
+  color: #34d399;
+}
+
+.agent-upgrade-outcome--error {
+  color: #f87171;
+}
+
+/* The host's own command output. Capped and scrollable so npm's verbose
+ * fetch log can't push the dialog's buttons off-screen. */
+.agent-upgrade-log {
+  margin: 0 0 16px;
+  padding: 8px 10px;
+  max-height: 180px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #a3a3a3;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-y: auto;
+}
+
 /* Orchestrator activity feed — fills the right pane when no task is selected */
 .orchestrator-feed {
   display: flex;

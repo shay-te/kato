@@ -2955,43 +2955,18 @@ def _match_model_alias(configured: str, ids: list) -> str:
 
     Matches exactly first (``opus`` → ``opus``; a codex slug → itself), then by
     Claude family so a full id like ``claude-opus-4-8`` still resolves to the
-    ``opus`` alias the picker offers (the alias genuinely runs the latest, so
-    family-level matching is truthful there). Fable is stricter — see
-    ``_match_pinned_fable_id``.
+    ``opus`` alias the picker offers. Family-level matching is truthful for
+    EVERY family — including fable — because the picker now offers the stable
+    CLI alias, which resolves to the latest of that family, rather than a
+    pinned full id that could name a different concrete model than the one
+    spawn would run.
     """
     candidate = (configured or '').strip().lower()
     if candidate in ids:
         return candidate
-    for family in ('opus', 'sonnet', 'haiku'):
+    for family in ('fable', 'opus', 'sonnet', 'haiku'):
         if family in ids and (candidate == family or candidate.startswith(f'claude-{family}')):
             return family
-    return _match_pinned_fable_id(candidate, ids)
-
-
-def _match_pinned_fable_id(candidate: str, ids: list) -> str:
-    """Match a configured fable id to the offered pinned id — same version only.
-
-    Fable has no CLI alias: the picker offers a pinned FULL id and spawn
-    passes the configured value verbatim, so a family-level fallback could
-    flag a DIFFERENT concrete model than the one that will actually run
-    (e.g. configured ``claude-fable-5`` highlighted as an offered
-    ``claude-fable-6``). Only suffix variants of the SAME version match
-    (``claude-fable-5[1m]`` → ``claude-fable-5``). The bare word ``fable``
-    matches nothing — the CLI rejects ``--model fable``, and mapping it
-    would legitimize a config that fails at spawn.
-    """
-    from claude_core_lib.claude_core_lib.helpers.model_catalog import (
-        family_version_from_model_id,
-    )
-    wanted = family_version_from_model_id(candidate)
-    if wanted is None or wanted[0] != 'fable':
-        return ''
-    for offered in ids:
-        if not isinstance(offered, str):
-            continue
-        parsed = family_version_from_model_id(offered)
-        if parsed is not None and parsed[:3] == wanted[:3]:
-            return offered
     return ''
 
 
@@ -3275,6 +3250,16 @@ def _register_agent_version_route(app: Flask) -> None:
         """
         if _truthy_arg(request.args.get('refresh')):
             app.config.pop('AGENT_VERSION_INFO', None)
+            # A manual refresh must also re-ask the registry — otherwise a
+            # release published during this process's lifetime stays invisible
+            # until the published-version TTL lapses.
+            try:
+                from kato_core_lib.helpers.agent_version_utils import (
+                    reset_latest_version_cache,
+                )
+                reset_latest_version_cache()
+            except Exception:
+                app.logger.exception('could not reset the published-version cache')
         cached = app.config.get('AGENT_VERSION_INFO')
         if cached is None:
             try:
@@ -3287,7 +3272,9 @@ def _register_agent_version_route(app: Flask) -> None:
                 cached = {
                     'backend': 'unknown', 'binary': '', 'found': True,
                     'version': None, 'version_raw': '', 'recommended_min': '',
-                    'up_to_date': True, 'supports_workflows': False, 'detail': '',
+                    'up_to_date': True, 'latest_version': None,
+                    'update_available': False, 'supports_workflows': False,
+                    'detail': '',
                 }
             app.config['AGENT_VERSION_INFO'] = cached
         return jsonify(cached)
@@ -3296,24 +3283,47 @@ def _register_agent_version_route(app: Flask) -> None:
 def _register_agent_version_upgrade_route(app: Flask) -> None:
     @app.post('/api/agent-version/upgrade')
     def post_agent_version_upgrade():
-        """Run the gated, FIXED CLI-upgrade command (claude+npm only).
+        """START the gated, FIXED CLI upgrade in the background.
+
+        Returns immediately with the first progress snapshot; the UI polls the
+        GET below for the bar and the live log. Running it inline used to hold
+        the request open for the whole install, so a reload or a proxy timeout
+        lost a command that was still modifying the host.
 
         The operator's per-use approval happens in the UI (confirm); the
-        server-side gate (opt-in setting + claude + non-docker) is enforced in
-        ``upgrade_agent_cli``. Busts the cached version so the next GET
-        re-probes. Reports failure in the body (not an HTTP error) so the UI
-        can show the message.
+        server-side gate (opt-in setting + supported backend + non-docker) is
+        enforced in ``upgrade_plan``. Failures are reported in the body (not an
+        HTTP error) so the UI can show the message.
         """
         try:
-            from kato_core_lib.helpers.agent_version_utils import (
-                upgrade_agent_cli,
-            )
+            from kato_core_lib.helpers import agent_cli_upgrade_job
         except Exception:
             app.logger.exception('agent upgrade helper unavailable')
-            return jsonify({'ok': False, 'message': 'upgrade helper unavailable'})
-        result = upgrade_agent_cli()
+            return jsonify({'ok': False, 'state': 'error',
+                            'message': 'upgrade helper unavailable'})
         app.config.pop('AGENT_VERSION_INFO', None)
-        return jsonify(result)
+        return jsonify(agent_cli_upgrade_job.start())
+
+    @app.get('/api/agent-version/upgrade')
+    def get_agent_version_upgrade():
+        """Progress snapshot for the in-flight (or last) upgrade.
+
+        ``{state, percent, step, command, lines, ok, message, version_before,
+        version_after}``. Poll-friendly and reload-safe: the job lives on the
+        server, so closing the modal never orphans it.
+        """
+        try:
+            from kato_core_lib.helpers import agent_cli_upgrade_job
+        except Exception:
+            app.logger.exception('agent upgrade helper unavailable')
+            return jsonify({'ok': False, 'state': 'error',
+                            'message': 'upgrade helper unavailable'})
+        snapshot = agent_cli_upgrade_job.status()
+        if snapshot.get('state') in ('done', 'error'):
+            # The binary may have just changed under us — force the next
+            # version GET to re-probe instead of serving the pre-upgrade cache.
+            app.config.pop('AGENT_VERSION_INFO', None)
+        return jsonify(snapshot)
 
 
 # Action Guard categories whose remembered "allow always" must never

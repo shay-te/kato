@@ -47,6 +47,12 @@ vi.mock('./api.js', () => ({
     { ok: true, body: { repositories: [] } },
   ),
   updateRepositoryApprovals: vi.fn().mockResolvedValue({ ok: true, body: {} }),
+  // AgentVersionBanner re-attaches to any in-flight CLI upgrade on mount, so
+  // the progress read fires even when nothing is upgrading.
+  fetchAgentUpgradeStatus: vi.fn().mockResolvedValue(
+    { state: 'idle', percent: 0, lines: [] },
+  ),
+  upgradeAgentCli: vi.fn().mockResolvedValue({ ok: true, body: {} }),
 }));
 
 vi.mock('./hooks/useSessions.js', () => ({

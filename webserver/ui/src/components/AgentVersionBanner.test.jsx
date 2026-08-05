@@ -1,24 +1,38 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
-const { _agentVer, _refresh, _upgrade } = vi.hoisted(() => ({
+const { _agentVer, _refresh, _upgrade, _status, _catalogs } = vi.hoisted(() => ({
   _agentVer: { value: null },
   _refresh: { fn: null },
   _upgrade: { fn: null },
+  _status: { fn: null },
+  _catalogs: { fn: null },
 }));
 vi.mock('../hooks/useAgentVersion.js', () => ({
   useAgentVersion: () => _agentVer.value,
   refreshAgentVersion: (...a) => _refresh.fn(...a),
 }));
+vi.mock('../hooks/useCatalogRefresh.js', () => ({
+  refreshCatalogs: (...a) => _catalogs.fn(...a),
+}));
 vi.mock('../api.js', () => ({
   upgradeAgentCli: (...a) => _upgrade.fn(...a),
+  fetchAgentUpgradeStatus: (...a) => _status.fn(...a),
 }));
 
 import AgentVersionBanner from './AgentVersionBanner.jsx';
 
+const IDLE = { state: 'idle', percent: 0, lines: [] };
+const DONE = {
+  state: 'done', ok: true, percent: 100, message: 'upgraded (2.1.142 → 2.1.222)',
+  lines: ['added 1 package'],
+};
+
 beforeEach(() => {
   _refresh.fn = vi.fn().mockResolvedValue({});
-  _upgrade.fn = vi.fn().mockResolvedValue({ ok: true, body: { ok: true, message: 'upgraded' } });
+  _catalogs.fn = vi.fn();
+  _status.fn = vi.fn().mockResolvedValue({ ...IDLE });
+  _upgrade.fn = vi.fn().mockResolvedValue({ ok: true, body: { ...DONE } });
 });
 
 function renderWith(info) {
@@ -64,6 +78,31 @@ describe('AgentVersionBanner', () => {
     // Calm advisory styling — NOT the red security-alert banner.
     expect(banner).toHaveClass('kato-version-banner', 'kato-version-banner--info');
     expect(container.querySelector('.kato-safety-banner')).toBeNull();
+  });
+
+  test('a CLI that clears the floor but trails the published release still shows', () => {
+    // The reported bug: 2.1.179 vs a 2.1.160 floor read as "up to date" and the
+    // banner stayed silent while 2.1.222 was out.
+    renderWith({
+      backend: 'claude', binary: 'claude', found: true, up_to_date: true,
+      update_available: true, version: '2.1.179', recommended_min: '2.1.160',
+      latest_version: '2.1.222',
+    });
+    const banner = screen.getByRole('status');
+    expect(banner).toHaveTextContent(/update available/i);
+    expect(banner).toHaveTextContent(/2\.1\.179/);
+    expect(banner).toHaveTextContent(/latest is 2\.1\.222/i);
+  });
+
+  test('names the published version rather than the recommended floor', () => {
+    renderWith({
+      backend: 'claude', binary: 'claude', found: true, up_to_date: false,
+      update_available: true, version: '2.1.142', recommended_min: '2.1.160',
+      latest_version: '2.1.222',
+    });
+    const banner = screen.getByRole('status');
+    expect(banner).toHaveTextContent(/latest is 2\.1\.222/i);
+    expect(banner).not.toHaveTextContent(/recommended/i);
   });
 
   test('the out-of-date banner links to the download page (opens in a new tab)', () => {
@@ -169,13 +208,49 @@ describe('AgentVersionBanner', () => {
     await waitFor(() => expect(_refresh.fn).toHaveBeenCalledTimes(1));
   });
 
-  test('a failed upgrade does not re-probe and returns to idle', async () => {
-    _upgrade.fn = vi.fn().mockResolvedValue({ ok: true, body: { ok: false, message: 'npm exited 1' } });
+  test('a finished upgrade also re-fetches the model picker catalogue', async () => {
+    // A new CLI can resolve its aliases to newer models. Re-probing only the
+    // version would leave the picker showing the OLD CLI's model labels until
+    // the operator hit the header Refresh.
     renderWith(_UPGRADABLE);
     fireEvent.click(screen.getByRole('button', { name: /upgrade now/i }));
     fireEvent.click(screen.getByRole('button', { name: /confirm upgrade/i }));
-    await waitFor(() => expect(_upgrade.fn).toHaveBeenCalledTimes(1));
-    expect(_refresh.fn).not.toHaveBeenCalled();
-    await waitFor(() => expect(screen.getByRole('button', { name: /upgrade now/i })).toBeInTheDocument());
+    await waitFor(() => expect(_catalogs.fn).toHaveBeenCalledTimes(1));
+  });
+
+  test('the outcome stays on screen after the run finishes', async () => {
+    renderWith(_UPGRADABLE);
+    fireEvent.click(screen.getByRole('button', { name: /upgrade now/i }));
+    fireEvent.click(screen.getByRole('button', { name: /confirm upgrade/i }));
+    await waitFor(() =>
+      expect(screen.getByText(/2\.1\.142 → 2\.1\.222/)).toBeInTheDocument());
+    // Closing it returns to the banner instead of leaving the dialog stuck.
+    fireEvent.click(screen.getByRole('button', { name: /close/i }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  test('a failed upgrade surfaces the error instead of silently closing', async () => {
+    _upgrade.fn = vi.fn().mockResolvedValue({
+      ok: true,
+      body: { state: 'error', ok: false, percent: 60,
+              message: 'npm exited with code 1', lines: ['npm ERR! EACCES'] },
+    });
+    renderWith(_UPGRADABLE);
+    fireEvent.click(screen.getByRole('button', { name: /upgrade now/i }));
+    fireEvent.click(screen.getByRole('button', { name: /confirm upgrade/i }));
+    await waitFor(() =>
+      expect(screen.getByText('npm exited with code 1')).toBeInTheDocument());
+    expect(screen.getByLabelText('Upgrade output')).toHaveTextContent('EACCES');
+  });
+
+  test('re-attaches to an upgrade already running (survives a reload)', async () => {
+    _status.fn = vi.fn().mockResolvedValue({
+      state: 'running', percent: 55, step: 'Installing…', lines: ['reify'],
+      command: 'npm install -g @anthropic-ai/claude-code@latest',
+    });
+    renderWith(_UPGRADABLE);
+    // No click — the job was started before this mount.
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '55');
   });
 });
