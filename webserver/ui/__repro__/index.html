@@ -1,0 +1,22 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>PENDING</title>
+<link rel="stylesheet" href="./app.css">
+<style>/*REPRO_NOMOTION*/ *,*::before,*::after{transition:none!important;animation:none!important}html,body{margin:0;height:100%}#layout{display:block!important;height:100%}.right-pane{display:none}.center-pane-with-tabs{height:calc(100% - 0px)}#task-header-slot{display:none} #out{position:fixed;bottom:0;left:0;z-index:99999;background:#000;color:#0f0;font:11px monospace;white-space:pre;max-height:40%;overflow:auto}</style>
+</head>
+<body>
+<div id="layout" class="has-top-tabs">
+  <div id="task-header-slot"></div>
+  <div class="right-pane"></div>
+  <div class="center-pane-with-tabs">
+    <div class="file-tab-strip"><ul class="file-tab-list"></ul></div>
+    <section id="editor-pane">
+      <header class="editor-pane-header">
+        <span class="editor-pane-path">flow_constants.py</span>
+        <span class="editor-pane-readonly-pill">read-only</span>
+      </header>
+      <div class="editor-pane-body"><div id="mount" style="height:100%"></div></div>
+    </section>
+  </div>
+</div>
+<pre id="out"></pre>
+<script type="module" src="./main.js"></script></body></html>
