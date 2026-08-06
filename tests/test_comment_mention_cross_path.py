@@ -8,7 +8,7 @@ work anyway" — was reported FOUR times. Every time it was fixed on one path
 and left broken on the other, because kato filters mentions in two completely
 independent places:
 
-  * ISSUE comments  → ``IssueClientBase._should_skip_comment``, used by
+  * ISSUE comments  → ``IssueClientBase._comment_addressed_elsewhere``, used by
     all five platform clients to decide what lands in the task description.
   * PR REVIEW comments → ``ReviewCommentService._review_comment_targets_someone_else``,
     used by the scan loop to decide what the agent acts on.
@@ -107,7 +107,7 @@ class IssuePathVerdictTests(unittest.TestCase):
         failures: list[str] = []
         for platform, client in _issue_clients().items():
             for label, body, expected in FIXTURES:
-                actual = client._should_skip_comment(body)
+                actual = client._comment_addressed_elsewhere(body)
                 if actual != expected:
                     failures.append(
                         f'{platform}/{label}: expected skip={expected}, '
@@ -139,7 +139,7 @@ class CrossPathAgreementTests(unittest.TestCase):
         disagreements: list[str] = []
         for platform, client in _issue_clients().items():
             for label, body, _ in FIXTURES:
-                issue_verdict = client._should_skip_comment(body)
+                issue_verdict = client._comment_addressed_elsewhere(body)
                 review_verdict = _review_skips(body)
                 if issue_verdict != review_verdict:
                     disagreements.append(
@@ -160,7 +160,7 @@ class CrossPathAgreementTests(unittest.TestCase):
             self.assertTrue(_review_skips(body), body)
             for platform, client in _issue_clients().items():
                 self.assertTrue(
-                    client._should_skip_comment(body),
+                    client._comment_addressed_elsewhere(body),
                     f'{platform} failed open on a brace-encoded human mention: {body!r}',
                 )
 
@@ -192,14 +192,14 @@ class UnresolvableIdentityDivergenceTests(unittest.TestCase):
         client = YouTrackClient('https://yt.example', 't', 30, bot_login='')
         client._resolved_bot_logins = ()
         client._fetch_current_user_logins = lambda: ()
-        self.assertFalse(client._should_skip_comment('@dave ping'))
+        self.assertFalse(client._comment_addressed_elsewhere('@dave ping'))
 
     def test_both_paths_still_ignore_mention_free_comments(self) -> None:
         # Whatever the identity situation, a comment tagging nobody is never
         # "someone else's" — that is the one rule both paths share absolutely.
         client = YouTrackClient('https://yt.example', 't', 30, bot_login='')
         client._fetch_current_user_logins = lambda: ()
-        self.assertFalse(client._should_skip_comment('plain note'))
+        self.assertFalse(client._comment_addressed_elsewhere('plain note'))
         self.assertFalse(
             ReviewCommentService._review_comment_targets_someone_else('plain note', ()),
         )

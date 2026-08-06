@@ -611,23 +611,23 @@ class CommentAddressedElsewhereTests(unittest.TestCase):
             client, '_fetch_current_user_logins',
             side_effect=AssertionError('should not resolve'),
         ):
-            self.assertFalse(client._should_skip_comment('plain note'))
+            self.assertFalse(client._comment_addressed_elsewhere('plain note'))
 
     def test_human_mention_is_elsewhere(self) -> None:
         client = _make_client()
         client._configure_bot_login('kato_bot')
-        self.assertTrue(client._should_skip_comment('@alice ping'))
+        self.assertTrue(client._comment_addressed_elsewhere('@alice ping'))
 
     def test_mid_sentence_human_mention_is_elsewhere(self) -> None:
         client = _make_client()
         client._configure_bot_login('kato_bot')
         self.assertTrue(
-            client._should_skip_comment('he look yada yda @Alice yes ..'))
+            client._comment_addressed_elsewhere('he look yada yda @Alice yes ..'))
 
     def test_bot_mention_is_kept(self) -> None:
         client = _make_client()
         client._configure_bot_login('kato_bot')
-        self.assertFalse(client._should_skip_comment('@kato_bot ping'))
+        self.assertFalse(client._comment_addressed_elsewhere('@kato_bot ping'))
 
     def test_unresolvable_identity_keeps_comment(self) -> None:
         client = _make_client()
@@ -635,70 +635,66 @@ class CommentAddressedElsewhereTests(unittest.TestCase):
         with patch.object(
             client, '_fetch_current_user_logins', return_value=(),
         ):
-            self.assertFalse(client._should_skip_comment('@alice ping'))
+            self.assertFalse(client._comment_addressed_elsewhere('@alice ping'))
 
 
 class CommentPolicyTests(unittest.TestCase):
-    """``include_comments`` / ``require_bot_mention`` — which comments reach
-    the agent at all.
+    """``include_comments`` / ``require_bot_mention`` — which comments become
+    agent INSTRUCTIONS (the task description).
 
-    Ticket comments are folded into the task the agent then acts on, so a
-    comment nobody addressed to the bot must not become an instruction. The
-    strict rule inverts the old default: instead of "keep everything except
-    comments tagging someone else", it is "keep ONLY comments tagging the
-    bot".
+    Applied to ``_comment_lines`` only. The fetched list (``all_comments``) is
+    the host's control plane and must stay complete — see
+    ControlPlaneIsNotFilteredTests below.
     """
 
-    def test_disabled_skips_every_comment(self) -> None:
+    def _lines(self, client, *bodies):
+        return client._comment_lines(
+            [{ISSUE_COMMENT_AUTHOR: 'someone', ISSUE_COMMENT_BODY: b} for b in bodies]
+        )
+
+    def test_disabled_hides_every_comment(self) -> None:
         client = _make_client()
         client._configure_bot_login('agent_bot')
         client._configure_comment_policy(include_comments=False)
-        for body in ('@agent_bot ping', 'plain note', '@alice ping', ''):
-            self.assertTrue(client._should_skip_comment(body), body)
+        self.assertEqual(
+            self._lines(client, '@agent_bot ping', 'plain note', '@alice ping'), [])
 
     def test_disabled_wins_over_require_mention(self) -> None:
         client = _make_client()
         client._configure_bot_login('agent_bot')
         client._configure_comment_policy(
             include_comments=False, require_bot_mention=True)
-        self.assertTrue(client._should_skip_comment('@agent_bot ping'))
+        self.assertEqual(self._lines(client, '@agent_bot ping'), [])
 
-    def test_require_mention_keeps_only_bot_mentions(self) -> None:
+    def test_require_mention_shows_only_bot_mentions(self) -> None:
         client = _make_client()
         client._configure_bot_login('agent_bot')
         client._configure_comment_policy(
             include_comments=True, require_bot_mention=True)
-        self.assertFalse(client._should_skip_comment('@agent_bot please fix'))
-        self.assertFalse(
-            client._should_skip_comment('cc @alice and @agent_bot here'))
+        self.assertEqual(
+            self._lines(client, '@agent_bot please fix', 'untagged chatter'),
+            ['- someone: @agent_bot please fix'],
+        )
 
-    def test_require_mention_skips_untagged_comments(self) -> None:
+    def test_require_mention_hides_untagged_comments(self) -> None:
         # The behavior change: a comment tagging NOBODY is conversation
-        # between people, not an instruction — the loose rule kept it.
+        # between people, not an instruction — the loose rule showed it.
         client = _make_client()
         client._configure_bot_login('agent_bot')
         client._configure_comment_policy(
             include_comments=True, require_bot_mention=True)
-        self.assertTrue(client._should_skip_comment('this also needs a test'))
-
-    def test_require_mention_skips_comments_tagging_others(self) -> None:
-        client = _make_client()
-        client._configure_bot_login('agent_bot')
-        client._configure_comment_policy(
-            include_comments=True, require_bot_mention=True)
-        self.assertTrue(client._should_skip_comment('@alice can you look'))
+        self.assertEqual(self._lines(client, 'this also needs a test'), [])
 
     def test_require_mention_is_case_insensitive(self) -> None:
         client = _make_client()
         client._configure_bot_login('agent_bot')
         client._configure_comment_policy(
             include_comments=True, require_bot_mention=True)
-        self.assertFalse(client._should_skip_comment('@Agent_Bot fix it'))
+        self.assertEqual(len(self._lines(client, '@Agent_Bot fix it')), 1)
 
     def test_require_mention_fails_closed_on_unresolvable_identity(self) -> None:
-        # We cannot confirm the bot was tagged, and acting on an unverified
-        # comment is exactly what this setting exists to prevent. (The loose
-        # rule fails OPEN here — see test_unresolvable_identity_keeps_comment.)
+        # We cannot confirm the bot was tagged, and feeding the agent an
+        # unverified comment is exactly what this setting exists to prevent.
         client = _make_client()
         client._configure_bot_login('')
         client._configure_comment_policy(
@@ -706,19 +702,7 @@ class CommentPolicyTests(unittest.TestCase):
         with patch.object(
             client, '_fetch_current_user_logins', return_value=(),
         ):
-            self.assertTrue(client._should_skip_comment('@agent_bot ping'))
-            self.assertTrue(client._should_skip_comment('plain note'))
-
-    def test_require_mention_uses_a_resolved_identity(self) -> None:
-        client = _make_client()
-        client._configure_bot_login('')
-        client._configure_comment_policy(
-            include_comments=True, require_bot_mention=True)
-        with patch.object(
-            client, '_fetch_current_user_logins', return_value=('resolved_bot',),
-        ):
-            self.assertFalse(client._should_skip_comment('@resolved_bot ping'))
-            self.assertTrue(client._should_skip_comment('@alice ping'))
+            self.assertEqual(self._lines(client, '@agent_bot ping', 'note'), [])
 
     def test_brace_encoded_bot_mention_counts(self) -> None:
         # Bitbucket writes ``@{account_id}``; the strict rule must see it or
@@ -727,7 +711,7 @@ class CommentPolicyTests(unittest.TestCase):
         client._configure_bot_login('557058:abc')
         client._configure_comment_policy(
             include_comments=True, require_bot_mention=True)
-        self.assertFalse(client._should_skip_comment('@{557058:abc} please fix'))
+        self.assertEqual(len(self._lines(client, '@{557058:abc} please fix')), 1)
 
     def test_policy_accepts_string_values_from_config(self) -> None:
         # Config arrives as strings from env/settings; ``bool("false")`` is
@@ -736,20 +720,72 @@ class CommentPolicyTests(unittest.TestCase):
         client._configure_bot_login('agent_bot')
         client._configure_comment_policy(
             include_comments='false', require_bot_mention='true')
-        self.assertTrue(client._should_skip_comment('@agent_bot ping'))
+        self.assertEqual(self._lines(client, '@agent_bot ping'), [])
         client._configure_comment_policy(
             include_comments='true', require_bot_mention='true')
-        self.assertFalse(client._should_skip_comment('@agent_bot ping'))
-        self.assertTrue(client._should_skip_comment('untagged note'))
+        self.assertEqual(len(self._lines(client, '@agent_bot ping')), 1)
+        self.assertEqual(self._lines(client, 'untagged note'), [])
 
-    def test_default_policy_is_the_loose_legacy_rule(self) -> None:
+    def test_default_policy_shows_comments(self) -> None:
         # A client that never configures a policy must behave exactly as
         # before, so an unwired provider can't silently start dropping work.
         client = _make_client()
         client._configure_bot_login('agent_bot')
-        self.assertFalse(client._should_skip_comment('plain note'))
-        self.assertFalse(client._should_skip_comment('@agent_bot ping'))
-        self.assertTrue(client._should_skip_comment('@alice ping'))
+        self.assertEqual(len(self._lines(client, 'plain note')), 1)
+        self.assertEqual(len(self._lines(client, '@agent_bot ping')), 1)
+
+
+class ControlPlaneIsNotFilteredTests(unittest.TestCase):
+    """Regression: the visibility policy must NEVER touch ``all_comments``.
+
+    The host reads its OWN prior comments back out of that list to know a task
+    already ran, and to recover the pull-request URL it posted. Those comments
+    tag nobody, so a "only comments that mention me" rule dropped every one —
+    the latch disappeared and every scan re-ran the task and posted the same
+    comment again, spamming the ticket and its watchers with a comment loop.
+    """
+
+    LATCH = 'Agent completed task ABC-1'
+
+    def _entries(self, client, *bodies):
+        return client._build_comment_entries(
+            [{'b': b} for b in bodies],
+            extract_body=lambda c: c['b'],
+            extract_author=lambda c: 'agent',
+            skip=lambda c: client._comment_addressed_elsewhere(c['b']),
+        )
+
+    def test_host_own_comments_survive_the_strictest_policy(self) -> None:
+        client = _make_client()
+        client._configure_bot_login('agent_bot')
+        client._configure_comment_policy(
+            include_comments=False, require_bot_mention=True)
+        bodies = [e[ISSUE_COMMENT_BODY] for e in self._entries(client, self.LATCH)]
+        self.assertEqual(bodies, [self.LATCH])
+
+    def test_untagged_human_comments_also_survive_in_the_list(self) -> None:
+        client = _make_client()
+        client._configure_bot_login('agent_bot')
+        client._configure_comment_policy(
+            include_comments=False, require_bot_mention=True)
+        bodies = [e[ISSUE_COMMENT_BODY] for e in self._entries(client, 'plain note')]
+        self.assertEqual(bodies, ['plain note'])
+
+    def test_list_still_drops_comments_aimed_at_other_people(self) -> None:
+        client = _make_client()
+        client._configure_bot_login('agent_bot')
+        self.assertEqual(self._entries(client, '@alice ping'), [])
+
+    def test_hidden_from_the_agent_yet_present_for_the_host(self) -> None:
+        # The two layers disagreeing is the WHOLE point: the description the
+        # agent reads is empty, the list the host reasons over is not.
+        client = _make_client()
+        client._configure_bot_login('agent_bot')
+        client._configure_comment_policy(
+            include_comments=True, require_bot_mention=True)
+        entries = self._entries(client, self.LATCH)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(client._comment_lines(entries), [])
 
 
 class BraceEncodedMentionTests(unittest.TestCase):
@@ -774,28 +810,28 @@ class BraceEncodedMentionTests(unittest.TestCase):
         client = _make_client()
         client._configure_bot_login('bot_user')
         self.assertTrue(
-            client._should_skip_comment('@{Dave Smith} please look'))
+            client._comment_addressed_elsewhere('@{Dave Smith} please look'))
         self.assertTrue(
-            client._should_skip_comment('@{557058:dave-uuid} look'))
+            client._comment_addressed_elsewhere('@{557058:dave-uuid} look'))
 
     def test_brace_mention_of_the_bot_is_kept(self) -> None:
         client = _make_client()
         client._configure_bot_login('bot_user')
-        self.assertFalse(client._should_skip_comment('@{bot_user} fix'))
+        self.assertFalse(client._comment_addressed_elsewhere('@{bot_user} fix'))
 
     def test_both_encodings_together(self) -> None:
         client = _make_client()
         client._configure_bot_login('bot_user')
         # Tagging the bot alongside a human is still the bot's to answer.
         self.assertFalse(
-            client._should_skip_comment('@{Dave Smith} and @bot_user'))
+            client._comment_addressed_elsewhere('@{Dave Smith} and @bot_user'))
 
     def test_code_annotations_are_still_not_mentions(self) -> None:
         # The denylist must survive the switch to the union extractor.
         client = _make_client()
         client._configure_bot_login('bot_user')
         self.assertFalse(
-            client._should_skip_comment('should this use @Override?'))
+            client._comment_addressed_elsewhere('should this use @Override?'))
 
 
 if __name__ == '__main__':

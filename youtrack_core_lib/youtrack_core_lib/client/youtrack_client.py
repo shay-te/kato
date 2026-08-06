@@ -449,8 +449,8 @@ class YouTrackClient(YouTrackClientBase):
             # bot — those are operator-to-employee discussions, not
             # requests the agent should act on. Comments with no
             # @-mention are kept (general project context). See
-            # IssueClientBase._should_skip_comment.
-            skip=lambda c: self._should_skip_comment(
+            # IssueClientBase._comment_addressed_elsewhere.
+            skip=lambda c: self._comment_addressed_elsewhere(
                 text_from_mapping(c, YouTrackCommentFields.TEXT),
             ),
         )

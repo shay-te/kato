@@ -525,14 +525,14 @@ class YouTrackBotIdentityWiringTests(unittest.TestCase):
         # identity to compare against) and got worked by the agent — with no
         # error anywhere, only clearing on a full process restart. Uses the
         # REAL client + REAL mention-detection code path
-        # (_should_skip_comment), only the network call is mocked.
+        # (_comment_addressed_elsewhere), only the network call is mocked.
         client = _make_base_with_login('me')  # forces lazy resolution
         with patch.object(
             client, '_get_with_retry', side_effect=RuntimeError('network blip'),
         ):
             # First attempt fails — filter must NOT silently disable itself.
             self.assertFalse(
-                client._should_skip_comment('@alice please handle this'),
+                client._comment_addressed_elsewhere('@alice please handle this'),
             )
         # A later call, once the API is healthy again, must actually retry
         # (not reuse a permanently-cached empty result).
@@ -541,10 +541,10 @@ class YouTrackBotIdentityWiringTests(unittest.TestCase):
             return_value=mock_response(json_data={'login': 'resolved_bot'}),
         ):
             self.assertTrue(
-                client._should_skip_comment('@alice please handle this'),
+                client._comment_addressed_elsewhere('@alice please handle this'),
             )
             self.assertFalse(
-                client._should_skip_comment('@resolved_bot please fix this'),
+                client._comment_addressed_elsewhere('@resolved_bot please fix this'),
             )
 
     def test_successful_resolution_is_still_cached_not_refetched(self):
@@ -556,34 +556,34 @@ class YouTrackBotIdentityWiringTests(unittest.TestCase):
             client, '_get_with_retry',
             return_value=mock_response(json_data={'login': 'resolved_bot'}),
         ) as get:
-            client._should_skip_comment('@alice first comment')
-            client._should_skip_comment('@bob second comment')
+            client._comment_addressed_elsewhere('@alice first comment')
+            client._comment_addressed_elsewhere('@bob second comment')
         self.assertEqual(get.call_count, 1)
 
 
 class YouTrackCommentAddressedElsewhereTests(unittest.TestCase):
-    """``_should_skip_comment`` with a resolved bot login."""
+    """``_comment_addressed_elsewhere`` with a resolved bot login."""
 
     def setUp(self):
         self.client = _make_base_with_login('kato_bot')
 
     def test_mention_of_other_human_is_addressed_elsewhere(self):
         self.assertTrue(
-            self.client._should_skip_comment('@alice please review'))
+            self.client._comment_addressed_elsewhere('@alice please review'))
 
     def test_mention_mid_sentence_is_addressed_elsewhere(self):
         # A mention embedded in prose, not at the start, must still count.
         self.assertTrue(
-            self.client._should_skip_comment(
+            self.client._comment_addressed_elsewhere(
                 'he look yada yda @Alice yes ..'))
 
     def test_mention_of_bot_is_not_addressed_elsewhere(self):
         self.assertFalse(
-            self.client._should_skip_comment('@kato_bot fix it'))
+            self.client._comment_addressed_elsewhere('@kato_bot fix it'))
 
     def test_no_mention_is_not_addressed_elsewhere(self):
         self.assertFalse(
-            self.client._should_skip_comment('just a note'))
+            self.client._comment_addressed_elsewhere('just a note'))
 
 
 if __name__ == '__main__':

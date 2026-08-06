@@ -114,6 +114,8 @@ class IssueClientBase(RetryingClientBase):
             body = str(comment.get(ISSUE_COMMENT_BODY, '') or '').strip()
             if not body or self._is_operational_comment(body):
                 continue
+            if self._comment_hidden_from_agent(body):
+                continue
             author = str(comment.get(ISSUE_COMMENT_AUTHOR, '') or 'unknown').strip() or 'unknown'
             lines.append(f'- {author}: {body}')
         return lines
@@ -340,7 +342,7 @@ class IssueClientBase(RetryingClientBase):
         and no fix short of a full restart. A genuinely unresolvable bot
         still costs at most one extra API call per comment that actually
         carries a mention (already the hot-path guard in
-        ``_should_skip_comment``), not a request storm.
+        ``_comment_addressed_elsewhere``), not a request storm.
         """
         if self._bot_login:
             return (self._bot_login,)
@@ -366,7 +368,7 @@ class IssueClientBase(RetryingClientBase):
 
         This used to be plain-``@login``-only, which made the filter
         FAIL-OPEN on any brace-encoded mention: no mention was extracted, so
-        ``_should_skip_comment`` saw a "mention-free" comment, kept
+        ``_comment_addressed_elsewhere`` saw a "mention-free" comment, kept
         it, and the agent went and worked a comment that tagged a human
         teammate. That is the recurring "the agent takes on comments where
         I tagged another developer" report — the review-comment path had
@@ -380,36 +382,55 @@ class IssueClientBase(RetryingClientBase):
         """
         return extract_all_mention_tokens(body)
 
-    def _should_skip_comment(self, body: object) -> bool:
-        """Whether this comment must be kept OUT of the agent's task context.
+    def _comment_addressed_elsewhere(self, body: object) -> bool:
+        """Whether a comment @-mentions humans OTHER than the bot.
 
-        Three cases, in order:
+        Decides what lands in the fetched comment list (``all_comments``).
 
-        * comments disabled by the host  →  skip everything;
-        * ``require_bot_mention``  →  keep ONLY comments that ``@mention`` the
-          bot. A comment nobody tagged is human conversation on the ticket,
-          not an instruction, so it is skipped too — that is the whole point
-          of the strict rule and the difference from the looser one below.
-          Skips **fail closed** when the bot's identity can't be resolved: we
-          cannot confirm the bot was tagged, and acting on an unverified
-          comment is exactly what this setting exists to prevent (the
-          resolver logs the failure).
-        * otherwise  →  the looser legacy rule: keep everything except
-          comments that tag humans other than the bot. Short-circuits before
-          resolving the bot identity when the comment carries no mention at
-          all, keeping the current-user round-trip off the hot path.
+        **This is deliberately NOT the operator's comment-visibility policy.**
+        ``all_comments`` is the host's CONTROL PLANE, not agent instructions:
+        the host reads its OWN prior comments back out of it to know a task
+        already ran (the "already started / completed / stopped" latch) and to
+        find the pull-request URL it posted earlier. Applying the visibility
+        policy here erased those markers — the host's own comments tag nobody,
+        so a "only comments that mention me" rule drops every one — the latch
+        vanished, and each scan re-ran the task and posted the same comment
+        again. That is a comment loop that spams the ticket and its watchers.
+        The visibility policy belongs to ``_comment_hidden_from_agent``, which
+        filters the DESCRIPTION the agent reads and nothing else.
+
+        Short-circuits before resolving the bot identity when the comment
+        carries no mention at all — that keeps the current-user round-trip
+        off the hot path for the overwhelmingly common mention-free comment.
         """
-        if not self._include_comments:
-            return True
         mentions = self._extract_comment_mentions(body)
-        if self._require_bot_mention:
-            return not mentions_include_identity(
-                mentions, self._effective_bot_logins()
-            )
         if not mentions:
             return False
         return is_addressed_elsewhere_from_mentions(
             mentions, self._effective_bot_logins()
+        )
+
+    def _comment_hidden_from_agent(self, body: object) -> bool:
+        """Whether the operator's policy keeps this comment out of the agent's
+        instructions. Applied ONLY to the task description.
+
+        * comments disabled by the host  →  hide everything;
+        * ``require_bot_mention``  →  show ONLY comments that ``@mention`` the
+          bot. A comment nobody tagged is human conversation on the ticket,
+          not an instruction, so it is hidden too — that is the point of the
+          strict rule. It **fails closed** when the bot's identity can't be
+          resolved: we cannot confirm the bot was tagged, and feeding the
+          agent an unverified comment is what this setting exists to prevent
+          (the resolver logs the failure).
+        * otherwise  →  show it; ``_comment_addressed_elsewhere`` has already
+          kept comments aimed at other people out of the list.
+        """
+        if not self._include_comments:
+            return True
+        if not self._require_bot_mention:
+            return False
+        return not mentions_include_identity(
+            self._extract_comment_mentions(body), self._effective_bot_logins()
         )
 
     # ----- text-attachment downloading (jira + youtrack) -----

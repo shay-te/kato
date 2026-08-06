@@ -38,7 +38,7 @@ class GitLabIssuesClient(IssueClientBase):
         # real username, the bot's actual username is resolved from GET /user.
         self._configure_bot_login(bot_login)
         # Which issue comments reach the agent at all (see
-        # IssueClientBase._should_skip_comment).
+        # IssueClientBase._comment_addressed_elsewhere).
         self._configure_comment_policy(
             include_comments=include_comments,
             require_bot_mention=require_bot_mention,
@@ -196,7 +196,7 @@ class GitLabIssuesClient(IssueClientBase):
         def skip(c: dict) -> bool:
             if c.get(GitLabCommentFields.SYSTEM):
                 return True
-            return self._should_skip_comment(
+            return self._comment_addressed_elsewhere(
                 c.get(GitLabCommentFields.BODY, ''),
             )
 

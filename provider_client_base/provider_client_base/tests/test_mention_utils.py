@@ -13,8 +13,8 @@ from provider_client_base.provider_client_base.helpers.mention_utils import (
     extract_all_mention_tokens,
     extract_mention_logins,
     is_addressed_elsewhere_from_mentions,
-    is_should_skip_comment,
-    is_should_skip_comment_any,
+    is_comment_addressed_elsewhere,
+    is_comment_addressed_elsewhere_any,
     mentions_include_identity,
 )
 
@@ -145,34 +145,34 @@ class IsCommentAddressedElsewhereTests(unittest.TestCase):
     # ---- filter disabled paths ----
 
     def test_empty_bot_login_disables_filter(self) -> None:
-        self.assertFalse(is_should_skip_comment('@alice please', ''))
-        self.assertFalse(is_should_skip_comment('@alice please', None))
+        self.assertFalse(is_comment_addressed_elsewhere('@alice please', ''))
+        self.assertFalse(is_comment_addressed_elsewhere('@alice please', None))
 
     def test_me_alias_disables_filter(self) -> None:
         # YouTrack's ``"me"`` is a query alias, not a real login — it
         # could never literally appear in a ``@mention``. Treat as
         # "filter disabled" rather than silently keeping nothing.
-        self.assertFalse(is_should_skip_comment('@alice please', 'me'))
-        self.assertFalse(is_should_skip_comment('@alice please', 'ME'))
-        self.assertFalse(is_should_skip_comment('@alice please', '  me  '))
+        self.assertFalse(is_comment_addressed_elsewhere('@alice please', 'me'))
+        self.assertFalse(is_comment_addressed_elsewhere('@alice please', 'ME'))
+        self.assertFalse(is_comment_addressed_elsewhere('@alice please', '  me  '))
 
     # ---- the actual rule ----
 
     def test_no_mentions_in_body_is_kept(self) -> None:
         # General project note → kato should still see it.
         self.assertFalse(
-            is_should_skip_comment('this also needs a unit test', 'kato_bot'),
+            is_comment_addressed_elsewhere('this also needs a unit test', 'kato_bot'),
         )
 
     def test_mention_matches_bot_is_kept(self) -> None:
         self.assertFalse(
-            is_should_skip_comment('@kato_bot fix the typo', 'kato_bot'),
+            is_comment_addressed_elsewhere('@kato_bot fix the typo', 'kato_bot'),
         )
 
     def test_mention_to_someone_else_is_skipped(self) -> None:
         # The actual reported bug.
         self.assertTrue(
-            is_should_skip_comment('@jane.doe please look at this', 'kato_bot'),
+            is_comment_addressed_elsewhere('@jane.doe please look at this', 'kato_bot'),
         )
 
     def test_bot_among_others_is_kept(self) -> None:
@@ -180,19 +180,19 @@ class IsCommentAddressedElsewhereTests(unittest.TestCase):
         # comment is still meant for kato → keep it.
         self.assertTrue(
             # only @alice — not kato.
-            is_should_skip_comment('@alice and @bob', 'kato_bot'),
+            is_comment_addressed_elsewhere('@alice and @bob', 'kato_bot'),
         )
         self.assertFalse(
             # kato is one of the addressees.
-            is_should_skip_comment('@alice and @kato_bot', 'kato_bot'),
+            is_comment_addressed_elsewhere('@alice and @kato_bot', 'kato_bot'),
         )
 
     def test_case_insensitive_match(self) -> None:
         self.assertFalse(
-            is_should_skip_comment('@Kato_Bot fix it', 'kato_bot'),
+            is_comment_addressed_elsewhere('@Kato_Bot fix it', 'kato_bot'),
         )
         self.assertFalse(
-            is_should_skip_comment('@kato_bot fix it', 'KATO_BOT'),
+            is_comment_addressed_elsewhere('@kato_bot fix it', 'KATO_BOT'),
         )
 
     def test_email_addresses_do_not_trigger_skip(self) -> None:
@@ -200,7 +200,7 @@ class IsCommentAddressedElsewhereTests(unittest.TestCase):
         # ``example``; otherwise plain operator notes that include an
         # email would be silently dropped.
         self.assertFalse(
-            is_should_skip_comment(
+            is_comment_addressed_elsewhere(
                 'forward this to ops@example.com please',
                 'kato_bot',
             ),
@@ -209,12 +209,12 @@ class IsCommentAddressedElsewhereTests(unittest.TestCase):
     def test_non_string_body_is_handled(self) -> None:
         # extract_body callbacks may return non-strings (Jira ADF,
         # numbers, lists). Filter must not crash.
-        self.assertFalse(is_should_skip_comment(42, 'kato_bot'))
-        self.assertFalse(is_should_skip_comment(None, 'kato_bot'))
+        self.assertFalse(is_comment_addressed_elsewhere(42, 'kato_bot'))
+        self.assertFalse(is_comment_addressed_elsewhere(None, 'kato_bot'))
 
     def test_bot_login_stripped_of_whitespace(self) -> None:
         self.assertTrue(
-            is_should_skip_comment('@jane please', '  kato_bot  '),
+            is_comment_addressed_elsewhere('@jane please', '  kato_bot  '),
         )
 
 
@@ -229,74 +229,74 @@ class IsCommentAddressedElsewhereAnyTests(unittest.TestCase):
     # ---- filter disabled paths ----
 
     def test_no_logins_disables_filter(self) -> None:
-        self.assertFalse(is_should_skip_comment_any('@alice please', ()))
-        self.assertFalse(is_should_skip_comment_any('@alice please', []))
+        self.assertFalse(is_comment_addressed_elsewhere_any('@alice please', ()))
+        self.assertFalse(is_comment_addressed_elsewhere_any('@alice please', []))
 
     def test_only_empty_or_me_logins_disables_filter(self) -> None:
         # Every candidate normalizes away → no usable login → keep everything,
         # exactly like the single-login form.
         self.assertFalse(
-            is_should_skip_comment_any('@alice please', ['', None, 'me', '  ME ']),
+            is_comment_addressed_elsewhere_any('@alice please', ['', None, 'me', '  ME ']),
         )
 
     def test_none_argument_disables_filter(self) -> None:
-        self.assertFalse(is_should_skip_comment_any('@alice please', None))
+        self.assertFalse(is_comment_addressed_elsewhere_any('@alice please', None))
 
     # ---- the multi-login rule ----
 
     def test_mention_to_someone_else_is_skipped(self) -> None:
         # Neither bot login is mentioned → addressed elsewhere → skip.
         self.assertTrue(
-            is_should_skip_comment_any('@jane.doe please look', self.BOT),
+            is_comment_addressed_elsewhere_any('@jane.doe please look', self.BOT),
         )
 
     def test_mention_of_task_platform_login_is_kept(self) -> None:
         self.assertFalse(
-            is_should_skip_comment_any('@kato_yt fix the typo', self.BOT),
+            is_comment_addressed_elsewhere_any('@kato_yt fix the typo', self.BOT),
         )
 
     def test_mention_of_code_host_login_is_kept(self) -> None:
         # The crux for a mixed deployment: the reviewer @-mentions the bot
         # under its OTHER (Bitbucket) login — must NOT be dropped.
         self.assertFalse(
-            is_should_skip_comment_any('@kato_bb can you also fix X', self.BOT),
+            is_comment_addressed_elsewhere_any('@kato_bb can you also fix X', self.BOT),
         )
 
     def test_bot_among_others_is_kept(self) -> None:
         self.assertFalse(
-            is_should_skip_comment_any('@alice and @kato_bb', self.BOT),
+            is_comment_addressed_elsewhere_any('@alice and @kato_bb', self.BOT),
         )
         self.assertTrue(
-            is_should_skip_comment_any('@alice and @bob', self.BOT),
+            is_comment_addressed_elsewhere_any('@alice and @bob', self.BOT),
         )
 
     def test_no_mentions_in_body_is_kept(self) -> None:
         self.assertFalse(
-            is_should_skip_comment_any('this also needs a unit test', self.BOT),
+            is_comment_addressed_elsewhere_any('this also needs a unit test', self.BOT),
         )
 
     def test_empty_logins_mixed_with_a_real_one_still_filter(self) -> None:
         # Blank/'me' entries are dropped but the one real login still applies.
         self.assertTrue(
-            is_should_skip_comment_any('@jane please', ['', 'me', 'kato_bb']),
+            is_comment_addressed_elsewhere_any('@jane please', ['', 'me', 'kato_bb']),
         )
         self.assertFalse(
-            is_should_skip_comment_any('@kato_bb please', ['', 'me', 'kato_bb']),
+            is_comment_addressed_elsewhere_any('@kato_bb please', ['', 'me', 'kato_bb']),
         )
 
     def test_case_insensitive_across_logins(self) -> None:
         self.assertFalse(
-            is_should_skip_comment_any('@Kato_BB fix it', self.BOT),
+            is_comment_addressed_elsewhere_any('@Kato_BB fix it', self.BOT),
         )
 
     def test_bare_string_is_treated_as_single_login(self) -> None:
         # Convenience: a single login may be passed as a plain string.
-        self.assertTrue(is_should_skip_comment_any('@jane please', 'kato_bb'))
-        self.assertFalse(is_should_skip_comment_any('@kato_bb please', 'kato_bb'))
+        self.assertTrue(is_comment_addressed_elsewhere_any('@jane please', 'kato_bb'))
+        self.assertFalse(is_comment_addressed_elsewhere_any('@kato_bb please', 'kato_bb'))
 
     def test_non_string_body_is_handled(self) -> None:
-        self.assertFalse(is_should_skip_comment_any(42, self.BOT))
-        self.assertFalse(is_should_skip_comment_any(None, self.BOT))
+        self.assertFalse(is_comment_addressed_elsewhere_any(42, self.BOT))
+        self.assertFalse(is_comment_addressed_elsewhere_any(None, self.BOT))
 
 
 class MentionMidSentenceTests(unittest.TestCase):
@@ -308,10 +308,10 @@ class MentionMidSentenceTests(unittest.TestCase):
         self.assertEqual(extract_mention_logins(self.SENTENCE), ['alice'])
 
     def test_addressed_elsewhere_when_bot_is_someone_else(self) -> None:
-        self.assertTrue(is_should_skip_comment(self.SENTENCE, 'kato_bot'))
+        self.assertTrue(is_comment_addressed_elsewhere(self.SENTENCE, 'kato_bot'))
 
     def test_kept_when_bot_is_the_one_mentioned(self) -> None:
-        self.assertFalse(is_should_skip_comment(self.SENTENCE, 'alice'))
+        self.assertFalse(is_comment_addressed_elsewhere(self.SENTENCE, 'alice'))
 
 
 class IsAddressedElsewhereFromMentionsTests(unittest.TestCase):

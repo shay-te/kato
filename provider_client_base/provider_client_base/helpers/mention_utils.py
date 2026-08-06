@@ -232,8 +232,8 @@ def is_addressed_elsewhere_from_mentions(
     return logins.isdisjoint(mentions)
 
 
-def is_should_skip_comment_any(body: object, bot_logins: object) -> bool:
-    """Same rule as :func:`is_should_skip_comment`, but for a bot
+def is_comment_addressed_elsewhere_any(body: object, bot_logins: object) -> bool:
+    """Same rule as :func:`is_comment_addressed_elsewhere`, but for a bot
     known under SEVERAL logins at once.
 
     A bot can have more than one login simultaneously — e.g. its
@@ -254,12 +254,12 @@ def is_should_skip_comment_any(body: object, bot_logins: object) -> bool:
     )
 
 
-def is_should_skip_comment(body: object, bot_login: object) -> bool:
+def is_comment_addressed_elsewhere(body: object, bot_login: object) -> bool:
     """Is this comment @-mentioning humans OTHER than the bot user?
 
     See the module docstring for the rule. Returns False whenever
     the filter is disabled (empty / ``"me"`` bot login) so callers
     can wire this in unconditionally. Thin single-login wrapper over
-    :func:`is_should_skip_comment_any`.
+    :func:`is_comment_addressed_elsewhere_any`.
     """
-    return is_should_skip_comment_any(body, (bot_login,))
+    return is_comment_addressed_elsewhere_any(body, (bot_login,))

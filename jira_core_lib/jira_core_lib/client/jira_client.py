@@ -68,7 +68,7 @@ class JiraClient(IssueClientBase):
         # ``/rest/api/3/myself``.
         self._configure_bot_login(bot_login)
         # Which issue comments reach the agent at all (see
-        # IssueClientBase._should_skip_comment).
+        # IssueClientBase._comment_addressed_elsewhere).
         self._configure_comment_policy(
             include_comments=include_comments,
             require_bot_mention=require_bot_mention,
@@ -327,7 +327,7 @@ class JiraClient(IssueClientBase):
             # Drop comments addressed to humans other than the bot user.
             # Pass the RAW body so ADF mention nodes (which the plain-text
             # flattening drops) are seen — see _extract_comment_mentions.
-            skip=lambda c: self._should_skip_comment(
+            skip=lambda c: self._comment_addressed_elsewhere(
                 c.get(JiraCommentFields.BODY),
             ),
         )

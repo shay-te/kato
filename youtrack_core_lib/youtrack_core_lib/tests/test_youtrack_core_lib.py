@@ -34,35 +34,47 @@ class CommentPolicyWiringTests(unittest.TestCase):
     failure mode that looks fine in the settings UI and changes nothing.
     """
 
-    def test_policy_flows_from_config_to_the_client(self):
+    @staticmethod
+    def _lines(client, *bodies):
+        return client._comment_lines([{'author': 'someone', 'body': b} for b in bodies])
+
+    def _client(self, include, require, assignee='agent_bot'):
         cfg = _cfg()
-        cfg.core_lib.youtrack_core_lib.include_comments = True
-        cfg.core_lib.youtrack_core_lib.require_bot_mention = True
-        cfg.core_lib.youtrack_core_lib.assignee = 'agent_bot'
-        client = YouTrackCoreLib(cfg).issue
+        cfg.core_lib.youtrack_core_lib.include_comments = include
+        cfg.core_lib.youtrack_core_lib.require_bot_mention = require
+        cfg.core_lib.youtrack_core_lib.assignee = assignee
+        return YouTrackCoreLib(cfg).issue
+
+    def test_policy_flows_from_config_to_the_client(self):
+        client = self._client(True, True)
         self.assertTrue(client._include_comments)
         self.assertTrue(client._require_bot_mention)
-        # …and the rule it produces: only a comment tagging the bot survives.
-        self.assertFalse(client._should_skip_comment('@agent_bot please fix'))
-        self.assertTrue(client._should_skip_comment('untagged chatter'))
-        self.assertTrue(client._should_skip_comment('@alice please fix'))
+        # …and the rule it produces: only a comment tagging the bot is shown.
+        self.assertEqual(len(self._lines(client, '@agent_bot please fix')), 1)
+        self.assertEqual(self._lines(client, 'untagged chatter'), [])
+        self.assertEqual(self._lines(client, '@alice please fix'), [])
 
-    def test_comments_disabled_skips_everything(self):
-        cfg = _cfg()
-        cfg.core_lib.youtrack_core_lib.include_comments = False
-        cfg.core_lib.youtrack_core_lib.require_bot_mention = True
-        cfg.core_lib.youtrack_core_lib.assignee = 'agent_bot'
-        client = YouTrackCoreLib(cfg).issue
-        self.assertTrue(client._should_skip_comment('@agent_bot please fix'))
+    def test_comments_disabled_hides_everything(self):
+        client = self._client(False, True)
+        self.assertEqual(self._lines(client, '@agent_bot please fix'), [])
 
     def test_string_config_values_are_coerced(self):
-        cfg = _cfg()
-        cfg.core_lib.youtrack_core_lib.include_comments = 'false'
-        cfg.core_lib.youtrack_core_lib.require_bot_mention = 'true'
-        cfg.core_lib.youtrack_core_lib.assignee = 'agent_bot'
-        client = YouTrackCoreLib(cfg).issue
+        client = self._client('false', 'true')
         self.assertFalse(client._include_comments)
         self.assertTrue(client._require_bot_mention)
+
+    def test_policy_never_filters_the_hosts_own_latch_comments(self):
+        # Regression: the "already ran" latch and the pull-request URL both
+        # live in the fetched list. Filtering it made every scan re-run the
+        # task and re-post the same comment — a loop that spams watchers.
+        client = self._client(False, True)
+        entries = client._build_comment_entries(
+            [{'b': 'Agent completed task ABC-1'}],
+            extract_body=lambda c: c['b'],
+            extract_author=lambda c: 'agent',
+            skip=lambda c: client._comment_addressed_elsewhere(c['b']),
+        )
+        self.assertEqual(len(entries), 1)
 
 
 class YouTrackCoreLibInheritanceTests(unittest.TestCase):

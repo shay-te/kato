@@ -39,7 +39,7 @@ class GitHubIssuesClient(IssueClientBase):
         # real login, the bot's actual login is resolved from ``GET /user``.
         self._configure_bot_login(bot_login)
         # Which issue comments reach the agent at all (see
-        # IssueClientBase._should_skip_comment).
+        # IssueClientBase._comment_addressed_elsewhere).
         self._configure_comment_policy(
             include_comments=include_comments,
             require_bot_mention=require_bot_mention,
@@ -195,8 +195,8 @@ class GitHubIssuesClient(IssueClientBase):
                 GitHubCommentFields.LOGIN
             ),
             # Drop comments addressed to humans other than the bot
-            # user — see IssueClientBase._should_skip_comment.
-            skip=lambda c: self._should_skip_comment(
+            # user — see IssueClientBase._comment_addressed_elsewhere.
+            skip=lambda c: self._comment_addressed_elsewhere(
                 c.get(GitHubCommentFields.BODY, ''),
             ),
         )

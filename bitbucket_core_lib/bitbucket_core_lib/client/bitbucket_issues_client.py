@@ -50,7 +50,7 @@ class BitbucketIssuesClient(IssueClientBase):
         # the bot's real account_id/uuid/nickname is resolved from /2.0/user.
         self._configure_bot_login(bot_login)
         # Which issue comments reach the agent at all (see
-        # IssueClientBase._should_skip_comment).
+        # IssueClientBase._comment_addressed_elsewhere).
         self._configure_comment_policy(
             include_comments=include_comments,
             require_bot_mention=require_bot_mention,
@@ -237,9 +237,9 @@ class BitbucketIssuesClient(IssueClientBase):
             extract_body=extract_body,
             extract_author=extract_author,
             # Drop comments addressed to humans other than the configured bot
-            # account — see IssueClientBase._should_skip_comment and the
+            # account — see IssueClientBase._comment_addressed_elsewhere and the
             # Bitbucket ``@{account_id}`` extractor above.
-            skip=lambda c: self._should_skip_comment(extract_body(c)),
+            skip=lambda c: self._comment_addressed_elsewhere(extract_body(c)),
         )
 
     # ----- provider-specific filtering -----

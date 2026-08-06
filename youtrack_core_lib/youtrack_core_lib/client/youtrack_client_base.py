@@ -79,7 +79,7 @@ class YouTrackClientBase(IssueClientBase):
         # slip through and get worked by the agent).
         self._configure_bot_login(bot_login)
         # Which issue comments reach the agent at all (see
-        # IssueClientBase._should_skip_comment).
+        # IssueClientBase._comment_addressed_elsewhere).
         self._configure_comment_policy(
             include_comments=include_comments,
             require_bot_mention=require_bot_mention,
@@ -200,6 +200,11 @@ class YouTrackClientBase(IssueClientBase):
                 continue
             body = text_from_mapping(comment, TaskCommentFields.BODY)
             if not body or self._is_operational_comment(body):
+                continue
+            # Same operator visibility policy the shared base applies — this
+            # override exists only for YouTrack's field names, so skipping the
+            # check here would silently exempt YouTrack from the setting.
+            if self._comment_hidden_from_agent(body):
                 continue
             author = (
                 text_from_mapping(comment, TaskCommentFields.AUTHOR, 'unknown')
