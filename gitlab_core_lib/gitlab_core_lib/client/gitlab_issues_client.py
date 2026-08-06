@@ -26,6 +26,8 @@ class GitLabIssuesClient(IssueClientBase):
         *,
         is_operational_comment: Callable[[str], bool] | None = None,
         bot_login: str = '',
+        include_comments: bool = True,
+        require_bot_mention: bool = False,
     ) -> None:
         super().__init__(base_url, token, timeout=30, max_retries=max_retries)
         self._project = quote(str(project).strip(), safe='')
@@ -35,6 +37,12 @@ class GitLabIssuesClient(IssueClientBase):
         # @-mention filter (see IssueClientBase). When ``assignee`` isn't a
         # real username, the bot's actual username is resolved from GET /user.
         self._configure_bot_login(bot_login)
+        # Which issue comments reach the agent at all (see
+        # IssueClientBase._should_skip_comment).
+        self._configure_comment_policy(
+            include_comments=include_comments,
+            require_bot_mention=require_bot_mention,
+        )
         self.set_headers({'PRIVATE-TOKEN': token})
 
     def _fetch_current_user_logins(self) -> tuple:
@@ -188,7 +196,7 @@ class GitLabIssuesClient(IssueClientBase):
         def skip(c: dict) -> bool:
             if c.get(GitLabCommentFields.SYSTEM):
                 return True
-            return self._comment_addressed_elsewhere(
+            return self._should_skip_comment(
                 c.get(GitLabCommentFields.BODY, ''),
             )
 

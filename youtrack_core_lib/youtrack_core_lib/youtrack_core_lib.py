@@ -26,4 +26,6 @@ class YouTrackCoreLib(CoreLib):
             youtrack_cfg.max_retries,
             operational_comment_prefixes=operational_comment_prefixes,
             bot_login=str(getattr(youtrack_cfg, 'assignee', '') or ''),
+            include_comments=getattr(youtrack_cfg, 'include_comments', True),
+            require_bot_mention=getattr(youtrack_cfg, 'require_bot_mention', False),
         )

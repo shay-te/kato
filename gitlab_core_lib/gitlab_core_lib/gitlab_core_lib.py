@@ -28,4 +28,6 @@ class GitLabCoreLib(CoreLib):
             gitlab_cfg.project,
             gitlab_cfg.max_retries,
             bot_login=str(getattr(gitlab_cfg, 'assignee', '') or ''),
+            include_comments=getattr(gitlab_cfg, 'include_comments', True),
+            require_bot_mention=getattr(gitlab_cfg, 'require_bot_mention', False),
         )

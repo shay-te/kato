@@ -27,6 +27,44 @@ def _cfg(
     return cfg
 
 
+class CommentPolicyWiringTests(unittest.TestCase):
+    """The host's comment settings must reach the client, not stop at config.
+
+    A policy that parses correctly but never gets passed through is the
+    failure mode that looks fine in the settings UI and changes nothing.
+    """
+
+    def test_policy_flows_from_config_to_the_client(self):
+        cfg = _cfg()
+        cfg.core_lib.youtrack_core_lib.include_comments = True
+        cfg.core_lib.youtrack_core_lib.require_bot_mention = True
+        cfg.core_lib.youtrack_core_lib.assignee = 'agent_bot'
+        client = YouTrackCoreLib(cfg).issue
+        self.assertTrue(client._include_comments)
+        self.assertTrue(client._require_bot_mention)
+        # …and the rule it produces: only a comment tagging the bot survives.
+        self.assertFalse(client._should_skip_comment('@agent_bot please fix'))
+        self.assertTrue(client._should_skip_comment('untagged chatter'))
+        self.assertTrue(client._should_skip_comment('@alice please fix'))
+
+    def test_comments_disabled_skips_everything(self):
+        cfg = _cfg()
+        cfg.core_lib.youtrack_core_lib.include_comments = False
+        cfg.core_lib.youtrack_core_lib.require_bot_mention = True
+        cfg.core_lib.youtrack_core_lib.assignee = 'agent_bot'
+        client = YouTrackCoreLib(cfg).issue
+        self.assertTrue(client._should_skip_comment('@agent_bot please fix'))
+
+    def test_string_config_values_are_coerced(self):
+        cfg = _cfg()
+        cfg.core_lib.youtrack_core_lib.include_comments = 'false'
+        cfg.core_lib.youtrack_core_lib.require_bot_mention = 'true'
+        cfg.core_lib.youtrack_core_lib.assignee = 'agent_bot'
+        client = YouTrackCoreLib(cfg).issue
+        self.assertFalse(client._include_comments)
+        self.assertTrue(client._require_bot_mention)
+
+
 class YouTrackCoreLibInheritanceTests(unittest.TestCase):
     def test_is_core_lib_subclass(self):
         self.assertTrue(issubclass(YouTrackCoreLib, CoreLib))

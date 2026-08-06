@@ -56,6 +56,8 @@ class JiraClient(IssueClientBase):
         *,
         is_operational_comment: Callable[[str], bool] | None = None,
         bot_login: str = '',
+        include_comments: bool = True,
+        require_bot_mention: bool = False,
     ) -> None:
         super().__init__(base_url, token, timeout=30, max_retries=max_retries)
         self._is_operational_comment: Callable[[str], bool] = (
@@ -65,6 +67,12 @@ class JiraClient(IssueClientBase):
         # or ``currentUser()``, the bot's real identities are resolved from
         # ``/rest/api/3/myself``.
         self._configure_bot_login(bot_login)
+        # Which issue comments reach the agent at all (see
+        # IssueClientBase._should_skip_comment).
+        self._configure_comment_policy(
+            include_comments=include_comments,
+            require_bot_mention=require_bot_mention,
+        )
         if str(user_email or '').strip():
             self.headers = None
             self.set_auth((str(user_email).strip(), token))
@@ -319,7 +327,7 @@ class JiraClient(IssueClientBase):
             # Drop comments addressed to humans other than the bot user.
             # Pass the RAW body so ADF mention nodes (which the plain-text
             # flattening drops) are seen — see _extract_comment_mentions.
-            skip=lambda c: self._comment_addressed_elsewhere(
+            skip=lambda c: self._should_skip_comment(
                 c.get(JiraCommentFields.BODY),
             ),
         )

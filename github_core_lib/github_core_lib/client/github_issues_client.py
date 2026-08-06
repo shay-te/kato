@@ -26,6 +26,8 @@ class GitHubIssuesClient(IssueClientBase):
         *,
         is_operational_comment: Callable[[str], bool] | None = None,
         bot_login: str = '',
+        include_comments: bool = True,
+        require_bot_mention: bool = False,
     ) -> None:
         super().__init__(base_url, token, timeout=30, max_retries=max_retries)
         self._owner = str(owner).strip()
@@ -36,6 +38,12 @@ class GitHubIssuesClient(IssueClientBase):
         # @-mention filter (see IssueClientBase). When ``assignee`` isn't a
         # real login, the bot's actual login is resolved from ``GET /user``.
         self._configure_bot_login(bot_login)
+        # Which issue comments reach the agent at all (see
+        # IssueClientBase._should_skip_comment).
+        self._configure_comment_policy(
+            include_comments=include_comments,
+            require_bot_mention=require_bot_mention,
+        )
         self.set_headers(
             {
                 'Authorization': f'Bearer {token}',
@@ -187,8 +195,8 @@ class GitHubIssuesClient(IssueClientBase):
                 GitHubCommentFields.LOGIN
             ),
             # Drop comments addressed to humans other than the bot
-            # user — see IssueClientBase._comment_addressed_elsewhere.
-            skip=lambda c: self._comment_addressed_elsewhere(
+            # user — see IssueClientBase._should_skip_comment.
+            skip=lambda c: self._should_skip_comment(
                 c.get(GitHubCommentFields.BODY, ''),
             ),
         )

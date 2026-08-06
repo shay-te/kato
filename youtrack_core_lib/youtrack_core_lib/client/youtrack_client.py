@@ -69,6 +69,8 @@ class YouTrackClient(YouTrackClientBase):
         *,
         operational_comment_prefixes: tuple[str, ...] = (),
         bot_login: str = '',
+        include_comments: bool = True,
+        require_bot_mention: bool = False,
     ) -> None:
         super().__init__(
             base_url,
@@ -77,6 +79,8 @@ class YouTrackClient(YouTrackClientBase):
             max_retries=max_retries,
             operational_comment_prefixes=operational_comment_prefixes,
             bot_login=bot_login,
+            include_comments=include_comments,
+            require_bot_mention=require_bot_mention,
         )
 
     def validate_connection(self, project: str, assignee: str, states: list[str]) -> None:
@@ -445,8 +449,8 @@ class YouTrackClient(YouTrackClientBase):
             # bot — those are operator-to-employee discussions, not
             # requests the agent should act on. Comments with no
             # @-mention are kept (general project context). See
-            # IssueClientBase._comment_addressed_elsewhere.
-            skip=lambda c: self._comment_addressed_elsewhere(
+            # IssueClientBase._should_skip_comment.
+            skip=lambda c: self._should_skip_comment(
                 text_from_mapping(c, YouTrackCommentFields.TEXT),
             ),
         )

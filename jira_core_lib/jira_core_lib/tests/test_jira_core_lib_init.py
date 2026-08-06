@@ -32,6 +32,8 @@ class JiraCoreLibInitTests(unittest.TestCase):
             'https://example.atlassian.net', 'token',
             'me@example.com', 3,
             bot_login='',
+            include_comments=True,
+            require_bot_mention=False,
         )
 
     def test_passes_assignee_through_as_bot_login(self) -> None:
@@ -56,6 +58,8 @@ class JiraCoreLibInitTests(unittest.TestCase):
             'https://example.atlassian.net', 'token',
             'me@example.com', 3,
             bot_login='botuser',
+            include_comments=True,
+            require_bot_mention=False,
         )
 
 

@@ -47,6 +47,26 @@ def normalized_lower_text(value: object) -> str:
     return normalized_text(value).lower()
 
 
+def bool_from_text(value: object, default: bool = False) -> bool:
+    """Coerce a config value to a bool, tolerating strings.
+
+    Config reaches a client from several directions — a real bool from Python,
+    ``"false"`` from an env var, ``"off"`` from a settings file — and every one
+    of those must mean the same thing. Anything unrecognised (``None``, ``''``,
+    a typo) falls back to ``default`` rather than to Python truthiness, because
+    ``bool("false")`` is ``True`` and that reading silently enables a feature
+    the operator just turned off.
+    """
+    if isinstance(value, bool):
+        return value
+    text = normalized_lower_text(value)
+    if text in ('1', 'true', 'yes', 'on'):
+        return True
+    if text in ('0', 'false', 'no', 'off'):
+        return False
+    return default
+
+
 def condensed_text(value: object) -> str:
     """:func:`normalized_text` with every run of whitespace collapsed to one space."""
     return ' '.join(normalized_text(value).split())

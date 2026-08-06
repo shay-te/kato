@@ -88,6 +88,8 @@ kato:
     review_state: ${core_lib.youtrack_core_lib.review_state}
     issue_states: ${core_lib.youtrack_core_lib.issue_states}
     max_retries: ${core_lib.youtrack_core_lib.max_retries}
+    include_comments: ${oc.decode:${oc.env:KATO_TASK_COMMENTS_ENABLED,"false"}}
+    require_bot_mention: ${oc.decode:${oc.env:KATO_TASK_COMMENTS_REQUIRE_MENTION,"true"}}
   jira:
     base_url: ${core_lib.jira_core_lib.base_url}
     token: ${core_lib.jira_core_lib.token}
@@ -100,6 +102,8 @@ kato:
     review_state: ${oc.env:JIRA_REVIEW_STATE,"In Review"}
     issue_states: ${oc.env:JIRA_ISSUE_STATES,"To Do,Open"}
     max_retries: ${core_lib.jira_core_lib.max_retries}
+    include_comments: ${oc.decode:${oc.env:KATO_TASK_COMMENTS_ENABLED,"false"}}
+    require_bot_mention: ${oc.decode:${oc.env:KATO_TASK_COMMENTS_REQUIRE_MENTION,"true"}}
   github_issues:
     base_url: ${core_lib.github_core_lib.base_url}
     token: ${core_lib.github_core_lib.token}
@@ -113,6 +117,8 @@ kato:
     review_state: ${oc.env:GITHUB_REVIEW_STATE,"In Review"}
     issue_states: ${oc.env:GITHUB_ISSUE_STATES,"open"}
     max_retries: ${core_lib.github_core_lib.max_retries}
+    include_comments: ${oc.decode:${oc.env:KATO_TASK_COMMENTS_ENABLED,"false"}}
+    require_bot_mention: ${oc.decode:${oc.env:KATO_TASK_COMMENTS_REQUIRE_MENTION,"true"}}
   gitlab_issues:
     base_url: ${core_lib.gitlab_core_lib.base_url}
     token: ${core_lib.gitlab_core_lib.token}
@@ -124,6 +130,8 @@ kato:
     review_state: ${oc.env:GITLAB_REVIEW_STATE,"In Review"}
     issue_states: ${oc.env:GITLAB_ISSUE_STATES,"opened"}
     max_retries: ${core_lib.gitlab_core_lib.max_retries}
+    include_comments: ${oc.decode:${oc.env:KATO_TASK_COMMENTS_ENABLED,"false"}}
+    require_bot_mention: ${oc.decode:${oc.env:KATO_TASK_COMMENTS_REQUIRE_MENTION,"true"}}
   bitbucket_issues:
     base_url: ${core_lib.bitbucket_core_lib.base_url}
     token: ${core_lib.bitbucket_core_lib.token}
@@ -139,6 +147,8 @@ kato:
     review_state: ${oc.env:BITBUCKET_REVIEW_STATE,"resolved"}
     issue_states: ${oc.env:BITBUCKET_ISSUE_STATES,"new,open"}
     max_retries: ${core_lib.bitbucket_core_lib.max_retries}
+    include_comments: ${oc.decode:${oc.env:KATO_TASK_COMMENTS_ENABLED,"false"}}
+    require_bot_mention: ${oc.decode:${oc.env:KATO_TASK_COMMENTS_REQUIRE_MENTION,"true"}}
   repository_root_path: ${oc.env:REPOSITORY_ROOT_PATH,""}
   ignored_repository_folders: ${oc.env:KATO_IGNORED_REPOSITORY_FOLDERS,""}
   source_fingerprint: ${oc.env:KATO_SOURCE_FINGERPRINT,""}

@@ -58,6 +58,16 @@ class TaskClientFactory:
                             'workspace': getattr(self._config, 'workspace', ''),
                             'repo_slug': getattr(self._config, 'repo_slug', ''),
                             'max_retries': self._max_retries,
+                            # Unlike the other providers (whose whole task
+                            # block is merged wholesale), bitbucket's config is
+                            # an explicit allowlist — a key missing here never
+                            # reaches the client, so the comment policy has to
+                            # be listed or it silently falls back to defaults.
+                            'assignee': getattr(self._config, 'assignee', ''),
+                            'include_comments': getattr(
+                                self._config, 'include_comments', False),
+                            'require_bot_mention': getattr(
+                                self._config, 'require_bot_mention', True),
                         },
                     },
                 }

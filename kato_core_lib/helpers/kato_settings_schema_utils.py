@@ -170,6 +170,16 @@ SETTINGS_SCHEMA: list[dict] = [
             ('KATO_TASK_PUBLISH_MAX_RETRIES', 'number',
              'Publish max retries',
              'Retries for the publish step (PR + move-to-review).', {}),
+            ('KATO_TASK_COMMENTS_ENABLED', 'bool',
+             'Read ticket comments',
+             'Off by default. When on, comments on the ticket '
+             '(YouTrack/Jira/…) are added to the task the agent works '
+             'from. Off = the agent sees only the description.', {}),
+            ('KATO_TASK_COMMENTS_REQUIRE_MENTION', 'bool',
+             'Only @-mentioned comments',
+             'Requires the above. Takes a ticket comment ONLY when it '
+             '@-mentions the kato user — untagged chatter between people '
+             'never becomes instructions. Leave on.', {}),
             ('KATO_WORKSPACE_REVIEW_TTL_SECONDS', 'number',
              'Workspace review TTL (s)',
              'How long a review-state workspace survives before '

@@ -30,4 +30,6 @@ class GitHubCoreLib(CoreLib):
             repo,
             github_cfg.max_retries,
             bot_login=str(getattr(github_cfg, 'assignee', '') or ''),
+            include_comments=getattr(github_cfg, 'include_comments', True),
+            require_bot_mention=getattr(github_cfg, 'require_bot_mention', False),
         )

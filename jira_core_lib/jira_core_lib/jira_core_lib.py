@@ -23,4 +23,6 @@ class JiraCoreLib(CoreLib):
             jira_cfg.email,
             jira_cfg.max_retries,
             bot_login=str(getattr(jira_cfg, 'assignee', '') or ''),
+            include_comments=getattr(jira_cfg, 'include_comments', True),
+            require_bot_mention=getattr(jira_cfg, 'require_bot_mention', False),
         )

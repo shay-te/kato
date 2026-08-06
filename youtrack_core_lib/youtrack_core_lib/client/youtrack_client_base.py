@@ -66,6 +66,8 @@ class YouTrackClientBase(IssueClientBase):
         max_retries: int = 3,
         operational_comment_prefixes: tuple[str, ...] = (),
         bot_login: str = '',
+        include_comments: bool = True,
+        require_bot_mention: bool = False,
     ) -> None:
         super().__init__(base_url, token, timeout=timeout, max_retries=max_retries)
         self._operational_comment_prefixes = tuple(operational_comment_prefixes or ())
@@ -76,6 +78,12 @@ class YouTrackClientBase(IssueClientBase):
         # leaving the filter disabled (which let comments @-mentioning a HUMAN
         # slip through and get worked by the agent).
         self._configure_bot_login(bot_login)
+        # Which issue comments reach the agent at all (see
+        # IssueClientBase._should_skip_comment).
+        self._configure_comment_policy(
+            include_comments=include_comments,
+            require_bot_mention=require_bot_mention,
+        )
 
     # ----- abstract interface -----
 

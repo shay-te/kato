@@ -40,4 +40,6 @@ class BitbucketCoreLib(CoreLib):
                 or bitbucket_cfg.get('username', '')
                 or ''
             ),
+            include_comments=bitbucket_cfg.get('include_comments', True),
+            require_bot_mention=bitbucket_cfg.get('require_bot_mention', False),
         )

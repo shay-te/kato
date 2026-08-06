@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Editor from '@monaco-editor/react';
 import { fetchFileContent } from '../api.js';
+import { useFindWidgetEscape } from '../hooks/useFindWidgetEscape.js';
 import { readCachedFileContent, writeCachedFileContent } from '../utils/fileContentCache.js';
 import {
   useTaskComments,
@@ -445,6 +446,11 @@ export default function EditorPane({
     minHeight: 60,
     extraClassName: 'editor-pane-comments-zone-host',
   });
+
+  // Ctrl+F's find bar must always be dismissable with Escape — Monaco's own
+  // binding needs editor focus, which leaves the bar pinned over the file the
+  // moment focus is anywhere else. See the hook for the full mechanism.
+  useFindWidgetEscape(editorRef);
 
   // Scroll the editor to a line when the operator clicks a chip.
   function jumpToLine(line) {

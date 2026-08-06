@@ -23,9 +23,10 @@ from provider_client_base.provider_client_base.data.issue_record import (
 from provider_client_base.provider_client_base.helpers.mention_utils import (
     extract_all_mention_tokens,
     is_addressed_elsewhere_from_mentions,
+    mentions_include_identity,
 )
 from provider_client_base.provider_client_base.helpers.retry_utils import run_with_retry
-from utils_core_lib.utils_core_lib.text_utils import normalized_text
+from utils_core_lib.utils_core_lib.text_utils import bool_from_text, normalized_text
 from provider_client_base.provider_client_base.retrying_client_base import RetryingClientBase
 
 _COMMENT_SECTION_TITLE = (
@@ -265,20 +266,37 @@ class IssueClientBase(RetryingClientBase):
 
     # ----- @-mention bot-identity filter -----
     #
-    # A comment that ``@mentions`` a human other than the bot is work
-    # directed at that person, not kato — including it in the task context
-    # makes the agent act on someone else's instruction. The rule lives in
-    # ``mention_utils``; this scaffold supplies the bot identity to compare
-    # against. The key correctness fix: when the host configures the bot's
-    # ``assignee`` as an alias ("me", "currentUser()") or leaves it unset,
-    # the configured value can never match a literal mention, so the real
-    # identity is resolved lazily from the platform's current-user endpoint
-    # instead of silently disabling the filter.
+    # Issue comments are folded into the task description the agent then acts
+    # on, so "which comments count" decides what work the agent takes on.
+    # Two knobs, both supplied by the host:
+    #
+    #   ``include_comments``      — consume issue comments at all.
+    #   ``require_bot_mention``   — take a comment ONLY when it ``@mentions``
+    #                               the bot. This is the strict rule: a
+    #                               comment that tags nobody is conversation
+    #                               between humans, not an instruction to the
+    #                               agent, and gets ignored just like one that
+    #                               tags somebody else.
+    #
+    # With ``require_bot_mention`` off, the older, looser rule applies: keep
+    # everything except comments that tag humans OTHER than the bot.
+    #
+    # The rule lives in ``mention_utils``; this scaffold supplies the bot
+    # identity to compare against. When the host configures the bot's
+    # ``assignee`` as an alias ("me", "currentUser()") or leaves it unset, the
+    # configured value can never match a literal mention, so the real identity
+    # is resolved lazily from the platform's current-user endpoint instead of
+    # silently disabling the filter.
 
     # Configured ``bot_login`` values that are NOT real mention handles —
     # treated as "unset" so the real identity is resolved from the API
     # instead. Subclasses extend (youtrack ``"me"``, jira ``"currentuser()"``).
     _BOT_LOGIN_ALIASES: frozenset = frozenset()
+
+    # Defaults for hosts/subclasses that never call
+    # ``_configure_comment_policy`` — preserve the pre-policy behavior.
+    _include_comments: bool = True
+    _require_bot_mention: bool = False
 
     def _configure_bot_login(self, bot_login: object) -> None:
         """Initialise @-mention-filter state. Call from the subclass __init__.
@@ -289,6 +307,21 @@ class IssueClientBase(RetryingClientBase):
         normalized = str(bot_login or '').strip().lower()
         self._bot_login = '' if normalized in self._BOT_LOGIN_ALIASES else normalized
         self._resolved_bot_logins: tuple = ()
+
+    def _configure_comment_policy(
+        self,
+        *,
+        include_comments: object = True,
+        require_bot_mention: object = False,
+    ) -> None:
+        """Set which issue comments reach the agent. Call from ``__init__``.
+
+        Values arrive from host config, which may hand us strings ("false")
+        as easily as booleans, so both are coerced here rather than at every
+        call site.
+        """
+        self._include_comments = bool_from_text(include_comments, default=True)
+        self._require_bot_mention = bool_from_text(require_bot_mention, default=False)
 
     def _effective_bot_logins(self) -> tuple:
         """The bot identities a mention must match to count as "for the bot".
@@ -307,7 +340,7 @@ class IssueClientBase(RetryingClientBase):
         and no fix short of a full restart. A genuinely unresolvable bot
         still costs at most one extra API call per comment that actually
         carries a mention (already the hot-path guard in
-        ``_comment_addressed_elsewhere``), not a request storm.
+        ``_should_skip_comment``), not a request storm.
         """
         if self._bot_login:
             return (self._bot_login,)
@@ -333,7 +366,7 @@ class IssueClientBase(RetryingClientBase):
 
         This used to be plain-``@login``-only, which made the filter
         FAIL-OPEN on any brace-encoded mention: no mention was extracted, so
-        ``_comment_addressed_elsewhere`` saw a "mention-free" comment, kept
+        ``_should_skip_comment`` saw a "mention-free" comment, kept
         it, and the agent went and worked a comment that tagged a human
         teammate. That is the recurring "the agent takes on comments where
         I tagged another developer" report — the review-comment path had
@@ -347,14 +380,32 @@ class IssueClientBase(RetryingClientBase):
         """
         return extract_all_mention_tokens(body)
 
-    def _comment_addressed_elsewhere(self, body: object) -> bool:
-        """Whether a comment @-mentions humans OTHER than the bot.
+    def _should_skip_comment(self, body: object) -> bool:
+        """Whether this comment must be kept OUT of the agent's task context.
 
-        Short-circuits before resolving the bot identity when the comment
-        carries no mention at all — that keeps the current-user round-trip
-        off the hot path for the overwhelmingly common mention-free comment.
+        Three cases, in order:
+
+        * comments disabled by the host  →  skip everything;
+        * ``require_bot_mention``  →  keep ONLY comments that ``@mention`` the
+          bot. A comment nobody tagged is human conversation on the ticket,
+          not an instruction, so it is skipped too — that is the whole point
+          of the strict rule and the difference from the looser one below.
+          Skips **fail closed** when the bot's identity can't be resolved: we
+          cannot confirm the bot was tagged, and acting on an unverified
+          comment is exactly what this setting exists to prevent (the
+          resolver logs the failure).
+        * otherwise  →  the looser legacy rule: keep everything except
+          comments that tag humans other than the bot. Short-circuits before
+          resolving the bot identity when the comment carries no mention at
+          all, keeping the current-user round-trip off the hot path.
         """
+        if not self._include_comments:
+            return True
         mentions = self._extract_comment_mentions(body)
+        if self._require_bot_mention:
+            return not mentions_include_identity(
+                mentions, self._effective_bot_logins()
+            )
         if not mentions:
             return False
         return is_addressed_elsewhere_from_mentions(

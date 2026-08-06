@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { modalOrDrawerOpen } from '../utils/modalOpen.js';
 
 /**
  * Tab / Shift+Tab cycles the task navigation strip at the top.
@@ -27,13 +28,6 @@ function isEditableTarget(el) {
     return true;
   }
   return !!el.isContentEditable;
-}
-
-function modalOrDrawerOpen() {
-  if (typeof document === 'undefined') { return false; }
-  return !!document.querySelector(
-    '[role="dialog"][aria-modal="true"], .settings-drawer.is-open',
-  );
 }
 
 export function useTaskTabShortcuts({ sessions, activeTaskId, onSelect }) {

@@ -15,6 +15,7 @@ from types import MappingProxyType, SimpleNamespace
 from omegaconf import OmegaConf
 
 from utils_core_lib.utils_core_lib.text_utils import (
+    bool_from_text,
     alphanumeric_lower_text,
     condensed_lower_text,
     condensed_text,
@@ -25,6 +26,29 @@ from utils_core_lib.utils_core_lib.text_utils import (
     text_from_attr,
     text_from_mapping,
 )
+
+
+class BoolFromTextTests(unittest.TestCase):
+    """Config booleans arrive as real bools OR as strings from env/settings."""
+
+    def test_real_booleans_pass_through(self) -> None:
+        self.assertTrue(bool_from_text(True))
+        self.assertFalse(bool_from_text(False))
+
+    def test_truthy_spellings(self) -> None:
+        for value in ('1', 'true', 'TRUE', ' True ', 'yes', 'on'):
+            self.assertTrue(bool_from_text(value), value)
+
+    def test_falsy_spellings(self) -> None:
+        # ``bool("false")`` is True — reading these naively silently enables
+        # a feature the operator just turned off.
+        for value in ('0', 'false', 'FALSE', ' False ', 'no', 'off'):
+            self.assertFalse(bool_from_text(value), value)
+
+    def test_unrecognised_falls_back_to_the_default(self) -> None:
+        for value in (None, '', '  ', 'maybe', 'ON!', 42, object()):
+            self.assertFalse(bool_from_text(value), value)
+            self.assertTrue(bool_from_text(value, default=True), value)
 
 
 class NormalizedTextTests(unittest.TestCase):
