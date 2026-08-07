@@ -23,7 +23,7 @@ import {
   isFileConflicted,
 } from './diffModel.js';
 import { toastResult } from './stores/toastStore.js';
-import { copyRepoRelativePath } from './utils/clipboard.js';
+import { copyFileName, copyRepoRelativePath } from './utils/clipboard.js';
 import {
   activateTreeNode,
   findTreeNodeIdByRelativePath,
@@ -297,6 +297,11 @@ export default function FilesTab({
     closePathMenu();
     await copyRepoRelativePath(repoId, path);
   }
+  async function copyPathMenuFileName() {
+    const path = String(pathMenu?.relativePath || '').trim();
+    closePathMenu();
+    await copyFileName(path);
+  }
   // Drop the file's path into the chat composer as a reference (repo-scoped
   // when the repo is known), so the operator can point Claude at the whole
   // file without pasting its contents.
@@ -553,6 +558,14 @@ export default function FilesTab({
             role="menuitem"
           >
             Place in chat
+          </button>
+          <button
+            type="button"
+            className="files-tab-context-menu-item"
+            onClick={copyPathMenuFileName}
+            role="menuitem"
+          >
+            Copy file name
           </button>
           <button
             type="button"

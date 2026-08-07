@@ -18,13 +18,15 @@ import RestartBanner from './settings/RestartBanner.jsx';
 //
 // Writes go to ~/.kato/settings.json via POST /api/all-settings
 // (server whitelists to the schema) — kato's only config file.
-// Restart required — banner shown after a save.
+// Most keys are read at boot, so a save shows the restart banner; the
+// server flags the ones that apply live (the review-comment switch) and
+// the banner stays hidden for those.
 
 export default function SchemaSettingsPanel({ sectionId, highlightKey = '' }) {
   const fieldsRef = useRef(null);
   const {
     loading, error, section, settingsFilePath,
-    draft, setField, savedAt, saveBarProps,
+    draft, setField, savedAt, saveBarProps, restartRequired,
   } = useSchemaSectionDraft(sectionId);
 
   // When the operator jumps here from the settings search, scroll the matched
@@ -95,7 +97,7 @@ export default function SchemaSettingsPanel({ sectionId, highlightKey = '' }) {
 
       <SettingsActions {...saveBarProps} />
 
-      <RestartBanner show={savedAt} />
+      <RestartBanner show={savedAt && restartRequired} />
     </div>
   );
 }

@@ -4,7 +4,7 @@
 // instead of silently doing nothing.
 
 import { describe, test, expect, vi, afterEach } from 'vitest';
-import { copyTextToClipboard } from './clipboard.js';
+import { copyFileName, copyTextToClipboard } from './clipboard.js';
 
 const origClipboard = navigator.clipboard;
 const origExec = document.execCommand;
@@ -51,6 +51,43 @@ describe('copyTextToClipboard', () => {
     const writeText = vi.fn();
     setClipboard(writeText);
     await copyTextToClipboard('');
+    expect(writeText).not.toHaveBeenCalled();
+  });
+});
+
+describe('copyFileName', () => {
+  test('copies only the last segment of a path', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    setClipboard(writeText);
+
+    await copyFileName('kato_core_lib/data_layers/service/agent_service.py');
+    expect(writeText).toHaveBeenCalledWith('agent_service.py');
+  });
+
+  test('a bare name copies unchanged', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    setClipboard(writeText);
+
+    await copyFileName('README.md');
+    expect(writeText).toHaveBeenCalledWith('README.md');
+  });
+
+  test('a folder path copies the folder name, not an empty string', async () => {
+    // A tree folder row's relative path can carry a trailing separator;
+    // basenameOf strips it, so the operator gets ``service`` rather than
+    // a silent no-op copy.
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    setClipboard(writeText);
+
+    await copyFileName('kato_core_lib/data_layers/service/');
+    expect(writeText).toHaveBeenCalledWith('service');
+  });
+
+  test('empty path is a no-op', async () => {
+    const writeText = vi.fn();
+    setClipboard(writeText);
+
+    await copyFileName('');
     expect(writeText).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import threading
 from urllib.parse import urlparse
 
 from core_lib.data_layers.service.service import Service
@@ -29,6 +30,10 @@ from kato_core_lib.helpers.mission_logging_utils import (
     log_mission_start,
     log_review_comment_end,
     log_review_comment_start,
+)
+from kato_core_lib.helpers.review_comment_gate_utils import (
+    REVIEW_COMMENTS_DISABLED_REASON,
+    review_comments_enabled,
 )
 from kato_core_lib.helpers.review_comment_utils import (
     KATO_REVIEW_COMMENT_NO_CHANGES_PREFIX,
@@ -75,11 +80,104 @@ class ReviewCommentService(Service):
         # other's git state (index.lock, half-finished rebases, branch
         # switches) when multiple comments fire on the same scan tick.
         self._workspace_manager = workspace_manager
+        # Task ids whose review-comment batch is running RIGHT NOW. The
+        # parallel runner's in-flight set can't answer this — it keys tasks
+        # and review batches alike, so it can't tell "stop the review-comment
+        # work" from "stop everything". Guarded by its own lock because it is
+        # written from worker threads and read from the webserver thread.
+        self._active_review_task_ids: set[str] = set()
+        self._active_review_lock = threading.Lock()
+        # Last state the poll gate logged; ``True`` so a normal boot (switch
+        # on) stays silent and only a transition prints.
+        self._poll_gate_logged_enabled = True
         self.logger = logger or configure_logger(self.__class__.__name__)
 
     @property
     def state_registry(self) -> AgentStateRegistry:
         return self._state_registry
+
+    def active_review_comment_task_ids(self) -> list[str]:
+        """Task ids currently inside :meth:`process_review_comment_batch`."""
+        with self._active_review_lock:
+            return sorted(self._active_review_task_ids)
+
+    def stop_active_review_comment_work(self) -> list[str]:
+        """Kill every in-flight review-comment run. Returns the task ids hit.
+
+        Called when the operator switches ``KATO_REVIEW_COMMENTS_ENABLED``
+        off: the gate stops the NEXT poll, this stops the run already
+        going. Terminating the session makes the runner raise
+        :class:`SessionStoppedByUserError`, which
+        :meth:`process_review_comment_batch` already treats as an
+        intentional teardown — no workspace restore, no retry, thread left
+        exactly as the reviewer left it.
+
+        Best-effort per task so one failure can't strand the rest, and a
+        no-op when the review-fix isn't running as a streaming session
+        (no session manager to terminate) — the gate in
+        :meth:`process_review_comment_batch` still stops the batch at its
+        next boundary in that case.
+        """
+        session_manager = self._session_manager()
+        stopped: list[str] = []
+        for task_id in self.active_review_comment_task_ids():
+            if session_manager is None:
+                continue
+            try:
+                if session_manager.get_record(task_id) is None:
+                    continue
+                session_manager.terminate_session(task_id)
+            except Exception:
+                self.logger.exception(
+                    'failed to stop the in-flight review-comment run for '
+                    'task %s', task_id,
+                )
+                continue
+            stopped.append(task_id)
+        if stopped:
+            self.logger.info(
+                'stopped %d in-flight review-comment run(s) because %s: %s',
+                len(stopped), REVIEW_COMMENTS_DISABLED_REASON,
+                ', '.join(stopped),
+            )
+        return stopped
+
+    def _session_manager(self):
+        """The streaming session manager, or ``None`` when not wired."""
+        return getattr(self._planning_session_runner, 'session_manager', None)
+
+    def _mark_review_run_active(self, task_id: str) -> None:
+        normalized = str(task_id or '').strip()
+        if not normalized:
+            return
+        with self._active_review_lock:
+            self._active_review_task_ids.add(normalized)
+
+    def _mark_review_run_finished(self, task_id: str) -> None:
+        normalized = str(task_id or '').strip()
+        if not normalized:
+            return
+        with self._active_review_lock:
+            self._active_review_task_ids.discard(normalized)
+
+    def _log_poll_gate(self, *, enabled: bool) -> None:
+        """Log the switch ONCE per transition, not once per scan tick.
+
+        A line every 180s for however long the operator leaves the switch
+        off would bury the log; a silent skip leaves "kato stopped reacting
+        to my PR comments" with nothing to grep for. One line each way is
+        the middle.
+        """
+        if enabled == self._poll_gate_logged_enabled:
+            return
+        self._poll_gate_logged_enabled = enabled
+        if enabled:
+            self.logger.info('resuming review-comment polling — switch is on')
+        else:
+            self.logger.info(
+                'skipping review-comment polling — %s',
+                REVIEW_COMMENTS_DISABLED_REASON,
+            )
 
     def handle_pull_request_comment(self, payload: dict) -> dict[str, str]:
         comment = review_comment_from_payload(payload)
@@ -113,6 +211,19 @@ class ReviewCommentService(Service):
         """
         if not comments:
             return []
+        if not review_comments_enabled():
+            # The switch can flip between dispatch and start (the batch sits
+            # in the runner's queue). Re-check here so a batch that was
+            # already queued when the operator hit the switch never spawns
+            # an agent — the queued work dies with the poll, not one tick
+            # after it.
+            self.logger.info(
+                'dropping a queued review-comment batch for pull request %s '
+                '— %s',
+                comments[0].pull_request_id,
+                REVIEW_COMMENTS_DISABLED_REASON,
+            )
+            return []
         review_context = self._review_fix_context(comments[0])
         # Defensive: every comment must share the (repo, pr) shape.
         # The dispatcher already groups; this guards against a
@@ -142,6 +253,20 @@ class ReviewCommentService(Service):
             comments[0].pull_request_id,
             len(comments),
         )
+        # Registered from here (before the clone, which is slow) so a
+        # switch-off during provisioning still finds the run to stop.
+        self._mark_review_run_active(review_context.task_id)
+        try:
+            return self._run_review_comment_batch(comments, review_context)
+        finally:
+            self._mark_review_run_finished(review_context.task_id)
+
+    def _run_review_comment_batch(
+        self, comments: list[ReviewComment], review_context: ReviewFixContext,
+    ) -> list[dict[str, str]]:
+        """Provision, run the agent, publish. Split out of
+        :meth:`process_review_comment_batch` purely so the active-run
+        bookkeeping gets a ``finally`` without re-indenting this body."""
         repository = self._repository_service.get_repository(review_context.repository_id)
         repository = self._provision_workspace_clone(repository, review_context)
         # Pure-question batches go through the answer-only flow:
@@ -250,6 +375,14 @@ class ReviewCommentService(Service):
 
     def get_new_pull_request_comments(self) -> list[ReviewComment]:
         new_comments: list[ReviewComment] = []
+        if not review_comments_enabled():
+            # Return BEFORE ``_review_pull_request_contexts`` so the switch
+            # means what it says: no PR listing, no comment listing, not a
+            # single request to the git host. Gating further down (at
+            # dispatch) would still hit Bitbucket/GitHub/GitLab every tick.
+            self._log_poll_gate(enabled=False)
+            return new_comments
+        self._log_poll_gate(enabled=True)
         try:
             review_contexts = self._review_pull_request_contexts()
         except Exception:
