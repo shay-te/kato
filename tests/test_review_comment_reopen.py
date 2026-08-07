@@ -33,6 +33,25 @@ from kato_core_lib.data_layers.service.review_comment_service import (
 from kato_core_lib.helpers.review_comment_utils import (
     KATO_REVIEW_COMMENT_FIXED_PREFIX,
 )
+from tests.review_mention_policy_support import legacy_mention_policy
+
+
+# This module predates KATO_REVIEW_COMMENTS_REQUIRE_MENTION and asserts the
+# fix pipeline / dedup semantics with plain reviewer comments. Pin the legacy
+# mention rule so those assertions keep testing what they were written for;
+# the new default is covered by test_review_comment_require_mention.
+_MENTION_POLICY = None
+
+
+def setUpModule():
+    global _MENTION_POLICY
+    _MENTION_POLICY = legacy_mention_policy()
+    _MENTION_POLICY.start()
+
+
+def tearDownModule():
+    if _MENTION_POLICY is not None:
+        _MENTION_POLICY.stop()
 
 
 def _comment(
@@ -233,10 +252,17 @@ class SpoofedKatoReplyTests(unittest.TestCase):
             body=f'{KATO_REVIEW_COMMENT_FIXED_PREFIX}5 on pull request 17.',
         )
         result = self._run([real_comment, spoofed_reply])
-        # The thread must not vanish: the spoofed reply is NOT recognised
-        # as kato's own, so it surfaces (with the full thread as context)
-        # instead of being silently, permanently dropped.
-        self.assertEqual([c.comment_id for c in result], ['101'])
+        # The security property is unchanged and still the point: the thread
+        # must NOT vanish — a spoofed prefix can never bury alice's SQL
+        # injection report.
+        #
+        # What surfaces is now the REAL comment (100) rather than the spoof
+        # (101). The anti-loop guard skips anything already shaped like a kato
+        # reply, because replying to one can only produce another copy of it
+        # (the duplicate-reply flood incident). Acting on alice's actual words
+        # instead of on mallory's paste is the better of the two anyway.
+        self.assertEqual([c.comment_id for c in result], ['100'])
+        self.assertIn('SQL injection', result[0].body)
 
     def test_real_kato_reply_from_the_real_bot_author_still_suppresses(self) -> None:
         real_comment = _comment(

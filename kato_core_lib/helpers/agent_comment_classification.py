@@ -74,8 +74,46 @@ def _matches_prefixes(text: object, prefixes: tuple[str, ...]) -> bool:
 
 
 def is_agent_operational_comment(text: object) -> bool:
-    """True when kato itself posted this comment."""
+    """True when kato itself posted this comment, judged by its wording."""
     return _matches_prefixes(text, AGENT_COMMENT_PREFIXES)
+
+
+def is_agent_authored_comment(
+    comment: object,
+    bot_identities: object = (),
+) -> bool:
+    """True when kato wrote this ticket comment — by ACCOUNT first, wording second.
+
+    ``comment`` is a comment entry (``{author, author_id, body}``).
+
+    Account beats wording. Wording is a guess that breaks every time the text
+    changes or a human quotes kato back at it; the authoring account is a fact.
+    This is what a dedicated kato user buys: give kato its own ticket account
+    and ``author_id`` answers "did I write this?" outright, no prefix matching.
+
+    ``bot_identities`` is compared against the STABLE handle (``author_id``),
+    not the rendered display name — providers send "Jane Doe" where the config
+    holds "jane.doe", and comparing those never matches.
+
+    Falls back to the wording check when the account can't decide: no
+    identities configured, no ``author_id`` on the entry (an older provider
+    path), or the comment was authored by someone else. That last case matters
+    for the SHARED-account setup, where kato posts as the operator: the
+    account can't distinguish them, so the prefixes still carry the weight.
+    """
+    identities = {
+        str(identity).strip().lower()
+        for identity in (bot_identities or ())
+        if str(identity).strip()
+    }
+    author_id = normalized_text(
+        text_from_mapping(comment, TaskCommentFields.AUTHOR_ID),
+    ).lower()
+    if identities and author_id and author_id in identities:
+        return True
+    return is_agent_operational_comment(
+        text_from_mapping(comment, TaskCommentFields.BODY),
+    )
 
 
 def is_completion_comment(text: object) -> bool:

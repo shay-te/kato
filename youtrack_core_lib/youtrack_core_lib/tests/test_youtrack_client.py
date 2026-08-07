@@ -296,12 +296,14 @@ class YouTrackGetAssignedTasksTests(unittest.TestCase):
             [
                 {
                     TaskCommentFields.AUTHOR: 'shay',
+                    TaskCommentFields.AUTHOR_ID: '',
                     TaskCommentFields.BODY: (
                         'Kato agent could not safely process this task: timeout'
                     ),
                 },
                 {
                     TaskCommentFields.AUTHOR: 'shay',
+                    TaskCommentFields.AUTHOR_ID: '',
                     TaskCommentFields.BODY: (
                         'Kato agent skipped this task because it could not detect '
                         'which repository to use from the task content: no configured '
@@ -310,6 +312,7 @@ class YouTrackGetAssignedTasksTests(unittest.TestCase):
                 },
                 {
                     TaskCommentFields.AUTHOR: 'Product Manager',
+                    TaskCommentFields.AUTHOR_ID: '',
                     TaskCommentFields.BODY: 'Please keep the fix minimal.',
                 },
             ],

@@ -34,6 +34,7 @@ from kato_core_lib.helpers.mission_logging_utils import (
 from kato_core_lib.helpers.review_comment_gate_utils import (
     REVIEW_COMMENTS_DISABLED_REASON,
     review_comments_enabled,
+    review_comments_require_mention,
 )
 from kato_core_lib.helpers.review_comment_utils import (
     KATO_REVIEW_COMMENT_NO_CHANGES_PREFIX,
@@ -41,6 +42,7 @@ from kato_core_lib.helpers.review_comment_utils import (
     comment_context_entry,
     is_kato_review_comment_reply,
     is_question_only_batch,
+    looks_like_kato_review_comment_reply,
     review_comment_answer_body,
     review_comment_from_payload,
     review_comment_fixed_comment,
@@ -687,13 +689,25 @@ class ReviewCommentService(Service):
         seen_resolution_targets: set = set()
         for index in range(len(comments) - 1, -1, -1):
             comment = comments[index]
-            if is_kato_review_comment_reply(comment, bot_identities):
+            # Two different questions, deliberately answered by two different
+            # checks. "Is this kato's reply, so the thread is addressed?" needs
+            # the author check (the prefixes are public — a copy must not bury
+            # a reviewer's comment). "Would acting on this loop?" does not:
+            # replying to something already shaped like a kato reply can only
+            # produce another identical reply, so it is skipped even when
+            # authorship can't be confirmed. Identity resolution has failed
+            # twice in production; this makes the loop impossible rather than
+            # contingent on it.
+            if (is_kato_review_comment_reply(comment, bot_identities)
+                    or looks_like_kato_review_comment_reply(comment)):
                 continue
-            # Operator's hard rule: a review comment that @-tags ANYONE is
-            # that person's to answer, NOT kato's — UNLESS the tag is kato
-            # itself. Runs AFTER the kato-own-reply skip so kato's replies
-            # (which may @-mention the reviewer) are never mention-filtered.
-            if self._review_comment_targets_someone_else(comment.body, bot_identities):
+            # Operator's hard rule: kato answers only what is addressed to
+            # it. By default that means the comment must @-mention kato;
+            # everything else on the pull request — including reviewer-to-
+            # reviewer chatter that tags nobody — is left alone. Runs AFTER
+            # the kato-own-reply skip so kato's replies (which may @-mention
+            # the reviewer) are never mention-filtered.
+            if self._review_comment_not_for_kato(comment.body, bot_identities):
                 continue
             setattr(comment, PullRequestFields.REPOSITORY_ID, repository_id)
             setattr(comment, ReviewCommentFields.ALL_COMMENTS, list(comment_context))
@@ -754,20 +768,34 @@ class ReviewCommentService(Service):
         return normalize_bot_identities(identities)
 
     @staticmethod
-    def _review_comment_targets_someone_else(
+    def _review_comment_not_for_kato(
         body: object, bot_identities: tuple[str, ...],
     ) -> bool:
-        """True when a review comment @-tags someone OTHER than kato.
+        """True when kato must leave this pull-request comment alone.
 
-        The operator's rule, exactly: a comment that tags anyone is theirs to
-        answer — kato only acts when the tag is kato itself, or when the
-        comment tags no one at all. Catches BOTH mention encodings (plain
-        ``@login`` and Bitbucket's ``@{account_id}``) so a tagged comment is
-        never mistaken for a mention-free one. When the comment tags people
-        but we can't confirm kato is among them (unknown/partial bot
-        identity), it counts as "someone else" — kato stays out.
+        Two rules, selected by ``KATO_REVIEW_COMMENTS_REQUIRE_MENTION``:
+
+        * **on (default)** — kato acts ONLY on comments that ``@mention`` it.
+          A pull request is a conversation between reviewers; a comment that
+          tags nobody is them talking to each other, not an instruction to the
+          agent, so it is ignored along with comments that tag someone else.
+        * **off** — the older, looser rule: act on everything except comments
+          that tag a human other than kato.
+
+        Catches BOTH mention encodings (plain ``@login`` and Bitbucket's
+        ``@{account_id}``) so a tagged comment is never mistaken for a
+        mention-free one.
+
+        Requiring a mention **fails closed**: with no resolvable bot identity
+        no mention can ever match, so kato acts on nothing rather than
+        answering comments it cannot confirm were addressed to it. That is the
+        point of the setting — but it also means a broken bot identity looks
+        like "kato went quiet", so ``_review_bot_identities`` logs its
+        resolution failures.
         """
         mentions = extract_all_mention_tokens(body)
+        if review_comments_require_mention():
+            return not mentions_include_identity(mentions, bot_identities)
         if not mentions:
             return False
         return not mentions_include_identity(mentions, bot_identities)

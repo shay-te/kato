@@ -445,6 +445,7 @@ class YouTrackClient(YouTrackClientBase):
             comments,
             extract_body=lambda c: text_from_mapping(c, YouTrackCommentFields.TEXT),
             extract_author=self._comment_author_name,
+            extract_author_id=self._comment_author_login,
             # Drop comments that @-mention humans other than the kato
             # bot — those are operator-to-employee discussions, not
             # requests the agent should act on. Comments with no
@@ -503,6 +504,20 @@ class YouTrackClient(YouTrackClientBase):
             or author.get(YouTrackCommentFields.LOGIN)
             or 'unknown'
         )
+
+    @staticmethod
+    def _comment_author_login(comment: dict[str, Any]) -> str:
+        """The author's LOGIN — the handle ``/api/users/me`` reports.
+
+        Kept separate from ``_comment_author_name``, which prefers the
+        display name ("Jane Doe") for human-readable output. Only the login
+        can be compared against the account this client authenticates as, so
+        "did I write this comment?" must read this field.
+        """
+        author = comment.get(YouTrackCommentFields.AUTHOR) or {}
+        if not isinstance(author, dict):
+            return ''
+        return str(author.get(YouTrackCommentFields.LOGIN) or '')
 
     @staticmethod
     def _attachment_name(attachment: dict[str, Any]) -> str:

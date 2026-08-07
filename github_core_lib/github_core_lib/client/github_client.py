@@ -250,6 +250,7 @@ mutation($threadId: ID!) {
                     pull_request_id=pull_request_id,
                     comment_id=item.get('databaseId', ''),
                     author=author.get('login', ''),
+                    author_id=author.get('login', ''),
                     body=item.get('body', ''),
                     resolution_target_id=thread_id,
                     resolution_target_type='thread',

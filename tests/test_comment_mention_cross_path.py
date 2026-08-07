@@ -10,7 +10,7 @@ independent places:
 
   * ISSUE comments  → ``IssueClientBase._comment_addressed_elsewhere``, used by
     all five platform clients to decide what lands in the task description.
-  * PR REVIEW comments → ``ReviewCommentService._review_comment_targets_someone_else``,
+  * PR REVIEW comments → ``ReviewCommentService._review_comment_not_for_kato``,
     used by the scan loop to decide what the agent acts on.
 
 They have separate extractors, separate identity resolution and separate call
@@ -48,6 +48,7 @@ from kato_core_lib.data_layers.service.review_comment_service import (
     ReviewCommentService,
 )
 from youtrack_core_lib.youtrack_core_lib.client.youtrack_client import YouTrackClient
+from tests.review_mention_policy_support import legacy_mention_policy
 
 
 # The bot's identity, spelled the same way on both paths so the two are
@@ -95,9 +96,23 @@ def _issue_clients() -> dict[str, object]:
     }
 
 
+def _review_skips_with_identities(body: str, identities: tuple) -> bool:
+    """Review-path verdict for an explicit identity set, legacy rule pinned."""
+    with legacy_mention_policy():
+        return ReviewCommentService._review_comment_not_for_kato(body, identities)
+
+
 def _review_skips(body: str) -> bool:
-    """The review path's verdict. Static, so no service wiring is needed."""
-    return ReviewCommentService._review_comment_targets_someone_else(body, (BOT,))
+    """The review path's verdict under the LEGACY (mention-optional) rule.
+
+    Both paths now also support a stricter "must @mention kato" policy, but
+    the agreement this file locks in is about MENTION EXTRACTION — whether
+    each path can see an ``@dave`` or an ``@{Dave Smith}`` at all. Pinning the
+    legacy rule keeps that the only variable; the strict policy has its own
+    suites (test_review_comment_require_mention, CommentPolicyTests).
+    """
+    with legacy_mention_policy():
+        return ReviewCommentService._review_comment_not_for_kato(body, (BOT,))
 
 
 class IssuePathVerdictTests(unittest.TestCase):
@@ -185,7 +200,7 @@ class UnresolvableIdentityDivergenceTests(unittest.TestCase):
 
     def test_review_path_fails_closed_with_no_identity(self) -> None:
         self.assertTrue(
-            ReviewCommentService._review_comment_targets_someone_else('@dave ping', ()),
+            _review_skips_with_identities('@dave ping', ()),
         )
 
     def test_issue_path_fails_open_with_no_identity(self) -> None:
@@ -201,7 +216,7 @@ class UnresolvableIdentityDivergenceTests(unittest.TestCase):
         client._fetch_current_user_logins = lambda: ()
         self.assertFalse(client._comment_addressed_elsewhere('plain note'))
         self.assertFalse(
-            ReviewCommentService._review_comment_targets_someone_else('plain note', ()),
+            _review_skips_with_identities('plain note', ()),
         )
 
 

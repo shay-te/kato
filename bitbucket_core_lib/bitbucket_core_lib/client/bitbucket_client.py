@@ -211,6 +211,12 @@ class BitbucketClient(PullRequestClientBase):
             author = dict_from_mapping(item, 'user')
             display_name = author.get('display_name', '')
             nickname = author.get('nickname', '')
+            # Stable handles, in the order a host is configured by. Bitbucket
+            # renders ``display_name`` ("Shay Tessler") but is CONFIGURED by
+            # username/nickname, so the identity check needs these too.
+            account_id = normalized_text(
+                author.get('account_id', '') or author.get('uuid', '')
+            )
             resolution_target_id = normalized_text(
                 parent.get('id', '') or item.get('id', '')
             )
@@ -232,6 +238,7 @@ class BitbucketClient(PullRequestClientBase):
                 pull_request_id=pull_request_id,
                 comment_id=item.get('id', ''),
                 author=display_name or nickname or '',
+                author_id=nickname or account_id or '',
                 body=content.get('raw', ''),
                 resolution_target_id=resolution_target_id,
                 resolution_target_type='comment',

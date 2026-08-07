@@ -246,6 +246,7 @@ class YouTrackClientBase(IssueClientBase):
         extract_body: Callable[[dict[str, Any]], object],
         extract_author: Callable[[dict[str, Any]], object],
         skip: Callable[[dict[str, Any]], bool] | None = None,
+        extract_author_id: Callable[[dict[str, Any]], object] | None = None,
     ) -> list[dict[str, str]]:
         entries: list[dict[str, str]] = []
         for comment in comments:
@@ -253,7 +254,11 @@ class YouTrackClientBase(IssueClientBase):
                 continue
             if skip is not None and skip(comment):
                 continue
-            entry = cls._task_comment_entry(extract_author(comment), extract_body(comment))
+            entry = cls._task_comment_entry(
+                extract_author(comment),
+                extract_body(comment),
+                extract_author_id(comment) if extract_author_id else '',
+            )
             if entry:
                 entries.append(entry)
         return entries
@@ -262,12 +267,14 @@ class YouTrackClientBase(IssueClientBase):
     def _task_comment_entry(
         author: object,
         body: object,
+        author_id: object = '',
     ) -> dict[str, str] | None:
         normalized_body = normalized_text(body)
         if not normalized_body:
             return None
         return {
             TaskCommentFields.AUTHOR: normalized_text(author) or 'unknown',
+            TaskCommentFields.AUTHOR_ID: normalized_text(author_id),
             TaskCommentFields.BODY: normalized_body,
         }
 

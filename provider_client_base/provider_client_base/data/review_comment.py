@@ -12,10 +12,22 @@ class ReviewComment(object):
         line_number: int | str = '',
         line_type: str = '',
         commit_sha: str = '',
+        author_id: str = '',
     ) -> None:
         self.pull_request_id = pull_request_id
         self.comment_id = comment_id
         self.author = author
+        # The author's STABLE handle (bitbucket nickname/account_id, github
+        # login, gitlab username) — as opposed to ``author``, which providers
+        # may render as a human display name.
+        #
+        # A host identifies its own bot by handle, so an identity check that
+        # only ever saw ``author`` compared a display name ("Jane Doe")
+        # against a configured handle ("jane.doe") on Bitbucket and could
+        # never match. A host that cannot recognise its OWN replies re-polls
+        # them as fresh reviewer comments and reposts the same reply on every
+        # poll — an unbounded self-reply loop.
+        self.author_id = author_id
         self.body = body
         self.file_path = file_path
         self.line_number = line_number

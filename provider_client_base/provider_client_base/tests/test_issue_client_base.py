@@ -11,6 +11,7 @@ from provider_client_base.provider_client_base.client.issue_client_base import (
 from provider_client_base.provider_client_base.data.issue_record import (
     ISSUE_ALL_COMMENTS,
     ISSUE_COMMENT_AUTHOR,
+    ISSUE_COMMENT_AUTHOR_ID,
     ISSUE_COMMENT_BODY,
     IssueRecord,
 )
@@ -193,7 +194,8 @@ class BuildCommentEntriesTests(unittest.TestCase):
         )
         self.assertEqual(
             entries,
-            [{ISSUE_COMMENT_AUTHOR: 'alice', ISSUE_COMMENT_BODY: 'hello'}],
+            [{ISSUE_COMMENT_AUTHOR: 'alice', ISSUE_COMMENT_AUTHOR_ID: '',
+              ISSUE_COMMENT_BODY: 'hello'}],
         )
 
     def test_skips_non_dict_and_empty_body(self) -> None:
@@ -203,7 +205,8 @@ class BuildCommentEntriesTests(unittest.TestCase):
             extract_author=lambda c: c.get('a'),
         )
         self.assertEqual(
-            entries, [{ISSUE_COMMENT_AUTHOR: 'bob', ISSUE_COMMENT_BODY: 'kept'}],
+            entries, [{ISSUE_COMMENT_AUTHOR: 'bob', ISSUE_COMMENT_AUTHOR_ID: '',
+              ISSUE_COMMENT_BODY: 'kept'}],
         )
 
     def test_default_author_when_blank(self) -> None:

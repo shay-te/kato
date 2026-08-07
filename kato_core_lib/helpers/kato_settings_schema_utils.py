@@ -41,6 +41,7 @@ LOG_LEVELS = ['debug', 'info', 'warning', 'error', 'critical']
 DEFAULT_ON_BOOL_KEYS: frozenset[str] = frozenset({
     'KATO_ALLOW_CLI_UPGRADE',
     'KATO_REVIEW_COMMENTS_ENABLED',
+    'KATO_REVIEW_COMMENTS_REQUIRE_MENTION',
 })
 
 # Action Guard posture — the per-category decision selects in the Settings UI.
@@ -197,6 +198,13 @@ SETTINGS_SCHEMA: list[dict] = [
              'GitHub / GitLab for new pull-request review comments — and '
              'to stop any review-comment run already in flight. Applies '
              'immediately, no restart. Ticket pickup is unaffected.', {}),
+            ('KATO_REVIEW_COMMENTS_REQUIRE_MENTION', 'bool',
+             'Only @-mentioned PR comments',
+             'On by default. Kato answers ONLY pull-request comments that '
+             '@-mention its own user and ignores the rest — including '
+             'reviewer-to-reviewer chatter that tags nobody. Turn OFF to '
+             'act on everything except comments tagging someone else. '
+             'Applies immediately, no restart.', {}),
             ('KATO_WORKSPACE_REVIEW_TTL_SECONDS', 'number',
              'Workspace review TTL (s)',
              'How long a review-state workspace survives before '

@@ -7,6 +7,9 @@ from provider_client_base.provider_client_base.data.fields import (
 
 class TaskCommentFields(object):
     AUTHOR = 'author'
+    # Stable handle (login/accountId), NOT the rendered display name —
+    # the only field that can answer "did this host write this comment?".
+    AUTHOR_ID = 'author_id'
     BODY = 'body'
     ALL_COMMENTS = 'all_comments'
 

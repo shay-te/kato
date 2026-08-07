@@ -7,6 +7,15 @@ from dataclasses import dataclass, field
 # shared ``IssueClientBase`` helpers and each provider client agree on
 # the dict shape without re-declaring the constants per lib.
 ISSUE_COMMENT_AUTHOR = 'author'
+# The author's STABLE handle (youtrack/gitlab login, github login, jira
+# accountId, bitbucket nickname) — as opposed to ``ISSUE_COMMENT_AUTHOR``,
+# which providers render as a human display name ("Jane Doe").
+#
+# A host identifies its own account by handle, so "did I write this?" can only
+# be answered against this field. Comparing the rendered name against a
+# configured handle never matches, which is how a host ends up re-reading its
+# own comments as fresh instructions.
+ISSUE_COMMENT_AUTHOR_ID = 'author_id'
 ISSUE_COMMENT_BODY = 'body'
 ISSUE_ALL_COMMENTS = 'all_comments'
 

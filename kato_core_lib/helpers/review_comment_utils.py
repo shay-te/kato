@@ -186,6 +186,34 @@ def review_comment_resolution_key(comment: ReviewComment) -> tuple[str, str]:
     return resolution_target_type, resolution_target_id
 
 
+def looks_like_kato_review_comment_reply(comment: ReviewComment) -> bool:
+    """Does this comment's BODY have the shape of one of kato's own replies?
+
+    Prefix-only — deliberately no author check. Use this for the one question
+    where authorship doesn't change the right answer: *would replying to this
+    create a loop?* Acting on a comment that already reads as a kato reply can
+    only ever produce another identical reply, so kato must never ingest one
+    even when it cannot prove it wrote it.
+
+    That makes the loop structurally impossible instead of contingent on
+    identity resolution succeeding — which it has now failed to do twice, in
+    two different ways (a Jira ``currentUser()`` alias, then Bitbucket
+    rendering the author as a display name), each time costing the operator a
+    thread full of duplicate replies and a flood of notification emails.
+
+    Do NOT use this for "kato already addressed this thread" — the prefixes
+    are public text any participant can copy, and treating a copy as proof
+    would silently bury a real reviewer's comment. That decision needs
+    :func:`is_kato_review_comment_reply`'s author check.
+    """
+    body = normalized_text(comment.body)
+    for opener in ('<sub>', '<small>'):
+        if body.startswith(opener):
+            body = body[len(opener):]
+            break
+    return body.startswith(KATO_SELF_REPLY_PREFIXES)
+
+
 def is_kato_review_comment_reply(
     comment: ReviewComment,
     bot_identities: object = (),
@@ -216,20 +244,7 @@ def is_kato_review_comment_reply(
     to the old behaviour rather than making kato mistake its OWN
     replies for new reviewer comments it must re-process.
     """
-    body = normalized_text(comment.body)
-    for opener in ('<sub>', '<small>'):
-        if body.startswith(opener):
-            body = body[len(opener):]
-            break
-    prefix_matches = body.startswith(
-        (
-            KATO_REVIEW_COMMENT_FIXED_PREFIX,
-            KATO_REVIEW_COMMENT_REPLY_PREFIX,
-            KATO_REVIEW_COMMENT_ANSWER_PREFIX,
-            KATO_REVIEW_COMMENT_NO_CHANGES_PREFIX,
-        )
-    )
-    if not prefix_matches:
+    if not looks_like_kato_review_comment_reply(comment):
         return False
     identities = {
         str(identity).strip().lower()
@@ -238,8 +253,21 @@ def is_kato_review_comment_reply(
     }
     if not identities:
         return True
-    author = str(getattr(comment, 'author', '') or '').strip().lower()
-    return author in identities
+    # Match on EVERY identity flavour the host reports for the author, not
+    # just the rendered one. Bitbucket renders ``author`` as a display name
+    # ("Shay Tessler") while the operator configures kato by username
+    # ("shay.te"), so an author-only check could never match there: kato
+    # stopped recognising its own replies, re-polled them as fresh reviewer
+    # comments, and reposted the same reply on every scan tick — the PR
+    # comment loop that spammed the thread and its watchers. ``author_id``
+    # carries the stable handle (bitbucket nickname/account_id, github login,
+    # gitlab username) precisely so this comparison can succeed.
+    candidates = {
+        str(getattr(comment, attribute, '') or '').strip().lower()
+        for attribute in ('author', 'author_id')
+    }
+    candidates.discard('')
+    return not identities.isdisjoint(candidates)
 
 
 # Heuristic: question vs fix-request classification for review comments.

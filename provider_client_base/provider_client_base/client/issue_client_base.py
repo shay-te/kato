@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 from provider_client_base.provider_client_base.data.issue_record import (
     ISSUE_ALL_COMMENTS,
     ISSUE_COMMENT_AUTHOR,
+    ISSUE_COMMENT_AUTHOR_ID,
     ISSUE_COMMENT_BODY,
     IssueRecord,
 )
@@ -128,7 +129,15 @@ class IssueClientBase(RetryingClientBase):
         extract_body: Callable[[dict[str, Any]], object],
         extract_author: Callable[[dict[str, Any]], object],
         skip: Callable[[dict[str, Any]], bool] | None = None,
+        extract_author_id: Callable[[dict[str, Any]], object] | None = None,
     ) -> list[dict[str, str]]:
+        """Build the neutral comment entries that become ``all_comments``.
+
+        ``extract_author_id`` yields the author's STABLE handle. Supply it
+        wherever the host must answer "did I write this?" — the rendered
+        ``author`` is a display name on most providers and can never be
+        compared against a configured handle.
+        """
         entries: list[dict[str, str]] = []
         for comment in comments:
             if not isinstance(comment, dict):
@@ -140,6 +149,9 @@ class IssueClientBase(RetryingClientBase):
                 continue
             entries.append({
                 ISSUE_COMMENT_AUTHOR: normalized_text(extract_author(comment)) or 'unknown',
+                ISSUE_COMMENT_AUTHOR_ID: normalized_text(
+                    extract_author_id(comment) if extract_author_id else '',
+                ),
                 ISSUE_COMMENT_BODY: body,
             })
         return entries

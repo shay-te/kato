@@ -38,6 +38,30 @@ The first-run wizard shows these steps inline (Settings → credentials repeats 
 | GitLab | avatar → Edit profile → [Access tokens](https://gitlab.com/-/user_settings/personal_access_tokens) → Add new token — [docs](https://docs.gitlab.com/user/profile/personal_access_tokens/) | `api` |
 | Bitbucket | [id.atlassian.com](https://id.atlassian.com/manage-profile/security/api-tokens) → Security → API tokens (Bitbucket Cloud authenticates through Atlassian) — [docs](https://support.atlassian.com/bitbucket-cloud/docs/using-api-tokens/) | repositories / pull requests / issues RW, plus `BITBUCKET_USERNAME` and `BITBUCKET_API_EMAIL` |
 
+## Give kato its own account (recommended)
+
+Kato can run on your own account — the token is yours, so its comments and pull-request replies appear under your name. It works, but it leaves kato unable to answer one question reliably: **"did I write this comment, or did a human?"**
+
+With a shared account the two are indistinguishable by author, so kato falls back to recognising its own writing by the *wording* of the comment. That is a guess, and it has failed in production more than once — each failure means kato reads its own comment as a new instruction, acts on it, comments again, and loops, emailing every watcher on every scan tick.
+
+Give kato a separate user and the guess disappears: the comment author *is* the answer.
+
+**Setup**
+
+1. Create a new user on the ticket platform — e.g. `kato-bot` — and, if your repositories live elsewhere, on the git host too.
+2. Grant it the same project access your own account has (read issues, comment, move states; push + open pull requests on the repo host).
+3. Create the API token **while signed in as that user** and put it in kato's settings (`YOUTRACK_API_TOKEN`, `BITBUCKET_API_TOKEN`, …).
+4. Point kato's scanning identity at it: `YOUTRACK_ASSIGNEE=kato-bot` (and `BITBUCKET_USERNAME` / `GITHUB_ASSIGNEE` / … to match the same account).
+5. **Reassign the work.** Kato picks up tickets assigned to that account — anything still assigned to you will stop being picked up until you move it over.
+
+**What changes once it's in place**
+
+- Kato identifies its own ticket and pull-request comments by account, not by matching English sentences.
+- `KATO_TASK_COMMENTS_REQUIRE_MENTION` becomes coherent: you `@kato-bot` to direct the agent, instead of @-mentioning yourself.
+- Its comments are attributable in the ticket history — you can tell at a glance what the agent did versus what you did.
+
+Kato still works without this, and every wording-based check remains as a fallback. This removes a class of failure rather than a specific bug.
+
 ## Setting Up YouTrack
 
 Use this when tasks are coming from YouTrack:

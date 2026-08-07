@@ -15,6 +15,25 @@ from kato_core_lib.data_layers.service.planning_session_runner import SessionSto
 from kato_core_lib.data_layers.service.review_comment_service import ReviewCommentService
 from kato_core_lib.helpers.review_comment_utils import review_comment_fixed_comment
 from tests.utils import build_review_comment, build_task
+from tests.review_mention_policy_support import legacy_mention_policy
+
+
+# This module predates KATO_REVIEW_COMMENTS_REQUIRE_MENTION and asserts the
+# fix pipeline / dedup semantics with plain reviewer comments. Pin the legacy
+# mention rule so those assertions keep testing what they were written for;
+# the new default is covered by test_review_comment_require_mention.
+_MENTION_POLICY = None
+
+
+def setUpModule():
+    global _MENTION_POLICY
+    _MENTION_POLICY = legacy_mention_policy()
+    _MENTION_POLICY.start()
+
+
+def tearDownModule():
+    if _MENTION_POLICY is not None:
+        _MENTION_POLICY.stop()
 
 
 class ReviewCommentServiceTests(unittest.TestCase):

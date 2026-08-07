@@ -61,3 +61,43 @@ def review_comments_enabled(env: dict | None = None) -> bool:
     """``False`` only when the operator explicitly switched the loop off."""
     env = os.environ if env is None else env
     return _resolved_value(env).lower() not in _FALSY
+
+
+REVIEW_COMMENTS_REQUIRE_MENTION_KEY = 'KATO_REVIEW_COMMENTS_REQUIRE_MENTION'
+
+# Default ON: a pull-request comment is a conversation between reviewers by
+# default, and only the ones that actually tag kato are addressed to it.
+REVIEW_COMMENTS_REQUIRE_MENTION_DEFAULT = 'true'
+
+_TRUTHY = ('true', '1', 'yes', 'on')
+
+
+def _resolved_require_mention(env: dict) -> str:
+    """settings.json (live) → shell env → default-on. Mirrors the gate above."""
+    try:
+        settings = read_kato_settings()
+    except Exception:  # noqa: BLE001 - a corrupt settings file must not
+        settings = {}  # decide the switch; fall through to env/default.
+    for source in (settings, env):
+        value = source.get(REVIEW_COMMENTS_REQUIRE_MENTION_KEY)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return REVIEW_COMMENTS_REQUIRE_MENTION_DEFAULT
+
+
+def review_comments_require_mention(env: dict | None = None) -> bool:
+    """Must a PR review comment ``@mention`` kato for kato to act on it?
+
+    ``True`` (default) means kato answers ONLY comments that tag it, and
+    ignores everything else on the pull request — including comments that tag
+    nobody, which are reviewers talking to each other.
+
+    ``False`` restores the older, looser rule: act on everything except
+    comments that tag a human other than kato.
+
+    Read fresh on every check, same as
+    :func:`review_comments_enabled` — the operator changes this to change
+    kato's behaviour now, not after a restart.
+    """
+    env = os.environ if env is None else env
+    return _resolved_require_mention(env).lower() in _TRUTHY

@@ -23,6 +23,25 @@ from unittest.mock import MagicMock
 
 from provider_client_base.provider_client_base.data.review_comment import ReviewComment
 from kato_core_lib.data_layers.service.review_comment_service import ReviewCommentService
+from tests.review_mention_policy_support import legacy_mention_policy
+
+
+# This module predates KATO_REVIEW_COMMENTS_REQUIRE_MENTION and asserts the
+# fix pipeline / dedup semantics with plain reviewer comments. Pin the legacy
+# mention rule so those assertions keep testing what they were written for;
+# the new default is covered by test_review_comment_require_mention.
+_MENTION_POLICY = None
+
+
+def setUpModule():
+    global _MENTION_POLICY
+    _MENTION_POLICY = legacy_mention_policy()
+    _MENTION_POLICY.start()
+
+
+def tearDownModule():
+    if _MENTION_POLICY is not None:
+        _MENTION_POLICY.stop()
 
 
 def _comment(comment_id: str, body: str) -> ReviewComment:

@@ -114,7 +114,8 @@ class BuildCommentEntriesTests(unittest.TestCase):
             extract_body=lambda c: c['text'],
             extract_author=lambda c: c['author']['name'],
         )
-        self.assertEqual(entries, [{'author': 'alice', 'body': 'hello'}])
+        self.assertEqual(
+            entries, [{'author': 'alice', 'author_id': '', 'body': 'hello'}])
 
     def test_skips_empty_body(self):
         entries = YouTrackClientBase._build_comment_entries(
@@ -155,7 +156,8 @@ class BuildCommentEntriesTests(unittest.TestCase):
 class TaskCommentEntryTests(unittest.TestCase):
     def test_valid_entry(self):
         entry = YouTrackClientBase._task_comment_entry('alice', 'hello')
-        self.assertEqual(entry, {'author': 'alice', 'body': 'hello'})
+        self.assertEqual(
+            entry, {'author': 'alice', 'author_id': '', 'body': 'hello'})
 
     def test_empty_body_returns_none(self):
         self.assertIsNone(YouTrackClientBase._task_comment_entry('alice', ''))
@@ -169,7 +171,7 @@ class TaskCommentEntryTests(unittest.TestCase):
 
     def test_strips_author_and_body(self):
         entry = YouTrackClientBase._task_comment_entry('  alice  ', '  msg  ')
-        self.assertEqual(entry, {'author': 'alice', 'body': 'msg'})
+        self.assertEqual(entry, {'author': 'alice', 'author_id': '', 'body': 'msg'})
 
 
 class BuildTaskTests(unittest.TestCase):

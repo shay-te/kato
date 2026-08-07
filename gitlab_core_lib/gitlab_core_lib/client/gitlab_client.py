@@ -188,6 +188,7 @@ class GitLabClient(PullRequestClientBase):
                     pull_request_id=pull_request_id,
                     comment_id=item.get('id', ''),
                     author=author.get('username') or author.get('name') or '',
+                    author_id=author.get('username', ''),
                     body=item.get('body', ''),
                     resolution_target_id=discussion_id,
                     resolution_target_type='discussion',
