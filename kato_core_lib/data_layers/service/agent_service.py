@@ -364,6 +364,20 @@ class AgentService(MissionStepLoggerMixin, Service):
         self._cleanup_done_task_conversations()
         return self._review_comment_service.get_new_pull_request_comments()
 
+    def active_review_comment_task_ids(self) -> list[str]:
+        """Task ids currently running a PR review-comment batch."""
+        return self._review_comment_service.active_review_comment_task_ids()
+
+    def stop_review_comment_work(self) -> list[str]:
+        """Stop every in-flight PR review-comment run; return the task ids.
+
+        The webserver calls this the moment an operator switches
+        ``KATO_REVIEW_COMMENTS_ENABLED`` off, so "stop pulling comments"
+        also means "stop the one you're working on right now" rather than
+        "stop after this one finishes".
+        """
+        return self._review_comment_service.stop_active_review_comment_work()
+
     def cleanup_done_tasks(self) -> None:
         """Public boot entrypoint for the done-task prune.
 

@@ -32,6 +32,17 @@ from agent_core_lib.agent_core_lib.helpers.command_policy import (
 
 LOG_LEVELS = ['debug', 'info', 'warning', 'error', 'critical']
 
+# ``bool`` fields whose UNSET value means ON. The settings store has no
+# concept of "not written yet" once rendered, so without this the toggle
+# would draw unchecked while the code behind it defaults to enabled —
+# an off-looking switch that is actually on. ``/api/all-settings`` fills
+# these with ``"true"`` when nothing is stored so the picker always
+# reflects what kato will really do.
+DEFAULT_ON_BOOL_KEYS: frozenset[str] = frozenset({
+    'KATO_ALLOW_CLI_UPGRADE',
+    'KATO_REVIEW_COMMENTS_ENABLED',
+})
+
 # Action Guard posture — the per-category decision selects in the Settings UI.
 # Defaults are DERIVED from the engine's secure default so the schema, the
 # resolver, and the boot banner can never drift from the enforcement code.
@@ -180,6 +191,12 @@ SETTINGS_SCHEMA: list[dict] = [
              'Requires the above. Takes a ticket comment ONLY when it '
              '@-mentions the kato user — untagged chatter between people '
              'never becomes instructions. Leave on.', {}),
+            ('KATO_REVIEW_COMMENTS_ENABLED', 'bool',
+             'Pull PR review comments',
+             'On by default. Turn OFF to stop kato polling Bitbucket / '
+             'GitHub / GitLab for new pull-request review comments — and '
+             'to stop any review-comment run already in flight. Applies '
+             'immediately, no restart. Ticket pickup is unaffected.', {}),
             ('KATO_WORKSPACE_REVIEW_TTL_SECONDS', 'number',
              'Workspace review TTL (s)',
              'How long a review-state workspace survives before '

@@ -9,9 +9,11 @@ import { countNoun } from '../utils/pluralize.js';
 // bespoke panels (Action Guard) build on this so the boilerplate lives once.
 //
 // Returns the section + its fields, the editable ``draft`` with ``setField``,
-// the ``dirtyKeys`` diff, ``revert``, and the ``save`` state machine (which
-// POSTs only the changed keys). ``successMessage`` overrides the save toast
-// for sections that apply live (Action Guard) instead of needing a restart.
+// the ``dirtyKeys`` diff, ``revert``, the ``save`` state machine (which POSTs
+// only the changed keys), and ``restartRequired`` — the server's verdict on
+// the last save, so a panel only shows the restart banner when it's true.
+// ``successMessage`` overrides the save toast for sections that apply live
+// (Action Guard) instead of needing a restart.
 export function useSchemaSectionDraft(sectionId, { onSaved, successMessage } = {}) {
   const [meta, setMeta] = useState({ sections: [], settingsFilePath: '' });
   const [draft, setDraft] = useState({});
@@ -42,7 +44,19 @@ export function useSchemaSectionDraft(sectionId, { onSaved, successMessage } = {
     return out;
   }, [section, draft]);
 
-  const saveOpts = { onSaved: () => { refresh(); if (onSaved) { onSaved(); } } };
+  // Whether the LAST save actually needs a restart. The server answers this
+  // per-save (a section can hold both restart-only keys and live ones, e.g.
+  // the review-comment switch in General), so trusting a per-panel constant
+  // would show "restart kato" after a change that already took effect.
+  const [restartRequired, setRestartRequired] = useState(true);
+
+  const saveOpts = {
+    onSaved: (result) => {
+      setRestartRequired(result?.body?.restart_required !== false);
+      refresh();
+      if (onSaved) { onSaved(result); }
+    },
+  };
   if (successMessage) { saveOpts.successMessage = successMessage; }
   const { saving, savedAt, save } = useRestartingSave(() => {
     const updates = {};
@@ -75,6 +89,6 @@ export function useSchemaSectionDraft(sectionId, { onSaved, successMessage } = {
     section, fields: section?.fields || [],
     settingsFilePath: meta.settingsFilePath,
     draft, setField, dirtyKeys, revert,
-    saving, savedAt, save, saveBarProps,
+    saving, savedAt, save, saveBarProps, restartRequired,
   };
 }

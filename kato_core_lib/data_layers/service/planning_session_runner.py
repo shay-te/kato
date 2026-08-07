@@ -176,6 +176,17 @@ class PlanningSessionRunner(object):
         self._hook_runner = hook_runner
         self.logger = configure_logger(self.__class__.__name__)
 
+    @property
+    def session_manager(self) -> ClaudeSessionManager:
+        """The manager owning the live subprocesses this runner spawns.
+
+        Exposed so callers that need to stop a run they started through
+        this runner (``ReviewCommentService.stop_active_review_comment_work``)
+        can reach the same ``terminate_session`` the UI's Stop button uses,
+        instead of reaching into a private attribute.
+        """
+        return self._session_manager
+
     def resume_session_for_chat(
         self,
         *,

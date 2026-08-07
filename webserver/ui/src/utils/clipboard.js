@@ -1,5 +1,6 @@
 import { toast } from '../stores/toastStore.js';
 import { formatRepoRelativePath } from '../diffModel.js';
+import { basenameOf } from './basenameOf.js';
 
 export async function copyTextToClipboard(text) {
   const value = String(text || '');
@@ -33,19 +34,17 @@ export async function copyTextToClipboard(text) {
   }
 }
 
-// Copy a repo-relative file path to the clipboard and surface a toast
-// for the success / failure outcome. Shared by the Files tab path menu
-// and the diff-file header path menu, which previously hand-rolled the
-// identical formatRepoRelativePath -> copy -> toast sequence.
-export async function copyRepoRelativePath(repoId, path) {
-  const repoPath = formatRepoRelativePath(repoId, path);
-  if (!path) { return; }
+// Copy → success toast → failure toast. The public copy actions below
+// differ only in WHAT they copy and how the success toast is titled, so
+// the sequence lives here once instead of in each of them.
+async function copyWithToast(text, successTitle) {
+  if (!text) { return; }
   try {
-    await copyTextToClipboard(repoPath);
+    await copyTextToClipboard(text);
     toast.show({
       kind: 'success',
-      title: 'Copied relative path',
-      message: repoPath,
+      title: successTitle,
+      message: text,
       durationMs: 2500,
     });
   } catch (err) {
@@ -56,4 +55,22 @@ export async function copyRepoRelativePath(repoId, path) {
       durationMs: 5000,
     });
   }
+}
+
+// Copy a repo-relative file path to the clipboard and surface a toast
+// for the success / failure outcome. Shared by the Files tab path menu
+// and the diff-file header path menu, which previously hand-rolled the
+// identical formatRepoRelativePath -> copy -> toast sequence.
+export async function copyRepoRelativePath(repoId, path) {
+  if (!path) { return; }
+  await copyWithToast(formatRepoRelativePath(repoId, path), 'Copied relative path');
+}
+
+// Just the last segment — ``agent_service.py``, not
+// ``kato_core_lib/data_layers/service/agent_service.py``. What you want
+// when pasting a name into a search box, a ticket, or a message, where
+// the surrounding path is noise. Works for folders too (the folder's own
+// name), since a folder row's relative path ends in that name.
+export async function copyFileName(path) {
+  await copyWithToast(basenameOf(String(path || '').trim()), 'Copied file name');
 }

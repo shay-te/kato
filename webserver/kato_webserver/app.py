@@ -271,7 +271,7 @@ def _validate_settings(updates: dict[str, str]) -> list[str]:
     return validate_settings_values(updates)
 
 
-def _validate_persist_and_respond(updates: dict):
+def _validate_persist_and_respond(updates: dict, app: Flask | None = None):
     """Validate → persist → standard "saved, restart required" response.
 
     Shared tail for the three settings-write POST handlers
@@ -281,6 +281,9 @@ def _validate_persist_and_respond(updates: dict):
     ``{ok, updated_keys, restart_required, message}`` success envelope.
     Callers own their allowlist filtering and the "no recognised
     updates" empty-payload guard — this is purely the common tail.
+
+    ``app`` (when passed) lets a saved key take effect immediately
+    instead of at the next restart — see :func:`_apply_live_settings`.
     """
     validation_errors = _validate_settings(updates)
     if validation_errors:
@@ -289,22 +292,99 @@ def _validate_persist_and_respond(updates: dict):
         _persist_settings(updates)
     except OSError as exc:
         return jsonify({'error': f'failed to write settings file: {exc}'}), 500
+    live_message = _apply_live_settings(app, updates) if app is not None else ''
+    # A save can mix a live key with restart-only ones (the General tab
+    # POSTs every dirty field at once) — the banner must stay up unless
+    # EVERY saved key applies live, or a restart-only change silently
+    # looks like it already took effect.
+    restart_required = not (live_message and set(updates) <= _live_settings_keys())
+    message = live_message or 'Saved. Restart kato for the change to take effect.'
+    if live_message and restart_required:
+        message = f'{live_message} Restart kato for the other change(s).'
     return jsonify({
         'ok': True,
         'updated_keys': sorted(updates.keys()),
-        'restart_required': True,
-        'message': 'Saved. Restart kato for the change to take effect.',
+        'restart_required': restart_required,
+        'message': message,
     })
+
+
+def _live_settings_keys() -> frozenset[str]:
+    """Schema keys :func:`_apply_live_settings` enforces without a restart."""
+    from kato_core_lib.helpers.review_comment_gate_utils import (
+        REVIEW_COMMENTS_ENABLED_KEY,
+    )
+
+    return frozenset({REVIEW_COMMENTS_ENABLED_KEY})
+
+
+def _apply_live_settings(app: Flask, updates: dict) -> str:
+    """Enforce the just-saved settings that apply WITHOUT a restart.
+
+    Returns the operator-facing message to send back, or ``''`` when
+    nothing live was touched (caller falls back to "restart required").
+
+    Today that is the review-comment switch. Turning it off has to do two
+    things: stop the next poll (the gate in ``review_comment_gate_utils``
+    reads settings.json fresh, so persisting already did that) and stop the
+    run already going — which needs the live service, hence this hook.
+    """
+    from kato_core_lib.helpers.review_comment_gate_utils import (
+        REVIEW_COMMENTS_ENABLED_KEY,
+    )
+
+    if REVIEW_COMMENTS_ENABLED_KEY not in updates:
+        return ''
+    turned_on = str(updates[REVIEW_COMMENTS_ENABLED_KEY]).strip().lower() != 'false'
+    if turned_on:
+        return 'Saved. Kato will pull PR review comments on the next scan.'
+    stopped = _stop_review_comment_work(app)
+    if not stopped:
+        return 'Saved. Kato has stopped pulling PR review comments.'
+    return (
+        'Saved. Kato has stopped pulling PR review comments and stopped '
+        f'{len(stopped)} run(s) in progress: {", ".join(stopped)}.'
+    )
+
+
+def _stop_review_comment_work(app: Flask) -> list[str]:
+    """Best-effort stop of in-flight review-comment runs. Never raises —
+    the settings write already succeeded and must not report failure
+    because a teardown hiccuped; the gate still blocks the next poll."""
+    service = app.config.get('AGENT_SERVICE')
+    stopper = getattr(service, 'stop_review_comment_work', None)
+    if not callable(stopper):
+        return []
+    try:
+        stopped = stopper()
+    except Exception:
+        app.logger.exception(
+            'failed to stop in-flight review-comment runs after the switch '
+            'was turned off',
+        )
+        return []
+    return [str(task_id) for task_id in (stopped or [])]
 
 
 def _persist_settings(updates: dict) -> None:
     """Write UI-edited settings to ``~/.kato/settings.json`` (atomic).
 
     Single chokepoint so every settings route writes the same place.
+
+    Also mirrors the saved values into ``os.environ``. Boot copies
+    settings.json INTO the process env (``_load_layered_config_into_environ``),
+    and ``_resolve_setting`` reads env first — so without this mirror a key
+    that existed at boot keeps reporting its BOOT value after a save, and the
+    UI redraws the field with the old value the moment it refreshes. That
+    reads as "my change didn't save". Mirroring keeps the two stores saying
+    the same thing inside the live process; anything already read at boot is
+    unaffected, and live readers now see what the operator actually chose.
     """
     from kato_core_lib.helpers.kato_settings_store_utils import write_kato_settings
 
     write_kato_settings(updates)
+    for key, value in updates.items():
+        os.environ[str(key)] = str(value)
 
 
 # ---------------------------------------------------------------------------
@@ -1573,6 +1653,7 @@ def _register_http_routes(app: Flask) -> None:
         """
         from kato_core_lib.helpers.kato_settings_schema_utils import (
             ACTION_GUARD_SECURE_DEFAULTS,
+            DEFAULT_ON_BOOL_KEYS,
             schema_for_api,
         )
         from kato_core_lib.helpers.kato_settings_store_utils import (
@@ -1593,10 +1674,10 @@ def _register_http_routes(app: Flask) -> None:
                         and field['key'] in ACTION_GUARD_SECURE_DEFAULTS):
                     field['value'] = ACTION_GUARD_SECURE_DEFAULTS[field['key']]
                     field['source'] = 'action_guard_secure_default'
-                # In-app CLI upgrade is ON unless explicitly disabled — show the
-                # toggle checked when unset so it reflects the real default
-                # (no ambiguous "off-looking but actually on" picker).
-                if (field['key'] == 'KATO_ALLOW_CLI_UPGRADE'
+                # Opt-OUT toggles are ON unless explicitly disabled — show them
+                # checked when unset so they reflect the real default (no
+                # ambiguous "off-looking but actually on" picker).
+                if (field['key'] in DEFAULT_ON_BOOL_KEYS
                         and not str(field['value']).strip()):
                     field['value'] = 'true'
                     field['source'] = 'default'
@@ -1634,7 +1715,7 @@ def _register_http_routes(app: Flask) -> None:
                 updates[key] = str(value if value is not None else '')
         if not updates:
             return jsonify({'error': 'no recognised settings in payload'}), 400
-        return _validate_persist_and_respond(updates)
+        return _validate_persist_and_respond(updates, app)
 
     @app.get('/api/repository-approvals')
     def list_repository_approvals():

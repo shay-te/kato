@@ -921,6 +921,35 @@ describe('FilesTab — render shell', () => {
     });
   });
 
+  test('right-clicking a changed file copies just the file name', async () => {
+    fetchFileTree.mockResolvedValue(FILE_TREE_PAYLOAD);
+    fetchDiff.mockResolvedValue(DIFF_PAYLOAD);
+    render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+    const label = await screen.findByText('Changed.js');
+
+    fireEvent.contextMenu(label.closest('button'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy file name' }));
+
+    // The BASENAME, not the repo-prefixed path the neighbouring item copies.
+    await waitFor(() => {
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith('Changed.js');
+    });
+  });
+
+  test('right-clicking a changed folder copies just the folder name', async () => {
+    fetchFileTree.mockResolvedValue(FILE_TREE_PAYLOAD);
+    fetchDiff.mockResolvedValue(DIFF_PAYLOAD);
+    render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+    const folder = await screen.findByText('src');
+
+    fireEvent.contextMenu(folder.closest('button'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy file name' }));
+
+    await waitFor(() => {
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith('src');
+    });
+  });
+
   test('no comment badge on files without threads', async () => {
     fetchFileTree.mockResolvedValue(FILE_TREE_PAYLOAD);
     fetchDiff.mockResolvedValue(DIFF_PAYLOAD);
