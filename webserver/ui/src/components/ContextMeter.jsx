@@ -18,9 +18,13 @@ export default function ContextMeter({ usage }) {
   const used = toCount(usage?.used_tokens);
   const limit = toCount(usage?.limit_tokens);
   const known = limit > 0 && used > 0;
-  const remainingPct = known
-    ? Math.max(0, Math.min(100, Math.round(((limit - used) / limit) * 100)))
-    : null;
+  // Nothing to report → render NOTHING. A placeholder in a row of pills is
+  // clutter, and an empty gauge is one glance away from being read as a
+  // reading. The meter appears once a turn has told us where we stand.
+  if (!known) { return null; }
+  const remainingPct = Math.max(
+    0, Math.min(100, Math.round(((limit - used) / limit) * 100)),
+  );
   const level = severity(remainingPct);
 
   return (
@@ -28,22 +32,18 @@ export default function ContextMeter({ usage }) {
       className={`context-meter context-meter--${level}`}
       role="status"
       aria-label={
-        known
-          ? `Context window: ${remainingPct}% remaining, `
-            + `${formatTokens(used)} of ${formatTokens(limit)} used`
-          : 'Context window usage unknown'
+        `Context window: ${remainingPct}% remaining, `
+        + `${formatTokens(used)} of ${formatTokens(limit)} used`
       }
-      data-tooltip={tooltip(known, used, limit, remainingPct)}
+      data-tooltip={tooltip(used, limit, remainingPct)}
     >
       <span className="context-meter-track" aria-hidden="true">
         <span
           className="context-meter-fill"
-          style={{ width: `${known ? 100 - remainingPct : 0}%` }}
+          style={{ width: `${100 - remainingPct}%` }}
         />
       </span>
-      <span className="context-meter-label">
-        {known ? `${remainingPct}% left` : 'context —'}
-      </span>
+      <span className="context-meter-label">{`${remainingPct}% left`}</span>
     </div>
   );
 }
@@ -51,17 +51,12 @@ export default function ContextMeter({ usage }) {
 // Warn early enough to act. Compacting takes a turn, so "act now" has to fire
 // while there is still room to run it.
 function severity(remainingPct) {
-  if (remainingPct === null) { return 'unknown'; }
   if (remainingPct <= 10) { return 'critical'; }
   if (remainingPct <= 25) { return 'low'; }
   return 'ok';
 }
 
-function tooltip(known, used, limit, remainingPct) {
-  if (!known) {
-    return 'Context window usage is unknown until this task has a live '
-      + 'Claude session that has completed a turn.';
-  }
+function tooltip(used, limit, remainingPct) {
   const base = `Context window: ${formatTokens(used)} of ${formatTokens(limit)} `
     + `used, ${remainingPct}% left.`;
   if (remainingPct > 25) {

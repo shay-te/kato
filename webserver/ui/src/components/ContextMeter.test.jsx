@@ -23,14 +23,14 @@ describe('ContextMeter', () => {
     expect(container.querySelector('.context-meter-fill')).toHaveStyle({ width: '75%' });
   });
 
-  test('unknown usage says unknown instead of showing 0% used', () => {
-    // Rendering "100% left" for an unmeasured window would read as "plenty of
-    // room" on a session that might be nearly full.
+  test('renders NOTHING when there is no reading', () => {
+    // A placeholder in a row of pills is clutter, and an empty gauge is one
+    // glance from being read as a measurement. Absent says "no data" clearly.
     for (const usage of [null, undefined, {}, { used_tokens: 0, limit_tokens: 0 },
-                         { used_tokens: 5, limit_tokens: 0 }]) {
-      const { unmount } = render(<ContextMeter usage={usage} />);
-      expect(screen.getByText('context —')).toBeInTheDocument();
-      expect(meter()).toHaveClass('context-meter--unknown');
+                         { used_tokens: 5, limit_tokens: 0 },
+                         { used_tokens: 0, limit_tokens: 200_000 }]) {
+      const { container, unmount } = render(<ContextMeter usage={usage} />);
+      expect(container).toBeEmptyDOMElement();
       unmount();
     }
   });
@@ -67,8 +67,10 @@ describe('ContextMeter', () => {
     expect(screen.getByText('0% left')).toBeInTheDocument();
   });
 
-  test('junk values degrade to unknown rather than NaN', () => {
-    render(<ContextMeter usage={{ used_tokens: 'lots', limit_tokens: null }} />);
-    expect(screen.getByText('context —')).toBeInTheDocument();
+  test('junk values render nothing rather than NaN', () => {
+    const { container } = render(
+      <ContextMeter usage={{ used_tokens: 'lots', limit_tokens: null }} />,
+    );
+    expect(container).toBeEmptyDOMElement();
   });
 });

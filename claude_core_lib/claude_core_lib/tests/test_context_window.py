@@ -14,6 +14,7 @@ import unittest
 from claude_core_lib.claude_core_lib.helpers.context_window import (
     context_window_tokens,
     prompt_tokens_from_usage,
+    resolved_model_of_event,
     usage_of_event,
 )
 
@@ -37,6 +38,49 @@ class ContextWindowTests(unittest.TestCase):
         for model in ('', None, '   '):
             with self.subTest(repr(model)):
                 self.assertEqual(context_window_tokens(model), 0)
+
+
+class ResolvedModelTests(unittest.TestCase):
+    """The window must be sized from the RESOLVED id, never the alias.
+
+    Regression: sizing off the configured ``opus`` gave a 200k window for a
+    session actually running a 1M-context model, so a healthy conversation
+    rendered "0% left" in red and told the operator to compact a session with
+    three quarters of its window free.
+    """
+
+    def test_alias_carries_no_window_information(self) -> None:
+        # An alias must NOT be treated as the standard window — it could
+        # resolve either way, and guessing is what produced the false alarm.
+        self.assertEqual(resolved_model_of_event({'message': {'model': 'opus'}}), 'opus')
+        self.assertEqual(context_window_tokens('claude-opus-5[1m]'), 1_000_000)
+        self.assertEqual(context_window_tokens('claude-opus-5'), 200_000)
+
+    def test_assistant_turn_reports_the_resolved_id(self) -> None:
+        self.assertEqual(
+            resolved_model_of_event(
+                {'type': 'assistant', 'message': {'model': 'claude-opus-5[1m]'}},
+            ),
+            'claude-opus-5[1m]',
+        )
+
+    def test_top_level_model_is_also_read(self) -> None:
+        self.assertEqual(
+            resolved_model_of_event({'type': 'system', 'model': 'claude-haiku-4-5'}),
+            'claude-haiku-4-5',
+        )
+
+    def test_events_without_a_model_yield_empty(self) -> None:
+        for event in ({'type': 'result'}, {'message': {}}, {'message': 'x'},
+                      {}, None, 'nope'):
+            with self.subTest(repr(event)[:24]):
+                self.assertEqual(resolved_model_of_event(event), '')
+
+    def test_a_long_context_session_is_not_reported_as_full(self) -> None:
+        # The exact shape of the bug: 250k used, 1M window → 75% left, not 0%.
+        limit = context_window_tokens('claude-opus-5[1m]')
+        used = 250_000
+        self.assertEqual(round((limit - used) / limit * 100), 75)
 
 
 class PromptTokensTests(unittest.TestCase):

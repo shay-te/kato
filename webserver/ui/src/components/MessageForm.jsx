@@ -43,7 +43,7 @@ import {
   clearImageDraft,
 } from '../utils/composerImageDraft.js';
 import { fetchDraft, saveDraft } from '../api.js';
-import ComposerCommandMenu from './ComposerCommandMenu.jsx';
+import ComposerActionsMenu from './ComposerActionsMenu.jsx';
 import ComposerModeMenu from './ComposerModeMenu.jsx';
 import ContextMeter from './ContextMeter.jsx';
 
@@ -96,6 +96,7 @@ const MessageForm = forwardRef(function MessageForm({
   agentMode = '',
   onAgentModeChange,
   contextUsage = null,
+  onStop,
 }, ref) {
   // Lazy initializer reads the persisted draft once on mount.
   // SessionDetail keys this component on the active task, so this
@@ -372,6 +373,13 @@ const MessageForm = forwardRef(function MessageForm({
       : 'Reply to Claude';
   const submitClass = isQueueing ? 'is-queued' : '';
   const hasContent = (value || '').trim() || attachments.length > 0;
+  // While Claude is working with NOTHING to send, the button has no job — it
+  // sat there disabled. That is exactly the moment you want to interrupt, so
+  // it becomes Stop instead. With text or attachments present it stays the
+  // queue button: typing a follow-up must never turn into killing the turn.
+  const showStop = Boolean(
+    turnInFlight && !disabled && !hasContent && typeof onStop === 'function',
+  );
   const submitLabel = isQueueing ? 'Queue' : 'Send';
   let submitTitle;
   if (disabled) {
@@ -642,73 +650,50 @@ const MessageForm = forwardRef(function MessageForm({
             style={{ display: 'none' }}
             onChange={handleFilePickerChange}
           />
+          <ComposerActionsMenu
+            onRun={runCommand}
+            disabled={disabled}
+            models={availableModels}
+            selectedModel={effectiveModelId(availableModels, selectedModel)}
+            onModelChange={onModelChange}
+            effortLevels={effortLevels}
+            selectedEffort={effectiveEffort(effortLevels, selectedEffort, effortDefault)}
+            onEffortChange={onEffortChange}
+          />
+        </div>
+        <div className="composer-toolbar-right">
+          <ContextMeter usage={contextUsage} />
           <ComposerModeMenu
             mode={agentMode}
             onChange={onAgentModeChange}
             disabled={disabled}
+            ultracode={ultracode}
+            onUltracodeChange={setUltracode}
+            supportsWorkflows={supportsWorkflows}
+            planAvailable={planAvailable}
+            onOpenPlan={onOpenPlan}
           />
-          <ComposerCommandMenu onRun={runCommand} disabled={disabled} />
-          {planAvailable && (
+          {showStop ? (
             <button
               type="button"
-              className="composer-view-plan tooltip-above"
-              data-tooltip="View the agent's latest plan in the centre pane for review."
-              aria-label="View plan"
-              onClick={() => onOpenPlan && onOpenPlan()}
+              className="message-send is-stop tooltip-above"
+              data-tooltip="Stop Claude. The turn ends where it is and the chat history is kept — this does not start a new session."
+              aria-label="Stop Claude"
+              onClick={() => onStop && onStop()}
             >
-              View plan
+              <span aria-hidden="true">■</span>
             </button>
-          )}
-          {supportsWorkflows && (
+          ) : (
             <button
-              type="button"
-              className={`composer-ultracode tooltip-above ${ultracode ? 'is-on' : ''}`}
-              data-tooltip="ultracode: have the agent run multi-agent workflows for this message (prepends the keyword). Off by default — it can fan out into many subagents."
-              aria-pressed={ultracode}
-              aria-label="Toggle ultracode"
-              onClick={() => setUltracode((on) => !on)}
+              type="submit"
+              disabled={disabled || !hasContent}
+              className={`message-send ${submitClass} tooltip-above`.trim()}
+              data-tooltip={submitTitle}
+              aria-label={submitLabel}
             >
-              ultracode
+              <span aria-hidden="true">{isQueueing ? '◴' : '↑'}</span>
             </button>
           )}
-        </div>
-        <div className="composer-toolbar-right">
-          <ContextMeter usage={contextUsage} />
-          {availableModels.length > 0 && (
-            <ComposerSelect
-              id="model-selector"
-              tooltip="Model used for the next session spawn. Takes effect when Claude is re-spawned."
-              ariaLabel="Select model"
-              value={effectiveModelId(availableModels, selectedModel)}
-              onChange={onModelChange}
-            >
-              {availableModels.map((m) => (
-                <option key={m.id} value={m.id}>{m.label}</option>
-              ))}
-            </ComposerSelect>
-          )}
-          {effortLevels.length > 0 && (
-            <ComposerSelect
-              id="effort-selector"
-              tooltip="Reasoning effort for this chat. Higher = more thinking. Shows the level kato will actually run (the configured default until you pick one). A change applies on the next message (the session re-spawns to take effect)."
-              ariaLabel="Select reasoning effort"
-              value={effectiveEffort(effortLevels, selectedEffort, effortDefault)}
-              onChange={onEffortChange}
-            >
-              {effortLevels.map((level) => (
-                <option key={level} value={level}>{`Effort: ${level}`}</option>
-              ))}
-            </ComposerSelect>
-          )}
-          <button
-            type="submit"
-            disabled={disabled || !hasContent}
-            className={`message-send ${submitClass} tooltip-above`.trim()}
-            data-tooltip={submitTitle}
-            aria-label={submitLabel}
-          >
-            <span aria-hidden="true">{isQueueing ? '◴' : '↑'}</span>
-          </button>
         </div>
       </div>
     </form>

@@ -85,6 +85,34 @@ function renderForm({ taskId = 'T1', onSubmit = vi.fn(), ...rest } = {}) {
 }
 
 
+
+// ultracode moved into the Modes popover (the toolbar was overflowing on a
+// narrow window). Open the menu, then reach the toggle.
+function openModes() {
+  fireEvent.click(screen.getByRole('button', { name: /agent mode:/i }));
+}
+
+// Model + effort moved into the actions palette (the toolbar overflowed on a
+// narrow pane). Open it, then reach the pickers.
+function modelSelect() {
+  if (!screen.queryByRole('menu')) { openActions(); }
+  return screen.getByRole('combobox', { name: /select model/i });
+}
+
+function effortSelect() {
+  if (!screen.queryByRole('menu')) { openActions(); }
+  return screen.getByRole('combobox', { name: /select reasoning effort/i });
+}
+
+function openActions() {
+  fireEvent.click(screen.getByRole('button', { name: /actions/i }));
+}
+
+function ultracodeToggle() {
+  openModes();
+  return screen.getByRole('menuitemcheckbox', { name: /ultracode/i });
+}
+
 describe('MessageForm — draft persistence (operator scenario)', () => {
 
   test('hydrates from localStorage on mount when a draft exists for taskId', () => {
@@ -152,11 +180,11 @@ describe('MessageForm — draft persistence (operator scenario)', () => {
     const textarea = screen.getByRole('textbox');
     fireEvent.change(textarea, { target: { value: 'audit the cascade' } });
     // Off by default → plain text.
-    const toggle = screen.getByRole('button', { name: /ultracode/i });
-    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    const toggle = ultracodeToggle();
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
     // Arm it, then send.
     fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
     fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
     expect(onSubmit).toHaveBeenCalledWith('ultracode\n\naudit the cascade', []);
   });
@@ -165,7 +193,8 @@ describe('MessageForm — draft persistence (operator scenario)', () => {
     _agentVer.value = { supports_workflows: false };
     try {
       renderForm({ taskId: 'T1' });
-      expect(screen.queryByRole('button', { name: /ultracode/i })).toBeNull();
+      openModes();
+      expect(screen.queryByRole('menuitemcheckbox', { name: /ultracode/i })).toBeNull();
     } finally {
       _agentVer.value = { supports_workflows: true };
     }
@@ -234,22 +263,22 @@ describe('MessageForm — draft persistence (operator scenario)', () => {
   test('ultracode chip survives tab switch and is isolated per task', () => {
     // Arm ultracode on tab A.
     const { unmount } = renderForm({ taskId: 'A' });
-    const toggleA = screen.getByRole('button', { name: /ultracode/i });
-    expect(toggleA).toHaveAttribute('aria-pressed', 'false');
+    const toggleA = ultracodeToggle();
+    expect(toggleA).toHaveAttribute('aria-checked', 'false');
     fireEvent.click(toggleA);
-    expect(toggleA).toHaveAttribute('aria-pressed', 'true');
+    expect(toggleA).toHaveAttribute('aria-checked', 'true');
     unmount();
 
     // Switch to tab B — must start off (per-task isolation).
     const { unmount: unmountB } = renderForm({ taskId: 'B' });
-    const toggleB = screen.getByRole('button', { name: /ultracode/i });
-    expect(toggleB).toHaveAttribute('aria-pressed', 'false');
+    const toggleB = ultracodeToggle();
+    expect(toggleB).toHaveAttribute('aria-checked', 'false');
     unmountB();
 
     // Back to tab A — must still be armed.
     renderForm({ taskId: 'A' });
-    const toggleAAgain = screen.getByRole('button', { name: /ultracode/i });
-    expect(toggleAAgain).toHaveAttribute('aria-pressed', 'true');
+    const toggleAAgain = ultracodeToggle();
+    expect(toggleAAgain).toHaveAttribute('aria-checked', 'true');
   });
 
   test('Bug: draft + textarea survive when onSubmit returns false (send failed)', async () => {
@@ -527,7 +556,7 @@ describe('MessageForm — model selector', () => {
       selectedModel: 'opus',
     });
 
-    const select = screen.getByRole('combobox', { name: /select model/i });
+    const select = modelSelect();
     expect(select).toBeInTheDocument();
     expect(select).toHaveValue('opus');
   });
@@ -548,7 +577,7 @@ describe('MessageForm — model selector', () => {
       ],
       selectedModel: '',
     });
-    const select = screen.getByRole('combobox', { name: /select model/i });
+    const select = modelSelect();
     // The actual default model is shown selected — not an ambiguous "Default".
     expect(select).toHaveValue('sonnet');
     expect(screen.queryByRole('option', { name: 'Default' })).not.toBeInTheDocument();
@@ -565,7 +594,7 @@ describe('MessageForm — model selector', () => {
       ],
       selectedModel: 'opus',
     });
-    expect(screen.getByRole('combobox', { name: /select model/i })).toHaveValue('opus');
+    expect(modelSelect()).toHaveValue('opus');
   });
 
   test('changing the selected model fires onModelChange', () => {
@@ -580,7 +609,7 @@ describe('MessageForm — model selector', () => {
       onModelChange,
     });
 
-    fireEvent.change(screen.getByRole('combobox', { name: /select model/i }), {
+    fireEvent.change(modelSelect(), {
       target: { value: 'sonnet' },
     });
     expect(onModelChange).toHaveBeenCalledWith('sonnet');
@@ -596,7 +625,7 @@ describe('MessageForm — effort selector', () => {
       effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
       selectedEffort: 'high',
     });
-    const select = screen.getByRole('combobox', { name: /select reasoning effort/i });
+    const select = effortSelect();
     expect(select).toBeInTheDocument();
     expect(select).toHaveValue('high');
   });
@@ -616,7 +645,7 @@ describe('MessageForm — effort selector', () => {
       onEffortChange,
     });
     fireEvent.change(
-      screen.getByRole('combobox', { name: /select reasoning effort/i }),
+      effortSelect(),
       { target: { value: 'max' } },
     );
     expect(onEffortChange).toHaveBeenCalledWith('max');
@@ -629,7 +658,7 @@ describe('MessageForm — effort selector', () => {
       selectedEffort: '',
       effortDefault: 'high',
     });
-    const select = screen.getByRole('combobox', { name: /select reasoning effort/i });
+    const select = effortSelect();
     const optionValues = Array.from(select.querySelectorAll('option')).map((o) => o.value);
     // No empty-value "Auto" option, and the label is gone too.
     expect(optionValues).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
@@ -643,7 +672,7 @@ describe('MessageForm — effort selector', () => {
       selectedEffort: '',
       effortDefault: 'high',
     });
-    expect(screen.getByRole('combobox', { name: /select reasoning effort/i }))
+    expect(effortSelect())
       .toHaveValue('high');
   });
 
@@ -654,7 +683,7 @@ describe('MessageForm — effort selector', () => {
       selectedEffort: 'max',
       effortDefault: 'high',
     });
-    expect(screen.getByRole('combobox', { name: /select reasoning effort/i }))
+    expect(effortSelect())
       .toHaveValue('max');
   });
 
@@ -665,7 +694,7 @@ describe('MessageForm — effort selector', () => {
       selectedEffort: '',
       effortDefault: '',
     });
-    expect(screen.getByRole('combobox', { name: /select reasoning effort/i }))
+    expect(effortSelect())
       .toHaveValue('low');
   });
 });
@@ -902,5 +931,42 @@ describe('MessageForm — @ file mention picker', () => {
     fireEvent.keyDown(textarea, { key: 'Enter' });
     await waitFor(() => expect(textarea.value).toContain('`client/src/app.js`'));
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  describe('Stop while Claude is working', () => {
+    test('an empty composer mid-turn offers Stop instead of a dead button', () => {
+      // That button had no job while a turn was running with nothing typed —
+      // it just sat disabled. It is exactly when you want to interrupt.
+      const onStop = vi.fn();
+      renderForm({ taskId: 'T1', turnInFlight: true, onStop });
+      const stop = screen.getByRole('button', { name: /stop claude/i });
+      expect(stop).toBeEnabled();
+      fireEvent.click(stop);
+      expect(onStop).toHaveBeenCalledTimes(1);
+    });
+
+    test('typing turns Stop back into Queue — never kills the turn by accident', () => {
+      const onStop = vi.fn();
+      renderForm({ taskId: 'T1', turnInFlight: true, onStop });
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: 'follow-up' } });
+      expect(screen.queryByRole('button', { name: /stop claude/i })).toBeNull();
+      expect(screen.getByRole('button', { name: /queue/i })).toBeInTheDocument();
+      expect(onStop).not.toHaveBeenCalled();
+    });
+
+    test('no Stop when Claude is idle', () => {
+      renderForm({ taskId: 'T1', turnInFlight: false, onStop: vi.fn() });
+      expect(screen.queryByRole('button', { name: /stop claude/i })).toBeNull();
+    });
+
+    test('no Stop when the composer is disabled (no live session)', () => {
+      renderForm({ taskId: 'T1', turnInFlight: true, disabled: true, onStop: vi.fn() });
+      expect(screen.queryByRole('button', { name: /stop claude/i })).toBeNull();
+    });
+
+    test('no Stop when the parent wired no handler', () => {
+      renderForm({ taskId: 'T1', turnInFlight: true });
+      expect(screen.queryByRole('button', { name: /stop claude/i })).toBeNull();
+    });
   });
 });

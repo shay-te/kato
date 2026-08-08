@@ -13,13 +13,28 @@ import { useDismissOnOutsidePointerOrEscape } from '../hooks/useDismissOnOutside
  * "Mode" label — the picker's job is to answer "what will happen when I hit
  * send", and an ambiguous label is exactly the thing that gets an operator to
  * approve an edit they thought needed confirming.
+ *
+ * It also hosts the two other agent-behaviour controls — the ultracode
+ * opt-in and "View plan". They were standalone pills, which is how the
+ * toolbar grew wide enough to overlap itself on a narrow window. They belong
+ * here anyway: all three answer "how should the agent behave", and neither is
+ * touched often enough to earn permanent space.
  */
-export default function ComposerModeMenu({ mode, onChange, disabled = false }) {
+export default function ComposerModeMenu({
+  mode,
+  onChange,
+  disabled = false,
+  ultracode = false,
+  onUltracodeChange,
+  supportsWorkflows = false,
+  planAvailable = false,
+  onOpenPlan,
+}) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
   const active = agentModeEntry(mode);
 
-  useDismissOnOutsidePointerOrEscape(open, () => setOpen(false));
+  useDismissOnOutsidePointerOrEscape(open, () => setOpen(false), rootRef);
 
   function pick(entry) {
     setOpen(false);
@@ -73,6 +88,54 @@ export default function ComposerModeMenu({ mode, onChange, disabled = false }) {
               )}
             </button>
           ))}
+          {(supportsWorkflows || planAvailable) && (
+            <div className="composer-mode-extras">
+              {supportsWorkflows && (
+                <button
+                  type="button"
+                  role="menuitemcheckbox"
+                  aria-checked={ultracode}
+                  className={`composer-mode-item${ultracode ? ' is-active' : ''}`}
+                  onClick={() => {
+                    if (typeof onUltracodeChange === 'function') {
+                      onUltracodeChange(!ultracode);
+                    }
+                  }}
+                >
+                  <span className="composer-mode-item-icon" aria-hidden="true">⚡</span>
+                  <span className="composer-mode-item-text">
+                    <span className="composer-mode-item-name">ultracode</span>
+                    <span className="composer-mode-item-desc">
+                      Run multi-agent workflows for the next message — can fan
+                      out into many subagents
+                    </span>
+                  </span>
+                  {ultracode && (
+                    <span className="composer-mode-item-check" aria-hidden="true">✓</span>
+                  )}
+                </button>
+              )}
+              {planAvailable && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="composer-mode-item"
+                  onClick={() => {
+                    setOpen(false);
+                    if (typeof onOpenPlan === 'function') { onOpenPlan(); }
+                  }}
+                >
+                  <span className="composer-mode-item-icon" aria-hidden="true">☰</span>
+                  <span className="composer-mode-item-text">
+                    <span className="composer-mode-item-name">View plan</span>
+                    <span className="composer-mode-item-desc">
+                      Open the agent&apos;s latest plan in the centre pane
+                    </span>
+                  </span>
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -30,6 +30,10 @@ _LONG_CONTEXT_MARKERS = ('[1m]', '-1m', ':1m')
 def context_window_tokens(model: object) -> int:
     """The model's context window in tokens, or ``0`` when unknown.
 
+    Pass the RESOLVED model id from the stream, never a configured alias:
+    ``opus`` carries no window information and would be sized as standard,
+    which reported "0% left" on a perfectly healthy 1M-context session.
+
     Keyed off the ``[1m]`` marker rather than a per-model table: the table
     would silently go stale on every release and start reporting a wrong
     window, which is the one failure this indicator cannot afford. An empty
@@ -41,6 +45,23 @@ def context_window_tokens(model: object) -> int:
     if any(marker in text for marker in _LONG_CONTEXT_MARKERS):
         return _LONG_CONTEXT_TOKENS
     return _DEFAULT_CONTEXT_TOKENS
+
+
+def resolved_model_of_event(raw: object) -> str:
+    """The concrete model id the CLI resolved this turn to (``''`` if absent).
+
+    The configured value may be an ALIAS (``opus``), which says nothing about
+    the context window — ``opus`` can resolve to a 200k model or a 1M one. The
+    stream reports the real id (``claude-opus-5[1m]``) on every assistant
+    turn, and only that can size the window.
+    """
+    if not isinstance(raw, dict):
+        return ''
+    message = raw.get('message')
+    if isinstance(message, dict) and message.get('model'):
+        return str(message['model']).strip()
+    model = raw.get('model')
+    return str(model).strip() if model else ''
 
 
 def prompt_tokens_from_usage(usage: object) -> int:

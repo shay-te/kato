@@ -59,6 +59,7 @@ from claude_core_lib.claude_core_lib.helpers.sandbox_scope import (
 from claude_core_lib.claude_core_lib.helpers.context_window import (
     context_window_tokens,
     prompt_tokens_from_usage,
+    resolved_model_of_event,
     usage_of_event,
 )
 from claude_core_lib.claude_core_lib.session.index import parse_jsonl_dict_line
@@ -362,6 +363,9 @@ class StreamingClaudeSession(object):
         # webserver thread, and it must never contend with event delivery.
         self._context_usage_lock = threading.Lock()
         self._context_used_tokens = 0
+        # The model the CLI actually resolved the alias to, learned from the
+        # stream. Only this can size the context window (see context_usage).
+        self._resolved_model = ''
         self._agent_session_id: str = ''
         self._terminal_event: SessionEvent | None = None
         self._reader_threads: list[threading.Thread] = []
@@ -1077,11 +1081,15 @@ class StreamingClaudeSession(object):
 
         Best-effort — a shape change upstream must never break the stream.
         """
+        resolved = resolved_model_of_event(event.raw)
         tokens = prompt_tokens_from_usage(usage_of_event(event.raw))
-        if tokens <= 0:
+        if not resolved and tokens <= 0:
             return
         with self._context_usage_lock:
-            self._context_used_tokens = tokens
+            if tokens > 0:
+                self._context_used_tokens = tokens
+            if resolved:
+                self._resolved_model = resolved
 
     def context_usage(self) -> dict:
         """``{used_tokens, limit_tokens, model}`` for the context indicator.
@@ -1093,11 +1101,17 @@ class StreamingClaudeSession(object):
         """
         with self._context_usage_lock:
             used = self._context_used_tokens
-        model = normalized_text(self._model)
+            resolved = self._resolved_model
+        # The RESOLVED model, never the configured alias. ``--model opus`` may
+        # resolve to a 1M-context variant, and sizing the window off the alias
+        # reported a 200k limit for it — so a healthy conversation rendered as
+        # "0% left" in red and told the operator to compact a session with
+        # three quarters of its window free. Until a turn reports the real id
+        # the window is UNKNOWN (0), which the meter shows as "—".
         return {
             'used_tokens': used,
-            'limit_tokens': context_window_tokens(model),
-            'model': model,
+            'limit_tokens': context_window_tokens(resolved),
+            'model': resolved,
         }
 
     def stderr_snapshot(self) -> list[str]:

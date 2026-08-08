@@ -72,4 +72,48 @@ describe('ComposerModeMenu', () => {
     render(<ComposerModeMenu mode="" onChange={vi.fn()} disabled />);
     expect(screen.getByRole('button', { name: /agent mode:/i })).toBeDisabled();
   });
+
+  test('hosts ultracode so it does not need its own toolbar pill', () => {
+    // The toolbar overflowed and drew controls on top of each other on a
+    // narrow window; the rarely-touched toggles moved in here.
+    const onUltracodeChange = vi.fn();
+    render(
+      <ComposerModeMenu
+        mode=""
+        onChange={vi.fn()}
+        supportsWorkflows
+        ultracode={false}
+        onUltracodeChange={onUltracodeChange}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /agent mode:/i }));
+    const toggle = screen.getByRole('menuitemcheckbox', { name: /ultracode/i });
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    fireEvent.click(toggle);
+    expect(onUltracodeChange).toHaveBeenCalledWith(true);
+  });
+
+  test('hides ultracode when the CLI cannot run workflows', () => {
+    render(<ComposerModeMenu mode="" onChange={vi.fn()} supportsWorkflows={false} />);
+    fireEvent.click(screen.getByRole('button', { name: /agent mode:/i }));
+    expect(screen.queryByRole('menuitemcheckbox', { name: /ultracode/i })).toBeNull();
+  });
+
+  test('View plan only appears when there is a plan, and closes the menu', () => {
+    const onOpenPlan = vi.fn();
+    const { rerender } = render(
+      <ComposerModeMenu mode="" onChange={vi.fn()} planAvailable={false} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /agent mode:/i }));
+    expect(screen.queryByRole('menuitem', { name: /view plan/i })).toBeNull();
+
+    rerender(
+      <ComposerModeMenu
+        mode="" onChange={vi.fn()} planAvailable onOpenPlan={onOpenPlan}
+      />,
+    );
+    fireEvent.click(screen.getByRole('menuitem', { name: /view plan/i }));
+    expect(onOpenPlan).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
 });

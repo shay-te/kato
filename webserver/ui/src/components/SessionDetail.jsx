@@ -25,8 +25,9 @@ import { permissionStore } from '../stores/permissionStore.js';
 import { usePendingPermissions } from '../hooks/usePendingPermissions.js';
 import { unpackPermissionEnvelope } from '../utils/permissionEnvelope.js';
 import { toast } from '../stores/toastStore.js';
-import { fetchEffortLevels, fetchModels, fetchSessionAgentMode, fetchSessionEffort, fetchSessionModel, fetchSessionPlanMode, postChatMessage, setSessionAgentMode, setSessionEffort, setSessionModel, setSessionPlanMode } from '../api.js';
+import { fetchEffortLevels, fetchModels, fetchSessionAgentMode, fetchSessionEffort, fetchSessionModel, fetchSessionPlanMode, postChatMessage, postSession, setSessionAgentMode, setSessionEffort, setSessionModel, setSessionPlanMode } from '../api.js';
 import { useContextUsage } from '../hooks/useContextUsage.js';
+import { useBusyAction } from '../hooks/useBusyAction.js';
 
 // Grace before we reconnect a still-"live" stream that the server says has a
 // pending permission we haven't received. Long enough for a normal live event
@@ -468,6 +469,14 @@ export default function SessionDetail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stream.turnInFlight]);
 
+  // Composer Stop — same action the header's Stop runs, reusing its result
+  // handler so both surfaces report the outcome identically. Offered only
+  // while Claude is working and there is nothing to send (see MessageForm).
+  const [, onComposerStop] = useBusyAction(
+    () => postSession(taskId, 'stop'),
+    { onDone: (result) => onStopped(result) },
+  );
+
   async function onStopped(result) {
     stream.appendLocalEvent(
       result.ok
@@ -691,6 +700,7 @@ export default function SessionDetail({
           agentMode={agentMode}
           onAgentModeChange={handleAgentModeChange}
           contextUsage={contextUsage}
+          onStop={onComposerStop}
           planAvailable={planAvailable}
           onOpenPlan={onOpenPlan}
         />

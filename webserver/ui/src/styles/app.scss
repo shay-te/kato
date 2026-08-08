@@ -3033,6 +3033,34 @@ header .chats-menu button:not(.header-status) {
   display: flex;
   align-items: center;
   gap: $SPACE-8;
+  min-width: 0;
+}
+
+/* The row must SHRINK, never overflow. Every pill used to be
+ * ``flex-shrink: 0``, so on a narrow window the toolbar ran past its capsule
+ * and the controls drew on top of each other. The left group yields first
+ * (its labels can truncate); the right group holds the model/effort values
+ * and the send button, which must stay readable and reachable. */
+/* NO ``overflow: hidden`` here. The mode / commands popovers are absolutely
+ * positioned inside this group, so clipping it clipped THEM — the menu
+ * rendered as a black sliver the height of the toolbar row. Truncation is the
+ * label's own job (.composer-mode-label); this just has to be allowed to
+ * shrink. */
+.composer-toolbar-left {
+  flex: 1 1 auto;
+}
+
+.composer-toolbar-right {
+  flex: 0 1 auto;
+}
+
+/* Below this the mode label is dropped and the pill becomes its icon — the
+ * mode is still visible (and still in the tooltip / accessible name), just
+ * not spelled out. */
+@media (max-width: 1100px) {
+  .composer-mode-label {
+    display: none;
+  }
 }
 
 /* Attachments preview lives ABOVE the input row inside the same
@@ -3224,6 +3252,16 @@ header .chats-menu button:not(.header-status) {
   justify-content: center;
   box-shadow: $SHADOW-18;
   transition: background 120ms ease, box-shadow 120ms ease, transform 90ms ease, opacity 120ms ease;
+}
+
+/* Stop: red, so interrupting never looks like sending. Same 34px circle as
+ * send — it replaces that button rather than crowding beside it. */
+.message-send.is-stop {
+  background: $C-RED-60;
+}
+
+.message-send.is-stop:hover {
+  background: $C-RED-71;
 }
 
 .message-send:hover {
@@ -9561,18 +9599,22 @@ body.kato-resizing #left-pane-resizer::before {
  * one row of controls. Both popovers open UPWARD — the composer sits at the
  * bottom of the pane, so a downward menu would open off-screen. */
 .composer-mode-menu,
-.composer-command-menu {
+.composer-actions-menu {
   position: relative;
   flex-shrink: 0;
 }
 
+/* 34px matches #message-attach and .message-send — the toolbar reads as one
+ * row of controls only if they share a height. */
 .composer-mode-trigger,
-.composer-command-trigger {
+.composer-actions-trigger {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: $SPACE-6;
-  height: 26px;
-  padding: 0 $SPACE-10;
+  min-width: 0;
+  height: 34px;
+  padding: 0 $SPACE-12;
   border-radius: $RADIUS-PILL;
   border: 1px solid $C-NEUTRAL-16;
   background: transparent;
@@ -9584,28 +9626,50 @@ body.kato-resizing #left-pane-resizer::before {
 }
 
 .composer-mode-trigger:hover,
-.composer-command-trigger:hover,
+.composer-actions-trigger {
+  width: 34px;
+  padding: 0;
+  border-radius: $RADIUS-CIRCLE;
+  font-size: $TEXT-15;
+}
+
+.composer-actions-trigger:hover,
 .composer-mode-trigger.is-open,
-.composer-command-trigger.is-open {
+.composer-actions-trigger.is-open {
   color: $C-NEUTRAL-96;
   border-color: $C-NEUTRAL-45;
 }
 
 .composer-mode-trigger:disabled,
-.composer-command-trigger:disabled {
+.composer-actions-trigger:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
 .composer-mode-icon {
+  flex-shrink: 0;
   color: $C-NEUTRAL-64;
 }
 
+.composer-mode-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Separates the mode radios from the ultracode / view-plan actions below. */
+.composer-mode-extras {
+  margin-top: $SPACE-4;
+  padding-top: $SPACE-4;
+  border-top: 1px solid $C-NEUTRAL-100-A10;
+}
+
 .composer-mode-popover,
-.composer-command-popover {
+.composer-actions-popover {
   position: absolute;
   bottom: calc(100% + #{$SPACE-6});
   left: 0;
+  max-width: min(380px, calc(100vw - #{$SPACE-24}));
   z-index: 40;
   min-width: 300px;
   max-width: 380px;
@@ -9614,6 +9678,14 @@ body.kato-resizing #left-pane-resizer::before {
   border: 1px solid $C-NEUTRAL-100-A10;
   background: $C-NEUTRAL-16;
   box-shadow: $SHADOW-25;
+}
+
+/* The mode button sits at the RIGHT end of the bar, so its menu opens
+ * leftward from that edge — anchoring it left pushed it past the composer
+ * capsule (measured: 80px of overflow at every pane width). */
+.composer-mode-popover {
+  right: 0;
+  left: auto;
 }
 
 .composer-mode-popover-title {
@@ -9625,7 +9697,7 @@ body.kato-resizing #left-pane-resizer::before {
 }
 
 .composer-mode-item,
-.composer-command-item {
+.composer-actions-item {
   display: flex;
   align-items: flex-start;
   gap: $SPACE-8;
@@ -9640,7 +9712,7 @@ body.kato-resizing #left-pane-resizer::before {
 }
 
 .composer-mode-item:hover,
-.composer-command-item:hover {
+.composer-actions-item:hover {
   background: $C-NEUTRAL-100-A06;
 }
 
@@ -9668,7 +9740,7 @@ body.kato-resizing #left-pane-resizer::before {
 }
 
 .composer-mode-item-desc,
-.composer-command-item-desc {
+.composer-actions-item-desc {
   color: $C-NEUTRAL-64;
   font-size: $TEXT-11;
   line-height: 1.4;
@@ -9679,50 +9751,89 @@ body.kato-resizing #left-pane-resizer::before {
   color: $C-CYAN-58;
 }
 
-.composer-command-item {
+.composer-actions-item {
   flex-direction: column;
   gap: 2px;
 }
 
-.composer-command-item-name {
+.composer-actions-item-name {
   font: 600 12px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 /* A destructive command announces itself before it is armed, and turns red
  * only while it waits for the second click. */
-.composer-command-item.is-destructive .composer-command-item-name {
+.composer-actions-item.is-destructive .composer-actions-item-name {
   color: $C-AMBER-77;
 }
 
-.composer-command-item.is-confirming {
+.composer-actions-item.is-confirming {
   background: $C-RED-60-A12;
 }
 
-.composer-command-item.is-confirming .composer-command-item-name,
-.composer-command-item.is-confirming .composer-command-item-desc {
+.composer-actions-item.is-confirming .composer-actions-item-name,
+.composer-actions-item.is-confirming .composer-actions-item-desc {
   color: $C-RED-82;
 }
 
-/* Context meter — remaining window. Colour is the signal; the bar fills as
- * context is CONSUMED, so a full bar means "no room left". */
+/* Actions palette: section headings + the model / effort rows. Everything
+ * that is not needed on every message lives here, so the toolbar stays four
+ * controls wide and cannot overflow a narrow chat pane. */
+.composer-actions-section {
+  padding: $SPACE-8 $SPACE-8 $SPACE-3;
+  color: $C-NEUTRAL-64;
+  font-size: $TEXT-11;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.composer-actions-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $SPACE-8;
+  padding: $SPACE-6 $SPACE-8;
+}
+
+.composer-actions-row-label {
+  color: $C-NEUTRAL-96;
+  font-size: $TEXT-13;
+}
+
+.composer-actions-select {
+  max-width: 60%;
+  padding: $SPACE-3 $SPACE-8;
+  border: 1px solid $C-NEUTRAL-100-A10;
+  border-radius: $RADIUS-6;
+  background: $C-NEUTRAL-100-A06;
+  color: $C-NEUTRAL-96;
+  font: inherit;
+  font-size: $TEXT-12;
+  cursor: pointer;
+}
+
+/* Context meter — ambient, not an alarm.
+ *
+ * It sits in a row of interactive pills, so it must NOT look like another
+ * one: no border, no fill, no pill outline. It is a thin rule plus a number,
+ * muted until the window is genuinely low. The first version framed itself in
+ * red and read as a broken control rather than a gauge. */
 .context-meter {
   display: flex;
   align-items: center;
   gap: $SPACE-6;
   flex-shrink: 0;
-  padding: 0 $SPACE-8;
-  height: 26px;
-  border-radius: $RADIUS-PILL;
-  border: 1px solid transparent;
+  height: 34px;
+  margin-right: $SPACE-2;
   color: $C-NEUTRAL-64;
-  font: 600 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 500 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: nowrap;
+  cursor: default;
 }
 
 .context-meter-track {
   display: block;
-  width: 44px;
-  height: 4px;
+  width: 28px;
+  height: 3px;
   border-radius: $RADIUS-PILL;
   background: $C-NEUTRAL-100-A10;
   overflow: hidden;
@@ -9732,14 +9843,11 @@ body.kato-resizing #left-pane-resizer::before {
   display: block;
   height: 100%;
   border-radius: $RADIUS-PILL;
-  background: $C-NEUTRAL-64;
+  background: $C-NEUTRAL-45;
   transition: width 240ms ease-out;
 }
 
-.context-meter--ok .context-meter-fill {
-  background: $C-CYAN-52;
-}
-
+/* Healthy is deliberately colourless — colour is reserved for "act soon". */
 .context-meter--low {
   color: $C-AMBER-77;
 }
@@ -9750,13 +9858,12 @@ body.kato-resizing #left-pane-resizer::before {
 
 .context-meter--critical {
   color: $C-RED-82;
-  border-color: $C-RED-60-A35;
 }
 
 .context-meter--critical .context-meter-fill {
-  background: $C-RED-60;
+  background: $C-RED-71;
 }
 
 .context-meter--unknown .context-meter-track {
-  opacity: 0.4;
+  opacity: 0.35;
 }
