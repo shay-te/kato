@@ -72,9 +72,20 @@ class PlanModeStoreTests(unittest.TestCase):
         Path(self._path).write_text('not json {{{', encoding='utf-8')
         self.assertEqual(read_plan_mode_tasks(), set())
 
-    def test_non_list_payload_returns_empty(self) -> None:
-        Path(self._path).write_text('{"PROJ-1": "plan"}', encoding='utf-8')
-        self.assertEqual(read_plan_mode_tasks(), set())
+    def test_mapping_payload_is_the_current_format(self) -> None:
+        # Modes replaced the plan-only flag: the file is now
+        # ``{task_id: permission_mode}``. Plan-locked tasks are the entries
+        # whose mode IS 'plan'.
+        Path(self._path).write_text(
+            '{"PROJ-1": "plan", "PROJ-2": "bypassPermissions"}', encoding='utf-8',
+        )
+        self.assertEqual(read_plan_mode_tasks(), {'PROJ-1'})
+
+    def test_junk_payload_returns_empty(self) -> None:
+        for payload in ('"a string"', '42', 'null'):
+            with self.subTest(payload):
+                Path(self._path).write_text(payload, encoding='utf-8')
+                self.assertEqual(read_plan_mode_tasks(), set())
 
     def test_concurrent_locks_never_lose_a_task(self) -> None:
         # Regression: set_plan_mode() used to have no lock around its

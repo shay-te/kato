@@ -25,7 +25,8 @@ import { permissionStore } from '../stores/permissionStore.js';
 import { usePendingPermissions } from '../hooks/usePendingPermissions.js';
 import { unpackPermissionEnvelope } from '../utils/permissionEnvelope.js';
 import { toast } from '../stores/toastStore.js';
-import { fetchEffortLevels, fetchModels, fetchSessionEffort, fetchSessionModel, fetchSessionPlanMode, postChatMessage, setSessionEffort, setSessionModel, setSessionPlanMode } from '../api.js';
+import { fetchEffortLevels, fetchModels, fetchSessionAgentMode, fetchSessionEffort, fetchSessionModel, fetchSessionPlanMode, postChatMessage, setSessionAgentMode, setSessionEffort, setSessionModel, setSessionPlanMode } from '../api.js';
+import { useContextUsage } from '../hooks/useContextUsage.js';
 
 // Grace before we reconnect a still-"live" stream that the server says has a
 // pending permission we haven't received. Long enough for a normal live event
@@ -234,6 +235,25 @@ export default function SessionDetail({
   const handlePlanModeChange = useCallback((on) => {
     setPlanMode(on);
     setSessionPlanMode(taskId, on);
+  }, [taskId]);
+
+  // The composer's Modes picker. Plan is one of the modes, so this and
+  // ``planMode`` describe the same server-side override — keep them in step
+  // so "View plan" still appears when Plan is chosen from the menu.
+  const contextUsage = useContextUsage(taskId, stream.turnInFlight);
+
+  const [agentMode, setAgentMode] = useState('');
+  useEffect(() => {
+    if (!taskId) { setAgentMode(''); return; }
+    fetchSessionAgentMode(taskId)
+      .then((result) => setAgentMode(String((result && result.mode) || '')))
+      .catch(() => {});
+  }, [taskId]);
+  const handleAgentModeChange = useCallback((mode) => {
+    const next = String(mode ?? '');
+    setAgentMode(next);
+    setPlanMode(next === 'plan');
+    setSessionAgentMode(taskId, next);
   }, [taskId]);
   useEffect(() => {
     if (typeof onPendingPermissionChange !== 'function') { return; }
@@ -668,6 +688,9 @@ export default function SessionDetail({
           onEffortChange={handleEffortChange}
           planMode={planMode}
           onPlanModeChange={handlePlanModeChange}
+          agentMode={agentMode}
+          onAgentModeChange={handleAgentModeChange}
+          contextUsage={contextUsage}
           planAvailable={planAvailable}
           onOpenPlan={onOpenPlan}
         />

@@ -75,6 +75,12 @@ vi.mock('../api.js', () => ({
   fetchSessionEffort: vi.fn().mockResolvedValue({ effort: '' }),
   setSessionEffort: vi.fn().mockResolvedValue({}),
   fetchSessionPlanMode: vi.fn().mockResolvedValue({ plan_mode: false }),
+  // The composer's Modes picker and context meter both read on mount.
+  fetchSessionAgentMode: vi.fn().mockResolvedValue({ mode: '' }),
+  setSessionAgentMode: vi.fn().mockResolvedValue({ ok: true }),
+  fetchSessionContextUsage: vi.fn().mockResolvedValue(
+    { used_tokens: 0, limit_tokens: 0, model: '' },
+  ),
   setSessionPlanMode: vi.fn().mockResolvedValue({}),
 }));
 vi.mock('../hooks/useSessionStream.js', async (importActual) => {

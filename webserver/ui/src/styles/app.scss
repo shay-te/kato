@@ -9554,3 +9554,209 @@ body.kato-resizing #left-pane-resizer::before {
   padding: $SPACE-8 $SPACE-10;
   border-top: 1px solid $C-NEUTRAL-16;
 }
+
+/* ───── Composer: modes menu, commands menu, context meter ─────
+ *
+ * Mode + commands reuse the opt-in pill shape above so the toolbar reads as
+ * one row of controls. Both popovers open UPWARD — the composer sits at the
+ * bottom of the pane, so a downward menu would open off-screen. */
+.composer-mode-menu,
+.composer-command-menu {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.composer-mode-trigger,
+.composer-command-trigger {
+  display: flex;
+  align-items: center;
+  gap: $SPACE-6;
+  height: 26px;
+  padding: 0 $SPACE-10;
+  border-radius: $RADIUS-PILL;
+  border: 1px solid $C-NEUTRAL-16;
+  background: transparent;
+  color: $C-NEUTRAL-64;
+  font: 600 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.composer-mode-trigger:hover,
+.composer-command-trigger:hover,
+.composer-mode-trigger.is-open,
+.composer-command-trigger.is-open {
+  color: $C-NEUTRAL-96;
+  border-color: $C-NEUTRAL-45;
+}
+
+.composer-mode-trigger:disabled,
+.composer-command-trigger:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.composer-mode-icon {
+  color: $C-NEUTRAL-64;
+}
+
+.composer-mode-popover,
+.composer-command-popover {
+  position: absolute;
+  bottom: calc(100% + #{$SPACE-6});
+  left: 0;
+  z-index: 40;
+  min-width: 300px;
+  max-width: 380px;
+  padding: $SPACE-6;
+  border-radius: $RADIUS-10;
+  border: 1px solid $C-NEUTRAL-100-A10;
+  background: $C-NEUTRAL-16;
+  box-shadow: $SHADOW-25;
+}
+
+.composer-mode-popover-title {
+  padding: $SPACE-6 $SPACE-8 $SPACE-3;
+  color: $C-NEUTRAL-64;
+  font-size: $TEXT-11;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.composer-mode-item,
+.composer-command-item {
+  display: flex;
+  align-items: flex-start;
+  gap: $SPACE-8;
+  width: 100%;
+  padding: $SPACE-8;
+  border: 0;
+  border-radius: $RADIUS-6;
+  background: transparent;
+  color: $C-NEUTRAL-96;
+  text-align: left;
+  cursor: pointer;
+}
+
+.composer-mode-item:hover,
+.composer-command-item:hover {
+  background: $C-NEUTRAL-100-A06;
+}
+
+.composer-mode-item.is-active {
+  background: $C-NEUTRAL-100-A10;
+}
+
+.composer-mode-item-icon {
+  flex-shrink: 0;
+  width: 18px;
+  color: $C-NEUTRAL-64;
+  font-size: $TEXT-12;
+}
+
+.composer-mode-item-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.composer-mode-item-name {
+  font-size: $TEXT-13;
+  font-weight: 600;
+}
+
+.composer-mode-item-desc,
+.composer-command-item-desc {
+  color: $C-NEUTRAL-64;
+  font-size: $TEXT-11;
+  line-height: 1.4;
+}
+
+.composer-mode-item-check {
+  margin-left: auto;
+  color: $C-CYAN-58;
+}
+
+.composer-command-item {
+  flex-direction: column;
+  gap: 2px;
+}
+
+.composer-command-item-name {
+  font: 600 12px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* A destructive command announces itself before it is armed, and turns red
+ * only while it waits for the second click. */
+.composer-command-item.is-destructive .composer-command-item-name {
+  color: $C-AMBER-77;
+}
+
+.composer-command-item.is-confirming {
+  background: $C-RED-60-A12;
+}
+
+.composer-command-item.is-confirming .composer-command-item-name,
+.composer-command-item.is-confirming .composer-command-item-desc {
+  color: $C-RED-82;
+}
+
+/* Context meter — remaining window. Colour is the signal; the bar fills as
+ * context is CONSUMED, so a full bar means "no room left". */
+.context-meter {
+  display: flex;
+  align-items: center;
+  gap: $SPACE-6;
+  flex-shrink: 0;
+  padding: 0 $SPACE-8;
+  height: 26px;
+  border-radius: $RADIUS-PILL;
+  border: 1px solid transparent;
+  color: $C-NEUTRAL-64;
+  font: 600 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+}
+
+.context-meter-track {
+  display: block;
+  width: 44px;
+  height: 4px;
+  border-radius: $RADIUS-PILL;
+  background: $C-NEUTRAL-100-A10;
+  overflow: hidden;
+}
+
+.context-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: $RADIUS-PILL;
+  background: $C-NEUTRAL-64;
+  transition: width 240ms ease-out;
+}
+
+.context-meter--ok .context-meter-fill {
+  background: $C-CYAN-52;
+}
+
+.context-meter--low {
+  color: $C-AMBER-77;
+}
+
+.context-meter--low .context-meter-fill {
+  background: $C-AMBER-77;
+}
+
+.context-meter--critical {
+  color: $C-RED-82;
+  border-color: $C-RED-60-A35;
+}
+
+.context-meter--critical .context-meter-fill {
+  background: $C-RED-60;
+}
+
+.context-meter--unknown .context-meter-track {
+  opacity: 0.4;
+}

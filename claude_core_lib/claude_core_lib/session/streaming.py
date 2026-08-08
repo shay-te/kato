@@ -56,6 +56,11 @@ from claude_core_lib.claude_core_lib.helpers.sandbox_scope import (
     classify_command_sandbox,
     classify_tool_input_sandbox,
 )
+from claude_core_lib.claude_core_lib.helpers.context_window import (
+    context_window_tokens,
+    prompt_tokens_from_usage,
+    usage_of_event,
+)
 from claude_core_lib.claude_core_lib.session.index import parse_jsonl_dict_line
 from claude_core_lib.claude_core_lib.session.registry import kill_process_tree
 from agent_core_lib.agent_core_lib.helpers.cli_shim_utils import (
@@ -352,6 +357,11 @@ class StreamingClaudeSession(object):
         # a snapshot of new entries and (b) record the new high-water
         # index without a TOCTOU window.
         self._events_changed = threading.Condition(self._recent_events_lock)
+        # Latest turn's prompt size, for the context-window indicator. Its
+        # own lock: written from the stdout reader thread, read from the
+        # webserver thread, and it must never contend with event delivery.
+        self._context_usage_lock = threading.Lock()
+        self._context_used_tokens = 0
         self._agent_session_id: str = ''
         self._terminal_event: SessionEvent | None = None
         self._reader_threads: list[threading.Thread] = []
@@ -1046,10 +1056,49 @@ class StreamingClaudeSession(object):
         Also feeds the legacy ``_event_queue`` for the
         ``poll_event`` / ``events_iter`` callers.
         """
+        self._track_context_usage(event)
         with self._events_changed:
             self._recent_events.append(event)
             self._events_changed.notify_all()
         self._event_queue.put(event)
+
+    def _track_context_usage(self, event: SessionEvent) -> None:
+        """Remember how much context the latest turn occupied.
+
+        The CLI reports per-turn ``usage`` on assistant and result events.
+        The PROMPT side of it — fresh input plus both cache buckets — is the
+        conversation as the model saw it, i.e. the context actually in use;
+        output tokens are what it wrote, and become part of the next turn's
+        prompt rather than adding to this one.
+
+        Latest-wins rather than a sum: each turn re-sends the whole
+        conversation, so the newest number IS the size, and adding them up
+        would climb past the window while the real usage sat flat.
+
+        Best-effort — a shape change upstream must never break the stream.
+        """
+        tokens = prompt_tokens_from_usage(usage_of_event(event.raw))
+        if tokens <= 0:
+            return
+        with self._context_usage_lock:
+            self._context_used_tokens = tokens
+
+    def context_usage(self) -> dict:
+        """``{used_tokens, limit_tokens, model}`` for the context indicator.
+
+        ``limit_tokens`` is 0 when the window can't be determined, which the
+        UI must render as "unknown" rather than guessing a percentage — a
+        wrong "93% full" would push an operator into compacting a session
+        that had plenty of room.
+        """
+        with self._context_usage_lock:
+            used = self._context_used_tokens
+        model = normalized_text(self._model)
+        return {
+            'used_tokens': used,
+            'limit_tokens': context_window_tokens(model),
+            'model': model,
+        }
 
     def stderr_snapshot(self) -> list[str]:
         with self._stderr_lock:

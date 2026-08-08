@@ -43,6 +43,9 @@ import {
   clearImageDraft,
 } from '../utils/composerImageDraft.js';
 import { fetchDraft, saveDraft } from '../api.js';
+import ComposerCommandMenu from './ComposerCommandMenu.jsx';
+import ComposerModeMenu from './ComposerModeMenu.jsx';
+import ContextMeter from './ContextMeter.jsx';
 
 // Composer state (the textarea contents + attached images) lives
 // INSIDE this component on purpose — typing should not re-render
@@ -90,6 +93,9 @@ const MessageForm = forwardRef(function MessageForm({
   onPlanModeChange,
   planAvailable = false,
   onOpenPlan,
+  agentMode = '',
+  onAgentModeChange,
+  contextUsage = null,
 }, ref) {
   // Lazy initializer reads the persisted draft once on mount.
   // SessionDetail keys this component on the active task, so this
@@ -338,6 +344,21 @@ const MessageForm = forwardRef(function MessageForm({
     // Explicit ``false`` = "send failed" without throw → restore for retry.
     // Anything else (undefined / true) is success; the composer stays cleared.
     if (result === false) { restoreComposer(sentText, sentAttachments); }
+  }
+
+  // Slash commands go to the session as-is: they are instructions to the
+  // CLI, not prose, so they carry no attachments and skip the ultracode
+  // prefix (which would turn `/compact` into unrecognised text). The draft
+  // is left untouched — running /cost shouldn't cost you a half-written
+  // message.
+  async function runCommand(command) {
+    if (typeof onSubmit !== 'function' || disabled) { return; }
+    try {
+      await onSubmit(command, []);
+    } catch (_err) {
+      // Send threw — SessionDetail surfaced the error bubble. Nothing to
+      // restore: the composer's own draft was never consumed.
+    }
   }
 
   // While Claude is working the composer is in QUEUE mode: the
@@ -621,16 +642,12 @@ const MessageForm = forwardRef(function MessageForm({
             style={{ display: 'none' }}
             onChange={handleFilePickerChange}
           />
-          <button
-            type="button"
-            className={`composer-plan-mode tooltip-above ${planMode ? 'is-on' : ''}`}
-            data-tooltip="Plan mode: lock the agent to planning only. It can read, search and propose a plan but NEVER edits files or runs mutating tools. Applies on the next message (the session re-spawns to take effect)."
-            aria-pressed={planMode}
-            aria-label="Toggle plan mode"
-            onClick={() => onPlanModeChange && onPlanModeChange(!planMode)}
-          >
-            Plan mode
-          </button>
+          <ComposerModeMenu
+            mode={agentMode}
+            onChange={onAgentModeChange}
+            disabled={disabled}
+          />
+          <ComposerCommandMenu onRun={runCommand} disabled={disabled} />
           {planAvailable && (
             <button
               type="button"
@@ -656,6 +673,7 @@ const MessageForm = forwardRef(function MessageForm({
           )}
         </div>
         <div className="composer-toolbar-right">
+          <ContextMeter usage={contextUsage} />
           {availableModels.length > 0 && (
             <ComposerSelect
               id="model-selector"

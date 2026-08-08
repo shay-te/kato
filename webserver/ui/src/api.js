@@ -593,6 +593,34 @@ export function setSessionPlanMode(taskId, on) {
   );
 }
 
+// Context-window usage for a task's live session:
+// ``{ used_tokens, limit_tokens, model }``. Zeros mean "unknown" (no live
+// session yet, or a model kato can't size) — the meter renders that as
+// unknown rather than as 0% used.
+export function fetchSessionContextUsage(taskId) {
+  if (!taskId) { return Promise.resolve(null); }
+  return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}`)
+    .then((payload) => (payload && payload.context_usage) || null);
+}
+
+// The task's agent MODE — the literal ``--permission-mode`` kato spawns the
+// session with ('' = kato's configured default). Plan is one of the modes,
+// so this supersedes the plan-mode pair above for the composer's picker.
+// Persisted per task server-side (survives restart) and applied on the next
+// (re)spawn, which RESUMES the same Claude session.
+export function fetchSessionAgentMode(taskId) {
+  if (!taskId) { return Promise.resolve({ mode: '' }); }
+  return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/agent-mode`);
+}
+
+export function setSessionAgentMode(taskId, mode) {
+  if (!taskId) { return { ok: false, error: 'no task id' }; }
+  return postEnvelope(
+    `/api/sessions/${encodeURIComponent(taskId)}/agent-mode`,
+    { mode: String(mode ?? '') },
+  );
+}
+
 // The agent's captured plan (``<workspace>/plan.md``), written whenever
 // the agent presents a plan via ExitPlanMode while in plan mode. Returns
 // ``{ exists, content, mtime }``; ``mtime`` lets the caller detect a NEW

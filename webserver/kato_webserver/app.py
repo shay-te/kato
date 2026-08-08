@@ -130,6 +130,13 @@ _SSE_HEARTBEAT_SECONDS = 15.0
 # the agent may read / search / plan but never edit files or run mutating
 # tools. Backs the composer's plan-mode lock.
 PLAN_PERMISSION_MODE = 'plan'
+# Agent modes the composer can select, as the CLI's ``--permission-mode``.
+# '' = kato's configured default (acceptEdits) — the composer's "Edit
+# automatically". Anything outside this set is refused at the route rather
+# than handed to the CLI, where it would break the spawn instead.
+AGENT_PERMISSION_MODES = frozenset({
+    '', 'default', 'acceptEdits', PLAN_PERMISSION_MODE, 'bypassPermissions',
+})
 
 
 def _record_cwd_or_none(manager, task_id: str) -> str | None:
@@ -935,10 +942,12 @@ def create_app(
     # Unlike model/effort, plan mode is a SAFETY lock, so it persists across
     # restarts: reload the locked tasks from ``plan_mode.json`` into the
     # live override map at boot, so the next respawn re-applies the lock.
-    from kato_core_lib.helpers.plan_mode_store import read_plan_mode_tasks
-    app.config['TASK_PLAN_MODE_OVERRIDES'] = {
-        task_id: PLAN_PERMISSION_MODE for task_id in read_plan_mode_tasks()
-    }
+    # Reloads EVERY persisted mode, not just the plan lock: the composer's
+    # mode picker writes the literal ``--permission-mode`` here, so a task
+    # left on "Manual" must come back on Manual rather than silently
+    # dropping to the permissive default.
+    from kato_core_lib.helpers.plan_mode_store import read_task_modes
+    app.config['TASK_PLAN_MODE_OVERRIDES'] = dict(read_task_modes())
 
     # Cache-bust the unhashed static bundles. ``static/build/app.js``
     # and ``static/css/app.css`` keep fixed names across rebuilds, so
@@ -1103,6 +1112,41 @@ def _register_http_routes(app: Flask) -> None:
         set_plan_mode(task_id, on)
         return jsonify({'plan_mode': on})
 
+    @app.get('/api/sessions/<task_id>/agent-mode')
+    def get_session_agent_mode(task_id: str):
+        """The task's agent mode — the literal ``--permission-mode`` to spawn with.
+
+        Empty string means "kato's configured default" (acceptEdits), which is
+        what the composer shows as "Edit automatically".
+        """
+        return jsonify({
+            'mode': _get_task_override(app, 'TASK_PLAN_MODE_OVERRIDES', task_id),
+        })
+
+    @app.post('/api/sessions/<task_id>/agent-mode')
+    def set_session_agent_mode(task_id: str):
+        """Set the task's agent mode. Persisted — it survives a restart.
+
+        Rejects anything outside the known set rather than passing it to the
+        CLI: an unrecognised ``--permission-mode`` makes the spawn fail, which
+        would look like "kato stopped responding" long after the bad value was
+        chosen.
+        """
+        body = request.get_json(silent=True) or {}
+        mode = str(body.get('mode', '') or '').strip()
+        if mode not in AGENT_PERMISSION_MODES:
+            return jsonify({
+                'error': f'unknown mode {mode!r}',
+                'allowed': sorted(AGENT_PERMISSION_MODES),
+            }), 400
+        if not _set_task_override(app, 'TASK_PLAN_MODE_OVERRIDES', task_id, mode):
+            return jsonify({'error': 'not available'}), 503
+        # Best-effort persistence — a write failure must not fail the choice
+        # the operator just made in the live session.
+        from kato_core_lib.helpers.plan_mode_store import set_task_mode
+        set_task_mode(task_id, mode)
+        return jsonify({'mode': mode})
+
     @app.get('/api/sessions/<task_id>/plan')
     def get_session_plan(task_id: str):
         """Return the agent's captured plan (``<workspace>/plan.md``).
@@ -1167,6 +1211,7 @@ def _register_http_routes(app: Flask) -> None:
             ]
         else:
             payload['recent_events'] = []
+        payload['context_usage'] = _session_context_usage(app, session)
         return jsonify(payload)
 
     @app.get('/api/claude/sessions')
@@ -3316,6 +3361,28 @@ def _register_action_guard_audit_route(app: Flask) -> None:
             'ok': bool(ok),
             'first_bad_index': int(first_bad),
         })
+
+
+def _session_context_usage(app: Flask, session) -> dict:
+    """Context-window usage for the composer indicator.
+
+    Always the same shape so the UI has one branch, not three:
+    ``{used_tokens, limit_tokens, model}``. No live session (or a session
+    that predates the tracking) reports zeros, which the UI renders as
+    "unknown" — never as 0% used, which would read as "plenty of room".
+    """
+    empty = {'used_tokens': 0, 'limit_tokens': 0, 'model': ''}
+    if session is None:
+        return empty
+    reader = getattr(session, 'context_usage', None)
+    if not callable(reader):
+        return empty
+    try:
+        usage = reader()
+    except Exception:
+        app.logger.exception('failed to read session context usage')
+        return empty
+    return usage if isinstance(usage, dict) else empty
 
 
 def _register_agent_version_route(app: Flask) -> None:

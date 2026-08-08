@@ -189,27 +189,37 @@ describe('MessageForm — draft persistence (operator scenario)', () => {
     }
   });
 
-  test('plan-mode button reflects the prop and is always available', () => {
-    // Unlike ultracode it is not version-gated — planning-only works on
-    // any CLI that honors --permission-mode.
+  test('the mode trigger names the active mode, not a generic label', () => {
+    // The picker answers "what happens when I hit send" — a trigger reading
+    // just "Mode" is how someone approves an edit they thought needed a
+    // confirmation. Not version-gated: --permission-mode works on any CLI.
     _agentVer.value = { supports_workflows: false };
     try {
-      renderForm({ taskId: 'T1', planMode: true });
-      const button = screen.getByRole('button', { name: /plan mode/i });
-      expect(button).toHaveAttribute('aria-pressed', 'true');
+      renderForm({ taskId: 'T1', agentMode: 'plan' });
+      expect(
+        screen.getByRole('button', { name: /agent mode: plan/i }),
+      ).toBeInTheDocument();
     } finally {
       _agentVer.value = { supports_workflows: true };
     }
   });
 
-  test('clicking plan-mode toggles via onPlanModeChange (no implicit local state)', () => {
-    const onPlanModeChange = vi.fn();
-    renderForm({ taskId: 'T1', planMode: false, onPlanModeChange });
-    const button = screen.getByRole('button', { name: /plan mode/i });
-    expect(button).toHaveAttribute('aria-pressed', 'false');
-    fireEvent.click(button);
-    // The composer is controlled — it asks the parent to flip, not itself.
-    expect(onPlanModeChange).toHaveBeenCalledWith(true);
+  test('picking a mode asks the parent to change it (no local state)', () => {
+    const onAgentModeChange = vi.fn();
+    renderForm({ taskId: 'T1', agentMode: '', onAgentModeChange });
+    fireEvent.click(screen.getByRole('button', { name: /agent mode:/i }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /plan/i }));
+    expect(onAgentModeChange).toHaveBeenCalledWith('plan');
+  });
+
+  test('re-picking the active mode does not churn a respawn', () => {
+    // Every mode change re-spawns the subprocess to re-bake the flag; doing
+    // that for a no-op click would interrupt the agent for nothing.
+    const onAgentModeChange = vi.fn();
+    renderForm({ taskId: 'T1', agentMode: 'plan', onAgentModeChange });
+    fireEvent.click(screen.getByRole('button', { name: /agent mode: plan/i }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /plan/i }));
+    expect(onAgentModeChange).not.toHaveBeenCalled();
   });
 
   test('ultracode OFF sends the message unchanged', async () => {
