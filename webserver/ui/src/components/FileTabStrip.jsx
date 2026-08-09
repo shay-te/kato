@@ -2,6 +2,7 @@ import { cx } from '../utils/cx.js';
 import { basenameOf } from '../utils/basenameOf.js';
 import { useHorizontalWheelScroll } from '../hooks/useHorizontalWheelScroll.js';
 import Icon from './Icon.jsx';
+import DiffKindIcon from './DiffKindIcon.jsx';
 
 // VS Code-style row of open-file tabs above the centre editor/diff
 // pane. Every open file gets its own tab — opening a file never
@@ -11,7 +12,9 @@ import Icon from './Icon.jsx';
 // no chevron buttons / click-and-hold scroll — just the shared
 // wheel-scroll remap (a mouse wheel would otherwise scroll the page,
 // not this strip) plus native drag-the-thumb scrolling for overflow.
-export default function FileTabStrip({ tabs, activeKey, onSelect, onClose }) {
+export default function FileTabStrip({
+  tabs, activeKey, onSelect, onClose, onToggleView,
+}) {
   // Callback ref, not useRef + useEffect — this component returns
   // null (no DOM node at all) whenever tabs is empty, which a plain
   // useEffect-on-a-stable-ref-object would miss the very first time
@@ -28,6 +31,7 @@ export default function FileTabStrip({ tabs, activeKey, onSelect, onClose }) {
             active={tab.key === activeKey}
             onSelect={onSelect}
             onClose={onClose}
+            onToggleView={onToggleView}
           />
         ))}
       </ul>
@@ -35,12 +39,26 @@ export default function FileTabStrip({ tabs, activeKey, onSelect, onClose }) {
   );
 }
 
-function FileTab({ tab, active, onSelect, onClose }) {
+function FileTab({
+  tab, active, onSelect, onClose, onToggleView,
+}) {
   const name = basenameOf(tab.relativePath || tab.absolutePath) || tab.relativePath;
   const title = tab.repoId ? `${tab.repoId}/${tab.relativePath}` : tab.relativePath;
+  const isDiff = tab.view === 'diff';
+  // A diff tab shows the file's change kind (the green + / red − / edit
+  // glyph the tree uses); a plain-file tab just shows a file.
+  const tabIcon = isDiff
+    ? <DiffKindIcon kind={tab.kind} />
+    : <Icon name="file" />;
 
   function handleSelect() {
     onSelect(tab.key);
+  }
+  function handleToggleView(event) {
+    // Not a tab selection — the click stops here or the strip would
+    // also focus the tab underneath it.
+    event.stopPropagation();
+    onToggleView(tab.key);
   }
   function handleClose(event) {
     event.stopPropagation();
@@ -72,7 +90,23 @@ function FileTab({ tab, active, onSelect, onClose }) {
       onKeyDown={handleKeyDown}
       tabIndex={0}
     >
-      <Icon name={tab.view === 'diff' ? 'diff' : 'file'} />
+      {/* The tab's leading icon carries BOTH jobs the diff pane's header
+          used to: it shows how the file changed (+ / − / edit) while the
+          diff is up, and clicking it switches diff ⇄ plain file. That
+          header is gone — it was a row restating this tab. */}
+      {typeof onToggleView === 'function' ? (
+        <button
+          type="button"
+          className="file-tab-view-toggle tooltip-start"
+          onClick={handleToggleView}
+          data-tooltip={isDiff ? 'View file (no diff)' : 'View diff'}
+          aria-label={isDiff ? `View ${name} without the diff` : `View the diff for ${name}`}
+        >
+          {tabIcon}
+        </button>
+      ) : (
+        tabIcon
+      )}
       <span className="file-tab-label">{name}</span>
       <button
         type="button"

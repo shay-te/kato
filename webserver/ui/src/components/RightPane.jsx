@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import FilesTab from '../FilesTab.jsx';
-import PaneResizer from './PaneResizer.jsx';
+import PanelCard from './PanelCard.jsx';
 
 export default function RightPane({
   activeTaskId,
@@ -84,16 +84,17 @@ export default function RightPane({
   // grows the panel into the editor's space. The legacy sidebar
   // layout still uses the right-edge resizer here too (the visual
   // result is the same: a draggable boundary), so a single
-  // ``PaneResizer`` with the left-pane id covers both.
-  const resizer = typeof onResizePointerDown === 'function'
-    ? <PaneResizer id="left-pane-resizer" onPointerDown={onResizePointerDown} />
-    : null;
+  // ``left-pane-resizer`` covers both.
   return (
-    <aside id="right-pane" style={inlineStyle}>
-      <div id="right-pane-root">
-        {sessionBody}
-      </div>
-      {resizer}
-    </aside>
+    <PanelCard
+      as="aside"
+      id="right-pane"
+      style={inlineStyle}
+      contentId="right-pane-root"
+      resizerId="left-pane-resizer"
+      onResizePointerDown={onResizePointerDown}
+    >
+      {sessionBody}
+    </PanelCard>
   );
 }

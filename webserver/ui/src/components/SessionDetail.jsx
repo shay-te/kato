@@ -4,7 +4,7 @@ import ChatSearch from './ChatSearch.jsx';
 import EventLog from './EventLog.jsx';
 import MessageForm from './MessageForm.jsx';
 import QueuedMessageList from './QueuedMessageList.jsx';
-import PaneResizer from './PaneResizer.jsx';
+import PanelCard from './PanelCard.jsx';
 import SessionHeader, { SessionHeaderPlaceholder } from './SessionHeader.jsx';
 import WorkingIndicator from './WorkingIndicator.jsx';
 import { BUBBLE_KIND } from '../constants/bubbleKind.js';
@@ -311,18 +311,19 @@ export default function SessionDetail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [needsAttention, stream.pendingPermission, stream.lifecycle]);
 
-  // Drag handle for the chat column's width. Rendered on the
-  // pane's left edge — the resizer is ``position: absolute`` with
-  // ``left: -3px``, which only paints correctly when its parent
-  // (this <main>) is itself ``position: relative`` (set in CSS).
-  const resizer = typeof onResizePointerDown === 'function'
-    ? <PaneResizer id="right-pane-resizer" onPointerDown={onResizePointerDown} />
-    : null;
+  // Drag handle for the chat column's width, rendered by PanelCard on
+  // the card's left edge (it anchors into the layout gutter, so the
+  // card must not clip it — see PanelCard).
+  const panelProps = {
+    as: 'main',
+    id: 'session-pane',
+    resizerId: 'right-pane-resizer',
+    onResizePointerDown,
+  };
 
   if (!session) {
     return (
-      <main id="session-pane">
-        {resizer}
+      <PanelCard {...panelProps}>
         {/* Keep the global header bar present (with a "Select a
             task" title + inert buttons) instead of letting it vanish
             — a header that appears/disappears as you click around is
@@ -333,7 +334,7 @@ export default function SessionDetail({
         <section id="session-placeholder" className="placeholder">
           Select a tab to chat with the bound Claude session.
         </section>
-      </main>
+      </PanelCard>
     );
   }
 
@@ -645,8 +646,7 @@ export default function SessionDetail({
     />
   );
   return (
-    <main id="session-pane">
-      {resizer}
+    <PanelCard {...panelProps}>
       <section id="session-detail">
         {headerSlot
           ? createPortal(sessionHeader, headerSlot)
@@ -705,7 +705,7 @@ export default function SessionDetail({
           onOpenPlan={onOpenPlan}
         />
       </section>
-    </main>
+    </PanelCard>
   );
 }
 

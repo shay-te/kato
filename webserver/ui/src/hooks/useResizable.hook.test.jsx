@@ -208,3 +208,58 @@ describe('useResizable — pointer-down side effects', () => {
     act(() => { document.dispatchEvent(new MouseEvent('mouseup')); });
   });
 });
+
+
+// Two classes, two scopes. ``kato-resizing`` (above) is GLOBAL and owns
+// document-wide ergonomics only — cursor + selection lock. The blue
+// active paint hangs off ``is-dragging`` on the ONE handle under the
+// pointer. Regression: the paint used to key off the body class, so
+// dragging the files/editor boundary also lit the editor/chat one and it
+// read as though both boundaries were moving.
+describe('useResizable — per-handle drag marking', () => {
+
+  function mountHandle() {
+    const handle = document.createElement('div');
+    handle.className = 'pane-resizer';
+    document.body.appendChild(handle);
+    return handle;
+  }
+
+  test('marks only the handle the drag started on', () => {
+    const dragged = mountHandle();
+    const other = mountHandle();
+    const { result } = renderHook(() => useResizable(DEFAULTS));
+
+    act(() => {
+      result.current.onPointerDown({
+        preventDefault: () => {},
+        clientX: 50,
+        currentTarget: dragged,
+      });
+    });
+
+    expect(dragged.classList.contains('is-dragging')).toBe(true);
+    expect(other.classList.contains('is-dragging')).toBe(false);
+
+    act(() => { document.dispatchEvent(new MouseEvent('mouseup')); });
+    dragged.remove();
+    other.remove();
+  });
+
+  test('clears the mark on mouseup', () => {
+    const handle = mountHandle();
+    const { result } = renderHook(() => useResizable(DEFAULTS));
+
+    act(() => {
+      result.current.onPointerDown({
+        preventDefault: () => {},
+        clientX: 50,
+        currentTarget: handle,
+      });
+    });
+    act(() => { document.dispatchEvent(new MouseEvent('mouseup')); });
+
+    expect(handle.classList.contains('is-dragging')).toBe(false);
+    handle.remove();
+  });
+});

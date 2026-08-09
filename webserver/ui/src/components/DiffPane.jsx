@@ -267,16 +267,6 @@ export default function DiffPane({
             taskId={taskId}
             onAddToChat={appendToInput}
             onFocusInTree={onFocusFileInTree}
-            onOpenAsFile={
-              typeof onOpenFile === 'function' && openFile?.absolutePath
-                ? () => onOpenFile({
-                  absolutePath: openFile.absolutePath,
-                  relativePath: openFile.relativePath || selected.path,
-                  repoId: selected.repo.repo_id,
-                  view: 'file',
-                })
-                : undefined
-            }
             comments={byFile.get(selected.path) || EMPTY_COMMENTS}
             commentsLoading={!!commentsLoading}
             commentsError={commentsError || ''}

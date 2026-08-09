@@ -47,7 +47,7 @@ export default function ComposerModeMenu({
     <div className="composer-mode-menu" ref={rootRef}>
       <button
         type="button"
-        className={`composer-mode-trigger tooltip-above ${open ? 'is-open' : ''}`}
+        className={`composer-mode-trigger tooltip-above tooltip-start ${open ? 'is-open' : ''}`}
         data-tooltip={
           `Agent mode: ${active.label} — ${active.description}. `
           + 'Applies on your next message (kato re-spawns the subprocess and '

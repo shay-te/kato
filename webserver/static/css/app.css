@@ -420,11 +420,22 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   /* row 1: task tab strip · row 2: full-width task header bar ·
    * row 3: the three panels */
   grid-template-rows: auto auto minmax(0, 1fr);
+  /* Floating-panel shell — the gutter between/around the three
+   * panel cards (see "panel cards" below). Only the COLUMN gap is
+   * set here: a row gap would also open a band between the tab
+   * strip and the task header, which read as one continuous
+   * toolbar. The panels' top gap comes from #task-header-slot's
+   * margin-bottom instead. */
+  column-gap: 8px;
+  padding: 0 8px 8px;
 }
 
 #layout.has-top-tabs > #tabs-pane {
   grid-column: 1/-1;
   grid-row: 1;
+  /* Full-bleed: cancel the shell's horizontal padding so the tab
+   * strip still spans the whole window edge-to-edge. */
+  margin: 0 -8px;
 }
 
 /* The hoisted task header — spans every column, between the tab
@@ -436,8 +447,68 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   grid-column: 1/-1;
   grid-row: 2;
   min-width: 0;
+  /* Full-bleed like the tab strip above it, plus the vertical gutter
+   * that separates the toolbar from the panel cards below. The
+   * bottom margin still applies when the slot is empty (no task
+   * selected) — an 8px strip of page background, not a dead band. */
+  margin: 0 -8px 8px;
 }
 
+/* ───── panel cards ──────────────────────────────────────────────
+ *
+ * Every main-screen panel (files tree, centre column, chat) renders
+ * through the shared ``PanelCard`` component and reads as a separate
+ * floating card: an 8px gutter around and between them (the shell's
+ * padding + column-gap above), a 1px hairline outline, and rounded
+ * corners.
+ *
+ * These two classes are the ONLY place that chrome is defined — a
+ * panel never styles its own outline/radius/clipping, and a new panel
+ * gets the look by rendering through PanelCard, not by adding another
+ * id here.
+ *
+ * Because the gutter now draws the separation, the old inter-pane
+ * divider borders are dropped (see the ``border-left/right: 0``
+ * overrides further down) — keeping them would paint a second
+ * hairline just inside the card outline. */
+.panel-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid #2a2a2a;
+  border-radius: 12px;
+  background: #0a0a0a;
+  /* Positioning context for the resize handle, which anchors itself
+   * into the gutter beside the card. */
+  position: relative;
+}
+
+.panel-card-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  /* The CONTENT clips to the rounded corners, not the card: the
+   * resize handle is a card child that deliberately sits out in the
+   * gutter (``left``/``right: -9px`` below), and clipping on the card
+   * would cut it away. */
+  border-radius: inherit;
+  overflow: hidden;
+}
+
+/* Bodies that are a single block filling the card — the ones that
+ * bring their own inner flex column (``.center-pane-with-tabs``) sit
+ * ON the content wrapper instead and need nothing here. */
+.panel-card-content > #plan-pane,
+.panel-card-content > .orchestrator-feed {
+  flex: 1;
+  min-height: 0;
+}
+
+/* The resize handles live in the gutter between two cards — see the
+ * ``.pane-resizer`` rule further down for the geometry and states. */
 /* ───── task segmented controller (top of app) ───────────────────
  *
  * Horizontal pill row of task segments. Each ``.tab`` is one
@@ -1168,18 +1239,9 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   font-size: 13px;
 }
 
-#session-pane {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  min-width: 0;
-  /* Positioning context for the chat-column resize handle (it
-   * uses ``position: absolute; left: -3px`` to anchor on the
-   * pane's left edge). Without this the handle would jump up
-   * the ancestor chain looking for a positioned parent. */
-  position: relative;
-}
-
+/* #session-pane is a ``.panel-card`` — the flex column, the outline,
+ * and the positioning context the resize handle anchors to all come
+ * from that shared rule. Nothing chat-specific to add here. */
 #session-placeholder {
   margin: auto;
   color: #a3a3a3;
@@ -1629,7 +1691,10 @@ header .chats-menu button:not(.header-status) {
   backdrop-filter: blur(16px) saturate(160%);
   border-top: 1px solid rgba(10, 132, 255, 0.4);
   border-bottom: 1px solid rgba(10, 132, 255, 0.4);
-  box-shadow: 0 0 0 1px rgba(10, 132, 255, 0.4), 0 0 12px rgba(10, 132, 255, 0.55);
+  /* No ring/glow. ``$SHADOW-20`` is a 1px cyan ring PLUS a 12px cyan
+   * blur on all four sides; because the bar bleeds to the chat's edges,
+   * that blur piled up against the panel wall and read as a thick blue
+   * left border. The hairlines above already frame the bar. */
 }
 
 /* Jump-to-comment icon on a comment-run prompt (kato addressing an
@@ -1702,16 +1767,11 @@ header .chats-menu button:not(.header-status) {
   color: #f5f5f7;
 }
 
-.chat-sticky-prompt-toggle::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background: #0a84ff;
-}
-
+/* No left accent slab. A 3px bar of full-saturation cyan ran the height
+ * of every prompt, and because the prompt already has a cyan gradient
+ * fill it read as two stacked blue edges — a bright slab, then the fill.
+ * The gradient plus the top/bottom hairlines mark the prompt on their
+ * own; the bar was a third signal for the same thing. */
 .chat-sticky-prompt-meta {
   flex-shrink: 0;
   display: flex;
@@ -2872,14 +2932,23 @@ header .chats-menu button:not(.header-status) {
   /* The capsule itself — absolute-positioned over the chat. */
   position: absolute;
   left: 50%;
-  bottom: 18px;
+  /* An even 8px inset on all three free sides, matching the gutter the
+   * panel card sits in. The old 18px bottom + 12px sides left the
+   * capsule floating well clear of the chat's own edge, which read as
+   * a second margin stacked on the card's. */
+  bottom: 8px;
   transform: translateX(-50%);
-  width: min(720px, 100% - 32px);
+  width: min(720px, 100% - 16px);
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 10px;
-  border-radius: 28px;
+  /* Tight: the capsule used to ring the input with 10px of padding on
+   * top of the textarea's own 6px, plus a 10px gap before the toolbar
+   * — three stacked spacings that read as a lot of dead glass around
+   * one line of text. The toolbar row supplies the visual breathing
+   * room now. */
+  gap: 4px;
+  padding: 6px;
+  border-radius: 22px;
   /* Frosted glass — translucent dark base + backdrop blur + a
    * faint inner highlight makes it read as a physical pane
    * sitting over the chat. */
@@ -3071,11 +3140,14 @@ header .chats-menu button:not(.header-status) {
   background: transparent;
   color: #f5f5f7;
   border: none;
-  padding: 6px 8px;
+  /* Left padding lines the placeholder up with the toolbar's first
+   * button below it (the toolbar's own ``padding: 0 2px`` + the
+   * button's inset), so the capsule reads as one column. */
+  padding: 4px 6px;
   font: inherit;
   line-height: 1.4;
   resize: none;
-  min-height: calc(1.4em + 12px);
+  min-height: calc(1.4em + 8px);
   max-height: min(260px, 40vh);
   overflow-y: auto;
   outline: none;
@@ -3740,18 +3812,15 @@ code {
 }
 
 /* ───── middle pane — VS Code-style open-file tab strip + Monaco editor ───── */
-.center-pane-with-tabs {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  min-width: 0;
-  height: 100%;
-}
-
 .center-pane-with-tabs > #editor-pane,
 .center-pane-with-tabs > .diff-pane {
   flex: 1;
   min-height: 0;
+  /* The centre column is a card with its own outline + gutter now,
+   * so the pane's own side dividers would paint a second hairline
+   * just inside it. The pane keeps them for any standalone use. */
+  border-left: 0;
+  border-right: 0;
 }
 
 .file-tab-strip {
@@ -3840,6 +3909,31 @@ code {
   color: #f5f5f7;
 }
 
+/* The tab's leading icon is also the diff ⇄ file view switch. It reads
+ * as a plain icon at rest (it IS the tab's kind indicator) and only
+ * picks up a button affordance on hover, so the strip doesn't look like
+ * a row of controls. */
+.file-tab-view-toggle {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.file-tab-view-toggle:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #f5f5f7;
+}
+
 /* ───── middle pane — Monaco editor (read-only file preview) ───── */
 #editor-pane {
   display: flex;
@@ -3923,8 +4017,8 @@ code {
   min-height: 0;
   min-width: 0;
   background: #2a2a2a;
-  border-left: 1px solid #2a2a2a;
-  border-right: 1px solid #2a2a2a;
+  /* No side dividers: the centre panel is a card with its own outline
+   * and gutter, so they would paint a second hairline just inside it. */
 }
 
 .plan-pane-header {
@@ -4034,45 +4128,46 @@ code {
   /* No TOP padding: a ``position: sticky; top:0`` child pins to the
    * scrollport's CONTENT box, so top padding becomes a dead strip
    * the diff scrolls visibly through above the pinned bar. */
-  padding: 0 6px;
+  padding: 0;
   scroll-behavior: smooth;
 }
 
 .diff-pane-file {
-  margin-top: 10px;
-  margin-bottom: 16px;
+  /* No margins: the centre panel is itself a rounded card now, so an
+   * inset file box read as a box-in-a-box and gave up panel width for
+   * nothing. Files run edge to edge; the seam between two of them is
+   * the header's own top border (below). */
   /* Clear the sticky title (~36px) so a scrolled-to file's first
    * lines aren't hidden under it. */
   scroll-margin-top: 8px;
 }
 
-/* The diff code box: a rounded, bordered card (GitHub/Bitbucket).
+/* The diff code box — full-bleed inside the centre panel card.
  *
- * ``overflow: clip`` (NOT hidden/auto/scroll) is the key: it clips
- * the children to the rounded box — so all four corners, including
- * the bottom, are actually rounded — WITHOUT establishing a scroll
+ * ``overflow: clip`` (NOT hidden/auto/scroll) is load-bearing: it
+ * clips the children to the box WITHOUT establishing a scroll
  * container. ``hidden``/``auto``/``scroll`` would make THIS box the
  * sticky header's scroll reference (it has no scrollable overflow)
  * and the header would stop riding the top; ``clip`` does not, so
  * the per-file sticky header keeps working against the real scroll
- * container, ``.diff-pane-body`` (inset:0). This is the standard
- * "rounded card + sticky child" fix and sidesteps the WebKit/Blink
- * quirk where a collapsed-border <table> escapes a rounded
- * overflow:hidden ancestor entirely. */
+ * container, ``.diff-pane-body`` (inset:0). It also sidesteps the
+ * WebKit/Blink quirk where a collapsed-border <table> escapes a
+ * clipping ancestor entirely. */
 .diff-pane .diff-file {
-  border: 1px solid #2a2a2a;
-  border-radius: 10px;
+  border: 0;
+  border-radius: 0;
   overflow: clip;
   background: #0a0a0a;
+  margin: 0;
 }
 
-/* The box's title — ATTACHED to the box (its first child), sharing
- * the box's rounded border: rounded top corners, side + bottom
- * edges so it reads as the card header. ``position: sticky`` bounded
- * by its ``.diff-file`` box, so it rides the top while you read this
- * file and the NEXT box's title pushes it off as you scroll in —
- * exactly GitHub/Bitbucket per-file cards. Works now that
- * .diff-pane-body is a real (inset:0) scroll container; every
+/* The file's title bar — the first child of its box, and the seam
+ * between one file and the next (a top hairline, since the boxes
+ * themselves are now edge-to-edge and unbordered). ``position:
+ * sticky`` bounded by its ``.diff-file`` box, so it rides the top
+ * while you read this file and the NEXT file's title pushes it off as
+ * you scroll in — exactly GitHub/Bitbucket per-file cards. Works now
+ * that .diff-pane-body is a real (inset:0) scroll container; every
  * earlier per-file-sticky failure was that container not existing.
  * Opaque so diff rows scroll cleanly underneath. */
 .diff-pane .diff-file-header {
@@ -4080,7 +4175,7 @@ code {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px;
+  padding: 6px 10px;
   background: #2a2a2a;
 }
 
@@ -4091,12 +4186,8 @@ code {
   z-index: 0;
   pointer-events: none;
   background: #0a0a0a;
-  border: 1px solid #2a2a2a;
-  border-radius: 10px 10px 0 0;
-}
-
-.diff-pane .diff-file.is-collapsed .diff-file-header::before {
-  border-radius: 10px;
+  border-top: 1px solid #2a2a2a;
+  border-bottom: 1px solid #2a2a2a;
 }
 
 .diff-pane .diff-file-header > * {
@@ -4282,108 +4373,109 @@ code {
   background: #0a0a0a;
 }
 
-/* right-side pane (Files + Changes), mounted by the React bundle */
-#right-pane {
-  border-left: 1px solid #2a2a2a;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  background: #0a0a0a;
-  position: relative;
-}
-
-/* VS Code-style column resizer between the center chat and the
- * right pane.
+/* The Files pane (mounted by the React bundle) is a ``.panel-card`` —
+ * outline, radius, flex column, and the resize handle's positioning
+ * context all come from that shared rule. */
+/* ───── pane resizer ─────────────────────────────────────────────
+ *
+ * The draggable boundary between two panel cards, rendered into the
+ * gutter by ``PaneResizer`` (see PanelCard). ONE rule for both sides —
+ * the ids carry only which card edge the handle hangs off; every
+ * shared visual used to be duplicated across two near-identical id
+ * blocks.
  *
  * Three visual states:
- *   - default → invisible 6px-wide grip (just a hit target)
- *   - hover   → faint blue tint on a 2px line down the boundary
- *   - active  → solid iOS-systemBlue line + soft glow while dragging
+ *   - default → a grey dot grip, so the gutter reads as a handle
+ *               instead of dead space
+ *   - hover   → grip + a 2px line down the gutter tint blue
+ *   - active  → grip + line go solid iOS-systemBlue with a soft glow
  *
- * The drag handler still lives in ``useResizable`` and toggles the
- * ``kato-resizing`` body class to drive the active visual; the
- * drag math itself didn't change. */
-#right-pane-resizer {
+ * The active state keys off ``.is-dragging``, which ``useResizable``
+ * puts on the ONE handle under the pointer — NOT off the global
+ * ``kato-resizing`` body class (that only owns the document-wide
+ * cursor + selection lock). Painting it from the body class lit up the
+ * other pane's handle at the same time, which read as both boundaries
+ * moving when only one was.
+ *
+ * Offsets are measured from the card's PADDING box, so the 9px over an
+ * 8px gutter is the gutter plus the card's 1px border. */
+.pane-resizer {
   position: absolute;
-  left: -3px;
   top: 0;
   bottom: 0;
-  width: 6px;
+  width: 10px;
   cursor: col-resize;
   background: transparent;
   z-index: 10;
+  /* Centres the dot grip in the gutter; the ::before line is out of
+   * flow and positions itself. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-#right-pane-resizer::before {
-  /* The actual visible "line" lives in an ::before so the grip
-   * stays a generous 6px hit target while the visible blue line
-   * is the crisp 2px the operator sees. */
+#right-pane-resizer {
+  left: -9px;
+}
+
+#left-pane-resizer {
+  right: -9px;
+}
+
+/* The visible boundary line. Kept in an ::before so the handle stays a
+ * generous 10px hit target while the line reads as a crisp hairline. */
+.pane-resizer::before {
   content: "";
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 2px;
+  left: 4px;
   width: 2px;
   background: transparent;
   transition: background 120ms ease, box-shadow 120ms ease;
 }
 
-#right-pane-resizer:hover::before {
+/* Three dots down the middle. The opaque background is the page colour
+ * behind the gutter, so the boundary line passes BEHIND the grip
+ * instead of running through the dots and swallowing them. Dot colour
+ * is ``currentColor``, so the hover/active states below only have to
+ * move ``color`` — no second copy of the gradient. */
+.pane-resizer-grip {
+  position: relative;
+  width: 6px;
+  height: 18px;
+  color: #737373;
+  background-color: #0a0a0a;
+  background-image: radial-gradient(circle, currentColor 1.5px, transparent 1.8px);
+  background-size: 6px 6px;
+  background-repeat: repeat-y;
+  transition: color 120ms ease;
+}
+
+.pane-resizer:hover::before {
   background: rgba(10, 132, 255, 0.4);
 }
 
-body.kato-resizing #right-pane-resizer::before {
+.pane-resizer.is-dragging::before {
   background: #0a84ff;
   box-shadow: 0 0 0 1px rgba(10, 132, 255, 0.4), 0 0 12px rgba(10, 132, 255, 0.55);
 }
 
+.pane-resizer:hover .pane-resizer-grip,
+.pane-resizer.is-dragging .pane-resizer-grip {
+  color: #0a84ff;
+}
+
+/* Global, and deliberately visual-free: document-wide drag ergonomics
+ * only. Anything that PAINTS a handle belongs on .is-dragging above. */
 body.kato-resizing {
   user-select: none;
   cursor: col-resize;
 }
 
-/* Left-pane resizer — mirror of the right-pane one, anchored to the
- * RIGHT edge of the left pane so the operator drags the boundary
- * between the Files panel and the centre column. Same hit-target /
- * hover / active visuals. */
-#left-pane-resizer {
-  position: absolute;
-  right: -3px;
-  top: 0;
-  bottom: 0;
-  width: 6px;
-  cursor: col-resize;
-  background: transparent;
-  z-index: 10;
-}
-
-#left-pane-resizer::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 2px;
-  width: 2px;
-  background: transparent;
-  transition: background 120ms ease, box-shadow 120ms ease;
-}
-
-#left-pane-resizer:hover::before {
-  background: rgba(10, 132, 255, 0.4);
-}
-
-body.kato-resizing #left-pane-resizer::before {
-  background: #0a84ff;
-  box-shadow: 0 0 0 1px rgba(10, 132, 255, 0.4), 0 0 12px rgba(10, 132, 255, 0.55);
-}
-
-#right-pane-root {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  flex-direction: column;
-}
-
+/* #right-pane-root is the card's ``.panel-card-content`` wrapper — the
+ * flex column comes from there; only the pane background (grouped
+ * above) is set on the id. */
 .right-pane-empty {
   margin: auto;
   color: #a3a3a3;
@@ -4502,7 +4594,9 @@ body.kato-resizing #left-pane-resizer::before {
 
 .files-tab-header,
 .changes-tab-header {
-  padding: 10px 12px;
+  /* Horizontal inset matches .files-tab-body below, so the search box
+   * and the repo cards under it start on the same vertical line. */
+  padding: 10px 6px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   font-size: 12px;
   color: rgba(245, 245, 247, 0.65);
@@ -4906,6 +5000,14 @@ body.kato-resizing #left-pane-resizer::before {
   border-radius: 0 0 10px 10px;
   padding: 4px;
   background: #0a0a0a;
+}
+
+/* In the centre panel the file boxes are full-bleed and square (the
+ * PANEL is the rounded card there), so the comments block that closes
+ * a file must not round its own bottom either. Everywhere else the
+ * file keeps its own card and the rounded bottom above still applies. */
+.diff-pane .diff-file-comments {
+  border-radius: 0;
 }
 
 .diff-file-comments-empty {
@@ -6008,11 +6110,11 @@ body.kato-resizing #left-pane-resizer::before {
   overflow-x: hidden;
   font-size: 13px;
   /* react-arborist sets row paddingLeft inline; pad the body instead.
-   * The right pad matches the header/toolbar's 12px inset so the repo
-   * group boxes end on the same vertical line as the toolbar actions
-   * instead of running flush to the panel edge. */
-  padding-left: 14px;
-  padding-right: 12px;
+   * Kept tight and symmetric — the panel is the narrowest column and
+   * every pixel here comes straight off the filename column, which is
+   * what the operator is actually reading. */
+  padding-left: 6px;
+  padding-right: 6px;
 }
 
 .files-tab-context-menu,
@@ -7336,9 +7438,17 @@ body.kato-resizing #left-pane-resizer::before {
  * tooltip-end buttons are typically inside narrow containers like
  * the sidebar (280px) — a 320px tooltip overflows the parent and
  * gets clipped by ``#layout: overflow:hidden``. The text wraps to
- * 3–4 lines when needed. */
+ * 3–4 lines when needed.
+ *
+ * The task header's action cluster gets the same treatment without
+ * opting in per button: it is pinned to the window's right edge, so a
+ * centre-anchored tooltip on ANY of those buttons runs off-screen and
+ * is clipped. Folded into this selector list rather than restated, so
+ * a button added to that group is covered automatically. */
 [data-tooltip].tooltip-end:hover::after,
-[data-tooltip].tooltip-end:focus-visible::after {
+[data-tooltip].tooltip-end:focus-visible::after,
+.session-header-actions [data-tooltip]:hover::after,
+.session-header-actions [data-tooltip]:focus-visible::after {
   left: auto;
   right: 0;
   transform: none;
@@ -7346,10 +7456,19 @@ body.kato-resizing #left-pane-resizer::before {
 }
 
 [data-tooltip].tooltip-end:hover::before,
-[data-tooltip].tooltip-end:focus-visible::before {
+[data-tooltip].tooltip-end:focus-visible::before,
+.session-header-actions [data-tooltip]:hover::before,
+.session-header-actions [data-tooltip]:focus-visible::before {
   left: auto;
   right: 6px;
   transform: none;
+}
+
+/* …but the header spans the whole window, so it keeps the roomier
+ * default width instead of the narrow-sidebar 220px above. */
+.session-header-actions [data-tooltip]:hover::after,
+.session-header-actions [data-tooltip]:focus-visible::after {
+  max-width: 320px;
 }
 
 /* Mirror of tooltip-end for buttons near the LEFT edge of their container
@@ -9418,7 +9537,15 @@ body.kato-resizing #left-pane-resizer::before {
   transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
 }
 
-.composer-mode-trigger:hover,
+/* Shape, NOT a hover state: the + / actions triggers are icon-only
+ * circles, while the mode trigger is a label-bearing capsule.
+ *
+ * ``.composer-mode-trigger:hover`` used to be glued onto this group,
+ * one selector adrift from the colour rule below. Hovering the mode
+ * pill therefore COLLAPSED it to a 34px circle, which pulled the pill
+ * out from under the pointer → un-hover → it expanded back under the
+ * pointer → hover again, flickering for as long as the cursor sat on
+ * it. Keep hover states out of any rule that changes a control's box. */
 .composer-actions-trigger {
   width: 34px;
   padding: 0;
@@ -9426,6 +9553,7 @@ body.kato-resizing #left-pane-resizer::before {
   font-size: 15px;
 }
 
+.composer-mode-trigger:hover,
 .composer-actions-trigger:hover,
 .composer-mode-trigger.is-open,
 .composer-actions-trigger.is-open {

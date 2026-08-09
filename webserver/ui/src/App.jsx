@@ -7,6 +7,7 @@ import GlobalPermissionContainer from './components/GlobalPermissionContainer.js
 import Header from './components/Header.jsx';
 import Layout from './components/Layout.jsx';
 import OrchestratorActivityFeed from './components/OrchestratorActivityFeed.jsx';
+import PanelCard from './components/PanelCard.jsx';
 import PlanPane from './components/PlanPane.jsx';
 import RightPane from './components/RightPane.jsx';
 import FileTabStrip from './components/FileTabStrip.jsx';
@@ -45,7 +46,7 @@ import { usePlanWatch } from './hooks/usePlanWatch.js';
 import { CLAUDE_EVENT } from './constants/claudeEvent.js';
 import { agentStatusStore } from './stores/agentStatusStore.js';
 import { mergePendingPermissionTaskIds } from './utils/sessionAttention.js';
-import { closeTab, patchTab, upsertTab } from './utils/fileTabs.js';
+import { closeTab, findTab, patchTab, upsertTab } from './utils/fileTabs.js';
 
 const RIGHT_PANE_DEFAULT_WIDTH = 380;
 const RIGHT_PANE_MIN_WIDTH = 220;
@@ -536,6 +537,19 @@ export default function App() {
     openTabsRef.current = tabs;
     rememberTabsView(activeTaskId, tabs, key);
   }, [activeTaskId]);
+  // Flip one tab between its diff and its plain-file view. Tabs are keyed
+  // by repo+path (not by view), so this merges into the SAME tab rather
+  // than opening a second one for the same file.
+  const handleToggleTabView = useCallback((key) => {
+    const tab = findTab(openTabsRef.current, key);
+    if (!tab) { return; }
+    handleOpenFile({
+      absolutePath: tab.absolutePath,
+      relativePath: tab.relativePath,
+      repoId: tab.repoId,
+      view: tab.view === 'diff' ? 'file' : 'diff',
+    });
+  }, [handleOpenFile]);
   const handleFocusFileInTree = useCallback((target) => {
     const relativePath = String(target?.relativePath || target?.absolutePath || '').trim();
     if (!relativePath) { return; }
@@ -560,16 +574,20 @@ export default function App() {
     [openTabs, activeTaskId],
   );
   const activeOpenFile = tabsForActiveTask.find((tab) => tab.key === activeTabKey) || null;
-  let centerPane;
+  // The centre column swaps between three bodies (activity feed, plan,
+  // file/diff view); all three go through the shared PanelCard so the
+  // card chrome is identical no matter which one is showing.
+  let centerBody;
+  let centerContentClassName = '';
   if (orchestratorOpen) {
-    centerPane = (
+    centerBody = (
       <OrchestratorActivityFeed
         history={status.history}
         onClose={toggleOrchestrator}
       />
     );
   } else if (planOpen) {
-    centerPane = <PlanPane content={planContent} />;
+    centerBody = <PlanPane content={planContent} />;
   } else {
     const filePane = activeOpenFile?.view === 'diff' ? (
       <DiffPane
@@ -589,18 +607,28 @@ export default function App() {
         onOpenFile={handleOpenFile}
       />
     );
-    centerPane = (
-      <div className="center-pane-with-tabs">
+    // The open-file tab strip stacks directly above the pane, so this
+    // body opts the card's content wrapper into the tab-strip rules
+    // rather than adding another nested flex column.
+    centerContentClassName = 'center-pane-with-tabs';
+    centerBody = (
+      <>
         <FileTabStrip
           tabs={tabsForActiveTask}
           activeKey={activeTabKey}
           onSelect={handleSelectFileTab}
           onClose={handleCloseFileTab}
+          onToggleView={handleToggleTabView}
         />
         {filePane}
-      </div>
+      </>
     );
   }
+  const centerPane = (
+    <PanelCard id="center-pane" contentClassName={centerContentClassName}>
+      {centerBody}
+    </PanelCard>
+  );
   const layout = (
     <Layout
       rightWidth={resizer.width}

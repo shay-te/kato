@@ -51,7 +51,7 @@ export default function ComposerActionsMenu({
     <div className="composer-actions-menu" ref={rootRef}>
       <button
         type="button"
-        className={`composer-actions-trigger tooltip-above ${open ? 'is-open' : ''}`}
+        className={`composer-actions-trigger tooltip-above tooltip-start ${open ? 'is-open' : ''}`}
         data-tooltip="Actions — Claude commands, model, and reasoning effort."
         aria-label="Actions"
         aria-haspopup="menu"

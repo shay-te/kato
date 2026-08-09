@@ -105,39 +105,26 @@ describe('DiffFileWithComments — collapse / expand integration', () => {
   test('initiallyExpanded=true: diff body renders inline', () => {
     const { container } = renderDiff({ file: _file(10), initiallyExpanded: true });
 
-    const toggle = container.querySelector('.diff-file-collapse-toggle');
-    expect(toggle).toBeInTheDocument();
-    expect(toggle).toHaveAttribute('aria-label', expect.stringMatching(/collapse diff/i));
+    expect(container.querySelector('.diff-file-body')).toBeInTheDocument();
     expect(screen.queryByText(/diff hidden/i)).not.toBeInTheDocument();
   });
 
-  test('initiallyExpanded=false: renders only the header and expand chevron', () => {
+  test('initiallyExpanded=false: renders the header only, no diff body', () => {
     const { container } = renderDiff({ file: _file(42), initiallyExpanded: false });
 
-    const toggle = screen.getByRole('button', { name: /expand diff/i });
-    expect(toggle).toBeInTheDocument();
-    expect(toggle).not.toHaveTextContent(/42 lines/i);
     expect(screen.queryByText(/diff hidden/i)).not.toBeInTheDocument();
     expect(container.querySelector('.diff')).not.toBeInTheDocument();
     expect(container.querySelector('.diff-file-body')).not.toBeInTheDocument();
   });
 
-  test('clicking the toggle expands a collapsed diff', () => {
-    renderDiff({ file: _file(20), initiallyExpanded: false });
-
-    fireEvent.click(screen.getByRole('button', { name: /expand diff/i }));
-    expect(screen.queryByText(/diff hidden/i)).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /collapse diff/i })).toBeInTheDocument();
-  });
-
   test('forceExpandToken expands a collapsed diff from parent navigation', async () => {
     const file = _file(20);
-    const { rerender } = renderDiff({
+    const { container, rerender } = renderDiff({
       file,
       initiallyExpanded: false,
       forceExpandToken: 0,
     });
-    expect(screen.getByRole('button', { name: /expand diff/i })).toBeInTheDocument();
+    expect(container.querySelector('.diff-file-body')).not.toBeInTheDocument();
 
     rerenderDiff(rerender, {
       file,
@@ -145,19 +132,19 @@ describe('DiffFileWithComments — collapse / expand integration', () => {
       forceExpandToken: 1,
     });
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /collapse diff/i })).toBeInTheDocument();
+      expect(container.querySelector('.diff-file-body')).toBeInTheDocument();
     });
   });
 
   test('a collapsed file auto-expands when it has an open inline comment', async () => {
-    renderDiff({
+    const { container } = renderDiff({
       file: _file(20),
       initiallyExpanded: false,
       comments: [{ id: 'c1', line: 3, status: 'open', file_path: 'src/file.py' }],
     });
     // The thread can't render while collapsed, so the file reveals itself.
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /collapse diff/i })).toBeInTheDocument();
+      expect(container.querySelector('.diff-file-body')).toBeInTheDocument();
     });
   });
 
@@ -184,50 +171,12 @@ describe('DiffFileWithComments — collapse / expand integration', () => {
   });
 
   test('a collapsed file with only resolved comments stays collapsed', () => {
-    renderDiff({
+    const { container } = renderDiff({
       file: _file(20),
       initiallyExpanded: false,
       comments: [{ id: 'c1', line: 3, status: 'resolved', file_path: 'src/file.py' }],
     });
-    expect(screen.getByRole('button', { name: /expand diff/i })).toBeInTheDocument();
-  });
-
-  test('after a comment auto-expand, a manual collapse is respected', async () => {
-    const { container } = renderDiff({
-      file: _file(20),
-      initiallyExpanded: false,
-      comments: [{ id: 'c1', line: 3, status: 'open', file_path: 'src/file.py' }],
-    });
-    await screen.findByRole('button', { name: /collapse diff/i });
-    fireEvent.click(container.querySelector('.diff-file-collapse-toggle'));
-    // Ref-guard means it must NOT bounce back open.
-    expect(screen.getByRole('button', { name: /expand diff/i })).toBeInTheDocument();
-  });
-
-  test('an initiallyExpanded file with an open comment stays collapsed after a manual collapse', () => {
-    // Regression (operator bug): DiffPane renders files initiallyExpanded.
-    // Collapsing one that carries an open comment used to bounce straight
-    // back open — the comment auto-expand re-fired for files that STARTED
-    // expanded (its ref-guard was only set for files that started
-    // collapsed), changing the UI while the operator read. A manual
-    // collapse must stick.
-    const { container } = renderDiff({
-      file: _file(20),
-      initiallyExpanded: true,
-      comments: [{ id: 'c1', line: 3, status: 'open', file_path: 'src/file.py' }],
-    });
-    expect(screen.getByRole('button', { name: /collapse diff/i })).toBeInTheDocument();
-    fireEvent.click(container.querySelector('.diff-file-collapse-toggle'));
-    expect(screen.getByRole('button', { name: /expand diff/i })).toBeInTheDocument();
-  });
-
-  test('clicking the toggle collapses an expanded diff', () => {
-    const { container } = renderDiff({ file: _file(20), initiallyExpanded: true });
-
-    expect(screen.queryByText(/diff hidden/i)).not.toBeInTheDocument();
-    fireEvent.click(container.querySelector('.diff-file-collapse-toggle'));
-    expect(screen.queryByText(/diff hidden/i)).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /expand diff/i })).toBeInTheDocument();
+    expect(container.querySelector('.diff-file-body')).not.toBeInTheDocument();
   });
 
   test('initiallyExpanded omitted: falls back to per-file isLargeFile rule', () => {
@@ -287,27 +236,6 @@ describe('DiffFileWithComments — collapse / expand integration', () => {
 
 describe('DiffFileWithComments — header rendering', () => {
 
-  test('renders the file path in the header', () => {
-    const { container } = renderDiff({ file: _file(10, { path: 'src/auth/login.py' }) });
-    const pathNode = container.querySelector('.diff-file-path');
-    expect(pathNode).toHaveTextContent('src/auth/login.py');
-    expect(container.querySelectorAll('.diff-file-path-separator')).toHaveLength(2);
-  });
-
-  test('clicking the header path asks the file tree to reveal that file', () => {
-    const onFocusInTree = vi.fn();
-    renderDiff({
-      file: _file(10, { path: 'src/auth/login.py' }),
-      onFocusInTree,
-    });
-
-    fireEvent.click(screen.getByRole('button', { name: /src.*auth.*login.py/i }));
-    expect(onFocusInTree).toHaveBeenCalledWith({
-      repoId: 'repo-1',
-      relativePath: 'src/auth/login.py',
-    });
-  });
-
   test('right-clicking the file header opens file actions', () => {
     const onFocusInTree = vi.fn();
     const { container } = renderDiff({
@@ -315,7 +243,7 @@ describe('DiffFileWithComments — header rendering', () => {
       onFocusInTree,
     });
 
-    fireEvent.contextMenu(container.querySelector('.diff-file-header'));
+    fireEvent.contextMenu(container.querySelector('.diff-file'));
 
     expect(screen.getByRole('menuitem', { name: /show in tree/i }))
       .toBeInTheDocument();
@@ -332,7 +260,7 @@ describe('DiffFileWithComments — header rendering', () => {
       onFocusInTree,
     });
 
-    fireEvent.contextMenu(container.querySelector('.diff-file-header'));
+    fireEvent.contextMenu(container.querySelector('.diff-file'));
     fireEvent.click(screen.getByRole('menuitem', { name: /show in tree/i }));
 
     expect(onFocusInTree).toHaveBeenCalledWith({
@@ -348,7 +276,7 @@ describe('DiffFileWithComments — header rendering', () => {
       onAddToChat,
     });
 
-    fireEvent.contextMenu(container.querySelector('.diff-file-header'));
+    fireEvent.contextMenu(container.querySelector('.diff-file'));
     fireEvent.click(screen.getByRole('menuitem', { name: /place in chat/i }));
 
     expect(onAddToChat).toHaveBeenCalledWith('`repo-1:src/auth/login.py`');
@@ -359,7 +287,7 @@ describe('DiffFileWithComments — header rendering', () => {
       file: _file(10, { path: 'src/auth/login.py' }),
     });
 
-    fireEvent.contextMenu(container.querySelector('.diff-file-header'));
+    fireEvent.contextMenu(container.querySelector('.diff-file'));
     fireEvent.click(screen.getByRole('menuitem', { name: /copy relative path/i }));
 
     await waitFor(() => {
@@ -368,37 +296,22 @@ describe('DiffFileWithComments — header rendering', () => {
     });
   });
 
-  test('shows the diff type icon (modify / add / delete)', () => {
+  test('the change-kind glyph is NOT repeated here — the tab carries it', () => {
+    // See FileTabStrip: the tab's leading icon is the kind glyph while a
+    // diff is up. A one-icon header row restating it was dead space.
     const { container } = renderDiff({ file: _file(10, { type: 'add' }) });
-    expect(container.querySelector('.diff-file-row-kind.kind-add'))
-      .toBeInTheDocument();
+    expect(container.querySelector('.diff-file-row-kind')).toBeNull();
   });
 
-  test('deleted file header shows its real path, never "/dev/null"', () => {
-    // react-diff-view sets the missing side to "/dev/null" for a
-    // pure delete. The header must resolve to the OLD path via
-    // diffDisplayPath, not render the literal "/dev/null".
-    const file = _file(10, { type: 'delete', path: 'src/gone.py' });
-    file.newPath = '/dev/null';
-    const { container } = renderDiff({ file });
-    const pathNode = container.querySelector('.diff-file-path');
-    expect(pathNode).toHaveTextContent('src/gone.py');
-    expect(pathNode).not.toHaveTextContent('/dev/null');
-  });
-
-  test('diff body lives in a .diff-file-body sibling of the sticky header', () => {
-    // The card keeps overflow:visible for its sticky header, so the
-    // rounded bottom is achieved by clipping this wrapper instead.
-    // It must be a sibling AFTER the header (not inside it).
+  test('diff body is the last child of the file section', () => {
+    // The card keeps overflow:visible, so the rounded bottom is achieved
+    // by clipping this wrapper instead — it has to be the final child.
     const { container } = renderDiff({ file: _file(6), initiallyExpanded: true });
     const section = container.querySelector('.diff-file');
-    const header = section.querySelector('.diff-file-header');
     const body = section.querySelector('.diff-file-body');
+
     expect(body).toBeInTheDocument();
-    expect(header).toHaveClass('sticky-section-header');
-    expect(header.contains(body)).toBe(false);
     expect(section.children[section.children.length - 1]).toBe(body);
-    // The actual diff table renders inside the wrapper.
     expect(body.querySelector('.diff')).toBeInTheDocument();
   });
 
@@ -409,14 +322,20 @@ describe('DiffFileWithComments — header rendering', () => {
     expect(section).toHaveStyle({ '--diff-gutter-col-width': '3ch' });
   });
 
-  test('renders the expand/collapse chevron on the left side of the header', () => {
+  test('no header row at all — the tab says everything it used to', () => {
     const { container } = renderDiff({ file: _file(10), initiallyExpanded: true });
-    const header = container.querySelector('.diff-file-header');
-    expect(header.firstElementChild).toHaveClass('diff-file-collapse-toggle');
-    expect(header.firstElementChild).toHaveAttribute(
-      'aria-label',
-      expect.stringMatching(/collapse diff/i),
-    );
+
+    expect(container.querySelector('.diff-file-header')).toBeNull();
+    expect(container.querySelector('.diff-file-collapse-toggle')).toBeNull();
+    expect(container.querySelector('.diff-file-path')).toBeNull();
+    expect(container.querySelector('.diff-file-open-as-file')).toBeNull();
+  });
+
+  test('a merge conflict brings the header back — the tab cannot signal it', () => {
+    const { container } = renderDiff({ file: _file(10), conflicted: true });
+
+    expect(container.querySelector('.diff-file-header')).toBeInTheDocument();
+    expect(screen.getByLabelText(/merge conflict/i)).toBeInTheDocument();
   });
 
   test('merge conflict mark shows when conflicted prop is true', () => {

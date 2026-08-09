@@ -51,7 +51,6 @@ import {
   splitSourceLines,
 } from './DiffExpansionHelpers.js';
 import { isLargeFile } from './diffFileSize.js';
-import DiffKindIcon from './DiffKindIcon.jsx';
 import { countNoun } from '../utils/pluralize.js';
 
 export function splitCommentsForDisplay(comments) {
@@ -100,24 +99,6 @@ function _defaultInitiallyExpanded(file) {
   return !isLargeFile(file);
 }
 
-function renderPathSegments(path) {
-  const rawPath = String(path || '');
-  const parts = rawPath.includes('/') && !rawPath.startsWith('/')
-    ? rawPath.split('/').filter(Boolean)
-    : [rawPath];
-  return parts.map((part, index) => {
-    const separator = index > 0 ? (
-      <span className="diff-file-path-separator">/</span>
-    ) : null;
-    return (
-      <span className="diff-file-path-part" key={`${part}-${index}`}>
-        {separator}
-        <span className="diff-file-path-segment">{part}</span>
-      </span>
-    );
-  });
-}
-
 // One <Diff> + per-line comment threads + file-level thread, all
 // in one component so the comments state is shared across the
 // gutter widgets and the bottom panel. Wraps react-diff-view's
@@ -137,10 +118,6 @@ function DiffFileWithComments({
   forceExpandToken = 0,
   onAddToChat,
   onFocusInTree,
-  // Swap the centre column from the diff view to a plain editor view of
-  // this file. Wired by DiffPane → App.handleOpenFile (view: 'file').
-  // Shown as a header icon when set.
-  onOpenAsFile,
   comments = [],
   commentsLoading = false,
   commentsError = '',
@@ -294,21 +271,11 @@ function DiffFileWithComments({
   // surface). Old-side and truly-orphaned threads are handled by the
   // comments panel / reveal logic, not here.
   const autoExpandedForCommentsRef = useRef(false);
-  // Once the operator manually toggles collapse/expand, the comment
-  // auto-expand below must stop fighting them — a file they collapsed
-  // STAYS collapsed while they read, even if it carries an open comment
-  // and the diff refreshes underneath them.
-  const userToggledExpandRef = useRef(false);
   useEffect(() => {
     autoExpandedForCommentsRef.current = false;
-    userToggledExpandRef.current = false;
   }, [path, repoId, taskId]);
   useEffect(() => {
-    if (
-      userToggledExpandRef.current
-      || autoExpandedForCommentsRef.current
-      || expanded
-    ) { return; }
+    if (autoExpandedForCommentsRef.current || expanded) { return; }
     let hasOpenInline = false;
     for (const lineComments of commentsByLine.values()) {
       if (lineComments.some((c) => c.status !== 'resolved')) {
@@ -321,13 +288,6 @@ function DiffFileWithComments({
       setExpanded(true);
     }
   }, [commentsByLine, expanded]);
-
-  // Operator-driven collapse/expand. Records the interaction so the
-  // comment auto-expand effect above never re-opens what they closed.
-  function setExpandedByUser(value) {
-    userToggledExpandRef.current = true;
-    setExpanded(value);
-  }
 
   async function onSubmit(line, body, parentId = '') {
     const trimmed = String(body || '').trim();
@@ -638,28 +598,6 @@ function DiffFileWithComments({
       <Icon name="warning" />
     </span>
   ) : null;
-  const collapseToggle = expanded ? (
-    <button
-      type="button"
-      className="diff-file-collapse-toggle is-icon tooltip-below"
-      onClick={() => setExpandedByUser(false)}
-      data-tooltip="Collapse diff"
-      aria-label="Collapse diff"
-    >
-      <Icon name="chevron-down" />
-    </button>
-  ) : (
-    <button
-      type="button"
-      className="diff-file-collapse-toggle is-icon tooltip-below"
-      onClick={() => setExpandedByUser(true)}
-      data-tooltip="Expand diff"
-      aria-label="Expand diff"
-    >
-      <Icon name="chevron-right" />
-    </button>
-  );
-
   function loadBaseSourceLines() {
     if (baseSourceLinesRef.current) { return Promise.resolve(baseSourceLinesRef.current); }
     // Coalesce concurrent callers onto ONE in-flight fetch. Without this the
@@ -895,19 +833,6 @@ function DiffFileWithComments({
       {commentsPanel}
     </div>
   ) : null;
-  const pathSegments = renderPathSegments(path);
-  const focusPathButton = typeof onFocusInTree === 'function' ? (
-    <button
-      type="button"
-      className="diff-file-path diff-file-path-button"
-      onClick={() => onFocusInTree({ repoId, relativePath: path })}
-      title="Show this file in the file tree"
-    >
-      {pathSegments}
-    </button>
-  ) : (
-    <span className="diff-file-path">{pathSegments}</span>
-  );
   const showInTreeDisabled = typeof onFocusInTree !== 'function';
   const placeInChatDisabled = typeof onAddToChat !== 'function';
   const pathContextMenu = pathMenu ? (
@@ -955,23 +880,16 @@ function DiffFileWithComments({
       onContextMenu={openPathMenu}
       title="Click a line gutter to add an inline comment · right-click for file actions"
     >
-      <StickyHeader as="header" className="diff-file-header">
-        {collapseToggle}
-        <DiffKindIcon kind={file.type} />
-        {conflictedBadge}
-        {focusPathButton}
-        {typeof onOpenAsFile === 'function' && (
-          <button
-            type="button"
-            className="diff-file-open-as-file is-icon tooltip-below"
-            onClick={onOpenAsFile}
-            data-tooltip="View file (no diff)"
-            aria-label="View file (no diff)"
-          >
-            <Icon name="file" />
-          </button>
-        )}
-      </StickyHeader>
+      {/* No header row in the normal case. The tab above names the file,
+          shows how it changed, and owns the diff/file switch — everything
+          this row used to hold. It comes back ONLY for a merge conflict,
+          which the tab has no way to signal and which the operator must
+          not miss. */}
+      {conflicted && (
+        <StickyHeader as="header" className="diff-file-header">
+          {conflictedBadge}
+        </StickyHeader>
+      )}
       {pathContextMenu}
       {bodyContent}
     </section>

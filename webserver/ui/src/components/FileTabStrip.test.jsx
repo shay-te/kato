@@ -148,9 +148,11 @@ describe('FileTabStrip', () => {
         onClose={() => {}}
       />,
     );
-    const icons = container.querySelectorAll('.file-tab > svg[data-icon]');
-    expect(icons[0].getAttribute('data-icon')).toBe('file');
-    expect(icons[1].getAttribute('data-icon')).toBe('code-compare');
+    const tabs = container.querySelectorAll('.file-tab');
+    // File view → plain file icon; diff view → the change-kind glyph the
+    // file tree uses (this fixture has no kind, so it falls back to edit).
+    expect(tabs[0].querySelector('svg[data-icon]').getAttribute('data-icon')).toBe('file');
+    expect(tabs[1].querySelector('.diff-file-row-kind')).toBeInTheDocument();
   });
 
   test('THE REGRESSION: wheel scroll still works after the FIRST tab opens (component starts with zero tabs)', () => {
@@ -180,5 +182,62 @@ describe('FileTabStrip', () => {
     strip.dispatchEvent(event);
     expect(strip.scrollLeft).toBe(50);
     expect(event.defaultPrevented).toBe(true);
+  });
+});
+
+describe('FileTabStrip — diff/file view toggle', () => {
+
+  // The diff pane used to carry its own "View file (no diff)" button in a
+  // header that also repeated this tab's filename. The switch moved onto
+  // the tab's leading icon, which was already showing which view is live.
+  function renderStrip(props = {}) {
+    return render(
+      <FileTabStrip
+        tabs={[tab(props.tab || {})]}
+        activeKey={null}
+        onSelect={props.onSelect || (() => {})}
+        onClose={() => {}}
+        onToggleView={props.onToggleView}
+      />,
+    );
+  }
+
+  test('the leading icon switches a diff tab to the plain file view', () => {
+    const onToggleView = vi.fn();
+    renderStrip({ tab: { view: 'diff' }, onToggleView });
+
+    fireEvent.click(screen.getByRole('button', { name: /without the diff/i }));
+    expect(onToggleView).toHaveBeenCalledWith('client::src/auth.py');
+  });
+
+  test('and switches a file tab back to the diff', () => {
+    const onToggleView = vi.fn();
+    renderStrip({ tab: { view: 'file' }, onToggleView });
+
+    fireEvent.click(screen.getByRole('button', { name: /view the diff/i }));
+    expect(onToggleView).toHaveBeenCalledWith('client::src/auth.py');
+  });
+
+  test('toggling does not also select the tab underneath', () => {
+    const onSelect = vi.fn();
+    renderStrip({ tab: { view: 'diff' }, onToggleView: vi.fn(), onSelect });
+
+    fireEvent.click(screen.getByRole('button', { name: /without the diff/i }));
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  test('a diff tab shows the file\'s change kind (the header used to)', () => {
+    const { container } = renderStrip({
+      tab: { view: 'diff', kind: 'add' }, onToggleView: vi.fn(),
+    });
+
+    expect(container.querySelector('.diff-file-row-kind.kind-add')).toBeInTheDocument();
+  });
+
+  test('stays a plain icon when no toggle handler is wired', () => {
+    const { container } = renderStrip({ tab: { view: 'diff' } });
+
+    expect(container.querySelector('.file-tab-view-toggle')).toBeNull();
+    expect(container.querySelector('.file-tab svg')).toBeInTheDocument();
   });
 });

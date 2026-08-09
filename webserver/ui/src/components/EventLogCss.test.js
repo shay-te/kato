@@ -39,13 +39,13 @@ test('EventLog prompt keeps sticky positioning from the shared sticky header', (
 test('EventLog prompt is visually distinct from ordinary chat bubbles', () => {
   const promptBody = ruleBody('.chat-sticky-prompt');
   const labelBody = ruleBody('.chat-sticky-prompt-label');
-  const accentBody = ruleBody('.chat-sticky-prompt-toggle::before');
-
   assert.match(promptBody, /background\s*:\s*linear-gradient\(/);
   assertDeclaration(promptBody, 'border-top', '1px solid rgba\\(10, 132, 255, 0\\.4\\)');
   assertDeclaration(promptBody, 'border-bottom', '1px solid rgba\\(10, 132, 255, 0\\.4\\)');
   assertDeclaration(labelBody, 'color', '#cce0ff');
-  assertDeclaration(accentBody, 'width', '3px');
+  // The gradient + hairlines ARE the distinction. No left accent bar:
+  // against the cyan fill it read as a doubled blue edge.
+  assert.doesNotMatch(css, /\.chat-sticky-prompt-toggle::before\s*\{/);
 });
 
 test('EventLog sticky prompts collapse to three lines with snippet expand button', () => {

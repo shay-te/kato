@@ -635,7 +635,7 @@ const MessageForm = forwardRef(function MessageForm({
           <button
             type="button"
             id="message-attach"
-            className="tooltip-above"
+            className="tooltip-above tooltip-start"
             data-tooltip="Attach files — images (PNG/JPEG/GIF/WebP) show as thumbnails; text files (json, xml, yaml, logs, or any plain-text/extensionless file) are inlined into your message. Paste, drop, or click to pick."
             disabled={disabled}
             onClick={() => fileInputRef.current?.click()}
@@ -676,7 +676,7 @@ const MessageForm = forwardRef(function MessageForm({
           {showStop ? (
             <button
               type="button"
-              className="message-send is-stop tooltip-above"
+              className="message-send is-stop tooltip-above tooltip-end"
               data-tooltip="Stop Claude. The turn ends where it is and the chat history is kept — this does not start a new session."
               aria-label="Stop Claude"
               onClick={() => onStop && onStop()}
@@ -687,7 +687,7 @@ const MessageForm = forwardRef(function MessageForm({
             <button
               type="submit"
               disabled={disabled || !hasContent}
-              className={`message-send ${submitClass} tooltip-above`.trim()}
+              className={`message-send ${submitClass} tooltip-above tooltip-end`.trim()}
               data-tooltip={submitTitle}
               aria-label={submitLabel}
             >
@@ -742,7 +742,7 @@ function ComposerSelect({ id, value, onChange, tooltip, ariaLabel, children }) {
   return (
     <select
       id={id}
-      className="composer-select tooltip-above"
+      className="composer-select tooltip-above tooltip-end"
       data-tooltip={tooltip}
       value={value}
       onChange={(e) => onChange && onChange(e.target.value)}

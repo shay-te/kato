@@ -47,11 +47,18 @@ test('DiffPane file headers keep their visual styling on the shared sticky heade
   assertDeclaration(body, 'background', '#2a2a2a');
 });
 
-test('DiffPane uses compact side spacing around file cards and headers', () => {
+test('DiffPane files run edge to edge inside the panel card', () => {
+  // The PANEL is the rounded card now, so the file boxes are full-bleed
+  // and square — an inset box-in-a-box gave up panel width for nothing.
   const paneBody = ruleBody('.diff-pane-body');
+  const fileBody = ruleBody('.diff-pane .diff-file');
   const headerBody = ruleBody('.diff-pane .diff-file-header');
-  assertDeclaration(paneBody, 'padding', '0 6px');
-  assertDeclaration(headerBody, 'padding', '6px');
+
+  assertDeclaration(paneBody, 'padding', '0');
+  assertDeclaration(fileBody, 'border', '0');
+  assertDeclaration(fileBody, 'border-radius', '0');
+  assertDeclaration(fileBody, 'margin', '0');
+  assertDeclaration(headerBody, 'padding', '6px 10px');
 });
 
 test('Badge, chip, and pill classes share the global pill radius', () => {
@@ -78,16 +85,18 @@ test('Badge, chip, and pill classes share the global pill radius', () => {
   assert.deepEqual(failures, []);
 });
 
-test('DiffPane file headers draw a rounded face above scrolling diff rows', () => {
+test('DiffPane file headers draw an opaque face above scrolling diff rows', () => {
+  // Hairlines top and bottom, no radius: with the file boxes full-bleed
+  // the header IS the seam between one file and the next.
   const body = ruleBody('.diff-pane .diff-file-header::before');
   assertDeclaration(body, 'background', '#0a0a0a');
-  assertDeclaration(body, 'border', '1px solid #2a2a2a');
-  assertDeclaration(body, 'border-radius', '10px 10px 0 0');
+  assertDeclaration(body, 'border-top', '1px solid #2a2a2a');
+  assertDeclaration(body, 'border-bottom', '1px solid #2a2a2a');
 });
 
-test('Collapsed diff file header rounds all corners', () => {
-  const body = ruleBody('.diff-pane .diff-file.is-collapsed .diff-file-header::before');
-  assertDeclaration(body, 'border-radius', '10px');
+test('DiffPane comments block squares off with its full-bleed file', () => {
+  const body = ruleBody('.diff-pane .diff-file-comments');
+  assertDeclaration(body, 'border-radius', '0');
 });
 
 test('DiffPane uses Bitbucket-style hunk colors (saturated red/green)', () => {

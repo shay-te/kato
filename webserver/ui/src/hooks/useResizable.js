@@ -23,7 +23,14 @@ export function useResizable({
   const onPointerDown = useCallback((event) => {
     event.preventDefault();
     startStateRef.current = { startX: event.clientX, startWidth: width };
+    // Two classes, two scopes. ``kato-resizing`` is GLOBAL and only drives
+    // document-wide drag ergonomics (col-resize cursor, no text selection).
+    // The blue active visual hangs off ``is-dragging`` on THIS handle —
+    // painting it from the body class lit up the other pane's handle too,
+    // which read as "both boundaries are moving" when only one was.
+    const handle = event.currentTarget;
     document.body.classList.add('kato-resizing');
+    if (handle) { handle.classList.add('is-dragging'); }
 
     const onMove = (moveEvent) => {
       if (!startStateRef.current) { return; }
@@ -35,6 +42,7 @@ export function useResizable({
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
       document.body.classList.remove('kato-resizing');
+      if (handle) { handle.classList.remove('is-dragging'); }
       startStateRef.current = null;
     };
     document.addEventListener('mousemove', onMove);
