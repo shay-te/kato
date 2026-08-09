@@ -31,13 +31,13 @@ function ruleBodyContaining(selector, marker) {
 }
 
 // Regression: `.composer-mode-trigger:hover` was grouped with the rule
-// that shapes the icon-only action buttons into 34px circles. Hovering
+// that shapes the icon-only action buttons into circles. Hovering
 // the mode pill collapsed it to a circle, which moved it out from under
 // the pointer; that un-hovered it, it expanded back under the pointer,
 // and it flickered for as long as the cursor rested on it.
 test('hovering a composer trigger never changes its box', () => {
   const shape = ruleBodyContaining('.composer-actions-trigger', 'border-radius: 50%');
-  assertDeclaration(shape, 'width', '34px');
+  assertDeclaration(shape, 'width', '28px');
 
   const boxProps = ['width', 'height', 'padding', 'margin', 'border-width', 'font-size'];
   // Comments stripped first — this file's own explanation names the

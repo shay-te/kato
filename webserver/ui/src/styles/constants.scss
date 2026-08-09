@@ -165,6 +165,23 @@ $SPACE-720: 720px;
 $SPACE-NEG-2: -2px;
 $SPACE-NEG-24: -24px;
 
+// ---------- Icon scale ----------
+// Icon buttons come in exactly TWO sizes. Before this there were seven
+// box sizes (16/18/22/26/28/32/34) and nine glyph sizes (9→18px), which
+// is why toolbars read as mismatched.
+//
+//   LG — a standalone button in a toolbar (app header, task header,
+//        composer, files-tab toolbar, comment/diff actions).
+//   SM — a control that lives INSIDE a pill or row and must not grow
+//        it: a tab's close/pin, the filter's clear, queued-message
+//        actions. These cannot be LG without breaking their container.
+//
+// Use these instead of hand-picking a px value for a new icon button.
+$ICON-BOX-LG: 28px;
+$ICON-GLYPH-LG: 14px;
+$ICON-BOX-SM: 16px;
+$ICON-GLYPH-SM: 10px;
+
 // ---------- Radius ----------
 $RADIUS-4: 4px;
 $RADIUS-CIRCLE: 50%;

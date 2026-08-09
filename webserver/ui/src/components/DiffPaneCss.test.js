@@ -137,26 +137,6 @@ test('DiffPane skips offscreen diff bodies during scroll', () => {
   assertDeclaration(body, 'contain-intrinsic-size', 'auto 720px');
 });
 
-test('Diff file header keeps the expand/collapse chevron on the left', () => {
-  const body = ruleBody('.diff-file-header .diff-file-collapse-toggle');
-  assertDeclaration(body, 'margin-left', '0');
-  assertDeclaration(body, 'flex-shrink', '0');
-});
-
-test('Diff file path button does not inherit the global round header button skin', () => {
-  const body = ruleBody('.diff-file-header .diff-file-path-button');
-  const hoverBody = ruleBody('.diff-file-header .diff-file-path-button:hover');
-  assertDeclaration(body, 'width', 'auto');
-  assertDeclaration(body, 'height', 'auto');
-  assertDeclaration(body, 'border', '0');
-  assertDeclaration(body, 'border-radius', '0');
-  assertDeclaration(body, 'background', 'transparent');
-  assertDeclaration(body, 'box-shadow', 'none');
-  assertDeclaration(hoverBody, 'border', '0');
-  assertDeclaration(hoverBody, 'background', 'transparent');
-  assertDeclaration(hoverBody, 'box-shadow', 'none');
-});
-
 test('Files tab body scrolls changed-file trees vertically', () => {
   const body = ruleBody('.files-tab-body');
   assertDeclaration(body, 'overflow-y', 'auto');
@@ -269,12 +249,22 @@ test('Comment editor has a formatting toolbar', () => {
   ruleBody('.diff-file-comments-toolbar');
 });
 
+test('the removed diff-header controls leave no CSS behind', () => {
+  // The chevron, the header path button and the "View file" button all
+  // came out when the tab took over naming the file and switching views.
+  // Their rules went with them — dead selectors are how a "why is this
+  // here?" block survives three refactors.
+  assert.doesNotMatch(css, /\.diff-file-collapse-toggle/);
+  assert.doesNotMatch(css, /\.diff-file-open-as-file/);
+  assert.doesNotMatch(css, /\.diff-file-path/);
+});
+
 test('Diff context expander has Bitbucket-style controls', () => {
   const rowBody = ruleBody('.diff-context-expander-inner');
   const buttonBody = ruleBody('.diff-context-expander-btn');
 
   assertDeclaration(rowBody, 'background', '#2a2a2a');
   assertDeclaration(rowBody, 'font-family', 'ui-monospace, monospace');
-  assertDeclaration(buttonBody, 'width', '22px');
+  assertDeclaration(buttonBody, 'width', '16px');
   assertDeclaration(buttonBody, 'border-radius', '4px');
 });

@@ -81,7 +81,10 @@ header {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 14px 24px;
+  /* 10px, not 14px. With 28px buttons this bar is 48px tall. It carries
+   * a logo, a static label, a status line and two buttons — it was the
+   * tallest of the three stacked chrome bars while earning the least. */
+  padding: 10px 24px;
   border-bottom: 1px solid #2a2a2a;
   flex-shrink: 0;
 }
@@ -126,8 +129,8 @@ header button:not(.header-status) {
   color: #a3a3a3;
   border: 1px solid #2a2a2a;
   border-radius: 50%;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -743,7 +746,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   background: transparent;
   border: none;
   color: rgba(245, 245, 247, 0.42);
-  font-size: 11px;
+  font-size: 10px;
   line-height: 1;
   cursor: pointer;
   /* Fixed square + flex-centre so the × glyph sits dead-centre and
@@ -765,8 +768,8 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 }
 
 .tabs-pane-top .tab .tab-forget-btn svg {
-  width: 9px;
-  height: 9px;
+  width: 10px;
+  height: 10px;
   display: block;
 }
 
@@ -796,7 +799,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   background: transparent;
   border: none;
   color: rgba(245, 245, 247, 0.42);
-  font-size: 11px;
+  font-size: 10px;
   line-height: 1;
   cursor: pointer;
   /* Matches .tab-forget-btn (16px) — the two discs sit next to each
@@ -814,8 +817,8 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 }
 
 .tabs-pane-top .tab .tab-pin-btn svg {
-  width: 9px;
-  height: 9px;
+  width: 10px;
+  height: 10px;
   display: block;
   /* Unpinned default: tip-up affordance, "not stuck in" — flips
    * to no rotation in the .is-pinned state below. */
@@ -969,8 +972,8 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 
 .tabs-action {
   flex-shrink: 0;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.06);
@@ -979,7 +982,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1;
   padding: 0;
   transition: background 120ms ease, transform 90ms ease;
@@ -1275,7 +1278,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   gap: 16px;
   min-width: 0;
   overflow: visible;
-  padding: 10px 24px;
+  padding: 8px 24px;
   border-bottom: 1px solid #2a2a2a;
   position: relative;
   z-index: 20;
@@ -1484,8 +1487,8 @@ header .chats-menu button:not(.header-status) {
  */
 .session-action {
   flex-shrink: 0;
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border-radius: 50%;
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -1495,7 +1498,7 @@ header .chats-menu button:not(.header-status) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1;
   transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease, transform 90ms ease, color 120ms ease;
 }
@@ -1711,14 +1714,14 @@ header .chats-menu button:not(.header-status) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: none;
   border-radius: 50%;
   background: transparent;
   color: #737373; /* neutral until the live status is known */
-  font-size: 11px;
+  font-size: 14px;
   line-height: 1;
   cursor: pointer;
   transition: background 120ms ease, transform 90ms ease;
@@ -2560,8 +2563,8 @@ header .chats-menu button:not(.header-status) {
  * inline so the operator never leaves the keyboard. */
 .chat-search-toggle {
   flex-shrink: 0;
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border-radius: 50%;
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -2571,7 +2574,7 @@ header .chats-menu button:not(.header-status) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1;
   transition: background 120ms ease, border-color 120ms ease, transform 90ms ease;
 }
@@ -2767,8 +2770,8 @@ header .chats-menu button:not(.header-status) {
 }
 
 .queued-message-glyph svg {
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
 }
 
 .queued-message-text {
@@ -2802,8 +2805,8 @@ header .chats-menu button:not(.header-status) {
 }
 
 .queued-message-steer svg {
-  width: 9px;
-  height: 9px;
+  width: 10px;
+  height: 10px;
 }
 
 .queued-message-steer-label {
@@ -3263,15 +3266,15 @@ header .chats-menu button:not(.header-status) {
  * shouting. */
 .message-send {
   flex-shrink: 0;
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   border: none;
   padding: 0;
   cursor: pointer;
   background: #0a84ff; /* iOS systemBlue */
   color: #f5f5f7;
-  font-size: 17px;
+  font-size: 14px;
   font-weight: 600;
   line-height: 1;
   display: flex;
@@ -3856,8 +3859,8 @@ code {
 }
 
 .file-tab svg {
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
   flex-shrink: 0;
 }
 
@@ -3900,8 +3903,8 @@ code {
 }
 
 .file-tab-close-btn svg {
-  width: 9px;
-  height: 9px;
+  width: 10px;
+  height: 10px;
 }
 
 .file-tab-close-btn:hover {
@@ -3923,8 +3926,8 @@ code {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   border-radius: 4px;
   transition: background 120ms ease, color 120ms ease;
 }
@@ -4673,11 +4676,11 @@ body.kato-resizing {
   border: none;
   color: #f5f5f7;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 10px;
   line-height: 1;
   padding: 0;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   display: inline-flex;
   align-items: center;
@@ -4706,7 +4709,7 @@ body.kato-resizing {
   border-radius: 50%;
   cursor: pointer;
   padding: 0;
-  font-size: 11px;
+  font-size: 14px;
   line-height: 1;
   display: inline-flex;
   align-items: center;
@@ -4821,8 +4824,8 @@ body.kato-resizing {
   font: 600 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .files-tab-repo-comments svg {
-  width: 11px;
-  height: 11px;
+  width: 10px;
+  height: 10px;
 }
 
 .files-tab-repo-header:hover {
@@ -4901,14 +4904,14 @@ body.kato-resizing {
   border: 1px solid transparent;
   border-radius: 50%;
   color: #a3a3a3;
-  width: 26px;
-  height: 26px;
+  width: 16px;
+  height: 16px;
   padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 10px;
   line-height: 1;
   flex-shrink: 0;
   transition: background-color 0.12s ease-out, color 0.12s ease-out, border-color 0.12s ease-out;
@@ -5274,8 +5277,8 @@ body.kato-resizing {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   line-height: 0;
   border: none;
@@ -5283,7 +5286,7 @@ body.kato-resizing {
   color: #a3a3a3;
   border-radius: 999px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 14px;
   transition: background 120ms ease, color 120ms ease, transform 90ms ease;
 }
 
@@ -5658,16 +5661,12 @@ body.kato-resizing {
 /* iOS-style pill buttons living inside the diff cards.
  *
  *   - .diff-repo-sync-comments        sync the comments-pull
- *   - .diff-file-collapse-toggle      hide/show file diff
  *   - .diff-file-add-file-comment     open the file-level form
- *   - .diff-file-open-as-file         swap to plain editor view
  *
  * They all follow the same shape: rounded glass pill with a
  * leading icon + label, matching the rest of the iOS-styled UI. */
 .diff-repo-sync-comments,
-.diff-file-collapse-toggle,
-.diff-file-add-file-comment,
-.diff-file-open-as-file {
+.diff-file-add-file-comment {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -5683,36 +5682,21 @@ body.kato-resizing {
 }
 
 .diff-repo-sync-comments:hover:not(:disabled),
-.diff-file-collapse-toggle:hover:not(:disabled),
-.diff-file-add-file-comment:hover:not(:disabled),
-.diff-file-open-as-file:hover:not(:disabled) {
+.diff-file-add-file-comment:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.06);
   border-color: rgba(255, 255, 255, 0.06);
   color: #f5f5f7;
 }
 
 .diff-repo-sync-comments:active:not(:disabled),
-.diff-file-collapse-toggle:active:not(:disabled),
-.diff-file-add-file-comment:active:not(:disabled),
-.diff-file-open-as-file:active:not(:disabled) {
+.diff-file-add-file-comment:active:not(:disabled) {
   transform: scale(0.96);
 }
 
 .diff-repo-sync-comments:disabled,
-.diff-file-collapse-toggle:disabled,
-.diff-file-add-file-comment:disabled,
-.diff-file-open-as-file:disabled {
+.diff-file-add-file-comment:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-/* Icon-only expand/collapse chevron + view-file icon in the file header. */
-.diff-file-collapse-toggle.is-icon,
-.diff-file-open-as-file.is-icon {
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  justify-content: center;
 }
 
 /* Commit-diff modal — wider scrim than the adopt-session modal so
@@ -5821,8 +5805,8 @@ body.kato-resizing {
 }
 
 .tree-row-comments svg {
-  width: 11px;
-  height: 11px;
+  width: 10px;
+  height: 10px;
 }
 
 /* Clickable badge: distinct from clicking the file name. Clicking it
@@ -6395,8 +6379,8 @@ body.kato-resizing {
 .tree-row-diff-btn {
   margin-left: auto;
   flex-shrink: 0;
-  width: 20px;
-  height: 20px;
+  width: 16px;
+  height: 16px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -6445,79 +6429,6 @@ body.kato-resizing {
   color: #a3a3a3;
   font-size: 10px;
   letter-spacing: 0.05em;
-}
-
-.diff-file-header .diff-file-collapse-toggle {
-  margin-left: 0;
-  flex-shrink: 0;
-}
-
-.diff-file-path {
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
-  overflow: hidden;
-  color: #f5f5f7;
-}
-
-.diff-file-path-button {
-  flex: 1;
-  border: 0;
-  padding: 0;
-  border-radius: 0;
-  background: transparent;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  appearance: none;
-}
-
-.diff-file-header .diff-file-path-button {
-  width: auto;
-  height: auto;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  justify-content: flex-start;
-  color: inherit;
-  -webkit-appearance: none;
-}
-
-.diff-file-header .diff-file-path-button:hover {
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.diff-file-path-button:hover .diff-file-path-segment,
-.diff-file-path-button:focus-visible .diff-file-path-segment {
-  color: #93c5fd;
-}
-
-.diff-file-header .diff-file-path-button:focus,
-.diff-file-path-button:focus-visible {
-  outline: none;
-  box-shadow: none;
-}
-
-.diff-file-path-part {
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
-}
-
-.diff-file-path-segment {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.diff-file-path-separator {
-  margin: 0 10px;
-  color: #a3a3a3;
-  flex-shrink: 0;
 }
 
 /* react-diff-view dark-theme via the library's own CSS variables — robust
@@ -6621,8 +6532,8 @@ body.kato-resizing {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 16px;
+  height: 16px;
   border: 1px solid transparent;
   border-radius: 4px;
   background: transparent;
@@ -9525,7 +9436,7 @@ body.kato-resizing {
   justify-content: center;
   gap: 6px;
   min-width: 0;
-  height: 34px;
+  height: 28px;
   padding: 0 12px;
   border-radius: 999px;
   border: 1px solid #2a2a2a;
@@ -9547,10 +9458,10 @@ body.kato-resizing {
  * pointer → hover again, flickering for as long as the cursor sat on
  * it. Keep hover states out of any rule that changes a control's box. */
 .composer-actions-trigger {
-  width: 34px;
+  width: 28px;
   padding: 0;
   border-radius: 50%;
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .composer-mode-trigger:hover,
@@ -9570,6 +9481,7 @@ body.kato-resizing {
 .composer-mode-icon {
   flex-shrink: 0;
   color: #a3a3a3;
+  font-size: 14px;
 }
 
 .composer-mode-label {
