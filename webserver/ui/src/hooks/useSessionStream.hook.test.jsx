@@ -226,6 +226,80 @@ describe('useSessionStream — incoming events drive lifecycle', () => {
     expect(FakeEventSource.instances[0].closed).toBe(true);
   });
 
+  // Reported: "I started a new task and he did the task but there is nothing
+  // on the chat at all, it is empty. I had to go to another task and come back
+  // to it again to see the chat." The tab connected while the workspace was
+  // still provisioning, got session_idle, closed the stream — and then never
+  // heard the session kato spawned a moment later.
+  test('an idle tab re-opens the stream so a later session is not missed', () => {
+    vi.useFakeTimers();
+    try {
+      renderHook(() => useSessionStream('T1'));
+      act(() => { FakeEventSource.instances[0].emit('session_idle'); });
+      expect(FakeEventSource.instances[0].closed).toBe(true);
+      expect(FakeEventSource.instances.length).toBe(1);
+
+      act(() => { vi.advanceTimersByTime(2000); });
+      expect(FakeEventSource.instances.length).toBe(2);
+      expect(FakeEventSource.instances[1].url).toContain('T1');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('the idle retry backs off while the tab stays idle', () => {
+    vi.useFakeTimers();
+    try {
+      renderHook(() => useSessionStream('T1'));
+      act(() => { FakeEventSource.instances[0].emit('session_idle'); });
+      act(() => { vi.advanceTimersByTime(2000); });
+      expect(FakeEventSource.instances.length).toBe(2);
+
+      // Still idle → the next wait is longer, so 2s is no longer enough.
+      act(() => { FakeEventSource.instances[1].emit('session_idle'); });
+      act(() => { vi.advanceTimersByTime(2000); });
+      expect(FakeEventSource.instances.length).toBe(2);
+
+      act(() => { vi.advanceTimersByTime(2000); });
+      expect(FakeEventSource.instances.length).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a live session stops the idle retry', () => {
+    vi.useFakeTimers();
+    try {
+      renderHook(() => useSessionStream('T1'));
+      act(() => { FakeEventSource.instances[0].emit('session_idle'); });
+      act(() => { vi.advanceTimersByTime(2000); });
+      expect(FakeEventSource.instances.length).toBe(2);
+
+      act(() => {
+        FakeEventSource.instances[1].emit('session_event', {
+          event: { raw: { type: 'assistant', message: { content: [] } } },
+        });
+      });
+      // Streaming now — no further reconnects, however long we wait.
+      act(() => { vi.advanceTimersByTime(120000); });
+      expect(FakeEventSource.instances.length).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a closed or missing tab is NOT retried', () => {
+    vi.useFakeTimers();
+    try {
+      renderHook(() => useSessionStream('T1'));
+      act(() => { FakeEventSource.instances[0].emit('session_missing'); });
+      act(() => { vi.advanceTimersByTime(120000); });
+      expect(FakeEventSource.instances.length).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('session_missing → MISSING lifecycle + turnInFlight resets', () => {
     const { result } = renderHook(() => useSessionStream('T1'));
     act(() => {

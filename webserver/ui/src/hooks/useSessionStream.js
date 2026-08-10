@@ -12,6 +12,16 @@ export const SESSION_LIFECYCLE = {
   MISSING: 'missing',     // server has no record for this task
 };
 
+// How long to wait before re-opening the stream for a tab the server told us
+// is IDLE. Idle is not terminal — kato can spawn a subprocess for this task at
+// any moment (the autonomous scan picking it up, a queued comment draining,
+// workspace provisioning finishing) and the closed stream would never hear it.
+// Backoff rather than a fixed interval because every reconnect makes the
+// server replay the FULL JSONL transcript: quick while the operator is most
+// likely watching a task they just started, then settling to a cheap poll.
+const IDLE_RETRY_MIN_MS = 2000;
+const IDLE_RETRY_MAX_MS = 30000;
+
 const ACTION_HYDRATE = 'hydrate';
 const ACTION_INCOMING_EVENT = 'incoming_event';
 const ACTION_INCOMING_HISTORY = 'incoming_history';
@@ -442,6 +452,7 @@ export function useSessionStream(taskId, onIncomingEvent) {
   );
   const [streamGeneration, setStreamGeneration] = useState(0);
   const taskIdRef = useRef(taskId);
+  const idleRetryRef = useRef(IDLE_RETRY_MIN_MS);
 
   // Persist every state transition into the module-level cache so a
   // remount (tab switch) sees the latest events when it hydrates.
@@ -532,6 +543,41 @@ export function useSessionStream(taskId, onIncomingEvent) {
     return () => stream.close();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId, streamGeneration]);
+
+  // Fresh task → fresh backoff, so switching to a tab never inherits the
+  // slow steady-state cadence the previous one had settled into.
+  useEffect(() => { idleRetryRef.current = IDLE_RETRY_MIN_MS; }, [taskId]);
+
+  // An idle tab is not a dead tab. ``session_idle`` closes the stream — there
+  // is no subprocess to follow — and nothing reopened it, so the client went
+  // permanently deaf the moment it saw one. Starting a task from the UI hit
+  // this every time: the tab connected while the workspace was still being
+  // provisioned (no agent session id yet, so no history to replay either),
+  // got ``session_idle``, and closed. Kato then ran the whole task into a
+  // chat that stayed empty behind "(no live subprocess for this tab)" — only
+  // switching to another task and back, which remounts and reconnects,
+  // revealed the transcript.
+  //
+  // Reconnecting does NOT resurrect anything: the server's idle path spawns a
+  // session only when there is already queued work for it. This is a listener
+  // waking up, not the lazy-resume design being undone.
+  useEffect(() => {
+    if (state.lifecycle !== SESSION_LIFECYCLE.IDLE) {
+      idleRetryRef.current = IDLE_RETRY_MIN_MS;
+      return undefined;
+    }
+    const delay = idleRetryRef.current;
+    idleRetryRef.current = Math.min(delay * 2, IDLE_RETRY_MAX_MS);
+    const handle = window.setTimeout(
+      () => setStreamGeneration((n) => n + 1),
+      delay,
+    );
+    return () => window.clearTimeout(handle);
+    // ``streamGeneration`` is a dependency so a reconnect that lands on IDLE
+    // again schedules the NEXT (longer) retry — without it the effect would
+    // see an unchanged lifecycle and never re-arm.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.lifecycle, streamGeneration, taskId]);
 
   return {
     events: state.events,
