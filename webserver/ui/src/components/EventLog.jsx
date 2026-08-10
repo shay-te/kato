@@ -17,6 +17,7 @@ import { isPinnedToBottom, scrollToBottom } from '../utils/scrollUtils.js';
 import { cx } from '../utils/cx.js';
 import { countNoun, withImageCountSuffix } from '../utils/pluralize.js';
 import { messageContentText } from '../utils/messageContent.js';
+import { isLocalCommandScaffolding } from '../utils/localCommandEnvelope.js';
 import {
   TOOL_DETAILS_COLLAPSE_THRESHOLD,
   TOOL_DETAILS_HARD_CAP,
@@ -562,7 +563,14 @@ function userMessageText(raw) {
   const arrayText = messageContentText(message);
   if (arrayText) { pieces.push(arrayText); }
   if (typeof rawContent === 'string' && rawContent.trim()) { pieces.push(rawContent); }
-  return pieces.join('\n');
+  const text = pieces.join('\n');
+  // Claude Code writes its own local-command scaffolding into the transcript
+  // as `user` turns (`<local-command-caveat>`, `<command-name>/context…`).
+  // Reported as "he sends these messages to the chat automatically in the
+  // middle of the run" — every `/context` left two bogus "YOU ASKED" bubbles.
+  // Reporting them as no-text here is the single choke point: the sticky
+  // header, the bubble, and the turn-boundary window all read this.
+  return isLocalCommandScaffolding(text) ? '' : text;
 }
 
 // A server USER entry whose text is a kato comment-run prompt → its

@@ -30,7 +30,7 @@ import {
 } from '../stores/taskCache/index.js';
 import { toast } from '../stores/toastStore.js';
 import { diffDisplayPath } from '../diffModel.js';
-import { copyRepoRelativePath } from '../utils/clipboard.js';
+import { copyFileName, copyRepoRelativePath } from '../utils/clipboard.js';
 import { useDismissOnOutsidePointerOrEscape } from '../hooks/useDismissOnOutsidePointerOrEscape.js';
 import { useClampedPointMenu } from '../hooks/useClampedPointMenu.js';
 import { commentDraftKey } from '../utils/composerDraft.js';
@@ -571,6 +571,11 @@ function DiffFileWithComments({
     await copyRepoRelativePath(repoId, path);
   }
 
+  async function copyHeaderFileName() {
+    closePathMenu();
+    await copyFileName(path);
+  }
+
   useDismissOnOutsidePointerOrEscape(pathMenu, closePathMenu);
   const { menuRef: pathMenuRef, style: pathMenuStyle } = useClampedPointMenu(pathMenu);
 
@@ -861,6 +866,17 @@ function DiffFileWithComments({
         role="menuitem"
       >
         Place in chat
+      </button>
+      {/* Same pair, in the same order, as the Files-tab tree menu — the
+          operator right-clicks a file in either place and finds the same
+          two copy actions. */}
+      <button
+        type="button"
+        className="diff-file-context-menu-item"
+        onClick={copyHeaderFileName}
+        role="menuitem"
+      >
+        Copy file name
       </button>
       <button
         type="button"

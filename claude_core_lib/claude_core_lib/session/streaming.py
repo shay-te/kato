@@ -61,6 +61,7 @@ from claude_core_lib.claude_core_lib.helpers.context_window import (
     prompt_tokens_from_usage,
     resolved_model_of_event,
     usage_of_event,
+    widen_window_to_observed,
 )
 from claude_core_lib.claude_core_lib.session.index import parse_jsonl_dict_line
 from claude_core_lib.claude_core_lib.session.registry import kill_process_tree
@@ -1102,15 +1103,21 @@ class StreamingClaudeSession(object):
         with self._context_usage_lock:
             used = self._context_used_tokens
             resolved = self._resolved_model
-        # The RESOLVED model, never the configured alias. ``--model opus`` may
-        # resolve to a 1M-context variant, and sizing the window off the alias
-        # reported a 200k limit for it — so a healthy conversation rendered as
-        # "0% left" in red and told the operator to compact a session with
-        # three quarters of its window free. Until a turn reports the real id
-        # the window is UNKNOWN (0), which the meter shows as "—".
+        # Sized from the RESOLVED model id. Note the CLI strips any ``[1m]``
+        # suffix before reporting that id, so the marker alone can't size the
+        # window — ``context_window_tokens`` keys off the model FAMILY, whose
+        # current generation is 1M for opus/sonnet/fable and 200k for haiku.
+        # Sizing every session at 200k made a 97k conversation in a 1M window
+        # read "51% left" while the CLI's own ``/context`` said 10% used.
+        # Until a turn reports a model id the window is UNKNOWN (0), which the
+        # meter renders as nothing rather than a confident wrong percentage.
+        # ``widen_window_to_observed`` is the backstop for an id we haven't
+        # learned: usage above the assumed window disproves the assumption.
         return {
             'used_tokens': used,
-            'limit_tokens': context_window_tokens(resolved),
+            'limit_tokens': widen_window_to_observed(
+                context_window_tokens(resolved), used,
+            ),
             'model': resolved,
         }
 

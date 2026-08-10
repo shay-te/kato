@@ -16,45 +16,106 @@ from claude_core_lib.claude_core_lib.helpers.context_window import (
     prompt_tokens_from_usage,
     resolved_model_of_event,
     usage_of_event,
+    widen_window_to_observed,
 )
 
 
 class ContextWindowTests(unittest.TestCase):
-    def test_standard_models_report_the_standard_window(self) -> None:
-        for model in ('opus', 'sonnet', 'haiku', 'claude-opus-5',
-                      'claude-haiku-4-5-20251001'):
-            with self.subTest(model):
-                self.assertEqual(context_window_tokens(model), 200_000)
-
-    def test_long_context_variants_are_recognised(self) -> None:
-        for model in ('claude-opus-5[1m]', 'claude-sonnet-5[1M]',
-                      'claude-fable-5[1m]'):
+    def test_current_generations_report_the_1m_window(self) -> None:
+        # 1M is the STANDARD window for these families now — not an opt-in
+        # variant. Sizing them at 200k is the bug this module exists to avoid.
+        for model in ('claude-opus-5', 'claude-opus-4-8', 'claude-opus-4-6',
+                      'claude-sonnet-5', 'claude-sonnet-4-6',
+                      'claude-fable-5', 'claude-mythos-5'):
             with self.subTest(model):
                 self.assertEqual(context_window_tokens(model), 1_000_000)
 
+    def test_short_window_families_and_older_releases(self) -> None:
+        for model in ('claude-haiku-4-5', 'claude-haiku-4-5-20251001',
+                      'claude-opus-4-5', 'claude-opus-4-1',
+                      'claude-sonnet-4-5', 'claude-sonnet-4-20250514'):
+            with self.subTest(model):
+                self.assertEqual(context_window_tokens(model), 200_000)
+
+    def test_date_suffix_is_not_parsed_as_a_minor_version(self) -> None:
+        # ``claude-sonnet-4-20250514`` is 4.0 with a date, not 4.20250514 —
+        # reading it as a huge minor would clear the 4.6 gate and wrongly
+        # report 1M for a 200k model.
+        self.assertEqual(context_window_tokens('claude-sonnet-4-20250514'), 200_000)
+
+    def test_explicit_long_context_marker_is_honoured(self) -> None:
+        for model in ('claude-opus-5[1m]', 'claude-sonnet-5[1M]',
+                      'claude-fable-5[1m]', 'claude-opus-4-5[1m]'):
+            with self.subTest(model):
+                self.assertEqual(context_window_tokens(model), 1_000_000)
+
+    def test_bare_alias_uses_the_family_latest(self) -> None:
+        # An alias always resolves to the LATEST of its family, so the
+        # family's current window is a reading, not a guess.
+        self.assertEqual(context_window_tokens('opus'), 1_000_000)
+        self.assertEqual(context_window_tokens('sonnet'), 1_000_000)
+        self.assertEqual(context_window_tokens('fable'), 1_000_000)
+        self.assertEqual(context_window_tokens('haiku'), 200_000)
+
     def test_unknown_model_reports_zero_not_a_guess(self) -> None:
-        # 0 is the UI's "unknown" signal. Returning the standard window here
-        # would render a confident percentage for a window we never confirmed.
-        for model in ('', None, '   '):
+        # 0 is the UI's "unknown" signal. Returning a window here would render
+        # a confident percentage for something we never identified.
+        for model in ('', None, '   ', 'gpt-4o', 'claude-', 'llama-3'):
             with self.subTest(repr(model)):
                 self.assertEqual(context_window_tokens(model), 0)
 
 
-class ResolvedModelTests(unittest.TestCase):
-    """The window must be sized from the RESOLVED id, never the alias.
+class ObservedFloorTests(unittest.TestCase):
+    """Usage above the assumed window disproves the assumption."""
 
-    Regression: sizing off the configured ``opus`` gave a 200k window for a
-    session actually running a 1M-context model, so a healthy conversation
-    rendered "0% left" in red and told the operator to compact a session with
-    three quarters of its window free.
+    def test_normal_case_leaves_the_limit_alone(self) -> None:
+        self.assertEqual(widen_window_to_observed(1_000_000, 97_200), 1_000_000)
+        self.assertEqual(widen_window_to_observed(200_000, 200_000), 200_000)
+
+    def test_usage_beyond_the_limit_widens_it(self) -> None:
+        # A model id we haven't learned, sized short: the session itself
+        # proves the window is bigger than we assumed.
+        self.assertEqual(widen_window_to_observed(200_000, 260_000), 1_000_000)
+
+    def test_usage_beyond_every_known_window_reports_itself(self) -> None:
+        self.assertEqual(widen_window_to_observed(200_000, 1_400_000), 1_400_000)
+
+    def test_unknown_stays_unknown(self) -> None:
+        # Never invent a window out of usage — 0 must survive so the meter
+        # keeps rendering "unknown" rather than "100% full".
+        self.assertEqual(widen_window_to_observed(0, 500_000), 0)
+
+    def test_junk_inputs_are_zero_not_an_exception(self) -> None:
+        for limit, used in ((None, 10), ('x', 10), (-5, 10), (True, 10)):
+            with self.subTest(repr(limit)):
+                self.assertEqual(widen_window_to_observed(limit, used), 0)
+
+
+class ResolvedModelTests(unittest.TestCase):
+    """The window is sized from the RESOLVED id — which drops ``[1m]``.
+
+    Regression: the CLI accepts ``[1m]`` on ``--model`` but strips it from the
+    id it reports back, so keying the window off that marker alone fell back
+    to 200k for every session. A 97.2k conversation in a 1M window rendered
+    "51% left" while the CLI's own ``/context`` reported 10% used.
     """
 
-    def test_alias_carries_no_window_information(self) -> None:
-        # An alias must NOT be treated as the standard window — it could
-        # resolve either way, and guessing is what produced the false alarm.
+    def test_resolved_id_arrives_without_the_1m_marker(self) -> None:
+        # Exactly what a real transcript carries for a 1M-window session.
+        resolved = resolved_model_of_event(
+            {'type': 'assistant', 'message': {'model': 'claude-opus-5'}},
+        )
+        self.assertEqual(resolved, 'claude-opus-5')
+        self.assertEqual(context_window_tokens(resolved), 1_000_000)
+
+    def test_the_reported_bug_no_longer_reproduces(self) -> None:
+        # 97.2k used against the real 1M window is 90% left, not 51%.
+        limit = context_window_tokens('claude-opus-5')
+        used = 97_200
+        self.assertEqual(round((limit - used) / limit * 100), 90)
+
+    def test_alias_is_read_as_a_family(self) -> None:
         self.assertEqual(resolved_model_of_event({'message': {'model': 'opus'}}), 'opus')
-        self.assertEqual(context_window_tokens('claude-opus-5[1m]'), 1_000_000)
-        self.assertEqual(context_window_tokens('claude-opus-5'), 200_000)
 
     def test_assistant_turn_reports_the_resolved_id(self) -> None:
         self.assertEqual(
@@ -75,12 +136,6 @@ class ResolvedModelTests(unittest.TestCase):
                       {}, None, 'nope'):
             with self.subTest(repr(event)[:24]):
                 self.assertEqual(resolved_model_of_event(event), '')
-
-    def test_a_long_context_session_is_not_reported_as_full(self) -> None:
-        # The exact shape of the bug: 250k used, 1M window → 75% left, not 0%.
-        limit = context_window_tokens('claude-opus-5[1m]')
-        used = 250_000
-        self.assertEqual(round((limit - used) / limit * 100), 75)
 
 
 class PromptTokensTests(unittest.TestCase):

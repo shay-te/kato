@@ -23,7 +23,7 @@ import Icon from './Icon.jsx';
 import { useChatComposer } from '../contexts/ChatComposerContext.jsx';
 import { toast } from '../stores/toastStore.js';
 import { commentDraftKey } from '../utils/composerDraft.js';
-import { copyRepoRelativePath } from '../utils/clipboard.js';
+import { copyFileName, copyRepoRelativePath } from '../utils/clipboard.js';
 import { useDismissOnOutsidePointerOrEscape } from '../hooks/useDismissOnOutsidePointerOrEscape.js';
 import { useClampedPointMenu } from '../hooks/useClampedPointMenu.js';
 import { useMonacoViewZone } from '../hooks/useMonacoViewZone.js';
@@ -96,6 +96,10 @@ export default function EditorPane({
   async function copyHeaderRelativePath() {
     closePathMenu();
     await copyRepoRelativePath(repoId, filePath);
+  }
+  async function copyHeaderFileName() {
+    closePathMenu();
+    await copyFileName(filePath);
   }
   useDismissOnOutsidePointerOrEscape(pathMenu, closePathMenu);
   const { menuRef: pathMenuRef, style: pathMenuStyle } = useClampedPointMenu(pathMenu);
@@ -616,6 +620,14 @@ export default function EditorPane({
           onContextMenu={(event) => event.preventDefault()}
           role="menu"
         >
+          <button
+            type="button"
+            className="diff-file-context-menu-item"
+            onClick={copyHeaderFileName}
+            role="menuitem"
+          >
+            Copy file name
+          </button>
           <button
             type="button"
             className="diff-file-context-menu-item"

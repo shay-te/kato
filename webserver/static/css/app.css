@@ -38,6 +38,34 @@
 
 :root {
   --radius-pill: 999px;
+  /* Tell the engine this page is dark so NATIVE controls are painted dark
+   * too. Without it, Chromium — which is what the Windows desktop shell
+   * (WebView2) runs on — draws every <select> popup in LIGHT chrome: a
+   * white listbox, with the option text inheriting the app's near-white
+   * $C-NEUTRAL-96, i.e. white on white, only the OS-highlighted row
+   * readable. macOS/WKWebView draws the popup in the system appearance,
+   * which is exactly why the dropdowns looked fine on a Mac and broken on
+   * Windows. One declaration also fixes the select caret, checkboxes, and
+   * the native scrollbar corner on that shell. */
+  color-scheme: dark;
+}
+
+/* The popup list of a <select> is painted by the browser, not by us, so it
+ * reads the control's computed background-COLOR — and the composer/settings
+ * pills set a translucent one ($C-NEUTRAL-100-A06), which composites over
+ * whatever base the engine chose. Paint the rows opaquely so the list stays
+ * legible even on an engine that ignores color-scheme. Scoped to option /
+ * optgroup so the closed control keeps its glass fill. */
+select option,
+select optgroup {
+  background-color: #303134;
+  color: #f5f5f7;
+}
+
+select optgroup {
+  /* Chromium renders optgroup labels in the popup's own italic; keep them
+   * dimmer than their options so the grouping still reads. */
+  color: #a3a3a3;
 }
 
 .sticky-section-header {
