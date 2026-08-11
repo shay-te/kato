@@ -180,8 +180,13 @@ function DiffFileWithComments({
       // The response is the WHOLE repo diff with only this file de-elided,
       // so the requested path has to be picked out of it — taking the first
       // parsed file rendered some other file's changes.
+      // NO parse options — ``diffModel.js`` uses a bare ``parseDiff(raw)``
+      // for every other file in the pane. Passing ``nearbySequences: 'zip'``
+      // here paired adjacent delete/insert runs differently, so the same
+      // file rendered as one giant whole-file rewrite ("the entire file is
+      // broken") purely because it came through this path.
       const parsed = pickFileDiff(
-        parseDiff(text || '', { nearbySequences: 'zip' }),
+        parseDiff(text || ''),
         path,
         diffDisplayPath,
       );
