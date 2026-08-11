@@ -7,6 +7,7 @@ import {
   computeNewLineNumber,
   computeOldLineNumber,
   expandFromRawCode,
+  parseDiff,
   getChangeKey,
 } from 'react-diff-view';
 
@@ -18,7 +19,7 @@ const OLD_LINE_OFFSET = 2000;
 function encodeOldLine(n) { return -(n + OLD_LINE_OFFSET); }
 function decodeOldLine(encoded) { return (-encoded) - OLD_LINE_OFFSET; }
 function isOldSideEncoded(n) { return n < -(OLD_LINE_OFFSET); }
-import { fetchBaseFileContent } from '../api.js';
+import { fetchBaseFileContent, fetchFullFileDiff } from '../api.js';
 import {
   createComment,
   resolveComment,
@@ -51,6 +52,7 @@ import {
   splitSourceLines,
 } from './DiffExpansionHelpers.js';
 import { isLargeFile } from './diffFileSize.js';
+import { isElidedDiff } from './elidedDiff.js';
 import { countNoun } from '../utils/pluralize.js';
 
 export function splitCommentsForDisplay(comments) {
@@ -161,6 +163,31 @@ function DiffFileWithComments({
     lines: null,
     error: '',
   });
+  // The server elided this file's hunks (too large). Offer a way out —
+  // without one the change is unreachable: the notice's "open it in the
+  // editor pane" shows the file's CURRENT contents, not the diff.
+  const [fullDiff, setFullDiff] = useState({ status: 'idle', error: '' });
+  const elided = isElidedDiff(renderedHunks);
+
+  async function loadFullDiff() {
+    if (fullDiff.status === 'loading') { return; }
+    setFullDiff({ status: 'loading', error: '' });
+    try {
+      const text = await fetchFullFileDiff(taskId, {
+        repoId,
+        path: file.newPath || file.oldPath || '',
+      });
+      const [parsed] = parseDiff(text || '', { nearbySequences: 'zip' });
+      const hunks = parsed?.hunks || [];
+      if (!hunks.length) { throw new Error('no diff returned'); }
+      setRenderedHunks(hunks);
+      setFullDiff({ status: 'loaded', error: '' });
+    } catch (error) {
+      setFullDiff({ status: 'error', error: String(error?.message || error) });
+      toast({ text: 'Could not load the full diff', durationMs: 5000 });
+    }
+  }
+
   const [pathMenu, setPathMenu] = useState(null);
 
   // A stable CONTENT signature of the diff — same string across identical
@@ -766,17 +793,37 @@ function DiffFileWithComments({
     });
   }
 
+  // Sits directly under the server's "diff too large" notice, which is all
+  // the pane can show until this loads the real hunks.
+  const showFullDiffButton = expanded && elided ? (
+    <div className="diff-file-elided-actions">
+      <button
+        type="button"
+        className="diff-file-elided-button"
+        onClick={loadFullDiff}
+        disabled={fullDiff.status === 'loading'}
+      >
+        {fullDiff.status === 'loading' ? 'Loading full diff…' : 'Show full diff'}
+      </button>
+      {fullDiff.status === 'error' && (
+        <span className="diff-file-elided-error">{fullDiff.error}</span>
+      )}
+    </div>
+  ) : null;
   const diffBody = expanded ? (
-    <Diff
-      viewType="unified"
-      diffType={file.type}
-      hunks={renderedHunks}
-      tokens={tokens}
-      widgets={widgets}
-      gutterEvents={gutterEvents}
-    >
-      {(hunks) => renderDiffChildren(hunks)}
-    </Diff>
+    <>
+      <Diff
+        viewType="unified"
+        diffType={file.type}
+        hunks={renderedHunks}
+        tokens={tokens}
+        widgets={widgets}
+        gutterEvents={gutterEvents}
+      >
+        {(hunks) => renderDiffChildren(hunks)}
+      </Diff>
+      {showFullDiffButton}
+    </>
   ) : null;
   // The standalone "+ Add file-level comment" entry button and its
   // empty-state hint paragraph were removed on request — the diff

@@ -9728,3 +9728,37 @@ body.kato-resizing {
 .context-meter--unknown .context-meter-track {
   opacity: 0.35;
 }
+
+/* "Show full diff" — the escape hatch from the server's oversized-diff
+ * elision. Sits under the notice hunk, which is otherwise a dead end. */
+.diff-file-elided-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+}
+
+.diff-file-elided-button {
+  background: rgba(255, 255, 255, 0.06);
+  color: #f5f5f7;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.diff-file-elided-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.diff-file-elided-button:disabled {
+  cursor: default;
+  color: #a3a3a3;
+}
+
+.diff-file-elided-error {
+  color: #a3a3a3;
+  font-size: 12px;
+}

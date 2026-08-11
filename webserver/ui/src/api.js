@@ -813,3 +813,26 @@ async function safeReadError(response) {
     return `${response.status} ${response.statusText}`;
   }
 }
+
+// One file's diff with the oversized-diff elision turned OFF.
+//
+// The server caps a single file's diff (line/byte limits) so a huge minified
+// bundle can't freeze the pane. That cap had no escape hatch, so a 2330-line
+// change was simply unviewable — the notice pointed at the editor pane, which
+// shows the file's CURRENT contents, not what changed. ``?full=<path>`` opts
+// exactly one file out; it is deliberately per-path so a big changeset can't
+// undo the protection wholesale.
+export async function fetchFullFileDiff(taskId, { repoId = '', path = '' } = {}) {
+  const query = new URLSearchParams();
+  query.set('full', path);
+  if (repoId) { query.set('repo', repoId); }
+  const url = `/api/sessions/${encodeURIComponent(taskId)}/diff`;
+  const response = await fetch(`${url}?${query.toString()}`, { cache: 'no-store' });
+  if (!response.ok) { throw new Error(`diff request failed (${response.status})`); }
+  const payload = await response.json();
+  const diffs = Array.isArray(payload?.diffs) ? payload.diffs : [];
+  const match = repoId
+    ? diffs.find((d) => String(d?.repo_id || '') === String(repoId))
+    : diffs[0];
+  return String((match || payload || {}).diff || '');
+}

@@ -523,4 +523,4 @@ class OversizedDiffOptOutTests(unittest.TestCase):
         # KB sent the operator chasing file size for nothing.
         out = git_diff_utils._elide_oversized_file_diffs(self._huge_section())
         self.assertIn('line limit', out)
-        self.assertIn('?full=big.js', out)  # the escape hatch, named in-place
+        self.assertIn('Show full diff', out)  # the control that loads it

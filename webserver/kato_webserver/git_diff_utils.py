@@ -575,14 +575,10 @@ def _elide_oversized_file_diffs(diff_text: str, *, full_paths=()) -> str:
             else f'~{body_bytes // 1024 or 1} KB > '
                  f'{TRACKED_FILE_DIFF_BYTE_LIMIT // 1024} KB limit'
         )
-        # NOTE: the ``?full=<path>`` escape hatch exists server-side but has
-        # no UI control yet, so the text points at the request rather than
-        # promising a button that isn't there.
         notice = (
             f'(diff too large to display: {reason}; '
             f'{hunk_lines} hunk lines elided — '
-            f'append ?full={_section_path(section)} to the diff request '
-            f'to load it in full)'
+            f'use "Show full diff" below to load it anyway)'
         )
         rebuilt.extend(header)
         rebuilt.append('@@ -1 +1 @@')
