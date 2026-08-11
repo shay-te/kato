@@ -381,6 +381,13 @@ class CodexCliClient(CliAgentSharedBehaviour):
         # channel.
         system_addendum = self._system_prompt_addendum()
         addendum_prefix = f'{system_addendum}\n\n' if system_addendum else ''
+        # Written to the TASK folder, outside every clone, so it cannot be
+        # committed. Empty for an adopted-cwd task (no task folder) — the
+        # shared base then falls back to the legacy in-repo wording.
+        pr_description_path = agent_prompt_utils.pr_description_path_for(workspace_root)
+        pr_description_label = (
+            pr_description_path or agent_prompt_utils.PR_DESCRIPTION_FILENAME
+        )
         return (
             f'{addendum_prefix}'
             f'{scope_prefix}'
@@ -389,10 +396,10 @@ class CodexCliClient(CliAgentSharedBehaviour):
             f'{repository_scope}\n\n'
             f'{agents_instructions}\n\n'
             f'{self._execution_guardrails_text()}\n\n'
-            f'{self._completion_instructions_text()}\n\n'
-            'The validation_report.md must list every changed file and, under each '
+            f'{self._completion_instructions_text(pr_description_path=pr_description_path)}\n\n'
+            f'{pr_description_label} must list every changed file and, under each '
             'file name, add a short explanation of what changed.\n'
-            'Use this format inside validation_report.md:\n'
+            f'Use this format inside {pr_description_label}:\n'
             'Files changed:\n'
             '- path/to/file.ext\n'
             '  Short explanation.\n'
@@ -407,6 +414,9 @@ class CodexCliClient(CliAgentSharedBehaviour):
     ) -> str:
         repository_scope = agent_prompt_utils.repository_scope_text(task, prepared_task)
         agents_instructions = agent_prompt_utils.agents_instructions_text(prepared_task)
+        pr_description_path = agent_prompt_utils.pr_description_path_for(
+            text_from_attr(prepared_task, 'workspace_root'),
+        )
         untrusted_task_body = wrap_untrusted_workspace_content(
             f'{task.summary}\n\n{task.description}',
             source_path=f'task:{task.id}',
@@ -427,7 +437,7 @@ class CodexCliClient(CliAgentSharedBehaviour):
             'Do not run npm run build, yarn build, pnpm build, or any equivalent production build command unless the task explicitly requires it.\n'
             'Do not commit or stage generated build artifacts such as build, dist, out, coverage, or target directories.\n'
             'Do not create a pull request.\n'
-            f'{self._completion_instructions_text(testing=True)}\n'
+            f'{self._completion_instructions_text(testing=True, pr_description_path=pr_description_path)}\n'
             'If no dedicated tests are defined or available, do not invent new ones; '
             'just report that no testing was defined and stop after saving any change.\n'
         )

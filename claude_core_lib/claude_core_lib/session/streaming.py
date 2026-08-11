@@ -30,6 +30,7 @@ from agent_core_lib.agent_core_lib.helpers.session_id_utils import (
     fix_session_id,
 )
 from claude_core_lib.claude_core_lib.session.wire_protocol import (
+    CLAUDE_EVENT_ASSISTANT,
     CLAUDE_EVENT_CONTROL_REQUEST,
     CLAUDE_EVENT_CONTROL_RESPONSE,
     CLAUDE_EVENT_PERMISSION_RESPONSE,
@@ -1083,7 +1084,20 @@ class StreamingClaudeSession(object):
         Best-effort — a shape change upstream must never break the stream.
         """
         resolved = resolved_model_of_event(event.raw)
-        tokens = prompt_tokens_from_usage(usage_of_event(event.raw))
+        # ONLY assistant events. Their ``usage`` is one API request's prompt —
+        # which is the context size. The ``result`` event's ``usage`` is the
+        # turn's CUMULATIVE total across every request in the agentic loop, so
+        # on a long tool-using turn its cache_read alone is several times the
+        # window. Latest-wins meant the result event overwrote the correct
+        # figure at the end of every turn, and a 122k conversation in a 1M
+        # window rendered "0% left" in red while the CLI's own ``/context``
+        # said 12% used.
+        raw = event.raw if isinstance(event.raw, dict) else {}
+        tokens = (
+            prompt_tokens_from_usage(usage_of_event(raw))
+            if raw.get('type') == CLAUDE_EVENT_ASSISTANT
+            else 0
+        )
         if not resolved and tokens <= 0:
             return
         with self._context_usage_lock:

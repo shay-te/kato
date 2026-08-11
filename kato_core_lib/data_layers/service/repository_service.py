@@ -5,6 +5,9 @@ import threading
 from pathlib import Path
 
 from bitbucket_core_lib.bitbucket_core_lib.helpers.git_auth import git_http_auth_header
+from agent_core_lib.agent_core_lib.helpers.agent_prompt_utils import (
+    PR_DESCRIPTION_FILENAME,
+)
 from git_core_lib.git_core_lib.client.git_client import GitClientMixin
 from git_core_lib.git_core_lib.helpers.git_clean_utils import (
     generated_artifact_paths_from_status,
@@ -27,6 +30,14 @@ from kato_core_lib.data_layers.service.repository_publication_service import (
 from kato_core_lib.data_layers.service.workspace_manager import (
     _KATO_METADATA_FILENAME,
 )
+
+
+class _NothingToCommit(Exception):
+    """Every dirty path was a publication exclusion — nothing left to save.
+
+    Distinct from a git failure: an empty index here is the correct outcome
+    (the only dirty file was a validation report), not an error to report.
+    """
 
 
 def _is_per_task_workspace_clone(repository) -> bool:
@@ -684,7 +695,8 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         # merge can no longer tangle uncommitted files.
         wip_committed = False
         try:
-            dirty = bool(self._working_tree_status(local_path).strip())
+            status_output = self._working_tree_status(local_path)
+            dirty = bool(status_output.strip())
         except Exception as exc:
             return {
                 'merged': False, 'reason': 'status_check_failed',
@@ -697,6 +709,30 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
                     f'failed to stage in-progress work for {repository.id}',
                     repository,
                 )
+                # Kato's publication exclusions have to hold HERE too. A
+                # blanket ``add -A`` used to sweep the agent's
+                # ``validation_report.md`` into this commit — and once the
+                # report is TRACKED, the publish path can never strip it
+                # again: its ``reset``+``clean`` only reach files that are
+                # untracked or merely staged. That is exactly how one report
+                # rode three "WIP: save in-progress work" commits onto a task
+                # branch and into the PR, growing on every later run.
+                #
+                # Unstage rather than delete: the agent may still be writing
+                # the report, and publication CONSUMES it (it becomes the PR
+                # description, then the file is cleaned). Leaving it dirty in
+                # the tree is harmless for the merge — these paths don't exist
+                # on the default branch, so they cannot conflict.
+                excluded = self._unstage_publication_excluded_paths(
+                    local_path, status_output, repository,
+                )
+                # Only worth a round-trip when something actually left the
+                # index; otherwise a dirty tree plus ``add -A`` guarantees
+                # there is something to commit.
+                if excluded and not self._staged_paths(local_path):
+                    # Everything dirty was excluded — there is nothing to
+                    # save, and ``git commit`` would fail on an empty index.
+                    raise _NothingToCommit
                 self._run_git(
                     local_path,
                     ['commit', '-m',
@@ -705,12 +741,15 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
                     f'failed to save in-progress work for {repository.id}',
                     repository,
                 )
+            except _NothingToCommit:
+                wip_committed = False
             except RuntimeError as exc:
                 return {
                     'merged': False, 'reason': 'wip_commit_failed',
                     'detail': str(exc),
                 }
-            wip_committed = True
+            else:
+                wip_committed = True
         try:
             self._run_git(
                 local_path, ['fetch', 'origin', '--prune'],
@@ -1095,18 +1134,79 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         branch_name: str,
         commit_message: str,
     ) -> str:
+        # The description now lives in the TASK folder, beside the clones
+        # rather than inside one, so it is readable whether or not this repo
+        # had changes — read it before the early return.
+        task_folder_description = self._pr_description_from_task_folder(local_path)
         status_output = self._working_tree_status(local_path)
         if not status_output:
-            return ''
+            return task_folder_description
         self._run_git(local_path, ['add', '-A'], f'failed to stage changes for branch {branch_name}')
         self._unstage_and_discard_generated_artifacts(local_path, branch_name, status_output)
+        # Legacy path: an agent (or an older prompt) that still writes
+        # ``validation_report.md`` into the repo root. Kept so such a file is
+        # still stripped before the push instead of riding into the PR — its
+        # text is only used when the task folder has none.
         validation_report_descriptions = self._unstage_and_read_validation_reports(
             local_path, branch_name, status_output
         )
+        if task_folder_description:
+            validation_report_descriptions = [task_folder_description]
         self._run_git(local_path, ['add', '-A'], f'failed to restage cleanup changes for branch {branch_name}')
         self._run_git(local_path, ['commit', '-m', commit_message], f'failed to commit changes for branch {branch_name}')
         self._ensure_clean_worktree(local_path, branch_name)
         return '\n\n'.join(validation_report_descriptions).strip()
+
+    def _pr_description_from_task_folder(self, local_path: str) -> str:
+        """Text of ``<task folder>/pr_description.md``, or ``''``.
+
+        The task folder is the clone's PARENT — the one folder every repo of
+        a task lives under, and the agent's ``--add-dir`` scope. Writing the
+        description there instead of inside a clone is what makes "never
+        committed" structural: git cannot stage a file outside its worktree.
+        Shared by every repo of a multi-repo task, so each PR gets the same
+        description.
+        """
+        task_folder = os.path.dirname(os.path.normpath(str(local_path or '')))
+        if not task_folder:
+            return ''
+        return self._validation_report_text(
+            os.path.join(task_folder, PR_DESCRIPTION_FILENAME),
+        ) or ''
+
+    def _unstage_publication_excluded_paths(
+        self,
+        local_path: str,
+        status_output: str,
+        repository=None,
+    ) -> list[str]:
+        """Unstage everything kato never publishes: reports + build artifacts.
+
+        Same set ``_commit_branch_changes_if_needed`` excludes at publish
+        time, but WITHOUT the ``clean`` — this runs mid-task, so the files
+        must survive on disk (see the merge call site). Returns what it
+        excluded so the caller can tell an emptied index from an untouched one.
+        """
+        excluded = [
+            *self._validation_report_paths_from_status(status_output),
+            *self._generated_artifact_paths_from_status(status_output),
+        ]
+        for path in excluded:
+            self._run_git(
+                local_path,
+                ['reset', 'HEAD', '--', path],
+                f'failed to exclude {path} from the in-progress commit',
+                repository,
+            )
+        return excluded
+
+    def _staged_paths(self, local_path: str) -> list[str]:
+        output = self._git_stdout(
+            local_path,
+            ['diff', '--cached', '--name-only'],
+            f'failed to inspect staged paths for repository at {local_path}',
+        )
+        return [line for line in output.splitlines() if line.strip()]
 
     def _unstage_and_discard_generated_artifacts(
         self,

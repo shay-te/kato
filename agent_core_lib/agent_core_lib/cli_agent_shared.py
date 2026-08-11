@@ -143,24 +143,47 @@ class CliAgentSharedBehaviour(object):
         ]
         return '\n\n'.join(section for section in sections if section)
 
-    def _completion_instructions_text(self, *, testing: bool = False) -> str:
-        """What the agent must do before it stops."""
+    def _completion_instructions_text(
+        self, *, testing: bool = False, pr_description_path: str = '',
+    ) -> str:
+        """What the agent must do before it stops.
+
+        ``pr_description_path`` is the ABSOLUTE path the description file must
+        be written to. Callers pass one outside every repository clone (the
+        task folder), which is what makes the "don't commit it" rule
+        structural rather than an instruction the agent has to remember: a
+        file that isn't in a worktree cannot be staged. Left empty, the old
+        in-repo wording is used — the fallback for tasks that have no task
+        folder (an adopted cwd), where the orchestrator still strips the file
+        before pushing.
+        """
+        if pr_description_path:
+            location = f'- Create {pr_description_path} '
+            outside = (
+                '  It is outside every repository, so it is never part of a commit.\n'
+            )
+        else:
+            location = '- Create validation_report.md in the repository root '
+            outside = (
+                '- Do not commit or stage that file; the orchestration layer '
+                'will read and remove it.\n'
+            )
         if testing:
             return (
                 'When you are done:\n'
                 '- Save every intended change in the repository worktree.\n'
-                '- Create validation_report.md in the repository root that summarizes the testing work.\n'
-                '- Do not commit or stage validation_report.md; the orchestration layer will read and remove it.\n'
+                f'{location}that summarizes the testing work.\n'
+                f'{outside}'
                 '- Stop. Do not produce any extra commentary.'
             )
         return (
             'When you are done:\n'
             '- Save every intended change in the repository worktree.\n'
-            '- Create validation_report.md in the repository root that will become the pull request description.\n'
+            f'{location}that will become the pull request description.\n'
+            f'{outside}'
             f'{agent_prompt_utils.narrow_edit_guardrails_text("to satisfy the task", bulleted=True)}'
             '- Do not run npm run build, yarn build, pnpm build, or any equivalent production build command unless the task explicitly requires it.\n'
             '- Do not commit or stage generated build artifacts such as build, dist, out, coverage, or target directories.\n'
-            '- Do not commit or stage validation_report.md; the orchestration layer will read and remove it before opening the pull request.\n'
             '- If no dedicated tests are defined for this task, do not invent new ones; just stop after saving the change.\n'
             '- Stop. Do not produce any extra commentary.'
         )

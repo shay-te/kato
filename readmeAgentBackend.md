@@ -22,7 +22,7 @@ Everything that works with OpenHands also works with `claude -p`:
 - Implementation conversations per task.
 - Optional testing-validation conversations (controlled by `OPENHANDS_SKIP_TESTING`).
 - Review-comment fix conversations on existing pull requests, including session resume so the agent keeps context across review rounds (mapped to `claude --resume <session_id>`).
-- Repository scope, security guardrails, and the `validation_report.md` PR-description handoff are identical in both backends.
+- Repository scope, security guardrails, and the `pr_description.md` PR-description handoff are identical in both backends.
 
 Switching is one env value: change `KATO_AGENT_BACKEND`, run `kato doctor`, restart Kato.
 
@@ -59,7 +59,7 @@ Notes:
 - The CLI runs locally and edits files directly in the prepared task branch, so the orchestration layer does not need OpenHands credentials, the agent-server image, or the dedicated testing container when this backend is active. The `OPENHANDS_*` block of `.env` can stay empty.
 - `KATO_CLAUDE_PERMISSION_MODE` defaults to `bypassPermissions` because the orchestration layer pins the agent to a prepared branch and runs unattended. Use `acceptEdits` if you would rather have Claude prompt for tool grants in interactive setups.
 - The CLI is invoked with `--output-format json` so the orchestration parses `result` and `session_id` from the structured output. Review-comment follow-ups pass that `session_id` back via `--resume`.
-- The agent still produces `validation_report.md` in the repository root; the existing publication flow uses it as the pull request description and removes it before pushing — same as the OpenHands path.
+- The agent writes `pr_description.md` into the **task folder** (`<workspaces_root>/<task_id>/`), beside the repo clones rather than inside one, and the publication flow reads it as the pull request description — same as the OpenHands path. The location is the guarantee: a file outside every worktree cannot be staged, so it can never reach a PR as a committed file. It used to be `validation_report.md` in the repository root, which depended on the orchestrator stripping it before each push — a blanket `git add -A` in the "merge default branch" WIP commit defeated that permanently, and one report rode three commits into a pull request. A repo-root `validation_report.md` is still stripped if an older prompt produces one, and its text is used only when the task folder has none.
 
 The agent is designed to:
 

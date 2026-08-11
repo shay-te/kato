@@ -192,3 +192,67 @@ class UsageExtractionTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TrackedUsageSourceTests(unittest.TestCase):
+    """Only ASSISTANT events may set the context figure.
+
+    Regression: ``result`` usage is the turn's CUMULATIVE total across every
+    API request in the agentic loop, and latest-wins let it overwrite the
+    real figure at the end of every turn. A 122.6k conversation in a 1M
+    window rendered "0% left" in red while ``/context`` reported 12% used.
+    """
+
+    @staticmethod
+    def _session():
+        from claude_core_lib.claude_core_lib.session.streaming import (
+            StreamingClaudeSession,
+        )
+        return StreamingClaudeSession.__new__(StreamingClaudeSession)
+
+    def _track(self, raws):
+        import threading
+        from types import SimpleNamespace
+        session = self._session()
+        session._context_usage_lock = threading.Lock()
+        session._context_used_tokens = 0
+        session._resolved_model = ''
+        for raw in raws:
+            session._track_context_usage(SimpleNamespace(raw=raw))
+        return session.context_usage()
+
+    def test_result_usage_never_sets_the_figure(self) -> None:
+        assistant = {
+            'type': 'assistant',
+            'message': {
+                'model': 'claude-opus-5',
+                'usage': {'input_tokens': 2, 'cache_read_input_tokens': 122_600},
+            },
+        }
+        # The same turn's result event, carrying the cumulative total.
+        result = {'type': 'result', 'usage': {'cache_read_input_tokens': 990_000}}
+
+        usage = self._track([assistant, result])
+
+        self.assertEqual(usage['used_tokens'], 122_602)
+        self.assertEqual(usage['limit_tokens'], 1_000_000)
+        remaining = round(
+            (usage['limit_tokens'] - usage['used_tokens'])
+            / usage['limit_tokens'] * 100
+        )
+        self.assertEqual(remaining, 88)  # not 0
+
+    def test_a_later_assistant_turn_still_updates(self) -> None:
+        usage = self._track([
+            {'type': 'assistant', 'message': {'model': 'claude-opus-5',
+                                              'usage': {'input_tokens': 10_000}}},
+            {'type': 'result', 'usage': {'input_tokens': 999_999}},
+            {'type': 'assistant', 'message': {'model': 'claude-opus-5',
+                                              'usage': {'input_tokens': 20_000}}},
+        ])
+        self.assertEqual(usage['used_tokens'], 20_000)
+
+    def test_result_events_still_contribute_the_model_id(self) -> None:
+        usage = self._track([{'type': 'result', 'model': 'claude-opus-5'}])
+        self.assertEqual(usage['model'], 'claude-opus-5')
+        self.assertEqual(usage['used_tokens'], 0)

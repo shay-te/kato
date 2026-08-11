@@ -247,6 +247,48 @@ class MergeRealGitTests(unittest.TestCase):
         ).stdout
         self.assertIn('WIP: save in-progress work', log)
 
+    def test_wip_commit_never_tracks_the_validation_report(self) -> None:
+        """The report is the PR description, not a file to ship.
+
+        Regression: ``add -A`` swept ``validation_report.md`` into the WIP
+        commit, and once TRACKED the publish path could no longer strip it
+        (its reset+clean only reach untracked / merely-staged files). One
+        report rode three WIP commits onto a branch and into the PR.
+        """
+        clone, repo = _build_repo_with_diverged_default(self.tmp)
+        (clone / 'agent-notes.txt').write_text('in progress\n', encoding='utf-8')
+        (clone / 'validation_report.md').write_text('# report\n', encoding='utf-8')
+
+        out = self.service.merge_default_branch_into_clone(repo, 'feat/x')
+
+        self.assertTrue(out['merged'])
+        self.assertTrue(out['wip_committed'])
+        tracked = subprocess.run(
+            ['git', 'ls-files'], cwd=str(clone),
+            capture_output=True, text=True, check=True,
+        ).stdout
+        self.assertNotIn('validation_report.md', tracked)
+        # Real work still saved…
+        self.assertIn('agent-notes.txt', tracked)
+        # …and the report survives on disk for publication to consume.
+        self.assertTrue((clone / 'validation_report.md').is_file())
+
+    def test_a_report_only_tree_makes_no_wip_commit(self) -> None:
+        # Nothing to save once the report is excluded — committing an empty
+        # index would fail, so the merge must simply proceed without one.
+        clone, repo = _build_repo_with_diverged_default(self.tmp)
+        (clone / 'validation_report.md').write_text('# report\n', encoding='utf-8')
+
+        out = self.service.merge_default_branch_into_clone(repo, 'feat/x')
+
+        self.assertTrue(out['merged'])
+        self.assertFalse(out['wip_committed'])
+        self.assertTrue((clone / 'validation_report.md').is_file())
+        self.assertNotIn('validation_report.md', subprocess.run(
+            ['git', 'ls-files'], cwd=str(clone),
+            capture_output=True, text=True, check=True,
+        ).stdout)
+
     def test_already_up_to_date_is_a_noop(self) -> None:
         clone, repo = _build_repo_with_diverged_default(self.tmp)
         # First merge brings main in cleanly...

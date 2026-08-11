@@ -8,6 +8,29 @@ from utils_core_lib.utils_core_lib.text_utils import (
     text_from_attr,
     text_from_mapping,
 )
+# The file the agent writes its pull-request description into.
+#
+# It lives in the TASK folder, never in a repository clone. That placement is
+# the whole point: the previous in-repo ``validation_report.md`` depended on
+# the orchestrator stripping it before every push, and one blanket ``git add
+# -A`` (the "merge default branch" WIP commit) was enough to defeat that
+# permanently — once TRACKED, the strip could no longer reach it, and the
+# report rode three commits into a pull request. A file outside every worktree
+# cannot be staged at all, so the guarantee is structural rather than a rule
+# the agent (or a future code path) has to keep remembering.
+PR_DESCRIPTION_FILENAME = 'pr_description.md'
+
+
+def pr_description_path_for(workspace_root: object) -> str:
+    """Absolute path of the PR-description file for a task folder.
+
+    ``''`` when there is no task folder (an adopted-cwd task), which callers
+    read as "fall back to the legacy in-repo file".
+    """
+    root = normalized_text(workspace_root)
+    return os.path.join(root, PR_DESCRIPTION_FILENAME) if root else ''
+
+
 # Env var naming the repository folders the agent must NOT touch. The host
 # resolves the folders from its own config and either passes them in
 # (``raw_value``) or exports them under this generic name.

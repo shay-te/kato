@@ -17,6 +17,7 @@ from utils_core_lib.utils_core_lib.text_utils import (
     condensed_text,
     normalized_lower_text,
     normalized_text,
+    text_from_attr,
     text_from_mapping,
 )
 from sandbox_core_lib.sandbox_core_lib.workspace_delimiter import (
@@ -364,7 +365,11 @@ class OpenHandsClient(RetryingClientBase):
         )
         repository_scope = self._repository_scope_text(task, prepared_task)
         agents_instructions = agent_prompt_utils.agents_instructions_text(prepared_task)
-        finish_instructions = self._finish_tool_instructions_text()
+        finish_instructions = self._finish_tool_instructions_text(
+            agent_prompt_utils.pr_description_path_for(
+                text_from_attr(prepared_task, 'workspace_root'),
+            ),
+        )
         scope_prefix = f'{scope_block}\n' if scope_block else ''
         # OG9a: the ticket summary/description is external, untrusted text
         # (any ticket reporter, no prior repo access needed) — wrap it so a
@@ -407,7 +412,11 @@ class OpenHandsClient(RetryingClientBase):
     ) -> str:
         repository_scope = self._repository_scope_text(task, prepared_task)
         agents_instructions = agent_prompt_utils.agents_instructions_text(prepared_task)
-        finish_instructions = self._finish_tool_instructions_text()
+        finish_instructions = self._finish_tool_instructions_text(
+            agent_prompt_utils.pr_description_path_for(
+                text_from_attr(prepared_task, 'workspace_root'),
+            ),
+        )
         untrusted_task_body = wrap_untrusted_workspace_content(
             f'{task.summary}\n\n{task.description}',
             source_path=f'task:{task.id}',
@@ -433,14 +442,34 @@ class OpenHandsClient(RetryingClientBase):
         )
 
     @staticmethod
-    def _finish_tool_instructions_text() -> str:
+    def _finish_tool_instructions_text(pr_description_path: str = '') -> str:
+        # The path is in the TASK folder, outside every clone, so the file
+        # cannot be staged or committed — no "don't commit it" rule needed.
+        # Empty path (adopted-cwd task, no task folder) keeps the legacy
+        # in-repo wording, which the orchestrator still strips before pushing.
+        if pr_description_path:
+            location = f'- Create {pr_description_path} when the task succeeds.\n'
+            label = pr_description_path
+            commit_rule = (
+                '  It is outside every repository, so it is never part of a commit.\n'
+            )
+        else:
+            location = (
+                '- Create validation_report.md in the repository root when the '
+                'task succeeds.\n'
+            )
+            label = 'validation_report.md'
+            commit_rule = (
+                '- Do not commit or stage validation_report.md; the orchestration '
+                'layer will read and remove it before opening the pull request.\n'
+            )
         return (
             '- Do not report success until all intended changes are saved in the repository worktree.\n'
-            '- Create validation_report.md in the repository root when the task succeeds.\n'
+            f'{location}'
+            f'{commit_rule}'
             '- Write the report that the orchestration layer will use as the pull request description.\n'
             '- Keep the report concise but explanatory.\n'
-            '- If you have validation results, include them in validation_report.md too.\n'
-            '- Do not commit or stage validation_report.md; the orchestration layer will read and remove it before opening the pull request.\n'
+            f'- If you have validation results, include them in {label} too.\n'
             '- Do not pass extra finish-tool arguments beyond the supported fields.'
         )
 
