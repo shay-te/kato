@@ -19,3 +19,22 @@ export function isElidedDiff(hunks) {
 }
 
 export { ELISION_MARKER };
+
+// Pick the requested file out of a whole-repo diff.
+//
+// ``?full=<path>`` de-elides ONE file but the response is still the entire
+// repo diff, so ``parseDiff`` yields every changed file. Taking [0] showed
+// whichever file happened to sort first — the "Show full diff shows some
+// other file" bug. Returns null when the path isn't present, so the caller
+// surfaces an error instead of rendering the wrong file's changes.
+export function pickFileDiff(parsedFiles, wantedPath, displayPathOf) {
+  const list = Array.isArray(parsedFiles) ? parsedFiles : [];
+  const wanted = String(wantedPath || '').trim();
+  if (!wanted) { return null; }
+  return list.find((entry) => {
+    if (typeof displayPathOf === 'function' && displayPathOf(entry) === wanted) {
+      return true;
+    }
+    return entry?.newPath === wanted || entry?.oldPath === wanted;
+  }) || null;
+}

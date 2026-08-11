@@ -52,7 +52,7 @@ import {
   splitSourceLines,
 } from './DiffExpansionHelpers.js';
 import { isLargeFile } from './diffFileSize.js';
-import { isElidedDiff } from './elidedDiff.js';
+import { isElidedDiff, pickFileDiff } from './elidedDiff.js';
 import { countNoun } from '../utils/pluralize.js';
 
 export function splitCommentsForDisplay(comments) {
@@ -177,9 +177,16 @@ function DiffFileWithComments({
         repoId,
         path: file.newPath || file.oldPath || '',
       });
-      const [parsed] = parseDiff(text || '', { nearbySequences: 'zip' });
+      // The response is the WHOLE repo diff with only this file de-elided,
+      // so the requested path has to be picked out of it — taking the first
+      // parsed file rendered some other file's changes.
+      const parsed = pickFileDiff(
+        parseDiff(text || '', { nearbySequences: 'zip' }),
+        path,
+        diffDisplayPath,
+      );
       const hunks = parsed?.hunks || [];
-      if (!hunks.length) { throw new Error('no diff returned'); }
+      if (!hunks.length) { throw new Error('file not found in diff response'); }
       setRenderedHunks(hunks);
       setFullDiff({ status: 'loaded', error: '' });
     } catch (error) {
