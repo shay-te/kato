@@ -599,6 +599,7 @@ def _compute_repo_diff(
     *,
     task_id: str = '',
     agent_service=None,
+    full_paths=(),
 ) -> dict[str, Any]:
     """Build the per-repo diff payload the Changes-tab accordion expects.
 
@@ -653,7 +654,7 @@ def _compute_repo_diff(
         'cwd': cwd,
         'base': '' if is_local else base,
         'head': current_branch(cwd),
-        'diff': diff_against_base(cwd, ref),
+        'diff': diff_against_base(cwd, ref, full_paths=full_paths),
         'conflicted_files': conflicted_paths(cwd),
         'error': '',
     }
@@ -2021,6 +2022,10 @@ def _register_http_routes(app: Flask) -> None:
         # shows only the branch's work, not the whole merged-in default
         # branch (see list_session_files). No-op unless a merge is pending.
         _finalize_resolved_merges(agent_service, task_id)
+        # ``?full=<path>`` (repeatable) opts ONE file out of the oversized-diff
+        # elision. Per-path on purpose: a blanket "send everything" would let a
+        # 40-file changeset undo the protection the cap exists for.
+        full_paths = tuple(request.args.getlist('full'))
         workspace_status = _workspace_status(workspace_manager, task_id)
         repository_ids = _task_repository_ids(workspace_manager, task_id)
         # Multi-repo task: compute one diff per clone so the UI can
@@ -2034,6 +2039,7 @@ def _register_http_routes(app: Flask) -> None:
                     continue
                 diffs.append(_compute_repo_diff(
                     repo_id, cwd, task_id=task_id, agent_service=agent_service,
+                    full_paths=full_paths,
                 ))
             if diffs:
                 first = diffs[0]
@@ -2061,7 +2067,10 @@ def _register_http_routes(app: Flask) -> None:
                 'head': '',
                 'diff': '',
             })
-        single = _compute_repo_diff('', cwd, task_id=task_id, agent_service=agent_service)
+        single = _compute_repo_diff(
+            '', cwd, task_id=task_id, agent_service=agent_service,
+            full_paths=full_paths,
+        )
         return jsonify({
             'repository_ids': [],
             'diffs': [single],

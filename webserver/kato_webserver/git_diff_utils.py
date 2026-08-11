@@ -471,7 +471,7 @@ def file_text_at_ref(cwd: str, ref: str, path: str) -> str | None:
     return run_git(cwd, ['show', f'{safe_ref}:{safe_path}'], timeout=15)
 
 
-def diff_against_base(cwd: str, base_ref: str) -> str:
+def diff_against_base(cwd: str, base_ref: str, full_paths=()) -> str:
     """Unified diff that surfaces committed AND uncommitted work vs ``base_ref``.
 
     The Changes tab is the single source of truth the user looks at while
@@ -490,10 +490,26 @@ def diff_against_base(cwd: str, base_ref: str) -> str:
         megabytes into the response.
     """
     main_diff = run_git(cwd, ['diff', _diff_base(cwd, base_ref)], timeout=30) or ''
-    return _elide_oversized_file_diffs(main_diff) + _untracked_files_as_diff(cwd)
+    return (
+        _elide_oversized_file_diffs(main_diff, full_paths=full_paths)
+        + _untracked_files_as_diff(cwd)
+    )
 
 
-def _elide_oversized_file_diffs(diff_text: str) -> str:
+def _section_path(section: list[str]) -> str:
+    """Repo-relative path from a ``diff --git a/<p> b/<p>`` header ('' if absent)."""
+    if not section or not section[0].startswith('diff --git '):
+        return ''
+    for line in section:
+        if line.startswith('+++ b/'):
+            return line[len('+++ b/'):].strip()
+        if line.startswith('--- a/'):
+            return line[len('--- a/'):].strip()
+    parts = section[0].split(' b/', 1)
+    return parts[1].strip() if len(parts) == 2 else ''
+
+
+def _elide_oversized_file_diffs(diff_text: str, *, full_paths=()) -> str:
     """Replace any single file's huge diff body with a short notice.
 
     ``git diff`` is a concatenation of per-file sections, each starting
@@ -516,11 +532,21 @@ def _elide_oversized_file_diffs(diff_text: str) -> str:
             sections.append([])
         sections[-1].append(line)
     rebuilt: list[str] = []
+    requested_full = {str(p).strip() for p in (full_paths or ()) if str(p).strip()}
     for section in sections:
+        over_lines = len(section) > TRACKED_FILE_DIFF_LINE_LIMIT
+        # +1 per line for the '\n' the join re-adds.
+        over_bytes = (
+            sum(len(ln) + 1 for ln in section) > TRACKED_FILE_DIFF_BYTE_LIMIT
+        )
+        # The operator asked for THIS file in full (the "Show full diff"
+        # affordance). Elision exists to keep the pane responsive, not to
+        # withhold the change — without an opt-out the diff was simply
+        # unreachable, since the notice's "open it in the editor pane"
+        # shows the file's current contents, not what changed.
         oversized = (
-            len(section) > TRACKED_FILE_DIFF_LINE_LIMIT
-            # +1 per line for the '\n' the join re-adds.
-            or sum(len(ln) + 1 for ln in section) > TRACKED_FILE_DIFF_BYTE_LIMIT
+            (over_lines or over_bytes)
+            and _section_path(section) not in requested_full
         )
         if (
             not oversized
@@ -539,10 +565,24 @@ def _elide_oversized_file_diffs(diff_text: str) -> str:
             continue
         header = section[:hunk_start]
         body_bytes = sum(len(ln) + 1 for ln in section[hunk_start:])
+        # Name the limit that ACTUALLY tripped. Reporting KB when the line
+        # cap fired sent an operator chasing file size for a 114 KB file
+        # that was comfortably under the 128 KB byte cap.
+        hunk_lines = len(section) - hunk_start
+        reason = (
+            f'{len(section)} lines > {TRACKED_FILE_DIFF_LINE_LIMIT} line limit'
+            if over_lines
+            else f'~{body_bytes // 1024 or 1} KB > '
+                 f'{TRACKED_FILE_DIFF_BYTE_LIMIT // 1024} KB limit'
+        )
+        # NOTE: the ``?full=<path>`` escape hatch exists server-side but has
+        # no UI control yet, so the text points at the request rather than
+        # promising a button that isn't there.
         notice = (
-            f'(diff too large to display: ~{body_bytes // 1024 or 1} KB '
-            f'across {len(section) - hunk_start} hunk lines elided — '
-            f'open the file in the editor pane to view the full change)'
+            f'(diff too large to display: {reason}; '
+            f'{hunk_lines} hunk lines elided — '
+            f'append ?full={_section_path(section)} to the diff request '
+            f'to load it in full)'
         )
         rebuilt.extend(header)
         rebuilt.append('@@ -1 +1 @@')

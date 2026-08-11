@@ -478,3 +478,49 @@ class UntrackedFilesAsDiffTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class OversizedDiffOptOutTests(unittest.TestCase):
+    """Elision keeps the pane responsive; it must not make a diff unreachable.
+
+    Reported: "no way to view the diff" — a 2330-line file was elided and the
+    notice pointed at the editor pane, which shows the file's CURRENT contents,
+    not the change. There was no way for any client to ask for it.
+    """
+
+    @staticmethod
+    def _huge_section(path='big.js', lines=None):
+        count = lines or (git_diff_utils.TRACKED_FILE_DIFF_LINE_LIMIT + 400)
+        body = '\n'.join(f'+line {i}' for i in range(count))
+        return (
+            f'diff --git a/{path} b/{path}\n'
+            f'index 111..222 100644\n'
+            f'--- a/{path}\n'
+            f'+++ b/{path}\n'
+            f'@@ -0,0 +1,{count} @@\n'
+            f'{body}'
+        )
+
+    def test_elided_by_default(self) -> None:
+        out = git_diff_utils._elide_oversized_file_diffs(self._huge_section())
+        self.assertIn('diff too large to display', out)
+
+    def test_requesting_the_path_returns_it_in_full(self) -> None:
+        out = git_diff_utils._elide_oversized_file_diffs(
+            self._huge_section(), full_paths=('big.js',),
+        )
+        self.assertNotIn('diff too large to display', out)
+        self.assertIn('+line 0', out)
+
+    def test_requesting_another_path_leaves_this_one_elided(self) -> None:
+        out = git_diff_utils._elide_oversized_file_diffs(
+            self._huge_section(), full_paths=('other.js',),
+        )
+        self.assertIn('diff too large to display', out)
+
+    def test_notice_names_the_limit_that_actually_tripped(self) -> None:
+        # The 114 KB file that started this was UNDER the byte cap; quoting
+        # KB sent the operator chasing file size for nothing.
+        out = git_diff_utils._elide_oversized_file_diffs(self._huge_section())
+        self.assertIn('line limit', out)
+        self.assertIn('?full=big.js', out)  # the escape hatch, named in-place
