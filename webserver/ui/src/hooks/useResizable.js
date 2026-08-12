@@ -18,6 +18,14 @@ export function useResizable({
     return stored !== null ? clamp(stored) : defaultWidth;
   });
 
+  // Bounds can arrive AFTER first render — a tab measures its own label in a
+  // layout effect, so the hook initialises against fallbacks and would then
+  // keep a width that the real min/max never applied to (the "grip renders
+  // but won't drag" bug). Re-clamp whenever they change.
+  useEffect(() => {
+    setWidth((current) => clamp(current));
+  }, [clamp]);
+
   const startStateRef = useRef(null);
 
   const onPointerDown = useCallback((event) => {

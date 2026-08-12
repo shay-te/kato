@@ -1,9 +1,13 @@
-import { useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { cx } from '../utils/cx.js';
 import { deriveTabStatus, tabStatusTitle } from '../utils/tabStatus.js';
 import { deriveAgentStatus, badgeKindFor } from '../utils/agentStatus.js';
 import Icon from './Icon.jsx';
 import { MAX_TAB_NAME_LENGTH } from '../utils/taskTabNames.js';
+
+// Fallbacks used until the label has been measured (first paint, or a
+// browser that gives us zero widths). Generous enough that a tab is never
+// unusably narrow, and never narrower than its own id.
 import TabTooltip from './TabTooltip.jsx';
 
 // Delay before the hover card appears — long enough that scrubbing
