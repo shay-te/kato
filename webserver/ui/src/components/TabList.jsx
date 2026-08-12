@@ -8,6 +8,12 @@ import {
   togglePinned,
   writePinnedIds,
 } from '../utils/pinnedTabs.js';
+import {
+  readTabNames,
+  setTabName,
+  tabNameFor,
+  writeTabNames,
+} from '../utils/taskTabNames.js';
 
 // Gap between segments in the strip — matches the CSS ``gap: 6px``
 // rule on #tab-list. Kept in sync here so the sticky-left offsets
@@ -48,6 +54,16 @@ export default function TabList({
   // operator's preference survives reloads. Read lazily on mount;
   // every toggle re-persists. See utils/pinnedTabs.js for the rules.
   const [pinnedIds, setPinnedIds] = useState(() => readPinnedIds());
+  // Operator's local tab renames — same shape and lifecycle as pins.
+  const [tabNames, setTabNames] = useState(() => readTabNames());
+
+  function handleRename(taskId, label) {
+    setTabNames((prev) => {
+      const next = setTabName(prev, taskId, label);
+      writeTabNames(next);
+      return next;
+    });
+  }
   const handleTogglePin = useCallback((taskId) => {
     setPinnedIds((prev) => {
       const next = togglePinned(taskId, prev);
@@ -212,6 +228,8 @@ export default function TabList({
         onSelect={onSelect}
         onForget={onForget}
         onTogglePin={handleTogglePin}
+        displayName={tabNameFor(tabNames, session.task_id, session.task_summary)}
+        onRename={handleRename}
       />
     );
   });

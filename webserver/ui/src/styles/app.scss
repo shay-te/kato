@@ -795,17 +795,21 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 /* The task NAME — the wide, VSCode-style part. Ellipsises when the tab
  * hits its max-width so one long name can't blow the pill out. Dimmer
  * than the id so the id still reads as the primary handle. */
+/* Same weight and full-strength colour as the id. The name used to sit at
+ * 65% alpha (85% when active) to keep the id the "primary handle" — but at
+ * 12px on a dark pill that dimming made the name genuinely hard to read,
+ * and the name is what the operator scans for once the ids blur together.
+ * One legible treatment across the whole tab beats a hierarchy nobody can
+ * read. */
 .tabs-pane-top .tab .tab-label-title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: $TEXT-12;
-  color: $C-NEUTRAL-96-A65;
-}
-
-.tabs-pane-top .tab.active .tab-label-title {
-  color: $C-NEUTRAL-96-A85;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: $C-NEUTRAL-96;
 }
 
 .tabs-pane-top .tab p {
@@ -6932,8 +6936,34 @@ body.kato-resizing {
   font-weight: 600;
 }
 
+/* The banner's action. ``.primary`` is only styled under ``.modal-actions``,
+ * so this button previously rendered with NO fill at all — it read as plain
+ * text next to the message and the operator never found it, which is why the
+ * banner looked like a link-only dead end. Give it the accent fill so the
+ * action is the loudest thing in the row. */
 .kato-version-banner__upgrade {
   flex-shrink: 0;
+  background: $C-CYAN-52;
+  color: $C-NEUTRAL-96;
+  border: 0;
+  border-radius: $RADIUS-6;
+  padding: $SPACE-4 $SPACE-10;
+  font: inherit;
+  font-size: $TEXT-12;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 0 0 3px $C-CYAN-52-A18;
+}
+
+.kato-version-banner__upgrade:hover:not(:disabled) {
+  background: $C-CYAN-47;
+  box-shadow: 0 0 0 4px $C-CYAN-52-A40;
+}
+
+.kato-version-banner__upgrade:disabled {
+  cursor: default;
+  background: $C-NEUTRAL-32;
+  box-shadow: none;
 }
 
 /* Why one-click upgrade isn't available (Docker / codex / hard-disabled). */
@@ -9976,4 +10006,18 @@ body.kato-resizing {
 .diff-file-elided-error {
   color: $C-NEUTRAL-64;
   font-size: $TEXT-12;
+}
+
+/* Inline tab rename input — sized to sit in the pill without resizing it. */
+.tabs-pane-top .tab .tab-label-rename {
+  min-width: 0;
+  max-width: 160px;
+  background: $C-NEUTRAL-16;
+  color: $C-NEUTRAL-96;
+  border: 1px solid $C-CYAN-52;
+  border-radius: $RADIUS-4;
+  padding: 0 $SPACE-4;
+  font: inherit;
+  font-size: $TEXT-12;
+  font-weight: 600;
 }

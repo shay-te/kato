@@ -3,6 +3,7 @@ import { cx } from '../utils/cx.js';
 import { deriveTabStatus, tabStatusTitle } from '../utils/tabStatus.js';
 import { deriveAgentStatus, badgeKindFor } from '../utils/agentStatus.js';
 import Icon from './Icon.jsx';
+import { MAX_TAB_NAME_LENGTH } from '../utils/taskTabNames.js';
 import TabTooltip from './TabTooltip.jsx';
 
 // Delay before the hover card appears — long enough that scrubbing
@@ -12,7 +13,7 @@ const HOVER_DELAY_MS = 350;
 
 export default function Tab({
   session, active, needsAttention, liveStatus = null, pinned = false,
-  onSelect, onForget, onTogglePin,
+  onSelect, onForget, onTogglePin, displayName = '', onRename,
 }) {
   const baseStatus = deriveTabStatus(session);
   // The agent dot + tooltip badge derive from the SAME value as the header chip
@@ -25,6 +26,19 @@ export default function Tab({
     pinned && 'is-pinned',
   );
   const dotClass = agent.dotClass;
+  // Local rename: the label shown is the operator's override when set, else
+  // the ticket summary. Renaming never touches the ticket — see taskTabNames.
+  const [renaming, setRenaming] = useState(false);
+  const label = String(
+    displayName || session?.task_summary || '',
+  ).trim();
+
+  function commitRename(value) {
+    setRenaming(false);
+    if (typeof onRename !== 'function') { return; }
+    // A blank clears the override and falls back to the ticket summary.
+    onRename(session.task_id, String(value == null ? '' : value).trim());
+  }
 
   // Hover-card state. ``anchorRect`` is a frozen snapshot of the
   // <li>'s viewport rect taken when the card opens — TabTooltip
@@ -100,8 +114,40 @@ export default function Tab({
         <span className={dotClass} />
         <span className="tab-label">
           <strong className="tab-label-id">{session.task_id}</strong>
-          {summary ? (
-            <span className="tab-label-title">{summary}</span>
+          {renaming ? (
+            <input
+              className="tab-label-rename"
+              defaultValue={label}
+              autoFocus
+              maxLength={MAX_TAB_NAME_LENGTH}
+              aria-label={`Rename the ${session.task_id} tab`}
+              // The tab itself selects-on-click; without this, clicking
+              // into your own text box switches tasks under you.
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+              onBlur={(e) => commitRename(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { commitRename(e.target.value); }
+                // Escape restores the previous label — including an empty
+                // one, so a mis-typed rename is always undoable.
+                if (e.key === 'Escape') { setRenaming(false); }
+                e.stopPropagation();
+              }}
+            />
+          ) : label ? (
+            <span
+              className="tab-label-title"
+              // Double-click is the VSCode-ish gesture and stays out of the
+              // way of the single-click select.
+              onDoubleClick={(e) => {
+                if (typeof onRename !== 'function') { return; }
+                e.stopPropagation();
+                setRenaming(true);
+              }}
+              title="Double-click to rename this tab"
+            >
+              {label}
+            </span>
           ) : null}
         </span>
         {changesIndicator}
