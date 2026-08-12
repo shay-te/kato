@@ -704,9 +704,36 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: flex;
-  gap: $SPACE-6;
-  align-items: stretch;
+  /* NOT flex. As flex items the tabs were governed by flex-basis /
+   * flex-shrink, which overrode any width or max-width set on them — a
+   * resizable tab fought the container and lost (tabs collapsed to their id
+   * instead of resizing). Laid out as inline-level boxes in a nowrap block,
+   * each tab simply honours its own max-width, which is what makes dragging
+   * one wider or narrower work at all. The tabs keep ``inline-flex`` for
+   * THEIR OWN internal row (dot, label, buttons) — that part was never the
+   * problem. */
+  display: block;
+  white-space: nowrap;
+  font-size: 0;  /* kills the whitespace gaps between inline-block siblings */
+}
+
+/* The gap flex used to provide, restored for inline flow. */
+.tabs-scroller #tab-list > .tab + .tab {
+  margin-left: $SPACE-6;
+}
+
+.tabs-scroller #tab-list > .tab {
+  vertical-align: middle;
+}
+
+/* Children of a tab lay out as inline boxes now that the tab is not a flex
+ * container — vertical-align replaces align-items, margins replace gap. */
+.tabs-pane-top .tab > * {
+  vertical-align: middle;
+}
+
+.tabs-pane-top .tab > * + * {
+  margin-left: $SPACE-6;
 }
 
 /* One segment. Pill-shaped, frosted, with the active segment
@@ -714,9 +741,14 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
  * choice. `<li>` is kept (instead of <button>) for compatibility
  * with existing tests that match `li.tab` for class assertions. */
 .tabs-pane-top .tab {
-  display: inline-flex;
-  align-items: center;
-  gap: $SPACE-6;
+  /* NO flex, anywhere in the tab. As a flex item the tab ignored max-width
+   * (flex-basis/flex-shrink won), and as a flex CONTAINER its children fought
+   * the same constraint. Plain inline-block flow: the tab honours its own
+   * max-width, and its children line up with vertical-align like any other
+   * inline content. */
+  display: inline-block;
+  white-space: nowrap;
+  font-size: $TEXT-12;
   /* Right padding is generous because the right edge holds TWO
    * round buttons (pin + ×) whose hover rings would otherwise bleed
    * past the pill's right rounded cap into the inter-tab gap (the
@@ -776,10 +808,15 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
  * the flex row (a flex item's default min-width:auto would refuse to
  * shrink and overflow the pill instead). */
 .tabs-pane-top .tab .tab-label {
-  display: inline-flex;
-  align-items: baseline;
-  gap: $SPACE-6;
-  min-width: 0;
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+.tabs-pane-top .tab .tab-label > * + * {
+  margin-left: $SPACE-6;
 }
 
 .tabs-pane-top .tab strong,
@@ -10023,3 +10060,56 @@ body.kato-resizing {
 }
 
 
+
+/* Tab resize grip. The <span> is an invisible grab area on the tab's very
+ * edge; ``::after`` draws the visible line, rounded so it matches the pill's
+ * soft geometry rather than reading as a hard rule. */
+.tabs-pane-top .tab {
+  position: relative;
+}
+
+.tabs-pane-top .tab .tab-resize-handle {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  width: 12px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+/* A uniform-thickness ARC on the pill's right cap. A bordered circle clipped
+ * to its right half traces the same curve as the tab's border-radius at a
+ * CONSTANT stroke width — a plain ``border-right`` on a rounded box tapers at
+ * the ends, which is what read as a crescent/moon. Hidden until the tab is
+ * hovered. */
+.tabs-pane-top .tab .tab-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  /* The pill's right cap is a semicircle of radius = tab height / 2, so the
+   * arc only matches its curvature if the circle's DIAMETER equals the tab
+   * height. A fixed size (18px) traced a tighter curve than the pill and
+   * read as a separate blob rather than its edge. */
+  height: 100%;
+  aspect-ratio: 1;
+  box-sizing: border-box;
+  border: 2px solid $C-NEUTRAL-96-A65;
+  border-radius: 50%;
+  /* Keep only the right half → an arc. */
+  clip-path: inset(0 0 0 50%);
+  opacity: 0;
+  transition: opacity 120ms ease-out, border-color 120ms ease-out;
+}
+
+.tabs-pane-top .tab:hover .tab-resize-handle::after {
+  opacity: 1;
+}
+
+.tabs-pane-top .tab .tab-resize-handle:hover::after,
+.tabs-pane-top .tab .tab-resize-handle.is-dragging::after {
+  opacity: 1;
+  border-color: $C-CYAN-52;
+}

@@ -3,6 +3,17 @@ import { cx } from '../utils/cx.js';
 import { deriveTabStatus, tabStatusTitle } from '../utils/tabStatus.js';
 import { deriveAgentStatus, badgeKindFor } from '../utils/agentStatus.js';
 import Icon from './Icon.jsx';
+import { useResizable } from '../hooks/useResizable.js';
+
+// Resize drives ``max-width``, NOT ``width``. A tab is inline-flex and sizes
+// to its content; ``max-width: 260px`` is the cap that ellipsises long names.
+// Raising the cap lets the tab grow to fit the name, lowering it shrinks
+// toward the id — which is exactly the requested behaviour, and it works WITH
+// the strip's layout instead of overriding width/flex-basis and fighting it
+// (that fought ``flex-shrink: 0`` and collapsed tabs to their id).
+const TAB_CAP_MIN = 132;   // roughly the task code alone
+const TAB_CAP_MAX = 600;
+const TAB_CAP_DEFAULT = 260;  // the stylesheet's own cap
 import { MAX_TAB_NAME_LENGTH } from '../utils/taskTabNames.js';
 
 // Fallbacks used until the label has been measured (first paint, or a
@@ -98,6 +109,17 @@ export default function Tab({
   // the untruncated name + the rest of the detail.
   const summary = String(session?.task_summary || '').trim();
 
+  const capKey = `kato.tab.cap.${session.task_id}`;
+  const { width: cap, onPointerDown } = useResizable({
+    storageKey: capKey,
+    defaultWidth: TAB_CAP_DEFAULT,
+    minWidth: TAB_CAP_MIN,
+    maxWidth: TAB_CAP_MAX,
+    // 'left' so dragging RIGHT widens. With 'right' the delta is inverted
+    // for a handle on the tab's right edge — pulling left grew the tab.
+    anchor: 'left',
+  });
+
   const model = buildTooltipModel(session, baseStatus, needsAttention, agent);
 
   return (
@@ -105,6 +127,11 @@ export default function Tab({
       <li
         ref={liRef}
         className={className}
+        // Always applied: an untouched tab's cap equals the stylesheet's own
+        // 260px, so this is a no-op until dragged. Gating it behind state made
+        // pointerdown re-render mid-drag, which dropped pointer capture — the
+        // tab then resized on plain mouse MOVE, with no button held.
+        style={{ maxWidth: `${cap}px` }}
         data-task-id={session.task_id}
         onClick={handleSelect}
         onMouseEnter={openTooltipSoon}
@@ -173,6 +200,20 @@ export default function Tab({
         >
           <Icon name="xmark" />
         </button>
+        <span
+          className="tab-resize-handle"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={`Resize the ${session.task_id} tab`}
+          title="Drag to resize this tab"
+          onClick={(e) => e.stopPropagation()}
+          // MOUSE down, not pointer down: useResizable ends the drag on a
+          // document ``mouseup``, and its ``preventDefault()`` on a
+          // pointerdown suppresses the compatibility mouse events — so the
+          // release was never seen and the tab kept resizing until the next
+          // click.
+          onMouseDown={(e) => { e.stopPropagation(); onPointerDown(e); }}
+        />
       </li>
       {anchorRect && (
         <TabTooltip anchorRect={anchorRect} model={model} />
