@@ -26,9 +26,11 @@ function assertDeclaration(body, property, value) {
   assert.match(body, new RegExp(`${property}\\s*:\\s*${value}\\s*;`));
 }
 
-test('pin and × stretch their hit target to the pill edges', () => {
+test('pencil, pin and × stretch their hit target to the pill edges', () => {
   const body = ruleBody(
-    '.tabs-pane-top .tab .tab-pin-btn::before,\n.tabs-pane-top .tab .tab-forget-btn::before',
+    '.tabs-pane-top .tab .tab-rename-btn::before,\n'
+    + '.tabs-pane-top .tab .tab-pin-btn::before,\n'
+    + '.tabs-pane-top .tab .tab-forget-btn::before',
   );
   assertDeclaration(body, 'position', 'absolute');
   // Vertical inset matches .tab's declared 6px padding exactly: the target
@@ -52,6 +54,109 @@ test('the × keeps its 16px disc — only the hit area grew', () => {
   assertDeclaration(body, 'visibility', 'hidden');
 });
 
+test('the pencil is revealed on hover, like the pin and ×', () => {
+  // Hidden at rest so a strip of tabs stays readable; visible the moment the
+  // pointer is on the tab, which is what makes renaming discoverable at all.
+  assertDeclaration(
+    ruleBody('.tabs-pane-top .tab .tab-rename-btn'), 'visibility', 'hidden',
+  );
+  assertDeclaration(
+    ruleBody(
+      '.tabs-pane-top .tab:hover .tab-rename-btn,\n'
+      + '.tabs-pane-top .tab.active .tab-rename-btn',
+    ),
+    'visibility',
+    'visible',
+  );
+});
+
+test('a RESIZED tab reserves room for every sibling sharing its row', () => {
+  // 10 dot + 6 label + 6+16 pencil + 6+16 pin + 6+16 × = 82, rounded DOWN to
+  // 80. The percentage resolves against the CONTENT box, so the pill's
+  // padding is already excluded and must not be added. Rounding down matters:
+  // reserving the exact cost leaves the label a pixel short of its own text
+  // at maximum width, and the overdraft comes out of the right padding.
+  assertDeclaration(
+    ruleBody('.tabs-pane-top .tab.has-custom-width .tab-label'),
+    'max-width',
+    'calc\\(100% - 80px\\)',
+  );
+});
+
+test('the changes indicator gets its own reserve rather than a blanket one', () => {
+  // Reserving for it on every tab squeezes the ones without it by 17px, and
+  // the symptom looks like two unrelated bugs: the name ellipsises early AND
+  // a gap opens between the × and the pill's edge. Inline content packs left,
+  // so pixels wrongly denied to the label resurface as dead space at the end.
+  assertDeclaration(
+    ruleBody('.tabs-pane-top .tab.has-custom-width.has-changes .tab-label'),
+    'max-width',
+    'calc\\(100% - 96px\\)',
+  );
+});
+
+test('an un-resized tab sizes to its name instead of ellipsising', () => {
+  // The reserve must NOT apply here: the tab grows to its content, so the
+  // percentage resolves against a width derived from this very label, and
+  // subtracting 100 leaves it ~1px short — an ellipsis on a tab that had
+  // just sized itself to avoid one. A px ceiling has no such feedback.
+  assertDeclaration(
+    ruleBody('.tabs-pane-top .tab .tab-label'), 'max-width', '860px',
+  );
+  // Scanned across the sheet rather than via ruleBody: `.tabs-pane-top .tab`
+  // has several blocks and the ceiling lives in a later one.
+  assert.match(css, /\.tabs-pane-top \.tab \{[^}]*max-width: 1000px;/);
+});
+
+test('the rename box is sized in JS, not by a percentage reserve', () => {
+  // The input gets an explicit pixel width measured off the label it
+  // replaces (Tab.jsx → renameBoxWidth). A `calc(100% - Npx)` reserve here
+  // let the box run on under the pin and × — which paint above it, so the
+  // overflow was invisible rather than obviously wrong. `max-width: 100%`
+  // is the only width rule left, as a floor for the unmeasured case.
+  const body = ruleBody('.tabs-pane-top .tab .tab-label-rename');
+  assertDeclaration(body, 'max-width', '100%');
+  assert.doesNotMatch(body, /(^|[^-])width:\s*100%/);
+  assert.doesNotMatch(css, /\.tab-label\.is-renaming \{[^}]*max-width/);
+  // And the label must not clip it: a box flush against its container's edge
+  // loses its 1px border to sub-pixel accumulation however exact the width.
+  assertDeclaration(
+    ruleBody('.tabs-pane-top .tab .tab-label.is-renaming'),
+    'overflow',
+    'visible',
+  );
+});
+
+test('the rename box gets the label to itself', () => {
+  // Sharing the label's ~158px with the id left roughly 90px of a 160px
+  // input visible and clipped the rest, so the operator could not see the
+  // text they were editing — and retyping it appended to the hidden value.
+  assertDeclaration(
+    ruleBody('.tabs-pane-top .tab .tab-label.is-renaming .tab-label-id'),
+    'display',
+    'none',
+  );
+  assertDeclaration(
+    ruleBody('.tabs-pane-top .tab .tab-label-rename'), 'width', '100%',
+  );
+});
+
+test('the × target stops short of the resize grip', () => {
+  // The × paints above the grip, so any target it extends rightward is
+  // grab-area the grip loses — and the grip is already the hardest control
+  // on the pill to hit.
+  // Matched against the whole sheet, not via ruleBody: the shared hit-area
+  // rule also ENDS in this selector, so a plain lookup finds that one first.
+  // This pins the standalone override that follows it.
+  // Neither side expands: rightward it eats the grip, leftward it claims the
+  // gap to the pin (both targets meet there, and the × wins), turning the
+  // destructive red on while the operator aims at the pin.
+  assert.match(css, /\.tab-forget-btn::before \{\s*left: 0;\s*right: 0;\s*\}/);
+  assertDeclaration(
+    ruleBody('.tabs-pane-top .tab .tab-resize-handle'), 'width', '16px',
+  );
+});
+
 test('the buttons stack above the resize handle', () => {
   // .tab-resize-handle::after is a circle as wide as the tab is tall,
   // clipped to its right half. clip-path culls hit-testing but opacity:0
@@ -59,7 +164,9 @@ test('the buttons stack above the resize handle', () => {
   // without these it took the clicks aimed at the × beside it.
   assertDeclaration(
     ruleBody(
-      '.tabs-pane-top .tab .tab-pin-btn,\n.tabs-pane-top .tab .tab-forget-btn',
+      '.tabs-pane-top .tab .tab-rename-btn,\n'
+      + '.tabs-pane-top .tab .tab-pin-btn,\n'
+      + '.tabs-pane-top .tab .tab-forget-btn',
     ),
     'z-index',
     '2',

@@ -101,6 +101,7 @@ from kato_webserver.git_diff_utils import (
     resolve_base_ref,
     tracked_file_tree,
 )
+from kato_webserver.prompt_attachment_store import save_attachment
 from kato_webserver.prompt_draft_store import read_draft, write_draft
 
 
@@ -1058,6 +1059,30 @@ def _register_http_routes(app: Flask) -> None:
             return jsonify({'ok': True})
         write_draft(workspace_dir, body.get('text', ''), body.get('images', []))
         return jsonify({'ok': True})
+
+    @app.post('/api/sessions/<task_id>/attachments')
+    def upload_session_attachment(task_id: str):
+        """Save a large composer attachment into the task workspace.
+
+        Small text files are inlined into the prompt by the composer. Past a
+        size threshold that only wastes context and truncates the interesting
+        part, so the file is written to disk here and the prompt references
+        its path instead — the agent reads it with its own tools.
+        """
+        workspace_manager = app.config.get('WORKSPACE_MANAGER')
+        if workspace_manager is None:
+            return jsonify({'ok': False, 'error': 'not available'}), 503
+        upload = request.files.get('file')
+        if upload is None:
+            return jsonify({'ok': False, 'error': 'no file in the request'}), 400
+        try:
+            workspace_dir = workspace_manager.workspace_path(task_id)
+        except Exception:  # noqa: BLE001 - unknown task has nowhere to write
+            return jsonify(
+                {'ok': False, 'error': 'no workspace for this task'},
+            ), 404
+        result = save_attachment(workspace_dir, upload.filename, upload.read())
+        return jsonify(result), (200 if result.get('ok') else 400)
 
     @app.get('/api/effort-levels')
     def list_effort_levels():

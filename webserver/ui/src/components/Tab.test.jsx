@@ -135,6 +135,286 @@ describe('Tab', () => {
     confirmSpy.mockRestore();
   });
 
+  test('the changes-indicator reserve is applied only when it is showing', () => {
+    const { container: without } = render(
+      <Tab session={_session({ has_changes_pending: false })} onSelect={() => {}} />,
+    );
+    expect(without.querySelector('li')).not.toHaveClass('has-changes');
+
+    const { container: with_ } = render(
+      <Tab session={_session({ has_changes_pending: true })} onSelect={() => {}} />,
+    );
+    expect(with_.querySelector('li')).toHaveClass('has-changes');
+  });
+
+  test('an un-resized tab is left to size itself to its name', () => {
+    // No inline max-width, and no `has-custom-width` class: both of those
+    // are what pinned the pill to a default width and ellipsised the ticket
+    // name the operator was trying to read.
+    window.localStorage.removeItem('kato.tab.cap.v3.KATO-123');
+    const { container } = render(
+      <Tab session={_session()} onSelect={() => {}} />,
+    );
+    const li = container.querySelector('li');
+
+    expect(li.style.maxWidth).toBe('');
+    expect(li).not.toHaveClass('has-custom-width');
+  });
+
+  test('a tab the operator resized takes a definite width, not a cap', () => {
+    // Definite, because a max-width leaves an inline-block pill sizing to
+    // its content — and the label's percentage reserve then resolves against
+    // a width derived from the label, ellipsising a name that had room. No
+    // amount of widening cleared it.
+    window.localStorage.setItem('kato.tab.cap.v3.KATO-123', '320');
+    try {
+      const { container } = render(
+        <Tab session={_session()} onSelect={() => {}} />,
+      );
+      const li = container.querySelector('li');
+
+      expect(li.style.width).toBe('320px');
+      expect(li.style.maxWidth).toBe('');
+      expect(li).toHaveClass('has-custom-width');
+    } finally {
+      window.localStorage.removeItem('kato.tab.cap.v3.KATO-123');
+    }
+  });
+
+  test('a width left over from the mount-persisting hook is ignored', () => {
+    // Every browser has one of these for every task it ever opened: the old
+    // hook wrote the default on mount, so "stored" did not mean "chosen".
+    // Honouring them would pin every tab to 260px and ellipsise the name.
+    window.localStorage.setItem('kato.tab.cap.KATO-123', '260');
+    try {
+      const { container } = render(
+        <Tab session={_session()} onSelect={() => {}} />,
+      );
+      const li = container.querySelector('li');
+
+      expect(li.style.maxWidth).toBe('');
+      expect(li).not.toHaveClass('has-custom-width');
+    } finally {
+      window.localStorage.removeItem('kato.tab.cap.KATO-123');
+    }
+  });
+
+  test('a stored width wider than the content is pulled back to it', () => {
+    // Dragging past the natural width only adds empty pill, so the measured
+    // auto-size width is the drag's upper bound. useResizable re-clamps when
+    // that bound arrives, so an over-wide stored value corrects on load.
+    const rect = window.HTMLElement.prototype.getBoundingClientRect;
+    window.HTMLElement.prototype.getBoundingClientRect = function () {
+      return { width: 300, height: 30, top: 0, left: 0, right: 0, bottom: 0 };
+    };
+    window.localStorage.setItem('kato.tab.cap.v3.KATO-123', '900');
+    try {
+      const { container } = render(
+        <Tab session={_session()} onSelect={() => {}} />,
+      );
+
+      // 300 measured + 24px slack. The slack is generous on purpose: an
+      // exact bound puts the ellipsis back at maximum width the moment any
+      // of the chrome measurements shifts by a pixel.
+      expect(container.querySelector('li').style.width).toBe('302px');
+    } finally {
+      window.localStorage.removeItem('kato.tab.cap.v3.KATO-123');
+      window.HTMLElement.prototype.getBoundingClientRect = rect;
+    }
+  });
+
+  test('a pencil button opens the rename box', () => {
+    // The discoverable path. Double-click alone was a guess — nothing on the
+    // tab said it could be renamed.
+    const { container } = render(
+      <Tab session={_session()} onSelect={() => {}} onRename={() => {}} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /rename the kato-123 tab/i }));
+
+    expect(container.querySelector('.tab-label-rename')).toBeInTheDocument();
+  });
+
+  test('the pencil does not also select the tab', () => {
+    const onSelect = vi.fn();
+    render(<Tab session={_session()} onSelect={onSelect} onRename={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /rename the kato-123 tab/i }));
+
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  test('the pencil gives way to the input while renaming', () => {
+    // It would otherwise sit next to its own text box, doing nothing.
+    const { container } = render(
+      <Tab session={_session()} onSelect={() => {}} onRename={() => {}} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /rename the kato-123 tab/i }));
+
+    expect(container.querySelector('.tab-rename-btn')).toBeNull();
+  });
+
+  test('no pencil when renaming is not wired', () => {
+    const { container } = render(<Tab session={_session()} onSelect={() => {}} />);
+
+    expect(container.querySelector('.tab-rename-btn')).toBeNull();
+  });
+
+  test('double-clicking the name opens a rename box holding the current name', () => {
+    const { container } = render(
+      <Tab session={_session()} onSelect={() => {}} onRename={() => {}} />,
+    );
+    fireEvent.doubleClick(container.querySelector('.tab-label-title'));
+
+    const input = container.querySelector('.tab-label-rename');
+    expect(input).toBeInTheDocument();
+    expect(input.value).toBe('Fix the bug');
+  });
+
+  test('the rename box selects its text so typing REPLACES the name', () => {
+    // The append bug: autoFocus parks the caret at the end of a value that
+    // is mostly clipped out of sight, so an operator who retypes the name
+    // gets "Core-lib skillCore-lib skillCore-lib skill" instead of one copy.
+    const { container } = render(
+      <Tab session={_session()} onSelect={() => {}} onRename={() => {}} />,
+    );
+    fireEvent.doubleClick(container.querySelector('.tab-label-title'));
+
+    const input = container.querySelector('.tab-label-rename');
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe('Fix the bug'.length);
+  });
+
+  test('the id makes way for the rename box instead of crowding it', () => {
+    // Sharing the label's ~158px with the id left about 90px of a 160px
+    // input visible, the rest clipped — which is what hid the text being
+    // edited in the first place.
+    const { container } = render(
+      <Tab session={_session()} onSelect={() => {}} onRename={() => {}} />,
+    );
+    expect(container.querySelector('.tab-label.is-renaming')).toBeNull();
+
+    fireEvent.doubleClick(container.querySelector('.tab-label-title'));
+    expect(container.querySelector('.tab-label.is-renaming')).toBeInTheDocument();
+  });
+
+  test('a fractional label width is not rounded up into a clipped border', () => {
+    // offsetWidth rounds to whole pixels. Rounding UP makes the input a hair
+    // wider than the label holding it, and the label's overflow:hidden then
+    // shaves the input's 1px right border — the "text field is cut off on
+    // the right" report. The sub-pixel measurement has to win.
+    const rect = window.HTMLElement.prototype.getBoundingClientRect;
+    window.HTMLElement.prototype.getBoundingClientRect = function () {
+      return { width: 239.6, height: 30, top: 0, left: 0, right: 0, bottom: 0 };
+    };
+    try {
+      const { container } = render(
+        <Tab session={_session()} onSelect={() => {}} onRename={() => {}} />,
+      );
+      fireEvent.click(
+        screen.getByRole('button', { name: /rename the kato-123 tab/i }),
+      );
+
+      // Sub-pixel width kept (not rounded to 240), less the 2px inset that
+      // keeps the box off its container's edge.
+      expect(container.querySelector('.tab-label-rename').style.width)
+        .toBe('237.6px');
+    } finally {
+      window.HTMLElement.prototype.getBoundingClientRect = rect;
+    }
+  });
+
+  test('the pill keeps its width while renaming', () => {
+    // A tab is inline-block, so it sizes to content — and renaming swaps the
+    // id + name for one input. Without pinning, double-clicking shrank the
+    // pill (and shoved every tab after it) the moment you started editing.
+    // jsdom reports offsetWidth as 0, so stub a real measurement.
+    const measured = Object.getOwnPropertyDescriptor(
+      window.HTMLElement.prototype, 'offsetWidth',
+    );
+    Object.defineProperty(window.HTMLElement.prototype, 'offsetWidth', {
+      configurable: true, value: 240,
+    });
+    try {
+      const { container } = render(
+        <Tab session={_session()} onSelect={() => {}} onRename={() => {}} />,
+      );
+      const li = container.querySelector('li');
+      expect(li.style.width).toBe('');
+
+      fireEvent.doubleClick(container.querySelector('.tab-label-title'));
+      expect(li.style.width).toBe('240px');
+      // The input is sized from the label it replaces, so its box can never
+      // run on under the pin / × (which paint above it and would hide the
+      // overflow). Same stub, less the 2px inset.
+      expect(container.querySelector('.tab-label-rename').style.width)
+        .toBe('238px');
+
+      fireEvent.keyDown(container.querySelector('.tab-label-rename'), {
+        key: 'Escape',
+      });
+      // Released afterwards — the pinned width must not outlive the edit, or
+      // a later resize-drag would be fighting a stale inline width.
+      expect(li.style.width).toBe('');
+    } finally {
+      Object.defineProperty(
+        window.HTMLElement.prototype, 'offsetWidth', measured,
+      );
+    }
+  });
+
+  test('Enter commits the new name', () => {
+    const onRename = vi.fn();
+    const { container } = render(
+      <Tab session={_session()} onSelect={() => {}} onRename={onRename} />,
+    );
+    fireEvent.doubleClick(container.querySelector('.tab-label-title'));
+
+    const input = container.querySelector('.tab-label-rename');
+    fireEvent.change(input, { target: { value: 'Core-lib skill' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(onRename).toHaveBeenCalledWith('KATO-123', 'Core-lib skill');
+    expect(container.querySelector('.tab-label-rename')).toBeNull();
+  });
+
+  test('a blank name clears the override', () => {
+    const onRename = vi.fn();
+    const { container } = render(
+      <Tab session={_session()} onSelect={() => {}} onRename={onRename} />,
+    );
+    fireEvent.doubleClick(container.querySelector('.tab-label-title'));
+
+    const input = container.querySelector('.tab-label-rename');
+    fireEvent.change(input, { target: { value: '   ' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(onRename).toHaveBeenCalledWith('KATO-123', '');
+  });
+
+  test('Escape closes the rename box without renaming', () => {
+    const onRename = vi.fn();
+    const { container } = render(
+      <Tab session={_session()} onSelect={() => {}} onRename={onRename} />,
+    );
+    fireEvent.doubleClick(container.querySelector('.tab-label-title'));
+
+    const input = container.querySelector('.tab-label-rename');
+    fireEvent.change(input, { target: { value: 'discard me' } });
+    fireEvent.keyDown(input, { key: 'Escape' });
+
+    expect(onRename).not.toHaveBeenCalled();
+    expect(container.querySelector('.tab-label-rename')).toBeNull();
+  });
+
+  test('double-clicking the name does not also select the tab', () => {
+    const onSelect = vi.fn();
+    const { container } = render(
+      <Tab session={_session()} onSelect={onSelect} onRename={() => {}} />,
+    );
+    fireEvent.doubleClick(container.querySelector('.tab-label-title'));
+
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
   test('forget button is a no-op when onForget is not a function', () => {
     render(<Tab session={_session()} onSelect={() => {}} />);
     // Should not throw — handleForget bails when typeof

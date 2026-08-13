@@ -545,6 +545,25 @@ export function saveDraft(taskId, draft) {
   );
 }
 
+// Save a file too large to inline into the prompt. It lands in the task
+// workspace and the composer references its PATH, so the agent reads it with
+// its own tools instead of receiving a truncated copy in its context.
+// Multipart rather than JSON: these are megabytes, and base64 would inflate
+// them by a third for no benefit.
+export function uploadAttachment(taskId, file) {
+  if (!taskId || !file) {
+    return Promise.resolve({ ok: false, error: 'no task or file' });
+  }
+  const form = new FormData();
+  form.append('file', file, file.name);
+  return fetch(
+    `/api/sessions/${encodeURIComponent(taskId)}/attachments`,
+    { method: 'POST', body: form },
+  )
+    .then((response) => response.json())
+    .catch((error) => ({ ok: false, error: String(error?.message || error) }));
+}
+
 export function fetchSessionModel(taskId) {
   if (!taskId) { return Promise.resolve({ model: '' }); }
   return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/model`);

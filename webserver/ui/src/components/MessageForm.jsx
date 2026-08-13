@@ -25,6 +25,8 @@ import {
   looksLikeTextFile,
   readTextAttachment,
   formatTextAttachment,
+  formatSavedAttachment,
+  MAX_TEXT_ATTACHMENT_BYTES,
   TEXT_REJECT_REASON,
 } from '../utils/textAttachment.js';
 import { toast } from '../stores/toastStore.js';
@@ -42,7 +44,7 @@ import {
   writeImageDraft,
   clearImageDraft,
 } from '../utils/composerImageDraft.js';
-import { fetchDraft, saveDraft } from '../api.js';
+import { fetchDraft, saveDraft, uploadAttachment } from '../api.js';
 import ComposerActionsMenu from './ComposerActionsMenu.jsx';
 import ComposerModeMenu from './ComposerModeMenu.jsx';
 import ContextMeter from './ContextMeter.jsx';
@@ -519,18 +521,34 @@ const MessageForm = forwardRef(function MessageForm({
   async function ingestTextFiles(files) {
     const blocks = [];
     for (const file of files) {
+      // Too big to inline: save it into the task workspace and reference the
+      // path. Truncating used to be the answer, which handed the agent a log
+      // whose interesting part had been cut off — with only a toast to say so.
+      if (file.size > MAX_TEXT_ATTACHMENT_BYTES) {
+        // eslint-disable-next-line no-await-in-loop
+        const saved = await uploadAttachment(taskId, file);
+        if (saved?.ok) {
+          blocks.push(formatSavedAttachment(file.name, saved.path, saved.bytes));
+          toast.show({
+            kind: 'success',
+            title: 'Large file saved to the workspace',
+            message: `${file.name} is on disk — the agent reads it from there, nothing was cut off.`,
+            durationMs: 6000,
+          });
+        } else {
+          toast.show({
+            kind: 'error',
+            title: 'File attachment failed',
+            message: `${file.name} could not be saved: ${saved?.error || 'unknown error'}`,
+            durationMs: 6000,
+          });
+        }
+        continue;
+      }
       // eslint-disable-next-line no-await-in-loop
       const { text, truncated, reason } = await readTextAttachment(file);
       if (text != null) {
         blocks.push(formatTextAttachment(file.name, text, { truncated }));
-        if (truncated) {
-          toast.show({
-            kind: 'warning',
-            title: 'Large file truncated',
-            message: `${file.name} was truncated — only the first part was attached.`,
-            durationMs: 6000,
-          });
-        }
       } else {
         toast.show({
           kind: reason === TEXT_REJECT_REASON.BINARY ? 'warning' : 'error',

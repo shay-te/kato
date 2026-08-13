@@ -26,11 +26,26 @@ export function useResizable({
     setWidth((current) => clamp(current));
   }, [clamp]);
 
+  // Has the operator actually CHOSEN a width, as opposed to living with the
+  // default? Callers use this to tell "never touched" from "deliberately set
+  // to 260" — a tab, for instance, sizes itself to its own label until the
+  // operator drags it, and only then honours a fixed cap. Nothing persisted
+  // means nothing chosen, which is why the width is no longer written on
+  // mount (it used to be, so every mount immediately looked like a choice).
+  const [hasCustomWidth, setHasCustomWidth] = useState(
+    () => readPersistedWidth(storageKey) !== null,
+  );
+
   const startStateRef = useRef(null);
 
   const onPointerDown = useCallback((event) => {
     event.preventDefault();
     startStateRef.current = { startX: event.clientX, startWidth: width };
+    // Persist at the END of the drag, from the last value the move handler
+    // produced — a press with no movement is not a resize and must not stamp
+    // a "chosen" width.
+    let dragged = false;
+    let latest = width;
     // Two classes, two scopes. ``kato-resizing`` is GLOBAL and only drives
     // document-wide drag ergonomics (col-resize cursor, no text selection).
     // The blue active visual hangs off ``is-dragging`` on THIS handle —
@@ -44,18 +59,24 @@ export function useResizable({
       if (!startStateRef.current) { return; }
       const dx = moveEvent.clientX - startStateRef.current.startX;
       const delta = anchor === 'right' ? -dx : dx;
-      setWidth(clamp(startStateRef.current.startWidth + delta));
+      latest = clamp(startStateRef.current.startWidth + delta);
+      dragged = true;
+      setWidth(latest);
     };
     const onUp = () => {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
       document.body.classList.remove('kato-resizing');
       if (handle) { handle.classList.remove('is-dragging'); }
+      if (dragged) {
+        writePersistedWidth(storageKey, latest);
+        setHasCustomWidth(true);
+      }
       startStateRef.current = null;
     };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
-  }, [anchor, clamp, width]);
+  }, [anchor, clamp, storageKey, width]);
 
   // Re-clamp whenever the bounds change. ``maxWidth`` is dynamic for the
   // chat pane (viewport − centre-min), so a viewport shrink lowers it; without
@@ -66,9 +87,5 @@ export function useResizable({
     setWidth((current) => clamp(current));
   }, [clamp]);
 
-  useEffect(() => {
-    writePersistedWidth(storageKey, width);
-  }, [storageKey, width]);
-
-  return { width, onPointerDown };
+  return { width, hasCustomWidth, onPointerDown };
 }

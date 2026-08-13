@@ -147,3 +147,24 @@ export function formatTextAttachment(name, text, { truncated = false } = {}) {
   const note = truncated ? ` (truncated to first ${kb} KB)` : '';
   return `Attached \`${safeName}\`${note}:\n${fence}${lang}\n${body}\n${fence}`;
 }
+
+// Human-readable size for the saved-file fragment below.
+function humanSize(bytes) {
+  const value = Number(bytes) || 0;
+  if (value >= 1024 * 1024) { return `${(value / (1024 * 1024)).toFixed(1)} MB`; }
+  if (value >= 1024) { return `${Math.round(value / 1024)} KB`; }
+  return `${value} bytes`;
+}
+
+// Fragment for a file too large to inline: it was written into the task
+// workspace, so hand the agent the PATH. Inlining a multi-megabyte log wastes
+// context on the parts nobody asked about and truncates the rest — reading it
+// from disk lets the agent grep for what the question actually needs.
+export function formatSavedAttachment(name, path, bytes) {
+  const safeName = baseName(name).trim() || 'attachment';
+  return (
+    `Attached \`${safeName}\` (${humanSize(bytes)}) — too large to inline, so `
+    + `it is saved in this task's workspace at:\n\`${path}\`\n`
+    + 'Read or search that file directly rather than asking me to paste it.'
+  );
+}

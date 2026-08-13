@@ -713,13 +713,16 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
    * only the dot showed" regression: the default flex-shrink:1 let a
    * crowded #tab-list shrink each segment to nothing.
    *
-   * A ``max-width`` cap makes them behave like VSCode / Chrome tabs: the
-   * chip grows to fit the task id + name up to the cap, then the NAME
-   * ellipsises (the id + pin/× icons are never squeezed — those parts
-   * are flex-shrink:0 inside). Without the cap a long task name would
-   * blow one tab out to the full strip width. */
+   * This is a CEILING, not the working width. A 260px cap here meant every
+   * ticket summary longer than a few words was permanently ellipsised, and
+   * no amount of dragging helped past the old 600px limit — the operator
+   * could not read the name of their own task. The pill is inline-block, so
+   * with the ceiling raised it simply sizes to its content; the strip
+   * scrolls horizontally, so a wide tab costs screen space and nothing else.
+   * A tab the operator HAS dragged carries an inline ``max-width`` (its
+   * remembered cap) which overrides this. */
   flex-shrink: 0;
-  max-width: 260px;
+  max-width: 1000px;
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease, transform 90ms ease;
 }
 
@@ -753,14 +756,58 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 /* id + name group. ``min-width: 0`` lets the name child ellipsise inside
  * the flex row (a flex item's default min-width:auto would refuse to
  * shrink and overflow the pill instead). */
-/* Reserve room for the fixed-width chrome (status dot, pin, ×) so the label
- * ellipsises INSTEAD of pushing them past the pill's edge. With the tab as an
- * inline-block, nothing shrinks the label automatically the way a flex row
- * did — dragging a tab narrower simply overflowed the buttons out of bounds.
- * The subtrahend is the dot + both 20px buttons + their margins. */
+/* Reserve room for the fixed-width chrome (changes indicator, pencil, pin, ×)
+ * so the label ellipsises INSTEAD of pushing them past the pill's edge. With
+ * the tab as an inline-block, nothing shrinks the label automatically the way
+ * a flex row did — dragging a tab narrower simply overflowed the buttons out
+ * of bounds.
+ *
+ * This reserve applies ONLY to a tab the operator has resized, i.e. one with
+ * a fixed width to fit inside. An auto-sized tab must not carry it: the tab
+ * grows to its content, so the percentage resolves against a width that was
+ * itself derived from the label, and the subtrahend then makes the label
+ * ~1px too narrow — an ellipsis on a tab that had just sized itself to avoid
+ * one. The px cap below bounds the auto case instead, with no circularity.
+ *
+ * The percentage resolves against the tab's CONTENT box, so the padding is
+ * already excluded — do NOT add it here. The subtrahend is every sibling
+ * that shares the row, plus the 6px `.tab > * + *` margin each one carries
+ * (including the label's own):
+ *
+ *   10 dot + 6 label + 6+16 pencil + 6+16 pin + 6+16 × = 82
+ *
+ * and 17 more (6+11) when the changes indicator is present — which is why
+ * this is split in two. A single figure covering the indicator over-reserves
+ * on every tab without one, and the symptom is a pair that looks unrelated:
+ * the name ellipsises early AND an unexplained gap opens between the × and
+ * the pill's edge. They are the same pixels. Inline content packs left, so
+ * whatever the label is wrongly denied resurfaces as dead space at the end
+ * of the row.
+ *
+ * Both figures are rounded DOWN. Reserving the exact cost leaves the label a
+ * pixel short of its own text at maximum width, so a tab dragged wide enough
+ * to show its whole name ellipsised anyway; the error has to fall on the
+ * generous side. The small overdraft comes out of the pill's 14px right
+ * padding, which exists precisely so the trailing controls can breathe.
+ *
+ * Anything that adds or removes a trailing control has to move these with
+ * it, staying just under the true cost. */
+.tabs-pane-top .tab.has-custom-width .tab-label {
+  max-width: calc(100% - 80px);
+}
+
+.tabs-pane-top .tab.has-custom-width.has-changes .tab-label {
+  max-width: calc(100% - 96px);
+}
+
+/* Auto-sizing tab: the name is shown in full. A plain px ceiling (not a
+ * percentage, which would feed back into the tab's own shrink-to-fit width)
+ * stops one pathological ticket summary from claiming the whole strip. Sized
+ * so the pill lands under the 1000px ceiling below once the id, dot, three
+ * buttons and padding take their ~127px. */
 .tabs-pane-top .tab .tab-label {
   display: inline-block;
-  max-width: calc(100% - 74px);
+  max-width: 860px;
   overflow: hidden;
   text-overflow: ellipsis;
   vertical-align: middle;
@@ -950,12 +997,58 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
  * half — still hit-testable (clip-path culls hits, opacity:0 does
  * not), positioned, and later in DOM order, so it painted over the
  * ×'s right edge and swallowed clicks there. */
+/* ───── tab-rename (pencil) button ────────────────────────────────
+ *
+ * Renaming used to be double-click-only. A gesture with no visible
+ * affordance is a guess: nothing on the tab said it could be renamed, so
+ * the feature may as well not have existed. Same 16px disc and same
+ * hover/active reveal as the pin and × beside it. Double-click still works
+ * for anyone who reaches for it. */
+.tabs-pane-top .tab .tab-rename-btn {
+  background: transparent;
+  border: none;
+  color: rgba(245, 245, 247, 0.42);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 50%;
+  visibility: hidden;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.tabs-pane-top .tab .tab-rename-btn svg {
+  width: 10px;
+  height: 10px;
+  display: block;
+}
+
+.tabs-pane-top .tab:hover .tab-rename-btn,
+.tabs-pane-top .tab.active .tab-rename-btn {
+  visibility: visible;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(245, 245, 247, 0.85);
+}
+
+.tabs-pane-top .tab .tab-rename-btn:hover {
+  background: rgba(10, 132, 255, 0.55);
+  color: #f5f5f7;
+}
+
+.tabs-pane-top .tab .tab-rename-btn,
 .tabs-pane-top .tab .tab-pin-btn,
 .tabs-pane-top .tab .tab-forget-btn {
   position: relative;
   z-index: 2;
 }
 
+.tabs-pane-top .tab .tab-rename-btn::before,
 .tabs-pane-top .tab .tab-pin-btn::before,
 .tabs-pane-top .tab .tab-forget-btn::before {
   content: "";
@@ -964,6 +1057,26 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   bottom: -6px;
   left: -3px;
   right: -3px;
+}
+
+/* The × gets NO horizontal expansion, only the vertical one it shares above.
+ *
+ * Rightward, it would eat into the resize grip: the × sits over it
+ * (z-index 2), so every pixel it borrows is a pixel the grip cannot be
+ * grabbed by — and the grip is already the hardest thing on the pill to hit,
+ * being on the rounded cap where the usable height tapers away.
+ *
+ * Leftward, it would claim the gap to the pin. That gap is 6px and the pin
+ * already expands 3px into it, so the two targets meet exactly — and the ×,
+ * painting later at the same z-index, took the whole thing. Aiming at the
+ * pin turned the × red down the full height of the pill, which reads as the
+ * destructive hover being stuck on.
+ *
+ * The vertical expansion is the one that mattered anyway: a 16px disc in a
+ * ~30px pill is missed above and below, not beside. */
+.tabs-pane-top .tab .tab-forget-btn::before {
+  left: 0;
+  right: 0;
 }
 
 /* ───── pinned-tab sticky positioning ─────────────────────────────
@@ -9891,9 +10004,40 @@ body.kato-resizing {
 }
 
 /* Inline tab rename input — sized to sit in the pill without resizing it. */
+/* While renaming, the input gets the label's whole width. The id is hidden
+ * for the duration: the label's cap already reserves 74px for the pin / × /
+ * changes indicator, and leaving the id in as well left roughly 90px of a
+ * 160px input actually visible — the rest clipped by the label's
+ * ``overflow: hidden``. An operator who cannot see the text they are editing
+ * retypes the name, and because the caret sits at the end of the hidden
+ * value it APPENDS instead of replacing. ``onFocus`` select-all in Tab.jsx
+ * is the other half of that fix. The tab still identifies itself: the input
+ * is labelled "Rename the <id> tab". */
+.tabs-pane-top .tab .tab-label.is-renaming .tab-label-id {
+  display: none;
+}
+
+/* Stop clipping while the input is up. The base label hides overflow so a
+ * long NAME ellipsises, but a rename box is one fixed-size element with
+ * nothing to ellipsise — and the clip was shaving its 1px right border,
+ * which is what "the text field is cut off on the right" was. The box is
+ * measured and inset 2px (Tab.jsx → RENAME_BOX_INSET_PX), so dropping the
+ * clip cannot let it reach the buttons. */
+.tabs-pane-top .tab .tab-label.is-renaming {
+  overflow: visible;
+}
+
+/* No width rules here on purpose. The input carries an explicit pixel width
+ * measured from this very label the moment the edit opened (Tab.jsx →
+ * renameBoxWidth), so the label keeps exactly the width it already had and
+ * the pill does not move. Percentage sizing here is what let the field run
+ * on underneath the pin and × — they paint above it (z-index: 2), so the
+ * overflowing box was invisible rather than obviously wrong. */
 .tabs-pane-top .tab .tab-label-rename {
   min-width: 0;
-  max-width: 160px;
+  /* Fallback only, for the case where the measurement came back 0 (no
+   * layout yet). Never lets the box exceed the label that contains it. */
+  max-width: 100%;
   background: #2a2a2a;
   color: #f5f5f7;
   border: 1px solid #0a84ff;
@@ -9916,7 +10060,11 @@ body.kato-resizing {
   top: 50%;
   right: 0;
   transform: translateY(-50%);
-  width: 12px;
+  /* 16px, not 12: the grip lives on the pill's rounded cap, where the
+   * usable height tapers to nothing at the corners, so the honest target is
+   * much smaller than the strip suggests. The × beside it claims the first
+   * 3px back via its own hit area, which left ~9px to hit. */
+  width: 16px;
   height: 100%;
   cursor: col-resize;
   touch-action: none;
