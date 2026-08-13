@@ -1212,7 +1212,7 @@ def _register_http_routes(app: Flask) -> None:
             ]
         else:
             payload['recent_events'] = []
-        payload['context_usage'] = _session_context_usage(app, session)
+        payload['context_usage'] = _session_context_usage(app, session, record)
         return jsonify(payload)
 
     @app.get('/api/claude/sessions')
@@ -3372,26 +3372,92 @@ def _register_action_guard_audit_route(app: Flask) -> None:
         })
 
 
-def _session_context_usage(app: Flask, session) -> dict:
+def _context_usage_from_record(record) -> dict:
+    """Last persisted context reading for a task (zeros when there is none).
+
+    The live figure lives on the SUBPROCESS, so a sleeping session — or any
+    session after a host restart — had nothing to report and the composer's
+    indicator disappeared entirely. The record keeps the last value a live
+    turn produced so the reading outlives the process that measured it.
+    """
+    empty = {'used_tokens': 0, 'limit_tokens': 0, 'model': ''}
+    if record is None:
+        return empty
+    try:
+        used = int(getattr(record, 'context_used_tokens', 0) or 0)
+        model = str(getattr(record, 'context_model', '') or '')
+    except (TypeError, ValueError):
+        return empty
+    if used <= 0 or not model:
+        return empty
+    return {
+        'used_tokens': used,
+        'limit_tokens': widen_window_to_observed(
+            context_window_tokens(model), used,
+        ),
+        'model': model,
+    }
+
+
+def _session_context_usage(app: Flask, session, record=None) -> dict:
     """Context-window usage for the composer indicator.
 
     Always the same shape so the UI has one branch, not three:
-    ``{used_tokens, limit_tokens, model}``. No live session (or a session
-    that predates the tracking) reports zeros, which the UI renders as
-    "unknown" — never as 0% used, which would read as "plenty of room".
+    ``{used_tokens, limit_tokens, model}``. Falls back to the last PERSISTED
+    reading when there is no live subprocess, so the indicator survives a
+    sleeping session instead of blinking out between turns. Zeros only when
+    nothing has ever been measured, which the UI renders as "unknown" —
+    never as 0% used, which would read as "plenty of room".
     """
     empty = {'used_tokens': 0, 'limit_tokens': 0, 'model': ''}
     if session is None:
-        return empty
+        return _context_usage_from_record(record)
     reader = getattr(session, 'context_usage', None)
     if not callable(reader):
-        return empty
+        return _context_usage_from_record(record)
     try:
         usage = reader()
     except Exception:
         app.logger.exception('failed to read session context usage')
-        return empty
-    return usage if isinstance(usage, dict) else empty
+        return _context_usage_from_record(record)
+    if not isinstance(usage, dict):
+        return _context_usage_from_record(record)
+    # A live session that has not seen an assistant turn YET (just spawned,
+    # or resumed after a restart) reports zeros — fall back rather than blank
+    # the indicator, then persist any real reading so it outlives this
+    # subprocess.
+    if int(usage.get('used_tokens', 0) or 0) <= 0:
+        return _context_usage_from_record(record)
+    _persist_context_usage(app, record, usage)
+    return usage
+
+
+def _persist_context_usage(app: Flask, record, usage: dict) -> None:
+    """Mirror a live reading onto the record so it survives the subprocess."""
+    if record is None:
+        return
+    used = int(usage.get('used_tokens', 0) or 0)
+    model = str(usage.get('model', '') or '')
+    if used <= 0 or not model:
+        return
+    if (
+        int(getattr(record, 'context_used_tokens', 0) or 0) == used
+        and str(getattr(record, 'context_model', '') or '') == model
+    ):
+        return  # unchanged — don't rewrite the record on every poll
+    try:
+        record.context_used_tokens = used
+        record.context_model = model
+        manager = app.config.get('SESSION_MANAGER')
+        saver = getattr(manager, 'save_record', None) or getattr(
+            manager, 'update_record', None,
+        )
+        if callable(saver):
+            saver(record)
+    except Exception:
+        # Best-effort: a stale persisted reading is far better than losing
+        # the live one, and this must never break the session payload.
+        app.logger.exception('failed to persist context usage')
 
 
 def _register_agent_version_route(app: Flask) -> None:
@@ -4271,6 +4337,10 @@ def _replay_preflight_log(workspace_manager, task_id: str):
 # of Claude's JSONL transcripts).
 from claude_core_lib.claude_core_lib.session.history import (
     resolve_agent_session_id as _resolve_agent_session_id,  # noqa: F401 — kept as alias for in-file callers
+)
+from claude_core_lib.claude_core_lib.helpers.context_window import (
+    context_window_tokens,
+    widen_window_to_observed,
 )
 
 

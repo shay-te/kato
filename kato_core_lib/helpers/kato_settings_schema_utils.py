@@ -182,6 +182,13 @@ SETTINGS_SCHEMA: list[dict] = [
             ('KATO_TASK_PUBLISH_MAX_RETRIES', 'number',
              'Publish max retries',
              'Retries for the publish step (PR + move-to-review).', {}),
+            ('KATO_AUTO_PUSH_ENABLED', 'bool',
+             'Autonomous push + PR',
+             'Off by default. Kato finishes a task, then parks it and '
+             'waits for the push button — it never pushes a branch or '
+             'opens a pull request on its own. Turn ON to let the scan '
+             'loop publish without asking. The UI Push / Done buttons '
+             'are operator actions and are never affected.', {}),
             ('KATO_TASK_COMMENTS_ENABLED', 'bool',
              'Read ticket comments',
              'Off by default. When on, comments on the ticket '

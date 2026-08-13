@@ -103,6 +103,17 @@ class TestAgentEndToEndIntegration(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures for integration testing."""
+        # The end-to-end flow under test INCLUDES push + PR. Kato's default is
+        # to park a finished task and wait for the operator's push button, so
+        # these opt in to autonomous publishing; tests/test_auto_push_switch
+        # owns the default. Patched at the point of use so the operator's real
+        # ~/.kato/settings.json can't decide the outcome of a test.
+        _auto_push = patch(
+            'kato_core_lib.data_layers.service.agent_service.auto_push_enabled',
+            return_value=True,
+        )
+        _auto_push.start()
+        self.addCleanup(_auto_push.stop)
         # Create mock services with proper stubs
         self.mock_task_data_access = Mock(spec=TaskService)
         self.mock_task_data_access.provider_name = 'youtrack'

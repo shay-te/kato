@@ -15,7 +15,7 @@ from __future__ import annotations
 import types
 import unittest
 from types import SimpleNamespace
-from unittest.mock import ANY, Mock, call
+from unittest.mock import ANY, Mock, call, patch
 
 from kato_core_lib.data_layers.data.fields import (
     ImplementationFields,
@@ -245,6 +245,19 @@ class TaskFixFlowTests(unittest.TestCase):
     README ### Task Fix Flow: verify all 17 steps run in the correct order
     for every combination of issue platform and repository provider.
     """
+
+    def setUp(self) -> None:
+        # The 17-step flow INCLUDES push + PR + move-to-review, so it opts in
+        # to autonomous publishing. Kato's default is to stop after testing
+        # and wait for the operator's push button — tests/test_auto_push_switch
+        # owns that. Patched at the point of use so the operator's real
+        # ~/.kato/settings.json can't decide the outcome of a test.
+        _auto_push = patch(
+            'kato_core_lib.data_layers.service.agent_service.auto_push_enabled',
+            return_value=True,
+        )
+        _auto_push.start()
+        self.addCleanup(_auto_push.stop)
 
     def _build_task_fix_services(self, issue_platform: str, repo_provider: str):
         """

@@ -75,7 +75,16 @@ export default function Tab({
     setAnchorRect(null);
   }
 
-  function handleSelect() {
+  // Selecting is the <li>'s job, but the pill also carries controls (pin, ×,
+  // the resize handle, the rename box) that must NOT select. Each of those
+  // stops propagation itself; this is the backstop, so a control added later
+  // can't silently reintroduce "clicking the × opened the task" — and so a
+  // click that lands on the pill while the pointer sits over a control still
+  // does nothing rather than switching tasks under the operator.
+  const CONTROL_SELECTOR = 'button, input, .tab-resize-handle';
+
+  function handleSelect(event) {
+    if (event?.target?.closest?.(CONTROL_SELECTOR)) { return; }
     closeTooltip();
     onSelect(session.task_id);
   }

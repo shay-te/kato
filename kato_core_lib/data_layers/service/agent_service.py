@@ -34,6 +34,11 @@ from kato_core_lib.helpers.workspace_repo_utils import sibling_repository_dirs
 from kato_core_lib.helpers.mission_logging_utils import MissionStepLoggerMixin
 from kato_core_lib.data_layers.data.task import Task
 from kato_core_lib.data_layers.service.implementation_service import ImplementationService
+from kato_core_lib.helpers.push_approval_gate_utils import (
+    AUTO_PUSH_DISABLED_REASON,
+    AUTO_PUSH_ENABLED_KEY,
+    auto_push_enabled,
+)
 from kato_core_lib.helpers.task_context_utils import PreparedTaskContext, session_suffix
 from kato_core_lib.helpers.task_lookup_utils import find_task_by_id
 from kato_core_lib.data_layers.service.notification_service import NotificationService
@@ -764,7 +769,7 @@ class AgentService(MissionStepLoggerMixin, Service):
         )
         if not testing_succeeded:
             return testing_result
-        if self._task_has_wait_before_push_tag(task):
+        if self._should_pause_for_push_approval(task):
             return self._pause_for_push_approval(task, prepared_task, execution)
         publish_result = self._task_publisher.publish_task_execution(
             task,
@@ -773,6 +778,20 @@ class AgentService(MissionStepLoggerMixin, Service):
         )
         self._update_workspace_status_after_publish(task.id, publish_result)
         return publish_result
+
+    @staticmethod
+    def _should_pause_for_push_approval(task: Task) -> bool:
+        """Must this finished task wait for the operator before publishing?
+
+        Publishing is an operator action, so the default is yes. Autonomous
+        push + PR happens only when ``KATO_AUTO_PUSH_ENABLED`` is explicitly
+        on, and even then the per-task ``kato:wait-before-git-push`` tag still
+        forces a pause — the tag is a stricter statement than the global
+        switch and must not be overridden by it.
+        """
+        if not auto_push_enabled():
+            return True
+        return AgentService._task_has_wait_before_push_tag(task)
 
     @staticmethod
     def _task_has_wait_before_push_tag(task: Task) -> bool:
@@ -801,15 +820,29 @@ class AgentService(MissionStepLoggerMixin, Service):
         task_id = str(task.id)
         with self._pending_publish_lock:
             self._pending_publish[task_id] = (task, prepared_task, execution)
+        # Name the reason that actually applies. The tag used to be the only
+        # way to get here, so the comment hard-coded it; now the default is a
+        # pause and most parked tasks carry no tag at all.
+        if self._task_has_wait_before_push_tag(task):
+            reason = f'`{TaskTags.WAIT_BEFORE_GIT_PUSH}` is set'
+            remedy = (
+                'click "Approve push" in the planning UI, or remove the '
+                f'`{TaskTags.WAIT_BEFORE_GIT_PUSH}` tag and re-trigger the '
+                'task'
+            )
+        else:
+            reason = AUTO_PUSH_DISABLED_REASON
+            remedy = (
+                'click "Approve push" in the planning UI, or set '
+                f'`{AUTO_PUSH_ENABLED_KEY}` to publish without asking'
+            )
         try:
             self._task_service.add_comment(
                 task_id,
                 'Kato has finished implementation and testing for this task. '
-                'Push and PR creation are paused because '
-                f'`{TaskTags.WAIT_BEFORE_GIT_PUSH}` is set. To proceed, '
-                'click "Approve push" in the planning UI, or remove the '
-                f'`{TaskTags.WAIT_BEFORE_GIT_PUSH}` tag and re-trigger the '
-                'task. Kato — not the agent — performs the push.',
+                f'Push and PR creation are paused because {reason}. '
+                f'To proceed, {remedy}. '
+                'Kato — not the agent — performs the push.',
             )
         except Exception:
             self.logger.exception(

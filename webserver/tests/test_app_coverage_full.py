@@ -1803,3 +1803,80 @@ class FollowLiveNoHeartbeatTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ContextUsageSurvivesIdleSessionTests(unittest.TestCase):
+    """The indicator must outlive the subprocess that measured it.
+
+    Reported as "the context usage is always disappearing": the live figure
+    lives on the session object, so a sleeping session — or any session after
+    a host restart — reported zeros and the composer's meter vanished.
+    """
+
+    @staticmethod
+    def _record(used=0, model=''):
+        return SimpleNamespace(
+            task_id='T1', context_used_tokens=used, context_model=model,
+        )
+
+    def _app(self):
+        app = SimpleNamespace(
+            logger=MagicMock(),
+            config={'SESSION_MANAGER': MagicMock()},
+        )
+        return app
+
+    def test_no_live_session_falls_back_to_the_persisted_reading(self) -> None:
+        usage = app_module._session_context_usage(
+            self._app(), None, self._record(122_600, 'claude-opus-5'),
+        )
+        self.assertEqual(usage['used_tokens'], 122_600)
+        self.assertEqual(usage['limit_tokens'], 1_000_000)
+
+    def test_nothing_ever_measured_stays_unknown(self) -> None:
+        # Zeros, NOT a guessed window — the UI renders unknown rather than
+        # "0% used", which would read as plenty of room.
+        usage = app_module._session_context_usage(self._app(), None, self._record())
+        self.assertEqual(usage, {'used_tokens': 0, 'limit_tokens': 0, 'model': ''})
+
+    def test_a_live_reading_is_persisted_for_later(self) -> None:
+        app = self._app()
+        record = self._record()
+        session = SimpleNamespace(context_usage=lambda: {
+            'used_tokens': 50_000, 'limit_tokens': 1_000_000,
+            'model': 'claude-opus-5',
+        })
+        app_module._session_context_usage(app, session, record)
+        self.assertEqual(record.context_used_tokens, 50_000)
+        self.assertEqual(record.context_model, 'claude-opus-5')
+        app.config['SESSION_MANAGER'].save_record.assert_called_once_with(record)
+
+    def test_a_live_session_with_no_turn_yet_uses_the_persisted_value(self) -> None:
+        # Just spawned / resumed: the subprocess has seen no assistant turn,
+        # so it reports zeros. Blanking the meter there is the bug.
+        session = SimpleNamespace(context_usage=lambda: {
+            'used_tokens': 0, 'limit_tokens': 0, 'model': '',
+        })
+        usage = app_module._session_context_usage(
+            self._app(), session, self._record(97_200, 'claude-opus-5'),
+        )
+        self.assertEqual(usage['used_tokens'], 97_200)
+
+    def test_a_reader_that_raises_still_reports_the_persisted_value(self) -> None:
+        def boom():
+            raise RuntimeError('boom')
+        usage = app_module._session_context_usage(
+            self._app(), SimpleNamespace(context_usage=boom),
+            self._record(1_000, 'claude-opus-5'),
+        )
+        self.assertEqual(usage['used_tokens'], 1_000)
+
+    def test_an_unchanged_reading_is_not_rewritten_every_poll(self) -> None:
+        app = self._app()
+        record = self._record(50_000, 'claude-opus-5')
+        session = SimpleNamespace(context_usage=lambda: {
+            'used_tokens': 50_000, 'limit_tokens': 1_000_000,
+            'model': 'claude-opus-5',
+        })
+        app_module._session_context_usage(app, session, record)
+        app.config['SESSION_MANAGER'].save_record.assert_not_called()

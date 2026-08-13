@@ -71,6 +71,13 @@ class PlanningSessionRecord(object):
     # the canonical name across every the orchestrator agent backend (Claude,
     # Codex, OpenHands, ...).
     agent_session_id: str = ''
+    # Last context-window reading reported by a live turn. Persisted because
+    # the live figure lives on the subprocess object: once a session sleeps or
+    # the host restarts, there is nothing to read and the composer's indicator
+    # vanished entirely. The number is still only WRITTEN by a live assistant
+    # turn — this just lets the last known value outlive the subprocess.
+    context_used_tokens: int = 0
+    context_model: str = ''
     status: str = SESSION_STATUS_ACTIVE
     created_at_epoch: float = field(default_factory=time.time)
     updated_at_epoch: float = field(default_factory=time.time)
@@ -872,6 +879,17 @@ class ClaudeSessionManager(object):
                 if drifted:
                     return None
             return session
+
+    def save_record(self, record: PlanningSessionRecord) -> None:
+        """Persist an already-held record back to disk.
+
+        For fields a CALLER owns and updates between turns — e.g. the last
+        context-window reading, which is measured from a live subprocess but
+        has to outlive it so the UI can still show it once the session sleeps.
+        """
+        if record is None:
+            return
+        self._persist_record(record)
 
     def get_record(self, task_id: str) -> PlanningSessionRecord | None:
         with self._lock:

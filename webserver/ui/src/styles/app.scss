@@ -980,6 +980,46 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   color: $C-NEUTRAL-96;
 }
 
+/* ───── pin / × hit targets ───────────────────────────────────────
+ *
+ * The DISCS are 16px, but the pill is ~30px tall — so the 6px bands
+ * of padding directly above and below each disc belonged to the
+ * `<li>`, whose onClick selects the task. A click that missed the ×
+ * by two or three pixels vertically therefore OPENED the task
+ * instead of forgetting it (operator report: "the X opens the
+ * task"). Nothing was wrong with the event wiring — handleForget
+ * already calls stopPropagation, and the click simply never reached
+ * the button.
+ *
+ * A transparent ::before stretches the HIT target to the pill's own
+ * edges without changing the rendered disc. The insets are bounded
+ * by the tab's declared padding (6px vertical) and by the 6px
+ * inter-child margin (3px horizontal), so the target can never
+ * escape the pill — `.tab` has no `overflow: hidden` to trim it, and
+ * a hit area bleeding into the inter-tab gap would resurrect the old
+ * "red X floating between tabs" regression as an invisible one.
+ *
+ * z-index lifts both buttons above `.tab-resize-handle`: its ::after
+ * arc is a circle as wide as the tab is tall, clipped to its right
+ * half — still hit-testable (clip-path culls hits, opacity:0 does
+ * not), positioned, and later in DOM order, so it painted over the
+ * ×'s right edge and swallowed clicks there. */
+.tabs-pane-top .tab .tab-pin-btn,
+.tabs-pane-top .tab .tab-forget-btn {
+  position: relative;
+  z-index: 2;
+}
+
+.tabs-pane-top .tab .tab-pin-btn::before,
+.tabs-pane-top .tab .tab-forget-btn::before {
+  content: '';
+  position: absolute;
+  top: -$SPACE-6;
+  bottom: -$SPACE-6;
+  left: -3px;
+  right: -3px;
+}
+
 /* ───── pinned-tab sticky positioning ─────────────────────────────
  *
  * Pinned tabs sort to the LEFT of the strip (TabList does the
@@ -4067,11 +4107,17 @@ code {
  * as a plain icon at rest (it IS the tab's kind indicator) and only
  * picks up a button affordance on hover, so the strip doesn't look like
  * a row of controls. */
+/* Diff ⇄ whole-file switch. Lives in the tab's trailing action group,
+ * immediately left of the close X — same 16px disc geometry as the X so the
+ * pair reads as one group. Always visible (not hover-revealed): it was
+ * previously the tab's LEADING file-type glyph, which nothing marked as
+ * interactive, so operators never found it. The cyan hover distinguishes it
+ * from the destructive-ish close button beside it. */
 .file-tab-view-toggle {
   background: transparent;
   border: none;
   padding: 0;
-  color: inherit;
+  color: $C-NEUTRAL-96-A42;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -4079,12 +4125,21 @@ code {
   flex-shrink: 0;
   width: $ICON-BOX-SM;
   height: $ICON-BOX-SM;
-  border-radius: $RADIUS-4;
+  border-radius: $RADIUS-CIRCLE;
   transition: background 120ms ease, color 120ms ease;
 }
 
+.file-tab-view-toggle svg {
+  width: $ICON-GLYPH-SM;
+  height: $ICON-GLYPH-SM;
+}
+
+.file-tab.active .file-tab-view-toggle {
+  color: $C-NEUTRAL-96-A85;
+}
+
 .file-tab-view-toggle:hover {
-  background: $C-NEUTRAL-100-A10;
+  background: $C-CYAN-52-A55;
   color: $C-NEUTRAL-96;
 }
 
@@ -10082,6 +10137,10 @@ body.kato-resizing {
   height: 100%;
   cursor: col-resize;
   touch-action: none;
+  /* Below the pin / × buttons (z-index: 2). This element is positioned and
+   * last in DOM order, so it — and the wider ::after arc below — would
+   * otherwise take the clicks meant for the × next to it. */
+  z-index: 1;
 }
 
 /* A uniform-thickness ARC on the pill's right cap. A bordered circle clipped

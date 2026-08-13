@@ -189,7 +189,10 @@ describe('FileTabStrip — diff/file view toggle', () => {
 
   // The diff pane used to carry its own "View file (no diff)" button in a
   // header that also repeated this tab's filename. The switch moved onto
-  // the tab's leading icon, which was already showing which view is live.
+  // the tab — first onto its leading icon, which turned out to be
+  // undiscoverable (a file-type glyph reads as decoration, not a control),
+  // and now onto its own button in the trailing action group beside the
+  // close X. The leading icon is back to pure status.
   function renderStrip(props = {}) {
     return render(
       <FileTabStrip
@@ -202,11 +205,11 @@ describe('FileTabStrip — diff/file view toggle', () => {
     );
   }
 
-  test('the leading icon switches a diff tab to the plain file view', () => {
+  test('the toggle switches a diff tab to the whole-file view', () => {
     const onToggleView = vi.fn();
     renderStrip({ tab: { view: 'diff' }, onToggleView });
 
-    fireEvent.click(screen.getByRole('button', { name: /without the diff/i }));
+    fireEvent.click(screen.getByRole('button', { name: /whole auth\.py file/i }));
     expect(onToggleView).toHaveBeenCalledWith('client::src/auth.py');
   });
 
@@ -222,8 +225,36 @@ describe('FileTabStrip — diff/file view toggle', () => {
     const onSelect = vi.fn();
     renderStrip({ tab: { view: 'diff' }, onToggleView: vi.fn(), onSelect });
 
-    fireEvent.click(screen.getByRole('button', { name: /without the diff/i }));
+    fireEvent.click(screen.getByRole('button', { name: /whole auth\.py file/i }));
     expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  test('the toggle sits in the trailing action group, beside the close X', () => {
+    // Discoverability is the whole point of the move: a tab's controls
+    // live on its right edge, so that is where operators look for one.
+    const { container } = renderStrip({
+      tab: { view: 'file' }, onToggleView: vi.fn(),
+    });
+    // The leading status glyph is a bare <svg> (Icon), so read the class
+    // attribute rather than .className (an SVGAnimatedString on SVG nodes).
+    const controls = [...container.querySelectorAll('.file-tab > *')]
+      .map((el) => `${el.tagName.toLowerCase()}.${el.getAttribute('class') || ''}`);
+
+    expect(controls).toEqual([
+      'svg.svg-inline--fa fa-file',
+      'span.file-tab-label',
+      'button.file-tab-view-toggle tooltip-start',
+      'button.file-tab-close-btn',
+    ]);
+  });
+
+  test('the leading status icon is no longer a button', () => {
+    const { container } = renderStrip({
+      tab: { view: 'diff', kind: 'add' }, onToggleView: vi.fn(),
+    });
+    const leading = container.querySelector('.file-tab > *');
+
+    expect(leading.tagName).not.toBe('BUTTON');
   });
 
   test('a diff tab shows the file\'s change kind (the header used to)', () => {

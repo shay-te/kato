@@ -163,11 +163,29 @@ scan → get_assigned_tasks() [API]
          2. provision_workspace_clones() ← parallel git clone (up to 4 at once)
          3. git fetch + checkout branch
      → agent session (OpenHands or Claude streaming)
-     → publish_task_execution()
-         → create_pull_request() per repo
-         → if all repos unchanged → status NO_CHANGES, task stays in current state (NOT moved to "In Review")
-         → if PRs created → move to "In Review", post summary comment
+     → _should_pause_for_push_approval(task)?   ← DEFAULT: yes, always
+         YES → _pause_for_push_approval(): stash (task, prepared, execution),
+               post a "waiting" ticket comment, workspace → review.
+               Nothing is pushed. Publish resumes only via approve_push()
+               (the UI's push button).
+         NO  → publish_task_execution()
+                 → create_pull_request() per repo
+                 → if all repos unchanged → status NO_CHANGES, task stays in current state (NOT moved to "In Review")
+                 → if PRs created → move to "In Review", post summary comment
 ```
+
+**Kato never publishes on its own.** Pushing a branch and opening a PR is an
+operator action. The pause used to be opt-IN — it fired only for a task
+tagged `kato:wait-before-git-push`, so every *untagged* task pushed and opened
+a PR autonomously, against the stated policy. `KATO_AUTO_PUSH_ENABLED`
+(default `false`, `helpers/push_approval_gate_utils.py`) inverts that: unset,
+the flow always parks after testing. The tag still forces a park even with the
+switch on — it is the stricter statement. The UI's own Push / Done buttons
+(`push_task`, `approve_push`) are operator actions and are never gated.
+
+Pending approvals are in-memory: a kato restart drops them, and `approve_push`
+then 404s ("no pending publish for this task"). The branch and commits survive
+in the workspace, so the UI's Push button is the recovery path.
 
 ### PR review comment
 ```

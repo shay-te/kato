@@ -25,6 +25,19 @@ class KatoCoreLibTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.cfg = build_test_cfg()
 
+    def setUp(self) -> None:
+        # The workflow these drive runs through to push + PR. Kato's default
+        # is to park a finished task and wait for the operator's push button,
+        # so they opt in to autonomous publishing; tests/test_auto_push_switch
+        # owns the default. Patched at the point of use so the operator's real
+        # ~/.kato/settings.json can't decide the outcome of a test.
+        _auto_push = patch(
+            'kato_core_lib.data_layers.service.agent_service.auto_push_enabled',
+            return_value=True,
+        )
+        _auto_push.start()
+        self.addCleanup(_auto_push.stop)
+
     def _build_workflow_app(self, *, testing_container_enabled: bool):
         cfg = build_test_cfg()
         cfg.kato.openhands.testing_container_enabled = testing_container_enabled

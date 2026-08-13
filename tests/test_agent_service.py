@@ -54,6 +54,18 @@ class AgentServiceTests(unittest.TestCase):
         })
         _ro.start()
         self.addCleanup(_ro.stop)
+        # These tests exercise the PUBLISH machinery (PRs opened, move to
+        # review, completion comments), so they opt in to autonomous
+        # publishing. Kato's default is to park a finished task and wait for
+        # the operator — see tests/test_auto_push_switch.py, which owns that
+        # behaviour. Patched at the point of use so the operator's real
+        # ~/.kato/settings.json can't decide the outcome of a test.
+        _auto_push = patch(
+            'kato_core_lib.data_layers.service.agent_service.auto_push_enabled',
+            return_value=True,
+        )
+        _auto_push.start()
+        self.addCleanup(_auto_push.stop)
         self.task_description = 'whats wrong with you please fix it'
         self.pr_description = (
             'Files changed:\n'

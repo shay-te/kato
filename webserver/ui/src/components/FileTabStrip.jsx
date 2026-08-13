@@ -90,24 +90,27 @@ function FileTab({
       onKeyDown={handleKeyDown}
       tabIndex={0}
     >
-      {/* The tab's leading icon carries BOTH jobs the diff pane's header
-          used to: it shows how the file changed (+ / − / edit) while the
-          diff is up, and clicking it switches diff ⇄ plain file. That
-          header is gone — it was a row restating this tab. */}
-      {typeof onToggleView === 'function' ? (
+      {/* Leading icon is STATUS ONLY — how the file changed (+ / − / edit)
+          while the diff is up, a plain file glyph otherwise. It used to
+          double as the diff ⇄ file switch, but a file-type glyph in the
+          leading slot reads as decoration: nothing marked it as clickable,
+          so the toggle was effectively undiscoverable. It now has its own
+          control next to the close X, where a tab's actions live. */}
+      {tabIcon}
+      <span className="file-tab-label">{name}</span>
+      {typeof onToggleView === 'function' && (
         <button
           type="button"
           className="file-tab-view-toggle tooltip-start"
           onClick={handleToggleView}
-          data-tooltip={isDiff ? 'View file (no diff)' : 'View diff'}
-          aria-label={isDiff ? `View ${name} without the diff` : `View the diff for ${name}`}
+          data-tooltip={isDiff ? 'View the whole file (no diff)' : 'View the diff'}
+          aria-label={isDiff ? `View the whole ${name} file` : `View the diff for ${name}`}
         >
-          {tabIcon}
+          {/* Shows the TARGET view, matching the tooltip: the diff glyph
+              means "take me to the diff". */}
+          <Icon name={isDiff ? 'file' : 'diff'} />
         </button>
-      ) : (
-        tabIcon
       )}
-      <span className="file-tab-label">{name}</span>
       <button
         type="button"
         className="file-tab-close-btn"
