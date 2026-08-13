@@ -753,9 +753,14 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 /* id + name group. ``min-width: 0`` lets the name child ellipsise inside
  * the flex row (a flex item's default min-width:auto would refuse to
  * shrink and overflow the pill instead). */
+/* Reserve room for the fixed-width chrome (status dot, pin, ×) so the label
+ * ellipsises INSTEAD of pushing them past the pill's edge. With the tab as an
+ * inline-block, nothing shrinks the label automatically the way a flex row
+ * did — dragging a tab narrower simply overflowed the buttons out of bounds.
+ * The subtrahend is the dot + both 20px buttons + their margins. */
 .tabs-pane-top .tab .tab-label {
   display: inline-block;
-  max-width: 100%;
+  max-width: calc(100% - 74px);
   overflow: hidden;
   text-overflow: ellipsis;
   vertical-align: middle;
