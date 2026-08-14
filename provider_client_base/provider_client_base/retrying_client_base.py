@@ -81,3 +81,57 @@ class RetryingClientBase(ClientBase):
 
     def _retry_operation_name(self, method: str, path: str) -> str:
         return f'{self.__class__.__name__} {method} {self._abs_url(path)}'
+
+    @staticmethod
+    def raise_for_status_with_detail(response) -> None:
+        """``raise_for_status`` that KEEPS the provider's explanation.
+
+        Plain ``raise_for_status`` produces ``400 Client Error: Bad Request for
+        url: ...`` and discards the response body — which is where every
+        provider puts the one sentence that says what is actually wrong
+        ("there are no changes to be pulled", "a pull request already exists",
+        "branch not found"). The operator then sees a status code and has no
+        way to act on it.
+
+        Best-effort by design: if the body is empty, unparseable, or the
+        response object doesn't behave like one, the original error is
+        re-raised untouched. Surfacing detail must never turn a clean HTTP
+        failure into a confusing one.
+        """
+        try:
+            response.raise_for_status()
+            return
+        except Exception as exc:
+            detail = RetryingClientBase._response_detail(response)
+            if not detail:
+                raise
+            raise type(exc)(f'{exc}: {detail}') from exc
+
+    @staticmethod
+    def _response_detail(response) -> str:
+        """The human-readable message out of an error response body."""
+        try:
+            payload = response.json()
+        except Exception:
+            payload = None
+        if isinstance(payload, dict):
+            # Bitbucket nests it: {"error": {"message": "...", "fields": {...}}}.
+            error = payload.get('error')
+            if isinstance(error, dict):
+                message = str(error.get('message', '') or '').strip()
+                fields = error.get('fields')
+                if message and isinstance(fields, dict) and fields:
+                    return f'{message} ({fields})'
+                if message:
+                    return message
+            # GitHub / GitLab keep it flat.
+            for key in ('message', 'error_description', 'error'):
+                value = payload.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        try:
+            text = str(response.text or '').strip()
+        except Exception:
+            return ''
+        # A body long enough to be an HTML error page is noise, not detail.
+        return text[:500] if 0 < len(text) <= 500 else ''

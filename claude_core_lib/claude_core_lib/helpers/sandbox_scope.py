@@ -25,6 +25,7 @@ from typing import Any
 from agent_core_lib.agent_core_lib.helpers.command_introspection import (
     deobfuscate_command,
     split_command_segments,
+    split_heredoc_bodies,
 )
 
 # Tool-input keys that name a filesystem path the agent intends to
@@ -201,6 +202,25 @@ def _next_simulated_cwd(segment: str, current_cwd: str) -> str:
     return _normalize(os.path.expanduser(target), current_cwd)
 
 
+def _absolute_path_args(text: str) -> list[str]:
+    """Home-tree ABSOLUTE paths in ``text`` — the cwd-independent subset.
+
+    Split out of ``_segment_path_args`` so heredoc bodies can be scanned with
+    only this rule. An absolute path means the same thing wherever it appears,
+    so a body needs no cwd simulation to judge one.
+    """
+    args: list[str] = []
+    for match in _COMMAND_ABS_PATH.finditer(text):
+        raw = match.group(0)
+        if len(raw) < 2:
+            continue
+        # Normalize before the home-tree test so ``~``, ``..``, ``.`` and
+        # doubled slashes can't dodge it (e.g. ``/Users/x/../../etc``).
+        if os.path.normpath(os.path.expanduser(raw)).startswith(_USER_SPACE_PREFIXES):
+            args.append(raw)
+    return args
+
+
 def _segment_path_args(segment: str) -> list[str]:
     """Filesystem paths referenced anywhere in ONE command segment that are
     worth sandbox-checking: absolute home-tree paths, relative ``..``
@@ -211,15 +231,7 @@ def _segment_path_args(segment: str) -> list[str]:
     left out of the absolute set on purpose (low-noise); relative paths
     are included and the caller decides (against the simulated cwd) if
     they actually escape."""
-    args: list[str] = []
-    for match in _COMMAND_ABS_PATH.finditer(segment):
-        raw = match.group(0)
-        if len(raw) < 2:
-            continue
-        # Normalize before the home-tree test so ``~``, ``..``, ``.`` and
-        # doubled slashes can't dodge it (e.g. ``/Users/x/../../etc``).
-        if os.path.normpath(os.path.expanduser(raw)).startswith(_USER_SPACE_PREFIXES):
-            args.append(raw)
+    args: list[str] = _absolute_path_args(segment)
     for match in _COMMAND_REL_DOTDOT.finditer(segment):
         raw = match.group(0)
         if '..' in raw.split('/'):  # a real ``..`` segment, not ``foo..bar``
@@ -259,9 +271,20 @@ def classify_command_sandbox(
     if not norm_roots:
         return False, ''
     norm_allowed = {_normalize(p, cwd) for p in allowed_paths if p}
-    text = deobfuscate_command(command)
+    # Heredoc bodies are DATA, not arguments — a file being written, a patch, a
+    # SQL script. Scanning them with the same rules as shell text made every
+    # relative path MENTIONED in prose ("see ../../docs/setup.md") read as a
+    # path being opened, so writing documentation tripped the out-of-scope
+    # warning. They are still scanned, but only for ABSOLUTE / home-tree paths:
+    # that keeps the case worth catching (``open('/Users/me/.ssh/id_rsa')``
+    # smuggled into a heredoc) while dropping the prose false positives.
+    #
+    # Known residual: a RELATIVE climb-out written inside a heredoc body is no
+    # longer flagged here. Accepted deliberately — it is a warning layer, and
+    # the docker sandbox is the structural boundary.
+    shell_text, heredoc_bodies = split_heredoc_bodies(deobfuscate_command(command))
     current_cwd = os.path.normpath(cwd) if cwd else cwd
-    for segment in split_command_segments(text):
+    for segment in split_command_segments(shell_text):
         for raw in _segment_path_args(segment):
             resolved = _normalize(os.path.expanduser(raw), current_cwd)
             if resolved in norm_allowed:
@@ -269,4 +292,12 @@ def classify_command_sandbox(
             if not any(_is_within(resolved, root) for root in norm_roots):
                 return True, raw
         current_cwd = _next_simulated_cwd(segment, current_cwd)
+    for body in heredoc_bodies:
+        # cwd-independent by construction: only absolute paths are considered.
+        for raw in _absolute_path_args(body):
+            resolved = _normalize(os.path.expanduser(raw), current_cwd)
+            if resolved in norm_allowed:
+                continue
+            if not any(_is_within(resolved, root) for root in norm_roots):
+                return True, raw
     return False, ''

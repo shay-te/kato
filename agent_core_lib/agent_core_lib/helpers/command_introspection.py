@@ -62,6 +62,71 @@ def split_command_segments(command: str) -> list[str]:
     return _SEGMENT_SPLIT.split(str(command or ''))
 
 
+# ``<<WORD`` / ``<<-WORD`` / ``<<'WORD'`` / ``<<"WORD"``. ``<<<`` is a
+# here-STRING (a single inline word, not a body) and must not match, hence the
+# negative lookahead.
+_HEREDOC_START = re.compile(r'<<-?\s*(?!<)([\'"]?)([A-Za-z_][A-Za-z0-9_]*)\1')
+
+
+def split_heredoc_bodies(command: str) -> tuple[str, list[str]]:
+    """Separate a command into ``(shell_text, heredoc_bodies)``.
+
+    A heredoc body is DATA fed to a program's stdin, not shell arguments —
+    typically a file being written, a SQL script, a patch. Scanners that
+    regex the raw command string cannot tell the two apart, so a path that is
+    merely *mentioned* in prose ("see ../../docs/setup.md") reads exactly like
+    a path being opened. Splitting them lets a caller apply a different, more
+    conservative rule to body text without going blind to it.
+
+    The delimiter ends the body on a line of its own (leading whitespace
+    tolerated, which covers ``<<-``). An unterminated heredoc — the last one
+    in a truncated command — runs to the end of the string, matching how a
+    shell would consume it.
+
+    Purely lexical: no quoting/expansion is applied, and a delimiter word
+    produced at runtime is invisible, same static-only caveat as the rest of
+    this module.
+    """
+    text = str(command or '')
+    match = _HEREDOC_START.search(text)
+    if match is None:
+        return text, []
+    shell_parts: list[str] = []
+    bodies: list[str] = []
+    position = 0
+    while match is not None:
+        delimiter = match.group(2)
+        # The rest of the line after ``<<WORD`` is still shell (redirections,
+        # a trailing ``&``), so the body starts at the NEXT newline.
+        line_end = text.find('\n', match.end())
+        if line_end == -1:
+            shell_parts.append(text[position:])
+            return ''.join(shell_parts), bodies
+        shell_parts.append(text[position:line_end + 1])
+        body_start = line_end + 1
+        body_end, resume = _find_heredoc_end(text, body_start, delimiter)
+        bodies.append(text[body_start:body_end])
+        position = resume
+        match = _HEREDOC_START.search(text, position)
+    shell_parts.append(text[position:])
+    return ''.join(shell_parts), bodies
+
+
+def _find_heredoc_end(text: str, start: int, delimiter: str) -> tuple[int, int]:
+    """``(body_end, resume_index)`` for the heredoc body beginning at ``start``."""
+    index = start
+    while index < len(text):
+        line_end = text.find('\n', index)
+        line_stop = len(text) if line_end == -1 else line_end
+        if text[index:line_stop].strip() == delimiter:
+            return index, (line_stop + 1 if line_end != -1 else len(text))
+        if line_end == -1:
+            break
+        index = line_end + 1
+    # Unterminated: the shell would swallow the remainder as body.
+    return len(text), len(text)
+
+
 # ASCII-only on purpose: a shell env-var name is POSIX ``[A-Za-z_][A-Za-z0-9_]*``
 # (bash rejects non-ASCII identifiers), and the permission-signature mirror in
 # ``permissionEnvelope.js`` matches with the ASCII class ``[A-Za-z_][A-Za-z0-9_]*``

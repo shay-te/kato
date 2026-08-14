@@ -1263,6 +1263,18 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         branch_name: str,
         destination_branch: str,
     ) -> None:
+        # Refresh the destination ref FIRST. Everything below is a commit-count
+        # comparison against it, and in a per-task workspace clone the local
+        # ``master`` / ``origin/master`` refs are only as fresh as the last
+        # fetch — which for a long-running task is whenever the workspace was
+        # provisioned. A branch whose pull request was merged upstream hours
+        # ago still looks "ahead" against that stale ref, so this method
+        # returns "publishable", the provider is asked to open a pull request
+        # that has nothing to merge, and the operator gets a bare
+        # "400 Client Error" for a task that actually SHIPPED. The
+        # already-merged branch below exists precisely to report that case
+        # honestly, and it can only fire if the ref is current.
+        self._refresh_destination_ref(local_path, destination_branch)
         comparison_ref = self._comparison_reference(local_path, destination_branch)
         ahead_count = self._ahead_count(local_path, comparison_ref, branch_name)
         if ahead_count >= 1:
@@ -1683,8 +1695,38 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
                 'refusing to start a new task'
             )
 
+    def _refresh_destination_ref(self, local_path: str, destination_branch: str) -> None:
+        """Best-effort ``git fetch origin <dest>`` before an ahead/behind check.
+
+        BEST-EFFORT by design: a publish must not fail because the operator is
+        offline or the remote briefly refused. On failure the comparison simply
+        falls back to whatever ref is already on disk — the pre-existing
+        behaviour — so this can only ever make the answer fresher.
+        """
+        normalized_branch = (destination_branch or '').strip()
+        if not normalized_branch:
+            return
+        try:
+            self._run_git(
+                local_path,
+                ['fetch', 'origin', normalized_branch],
+                f'failed to refresh origin/{normalized_branch} before '
+                f'checking whether the branch is publishable',
+            )
+        except Exception:
+            self.logger.warning(
+                'could not refresh origin/%s at %s — the merged/ahead check '
+                'will use the ref already on disk, which may be stale',
+                normalized_branch, local_path,
+            )
+
     def _comparison_reference(self, local_path: str, destination_branch: str) -> str:
-        for reference in (destination_branch, f'origin/{destination_branch}'):
+        # ``origin/<dest>`` FIRST. A per-task workspace clone never checks out
+        # or pulls its local ``master``, so that ref is frozen at clone time
+        # while ``origin/master`` is what ``_refresh_destination_ref`` just
+        # updated. Preferring the local branch meant the freshly fetched ref
+        # was ignored and the comparison stayed stale even after a good fetch.
+        for reference in (f'origin/{destination_branch}', destination_branch):
             if self._git_reference_exists(local_path, reference):
                 return reference
         raise RuntimeError(

@@ -1128,6 +1128,10 @@ class RepositoryServiceTests(unittest.TestCase):
             Mock(returncode=0, stdout='', stderr=''),
             Mock(returncode=0, stdout='[feature/proj-1/backend abc123] Implement PROJ-1\n', stderr=''),
             Mock(returncode=0, stdout='', stderr=''),
+            # ``_ensure_branch_is_publishable`` now refreshes the destination
+            # ref before comparing, so a branch merged upstream stops looking
+            # "ahead" against a stale clone. That fetch is this entry.
+            Mock(returncode=0, stdout='', stderr=''),  # fetch origin main
             Mock(returncode=0, stdout='main\n', stderr=''),
             Mock(returncode=0, stdout='1\n', stderr=''),
             Mock(returncode=0, stdout='feature/proj-1/backend\n', stderr=''),
@@ -1191,8 +1195,12 @@ class RepositoryServiceTests(unittest.TestCase):
                 # hardening for risk #24 (pre-commit hook installation).
                 # Every kato git command now disables hooks so a malicious
                 # ``.git/hooks/`` Claude drops never fires on the host.
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--verify', 'main'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-list', '--count', 'main..feature/proj-1/backend'],
+                # Refreshed first: the ahead/behind verdict is only as good as
+                # the ref it compares against, and a per-task clone never
+                # updates its own destination branch.
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'fetch', 'origin', 'main'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--verify', 'origin/main'],
+                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-list', '--count', 'origin/main..feature/proj-1/backend'],
             ],
         )
         data_access.create_pull_request.assert_called_once_with(
@@ -1230,6 +1238,10 @@ class RepositoryServiceTests(unittest.TestCase):
             Mock(returncode=0, stdout='', stderr=''),
             Mock(returncode=0, stdout='[feature/proj-1/backend abc123] Implement PROJ-1\n', stderr=''),
             Mock(returncode=0, stdout='', stderr=''),
+            # ``_ensure_branch_is_publishable`` now refreshes the destination
+            # ref before comparing, so a branch merged upstream stops looking
+            # "ahead" against a stale clone. That fetch is this entry.
+            Mock(returncode=0, stdout='', stderr=''),  # fetch origin main
             Mock(returncode=0, stdout='main\n', stderr=''),
             Mock(returncode=0, stdout='1\n', stderr=''),
             Mock(returncode=0, stdout='feature/proj-1/backend\n', stderr=''),
@@ -1287,8 +1299,12 @@ class RepositoryServiceTests(unittest.TestCase):
                     ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'commit', '-m', 'Implement PROJ-1'],
                     ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
                     # ``core.hooksPath=/dev/null`` security hardening for risk #24.
-                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--verify', 'main'],
-                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-list', '--count', 'main..feature/proj-1/backend'],
+                    # Refreshed first: the ahead/behind verdict is only as good as
+                    # the ref it compares against, and a per-task clone never
+                    # updates its own destination branch.
+                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'fetch', 'origin', 'main'],
+                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--verify', 'origin/main'],
+                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-list', '--count', 'origin/main..feature/proj-1/backend'],
                 ],
         )
         mock_restore_repositories.assert_called_once_with([repository], force=True)
@@ -1339,7 +1355,7 @@ class RepositoryServiceTests(unittest.TestCase):
                 )
             if tail == ('rev-parse', '--abbrev-ref', 'HEAD'):
                 return Mock(returncode=0, stdout='main\n', stderr='')
-            if tail == ('rev-list', '--count', 'main..feature/proj-1/backend'):
+            if tail == ('rev-list', '--count', 'origin/main..feature/proj-1/backend'):
                 return Mock(returncode=0, stdout='1\n', stderr='')
             return Mock(returncode=0, stdout='', stderr='')
 
@@ -1408,6 +1424,10 @@ class RepositoryServiceTests(unittest.TestCase):
         subprocess_results = [
             Mock(returncode=0, stdout='feature/proj-1/backend\n', stderr=''),
             Mock(returncode=0, stdout='', stderr=''),
+            # ``_ensure_branch_is_publishable`` now refreshes the destination
+            # ref before comparing, so a branch merged upstream stops looking
+            # "ahead" against a stale clone. That fetch is this entry.
+            Mock(returncode=0, stdout='', stderr=''),  # fetch origin main
             Mock(returncode=0, stdout='main\n', stderr=''),
             Mock(returncode=0, stdout='0\n', stderr=''),
             # rev-list --count feature/proj-1/backend..main (behind):
@@ -1438,7 +1458,7 @@ class RepositoryServiceTests(unittest.TestCase):
             service = RepositoryService(self.cfg.kato.repositories, 3)
             with self.assertRaisesRegex(
                 RuntimeError,
-                'branch feature/proj-1/backend has no task changes ahead of main',
+                'branch feature/proj-1/backend has no task changes ahead of origin/main',
             ):
                 service.create_pull_request(
                     repository,
@@ -2620,3 +2640,77 @@ class UpdateSourceToTaskBranchTests(unittest.TestCase):
             repository = types.SimpleNamespace(id='c', local_path=tmp)
             with self.assertRaisesRegex(RuntimeError, 'failed to inspect'):
                 svc.update_source_to_task_branch(repository, 'feat/task')
+
+
+class PublishableUsesAFreshDestinationRefTests(unittest.TestCase):
+    """The ahead/behind verdict is only as good as the ref it compares against.
+
+    A per-task workspace clone never pulls its ``master``, so both ``master``
+    and ``origin/master`` are frozen at provision time. A branch whose pull
+    request merged upstream hours ago still looks "ahead" against that stale
+    ref — so kato declared it publishable, asked the provider to open a pull
+    request with nothing to merge, and surfaced the resulting 400 as a failed
+    task that had in fact shipped (UNA-2981).
+    """
+
+    def _service(self):
+        from kato_core_lib.data_layers.service.repository_service import RepositoryService
+        svc = RepositoryService.__new__(RepositoryService)
+        svc.logger = Mock()
+        svc._run_git = Mock()
+        svc._git_reference_exists = Mock(return_value=True)
+        svc._ahead_count = Mock(return_value=1)
+        return svc
+
+    def test_fetches_the_destination_before_comparing(self) -> None:
+        svc = self._service()
+        svc._ensure_branch_is_publishable('/repo', 'UNA-2981', 'master')
+
+        args = svc._run_git.call_args[0]
+        self.assertEqual(args[0], '/repo')
+        self.assertEqual(args[1], ['fetch', 'origin', 'master'])
+
+    def test_a_fetch_failure_does_not_block_publishing(self) -> None:
+        """Offline must not turn into "cannot publish"."""
+        svc = self._service()
+        svc._run_git.side_effect = RuntimeError('network down')
+
+        svc._ensure_branch_is_publishable('/repo', 'UNA-2981', 'master')  # no raise
+
+        self.assertTrue(svc.logger.warning.called)
+
+    def test_blank_destination_is_not_fetched(self) -> None:
+        svc = self._service()
+        svc._refresh_destination_ref('/repo', '')
+        svc._run_git.assert_not_called()
+
+    def test_merged_branch_now_reports_as_merged_not_as_no_changes(self) -> None:
+        from kato_core_lib.data_layers.service.repository_service import (
+            RepositoryHasNoChangesError,
+        )
+        svc = self._service()
+        # After the fetch: 0 ahead, and the destination moved past the branch.
+        svc._ahead_count = Mock(side_effect=[0, 4])
+
+        with self.assertRaises(RepositoryHasNoChangesError) as caught:
+            svc._ensure_branch_is_publishable('/repo', 'UNA-2981', 'master')
+
+        self.assertIn('already merged', str(caught.exception))
+
+    def test_comparison_prefers_the_remote_tracking_ref(self) -> None:
+        """The local branch is the STALE one in a per-task clone."""
+        svc = self._service()
+        self.assertEqual(
+            svc._comparison_reference('/repo', 'master'), 'origin/master',
+        )
+
+    def test_falls_back_to_the_local_branch_when_no_remote_ref(self) -> None:
+        svc = self._service()
+        svc._git_reference_exists = Mock(side_effect=lambda _p, ref: ref == 'master')
+        self.assertEqual(svc._comparison_reference('/repo', 'master'), 'master')
+
+    def test_raises_when_neither_ref_exists(self) -> None:
+        svc = self._service()
+        svc._git_reference_exists = Mock(return_value=False)
+        with self.assertRaises(RuntimeError):
+            svc._comparison_reference('/repo', 'master')

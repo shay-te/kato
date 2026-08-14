@@ -532,3 +532,71 @@ class PullRequestClientBaseFlowTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class RaiseForStatusWithDetailTests(unittest.TestCase):
+    """Plain ``raise_for_status`` drops the body — which is the only part
+    that says what is actually wrong. A status code alone is unactionable.
+    """
+
+    class _Resp(object):
+        def __init__(self, payload=None, text='', boom=None):
+            self._payload = payload
+            self.text = text
+            self._boom = boom or Exception('400 Client Error: Bad Request')
+
+        def json(self):
+            if self._payload is None:
+                raise ValueError('not json')
+            return self._payload
+
+        def raise_for_status(self):
+            raise self._boom
+
+    def test_ok_response_does_not_raise(self):
+        class Ok(object):
+            def raise_for_status(self):
+                return None
+        self.assertIsNone(RetryingClientBase.raise_for_status_with_detail(Ok()))
+
+    def test_nested_provider_message_is_appended(self):
+        resp = self._Resp(payload={'error': {'message': 'There are no changes to be pulled'}})
+        with self.assertRaises(Exception) as caught:
+            RetryingClientBase.raise_for_status_with_detail(resp)
+        self.assertIn('400 Client Error', str(caught.exception))
+        self.assertIn('There are no changes to be pulled', str(caught.exception))
+
+    def test_nested_fields_are_included_when_present(self):
+        resp = self._Resp(payload={
+            'error': {'message': 'Bad request', 'fields': {'source': 'invalid'}},
+        })
+        with self.assertRaises(Exception) as caught:
+            RetryingClientBase.raise_for_status_with_detail(resp)
+        self.assertIn('source', str(caught.exception))
+
+    def test_flat_message_key_is_supported(self):
+        resp = self._Resp(payload={'message': 'Validation Failed'})
+        with self.assertRaises(Exception) as caught:
+            RetryingClientBase.raise_for_status_with_detail(resp)
+        self.assertIn('Validation Failed', str(caught.exception))
+
+    def test_unparseable_body_reraises_the_original_untouched(self):
+        original = Exception('418 Client Error')
+        resp = self._Resp(payload=None, text='', boom=original)
+        with self.assertRaises(Exception) as caught:
+            RetryingClientBase.raise_for_status_with_detail(resp)
+        self.assertIs(caught.exception, original)
+
+    def test_html_error_page_is_treated_as_noise(self):
+        """A long HTML body is not detail; don't paste it into the message."""
+        resp = self._Resp(payload=None, text='<html>' + ('x' * 900) + '</html>')
+        with self.assertRaises(Exception) as caught:
+            RetryingClientBase.raise_for_status_with_detail(resp)
+        self.assertNotIn('xxxx', str(caught.exception))
+
+    def test_the_original_exception_type_is_preserved(self):
+        import requests
+        boom = requests.HTTPError('400 Client Error')
+        resp = self._Resp(payload={'message': 'nope'}, boom=boom)
+        with self.assertRaises(requests.HTTPError):
+            RetryingClientBase.raise_for_status_with_detail(resp)

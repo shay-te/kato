@@ -56,7 +56,12 @@ class BitbucketClient(PullRequestClientBase):
                 description=description,
             ),
         )
-        response.raise_for_status()
+        # Detail-preserving: Bitbucket rejects a pull request with a 400 whose
+        # BODY carries the only useful part ("there are no changes to be
+        # pulled" when the branch is already merged, or a duplicate-PR
+        # message). Plain ``raise_for_status`` dropped it and the operator saw
+        # a bare status code against a task that had actually shipped.
+        self.raise_for_status_with_detail(response)
         return self._normalize_pr(response.json())
 
     def list_pull_request_comments(

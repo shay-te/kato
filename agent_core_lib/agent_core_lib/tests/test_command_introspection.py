@@ -5,6 +5,7 @@ from agent_core_lib.agent_core_lib.helpers.command_introspection import (
     deobfuscate_command,
     segment_program,
     split_command_segments,
+    split_heredoc_bodies,
 )
 
 
@@ -140,6 +141,70 @@ class ClassifyCommandEscapeTests(unittest.TestCase):
         ):
             escapes, _ = classify_command_escape(cmd)
             self.assertFalse(escapes, cmd)
+
+
+class SplitHeredocBodiesTests(unittest.TestCase):
+    """A heredoc body is stdin DATA, not shell arguments.
+
+    Scanners that regex the whole command cannot tell a path being OPENED from
+    one merely mentioned in prose being written to a file. Splitting the two
+    lets a caller apply a stricter rule to shell text than to body text.
+    """
+
+    def test_command_without_a_heredoc_is_returned_untouched(self):
+        shell, bodies = split_heredoc_bodies('cat a.txt | grep x')
+        self.assertEqual(shell, 'cat a.txt | grep x')
+        self.assertEqual(bodies, [])
+
+    def test_body_is_separated_from_the_shell_text(self):
+        command = "python3 - <<'PY'\nprint('../../x.md')\nPY\necho done"
+        shell, bodies = split_heredoc_bodies(command)
+        self.assertEqual(bodies, ["print('../../x.md')\n"])
+        self.assertIn('echo done', shell)
+        self.assertNotIn('../../x.md', shell)
+
+    def test_shell_scanning_resumes_after_the_delimiter(self):
+        """Anything after the closing delimiter is shell again."""
+        command = "python3 - <<'PY'\nbody\nPY\ncat ../../secret"
+        shell, _bodies = split_heredoc_bodies(command)
+        self.assertIn('cat ../../secret', shell)
+
+    def test_multiple_heredocs_are_each_captured(self):
+        command = (
+            "a <<'ONE'\nfirst\nONE\n"
+            "b <<'TWO'\nsecond\nTWO\n"
+        )
+        _shell, bodies = split_heredoc_bodies(command)
+        self.assertEqual(bodies, ['first\n', 'second\n'])
+
+    def test_unquoted_and_dash_forms_are_recognized(self):
+        for opener in ('<<END', '<<-END', '<<"END"', "<<'END'"):
+            _shell, bodies = split_heredoc_bodies(f'cat {opener}\ninner\nEND\n')
+            self.assertEqual(bodies, ['inner\n'], opener)
+
+    def test_here_string_is_not_a_heredoc(self):
+        """``<<<`` is a single inline word, not a body — it stays shell text."""
+        shell, bodies = split_heredoc_bodies("grep x <<< '/etc/passwd'")
+        self.assertEqual(bodies, [])
+        self.assertIn('/etc/passwd', shell)
+
+    def test_unterminated_heredoc_swallows_the_remainder(self):
+        """Matches how a shell consumes a truncated command."""
+        _shell, bodies = split_heredoc_bodies("cat <<'PY'\nline one\nline two")
+        self.assertEqual(bodies, ['line one\nline two'])
+
+    def test_delimiter_must_be_alone_on_its_line(self):
+        command = "cat <<'PY'\nPY is mentioned here\nPY\n"
+        _shell, bodies = split_heredoc_bodies(command)
+        self.assertEqual(bodies, ['PY is mentioned here\n'])
+
+    def test_indented_closing_delimiter_still_closes(self):
+        _shell, bodies = split_heredoc_bodies("cat <<-'PY'\n\tbody\n\tPY\n")
+        self.assertEqual(bodies, ['\tbody\n'])
+
+    def test_empty_and_none_are_safe(self):
+        self.assertEqual(split_heredoc_bodies(''), ('', []))
+        self.assertEqual(split_heredoc_bodies(None), ('', []))
 
 
 if __name__ == '__main__':

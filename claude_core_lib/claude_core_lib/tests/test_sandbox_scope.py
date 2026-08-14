@@ -473,5 +473,65 @@ class ClassifyCommandSandboxCdChainTests(unittest.TestCase):
         self.assertFalse(outside)
 
 
+class HeredocBodyScanningTests(unittest.TestCase):
+    """A heredoc body is DATA — a file being written, a patch, a script.
+
+    Scanning it with the same rules as shell text meant every relative path
+    MENTIONED in prose read as a path being opened, so an agent writing
+    documentation that references ``../../docs/x.md`` tripped the red
+    "reaching outside the task folder" warning on a legitimate action.
+
+    Body text is still scanned, but only for ABSOLUTE / home-tree paths, which
+    is where the case worth catching lives.
+    """
+
+    def _heredoc(self, *body_lines: str, after: str = '') -> str:
+        lines = ["python3 - <<'PY'", *body_lines, 'PY']
+        if after:
+            lines.append(after)
+        return '\n'.join(lines)
+
+    def test_relative_path_in_prose_is_not_flagged(self) -> None:
+        command = self._heredoc(
+            'text = "See ../../docs/pages/helpers/data_transform.md for detail"',
+            'open("notes.md", "w").write(text)',
+        )
+        self.assertEqual(classify_command_sandbox(command, CWD, ADD), (False, ''))
+
+    def test_absolute_escape_in_a_body_is_still_flagged(self) -> None:
+        """The case worth catching must survive the narrowing."""
+        command = self._heredoc('open("/Users/someone/.ssh/id_rsa").read()')
+        outside, offending = classify_command_sandbox(command, CWD, ADD)
+        self.assertTrue(outside)
+        self.assertIn('.ssh', offending)
+
+    def test_absolute_path_inside_the_sandbox_is_fine_in_a_body(self) -> None:
+        command = self._heredoc(f'open("{CWD}/src/app.py")')
+        self.assertEqual(classify_command_sandbox(command, CWD, ADD), (False, ''))
+
+    def test_shell_after_the_heredoc_is_still_fully_scanned(self) -> None:
+        """The body must not swallow the rest of the command."""
+        command = self._heredoc(
+            'just prose ../../x.md', after='cat ../../../etc/passwd',
+        )
+        outside, offending = classify_command_sandbox(command, CWD, ADD)
+        self.assertTrue(outside)
+        self.assertEqual(offending, '../../../etc/passwd')
+
+    def test_relative_escape_outside_any_heredoc_is_unchanged(self) -> None:
+        outside, offending = classify_command_sandbox(
+            'cat ../../../etc/passwd', CWD, ADD,
+        )
+        self.assertTrue(outside)
+        self.assertEqual(offending, '../../../etc/passwd')
+
+    def test_here_string_keeps_the_strict_shell_rules(self) -> None:
+        """``<<<`` is inline shell, not a body — no relaxation applies."""
+        outside, _ = classify_command_sandbox(
+            'grep x <<< ../../../etc/passwd', CWD, ADD,
+        )
+        self.assertTrue(outside)
+
+
 if __name__ == '__main__':
     unittest.main()
