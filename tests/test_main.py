@@ -1496,6 +1496,41 @@ class MarkWebserverConfiguredTests(unittest.TestCase):
         self.assertIs(flask_app.config['AGENT_SERVICE'], service)
         self.assertFalse(flask_app.config['NEEDS_CONFIG'])
 
+    def test_drops_the_agent_version_probe_cached_during_setup(self) -> None:
+        """A probe cached in setup mode saw no backend settings yet.
+
+        It reported "claude not found on PATH" (binary unresolvable), which
+        outlived the transition and greeted a freshly configured instance with
+        a false banner + no Upgrade button until a manual Refresh.
+        """
+        from kato_core_lib.main import _mark_webserver_configured
+        flask_app = types.SimpleNamespace(config={
+            'AGENT_SERVICE': None,
+            'NEEDS_CONFIG': True,
+            'AGENT_VERSION_INFO': {'found': False, 'can_upgrade': False,
+                                   'detail': 'claude not found on PATH'},
+        })
+        app = types.SimpleNamespace(
+            logger=Mock(), planning_flask_app=flask_app, service=object(),
+        )
+
+        _mark_webserver_configured(app)
+
+        self.assertNotIn('AGENT_VERSION_INFO', flask_app.config)
+
+    def test_missing_version_cache_is_not_an_error(self) -> None:
+        from kato_core_lib.main import _mark_webserver_configured
+        flask_app = types.SimpleNamespace(
+            config={'AGENT_SERVICE': None, 'NEEDS_CONFIG': True},
+        )
+        app = types.SimpleNamespace(
+            logger=Mock(), planning_flask_app=flask_app, service=object(),
+        )
+
+        _mark_webserver_configured(app)  # no KeyError
+
+        self.assertFalse(flask_app.config['NEEDS_CONFIG'])
+
 
 class RestartInPlaceTests(unittest.TestCase):
     """The backend-switch restart. Supervised (normal ``kato up``) exits

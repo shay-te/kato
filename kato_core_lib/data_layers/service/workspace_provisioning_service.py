@@ -68,6 +68,10 @@ def provision_task_workspace_clones(
     workspace_service.create(
         task_id=str(task.id),
         task_summary=str(getattr(task, 'summary', '') or ''),
+        # Cached so a later chat spawn can open with the ticket's own text
+        # without re-querying the tracker (which the scan cadence already
+        # rations to stay under provider rate limits).
+        task_description=str(getattr(task, 'description', '') or ''),
         repository_ids=repository_ids,
     )
     total = len(repositories)

@@ -19,13 +19,10 @@ import {
   buildThreads,
   katoTriggeredMessage,
 } from './CommentWidgets.jsx';
-import Icon from './Icon.jsx';
 import { useChatComposer } from '../contexts/ChatComposerContext.jsx';
 import { toast } from '../stores/toastStore.js';
 import { commentDraftKey } from '../utils/composerDraft.js';
 import { copyFileName, copyRepoRelativePath } from '../utils/clipboard.js';
-import { useDismissOnOutsidePointerOrEscape } from '../hooks/useDismissOnOutsidePointerOrEscape.js';
-import { useClampedPointMenu } from '../hooks/useClampedPointMenu.js';
 import { useMonacoViewZone } from '../hooks/useMonacoViewZone.js';
 
 /**
@@ -50,10 +47,6 @@ export default function EditorPane({
   openFile,
   onCommentSpawned,
   onViewStateChange,
-  // Flip the centre column back to the diff view — mirror of the
-  // "view file" icon in the diff header. Wired by App.handleOpenFile
-  // (view: 'diff').
-  onOpenFile,
 }) {
   const [state, setState] = useState({
     loading: false,
@@ -78,31 +71,6 @@ export default function EditorPane({
   const taskId = openFile?.taskId || '';
   const repoId = openFile?.repoId || '';
   const filePath = openFile?.relativePath || openFile?.absolutePath || '';
-
-  // Right-click menu on the file-path HEADER. The Monaco editor body
-  // already carries the same "Copy relative path" action in its native
-  // right-click menu (registered in handleEditorMount); this adds the
-  // identical action when the operator right-clicks the path label in
-  // the header strip instead of the code. Mirrors the Files tree +
-  // diff-file header menus — same helper, same copied ``repo:path``.
-  const [pathMenu, setPathMenu] = useState(null);
-  function openPathMenu(event) {
-    event.preventDefault();
-    event.stopPropagation();
-    if (!filePath) { return; }
-    setPathMenu({ x: event.clientX, y: event.clientY });
-  }
-  function closePathMenu() { setPathMenu(null); }
-  async function copyHeaderRelativePath() {
-    closePathMenu();
-    await copyRepoRelativePath(repoId, filePath);
-  }
-  async function copyHeaderFileName() {
-    closePathMenu();
-    await copyFileName(filePath);
-  }
-  useDismissOnOutsidePointerOrEscape(pathMenu, closePathMenu);
-  const { menuRef: pathMenuRef, style: pathMenuStyle } = useClampedPointMenu(pathMenu);
 
   // Refs so Monaco actions (registered once) always read latest
   // values without closing over stale state.
@@ -350,6 +318,22 @@ export default function EditorPane({
       },
     });
 
+    // Moved here from the (removed) path-header context menu, which was
+    // the only surface outside the Files tree offering it.
+    editor.addAction({
+      id: 'kato.copyFileName',
+      label: 'Copy file name',
+      contextMenuGroupId: 'kato',
+      contextMenuOrder: 3,
+      run: () => {
+        const file = openFileRef.current;
+        if (!file) { return; }
+        const path = file.relativePath || file.absolutePath || '';
+        if (!path) { return; }
+        copyFileName(path);
+      },
+    });
+
     // Hover: highlight the active line + show a ``+`` glyph in the
     // gutter so the operator can click to add a comment on that
     // line. Decorations are managed via deltaDecorations so we
@@ -587,57 +571,16 @@ export default function EditorPane({
     );
   }
 
+  // No path/read-only header strip. Every one of its affordances is
+  // reachable without spending a full row on it: the file tab already
+  // shows ``repoId/relativePath`` on hover, carries the diff ⇄ file
+  // toggle next to its close button, and the editor is ALWAYS read-only
+  // (``readOnly: true`` below is not conditional), so a permanent
+  // "read-only" pill told the operator nothing they could act on. The
+  // copy actions live in Monaco's own right-click menu and the Files
+  // tree. See the ``kato.copy*`` actions in handleEditorMount.
   return (
     <section id="editor-pane">
-      <header className="editor-pane-header" onContextMenu={openPathMenu}>
-        <span className="editor-pane-path" title={openFile.absolutePath}>
-          {openFile.relativePath || openFile.absolutePath}
-        </span>
-        <span className="editor-pane-readonly-pill">read-only</span>
-        {typeof onOpenFile === 'function' && (
-          <button
-            type="button"
-            className="diff-file-open-as-file is-icon tooltip-below"
-            onClick={() => onOpenFile({
-              absolutePath: openFile.absolutePath,
-              relativePath: openFile.relativePath,
-              repoId: openFile.repoId,
-              view: 'diff',
-            })}
-            data-tooltip="View diff"
-            aria-label="View diff"
-          >
-            <Icon name="diff" />
-          </button>
-        )}
-      </header>
-      {pathMenu && (
-        <div
-          ref={pathMenuRef}
-          className="diff-file-context-menu"
-          style={pathMenuStyle}
-          onPointerDown={(event) => event.stopPropagation()}
-          onContextMenu={(event) => event.preventDefault()}
-          role="menu"
-        >
-          <button
-            type="button"
-            className="diff-file-context-menu-item"
-            onClick={copyHeaderFileName}
-            role="menuitem"
-          >
-            Copy file name
-          </button>
-          <button
-            type="button"
-            className="diff-file-context-menu-item"
-            onClick={copyHeaderRelativePath}
-            role="menuitem"
-          >
-            Copy relative path
-          </button>
-        </div>
-      )}
       <div className="editor-pane-body">
         {body}
       </div>

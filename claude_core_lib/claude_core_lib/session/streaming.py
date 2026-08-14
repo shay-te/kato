@@ -642,6 +642,20 @@ class StreamingClaudeSession(object):
         return self._permission_mode
 
     @property
+    def disallowed_tools(self) -> str:
+        """The ``--disallowed-tools`` CSV this subprocess was spawned with.
+
+        Baked at spawn time like ``permission_mode``, and exposed for the same
+        reason: a caller comparing "what the operator now wants" against "what
+        is actually running" needs BOTH halves. A read-only turn can be
+        expressed by tool denial rather than by permission mode, and a
+        comparison that looked only at ``permission_mode`` would call such a
+        session unchanged and forward a message into a subprocess still wired
+        to the previous restriction.
+        """
+        return self._disallowed_tools
+
+    @property
     def last_user_message_sent_epoch(self) -> float:
         """Wall-clock of the most recent ``send_user_message``.
 

@@ -446,5 +446,88 @@ class UpgradePlanTests(unittest.TestCase):
         self.assertEqual(plan['argv'], [])
 
 
+def _settings_env(env):
+    """Pretend ``env`` is what the settings store resolves to right now."""
+    return mock.patch(
+        'kato_core_lib.helpers.kato_settings_store_utils.effective_config_env',
+        return_value=dict(env),
+    )
+
+
+class DefaultConfigEnvTests(unittest.TestCase):
+    """The env default must be the SETTINGS-aware one, not ``os.environ``.
+
+    Every key this module reads is an operator setting stored in
+    ``~/.kato/settings.json``, and saving one does not mutate the running
+    process env. Defaulting to ``os.environ`` made the probe disagree with
+    ``/api/config-status``: an operator who pointed ``KATO_CLAUDE_BINARY`` at
+    an absolute path cleared the setup gate while the banner kept reporting
+    "not found on PATH" until a kato restart.
+    """
+
+    SETTINGS = {'KATO_AGENT_BACKEND': 'codex', 'KATO_CODEX_BINARY': 'mycodex'}
+
+    def test_version_probe_reads_a_binary_set_only_in_settings(self):
+        with _settings_env(self.SETTINGS), \
+                mock.patch.dict(avu.os.environ, {}, clear=True), \
+                mock.patch.object(avu.shutil, 'which', return_value='/x/mycodex') as which, \
+                _registry():
+            info = avu.agent_version_info(runner=lambda path: 'codex 1.2.3')
+
+        which.assert_any_call('mycodex')
+        self.assertEqual(info['binary'], 'mycodex')
+        self.assertTrue(info['found'])
+
+    def test_upgrade_plan_reads_the_same_settings_as_the_probe(self):
+        """Or the button appears and then upgrades a binary kato can't see."""
+        settings = {'KATO_AGENT_BACKEND': 'claude',
+                    'KATO_CLAUDE_BINARY': '/opt/claude',
+                    'KATO_ALLOW_CLI_UPGRADE': 'true'}
+        with _settings_env(settings), \
+                mock.patch.dict(avu.os.environ, {}, clear=True), \
+                mock.patch.object(avu.shutil, 'which', return_value='/opt/claude'), \
+                _npm_managed(_NATIVE_REAL_PATH), _registry('9.9.9'):
+            plan = avu.upgrade_plan()
+
+        self.assertTrue(plan['allowed'])
+        self.assertIn('/opt/claude', plan['command'])
+
+    def test_installed_version_reads_settings_too(self):
+        with _settings_env(self.SETTINGS), \
+                mock.patch.dict(avu.os.environ, {}, clear=True), \
+                mock.patch.object(avu.shutil, 'which', return_value='/x/mycodex'):
+            version = avu.installed_version(runner=lambda path: 'codex 4.5.6')
+
+        self.assertEqual(version, '4.5.6')
+
+    def test_explicit_env_still_wins_over_the_settings_store(self):
+        with _settings_env(self.SETTINGS), \
+                mock.patch.object(avu.shutil, 'which', return_value='/x/other') as which, \
+                _registry():
+            avu.agent_version_info(
+                env={'KATO_AGENT_BACKEND': 'codex', 'KATO_CODEX_BINARY': 'other'},
+                runner=lambda path: 'codex 1.2.3',
+            )
+
+        which.assert_any_call('other')
+
+    def test_falls_back_to_process_env_when_the_store_is_unreadable(self):
+        """A version probe degrades; it never raises."""
+        broken = mock.patch(
+            'kato_core_lib.helpers.kato_settings_store_utils.effective_config_env',
+            side_effect=OSError('settings.json unreadable'),
+        )
+        with broken, mock.patch.dict(
+            avu.os.environ,
+            {'KATO_AGENT_BACKEND': 'codex', 'KATO_CODEX_BINARY': 'fromenv'},
+            clear=True,
+        ), mock.patch.object(avu.shutil, 'which', return_value='/x/fromenv') as which, \
+                _registry():
+            info = avu.agent_version_info(runner=lambda path: 'codex 1.2.3')
+
+        which.assert_any_call('fromenv')
+        self.assertTrue(info['found'])
+
+
 if __name__ == '__main__':
     unittest.main()

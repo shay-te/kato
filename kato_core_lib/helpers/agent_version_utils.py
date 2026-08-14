@@ -35,6 +35,32 @@ import threading
 import time
 import urllib.request
 
+
+def _config_env() -> dict:
+    """The config kato would boot with RIGHT NOW — ``settings.json`` included.
+
+    ``os.environ`` alone is the wrong default here. Every key this module
+    reads (``KATO_AGENT_BACKEND``, ``KATO_CLAUDE_BINARY``,
+    ``KATO_ALLOW_CLI_UPGRADE``, the min-version floors) is an OPERATOR
+    SETTING that lives in ``~/.kato/settings.json``, and saving one does not
+    mutate the running process env. That made the version probe disagree with
+    ``/api/config-status`` — which already resolves through
+    ``effective_config_env`` — so pointing ``KATO_CLAUDE_BINARY`` at an
+    absolute path cleared the setup gate while the banner went on reporting
+    "claude not found on PATH" until a restart.
+
+    Falls back to the process env if the store can't be read: a version probe
+    must degrade, never raise.
+    """
+    try:
+        from kato_core_lib.helpers.kato_settings_store_utils import (
+            effective_config_env,
+        )
+        return effective_config_env()
+    except Exception:
+        return dict(os.environ)
+
+
 _PROBE_TIMEOUT_SECONDS = 15
 _UPGRADE_TIMEOUT_SECONDS = 300
 _VERSION_RE = re.compile(r'(\d+)\.(\d+)\.(\d+)')
@@ -199,7 +225,7 @@ def installed_version(env: dict | None = None, runner=None) -> str | None:
     going through ``agent_version_info`` would also hit the npm registry on
     both sides of a command that already knows it changed things.
     """
-    env = os.environ if env is None else env
+    env = _config_env() if env is None else env
     backend = _resolve_backend(env)
     if backend == 'openhands':
         return None
@@ -219,7 +245,7 @@ def agent_version_info(env: dict | None = None, runner=None, latest=None) -> dic
     (installed is behind what's published), ``supports_workflows`` (claude + new
     enough), ``detail``. ``latest`` is an injectable lookup for tests. Never raises.
     """
-    env = os.environ if env is None else env
+    env = _config_env() if env is None else env
     backend = _resolve_backend(env)
     info = {
         'backend': backend, 'binary': '', 'found': True, 'version': None,
@@ -391,7 +417,7 @@ def upgrade_plan(env: dict | None = None) -> dict:
     ``argv`` is assembled from a FIXED template plus paths resolved off PATH —
     never from user input.
     """
-    env = os.environ if env is None else env
+    env = _config_env() if env is None else env
     plan = {'allowed': False, 'reason': '', 'manager': '', 'argv': [], 'command': ''}
     allowed, reason = upgrade_allowed(env)
     if not allowed:
@@ -435,7 +461,7 @@ def upgrade_allowed(env: dict | None = None) -> tuple[bool, str]:
     offered in Docker (the CLI lives in the image — rebuild it with
     ``kato sandbox build``). The per-use confirm in the UI (showing the exact
     command) is the approval gate."""
-    env = os.environ if env is None else env
+    env = _config_env() if env is None else env
     if _is_falsy(env.get('KATO_ALLOW_CLI_UPGRADE')):
         return False, 'in-app upgrade is disabled (KATO_ALLOW_CLI_UPGRADE=false)'
     backend = _resolve_backend(env)
@@ -492,7 +518,7 @@ def upgrade_agent_cli(env: dict | None = None, runner=None) -> dict:
     version_after}``. Never raises. For the progress-reporting variant the UI
     uses, see ``agent_cli_upgrade_job``.
     """
-    env = os.environ if env is None else env
+    env = _config_env() if env is None else env
     plan = upgrade_plan(env)
     if not plan['allowed']:
         return {'ok': False, 'message': plan['reason'], 'output': '',

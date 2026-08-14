@@ -2,7 +2,7 @@
 // the header buttons (Add task, Scan now). Empty state shows when
 // the sessions list is empty.
 
-import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 
 import TabList from './TabList.jsx';
@@ -338,5 +338,90 @@ describe('TabList — pinned tab ordering', () => {
     scroller.dispatchEvent(wheel);
     expect(scroller.scrollLeft).toBe(50);
     expect(wheel.defaultPrevented).toBe(true);
+  });
+});
+
+describe('TabList — pinned cluster stacking', () => {
+
+  const TAB_WIDTH = 100;   // fractional-safe stand-in for a measured pill
+  const GAP = 6;           // #tab-list > .tab + .tab { margin-left: 6px }
+
+  let restoreRect;
+
+  beforeEach(() => {
+    window.localStorage.removeItem(PINNED_TABS_STORAGE_KEY);
+    // jsdom reports a zero-size rect for everything, so the layout effect
+    // has nothing to accumulate. Give every ``.tab`` a real width.
+    const original = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = function rect() {
+      if (this.classList && this.classList.contains('tab')) {
+        return {
+          width: TAB_WIDTH, height: 30, top: 0, left: 0,
+          right: TAB_WIDTH, bottom: 30, x: 0, y: 0, toJSON: () => ({}),
+        };
+      }
+      return original.call(this);
+    };
+    restoreRect = () => { HTMLElement.prototype.getBoundingClientRect = original; };
+  });
+
+  afterEach(() => { restoreRect(); });
+
+  function renderPinned(ids) {
+    window.localStorage.setItem(PINNED_TABS_STORAGE_KEY, JSON.stringify(ids));
+    return render(
+      <TabList
+        sessions={[_session('A-1'), _session('A-2'), _session('A-3'), _session('A-4')]}
+        onSelect={() => {}}
+      />,
+    );
+  }
+
+  test('each pinned tab is offset past the full width of the ones before it', () => {
+    const { container } = renderPinned(['A-1', 'A-2', 'A-3']);
+
+    const pinned = container.querySelectorAll('li.tab.is-pinned');
+    expect(pinned).toHaveLength(3);
+    // Anything less than width+gap per step leaves the cluster overlapping.
+    expect(pinned[0].style.getPropertyValue('--sticky-left')).toBe('0px');
+    expect(pinned[1].style.getPropertyValue('--sticky-left'))
+      .toBe(`${TAB_WIDTH + GAP}px`);
+    expect(pinned[2].style.getPropertyValue('--sticky-left'))
+      .toBe(`${(TAB_WIDTH + GAP) * 2}px`);
+  });
+
+  test('a pinned tab never paints over the pinned tabs to its left', () => {
+    // The bug: every pinned tab shared one CSS z-index, so at equal z the
+    // LAST one in DOM order won and slid on top of its left-hand neighbours.
+    const { container } = renderPinned(['A-1', 'A-2', 'A-3']);
+
+    const z = Array.from(container.querySelectorAll('li.tab.is-pinned'))
+      .map((el) => Number(el.style.zIndex));
+
+    expect(z[0]).toBeGreaterThan(z[1]);
+    expect(z[1]).toBeGreaterThan(z[2]);
+  });
+
+  test('pinned tabs outrank the unpinned tabs scrolling underneath', () => {
+    const { container } = renderPinned(['A-1']);
+
+    const tabs = container.querySelectorAll('li.tab');
+    expect(Number(tabs[0].style.zIndex)).toBeGreaterThan(3);
+    expect(tabs[1].style.zIndex).toBe('');
+  });
+
+  test('offsets are recomputed when the pinned set changes', () => {
+    const { container } = renderPinned(['A-2']);
+    expect(container.querySelector('li.tab.is-pinned').style
+      .getPropertyValue('--sticky-left')).toBe('0px');
+
+    // Pin A-1 as well — it sorts ahead of A-2, which must shift right.
+    const unpinnedPin = container.querySelectorAll('.tab-pin-btn')[1];
+    fireEvent.click(unpinnedPin);
+
+    const pinned = container.querySelectorAll('li.tab.is-pinned');
+    expect(pinned).toHaveLength(2);
+    expect(pinned[1].style.getPropertyValue('--sticky-left'))
+      .toBe(`${TAB_WIDTH + GAP}px`);
   });
 });

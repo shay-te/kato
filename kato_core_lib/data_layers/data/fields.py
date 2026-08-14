@@ -78,6 +78,14 @@ class TaskTags(object):
     # Planning gate: hold a task in the planning UI before kato runs it.
     WAIT_PLANNING = f'{KATO_TAG_NAMESPACE}:wait-planning'
 
+    # Editing gate: the same "park it and open a chat tab" hold as
+    # WAIT_PLANNING, minus the planning. The workspace is cloned and the
+    # branch checked out, but the agent is told to produce NO plan and to
+    # start editing directly once the operator hands it the go-ahead (plus
+    # whatever clone directory / extra files the task needs). Use this when
+    # plan-then-work is pure latency because you already know the fix.
+    WAIT_EDITING = f'{KATO_TAG_NAMESPACE}:wait-editing'
+
     # Hold-before-publish gate. When this tag is on a task, kato runs
     # the agent and commits to the local task branch as usual, but
     # stops before pushing the branch and opening the PR. Removing the

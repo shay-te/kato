@@ -247,9 +247,21 @@ export default function TabList({
     const apply = () => {
       const pinned = list.querySelectorAll(':scope > .tab.is-pinned');
       let offset = 0;
-      pinned.forEach((el) => {
+      pinned.forEach((el, index) => {
         el.style.setProperty('--sticky-left', `${offset}px`);
-        offset += el.offsetWidth + TAB_GAP_PX;
+        // Earlier pinned tabs must paint ABOVE later ones. All pinned tabs
+        // share one ``z-index`` in CSS, so equal-z DOM order decided the
+        // winner and the RIGHTMOST pinned tab painted over its neighbours —
+        // any overlap (a resize mid-scroll, a sub-pixel seam) showed up as a
+        // pinned tab sliding on top of the pinned tabs to its left.
+        // Descending z-index makes the leftmost win, which is the only
+        // stacking that reads correctly for a left-anchored sticky cluster.
+        el.style.setProperty('z-index', String(pinned.length - index + 3));
+        // ``getBoundingClientRect().width`` is fractional; ``offsetWidth``
+        // rounds to an integer, so accumulating it drifted by up to half a
+        // pixel PER PINNED TAB and the cluster crept into overlap the more
+        // tabs were pinned.
+        offset += el.getBoundingClientRect().width + TAB_GAP_PX;
       });
     };
     apply();

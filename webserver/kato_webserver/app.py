@@ -71,6 +71,11 @@ from agent_core_lib.agent_core_lib.helpers.session_id_utils import (
     same_session_id,
 )
 from utils_core_lib.utils_core_lib.text_utils import text_from_mapping
+from kato_core_lib.helpers.explain_mode_utils import (
+    EXPLAIN_MODE,
+    is_explain_mode,
+    session_is_in_explain_mode,
+)
 from kato_core_lib.helpers.kato_paths_utils import kato_session_state_dir
 from claude_core_lib.claude_core_lib.session.wire_protocol import (
     CLAUDE_EVENT_CONTROL_REQUEST,
@@ -135,8 +140,13 @@ PLAN_PERMISSION_MODE = 'plan'
 # '' = kato's configured default (acceptEdits) — the composer's "Edit
 # automatically". Anything outside this set is refused at the route rather
 # than handed to the CLI, where it would break the spawn instead.
+# ``EXPLAIN_MODE`` is the one entry that is NOT a CLI permission mode: it is a
+# kato-level mode that the spawn path resolves into a permission mode plus a
+# read-only tool split (see helpers/explain_mode_utils.py). It is accepted here
+# because this set is what the COMPOSER may select, not what reaches the CLI.
 AGENT_PERMISSION_MODES = frozenset({
     '', 'default', 'acceptEdits', PLAN_PERMISSION_MODE, 'bypassPermissions',
+    EXPLAIN_MODE,
 })
 
 
@@ -4023,12 +4033,31 @@ def _plan_mode_change_needs_respawn(app: Flask, manager, task_id: str, images) -
     if bool(getattr(session, 'is_working', False)):
         return False  # don't interrupt a turn
     requested = str(overrides.get(task_id, '') or '')
-    live = str(getattr(session, 'permission_mode', '') or '')
-    # The session is "in plan mode" iff its baked mode is exactly 'plan';
-    # any other live mode (acceptEdits / bypassPermissions / '') counts as
-    # "can implement". Compare on that boolean so an unlocked override ('')
-    # only forces a respawn when the live session is actually still locked.
-    return (requested == PLAN_PERMISSION_MODE) != (live == PLAN_PERMISSION_MODE)
+    # Compare RESTRICTION, not the raw mode string. There are two independent
+    # ways a session can be locked down and they are baked at spawn time:
+    # ``--permission-mode plan``, and Explain's read-only tool denial. A
+    # comparison that looked only at ``permission_mode`` would see Explain's
+    # resolved 'default' and call the session unchanged — forwarding the
+    # message into a subprocess that can still edit.
+    return _requested_restriction(requested) != _live_restriction(session)
+
+
+def _requested_restriction(requested: str) -> str:
+    """The restriction the operator's current selection asks for."""
+    if requested == PLAN_PERMISSION_MODE:
+        return PLAN_PERMISSION_MODE
+    if is_explain_mode(requested):
+        return EXPLAIN_MODE
+    return ''
+
+
+def _live_restriction(session) -> str:
+    """The restriction actually baked into the running subprocess."""
+    if str(getattr(session, 'permission_mode', '') or '') == PLAN_PERMISSION_MODE:
+        return PLAN_PERMISSION_MODE
+    if session_is_in_explain_mode(session):
+        return EXPLAIN_MODE
+    return ''
 
 
 def _deliver_to_live_session(
@@ -4079,7 +4108,9 @@ def _spawn_or_reject_chat_session(app: Flask, task_id: str, text: str):
         return jsonify({'error': 'session is not running'}), 409
     manager = app.config['SESSION_MANAGER']
     workspace_manager = app.config.get('WORKSPACE_MANAGER')
-    cwd, summary = _chat_resume_context(manager, workspace_manager, task_id)
+    cwd, summary, description = _chat_resume_context(
+        manager, workspace_manager, task_id,
+    )
     additional_dirs = _chat_additional_dirs(workspace_manager, task_id)
     overrides = app.config.get('TASK_MODEL_OVERRIDES') or {}
     model_override = overrides.get(task_id, '')
@@ -4099,6 +4130,7 @@ def _spawn_or_reject_chat_session(app: Flask, task_id: str, text: str):
             message=text,
             cwd=cwd,
             task_summary=summary,
+            task_description=description,
             additional_dirs=additional_dirs,
             model=model_override,
             effort=effort_override,
@@ -4183,7 +4215,7 @@ def _migrate_adopted_session_transcript(
 
     session_manager = app.config['SESSION_MANAGER']
     workspace_manager = app.config.get('WORKSPACE_MANAGER')
-    target_cwd, _summary = _chat_resume_context(
+    target_cwd, _summary, _description = _chat_resume_context(
         session_manager, workspace_manager, task_id,
     )
     if not target_cwd:
@@ -4201,14 +4233,22 @@ def _migrate_adopted_session_transcript(
     )
 
 
-def _chat_resume_context(session_manager, workspace_manager, task_id: str) -> tuple[str, str]:
-    """Best-effort lookup of cwd + summary for a chat-respawn.
+def _chat_resume_context(
+    session_manager, workspace_manager, task_id: str,
+) -> tuple[str, str, str]:
+    """Best-effort lookup of cwd + summary + description for a chat-respawn.
 
     Falls back across managers because either side might be missing
     (kato/sessions wiped, or workspace metadata not yet populated).
+
+    The description comes from the workspace record only — the session record
+    never carried one. It is cached at provision time precisely so this lookup
+    stays offline; re-querying the tracker on every chat spawn would put the
+    ticket API on the interactive path.
     """
     cwd = ''
     summary = ''
+    description = ''
     if session_manager is not None:
         try:
             record = session_manager.get_record(task_id)
@@ -4225,13 +4265,14 @@ def _chat_resume_context(session_manager, workspace_manager, task_id: str) -> tu
         if workspace is not None:
             cwd = cwd or str(getattr(workspace, 'cwd', '') or '')
             summary = summary or str(getattr(workspace, 'task_summary', '') or '')
+            description = str(getattr(workspace, 'task_description', '') or '')
             if not cwd and getattr(workspace, 'repository_ids', None):
                 first_repo = workspace.repository_ids[0]
                 try:
                     cwd = str(workspace_manager.repository_path(task_id, first_repo))
                 except Exception:
                     cwd = ''
-    return cwd, summary
+    return cwd, summary, description
 
 
 def _chat_additional_dirs(workspace_manager, task_id: str) -> list[str]:

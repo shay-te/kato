@@ -134,12 +134,13 @@ class WorkspaceService(Service):
         *,
         task_id: str,
         task_summary: str = '',
+        task_description: str = '',
         repository_ids: list[str] | None = None,
     ) -> WorkspaceRecord:
         """Create the workspace folder + metadata. Idempotent.
 
         On a second call for the same ``task_id``, fields the caller
-        didn't pass (empty ``task_summary``, ``None``
+        didn't pass (empty ``task_summary`` / ``task_description``, ``None``
         ``repository_ids``) fall back to whatever the existing record
         had. ``created_at_epoch`` is preserved across calls.
         """
@@ -151,6 +152,10 @@ class WorkspaceService(Service):
                 task_summary=(
                     str(task_summary or '').strip()
                     or (existing.task_summary if existing else '')
+                ),
+                task_description=(
+                    str(task_description or '').strip()
+                    or (existing.task_description if existing else '')
                 ),
                 status=(
                     existing.status if existing else WORKSPACE_STATUS_PROVISIONING

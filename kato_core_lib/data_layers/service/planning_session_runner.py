@@ -34,6 +34,11 @@ from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
 from agent_core_lib.agent_core_lib.helpers.result_utils import build_openhands_result
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
+from kato_core_lib.helpers.explain_mode_utils import (
+    explain_prompt,
+    resolve_explain_spawn,
+)
+from kato_core_lib.helpers.task_definition_prompt import task_definition_block
 from utils_core_lib.utils_core_lib.text_utils import normalized_text
 
 
@@ -194,6 +199,7 @@ class PlanningSessionRunner(object):
         message: str,
         cwd: str = '',
         task_summary: str = '',
+        task_description: str = '',
         additional_dirs: list[str] | None = None,
         model: str = '',
         effort: str = '',
@@ -215,6 +221,18 @@ class PlanningSessionRunner(object):
         normalized_message = str(message or '').strip()
         if not normalized_message:
             raise ValueError('message is required to resume a chat session')
+        # Explain is the one composer mode that isn't a CLI permission mode:
+        # it resolves into a permission mode + a read-only tool split, and the
+        # message gets an answer-only instruction. Resolved here so BOTH chat
+        # entry points (the send route and the comment-driven respawn) get it
+        # from one place. Empty overrides for every other mode.
+        explain_spawn = resolve_explain_spawn(permission_mode)
+        if explain_spawn['permission_mode']:
+            # Re-sent on EVERY explain turn, resumed or not: the tool denial is
+            # baked into the subprocess, but the "answer, don't plan" framing
+            # is per-message — a session that switched into Explain mid-chat
+            # has prior turns telling it to go implement things.
+            normalized_message = explain_prompt(normalized_message)
         # When we have a saved session id, ``start_session`` will pass
         # ``--resume <id>`` to Claude — the prior conversation
         # (continuity, forbidden-repo guardrails, every prior turn) is
@@ -250,8 +268,25 @@ class PlanningSessionRunner(object):
                 else normalized_message
             )
         else:
+            # First spawn for this task: the agent has no history at all, so
+            # without this it reads the operator's opening message with no
+            # idea what the ticket actually asks for — "revert this" or "fix
+            # the validation error" against a blank slate. The autonomous
+            # implementation run always got the ticket text; a chat tab never
+            # did. Resumed turns skip it: Claude already has it in session
+            # history, and re-sending made it re-litigate the task each turn.
+            definition = task_definition_block(
+                task_id=normalized_task_id,
+                summary=task_summary,
+                description=task_description,
+            )
+            first_turn = (
+                f'{definition}\n\n{normalized_message}'
+                if definition
+                else normalized_message
+            )
             initial_prompt = agent_prompt_utils.prepend_chat_workspace_context(
-                normalized_message,
+                first_turn,
                 cwd=cwd,
                 additional_dirs=additional_dirs,
             )
@@ -272,7 +307,10 @@ class PlanningSessionRunner(object):
             cwd=normalized_text(cwd),
             model=model,
             effort=normalized_text(effort),
-            permission_mode=normalized_text(permission_mode),
+            permission_mode=explain_spawn['permission_mode']
+            or normalized_text(permission_mode),
+            allowed_tools=explain_spawn['allowed_tools'],
+            disallowed_tools=explain_spawn['disallowed_tools'],
             additional_dirs=additional_dirs,
         )
         sid = read_session_id_from(session)
@@ -576,6 +614,8 @@ class PlanningSessionRunner(object):
         model: str = '',
         effort: str = '',
         permission_mode: str = '',
+        allowed_tools: str = '',
+        disallowed_tools: str = '',
         additional_dirs: list[str] | None = None,
     ):
         return self._session_manager.start_session(
@@ -587,8 +627,11 @@ class PlanningSessionRunner(object):
             model=model or self._defaults.model,
             permission_mode=permission_mode or self._defaults.permission_mode,
             permission_prompt_tool=self._defaults.permission_prompt_tool,
-            allowed_tools=self._defaults.allowed_tools,
-            disallowed_tools=self._defaults.disallowed_tools,
+            # Per-spawn tool overrides exist for the read-only composer modes
+            # (Explain), which restrict BEYOND the configured defaults. Empty
+            # means "no override" so every other spawn keeps the defaults.
+            allowed_tools=allowed_tools or self._defaults.allowed_tools,
+            disallowed_tools=disallowed_tools or self._defaults.disallowed_tools,
             max_turns=self._defaults.max_turns,
             effort=effort or self._defaults.effort,
             expected_branch=branch_name,

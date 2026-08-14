@@ -237,7 +237,11 @@ describe('MessageForm — draft persistence (operator scenario)', () => {
     const onAgentModeChange = vi.fn();
     renderForm({ taskId: 'T1', agentMode: '', onAgentModeChange });
     fireEvent.click(screen.getByRole('button', { name: /agent mode:/i }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: /plan/i }));
+    fireEvent.click(screen.getByRole('menuitemradio', {
+      // Plan's own description — Explain's says "no plan", so a bare
+      // /plan/i matches two items.
+      name: /never edits or runs mutating tools/i,
+    }));
     expect(onAgentModeChange).toHaveBeenCalledWith('plan');
   });
 
@@ -247,7 +251,11 @@ describe('MessageForm — draft persistence (operator scenario)', () => {
     const onAgentModeChange = vi.fn();
     renderForm({ taskId: 'T1', agentMode: 'plan', onAgentModeChange });
     fireEvent.click(screen.getByRole('button', { name: /agent mode: plan/i }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: /plan/i }));
+    fireEvent.click(screen.getByRole('menuitemradio', {
+      // Plan's own description — Explain's says "no plan", so a bare
+      // /plan/i matches two items.
+      name: /never edits or runs mutating tools/i,
+    }));
     expect(onAgentModeChange).not.toHaveBeenCalled();
   });
 

@@ -638,6 +638,14 @@ def _mark_webserver_configured(app) -> None:
     flask_app.config['NEEDS_CONFIG'] = False
     # A stale error from an earlier failed attempt must not outlive success.
     flask_app.config['SETUP_ERROR'] = ''
+    # The agent-CLI probe is cached for the process lifetime, and in setup
+    # mode it ran BEFORE the operator supplied the backend settings — so it
+    # cached "claude not found on PATH". Leaving it would greet a freshly
+    # configured instance with a false "CLI not found" banner (and no Upgrade
+    # button, since the plan collapses when the binary can't be resolved)
+    # until someone happened to hit Refresh. Setup completion changes exactly
+    # the inputs that probe reads, so drop it and let the next GET re-probe.
+    flask_app.config.pop('AGENT_VERSION_INFO', None)
 
 
 def _reconcile_workspace_branches(app) -> None:

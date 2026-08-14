@@ -209,6 +209,7 @@ class WorkspaceRecoveryService(object):
         record = self._workspace_manager.create(
             task_id=task_id,
             task_summary=normalized_text(getattr(task, 'summary', '')),
+            task_description=normalized_text(getattr(task, 'description', '')),
             repository_ids=repository_ids,
         )
         self._workspace_manager.update_status(task_id, WORKSPACE_STATUS_ACTIVE)

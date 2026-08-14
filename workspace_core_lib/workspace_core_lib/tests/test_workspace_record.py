@@ -22,6 +22,7 @@ class WorkspaceRecordTests(unittest.TestCase):
         original = WorkspaceRecord(
             task_id='PROJ-9',
             task_summary='roundtrip test',
+            task_description='the full body text',
             status=WORKSPACE_STATUS_DONE,
             repository_ids=['repo1', 'repo2'],
             agent_session_id='sess-uuid',
@@ -32,6 +33,11 @@ class WorkspaceRecordTests(unittest.TestCase):
         )
         round_trip = WorkspaceRecord.from_dict(original.to_dict())
         self.assertEqual(round_trip, original)
+
+    def test_from_dict_defaults_description_for_records_written_before_it(self) -> None:
+        """Every workspace already on disk predates the field."""
+        record = WorkspaceRecord.from_dict({'task_id': 'PROJ-1'})
+        self.assertEqual(record.task_description, '')
 
     def test_from_dict_strips_session_id_and_cwd(self) -> None:
         record = WorkspaceRecord.from_dict({

@@ -13,6 +13,19 @@ const PATTERNS = [
     },
   },
   {
+    // Same hold, different contract: the agent is parked and will edit
+    // directly (no plan) once the operator hands it the go-ahead.
+    re: /^task (\S+) tagged kato:wait-editing/,
+    build: (m) => {
+      return {
+        title: 'Waiting for your go-ahead',
+        body: m[1],
+        taskId: m[1],
+        kind: NOTIFICATION_KIND.STARTED,
+      };
+    },
+  },
+  {
     re: /^Mission (\S+): starting mission(?:: (.+))?/,
     build: (m) => {
       const body = m[2] ? `${m[1]}: ${m[2]}` : m[1];

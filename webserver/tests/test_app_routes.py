@@ -1590,3 +1590,58 @@ class PlanModeRespawnTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ModeRestrictionRespawnTests(unittest.TestCase):
+    """Switching composer mode must respawn when the RESTRICTION changes.
+
+    The comparison used to look only at ``permission_mode``, which was fine
+    while 'plan' was the only restrictive mode. Explain resolves to
+    ``permission_mode='default'`` and expresses its restriction as a tool
+    denial instead — so a permission-mode-only comparison sees "default vs
+    default", calls the session unchanged, and forwards the message into a
+    subprocess that can still edit. That is the exact failure this pins.
+    """
+
+    READ_ONLY = 'Edit,Write,MultiEdit,NotebookEdit,Bash,WebFetch'
+
+    def _needs_respawn(self, requested: str, live_mode: str, live_denied: str) -> bool:
+        from kato_webserver.app import _plan_mode_change_needs_respawn
+        session = SimpleNamespace(
+            is_alive=True,
+            is_working=False,
+            permission_mode=live_mode,
+            disallowed_tools=live_denied,
+        )
+        app = SimpleNamespace(
+            config={'TASK_PLAN_MODE_OVERRIDES': {'T-1': requested}},
+        )
+        manager = SimpleNamespace(get_session=lambda _t: session)
+        return _plan_mode_change_needs_respawn(app, manager, 'T-1', images=None)
+
+    def test_switching_into_explain_from_an_editing_session_respawns(self) -> None:
+        self.assertTrue(self._needs_respawn('explain', 'default', ''))
+
+    def test_switching_out_of_explain_respawns(self) -> None:
+        self.assertFalse(self._needs_respawn('explain', 'default', self.READ_ONLY))
+        self.assertTrue(self._needs_respawn('', 'default', self.READ_ONLY))
+
+    def test_explain_and_plan_are_different_restrictions(self) -> None:
+        self.assertTrue(self._needs_respawn('explain', 'plan', ''))
+        self.assertTrue(self._needs_respawn('plan', 'default', self.READ_ONLY))
+
+    def test_already_in_the_requested_restriction_does_not_respawn(self) -> None:
+        self.assertFalse(self._needs_respawn('plan', 'plan', ''))
+        self.assertFalse(self._needs_respawn('', 'acceptEdits', ''))
+
+    def test_a_working_session_is_never_interrupted(self) -> None:
+        from kato_webserver.app import _plan_mode_change_needs_respawn
+        session = SimpleNamespace(
+            is_alive=True, is_working=True,
+            permission_mode='default', disallowed_tools='',
+        )
+        app = SimpleNamespace(config={'TASK_PLAN_MODE_OVERRIDES': {'T-1': 'explain'}})
+        manager = SimpleNamespace(get_session=lambda _t: session)
+        self.assertFalse(
+            _plan_mode_change_needs_respawn(app, manager, 'T-1', images=None),
+        )

@@ -14,6 +14,10 @@ from agent_core_lib.agent_core_lib.helpers.comment_prompt import (
     build_comment_prompt_context,
 )
 from agent_core_lib.agent_core_lib.helpers.logging_utils import configure_logger
+from agent_core_lib.agent_core_lib.helpers.read_only_tools import (
+    READ_ONLY_ALLOWED_TOOLS,
+    READ_ONLY_DISALLOWED_TOOLS,
+)
 from agent_core_lib.agent_core_lib.helpers.result_utils import build_openhands_result
 from agent_core_lib.agent_core_lib.helpers.session_id_utils import fix_session_id
 from utils_core_lib.utils_core_lib.text_utils import (
@@ -296,8 +300,8 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
         original_disallowed = self._disallowed_tools
         original_allowed = self._allowed_tools
         try:
-            self._disallowed_tools = 'Edit,Write,MultiEdit,NotebookEdit,Bash,WebFetch'
-            self._allowed_tools = 'Read,Glob,Grep'
+            self._disallowed_tools = READ_ONLY_DISALLOWED_TOOLS
+            self._allowed_tools = READ_ONLY_ALLOWED_TOOLS
             payload = self._run_prompt(
                 prompt=normalized_prompt,
                 cwd=normalized_cwd,

@@ -184,6 +184,98 @@ class PlanningSessionRunnerTests(unittest.TestCase):
         self.assertIn('secret-client', prompt)
         self.assertTrue(prompt.endswith('please continue'))
 
+    def test_first_chat_spawn_carries_the_task_definition(self) -> None:
+        """A fresh chat tab used to open with no idea what the ticket said.
+
+        Only the autonomous implementation run got the ticket text, so an
+        operator's opening "revert this" landed on an agent with no task
+        context at all.
+        """
+        manager = _FakeManager(_terminal(result='ok'))
+        runner = PlanningSessionRunner(session_manager=manager, defaults=self.defaults)
+
+        runner.resume_session_for_chat(
+            task_id='PROJ-1',
+            message='please continue',
+            cwd='/tmp/client',
+            task_summary='Fix the FOC rule',
+            task_description='It rejects valid input.',
+        )
+
+        prompt = manager.start_kwargs['initial_prompt']
+        self.assertIn('Task definition', prompt)
+        self.assertIn('Fix the FOC rule', prompt)
+        self.assertIn('It rejects valid input.', prompt)
+        # Tracker text is attacker-writable — it must stay framed.
+        self.assertIn('UNTRUSTED_WORKSPACE_FILE', prompt)
+        # The operator's own message still lands last.
+        self.assertTrue(prompt.endswith('please continue'))
+
+    def test_first_chat_spawn_without_a_description_is_unchanged(self) -> None:
+        manager = _FakeManager(_terminal(result='ok'))
+        runner = PlanningSessionRunner(session_manager=manager, defaults=self.defaults)
+
+        runner.resume_session_for_chat(
+            task_id='PROJ-1',
+            message='please continue',
+            cwd='/tmp/client',
+        )
+
+        prompt = manager.start_kwargs['initial_prompt']
+        self.assertNotIn('Task definition', prompt)
+        self.assertTrue(prompt.endswith('please continue'))
+
+    def test_explain_mode_spawns_read_only_and_never_reaches_the_cli_as_a_mode(self) -> None:
+        """'explain' is not a CLI --permission-mode; it must be resolved away."""
+        manager = _FakeManager(_terminal(result='explained'))
+        runner = PlanningSessionRunner(session_manager=manager, defaults=self.defaults)
+
+        runner.resume_session_for_chat(
+            task_id='PROJ-1',
+            message='what does this function do?',
+            cwd='/tmp/client',
+            permission_mode='explain',
+        )
+
+        kwargs = manager.start_kwargs
+        self.assertNotEqual(kwargs['permission_mode'], 'explain')
+        # The restriction is enforced by tool denial, not by the prompt.
+        denied = kwargs['disallowed_tools'].lower()
+        for tool in ('edit', 'write', 'bash'):
+            self.assertIn(tool, denied)
+        self.assertEqual(kwargs['allowed_tools'], 'Read,Glob,Grep')
+
+    def test_explain_mode_tells_the_agent_to_answer_not_plan(self) -> None:
+        manager = _FakeManager(_terminal(result='explained'))
+        runner = PlanningSessionRunner(session_manager=manager, defaults=self.defaults)
+
+        runner.resume_session_for_chat(
+            task_id='PROJ-1',
+            message='what does this function do?',
+            cwd='/tmp/client',
+            permission_mode='explain',
+        )
+
+        prompt = manager.start_kwargs['initial_prompt']
+        self.assertIn('Do NOT produce a plan', prompt)
+        self.assertIn('what does this function do?', prompt)
+
+    def test_non_explain_modes_keep_the_configured_tool_defaults(self) -> None:
+        """Explain's tool override must not leak into every other spawn."""
+        manager = _FakeManager(_terminal(result='ok'))
+        runner = PlanningSessionRunner(session_manager=manager, defaults=self.defaults)
+
+        runner.resume_session_for_chat(
+            task_id='PROJ-1',
+            message='go implement it',
+            cwd='/tmp/client',
+        )
+
+        kwargs = manager.start_kwargs
+        self.assertEqual(kwargs['allowed_tools'], self.defaults.allowed_tools)
+        self.assertEqual(kwargs['disallowed_tools'], self.defaults.disallowed_tools)
+        self.assertNotIn('ANSWER-ONLY TURN', kwargs['initial_prompt'])
+
     def test_resume_session_for_chat_forwards_plan_permission_mode(self) -> None:
         # The composer's plan-mode lock reaches the spawn as
         # ``--permission-mode plan`` so the agent can only plan.

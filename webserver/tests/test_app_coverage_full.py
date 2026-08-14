@@ -810,7 +810,7 @@ class PostMessageEffortRespawnTests(unittest.TestCase):
         app.config['TASK_EFFORT_OVERRIDES'] = {'T-1': 'high'}
 
         with patch.object(
-            app_module, '_chat_resume_context', return_value=('/cwd', 'sum'),
+            app_module, '_chat_resume_context', return_value=('/cwd', 'sum', ''),
         ), patch.object(
             app_module, '_chat_additional_dirs', return_value=[],
         ):
@@ -838,7 +838,7 @@ class PostMessageEffortRespawnTests(unittest.TestCase):
         app.config['TASK_EFFORT_OVERRIDES'] = {'T-1': 'high'}
 
         with patch.object(
-            app_module, '_chat_resume_context', return_value=('/cwd', 'sum'),
+            app_module, '_chat_resume_context', return_value=('/cwd', 'sum', ''),
         ), patch.object(
             app_module, '_chat_additional_dirs', return_value=[],
         ):
@@ -863,7 +863,7 @@ class MigrateTranscriptTests(unittest.TestCase):
             agent_session_id='sid-1', transcript_path='/path/sid-1.jsonl',
         )
         with patch.object(
-            app_module, '_chat_resume_context', return_value=('/cwd', 's'),
+            app_module, '_chat_resume_context', return_value=('/cwd', 's', ''),
         ), patch(
             'claude_core_lib.claude_core_lib.session.index.list_sessions',
             return_value=[entry],
@@ -883,7 +883,7 @@ class MigrateTranscriptTests(unittest.TestCase):
             agent_session_id='other', transcript_path='/path/other.jsonl',
         )
         with patch.object(
-            app_module, '_chat_resume_context', return_value=('/cwd', 's'),
+            app_module, '_chat_resume_context', return_value=('/cwd', 's', ''),
         ), patch(
             'claude_core_lib.claude_core_lib.session.index.list_sessions',
             return_value=[entry],
@@ -906,7 +906,7 @@ class ChatResumeContextTests(unittest.TestCase):
             cwd='', task_summary='S', repository_ids=['client'],
         )
         workspace.repository_path.return_value = '/ws/T-1/client'
-        cwd, summary = _chat_resume_context(None, workspace, 'T-1')
+        cwd, summary, _description = _chat_resume_context(None, workspace, 'T-1')
         self.assertEqual(cwd, '/ws/T-1/client')
         self.assertEqual(summary, 'S')
 
@@ -918,7 +918,7 @@ class ChatResumeContextTests(unittest.TestCase):
             cwd='', task_summary='', repository_ids=['client'],
         )
         workspace.repository_path.side_effect = RuntimeError('no path')
-        cwd, _summary = _chat_resume_context(None, workspace, 'T-1')
+        cwd, _summary, _description = _chat_resume_context(None, workspace, 'T-1')
         self.assertEqual(cwd, '')
 
 
@@ -1615,7 +1615,7 @@ class ChatResumeContextCwdSetTests(unittest.TestCase):
         workspace.get.return_value = SimpleNamespace(
             cwd='', task_summary='', repository_ids=['client'],
         )
-        cwd, summary = _chat_resume_context(record_mgr, workspace, 'T-1')
+        cwd, summary, _description = _chat_resume_context(record_mgr, workspace, 'T-1')
         self.assertEqual(cwd, '/record/cwd')
         self.assertEqual(summary, 'S')
         # repository_path must NOT be consulted because cwd was non-blank.

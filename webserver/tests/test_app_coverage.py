@@ -1502,7 +1502,7 @@ class ChatResumeContextTests(unittest.TestCase):
 
         session_manager = MagicMock()
         session_manager.get_record.side_effect = RuntimeError('fail')
-        cwd, summary = _chat_resume_context(session_manager, None, 'T-1')
+        cwd, summary, _description = _chat_resume_context(session_manager, None, 'T-1')
         self.assertEqual(cwd, '')
         self.assertEqual(summary, '')
 
@@ -1511,7 +1511,7 @@ class ChatResumeContextTests(unittest.TestCase):
 
         workspace_manager = MagicMock()
         workspace_manager.get.side_effect = RuntimeError('fail')
-        cwd, _ = _chat_resume_context(None, workspace_manager, 'T-1')
+        cwd, _, _description = _chat_resume_context(None, workspace_manager, 'T-1')
         self.assertEqual(cwd, '')
 
     def test_context_falls_back_to_workspace_first_repo(self):
@@ -1523,7 +1523,7 @@ class ChatResumeContextTests(unittest.TestCase):
             cwd='', task_summary='', repository_ids=['client'],
         )
         workspace_manager.repository_path.return_value = '/path/to/client'
-        cwd, _ = _chat_resume_context(None, workspace_manager, 'T-1')
+        cwd, _, _description = _chat_resume_context(None, workspace_manager, 'T-1')
         self.assertEqual(cwd, '/path/to/client')
 
     def test_context_workspace_repository_path_raises(self):
@@ -1534,7 +1534,7 @@ class ChatResumeContextTests(unittest.TestCase):
             cwd='', task_summary='', repository_ids=['client'],
         )
         workspace_manager.repository_path.side_effect = RuntimeError('lookup failed')
-        cwd, _ = _chat_resume_context(None, workspace_manager, 'T-1')
+        cwd, _, _description = _chat_resume_context(None, workspace_manager, 'T-1')
         self.assertEqual(cwd, '')
 
 

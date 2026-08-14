@@ -604,7 +604,6 @@ export default function App() {
         openFile={activeOpenFile}
         onCommentSpawned={handleCommentSpawned}
         onViewStateChange={handleFileViewStateChange}
-        onOpenFile={handleOpenFile}
       />
     );
     // The open-file tab strip stacks directly above the pane, so this

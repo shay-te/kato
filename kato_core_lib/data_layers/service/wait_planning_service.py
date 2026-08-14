@@ -1,19 +1,30 @@
-"""Wait-planning short-circuit handling.
+"""Operator-hold short-circuit handling (``kato:wait-planning`` / ``kato:wait-editing``).
 
-When a task is tagged ``kato:wait-planning``, the orchestrator skips
+When a task carries either hold tag, the orchestrator skips
 implementation/testing/publishing entirely and instead:
 
 1. Resolves which repositories the task touches.
 2. Provisions a per-task workspace folder + clones the repos into it.
 3. Checks out the task branch on every cloned repo.
-4. Spawns a long-lived Claude planning session in ``--permission-mode plan``
-   so the user can drive the conversation in the planning UI.
+4. Spawns a long-lived Claude session so the user drives the conversation
+   in the planning UI.
 5. Moves the ticket to "In Progress".
+
+Steps 1-3 and 5 are identical for both tags; only the opening prompt and the
+permission mode differ, so the two holds share this one service rather than
+forking a near-duplicate of the whole git dance:
+
+* ``kato:wait-planning`` — **discussion only**. Runs in
+  ``--permission-mode plan`` and the prompt forbids tool use outright.
+* ``kato:wait-editing`` — **implementation, just not yet**. Keeps the
+  configured permission mode and tells the agent to skip planning and edit
+  directly once the operator gives the go-ahead. For work where you already
+  know the fix and plan-then-work is pure latency.
 
 This whole flow lived on :class:`AgentService` and crowded that god-class
 with 11 wait-planning-specific methods. Pulling it out gives each class
 a single reason to change: ``AgentService`` is the top-level scan-loop
-orchestrator, ``WaitPlanningService`` is the wait-planning workflow.
+orchestrator, ``WaitPlanningService`` owns the operator-hold workflow.
 """
 
 from __future__ import annotations
@@ -28,6 +39,7 @@ from kato_core_lib.data_layers.service.workspace_provisioning_service import (
 )
 from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
 from kato_core_lib.helpers.logging_utils import configure_logger
+from kato_core_lib.helpers.task_definition_prompt import task_definition_block
 from kato_core_lib.helpers.task_execution_utils import skip_task_result
 from utils_core_lib.utils_core_lib.text_utils import text_from_attr
 
@@ -55,8 +67,17 @@ class _PlanningContext(object):
     expected_branch: str
 
 
+# The two hold tags, in match order. ``permission_mode`` is the CLI override
+# the spawn forces: wait-planning pins ``plan`` so the agent physically cannot
+# execute even if the prompt fails to stop it, while wait-editing passes ''
+# and inherits the runner's configured mode — its whole point is to be able to
+# edit the moment the operator says go.
+_WAIT_PLANNING_MODE = 'planning'
+_WAIT_EDITING_MODE = 'editing'
+
+
 class WaitPlanningService(object):
-    """Owns the ``kato:wait-planning`` short-circuit lifecycle."""
+    """Owns the ``kato:wait-planning`` / ``kato:wait-editing`` hold lifecycle."""
 
     def __init__(
         self,
@@ -78,36 +99,64 @@ class WaitPlanningService(object):
     # ----- public API -----
 
     @staticmethod
-    def task_has_wait_planning_tag(task: Task) -> bool:
+    def _task_has_tag(task: Task, wanted: str) -> bool:
         tags = getattr(task, 'tags', None) or []
-        target = TaskTags.WAIT_PLANNING.lower()
+        target = wanted.lower()
         for tag in tags:
             if str(tag or '').strip().lower() == target:
                 return True
         return False
 
+    @classmethod
+    def task_has_wait_planning_tag(cls, task: Task) -> bool:
+        return cls._task_has_tag(task, TaskTags.WAIT_PLANNING)
+
+    @classmethod
+    def task_has_wait_editing_tag(cls, task: Task) -> bool:
+        return cls._task_has_tag(task, TaskTags.WAIT_EDITING)
+
+    @classmethod
+    def _hold_mode(cls, task: Task) -> str:
+        """Which hold applies to ``task`` (``''`` when neither does).
+
+        Planning wins when both tags are present: it is the strictly more
+        restrictive hold, and silently letting the agent edit because a
+        second tag was left on the ticket is the wrong way to resolve a
+        contradiction.
+        """
+        if cls.task_has_wait_planning_tag(task):
+            return _WAIT_PLANNING_MODE
+        if cls.task_has_wait_editing_tag(task):
+            return _WAIT_EDITING_MODE
+        return ''
+
     def handle_task(self, task: Task) -> dict[str, object] | None:
-        """If ``task`` is tagged ``kato:wait-planning``, register the chat tab and stop.
+        """If ``task`` carries a hold tag, register the chat tab and stop.
 
         The orchestrator does no implementation/testing/publishing for
         these tasks — the human drives the conversation in the UI.
         Returns ``None`` to let the autonomous flow run; returns a skip
-        result when the wait-planning short-circuit took the wheel.
+        result when a hold short-circuit took the wheel.
         """
-        if not self.task_has_wait_planning_tag(task):
+        mode = self._hold_mode(task)
+        if not mode:
             return None
+        tag = (
+            TaskTags.WAIT_PLANNING if mode == _WAIT_PLANNING_MODE
+            else TaskTags.WAIT_EDITING
+        )
         if self._session_manager is None:
             # No streaming backend (e.g. OpenHands) — nothing to register.
             self.logger.info(
                 'task %s has %s but the active backend has no streaming UI; skipping',
                 task.id,
-                TaskTags.WAIT_PLANNING,
+                tag,
             )
             return skip_task_result(task.id, [])
         if self._is_chat_already_alive(task):
             return skip_task_result(task.id, [])
         context = self._resolve_planning_context(task)
-        self._spawn_planning_session(task, context)
+        self._spawn_planning_session(task, context, mode)
         # Planning is real work — move the ticket out of the inbox so
         # it doesn't get picked up by another agent / scanned again as
         # "needs to start". Idempotent on the ticket side, and only
@@ -126,13 +175,27 @@ class WaitPlanningService(object):
         self,
         task: Task,
         context: _PlanningContext,
+        mode: str = _WAIT_PLANNING_MODE,
     ) -> None:
-        # Belt-and-suspenders: the prompt explicitly forbids tool use,
-        # AND the CLI runs in ``--permission-mode plan`` so Claude can't
-        # execute even if it tries. Removing the tag flips back to the
-        # configured permission mode via the autonomous path.
         spawn_defaults = self._session_starter_defaults()
-        spawn_defaults['permission_mode'] = 'plan'
+        if mode == _WAIT_PLANNING_MODE:
+            # Belt-and-suspenders: the prompt explicitly forbids tool use,
+            # AND the CLI runs in ``--permission-mode plan`` so Claude can't
+            # execute even if it tries. Removing the tag flips back to the
+            # configured permission mode via the autonomous path.
+            spawn_defaults['permission_mode'] = 'plan'
+        # wait-editing deliberately does NOT pin a mode: it inherits the
+        # runner's configured one so the agent can start editing the instant
+        # the operator says go. Forcing ``plan`` here would recreate exactly
+        # the plan-then-work latency the tag exists to avoid.
+        prompt = (
+            self._build_planning_prompt(task) if mode == _WAIT_PLANNING_MODE
+            else self._build_editing_prompt(task)
+        )
+        tag = (
+            TaskTags.WAIT_PLANNING if mode == _WAIT_PLANNING_MODE
+            else TaskTags.WAIT_EDITING
+        )
         try:
             self._session_manager.start_session(
                 task_id=str(task.id),
@@ -143,22 +206,23 @@ class WaitPlanningService(object):
                 # exit with an error and the scan loop would respawn it
                 # forever. The contextual prompt below puts Claude in
                 # "ready, waiting" state without kicking off any work.
-                initial_prompt=self._build_planning_prompt(task),
+                initial_prompt=prompt,
                 cwd=context.cwd,
                 expected_branch=context.expected_branch,
                 **spawn_defaults,
             )
             self._mark_workspace_waiting_for_operator(task)
             self.logger.info(
-                'task %s tagged %s — registered planning chat (cwd=%s); '
+                'task %s tagged %s — registered %s chat (cwd=%s); '
                 'remove the tag to let the agent run autonomously',
                 task.id,
-                TaskTags.WAIT_PLANNING,
+                tag,
+                mode,
                 context.cwd or '?',
             )
         except Exception:
             self.logger.exception(
-                'failed to register planning session for task %s', task.id,
+                'failed to register %s session for task %s', mode, task.id,
             )
 
     def _mark_workspace_waiting_for_operator(self, task: Task) -> None:
@@ -304,7 +368,31 @@ class WaitPlanningService(object):
         return result
 
     @staticmethod
-    def _build_planning_prompt(task: Task) -> str:
+    def _hold_prompt_preamble(task: Task, opening: str) -> list[str]:
+        """Opening line + the ticket text + the forbidden-repo guardrails.
+
+        Shared by both hold prompts — the only difference between them is the
+        operating rules that follow, so everything up to that point lives here
+        instead of being written twice and drifting.
+        """
+        task_id = text_from_attr(task, 'id')
+        header = f'ticket {task_id}' if task_id else 'this task'
+        sections = [opening.format(header=header), '']
+        # Always framed as untrusted: the summary/description are tracker text
+        # that anyone with comment access there can write.
+        definition = task_definition_block(
+            task_id=task_id,
+            summary=text_from_attr(task, 'summary'),
+            description=text_from_attr(task, 'description'),
+        )
+        sections.append(definition or '## Task definition\n(no description provided)')
+        forbidden_repositories = agent_prompt_utils.forbidden_repository_guardrails_text()
+        if forbidden_repositories:
+            sections.extend(['', '## Forbidden repositories', forbidden_repositories])
+        return sections
+
+    @classmethod
+    def _build_planning_prompt(cls, task: Task) -> str:
         """Initial prompt for a wait-planning chat tab.
 
         Three jobs at once:
@@ -315,23 +403,9 @@ class WaitPlanningService(object):
           3. Avoid empty stdin (which makes ``claude -p`` exit with an
              error and the scan loop would respawn it forever).
         """
-        task_id = text_from_attr(task, 'id')
-        summary = text_from_attr(task, 'summary')
-        description = text_from_attr(task, 'description')
-        header = f'YouTrack ticket {task_id}' if task_id else 'this task'
-
-        sections = [
-            f"You're pair-planning with the user on {header}.",
-            '',
-            '## Task summary',
-            summary or '(no summary provided)',
-        ]
-        if description:
-            sections.extend(['', '## Task description', description])
-        forbidden_repositories = agent_prompt_utils.forbidden_repository_guardrails_text()
-        if forbidden_repositories:
-            sections.extend(['', '## Forbidden repositories', forbidden_repositories])
-        from kato_core_lib.data_layers.data.sentinels import KATO_TASK_DONE_SENTINEL
+        sections = cls._hold_prompt_preamble(
+            task, "You're pair-planning with the user on {header}.",
+        )
         sections.extend([
             '',
             '## Operating rules — READ CAREFULLY',
@@ -342,6 +416,62 @@ class WaitPlanningService(object):
             'questions, and help them refine the approach in plain text.',
             '- The user will explicitly tell you when planning is done. Until '
             'then, every reply is a discussion message — no tool calls.',
+            *cls._done_sentinel_section(),
+            '',
+            'Briefly acknowledge that you understand and are ready to plan. '
+            'Then wait for the user to drive the conversation.',
+        ])
+        return '\n'.join(sections)
+
+    @classmethod
+    def _build_editing_prompt(cls, task: Task) -> str:
+        """Initial prompt for a wait-editing chat tab.
+
+        Same hold as wait-planning — the agent must not start until the
+        operator says go — but the opposite instruction once it does: no
+        plan, no proposal round, edit directly. The operator reaches for this
+        tag precisely when they already know the fix and plan-then-work is
+        wasted latency, so a prompt that merely *allows* implementation is not
+        enough; the agent's default on being handed a task is to plan first,
+        and that default has to be named and overridden explicitly.
+
+        Reading the workspace while parked is deliberately allowed — the hold
+        is on EDITING, not on orientation, and an agent that has already read
+        the relevant files starts faster when the go-ahead lands.
+        """
+        sections = cls._hold_prompt_preamble(
+            task, "You're working with the user on {header}.",
+        )
+        sections.extend([
+            '',
+            '## Operating rules — READ CAREFULLY',
+            '- **Do not start yet.** Wait for the operator to explicitly tell '
+            'you to go. They still owe you context — the clone directory to '
+            'work in, and possibly more files related to this task.',
+            '- **Do not produce a plan.** No proposal, no numbered approach, '
+            'no "here is what I would do" round. When the go-ahead arrives, '
+            'start editing directly.',
+            '- You MAY read files and look around the workspace while you '
+            'wait, so you are oriented when the operator says go.',
+            '- DO NOT edit, write, create, delete, or run anything until the '
+            'operator gives the go-ahead.',
+            *cls._done_sentinel_section(),
+            '',
+            'Reply with one short line confirming you are ready and waiting '
+            'for the go-ahead. Do not summarize the task back, and do not '
+            'suggest an approach.',
+        ])
+        return '\n'.join(sections)
+
+    @staticmethod
+    def _done_sentinel_section() -> list[str]:
+        """The "emit this token when the operator says we're done" contract.
+
+        Identical for both holds — kato watches for the sentinel on either,
+        so the wording lives in one place.
+        """
+        from kato_core_lib.data_layers.data.sentinels import KATO_TASK_DONE_SENTINEL
+        return [
             '',
             '## How to signal "I am done" — IMPORTANT',
             f'When the operator confirms the task is complete and they are '
@@ -352,8 +482,4 @@ class WaitPlanningService(object):
             'move the ticket to In Review automatically. Emit it ONLY when '
             'the operator has clearly said the work is done — never as part '
             'of a question, an apology, or speculative text.',
-            '',
-            'Briefly acknowledge that you understand and are ready to plan. '
-            'Then wait for the user to drive the conversation.',
-        ])
-        return '\n'.join(sections)
+        ]

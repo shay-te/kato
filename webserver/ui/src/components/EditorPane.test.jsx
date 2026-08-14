@@ -1,16 +1,21 @@
-// Tests for EditorPane's file-path HEADER right-click menu.
+// Tests that EditorPane renders NO path/read-only header strip.
 //
-// The Monaco editor body has its own native right-click menu (with the
-// same "Copy relative path" action), but Monaco doesn't mount under
-// jsdom — so here we stub @monaco-editor/react and exercise only the
-// header menu, which is plain DOM. The shared copyRepoRelativePath
-// helper is mocked so we can assert the exact (repoId, path) it copies.
+// It used to carry one: file path + a permanent "read-only" pill + a
+// "View diff" button, plus a right-click menu with the copy actions. All
+// of it was redundant with the file tab directly above (which shows
+// ``repoId/relativePath`` on hover and owns the diff ⇄ file toggle), and
+// the pill was never conditional — the editor is always read-only — so
+// the row cost a full line of vertical space to say nothing actionable.
+//
+// The copy actions moved into Monaco's own right-click menu
+// (``kato.copyRelativePath`` / ``kato.copyFileName``). Monaco doesn't
+// mount under jsdom, so those are not exercised here; this file only
+// pins that the header does not come back.
 
-import { describe, test, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, test, expect, vi } from 'vitest';
+import { render } from '@testing-library/react';
 
-// Monaco never mounts in jsdom; render a stub so EditorPane's body is
-// inert and handleEditorMount (the editor-body menu) is irrelevant here.
+// Monaco never mounts in jsdom; render a stub so the body is inert.
 vi.mock('@monaco-editor/react', () => ({ default: () => null }));
 
 // No network: the pane fetches file content + comments on mount.
@@ -24,18 +29,11 @@ vi.mock('../api.js', () => ({
   resolveTaskComment: vi.fn(),
 }));
 
-// EditorPane only pulls appendToInput from the composer context.
 vi.mock('../contexts/ChatComposerContext.jsx', () => ({
   useChatComposer: () => ({ appendToInput: vi.fn() }),
 }));
 
-// The thing under test calls this on "Copy relative path".
-vi.mock('../utils/clipboard.js', () => ({
-  copyRepoRelativePath: vi.fn(async () => {}),
-}));
-
 import EditorPane from './EditorPane.jsx';
-import { copyRepoRelativePath } from '../utils/clipboard.js';
 
 const OPEN_FILE = {
   taskId: 'KATO-1',
@@ -44,32 +42,27 @@ const OPEN_FILE = {
   repoId: 'repo',
 };
 
-describe('EditorPane — header "Copy relative path" context menu', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+describe('EditorPane — no path/read-only header strip', () => {
+  test('renders no header row above the editor body', () => {
+    const { container } = render(<EditorPane openFile={OPEN_FILE} />);
+    expect(container.querySelector('.editor-pane-header')).toBeNull();
+    expect(container.querySelector('.editor-pane-path')).toBeNull();
+    expect(container.querySelector('.editor-pane-readonly-pill')).toBeNull();
+  });
 
-  test('no menu until the header is right-clicked', () => {
+  test('does not repeat the file path that the tab already shows on hover', () => {
+    const { container } = render(<EditorPane openFile={OPEN_FILE} />);
+    expect(container.textContent).not.toContain('src/foo.js');
+  });
+
+  test('the editor body is the pane\'s first child', () => {
+    const { container } = render(<EditorPane openFile={OPEN_FILE} />);
+    const pane = container.querySelector('#editor-pane');
+    expect(pane.firstElementChild).toHaveClass('editor-pane-body');
+  });
+
+  test('right-clicking the pane opens no custom menu (Monaco owns it)', () => {
     render(<EditorPane openFile={OPEN_FILE} />);
     expect(document.querySelector('.diff-file-context-menu')).toBeNull();
-  });
-
-  test('right-clicking the header opens a menu with "Copy relative path"', () => {
-    const { container } = render(<EditorPane openFile={OPEN_FILE} />);
-    fireEvent.contextMenu(container.querySelector('.editor-pane-header'));
-    expect(document.querySelector('.diff-file-context-menu')).toBeInTheDocument();
-    expect(
-      screen.getByRole('menuitem', { name: /copy relative path/i }),
-    ).toBeInTheDocument();
-  });
-
-  test('clicking it copies repo:relativePath via the shared helper, then closes', async () => {
-    const { container } = render(<EditorPane openFile={OPEN_FILE} />);
-    fireEvent.contextMenu(container.querySelector('.editor-pane-header'));
-    fireEvent.click(screen.getByRole('menuitem', { name: /copy relative path/i }));
-    // Same helper + arg order the Files tree and diff-file header use,
-    // so a path copied from any surface is byte-identical.
-    expect(copyRepoRelativePath).toHaveBeenCalledWith('repo', 'src/foo.js');
-    await waitFor(() => {
-      expect(document.querySelector('.diff-file-context-menu')).toBeNull();
-    });
   });
 });

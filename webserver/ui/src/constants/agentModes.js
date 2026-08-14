@@ -1,9 +1,12 @@
 // The composer's agent-mode picker, mirroring Claude Code's own Modes menu.
 //
 // Each ``mode`` is the literal ``--permission-mode`` kato spawns the session
-// with; '' means "kato's configured default", which is acceptEdits. The
-// webserver validates against the same set (AGENT_PERMISSION_MODES) — an
-// unknown value would break the spawn rather than fail visibly here.
+// with — EXCEPT 'explain', which is a kato-level mode the spawn path resolves
+// into a permission mode plus a read-only tool split (see
+// kato_core_lib/helpers/explain_mode_utils.py). '' means "kato's configured
+// default", which is acceptEdits. The webserver validates against the same set
+// (AGENT_PERMISSION_MODES) — an unknown value would break the spawn rather
+// than fail visibly here.
 //
 // A mode change takes effect on the NEXT message: the flag is baked in at
 // spawn time, so kato re-spawns the subprocess to apply it. That re-spawn
@@ -22,6 +25,12 @@ export const AGENT_MODES = [
     label: 'Edit automatically',
     icon: '</>',
     description: 'Edit files without asking; still asks for risky commands',
+  },
+  {
+    mode: 'explain',
+    label: 'Explain',
+    icon: '?',
+    description: 'Answer questions about the code — no edits, and no plan either',
   },
   {
     mode: 'plan',

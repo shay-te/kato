@@ -4129,9 +4129,10 @@ code {
   flex-shrink: 0;
   overflow-x: auto;
   overflow-y: hidden;
-  // Same gradient as the adjacent .editor-pane-header, immediately
-  // below this strip — reads as one continuous toolbar area instead
-  // of introducing a new background tone.
+  // This strip is now the pane's ONLY chrome — the .editor-pane-header
+  // that used to sit under it (path + read-only pill) was removed as
+  // redundant with the tab's own hover title and view toggle. The
+  // gradient stays: it reads as a toolbar band above the code.
   background: linear-gradient(180deg,
       $C-NEUTRAL-11-A62 0%,
       $C-NEUTRAL-07-A75 100%);
@@ -4265,41 +4266,6 @@ code {
   background: $C-NEUTRAL-16;
   border-left: 1px solid $C-NEUTRAL-16;
   border-right: 1px solid $C-NEUTRAL-16;
-}
-
-.editor-pane-header {
-  display: flex;
-  align-items: center;
-  gap: $SPACE-10;
-  padding: $SPACE-8 $SPACE-14;
-  border-bottom: 1px solid $C-NEUTRAL-16;
-  background: linear-gradient(180deg,
-      $C-NEUTRAL-11-A62 0%,
-      $C-NEUTRAL-07-A75 100%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  backdrop-filter: blur(20px) saturate(180%);
-}
-
-.editor-pane-path {
-  flex: 1;
-  min-width: 0;
-  font: 12px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: $C-NEUTRAL-96;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.editor-pane-readonly-pill {
-  flex-shrink: 0;
-  font-size: $TEXT-10;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: $C-NEUTRAL-96-A65;
-  padding: $SPACE-3 $SPACE-9;
-  border-radius: var(--radius-pill);
-  background: $C-NEUTRAL-100-A06;
-  border: 1px solid $C-NEUTRAL-100-A06;
 }
 
 .editor-pane-body {

@@ -66,6 +66,17 @@ test('classifyStatusEntry: wait-planning tag → STARTED kind, taskId captured',
   assert.equal(result.title, 'Planning chat ready');
 });
 
+test('classifyStatusEntry: wait-editing tag → STARTED kind, own title', function () {
+  const result = classifyStatusEntry(_entry(
+    'task PROJ-7 tagged kato:wait-editing',
+  ));
+  assert.equal(result.kind, NOTIFICATION_KIND.STARTED);
+  assert.equal(result.taskId, 'PROJ-7');
+  // Distinct from wait-planning: this hold is waiting on the operator, and
+  // there is no plan coming.
+  assert.equal(result.title, 'Waiting for your go-ahead');
+});
+
 test('classifyStatusEntry: "starting mission" with summary uses both parts in body', function () {
   const result = classifyStatusEntry(_entry(
     'Mission PROJ-2: starting mission: fix the login bug',

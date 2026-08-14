@@ -39,6 +39,23 @@ describe('ComposerModeMenu', () => {
     expect(checked[0]).toHaveTextContent(/plan/i);
   });
 
+  test('Explain is offered, and reports its kato-level token', () => {
+    // 'explain' is NOT a CLI --permission-mode: the spawn path resolves it
+    // into one plus a read-only tool split. The picker must send the token.
+    const onChange = open();
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /answer questions about the code/i }));
+    expect(onChange).toHaveBeenCalledWith('explain');
+  });
+
+  test('Explain reads as distinct from Plan in the menu', () => {
+    open({ mode: 'explain' });
+    const explain = screen.getByRole('menuitemradio', { name: /explain/i });
+    // The whole point of the mode: no edits AND no plan.
+    expect(explain).toHaveTextContent(/no edits/i);
+    expect(explain).toHaveTextContent(/no plan/i);
+    expect(explain.getAttribute('aria-checked')).toBe('true');
+  });
+
   test('picking a different mode reports the CLI permission-mode value', () => {
     const onChange = open();
     fireEvent.click(screen.getByRole('menuitemradio', { name: /approve everything/i }));
@@ -57,7 +74,12 @@ describe('ComposerModeMenu', () => {
     // Each change re-spawns the subprocess to re-bake the flag; a no-op click
     // must not interrupt the agent.
     const onChange = open({ mode: 'plan' });
-    fireEvent.click(screen.getByRole('menuitemradio', { name: /plan/i }));
+    // Matched on Plan's own description: Explain's says "no plan", so a bare
+    // /plan/i now hits two items. (The accessible name is label+description
+    // concatenated, so anchoring on /^Plan/ can't disambiguate either.)
+    fireEvent.click(screen.getByRole('menuitemradio', {
+      name: /never edits or runs mutating tools/i,
+    }));
     expect(onChange).not.toHaveBeenCalled();
   });
 

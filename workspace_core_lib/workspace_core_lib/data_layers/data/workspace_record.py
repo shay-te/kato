@@ -49,6 +49,10 @@ class WorkspaceRecord(object):
     * ``task_id`` — caller-supplied identifier, also the folder name
       under the workspace root.
     * ``task_summary`` — free-form human label, displayed by UIs.
+    * ``task_description`` — the task's full body text, cached here so a
+      consumer can rebuild the agent's opening context offline instead of
+      re-querying whatever issue tracker it came from. Optional; records
+      written before this field existed deserialize to ``''``.
     * ``status`` — lifecycle bucket; one of ``SUPPORTED_WORKSPACE_STATUSES``.
     * ``repository_ids`` — names of repos cloned into the workspace
       (each ends up at ``<workspace>/<repository_id>/``).
@@ -65,6 +69,7 @@ class WorkspaceRecord(object):
 
     task_id: str
     task_summary: str = ''
+    task_description: str = ''
     status: str = WORKSPACE_STATUS_PROVISIONING
     repository_ids: list[str] = field(default_factory=list)
     agent_session_id: str = ''
@@ -93,6 +98,7 @@ class WorkspaceRecord(object):
         return cls(
             task_id=str(payload.get('task_id', '') or ''),
             task_summary=str(payload.get('task_summary', '') or ''),
+            task_description=str(payload.get('task_description', '') or ''),
             status=str(
                 payload.get('status', WORKSPACE_STATUS_PROVISIONING)
                 or WORKSPACE_STATUS_PROVISIONING,
