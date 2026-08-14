@@ -159,3 +159,70 @@ class ValidateRepositoryRootPathTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class RuntimeVersusConfigSplitTests(unittest.TestCase):
+    """An uninstalled CLI is not unfinished configuration.
+
+    ``main`` derives SETUP MODE from ``collect_config_errors``. While the
+    "claude not on PATH" finding lived in that list, a fully-configured
+    install whose binary had moved booted straight into the first-run wizard
+    and asked the operator to re-enter settings that were already correct.
+    """
+
+    def _configured_env(self, **overrides):
+        env = {
+            'KATO_AGENT_BACKEND': 'claude',
+            'KATO_ISSUE_PLATFORM': 'youtrack',
+            'YOUTRACK_API_BASE_URL': 'https://y.example',
+            'YOUTRACK_API_TOKEN': 'perm-x',
+            'YOUTRACK_PROJECT': 'UNA',
+            'YOUTRACK_ASSIGNEE': 'op',
+            'REPOSITORY_ROOT_PATH': '/tmp',
+        }
+        env.update(overrides)
+        return env
+
+    def test_missing_binary_is_not_a_config_error(self):
+        env = self._configured_env(KATO_CLAUDE_BINARY='/nope/claude')
+        self.assertEqual(ve.collect_config_errors('all', env), [])
+
+    def test_missing_binary_is_a_runtime_error(self):
+        env = self._configured_env(KATO_CLAUDE_BINARY='/nope/claude')
+        errors = ve.collect_runtime_errors(env)
+        self.assertEqual(len(errors), 1)
+        self.assertIn('/nope/claude', errors[0])
+
+    def test_binary_not_on_path_is_runtime_not_config(self):
+        env = self._configured_env(KATO_CLAUDE_BINARY='definitely-not-a-real-binary')
+        self.assertEqual(ve.collect_config_errors('all', env), [])
+        self.assertTrue(
+            any('on PATH' in e for e in ve.collect_runtime_errors(env)),
+        )
+
+    def test_malformed_claude_settings_are_STILL_config_errors(self):
+        """Only the binary checks moved — a bad value is the operator's to fix."""
+        env = self._configured_env(
+            KATO_CLAUDE_BINARY='/nope/claude',
+            KATO_CLAUDE_TIMEOUT_SECONDS='12',
+        )
+        errors = ve.collect_config_errors('all', env)
+        self.assertTrue(any('TIMEOUT_SECONDS' in e for e in errors), errors)
+        # ...and the binary still isn't among them.
+        self.assertFalse(any('/nope/claude' in e for e in errors), errors)
+
+    def test_genuinely_missing_config_still_trips_setup_mode(self):
+        """The split must not make the wizard unreachable."""
+        env = {'KATO_AGENT_BACKEND': 'claude', 'KATO_ISSUE_PLATFORM': 'youtrack'}
+        self.assertTrue(ve.collect_config_errors('all', env))
+
+    def test_validate_environment_still_raises_on_a_missing_binary(self):
+        """doctor / the fatal check must keep reporting everything."""
+        env = self._configured_env(KATO_CLAUDE_BINARY='/nope/claude')
+        with self.assertRaises(ValueError) as caught:
+            ve.validate_environment('all', env)
+        self.assertIn('/nope/claude', str(caught.exception))
+
+    def test_runtime_errors_are_claude_only(self):
+        env = self._configured_env(KATO_AGENT_BACKEND='openhands')
+        self.assertEqual(ve.collect_runtime_errors(env), [])

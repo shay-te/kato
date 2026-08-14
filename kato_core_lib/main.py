@@ -29,7 +29,7 @@ from agent_core_lib.agent_core_lib.helpers.session_id_utils import (
 )
 from kato_core_lib.helpers.action_guard_config import print_action_guard_posture
 from kato_core_lib.errors import AgentBackendChangedError
-from kato_core_lib.validate_env import collect_config_errors
+from kato_core_lib.validate_env import collect_config_errors, collect_runtime_errors
 from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (
     BypassPermissionsRefused,
     print_security_posture,
@@ -102,6 +102,14 @@ def main(cfg: DictConfig) -> int:
             'kato is not configured yet (%d setting(s) missing) — opening '
             'the setup wizard in the browser.', len(config_errors),
         )
+    # Runtime problems are NOT setup problems. An uninstalled agent CLI used
+    # to land in ``config_errors`` and therefore trip SETUP MODE, so a fully
+    # configured install greeted the operator with the first-run wizard and
+    # asked them to re-enter settings that were already right. The fix is on
+    # the host, not in the Settings UI, so it is logged here and shown by the
+    # agent-version banner instead of gating the boot.
+    for runtime_error in collect_runtime_errors():
+        logger.warning('%s', runtime_error)
     try:
         validate_bypass_permissions()
     except BypassPermissionsRefused as exc:

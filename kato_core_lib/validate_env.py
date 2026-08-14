@@ -324,22 +324,46 @@ def _validate_openhands_model_auth(
     return errors
 
 
-def validate_claude_env(env: dict[str, str]) -> list[str]:
-    """Validate Claude CLI backend environment variables."""
-    errors: list[str] = []
+def validate_claude_runtime_env(env: dict[str, str]) -> list[str]:
+    """Is the Claude CLI actually INSTALLED and reachable?
+
+    Split out from ``validate_claude_env`` because this is a different class
+    of problem from "the operator hasn't configured kato yet", and conflating
+    the two had a real cost: ``main`` derives SETUP MODE from
+    ``collect_config_errors``, so a fully-configured install whose ``claude``
+    binary wasn't on PATH booted into the first-run wizard and invited the
+    operator to re-enter settings that were already correct.
+
+    Missing config is fixed in the Settings UI. A missing binary is fixed on
+    the host — the UI can only tell you about it, which the agent-version
+    banner already does. So this never gates setup mode; it is reported by
+    ``kato doctor`` and surfaced in the banner.
+    """
     binary = normalized_text(env.get('KATO_CLAUDE_BINARY', '')) or 'claude'
     if not Path(binary).is_absolute():
         if which(binary) is None:
-            errors.append(
+            return [
                 f'KATO_AGENT_BACKEND=claude requires the Claude CLI binary "{binary}" '
                 'to be installed and on PATH. Install Claude Code from '
                 'https://docs.claude.com/en/docs/claude-code/setup or set '
                 'KATO_CLAUDE_BINARY to its absolute path.'
-            )
+            ]
     elif not Path(binary).exists():
-        errors.append(
+        return [
             f'KATO_CLAUDE_BINARY points to a path that does not exist: {binary}'
-        )
+        ]
+    return []
+
+
+def validate_claude_env(env: dict[str, str]) -> list[str]:
+    """Validate Claude CLI backend environment variables.
+
+    Config AND runtime, so existing callers (``kato doctor``, the fatal
+    ``validate_environment``) keep reporting everything. Callers that must
+    distinguish the two use ``validate_claude_runtime_env`` /
+    ``collect_config_errors``.
+    """
+    errors: list[str] = validate_claude_runtime_env(env)
 
     timeout_raw = normalized_text(env.get('KATO_CLAUDE_TIMEOUT_SECONDS', ''))
     if timeout_raw:
@@ -363,16 +387,34 @@ def validate_claude_env(env: dict[str, str]) -> list[str]:
     return errors
 
 
-def _validate(mode: str, env: dict[str, str]) -> list[str]:
+def _validate(
+    mode: str,
+    env: dict[str, str],
+    *,
+    include_runtime: bool = True,
+) -> list[str]:
+    """``include_runtime=False`` drops "the CLI isn't installed" findings.
+
+    Setup mode is derived from this: an uninstalled binary must not be
+    mistaken for unfinished configuration (see ``validate_claude_runtime_env``).
+    """
+    def claude_errors() -> list[str]:
+        if include_runtime:
+            return validate_claude_env(env)
+        return [
+            error for error in validate_claude_env(env)
+            if error not in validate_claude_runtime_env(env)
+        ]
+
     if mode == 'agent':
         return validate_agent_env(env)
     if mode == 'openhands':
         if _configured_agent_backend(env) == 'claude':
-            return validate_claude_env(env)
+            return claude_errors()
         return validate_openhands_env(env)
     errors = validate_agent_env(env)
     if _configured_agent_backend(env) == 'claude':
-        errors.extend(validate_claude_env(env))
+        errors.extend(claude_errors())
     else:
         errors.extend(validate_openhands_env(env))
     return errors
@@ -382,23 +424,46 @@ def collect_config_errors(
     mode: str = 'all',
     env: dict[str, str] | None = None,
 ) -> list[str]:
-    """The config problems ``validate_environment`` would raise on, as a list
+    """The CONFIGURATION problems that mean kato isn't set up yet
     (empty ⇒ fully configured).
 
     Non-raising companion so a caller can boot into a "needs configuration"
-    state and surface WHAT is missing in the UI instead of hard-exiting — the
-    same source of truth the CLI's fatal check uses, so the two never drift.
+    state and surface WHAT is missing in the UI instead of hard-exiting.
+
+    Deliberately excludes runtime findings — "the Claude CLI isn't installed"
+    is not unfinished configuration, and counting it here is what made a
+    fully-configured install boot into the first-run wizard. Use
+    ``collect_runtime_errors`` for those; ``validate_environment`` still
+    raises on both.
     """
     effective_env = dict(env) if env is not None else dict(os.environ)
-    return _validate(mode, effective_env)
+    return _validate(mode, effective_env, include_runtime=False)
+
+
+def collect_runtime_errors(env: dict[str, str] | None = None) -> list[str]:
+    """Problems with the local agent CLI itself — not installed, bad path.
+
+    Fixed on the host rather than in the Settings UI, so these are reported
+    (doctor, the agent-version banner) but never gate setup mode.
+    """
+    effective_env = dict(env) if env is not None else dict(os.environ)
+    if _configured_agent_backend(effective_env) != 'claude':
+        return []
+    return validate_claude_runtime_env(effective_env)
 
 
 def validate_environment(
     mode: str = 'all',
     env: dict[str, str] | None = None,
 ) -> None:
-    """Validate environment settings and raise on invalid configuration."""
-    errors = collect_config_errors(mode, env)
+    """Validate environment settings and raise on invalid configuration.
+
+    Raises on BOTH classes — config and runtime. Only the setup-mode gate
+    cares about the distinction; a caller asking "is this environment
+    usable?" wants to hear about an uninstalled CLI too.
+    """
+    effective_env = dict(env) if env is not None else dict(os.environ)
+    errors = _validate(mode, effective_env)
     if errors:
         raise ValueError('\n'.join(errors))
 
