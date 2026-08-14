@@ -4131,6 +4131,11 @@ def _spawn_or_reject_chat_session(app: Flask, task_id: str, text: str):
             cwd=cwd,
             task_summary=summary,
             task_description=description,
+            # The TASK FOLDER — the boundary the operator means by "never
+            # leave the task". It scopes the prompt's STRICT BOUNDARY block
+            # and, in docker mode, is what the container bind-mounts (cwd is
+            # one repo clone, so mounting that hides the task's other repos).
+            workspace_root=_task_workspace_root(workspace_manager, task_id),
             additional_dirs=additional_dirs,
             model=model_override,
             effort=effort_override,
@@ -4273,6 +4278,25 @@ def _chat_resume_context(
                 except Exception:
                     cwd = ''
     return cwd, summary, description
+
+
+def _task_workspace_root(workspace_manager, task_id: str) -> str:
+    """The task's own folder — parent of every repo clone for this task.
+
+    Empty when the workspace manager can't produce one or the directory
+    doesn't exist. Never derived from a repo path by walking upward: an
+    adopted checkout's parent could be the operator's entire source root, and
+    handing THAT out as a scope boundary (or bind-mounting it) would be
+    strictly worse than the per-repo scope it replaced.
+    """
+    if workspace_manager is None:
+        return ''
+    try:
+        path = workspace_manager.workspace_path(task_id)
+    except Exception:
+        return ''
+    text = str(path or '')
+    return text if text and Path(text).is_dir() else ''
 
 
 def _chat_additional_dirs(workspace_manager, task_id: str) -> list[str]:

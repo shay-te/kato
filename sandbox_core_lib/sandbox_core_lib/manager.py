@@ -25,6 +25,7 @@ import hashlib
 import json
 import logging
 import os
+import posixpath
 import shutil
 import subprocess
 import sys
@@ -947,10 +948,35 @@ def _validate_workspace_path(workspace_path: str) -> str:
 
 # ----- spawn wrap -----
 
+def _container_workdir(workdir_subpath: str) -> str:
+    """``/workspace``, or a subdirectory of it for ``workdir_subpath``.
+
+    Refuses anything that isn't a plain relative descendant — an absolute
+    path, or one climbing out with ``..``, would put the WORKDIR outside the
+    bind mount and quietly undo the boundary the mount exists to create.
+    Falls back to the mount root, which is always inside it.
+    """
+    raw = str(workdir_subpath or '').strip()
+    # Absoluteness is tested BEFORE stripping separators: ``/etc`` would
+    # otherwise become the relative ``etc`` and resolve to /workspace/etc —
+    # inside the mount, but not what the caller asked for, which means a
+    # caller bug would be silently rewritten instead of ignored.
+    if not raw or os.path.isabs(raw) or posixpath.isabs(raw):
+        return _WORKSPACE_MOUNT
+    candidate = raw.strip('/')
+    if not candidate:
+        return _WORKSPACE_MOUNT
+    normalized = posixpath.normpath(candidate)
+    if normalized in ('.', '') or normalized.startswith('..'):
+        return _WORKSPACE_MOUNT
+    return posixpath.join(_WORKSPACE_MOUNT, normalized)
+
+
 def wrap_command(
     inner_command: list[str],
     *,
     workspace_path: str,
+    workdir_subpath: str = '',
     image_tag: str = SANDBOX_IMAGE_TAG,
     container_name: str | None = None,
     task_id: str | None = None,
@@ -1090,7 +1116,13 @@ def wrap_command(
         # being smuggled in. Owner is fixed up in entrypoint.sh
         # (chown to claude:users) before Claude is exec'd.
         '--tmpfs', f'{_CLAUDE_HOME}/.claude:rw,nosuid,nodev,size=64m,mode=0700',
-        '-w', _WORKSPACE_MOUNT,
+        # WORKDIR is the mount root unless the caller mounted something WIDER
+        # than the directory the agent should start in. A multi-repo task
+        # mounts the whole task folder (so every clone is reachable) but must
+        # still land the agent in its primary repo — otherwise widening the
+        # mount silently moves the agent's cwd up a level and every relative
+        # path it had been using breaks.
+        '-w', _container_workdir(workdir_subpath),
     ])
     for var in _PASS_THROUGH_ENV:
         if var in os.environ:

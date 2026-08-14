@@ -224,6 +224,7 @@ class StreamingClaudeSession(object):
         architecture_doc_path: str = '',
         lessons_path: str = '',
         docker_mode_on: bool = False,
+        sandbox_root: str = '',
         additional_dirs: list[str] | None = None,
         done_callback=None,
         done_sentinel: str = '',
@@ -312,6 +313,17 @@ class StreamingClaudeSession(object):
         # is the *containment* layer (sandbox), permission_mode is the
         # *prompt* layer (acceptEdits vs bypassPermissions).
         self._docker_mode_on = bool(docker_mode_on)
+        # The directory the docker sandbox bind-mounts, when it should be
+        # something WIDER than ``cwd``. ``cwd`` is one repository clone, so
+        # mounting it makes every OTHER repo in the same task invisible inside
+        # the container — a multi-repo task loses cross-repo access entirely.
+        # The caller passes the task folder here (the parent holding every
+        # clone for this task), which is both the boundary an operator means
+        # by "never leave the task folder" and the smallest mount that keeps
+        # multi-repo work possible. Empty ⇒ fall back to ``cwd`` (the previous
+        # behaviour) so a caller that cannot prove a task folder never widens
+        # the mount by accident.
+        self._sandbox_root = normalized_text(sandbox_root)
         self._env_overrides = dict(env or {})
         # Callback fired once when an assistant message arrives that
         # contains the done-sentinel token. Wired by the session manager to
@@ -641,6 +653,34 @@ class StreamingClaudeSession(object):
         """
         return self._permission_mode
 
+    def _sandbox_mount(self) -> tuple[str, str]:
+        """``(bind_mount_root, workdir_subpath)`` for the docker sandbox.
+
+        Without a ``sandbox_root`` this is the old behaviour: mount ``cwd``,
+        WORKDIR at the mount root. With one, mount the task folder so every
+        repo in the task is reachable, and keep the agent's working directory
+        on the SAME repo it would have had — widening the mount must not
+        silently relocate the agent.
+
+        Falls back to mounting ``cwd`` if ``cwd`` is not actually inside
+        ``sandbox_root``; a mount root that doesn't contain the working
+        directory would put the agent outside its own sandbox.
+        """
+        if not self._sandbox_root:
+            return self._cwd, ''
+        root = os.path.normpath(self._sandbox_root)
+        cwd = os.path.normpath(self._cwd) if self._cwd else ''
+        if not cwd or cwd == root:
+            return root, ''
+        try:
+            relative = os.path.relpath(cwd, root)
+        except ValueError:
+            # Different drives on Windows — no containment relationship.
+            return self._cwd, ''
+        if relative.startswith(os.pardir) or os.path.isabs(relative):
+            return self._cwd, ''
+        return root, relative.replace(os.sep, '/')
+
     @property
     def disallowed_tools(self) -> str:
         """The ``--disallowed-tools`` CSV this subprocess was spawned with.
@@ -720,11 +760,13 @@ class StreamingClaudeSession(object):
                 # audit log fires before the subprocess starts so the
                 # operator has a record even if the container fails to
                 # come up.
+                mount_root, workdir_subpath = self._sandbox_mount()
                 command, self._docker_container_name = wrap_spawn_for_docker(
                     command,
-                    workspace_path=self._cwd,
+                    workspace_path=mount_root,
                     task_id=self._task_id,
                     logger=self.logger,
+                    workdir_subpath=workdir_subpath,
                 )
                 # Docker sets the container WORKDIR to /workspace; the
                 # host cwd is irrelevant for the docker client itself.

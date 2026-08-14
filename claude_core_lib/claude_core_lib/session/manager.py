@@ -269,6 +269,7 @@ class ClaudeSessionManager(object):
         architecture_doc_path: str = '',
         lessons_path: str = '',
         docker_mode_on: bool = False,
+        sandbox_root: str = '',
         additional_dirs: list[str] | None = None,
     ) -> StreamingClaudeSession:
         """Spawn (or rehydrate) the streaming session bound to ``task_id``.
@@ -294,6 +295,9 @@ class ClaudeSessionManager(object):
             'architecture_doc_path': architecture_doc_path,
             'lessons_path': lessons_path,
             'docker_mode_on': docker_mode_on,
+            # Task folder for the docker bind mount; '' keeps the old
+            # cwd-only mount. See StreamingClaudeSession._sandbox_mount.
+            'sandbox_root': sandbox_root,
             'additional_dirs': list(additional_dirs or []),
             'done_callback': self._done_callback,
             'done_sentinel': self._done_sentinel,

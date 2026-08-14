@@ -39,6 +39,9 @@ from kato_core_lib.helpers.explain_mode_utils import (
     resolve_explain_spawn,
 )
 from kato_core_lib.helpers.task_definition_prompt import task_definition_block
+from kato_core_lib.helpers.workspace_refusal_guidance import (
+    KATO_WORKSPACE_REFUSAL_GUIDANCE,
+)
 from utils_core_lib.utils_core_lib.text_utils import normalized_text
 
 
@@ -200,6 +203,7 @@ class PlanningSessionRunner(object):
         cwd: str = '',
         task_summary: str = '',
         task_description: str = '',
+        workspace_root: str = '',
         additional_dirs: list[str] | None = None,
         model: str = '',
         effort: str = '',
@@ -280,16 +284,30 @@ class PlanningSessionRunner(object):
                 summary=task_summary,
                 description=task_description,
             )
-            first_turn = (
-                f'{definition}\n\n{normalized_message}'
-                if definition
-                else normalized_message
+            # The STRICT BOUNDARY block. Until now only the one-shot clients
+            # emitted it, so a chat session — the surface the operator
+            # actually drives — was never told where its world ends; it got a
+            # repo inventory (informational) and nothing that says "do not go
+            # outside". Scoped to the TASK FOLDER, which is the boundary the
+            # docker sandbox enforces, so the prompt and the container agree.
+            scope = agent_prompt_utils.workspace_scope_block(
+                [workspace_root] if workspace_root else [],
+                extra_refusal_guidance=KATO_WORKSPACE_REFUSAL_GUIDANCE,
+            )
+            first_turn = '\n\n'.join(
+                part for part in (definition, normalized_message) if part
             )
             initial_prompt = agent_prompt_utils.prepend_chat_workspace_context(
                 first_turn,
                 cwd=cwd,
                 additional_dirs=additional_dirs,
             )
+            # The boundary goes ABOVE the continuity/inventory preamble, not
+            # inside it. The block's own first line is "read this first", and
+            # a hard rule buried under three paragraphs of context is not a
+            # rule the agent reads first.
+            if scope:
+                initial_prompt = f'{scope}\n\n{initial_prompt}'
         # Fire user_prompt_submit BEFORE the spawn. Operator hooks
         # at this point see the raw message + task id and can
         # audit / mirror to Slack / etc. They cannot block (the
@@ -311,6 +329,7 @@ class PlanningSessionRunner(object):
             or normalized_text(permission_mode),
             allowed_tools=explain_spawn['allowed_tools'],
             disallowed_tools=explain_spawn['disallowed_tools'],
+            workspace_root=normalized_text(workspace_root),
             additional_dirs=additional_dirs,
         )
         sid = read_session_id_from(session)
@@ -616,6 +635,7 @@ class PlanningSessionRunner(object):
         permission_mode: str = '',
         allowed_tools: str = '',
         disallowed_tools: str = '',
+        workspace_root: str = '',
         additional_dirs: list[str] | None = None,
     ):
         return self._session_manager.start_session(
@@ -638,6 +658,10 @@ class PlanningSessionRunner(object):
             architecture_doc_path=self._defaults.architecture_doc_path,
             lessons_path=self._defaults.lessons_path,
             docker_mode_on=self._defaults.docker_mode_on,
+            # The docker sandbox mounts THIS, not cwd: cwd is one repo
+            # clone, so mounting it hides every sibling repo in the same
+            # task. Empty ⇒ previous cwd-only mount.
+            sandbox_root=workspace_root,
             additional_dirs=additional_dirs,
         )
 

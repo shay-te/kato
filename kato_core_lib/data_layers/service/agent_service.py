@@ -2670,10 +2670,18 @@ class AgentService(MissionStepLoggerMixin, Service):
         cwd = self._comment_agent_cwd(task_id, record)
         summary = ''
         description = ''
+        workspace_root = ''
         if self._workspace_manager is not None:
             workspace = self._workspace_manager.get(task_id)
             summary = str(getattr(workspace, 'task_summary', '') or '')
             description = str(getattr(workspace, 'task_description', '') or '')
+            # Task folder: scopes the prompt boundary and the docker mount.
+            try:
+                workspace_root = str(
+                    self._workspace_manager.workspace_path(task_id) or '',
+                )
+            except Exception:
+                workspace_root = ''
         # Expose the task's OTHER repo clones too. Without this a
         # comment-driven respawn spawned a single-repo session that
         # couldn't read across repos (the cross-repo "that repo is
@@ -2694,6 +2702,7 @@ class AgentService(MissionStepLoggerMixin, Service):
             cwd=cwd,
             task_summary=summary,
             task_description=description,
+            workspace_root=workspace_root,
             additional_dirs=additional_dirs,
         )
         return True

@@ -105,6 +105,7 @@ def wrap_spawn_for_docker(
     workspace_path: str,
     task_id: str,
     logger,
+    workdir_subpath: str = '',
 ) -> tuple[list[str], str]:
     """Run the six sandbox pre-spawn steps and return ``(docker_argv, container_name)``.
 
@@ -160,6 +161,9 @@ def wrap_spawn_for_docker(
     wrapped = wrap_command(
         command,
         workspace_path=workspace_path,
+        # Set when the mount is WIDER than the directory the agent should
+        # start in (task folder mounted, primary repo as cwd).
+        workdir_subpath=workdir_subpath,
         container_name=container_name,
         task_id=task_id,
     )
