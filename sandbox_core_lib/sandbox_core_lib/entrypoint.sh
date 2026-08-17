@@ -180,7 +180,15 @@ fi
 # the agent, fails closed if the drop did not actually take, and only
 # then execs the real command. Asserting the argv we requested cannot
 # tell us what the daemon actually built.
+# ``--securebits`` locks the kernel's "uid 0 is special" behaviour OFF and
+# then LOCKS that decision, so even a successful transition back to uid 0
+# (a setuid binary, a future bug) grants no capabilities. Without these,
+# the empty capability sets are a property of the current process rather
+# than an irreversible one. ``no_cap_ambient_raise`` is deliberately not
+# listed: this util-linux build rejects the name, and the ambient set is
+# already empty and unraisable with NoNewPrivs=1.
 exec setpriv \
+    --securebits=+noroot,+noroot_locked,+no_setuid_fixup,+no_setuid_fixup_locked,+keep_caps_locked \
     --reuid=claude \
     --regid=100 \
     --init-groups \

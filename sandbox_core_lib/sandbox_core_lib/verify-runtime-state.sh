@@ -95,7 +95,25 @@ if [ -r /proc/self/attr/current ]; then
     esac
 fi
 
+# ----- securebits: uid 0 must be permanently un-special -----
+# Not exposed in /proc/self/status, so read it back through setpriv's own
+# dump. Decidable → fail closed, same rule as seccomp. Without noroot +
+# noroot_locked, the empty capability sets are a property of THIS process
+# rather than an irreversible one.
+securebits_state='UNVERIFIABLE'
+if command -v setpriv >/dev/null 2>&1; then
+    securebits_state=$(setpriv --dump 2>/dev/null | awk -F': ' '/^Securebits:/ {print $2; exit}')
+    securebits_state=${securebits_state:-none}
+    for required in noroot noroot_locked; do
+        case ",$securebits_state," in
+            *",$required,"*) ;;
+            *) fail "securebits missing $required (got: $securebits_state) — uid 0 would still grant capabilities" ;;
+        esac
+    done
+fi
+
 echo "[kato-sandbox] runtime state verified: uid=$actual_uid gid=$actual_gid" \
+     "securebits=$securebits_state" \
      "caps=empty nnp=1 seccomp=$seccomp_state lsm=${lsm_state:-none}"
 
 exec "$@"

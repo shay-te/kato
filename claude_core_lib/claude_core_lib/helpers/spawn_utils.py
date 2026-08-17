@@ -131,6 +131,7 @@ def wrap_spawn_for_docker(
     """
     from sandbox_core_lib.sandbox_core_lib.manager import (
         SandboxError,
+        arm_container_watchdog,
         check_spawn_rate,
         ensure_image,
         enforce_no_workspace_secrets,
@@ -178,4 +179,10 @@ def wrap_spawn_for_docker(
         raise RuntimeError(
             f'sandbox audit log required but failed: {exc}',
         ) from exc
+    # Arm the parent-loss watchdog. Deliberately fire-and-forget: it
+    # retires itself once the container is gone, and it re-verifies the
+    # ownership labels before removing anything, so an un-disarmed
+    # watchdog is harmless. Never raises — failing to arm must not block
+    # a spawn, and the boot-time sweep still covers the gap.
+    arm_container_watchdog(container_name, logger=logger)
     return wrapped, container_name

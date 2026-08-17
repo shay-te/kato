@@ -157,6 +157,7 @@ def main(cfg: DictConfig) -> int:
             check_gvisor_or_exit,
             docker_running_rootless,
             gvisor_runtime_available,
+            install_host_egress_backstop,
             prune_stale_secret_dirs,
             reap_orphan_sandbox_containers,
         )
@@ -208,6 +209,12 @@ def main(cfg: DictConfig) -> int:
                 logger.info(
                     'sandbox: pruned %d stale secret drop(s)', len(dropped),
                 )
+            # Host-side egress floor for the sandbox bridge. The
+            # in-container firewall is the precise control; this one sits
+            # where the container cannot reach it, so flushing the inner
+            # rules still leaves only TCP/443 + pinned DNS. Best-effort:
+            # the primary control applies regardless.
+            install_host_egress_backstop(logger=logger)
         except Exception:
             logger.warning(
                 'sandbox: orphan container sweep failed; continuing boot',

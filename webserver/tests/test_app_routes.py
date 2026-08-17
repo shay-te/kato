@@ -1570,19 +1570,42 @@ class PlanModeRespawnTests(unittest.TestCase):
     def test_no_live_session_no_respawn(self):
         self.assertFalse(self._check(override='plan', session=None))
 
-    def test_working_session_not_interrupted(self):
-        self.assertFalse(
+    def test_locking_to_plan_interrupts_a_working_session(self):
+        # Was "not interrupted". Applying a restriction needs a respawn
+        # (the CLI bakes --permission-mode at spawn), so deferring it left
+        # the agent editing under a lock the operator had already set.
+        self.assertTrue(
             self._check(
                 override='plan',
                 session=self._session(permission_mode='acceptEdits', working=True),
             ),
         )
 
-    def test_images_never_respawn(self):
+    def test_unlocking_still_waits_for_an_idle_session(self):
         self.assertFalse(
+            self._check(
+                override='',
+                session=self._session(permission_mode='plan', working=True),
+            ),
+        )
+
+    def test_images_do_not_defeat_a_restriction(self):
+        # Was "images never respawn". The respawn path cannot carry
+        # attachments, so this drops them — which is strictly better than
+        # editing code the operator just asked the agent to stop touching.
+        self.assertTrue(
             self._check(
                 override='plan',
                 session=self._session(permission_mode='acceptEdits'),
+                images=[{'media_type': 'image/png', 'data': 'x'}],
+            ),
+        )
+
+    def test_images_still_deliver_when_no_restriction_is_being_applied(self):
+        self.assertFalse(
+            self._check(
+                override='',
+                session=self._session(permission_mode='plan'),
                 images=[{'media_type': 'image/png', 'data': 'x'}],
             ),
         )
@@ -1634,13 +1657,35 @@ class ModeRestrictionRespawnTests(unittest.TestCase):
         self.assertFalse(self._needs_respawn('plan', 'plan', ''))
         self.assertFalse(self._needs_respawn('', 'acceptEdits', ''))
 
-    def test_a_working_session_is_never_interrupted(self) -> None:
+    def test_a_working_session_IS_interrupted_to_apply_a_restriction(self) -> None:
+        # Inverted deliberately. This used to assert "never interrupt a
+        # turn", and that politeness WAS the bug: the CLI bakes Explain's
+        # tool denial at spawn, so declining to respawn meant the message
+        # went to the still-editing subprocess and the mode change did
+        # nothing. An operator selecting Explain mid-turn is asking the
+        # agent to stop touching their code — deferring that is
+        # indistinguishable from ignoring it.
         from kato_webserver.app import _plan_mode_change_needs_respawn
         session = SimpleNamespace(
             is_alive=True, is_working=True,
             permission_mode='default', disallowed_tools='',
         )
         app = SimpleNamespace(config={'TASK_PLAN_MODE_OVERRIDES': {'T-1': 'explain'}})
+        manager = SimpleNamespace(get_session=lambda _t: session)
+        self.assertTrue(
+            _plan_mode_change_needs_respawn(app, manager, 'T-1', images=None),
+        )
+
+    def test_leaving_a_restriction_still_waits_for_idle(self) -> None:
+        # The other direction keeps the old politeness: finishing a
+        # read-only turn harms nothing, and interrupting it would throw
+        # away the answer the operator is waiting for.
+        from kato_webserver.app import _plan_mode_change_needs_respawn
+        session = SimpleNamespace(
+            is_alive=True, is_working=True,
+            permission_mode='plan', disallowed_tools='',
+        )
+        app = SimpleNamespace(config={'TASK_PLAN_MODE_OVERRIDES': {'T-1': ''}})
         manager = SimpleNamespace(get_session=lambda _t: session)
         self.assertFalse(
             _plan_mode_change_needs_respawn(app, manager, 'T-1', images=None),

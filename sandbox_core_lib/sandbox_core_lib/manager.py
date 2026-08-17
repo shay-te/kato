@@ -34,6 +34,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from utils_core_lib.utils_core_lib.file_lock import exclusive_file_lock
+from sandbox_core_lib.sandbox_core_lib import watchdog as watchdog_module
 
 
 SANDBOX_IMAGE_TAG = 'kato/claude-sandbox:latest'
@@ -1868,6 +1869,284 @@ def _assert_seccomp_not_unconfined(argv: list[str]) -> None:
                 'sandbox argv contains seccomp=unconfined — refusing '
                 'to spawn. The default seccomp profile is required.',
             )
+
+
+class WatchdogHandle(object):
+    """Live parent-loss watchdog for one container.
+
+    Holds the WRITE end of the pipe whose read end the watchdog process
+    is blocked on. The guarantee comes from the kernel, not from code
+    running at the right moment: however this process dies — SIGKILL,
+    segfault, OOM, power loss — the descriptor closes and the watchdog
+    observes EOF. There is no shutdown path to forget to call.
+    """
+
+    def __init__(self, process, write_fd: int, container_name: str) -> None:
+        self._process = process
+        self._write_fd = write_fd
+        self.container_name = container_name
+        self._closed = False
+
+    @property
+    def pid(self) -> int:
+        return getattr(self._process, 'pid', 0)
+
+    def disarm(self, *, timeout: float = 5.0) -> None:
+        """Tell the watchdog this was a clean shutdown; it must not reap."""
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            os.write(self._write_fd, watchdog_module.DISARM_BYTE)
+        except OSError:
+            pass
+        try:
+            os.close(self._write_fd)
+        except OSError:
+            pass
+        try:
+            self._process.wait(timeout=timeout)
+        except Exception:
+            # A watchdog that will not exit is not worth blocking the
+            # caller for; it re-checks ownership before acting, and the
+            # container is gone by now, so it will no-op and exit.
+            pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        self.disarm()
+        return False
+
+
+def arm_container_watchdog(
+    container_name: str,
+    *,
+    logger: logging.Logger | None = None,
+):
+    """Start a watchdog that reaps ``container_name`` if THIS process dies.
+
+    Returns a ``WatchdogHandle`` (call ``disarm()`` on clean shutdown),
+    or ``None`` when the watchdog could not be started — the boot-time
+    sweep still covers that case, so failing to arm must never block a
+    spawn.
+    """
+    read_fd, write_fd = os.pipe()
+    incident_path = str(_DEFAULT_AUDIT_LOG_PATH.parent / 'sandbox-incidents.log')
+    try:
+        os.set_inheritable(read_fd, True)
+        process = subprocess.Popen(
+            [
+                sys.executable, '-m', 'sandbox_core_lib.sandbox_core_lib.watchdog',
+                '--fd', str(read_fd),
+                '--container', container_name,
+                '--owner-pid', str(os.getpid()),
+                '--owner-boot', host_boot_identity(),
+                '--incident-path', incident_path,
+                # Label keys are owned here, not baked into the watchdog.
+                '--pid-label', _OWNER_PID_LABEL,
+                '--boot-label', _OWNER_BOOT_LABEL,
+            ],
+            pass_fds=(read_fd,),
+            # Own session: a terminal group signal aimed at this process
+            # (Ctrl-C, closing shell) must not also kill the watchdog —
+            # that is precisely when it has work to do.
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception as exc:
+        for fd in (read_fd, write_fd):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if logger is not None:
+            logger.warning(
+                'could not arm the sandbox watchdog for %s (%s); the '
+                'boot-time sweep remains the fallback', container_name, exc,
+            )
+        return None
+    # The parent must not keep the read end open: while ANY process holds
+    # it, the watchdog's read never sees EOF and a dead owner would go
+    # unnoticed — the exact failure this class exists to prevent.
+    try:
+        os.close(read_fd)
+    except OSError:
+        pass
+    if logger is not None:
+        logger.info(
+            'sandbox watchdog armed for %s (pid %s)',
+            container_name, process.pid,
+        )
+    return WatchdogHandle(process, write_fd, container_name)
+
+
+def _backstop_tag() -> str:
+    """Comment tag identifying this lib's host rules (derived, not literal)."""
+    return f'{_SANDBOX_NETWORK_NAME}-backstop'
+
+
+def _sandbox_bridge_subnet() -> str:
+    """CIDR of the isolated sandbox bridge, or '' when undiscoverable."""
+    try:
+        result = subprocess.run(
+            [
+                'docker', 'network', 'inspect', _SANDBOX_NETWORK_NAME,
+                '--format', '{{range .IPAM.Config}}{{.Subnet}} {{end}}',
+            ],
+            capture_output=True, text=True,
+            encoding='utf-8', errors='replace',
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ''
+    if result.returncode != 0:
+        return ''
+    subnets = result.stdout.split()
+    return subnets[0] if subnets else ''
+
+
+def _run_host_netfilter_script(script: str, *, timeout: int = 120):
+    """Run an iptables script in the HOST network namespace.
+
+    Uses a throwaway privileged container on ``--net=host`` because the
+    host netfilter tables are not reachable from an ordinary container —
+    that inaccessibility is exactly the property that makes a host-side
+    rule worth having. The image is the sandbox image itself: already
+    digest-pinned and built by us, so this introduces no new supply-chain
+    surface. Docker Desktop keeps its chains in the LEGACY tables, so the
+    script prefers ``iptables-legacy`` and falls back to ``iptables``.
+    """
+    wrapper = (
+        'if command -v iptables-legacy >/dev/null 2>&1; then IPT=iptables-legacy; '
+        'else IPT=iptables; fi\n' + script
+    )
+    return subprocess.run(
+        [
+            'docker', 'run', '--rm', '--privileged', '--net=host',
+            '--entrypoint', 'sh', SANDBOX_IMAGE_TAG, '-c', wrapper,
+        ],
+        capture_output=True, text=True,
+        encoding='utf-8', errors='replace',
+        timeout=timeout,
+    )
+
+
+def _backstop_chain() -> str:
+    """Dedicated chain holding this lib's rules.
+
+    Rules live in their OWN chain rather than directly in DOCKER-USER so
+    that re-installing is a flush, not a surgical delete. The first
+    version tried to clean up with ``iptables -D ... -m comment
+    --comment <tag>``, which never deletes anything: ``-D`` matches on
+    the FULL rule spec, so a comment-only spec matches no rule, the
+    delete loop exited immediately, and every install stacked another
+    generation onto the chain.
+    """
+    return _backstop_tag().upper()
+
+
+def remove_host_egress_backstop(*, logger: logging.Logger | None = None) -> bool:
+    """Detach and empty this lib's chain on the host."""
+    chain = _backstop_chain()
+    script = (
+        f'while $IPT -D DOCKER-USER -j {chain} 2>/dev/null; do :; done\n'
+        f'$IPT -F {chain} 2>/dev/null || true\n'
+        f'$IPT -X {chain} 2>/dev/null || true\n'
+        'exit 0\n'
+    )
+    try:
+        result = _run_host_netfilter_script(script)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        if logger is not None:
+            logger.warning('could not remove host egress backstop: %s', exc)
+        return False
+    return result.returncode == 0
+
+
+def install_host_egress_backstop(*, logger: logging.Logger | None = None) -> bool:
+    """Install a host-side egress floor for the sandbox bridge.
+
+    The in-container firewall is the PRIMARY egress control and does the
+    precise work (destination allowlist, DNS rate limiting, RFC1918 and
+    metadata denies). Its weakness is placement: it lives in the same
+    network namespace as the workload, so its integrity depends entirely
+    on the capability drop having actually happened — an assumption that
+    was false in this sandbox until the runtime verifier caught it.
+
+    This adds a floor the container cannot reach at all, in the HOST's
+    ``DOCKER-USER`` chain, scoped to the sandbox bridge subnet so no
+    other network is affected. Even with the in-container rules flushed,
+    a sandbox can only emit TCP/443 and DNS to the pinned resolvers.
+
+    Deliberately port/protocol-scoped rather than destination-pinned: the
+    resolved addresses of the allowlisted host rotate, and a stale host
+    rule would break a legitimate session. Destination pinning stays
+    inside the container, where it is re-resolved on every start.
+
+    Best-effort by design — a backstop that refuses to boot the product
+    when it cannot be installed would be worse than the exposure it
+    closes. Returns True when the rules are in place.
+    """
+    subnet = _sandbox_bridge_subnet()
+    if not subnet:
+        if logger is not None:
+            logger.warning(
+                'host egress backstop skipped: cannot determine the %s subnet',
+                _SANDBOX_NETWORK_NAME,
+            )
+        return False
+    tag = _backstop_tag()
+    chain = _backstop_chain()
+    comment = f'-m comment --comment {tag}'
+    # Appended in evaluation order inside our own chain.
+    rules = [
+        f'-m conntrack --ctstate ESTABLISHED,RELATED -j RETURN {comment}',
+        f'-p tcp --dport 443 -j RETURN {comment}',
+        f'-p udp --dport 53 -d 1.1.1.1/32 -j RETURN {comment}',
+        f'-p udp --dport 53 -d 1.0.0.1/32 -j RETURN {comment}',
+        f'-p tcp --dport 53 -d 1.1.1.1/32 -j RETURN {comment}',
+        f'-p tcp --dport 53 -d 1.0.0.1/32 -j RETURN {comment}',
+        f'-j DROP {comment}',
+    ]
+    script = [
+        # Idempotent by construction: our rules live in a chain we own, so
+        # re-installing FLUSHES rather than trying to delete rule-by-rule.
+        f'$IPT -N {chain} 2>/dev/null || true',
+        f'$IPT -F {chain}',
+    ]
+    script += [f'$IPT -A {chain} {rule}' for rule in rules]
+    script += [
+        # Exactly one jump from DOCKER-USER, scoped to the sandbox bridge.
+        f'while $IPT -D DOCKER-USER -s {subnet} -j {chain} 2>/dev/null; do :; done',
+        f'$IPT -I DOCKER-USER 1 -s {subnet} -j {chain}',
+        f'$IPT -S DOCKER-USER | grep -c "j {chain}"',
+    ]
+    try:
+        result = _run_host_netfilter_script('\n'.join(script))
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        if logger is not None:
+            logger.warning('host egress backstop not installed: %s', exc)
+        return False
+    if result.returncode != 0:
+        if logger is not None:
+            logger.warning(
+                'host egress backstop not installed (rc=%s): %s. The '
+                'in-container firewall still applies.',
+                result.returncode, (result.stderr or '').strip()[:200],
+            )
+        return False
+    if logger is not None:
+        logger.info(
+            'host egress backstop active on %s (%s): only TCP/443 and DNS '
+            'to the pinned resolvers can leave the sandbox bridge, even if '
+            'a container flushes its own rules',
+            _SANDBOX_NETWORK_NAME, subnet,
+        )
+    return True
 
 
 def _secret_dir_root() -> Path:

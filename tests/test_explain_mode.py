@@ -110,5 +110,87 @@ class LiveSessionRecognitionTests(unittest.TestCase):
         self.assertTrue(is_read_only_tool_set(READ_ONLY_DISALLOWED_TOOLS))
 
 
+class RestrictionTakesEffectImmediatelyTests(unittest.TestCase):
+    """Selecting Explain mid-turn must actually stop the editing.
+
+    The reported bug: the operator flipped the composer to Explain while
+    the agent was working and it kept editing files. The CLI bakes the
+    read-only tool denial at SPAWN time, so only a respawn can apply it —
+    and the one function that decides to respawn bailed out early on
+    ``is_working`` ("don't interrupt a turn") and on attached images.
+    Both bail-outs fall through to ``_deliver_to_live_session``, which
+    hands the message to the subprocess that still holds every mutating
+    tool. The mode change was, in effect, ignored.
+
+    Tightening and loosening are therefore deliberately asymmetric.
+    """
+
+    def setUp(self) -> None:
+        from unittest.mock import MagicMock
+        from kato_webserver import app as app_module
+
+        self.module = app_module
+        self.app = MagicMock()
+        self.app.config = {'TASK_PLAN_MODE_OVERRIDES': {}}
+        self.manager = MagicMock()
+
+    def _session(self, *, working: bool, disallowed: str = '', mode: str = 'default'):
+        return SimpleNamespace(
+            is_alive=True,
+            is_working=working,
+            permission_mode=mode,
+            disallowed_tools=disallowed,
+        )
+
+    def _needs_respawn(self, *, requested, session, images=None):
+        self.app.config['TASK_PLAN_MODE_OVERRIDES'] = {'T-1': requested}
+        self.manager.get_session.return_value = session
+        return self.module._plan_mode_change_needs_respawn(
+            self.app, self.manager, 'T-1', images,
+        )
+
+    def test_switching_to_explain_mid_turn_respawns(self) -> None:
+        # THE BUG: this returned False, so the message went to the live
+        # editing subprocess and the agent kept writing files.
+        self.assertTrue(self._needs_respawn(
+            requested=EXPLAIN_MODE, session=self._session(working=True),
+        ))
+
+    def test_switching_to_explain_while_idle_respawns(self) -> None:
+        self.assertTrue(self._needs_respawn(
+            requested=EXPLAIN_MODE, session=self._session(working=False),
+        ))
+
+    def test_attached_images_do_not_defeat_a_restriction(self) -> None:
+        # Losing an attachment is strictly better than editing code the
+        # operator just asked the agent to stop touching.
+        self.assertTrue(self._needs_respawn(
+            requested=EXPLAIN_MODE,
+            session=self._session(working=True),
+            images=[{'media_type': 'image/png', 'data': 'x'}],
+        ))
+
+    def test_already_in_explain_does_not_respawn(self) -> None:
+        self.assertFalse(self._needs_respawn(
+            requested=EXPLAIN_MODE,
+            session=self._session(working=True, disallowed=READ_ONLY_DISALLOWED_TOOLS),
+        ))
+
+    def test_leaving_explain_waits_for_an_idle_session(self) -> None:
+        # Loosening is not urgent: letting a read-only turn finish is
+        # harmless, and interrupting it would throw away the answer.
+        restricted = self._session(working=True, disallowed=READ_ONLY_DISALLOWED_TOOLS)
+        self.assertFalse(self._needs_respawn(requested='', session=restricted))
+
+    def test_leaving_explain_respawns_once_idle(self) -> None:
+        idle = self._session(working=False, disallowed=READ_ONLY_DISALLOWED_TOOLS)
+        self.assertTrue(self._needs_respawn(requested='', session=idle))
+
+    def test_no_live_session_needs_no_respawn(self) -> None:
+        dead = SimpleNamespace(is_alive=False, is_working=False,
+                               permission_mode='default', disallowed_tools='')
+        self.assertFalse(self._needs_respawn(requested=EXPLAIN_MODE, session=dead))
+
+
 if __name__ == '__main__':
     unittest.main()

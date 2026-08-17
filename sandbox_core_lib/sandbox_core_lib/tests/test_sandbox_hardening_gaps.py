@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import unittest
 from unittest import mock
@@ -200,6 +201,171 @@ class ConfigDirHandoverTests(unittest.TestCase):
 
     def test_spawn_grants_the_capability_the_chown_needs(self) -> None:
         self.assertIn('--cap-add=CHOWN', manager._REQUIRED_DOCKER_FLAGS)
+
+
+class ParentLossWatchdogTests(unittest.TestCase):
+    """Reap the container the moment its owner dies, not at next boot.
+
+    ``--rm`` fires when the CONTAINER's process exits; it does nothing
+    when the process that launched it is SIGKILLed. The boot sweep caught
+    that eventually — this closes the window to ~1s.
+    """
+
+    def test_disarm_byte_means_do_not_reap(self) -> None:
+        import io
+        from sandbox_core_lib.sandbox_core_lib import watchdog as wd
+        read_fd, write_fd = os.pipe()
+        os.write(write_fd, wd.DISARM_BYTE)
+        os.close(write_fd)
+        with mock.patch.object(wd, '_remove') as remove:
+            self.assertEqual(wd.watch(read_fd, 'c1', '1', 'b'), 0)
+        remove.assert_not_called()
+
+    def test_eof_reaps_when_ownership_still_matches(self) -> None:
+        from sandbox_core_lib.sandbox_core_lib import watchdog as wd
+        read_fd, write_fd = os.pipe()
+        os.close(write_fd)                      # owner "died"
+        with mock.patch.object(wd, '_still_ours', return_value=True), \
+             mock.patch.object(wd, '_remove', return_value=True) as remove, \
+             mock.patch.object(wd, '_container_labels', return_value=None), \
+             mock.patch.object(wd, '_write_incident') as incident:
+            self.assertEqual(wd.watch(read_fd, 'c1', '1', 'b', '/tmp/x.log'), 0)
+        remove.assert_called_once_with('c1')
+        self.assertTrue(incident.call_args.args[1]['removed'])
+
+    def test_eof_does_not_reap_a_container_that_is_no_longer_ours(self) -> None:
+        # A name can be reused by a later spawn. Killing on name alone
+        # would let a stale watchdog take down a healthy container.
+        from sandbox_core_lib.sandbox_core_lib import watchdog as wd
+        read_fd, write_fd = os.pipe()
+        os.close(write_fd)
+        with mock.patch.object(wd, '_still_ours', return_value=False), \
+             mock.patch.object(wd, '_remove') as remove:
+            self.assertEqual(wd.watch(read_fd, 'c1', '1', 'b'), 0)
+        remove.assert_not_called()
+
+    def test_removal_is_retried_through_a_flaky_daemon(self) -> None:
+        # The host is often unhealthy at exactly the moment the owner
+        # died — a single failed `docker rm` must not end the attempt.
+        from sandbox_core_lib.sandbox_core_lib import watchdog as wd
+        read_fd, write_fd = os.pipe()
+        os.close(write_fd)
+        attempts = {'n': 0}
+
+        def flaky(_container):
+            attempts['n'] += 1
+            return attempts['n'] >= 3
+
+        with mock.patch.object(wd, '_still_ours', return_value=True), \
+             mock.patch.object(wd, '_remove', side_effect=flaky), \
+             mock.patch.object(wd, '_container_labels', return_value=None), \
+             mock.patch.object(wd, '_write_incident'), \
+             mock.patch.object(wd.time, 'sleep'):
+            self.assertEqual(wd.watch(read_fd, 'c1', '1', 'b'), 0)
+        self.assertEqual(attempts['n'], 3)
+
+    def test_ownership_labels_are_compared_exactly(self) -> None:
+        from sandbox_core_lib.sandbox_core_lib import watchdog as wd
+        pid_key, boot_key = manager._OWNER_PID_LABEL, manager._OWNER_BOOT_LABEL
+        labels = {pid_key: '42', boot_key: 'boot-a'}
+        with mock.patch.object(wd, '_container_labels', return_value=labels):
+            self.assertTrue(wd._still_ours('c', '42', 'boot-a', pid_key, boot_key))
+            self.assertFalse(wd._still_ours('c', '43', 'boot-a', pid_key, boot_key))
+            self.assertFalse(wd._still_ours('c', '42', 'boot-b', pid_key, boot_key))
+        with mock.patch.object(wd, '_container_labels', return_value=None):
+            self.assertFalse(wd._still_ours('c', '42', 'boot-a', pid_key, boot_key))
+
+    def test_arming_failure_never_blocks_a_spawn(self) -> None:
+        with mock.patch.object(
+            manager.subprocess, 'Popen', side_effect=OSError('no python'),
+        ):
+            self.assertIsNone(manager.arm_container_watchdog('c1'))
+
+    def test_parent_closes_its_copy_of_the_read_end(self) -> None:
+        # While ANY process holds the read end, the watchdog never sees
+        # EOF — a dead owner would go unnoticed, which is the entire
+        # failure this feature exists to prevent.
+        import inspect
+        source = inspect.getsource(manager.arm_container_watchdog)
+        self.assertIn('os.close(read_fd)', source)
+        self.assertIn('start_new_session=True', source)
+
+
+class HostEgressBackstopTests(unittest.TestCase):
+    """A floor the container cannot reach, in the HOST's DOCKER-USER chain.
+
+    The in-container firewall is the precise control, but it lives in the
+    workload's own netns — its integrity rests entirely on the capability
+    drop having happened, which in this sandbox was false until the
+    runtime verifier caught it. These rules sit outside that blast radius.
+    """
+
+    def _captured_script(self, subnet: str = '172.18.0.0/16') -> str:
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            if cmd[:3] == ['docker', 'network', 'inspect']:
+                return subprocess.CompletedProcess(cmd, 0, subnet + ' ', '')
+            captured['script'] = cmd[-1]
+            return subprocess.CompletedProcess(cmd, 0, '7\n', '')
+
+        with mock.patch.object(manager.subprocess, 'run', side_effect=fake_run):
+            self.assertTrue(manager.install_host_egress_backstop())
+        return captured['script']
+
+    def test_rules_are_scoped_to_the_sandbox_bridge_only(self) -> None:
+        script = self._captured_script()
+        for line in script.splitlines():
+            if 'DOCKER-USER' in line and ('-I' in line or '-D' in line):
+                if '-I' in line:
+                    self.assertIn(
+                        '-s 172.18.0.0/16', line,
+                        'every inserted rule must be scoped to the sandbox '
+                        'subnet — an unscoped DROP would break every other '
+                        "container on the host's networks",
+                    )
+
+    def test_default_is_drop_with_only_443_and_pinned_dns_allowed(self) -> None:
+        script = self._captured_script()
+        self.assertIn('-j DROP', script)
+        self.assertIn('--dport 443 -j RETURN', script)
+        self.assertIn('-d 1.1.1.1/32 -j RETURN', script)
+        self.assertIn('-d 1.0.0.1/32 -j RETURN', script)
+        self.assertIn('ESTABLISHED,RELATED -j RETURN', script)
+
+    def test_install_is_idempotent(self) -> None:
+        # Re-running must not stack a second generation of rules.
+        script = self._captured_script()
+        self.assertIn('-D DOCKER-USER', script.split('-I')[0])
+
+    def test_no_destination_pinning_in_the_host_layer(self) -> None:
+        # Deliberate: the allowlisted host's addresses rotate, and a stale
+        # host rule would break a legitimate session. Destination pinning
+        # belongs inside the container, where it re-resolves every start.
+        script = self._captured_script()
+        self.assertNotIn('anthropic', script.lower())
+
+    def test_missing_subnet_skips_without_raising(self) -> None:
+        with mock.patch.object(
+            manager.subprocess, 'run',
+            return_value=subprocess.CompletedProcess([], 1, '', 'no such network'),
+        ):
+            self.assertFalse(manager.install_host_egress_backstop())
+
+    def test_failure_is_best_effort_not_fatal(self) -> None:
+        # A backstop that refuses to boot the product when it cannot be
+        # installed would be worse than the exposure it closes.
+        with mock.patch.object(
+            manager.subprocess, 'run', side_effect=OSError('no docker'),
+        ):
+            self.assertFalse(manager.install_host_egress_backstop())
+            self.assertFalse(manager.remove_host_egress_backstop())
+
+    def test_rules_are_tagged_so_removal_targets_only_ours(self) -> None:
+        script = self._captured_script()
+        tag = manager._backstop_tag()
+        self.assertIn(f'--comment {tag}', script)
+        self.assertIn(manager._SANDBOX_NETWORK_NAME, tag)
 
 
 class OutOfBandSecretTests(unittest.TestCase):

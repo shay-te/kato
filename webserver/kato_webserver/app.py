@@ -4078,20 +4078,18 @@ def _plan_mode_change_needs_respawn(app: Flask, manager, task_id: str, images) -
     the live session's, in either direction (lock on AND unlock), so
     turning the lock back off also respawns out of plan mode.
 
-    Only fires when the session is idle and there are no images (the
-    respawn path can't carry them — those deliver at the current mode and
-    the change applies on the next plain message).
+    Tightening (selecting Explain or Plan) fires immediately and
+    interrupts a running turn — the operator is asking the agent to stop
+    changing code, and deferring that is indistinguishable from ignoring
+    it. Loosening waits for an idle session and lets images through,
+    because letting a read-only turn finish costs nothing.
     """
-    if images:
-        return False
     overrides = app.config.get('TASK_PLAN_MODE_OVERRIDES')
     if overrides is None:
         return False
     session = manager.get_session(task_id) if manager is not None else None
     if session is None or not getattr(session, 'is_alive', False):
         return False  # no live session — the spawn path applies the mode
-    if bool(getattr(session, 'is_working', False)):
-        return False  # don't interrupt a turn
     requested = str(overrides.get(task_id, '') or '')
     # Compare RESTRICTION, not the raw mode string. There are two independent
     # ways a session can be locked down and they are baked at spawn time:
@@ -4099,7 +4097,33 @@ def _plan_mode_change_needs_respawn(app: Flask, manager, task_id: str, images) -
     # comparison that looked only at ``permission_mode`` would see Explain's
     # resolved 'default' and call the session unchanged — forwarding the
     # message into a subprocess that can still edit.
-    return _requested_restriction(requested) != _live_restriction(session)
+    if _requested_restriction(requested) == _live_restriction(session):
+        return False
+    # TIGHTENING vs LOOSENING are not symmetric, and treating them as if
+    # they were is what let a session keep editing under Explain.
+    #
+    # Selecting Explain (or Plan) is the operator saying "stop changing my
+    # code". The old order deferred on ``is_working`` and on attached
+    # images — both of which fall through to ``_deliver_to_live_session``,
+    # i.e. straight into the subprocess that still holds every mutating
+    # tool. Switching to Explain mid-turn therefore did nothing at all:
+    # the CLI bakes the tool denial at spawn, so only a respawn can apply
+    # it, and the one path that respawns had just declined to.
+    #
+    # So: a restriction takes effect NOW, interrupting the turn if one is
+    # running. Removing a restriction still waits for idle and still lets
+    # images through — continuing a read-only turn harms nothing.
+    if _requested_restriction(requested):
+        if images:
+            app.logger.warning(
+                'task %s: applying a mode restriction requires a respawn, '
+                'which cannot carry attached images — the text is sent, the '
+                'images are not', task_id,
+            )
+        return True
+    if images:
+        return False
+    return not bool(getattr(session, 'is_working', False))
 
 
 def _requested_restriction(requested: str) -> str:

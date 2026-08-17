@@ -29,6 +29,8 @@ from sandbox_core_lib.sandbox_core_lib.manager import (  # noqa: F401
     wrap_command,
     reap_orphan_sandbox_containers,
     materialize_env_secrets,
+    install_host_egress_backstop,
+    remove_host_egress_backstop,
     prune_stale_secret_dirs,
     host_boot_identity,
     flag_present_in_argv,
