@@ -543,9 +543,27 @@ describe('App — forget task (hard-confirm modal gate)', () => {
     fireEvent.click(confirmBtn());
 
     await waitFor(() => {
-      expect(forgetTaskWorkspace).toHaveBeenCalledWith('T1');
+      expect(forgetTaskWorkspace).toHaveBeenCalledWith('T1', { markDone: false });
     });
     await waitFor(() => { expect(refresh).toHaveBeenCalled(); });
+  });
+
+  // The dialog's "this task is done" checkbox must reach the API call —
+  // it is the only path that closes the ticket on the tracker.
+  test('checking "task is done" forwards markDone to the API', async () => {
+    useSessions.mockReturnValue({
+      sessions: [{ task_id: 'T1' }],
+      refresh: vi.fn(),
+    });
+
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'forget-T1' }));
+    fireEvent.click(document.getElementById('forget-task-done'));
+    fireEvent.click(confirmBtn());
+
+    await waitFor(() => {
+      expect(forgetTaskWorkspace).toHaveBeenCalledWith('T1', { markDone: true });
+    });
   });
 
   test('approving forget of the ACTIVE task clears activeTaskId', async () => {
@@ -576,7 +594,7 @@ describe('App — forget task (hard-confirm modal gate)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'forget-T2' }));
     fireEvent.click(confirmBtn());
     await waitFor(() => {
-      expect(forgetTaskWorkspace).toHaveBeenCalledWith('T2');
+      expect(forgetTaskWorkspace).toHaveBeenCalledWith('T2', { markDone: false });
     });
     expect(screen.getByText('active=T1')).toBeInTheDocument();
   });

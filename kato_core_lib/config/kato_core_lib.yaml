@@ -86,6 +86,8 @@ kato:
     progress_state: ${core_lib.youtrack_core_lib.progress_state}
     review_state_field: ${core_lib.youtrack_core_lib.review_state_field}
     review_state: ${core_lib.youtrack_core_lib.review_state}
+    done_state_field: ${core_lib.youtrack_core_lib.done_state_field}
+    done_state: ${core_lib.youtrack_core_lib.done_state}
     issue_states: ${core_lib.youtrack_core_lib.issue_states}
     max_retries: ${core_lib.youtrack_core_lib.max_retries}
     include_comments: ${oc.decode:${oc.env:KATO_TASK_COMMENTS_ENABLED,"false"}}
@@ -100,6 +102,8 @@ kato:
     progress_state: ${oc.env:JIRA_PROGRESS_STATE,"In Progress"}
     review_state_field: ${oc.env:JIRA_REVIEW_STATE_FIELD,"status"}
     review_state: ${oc.env:JIRA_REVIEW_STATE,"In Review"}
+    done_state_field: ${oc.env:JIRA_DONE_STATE_FIELD,"status"}
+    done_state: ${oc.env:JIRA_DONE_STATE,"Done"}
     issue_states: ${oc.env:JIRA_ISSUE_STATES,"To Do,Open"}
     max_retries: ${core_lib.jira_core_lib.max_retries}
     include_comments: ${oc.decode:${oc.env:KATO_TASK_COMMENTS_ENABLED,"false"}}
@@ -115,6 +119,11 @@ kato:
     progress_state: ${oc.env:GITHUB_PROGRESS_STATE,"In Progress"}
     review_state_field: ${oc.env:GITHUB_REVIEW_STATE_FIELD,"labels"}
     review_state: ${oc.env:GITHUB_REVIEW_STATE,"In Review"}
+    # "Done" on GitHub issues means CLOSED, not another label — so the
+    # done transition writes the ``state`` field even though the review
+    # transition writes a label.
+    done_state_field: ${oc.env:GITHUB_DONE_STATE_FIELD,"state"}
+    done_state: ${oc.env:GITHUB_DONE_STATE,"closed"}
     issue_states: ${oc.env:GITHUB_ISSUE_STATES,"open"}
     max_retries: ${core_lib.github_core_lib.max_retries}
     include_comments: ${oc.decode:${oc.env:KATO_TASK_COMMENTS_ENABLED,"false"}}
@@ -128,6 +137,9 @@ kato:
     progress_state: ${oc.env:GITLAB_PROGRESS_STATE,"In Progress"}
     review_state_field: ${oc.env:GITLAB_REVIEW_STATE_FIELD,"labels"}
     review_state: ${oc.env:GITLAB_REVIEW_STATE,"In Review"}
+    # Same as GitHub: closing the issue is the done transition.
+    done_state_field: ${oc.env:GITLAB_DONE_STATE_FIELD,"state"}
+    done_state: ${oc.env:GITLAB_DONE_STATE,"closed"}
     issue_states: ${oc.env:GITLAB_ISSUE_STATES,"opened"}
     max_retries: ${core_lib.gitlab_core_lib.max_retries}
     include_comments: ${oc.decode:${oc.env:KATO_TASK_COMMENTS_ENABLED,"false"}}
@@ -145,6 +157,8 @@ kato:
     progress_state: ${oc.env:BITBUCKET_PROGRESS_STATE,"open"}
     review_state_field: ${oc.env:BITBUCKET_REVIEW_STATE_FIELD,"state"}
     review_state: ${oc.env:BITBUCKET_REVIEW_STATE,"resolved"}
+    done_state_field: ${oc.env:BITBUCKET_DONE_STATE_FIELD,"state"}
+    done_state: ${oc.env:BITBUCKET_DONE_STATE,"closed"}
     issue_states: ${oc.env:BITBUCKET_ISSUE_STATES,"new,open"}
     max_retries: ${core_lib.bitbucket_core_lib.max_retries}
     include_comments: ${oc.decode:${oc.env:KATO_TASK_COMMENTS_ENABLED,"false"}}

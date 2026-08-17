@@ -4107,6 +4107,47 @@ code {
   color: $C-RED-89;
 }
 
+/* "This task is done" opt-in. Boxed and sat apart from the consequence
+   list because it is the one control here that changes something OUTSIDE
+   kato (the ticket's column on the tracker) — it must not read as another
+   bullet in the list of things the delete already does. */
+.forget-task-done {
+  display: flex;
+  align-items: flex-start;
+  gap: $SPACE-10;
+  margin: 0;
+  padding: $SPACE-9 $SPACE-11;
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-6;
+  background: $C-NEUTRAL-04;
+  font-size: $TEXT-12_5;
+  color: $C-NEUTRAL-96;
+  line-height: 1.5;
+  cursor: pointer;
+  user-select: none;
+}
+
+.forget-task-done:has(input[type=checkbox]:checked) {
+  border-color: $C-BLUE-53;
+}
+
+.forget-task-done input[type=checkbox] {
+  margin: $SPACE-2 0 0;
+  flex: 0 0 auto;
+  accent-color: $C-BLUE-53;
+  cursor: pointer;
+}
+
+.forget-task-done > span {
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-2;
+}
+
+.forget-task-done-hint {
+  color: $C-NEUTRAL-64;
+}
+
 /* ───── middle pane — VS Code-style open-file tab strip + Monaco editor ───── */
 
 // Modifier on the centre card's ``.panel-card-content`` wrapper (see

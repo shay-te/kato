@@ -655,10 +655,16 @@ export function triggerScan() {
   return requestEnvelope('/api/scan/trigger', { method: 'POST' });
 }
 
-export function forgetTaskWorkspace(taskId) {
+// Delete kato's local copy of a task (clone + session record).
+// ``markDone`` is the dialog's "this task is done" checkbox: the server
+// moves the TICKET to the tracker's done column FIRST and refuses to
+// delete anything if that move fails, so a failed close never costs the
+// operator the workspace.
+export function forgetTaskWorkspace(taskId, { markDone = false } = {}) {
   if (!taskId) { return { ok: false, error: 'no task id' }; }
+  const query = markDone ? '?done=1' : '';
   return requestEnvelope(
-    `/api/sessions/${encodeURIComponent(taskId)}/workspace`,
+    `/api/sessions/${encodeURIComponent(taskId)}/workspace${query}`,
     { method: 'DELETE' },
   );
 }

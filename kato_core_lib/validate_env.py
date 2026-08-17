@@ -221,8 +221,16 @@ def _validate_issue_state_queue_env(env: dict[str, str], issue_platform: str) ->
     issue_states = _split_env_states(env.get(f'{platform_prefix}_ISSUE_STATES', ''))
     progress_state = normalized_text(env.get(f'{platform_prefix}_PROGRESS_STATE', ''))
     review_state = normalized_text(env.get(f'{platform_prefix}_REVIEW_STATE', ''))
+    # The done state is checked for the same reason as the other two: a
+    # queue that contains it means kato re-picks up the ticket it was
+    # just told is finished, on the very next scan.
+    done_state = normalized_text(env.get(f'{platform_prefix}_DONE_STATE', ''))
     invalid_states = []
-    for state_name, label in ((progress_state, 'progress'), (review_state, 'review')):
+    for state_name, label in (
+        (progress_state, 'progress'),
+        (review_state, 'review'),
+        (done_state, 'done'),
+    ):
         normalized_state = _normalized_state_token(state_name)
         if normalized_state and normalized_state in {
             _normalized_state_token(value) for value in issue_states

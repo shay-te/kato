@@ -414,6 +414,24 @@ class AgentService(MissionStepLoggerMixin, Service):
         """
         return str(value or '').strip().lower()
 
+    def mark_task_done(self, task_id: str) -> None:
+        """Move ``task_id``'s ticket to the tracker's done column.
+
+        Backs the "this task is done" checkbox on the forget dialog:
+        the operator is deleting the local clone AND declaring the work
+        finished, so the ticket moves to done (``<platform>_DONE_STATE``,
+        e.g. YouTrack/Jira ``Done``, GitHub/GitLab ``closed``) instead of
+        being left behind in whatever column kato last put it in.
+
+        Raises on failure — the caller surfaces the error and (in the
+        DELETE endpoint) refuses to wipe anything, so an operator never
+        gets told "moved to done" when the ticket didn't move.
+        """
+        normalized = str(task_id or '').strip()
+        if not normalized:
+            raise ValueError('task id is required')
+        self._task_state_service.move_task_to_done(normalized)
+
     def forget_task_state(self, task_id: str) -> None:
         """Drop the registry state for a task the operator deleted.
 

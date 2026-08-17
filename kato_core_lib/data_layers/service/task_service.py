@@ -16,14 +16,12 @@ from utils_core_lib.utils_core_lib.text_utils import alphanumeric_lower_text
 
 class TaskService(Service):
     """Wrap ticket-system task retrieval, queue filtering, and comments."""
-    _STATE_VALUE_DEFAULTS = {
-        **SHARED_STATE_VALUE_DEFAULTS,
-        # Used by ``list_all_assigned_tasks`` (operator-driven
-        # task picker) so completed tickets show up alongside
-        # in-flight ones. The autonomous queue path doesn't
-        # query for this state; only the picker does.
-        'done': 'Done',
-    }
+    # ``done`` (from the shared base) is used by
+    # ``list_all_assigned_tasks`` (operator-driven task picker) so
+    # completed tickets show up alongside in-flight ones. The
+    # autonomous queue path doesn't query for this state; only the
+    # picker does.
+    _STATE_VALUE_DEFAULTS = dict(SHARED_STATE_VALUE_DEFAULTS)
 
     def __init__(self, config: DictConfig, task_data_access: TaskDataAccess) -> None:
         self._config = config

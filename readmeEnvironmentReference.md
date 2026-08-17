@@ -16,6 +16,8 @@ The list below catalogs every environment key kato reads (set them in the Settin
 | `YOUTRACK_PROGRESS_STATE` | YouTrack value used for the in-progress transition. |
 | `YOUTRACK_REVIEW_STATE_FIELD` | YouTrack field used for the review transition. |
 | `YOUTRACK_REVIEW_STATE` | YouTrack value used for the review transition. |
+| `YOUTRACK_DONE_STATE_FIELD` | YouTrack field used for the done transition (the forget dialog’s “this task is done” checkbox). |
+| `YOUTRACK_DONE_STATE` | YouTrack value used for the done transition. Operator-triggered only — kato never closes a ticket on its own. |
 | `YOUTRACK_ISSUE_STATES` | YouTrack issue states that qualify for processing. |
 | `JIRA_API_BASE_URL` | Jira API base URL. |
 | `JIRA_API_TOKEN` | Jira API token. |
@@ -26,6 +28,8 @@ The list below catalogs every environment key kato reads (set them in the Settin
 | `JIRA_PROGRESS_STATE` | Jira value used for the in-progress transition. |
 | `JIRA_REVIEW_STATE_FIELD` | Jira field used for the review transition. |
 | `JIRA_REVIEW_STATE` | Jira value used for the review transition. |
+| `JIRA_DONE_STATE_FIELD` | Jira field used for the done transition (the forget dialog’s “this task is done” checkbox). |
+| `JIRA_DONE_STATE` | Jira value used for the done transition. Operator-triggered only — kato never closes a ticket on its own. |
 | `JIRA_ISSUE_STATES` | Jira issue states that qualify for processing. |
 | `GITHUB_API_BASE_URL` | GitHub Issues API base URL. |
 | `GITHUB_API_TOKEN` | GitHub API token. Also used for GitHub git push and PR creation when needed. |
@@ -36,6 +40,8 @@ The list below catalogs every environment key kato reads (set them in the Settin
 | `GITHUB_PROGRESS_STATE` | GitHub Issues value used for the in-progress transition. |
 | `GITHUB_REVIEW_STATE_FIELD` | GitHub Issues field used for the review transition. |
 | `GITHUB_REVIEW_STATE` | GitHub Issues value used for the review transition. |
+| `GITHUB_DONE_STATE_FIELD` | GitHub Issues field used for the done transition (the forget dialog’s “this task is done” checkbox). |
+| `GITHUB_DONE_STATE` | GitHub Issues value used for the done transition. Operator-triggered only — kato never closes a ticket on its own. |
 | `GITHUB_ISSUE_STATES` | GitHub Issues states that qualify for processing. |
 | `GITLAB_API_BASE_URL` | GitLab Issues API base URL. |
 | `GITLAB_API_TOKEN` | GitLab API token. Also used for GitLab git push and merge request creation when needed. |
@@ -45,6 +51,8 @@ The list below catalogs every environment key kato reads (set them in the Settin
 | `GITLAB_PROGRESS_STATE` | GitLab Issues value used for the in-progress transition. |
 | `GITLAB_REVIEW_STATE_FIELD` | GitLab Issues field used for the review transition. |
 | `GITLAB_REVIEW_STATE` | GitLab Issues value used for the review transition. |
+| `GITLAB_DONE_STATE_FIELD` | GitLab Issues field used for the done transition (the forget dialog’s “this task is done” checkbox). |
+| `GITLAB_DONE_STATE` | GitLab Issues value used for the done transition. Operator-triggered only — kato never closes a ticket on its own. |
 | `GITLAB_ISSUE_STATES` | GitLab Issues states that qualify for processing. |
 | `BITBUCKET_API_BASE_URL` | Bitbucket Issues API base URL. |
 | `BITBUCKET_API_TOKEN` | Bitbucket API token. Used as the password for Bitbucket git auth and Bitbucket REST API auth. |
@@ -57,6 +65,8 @@ The list below catalogs every environment key kato reads (set them in the Settin
 | `BITBUCKET_PROGRESS_STATE` | Bitbucket Issues value used for the in-progress transition. |
 | `BITBUCKET_REVIEW_STATE_FIELD` | Bitbucket Issues field used for the review transition. |
 | `BITBUCKET_REVIEW_STATE` | Bitbucket Issues value used for the review transition. |
+| `BITBUCKET_DONE_STATE_FIELD` | Bitbucket Issues field used for the done transition (the forget dialog’s “this task is done” checkbox). |
+| `BITBUCKET_DONE_STATE` | Bitbucket Issues value used for the done transition. Operator-triggered only — kato never closes a ticket on its own. |
 | `BITBUCKET_ISSUE_STATES` | Bitbucket Issues states that qualify for processing. |
 | `REPOSITORY_ROOT_PATH` | Root folder where the agent scans for checked-out repositories. |
 | `MOUNT_DOCKER_DATA_ROOT` | Host folder that holds all Docker bind-mounted data under one parent directory. |

@@ -10,13 +10,18 @@ AGENT_BACKEND_CLAUDE = 'claude'
 SUPPORTED_AGENT_BACKENDS = (AGENT_BACKEND_OPENHANDS, AGENT_BACKEND_CLAUDE)
 
 
-# Shared workflow-state value defaults. The progress/review entries are
-# common to TaskService (which also tracks 'done') and TaskStateService
-# (which tracks 'open' via its separate field-defaults map). Each service
-# composes its own ``_STATE_VALUE_DEFAULTS`` from this base.
+# Shared workflow-state value defaults, used by TaskService (queue
+# filtering + the operator task picker) and TaskStateService (the actual
+# ticket transitions; it tracks 'open' too via its separate field-defaults
+# map). Each service composes its own ``_STATE_VALUE_DEFAULTS`` from this
+# base.
 SHARED_STATE_VALUE_DEFAULTS = {
     'progress': 'In Progress',
     'review': 'In Review',
+    # Read by the operator task picker (so completed tickets are listed)
+    # AND by the "this task is done" checkbox on the forget dialog, which
+    # moves the ticket to this state before the local clone is wiped.
+    'done': 'Done',
 }
 
 

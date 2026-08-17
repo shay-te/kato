@@ -8,5 +8,7 @@ youtrack_core_lib:
     progress_state: ${oc.env:YOUTRACK_PROGRESS_STATE,"In Progress"}
     review_state_field: ${oc.env:YOUTRACK_REVIEW_STATE_FIELD,"State"}
     review_state: ${oc.env:YOUTRACK_REVIEW_STATE,"To Verify"}
+    done_state_field: ${oc.env:YOUTRACK_DONE_STATE_FIELD,"State"}
+    done_state: ${oc.env:YOUTRACK_DONE_STATE,"Done"}
     issue_states: ${oc.env:YOUTRACK_ISSUE_STATES,"Todo,Open"}
     max_retries: ${oc.decode:${oc.env:YOUTRACK_CORE_LIB_MAX_RETRIES,"3"}}

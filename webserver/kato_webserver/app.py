@@ -436,6 +436,8 @@ _TASK_PROVIDER_FIELDS: dict[str, tuple[str, ...]] = {
         'YOUTRACK_PROGRESS_STATE',
         'YOUTRACK_REVIEW_STATE_FIELD',
         'YOUTRACK_REVIEW_STATE',
+        'YOUTRACK_DONE_STATE_FIELD',
+        'YOUTRACK_DONE_STATE',
         'YOUTRACK_ISSUE_STATES',
     ),
     'jira': (
@@ -448,6 +450,8 @@ _TASK_PROVIDER_FIELDS: dict[str, tuple[str, ...]] = {
         'JIRA_PROGRESS_STATE',
         'JIRA_REVIEW_STATE_FIELD',
         'JIRA_REVIEW_STATE',
+        'JIRA_DONE_STATE_FIELD',
+        'JIRA_DONE_STATE',
         'JIRA_ISSUE_STATES',
     ),
     'github': (
@@ -461,6 +465,8 @@ _TASK_PROVIDER_FIELDS: dict[str, tuple[str, ...]] = {
         'GITHUB_PROGRESS_STATE',
         'GITHUB_REVIEW_STATE_FIELD',
         'GITHUB_REVIEW_STATE',
+        'GITHUB_DONE_STATE_FIELD',
+        'GITHUB_DONE_STATE',
         'GITHUB_ISSUE_STATES',
     ),
     'gitlab': (
@@ -473,6 +479,8 @@ _TASK_PROVIDER_FIELDS: dict[str, tuple[str, ...]] = {
         'GITLAB_PROGRESS_STATE',
         'GITLAB_REVIEW_STATE_FIELD',
         'GITLAB_REVIEW_STATE',
+        'GITLAB_DONE_STATE_FIELD',
+        'GITLAB_DONE_STATE',
         'GITLAB_ISSUE_STATES',
     ),
     'bitbucket': (
@@ -488,6 +496,8 @@ _TASK_PROVIDER_FIELDS: dict[str, tuple[str, ...]] = {
         'BITBUCKET_PROGRESS_STATE',
         'BITBUCKET_REVIEW_STATE_FIELD',
         'BITBUCKET_REVIEW_STATE',
+        'BITBUCKET_DONE_STATE_FIELD',
+        'BITBUCKET_DONE_STATE',
         'BITBUCKET_ISSUE_STATES',
     ),
 }
@@ -2820,10 +2830,25 @@ def _register_http_routes(app: Flask) -> None:
         the workspace clone, THEN VERIFY the directory is actually
         gone before returning 200. If anything's left, the operator
         gets a concrete error message they can act on.
+
+        ``?done=1`` (the forget dialog's "this task is done" checkbox)
+        additionally moves the TICKET to the tracker's done column
+        before any of that runs — see ``_move_task_to_done_or_error``
+        for why that ordering is the safe one.
         """
         workspace_manager = app.config.get('WORKSPACE_MANAGER')
         if workspace_manager is None:
             return jsonify({'error': 'workspace manager not wired'}), 503
+        mark_done = _truthy_arg(request.args.get('done'))
+        if mark_done:
+            done_error = _move_task_to_done_or_error(app, task_id)
+            if done_error:
+                return jsonify({
+                    'forgotten': False,
+                    'moved_to_done': False,
+                    'task_id': task_id,
+                    'error': done_error,
+                }), 502
         errors: list[str] = []
         # 1. Kill the live subprocess + wipe the session record /
         #    Claude JSONL transcript. Best-effort: a missing session
@@ -2887,10 +2912,15 @@ def _register_http_routes(app: Flask) -> None:
         if errors:
             return jsonify({
                 'forgotten': False,
+                'moved_to_done': mark_done,
                 'task_id': task_id,
                 'error': '; '.join(errors),
             }), 500
-        return jsonify({'forgotten': True, 'task_id': task_id})
+        return jsonify({
+            'forgotten': True,
+            'moved_to_done': mark_done,
+            'task_id': task_id,
+        })
 
 
 # ----- live status feed (SSE) -----
@@ -3042,6 +3072,36 @@ def _discover_chat_effort_levels(app: Flask) -> list:
 def _truthy_arg(value: object) -> bool:
     """Whether a query-string flag (e.g. ``?refresh=1``) is set/affirmative."""
     return str(value or '').strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _move_task_to_done_or_error(app: Flask, task_id: str) -> str:
+    """Move ``task_id``'s ticket to done. Returns '' on success, else why not.
+
+    Called BEFORE the forget endpoint destroys anything, and a failure
+    aborts the whole delete. The ticket move is the only half of this
+    operation that can't be redone from the UI afterwards — once the
+    clone and the session record are gone the tab is gone with them, so
+    an operator who saw "couldn't move to done" would have nothing left
+    to retry from. Failing first leaves everything intact: they retry,
+    or uncheck the box and delete locally anyway.
+    """
+    agent_service = app.config.get('AGENT_SERVICE')
+    mark_done = getattr(agent_service, 'mark_task_done', None)
+    if not callable(mark_done):
+        return (
+            'kato is not connected to a task platform, so '
+            f'{task_id} cannot be moved to done (nothing was deleted)'
+        )
+    try:
+        mark_done(task_id)
+    except Exception as exc:
+        app.logger.exception('failed to move task %s to done', task_id)
+        reason = str(exc) or exc.__class__.__name__
+        return (
+            f'could not move {task_id} to done on the task tracker: '
+            f'{reason} (nothing was deleted)'
+        )
+    return ''
 
 
 def _discover_chat_models(app: Flask, force: bool = False) -> list:

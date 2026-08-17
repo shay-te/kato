@@ -33,6 +33,11 @@ const PLATFORM_URL_EXAMPLES = {
   BITBUCKET: 'https://api.bitbucket.org/2.0',
 };
 
+// Platforms where "done" means closing the issue (a ``state`` change)
+// rather than moving it to a named workflow column — their done-state
+// examples have to differ or the placeholder teaches the wrong value.
+const CLOSING_PLATFORMS = new Set(['GITHUB', 'GITLAB', 'BITBUCKET']);
+
 function platformOf(key) {
   const head = String(key).split('_')[0];
   return PLATFORM_LABELS[head] ? head : '';
@@ -99,6 +104,12 @@ const SUFFIX_RULES = [
     () => 'Name of the workflow field kato updates when work is ready for review. Leave blank to use kato’s default.'],
   ['REVIEW_STATE', () => 'To Verify',
     () => 'Workflow state kato moves a ticket to after opening the pull request. Leave blank to use kato’s default.'],
+  // Only ever written by the operator's "this task is done" checkbox on
+  // the forget dialog — kato never closes a ticket on its own.
+  ['DONE_STATE_FIELD', (key) => (CLOSING_PLATFORMS.has(platformOf(key)) ? 'state' : 'State'),
+    () => 'Name of the workflow field kato updates when you delete a task and mark it done. Leave blank to use kato’s default.'],
+  ['DONE_STATE', (key) => (CLOSING_PLATFORMS.has(platformOf(key)) ? 'closed' : 'Done'),
+    () => 'Workflow state kato moves a ticket to when you delete a task and tick “this task is done”. Leave blank to use kato’s default.'],
   ['ISSUE_STATES', () => 'Open,To Do',
     () => 'Comma-separated list of states kato treats as ready to pick up. Leave blank to use kato’s default.'],
   ['REPO_SLUG', () => 'my-repo',

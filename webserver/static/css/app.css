@@ -4041,6 +4041,47 @@ code {
   color: #fecaca;
 }
 
+/* "This task is done" opt-in. Boxed and sat apart from the consequence
+   list because it is the one control here that changes something OUTSIDE
+   kato (the ticket's column on the tracker) — it must not read as another
+   bullet in the list of things the delete already does. */
+.forget-task-done {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  padding: 9px 11px;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  background: #0a0a0a;
+  font-size: 12.5px;
+  color: #f5f5f7;
+  line-height: 1.5;
+  cursor: pointer;
+  user-select: none;
+}
+
+.forget-task-done:has(input[type=checkbox]:checked) {
+  border-color: #2563eb;
+}
+
+.forget-task-done input[type=checkbox] {
+  margin: 2px 0 0;
+  flex: 0 0 auto;
+  accent-color: #2563eb;
+  cursor: pointer;
+}
+
+.forget-task-done > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.forget-task-done-hint {
+  color: #a3a3a3;
+}
+
 /* ───── middle pane — VS Code-style open-file tab strip + Monaco editor ───── */
 .center-pane-with-tabs > #editor-pane,
 .center-pane-with-tabs > .diff-pane {

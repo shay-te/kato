@@ -233,13 +233,15 @@ export default function App() {
   const openFileRequestRef = useRef(0);
   const fileTreeFocusRequestRef = useRef(0);
 
-  const doForgetTask = useCallback(async (taskId) => {
+  const doForgetTask = useCallback(async (taskId, markDone = false) => {
     if (!taskId) { return; }
     // Show the operator what's happening — silently failing was the
     // original bug. Backend now returns 500 with a concrete error
     // message when the workspace dir can't be removed (live process
-    // file locks, antivirus, etc.).
-    const result = await forgetTaskWorkspace(taskId);
+    // file locks, antivirus, etc.), and 502 when ``markDone`` was asked
+    // for but the ticket couldn't be moved to done — in THAT case the
+    // server deleted nothing, so the tab is still there to retry from.
+    const result = await forgetTaskWorkspace(taskId, { markDone });
     if (!result.ok) {
       // Route the error text through the canonical apiErrorMessage
       // precedence (body.error → result.error → fallback) instead of
@@ -281,14 +283,16 @@ export default function App() {
     toast.show({
       kind: 'success',
       title: `Forgot ${taskId}`,
-      message: 'Workspace clone and Claude session removed.',
+      message: markDone
+        ? 'Ticket moved to Done. Workspace clone and Claude session removed.'
+        : 'Workspace clone and Claude session removed.',
     });
   }, [activeTaskId, refresh]);
 
-  const confirmForgetTask = useCallback(() => {
+  const confirmForgetTask = useCallback((markDone = false) => {
     const taskId = forgetCandidate?.task_id;
     setForgetCandidate(null);
-    if (taskId) { doForgetTask(taskId); }
+    if (taskId) { doForgetTask(taskId, markDone); }
   }, [forgetCandidate, doForgetTask]);
 
   const [scanPending, setScanPending] = useState(false);

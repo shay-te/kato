@@ -83,6 +83,60 @@ class TaskStateServiceTests(unittest.TestCase):
             ],
         )
 
+    def test_done_defaults_to_the_review_field_and_done_value(self) -> None:
+        # Trackers where every workflow move writes the same field
+        # (YouTrack ``State``, Jira ``status``) need no done-specific
+        # config at all — done follows the review field.
+        config = types.SimpleNamespace(
+            base_url="https://youtrack.example",
+            token="yt-token",
+            project="PROJ",
+            assignee="me",
+            issue_states=["Todo", "Open"],
+        )
+        client = Mock()
+
+        TaskStateService(config, TaskDataAccess(config, client)).move_task_to_done('PROJ-1')
+
+        client.move_issue_to_state.assert_called_once_with('PROJ-1', 'State', 'Done')
+
+    def test_done_uses_its_own_field_when_configured(self) -> None:
+        # GitHub/GitLab: the review transition writes a LABEL, but done
+        # means closing the issue — a different field entirely.
+        config = types.SimpleNamespace(
+            base_url="https://api.github.com",
+            token="gh-token",
+            project="repo",
+            assignee="octocat",
+            issue_states="open",
+            review_state_field='labels',
+            review_state='In Review',
+            done_state_field='state',
+            done_state='closed',
+        )
+        client = Mock()
+
+        TaskStateService(config, TaskDataAccess(config, client)).move_task_to_done('7')
+
+        client.move_issue_to_state.assert_called_once_with('7', 'state', 'closed')
+
+    def test_done_move_failure_propagates(self) -> None:
+        # The forget endpoint refuses to delete anything when the ticket
+        # didn't move, so the failure must NOT be swallowed here.
+        config = types.SimpleNamespace(
+            base_url="https://youtrack.example",
+            token="yt-token",
+            project="PROJ",
+            assignee="me",
+            issue_states=["Todo"],
+        )
+        client = Mock()
+        client.move_issue_to_state.side_effect = RuntimeError('workflow rejected')
+
+        service = TaskStateService(config, TaskDataAccess(config, client))
+        with self.assertRaises(RuntimeError):
+            service.move_task_to_done('PROJ-1')
+
     def test_prefers_explicit_open_state_when_configured(self) -> None:
         config = types.SimpleNamespace(
             base_url="https://jira.example",

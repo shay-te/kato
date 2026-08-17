@@ -96,6 +96,60 @@ describe('ForgetTaskModal', () => {
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
+  // "This task is done" reaches OUTSIDE kato — it closes the operator's
+  // ticket on the tracker — so it must be opt-in on every single delete,
+  // never sticky and never pre-checked.
+  test('the "task is done" checkbox is off by default and confirms false', () => {
+    const onConfirm = vi.fn();
+    render(
+      <ForgetTaskModal
+        session={_session()} onConfirm={onConfirm} onCancel={vi.fn()}
+      />,
+    );
+    const done = document.getElementById('forget-task-done');
+    expect(done).toBeInTheDocument();
+    expect(done.checked).toBe(false);
+    expect(screen.getByText(/Done column on the task tracker/i)).toBeInTheDocument();
+    fireEvent.click(document.getElementById('forget-task-confirm'));
+    expect(onConfirm).toHaveBeenCalledWith(false);
+  });
+
+  test('checking "task is done" confirms true and relabels the action', () => {
+    const onConfirm = vi.fn();
+    render(
+      <ForgetTaskModal
+        session={_session()} onConfirm={onConfirm} onCancel={vi.fn()}
+      />,
+    );
+    fireEvent.click(document.getElementById('forget-task-done'));
+    expect(document.getElementById('forget-task-done').checked).toBe(true);
+    expect(
+      document.getElementById('forget-task-confirm'),
+    ).toHaveTextContent('Finish & forget KATO-123');
+    fireEvent.click(document.getElementById('forget-task-confirm'));
+    expect(onConfirm).toHaveBeenCalledWith(true);
+  });
+
+  // The two ticket outcomes are mutually exclusive — showing "the ticket
+  // is NOT changed" next to a checked "move it to Done" box is exactly the
+  // contradiction that makes an operator click the wrong button.
+  test('the ticket consequence flips with the checkbox', () => {
+    render(
+      <ForgetTaskModal
+        session={_session()} onConfirm={vi.fn()} onCancel={vi.fn()}
+      />,
+    );
+    const effects = () => document.querySelector('.forget-task-effects').textContent;
+    expect(effects()).toMatch(/issue tracker is\s*not\s*changed/i);
+    expect(effects()).not.toMatch(/moved to/i);
+
+    fireEvent.click(document.getElementById('forget-task-done'));
+    expect(effects()).toMatch(/moved to\s*Done/i);
+    expect(effects()).not.toMatch(/is\s*not\s*changed/i);
+    expect(effects()).toMatch(/nothing is\s*deleted/i);
+    expect(document.querySelectorAll('.forget-task-effects li').length).toBe(4);
+  });
+
   test('Cancel fires onCancel and is the auto-focused default', () => {
     const onCancel = vi.fn();
     render(

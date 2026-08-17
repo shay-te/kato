@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { TAB_STATUS } from '../constants/tabStatus.js';
 import { deriveTabStatus } from '../utils/tabStatus.js';
 import { useEscapeKey } from '../hooks/useEscapeKey.js';
@@ -16,9 +16,20 @@ import DialogShell from './DialogShell.jsx';
  * The consequence list is context-aware: an in-review task or one
  * with un-pushed changes gets an extra red callout, because that's
  * the case where forgetting actually destroys unrecoverable work.
+ *
+ * "This task is done" is the one thing in this dialog that reaches
+ * OUTSIDE kato: checked, the ticket moves to the tracker's done
+ * column (YouTrack / Jira / GitHub / GitLab / Bitbucket) before
+ * anything local is wiped. Unchecked — the default — the tracker is
+ * left exactly as it is, which is why the effects list flips between
+ * two mutually exclusive sentences rather than hedging in one.
+ * ``onConfirm`` receives the checkbox state.
  */
 export default function ForgetTaskModal({ session, onConfirm, onCancel }) {
   const cancelRef = useRef(null);
+  // Default OFF: closing someone's ticket is an outward-facing action,
+  // so it only happens when the operator says so on this specific delete.
+  const [markDone, setMarkDone] = useState(false);
 
   useEffect(() => {
     cancelRef.current?.focus();
@@ -73,13 +84,36 @@ export default function ForgetTaskModal({ session, onConfirm, onCancel }) {
             This tab and its local chat view are removed; the Claude
             session created for this task is dropped.
           </li>
-          <li>
-            The ticket itself on the issue tracker is{' '}
-            <strong>not</strong> changed. If it&rsquo;s still in a
-            state kato watches, kato may re-clone it fresh on a later
-            scan.
-          </li>
+          {markDone ? (
+            <li>
+              The ticket on the issue tracker is moved to{' '}
+              <strong>Done</strong>. If that move fails, nothing is
+              deleted and the task stays exactly as it is.
+            </li>
+          ) : (
+            <li>
+              The ticket itself on the issue tracker is{' '}
+              <strong>not</strong> changed. If it&rsquo;s still in a
+              state kato watches, kato may re-clone it fresh on a later
+              scan.
+            </li>
+          )}
         </ul>
+
+        <label className="forget-task-done" htmlFor="forget-task-done">
+          <input
+            id="forget-task-done"
+            type="checkbox"
+            checked={markDone}
+            onChange={(event) => setMarkDone(event.target.checked)}
+          />
+          <span>
+            <strong>This task is done</strong>
+            <span className="forget-task-done-hint">
+              Also move {taskId} to the Done column on the task tracker.
+            </span>
+          </span>
+        </label>
 
         {(inReview || hasUnpushed) && (
           <p className="forget-task-warning" role="alert">
@@ -115,9 +149,9 @@ export default function ForgetTaskModal({ session, onConfirm, onCancel }) {
             id="forget-task-confirm"
             type="button"
             className="danger"
-            onClick={onConfirm}
+            onClick={() => onConfirm(markDone)}
           >
-            Forget {taskId}
+            {markDone ? `Finish & forget ${taskId}` : `Forget ${taskId}`}
           </button>
         </div>
     </DialogShell>

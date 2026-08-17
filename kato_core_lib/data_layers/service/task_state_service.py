@@ -17,6 +17,13 @@ class TaskStateService(Service):
         'progress': 'review',
         'review': 'State',
         'open': 'progress',
+        # A tracker that closes a ticket through a different field than
+        # the review transition sets ``done_state_field`` explicitly
+        # (GitHub/GitLab: ``state`` rather than the ``labels`` field
+        # their review transition writes). Unset, it follows review's
+        # field — the common case on YouTrack/Jira, where every
+        # workflow move touches the same State/status field.
+        'done': 'review',
     }
     _STATE_VALUE_DEFAULTS = dict(SHARED_STATE_VALUE_DEFAULTS)
 
@@ -29,6 +36,16 @@ class TaskStateService(Service):
 
     def move_task_to_review(self, issue_id: str) -> None:
         self._move_task_to_configured_state(issue_id, 'review')
+
+    def move_task_to_done(self, issue_id: str) -> None:
+        """Move a ticket to the tracker's done/closed column.
+
+        Operator-triggered ONLY (the "this task is done" checkbox on the
+        forget dialog). The autonomous flow never closes a ticket —
+        deciding that work is finished is the reviewer's call, same as
+        the never-auto-resolve rule for PR comment threads.
+        """
+        self._move_task_to_configured_state(issue_id, 'done')
 
     def move_task_to_open(self, issue_id: str) -> None:
         self._task_data_access.move_task_to_state(
