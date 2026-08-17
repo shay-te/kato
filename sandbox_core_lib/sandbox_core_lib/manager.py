@@ -107,7 +107,7 @@ _OWNER_BOOT_LABEL = f'{_LABEL_NAMESPACE}.owner-boot'
 # Seccomp profile shipped WITH this lib and pinned explicitly on every
 # spawn. See the ``--security-opt seccomp=`` block in ``wrap_command``
 # for why we don't rely on the daemon's own default.
-_SECCOMP_PROFILE_PATH = Path(__file__).resolve().parent / 'seccomp' / 'default.json'
+_SECCOMP_PROFILE_PATH = Path(__file__).resolve().parent / 'seccomp' / 'agent.json'
 
 # Where the per-spawn secret drop is mounted inside the container. The
 # entrypoint reads an ALLOWLIST of names from here — never "export
@@ -1583,6 +1583,70 @@ def _last_audit_chain_hash(target: Path) -> str:
     return hashlib.sha256(lines[-1]).hexdigest()
 
 
+def verify_audit_chain(
+    target: Path | None = None,
+    *,
+    logger: logging.Logger | None = None,
+) -> dict:
+    """Walk the audit log and check every chain link.
+
+    The log is hash-chained precisely so tampering is detectable — but
+    nothing ever checked it, which makes the property theoretical: an
+    edited or truncated history looks identical to an honest one until
+    somebody manually runs sha256sum over the file. This does that walk.
+
+    Each line carries ``prev_hash`` = sha256 of the PREVIOUS raw line
+    (genesis for the first), so editing entry N invalidates the link at
+    N+1. Returns ``{ok, entries, broken_at, error}``; ``broken_at`` is
+    the 1-based line number of the first bad link. Read-only, and never
+    raises — a verifier that can take down the boot it is auditing is
+    worse than the tampering it looks for.
+
+    KNOWN RESIDUAL: dropping entries from the END leaves a shorter but
+    internally consistent chain, and no hash chain can detect that on its
+    own — the check would need an external anchor (the last known hash
+    and count, held somewhere the log's writer cannot reach). Edits and
+    reordering ARE caught. The error text says only what is true.
+    """
+    path = target or _DEFAULT_AUDIT_LOG_PATH
+    result = {'ok': True, 'entries': 0, 'broken_at': 0, 'error': ''}
+    if not path.exists():
+        return result
+    try:
+        with exclusive_file_lock(path):
+            with path.open('rb') as handle:
+                lines = [ln for ln in handle.read().splitlines() if ln.strip()]
+    except OSError as exc:
+        result['error'] = f'cannot read audit log: {exc}'
+        return result
+    expected = _AUDIT_GENESIS_HASH
+    for index, raw in enumerate(lines, start=1):
+        try:
+            entry = json.loads(raw)
+        except ValueError:
+            result.update(ok=False, broken_at=index, error='entry is not valid JSON')
+            break
+        if str(entry.get('prev_hash', '')) != expected:
+            result.update(
+                ok=False, broken_at=index,
+                error='chain link does not match the previous entry — the log '
+                      'was edited or reordered',
+            )
+            break
+        expected = hashlib.sha256(raw).hexdigest()
+    result['entries'] = len(lines)
+    if not result['ok'] and logger is not None:
+        logger.error(
+            'sandbox audit chain FAILED verification at entry %s of %s: %s '
+            '(%s)', result['broken_at'], result['entries'], result['error'], path,
+        )
+    elif logger is not None and result['entries']:
+        logger.info(
+            'sandbox audit chain verified: %s entries intact', result['entries'],
+        )
+    return result
+
+
 def _count_recent_spawns(target: Path, *, now: datetime | None = None) -> int:
     """Count audit-log entries within ``_SPAWN_RATE_WINDOW_SEC``.
 
@@ -1871,6 +1935,25 @@ def _assert_seccomp_not_unconfined(argv: list[str]) -> None:
             )
 
 
+MAX_CONTAINER_LIFETIME_ENV_KEY = 'AGENT_SANDBOX_MAX_CONTAINER_SECONDS'
+# 8h: far longer than any real turn, short enough that a wedged container
+# does not hold a workspace mount and its credentials open for days. A
+# session that legitimately needs longer is better served by restarting
+# it than by an agent process nobody has looked at since yesterday.
+_DEFAULT_MAX_CONTAINER_LIFETIME_SECONDS = 8 * 60 * 60
+
+
+def _max_container_lifetime_seconds() -> float:
+    """Cap on how long one sandbox container may live. 0 disables."""
+    raw = os.environ.get(MAX_CONTAINER_LIFETIME_ENV_KEY, '')
+    if not str(raw).strip():
+        return float(_DEFAULT_MAX_CONTAINER_LIFETIME_SECONDS)
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return float(_DEFAULT_MAX_CONTAINER_LIFETIME_SECONDS)
+
+
 class WatchdogHandle(object):
     """Live parent-loss watchdog for one container.
 
@@ -1947,6 +2030,7 @@ def arm_container_watchdog(
                 # Label keys are owned here, not baked into the watchdog.
                 '--pid-label', _OWNER_PID_LABEL,
                 '--boot-label', _OWNER_BOOT_LABEL,
+                '--max-lifetime-seconds', str(_max_container_lifetime_seconds()),
             ],
             pass_fds=(read_fd,),
             # Own session: a terminal group signal aimed at this process

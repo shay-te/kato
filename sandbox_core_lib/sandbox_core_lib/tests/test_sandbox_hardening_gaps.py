@@ -63,6 +63,156 @@ class SeccompPinTests(unittest.TestCase):
         self.assertIn('vendored', str(caught.exception))
 
 
+class AgentSeccompProfileTests(unittest.TestCase):
+    """The spawn uses the TIGHTENED profile, and its delta stays auditable."""
+
+    def _profiles(self):
+        from sandbox_core_lib.sandbox_core_lib.seccomp import derive_agent_profile
+        baseline = json.loads(
+            derive_agent_profile.BASELINE_PATH.read_text(encoding='utf-8'),
+        )
+        agent = json.loads(
+            derive_agent_profile.AGENT_PATH.read_text(encoding='utf-8'),
+        )
+        return derive_agent_profile, baseline, agent
+
+    def test_spawn_uses_the_agent_profile_not_the_baseline(self) -> None:
+        self.assertEqual(manager._SECCOMP_PROFILE_PATH.name, 'agent.json')
+
+    def test_checked_in_profile_equals_baseline_minus_denylist(self) -> None:
+        # The whole point of deriving: a future baseline refresh cannot
+        # silently drop a denial, because this recomputes it.
+        module, baseline, agent = self._profiles()
+        self.assertEqual(module.derive(baseline), agent)
+
+    def test_every_denied_syscall_is_actually_absent(self) -> None:
+        module, _baseline, agent = self._profiles()
+        allowed = {
+            name
+            for rule in agent.get('syscalls', [])
+            for name in rule.get('names', [])
+        }
+        for denied in module.DENIED_SYSCALLS:
+            self.assertNotIn(denied, allowed, f'{denied} survived the derivation')
+
+    def test_the_denylist_actually_removed_something(self) -> None:
+        # A denylist of names that were never in the baseline would pass
+        # every check above while changing nothing.
+        module, baseline, agent = self._profiles()
+        before = {n for r in baseline.get('syscalls', []) for n in r.get('names', [])}
+        after = {n for r in agent.get('syscalls', []) for n in r.get('names', [])}
+        self.assertTrue(before - after)
+        self.assertTrue(module.DENIED_SYSCALLS & before)
+
+    def test_profile_still_denies_by_default(self) -> None:
+        _module, _baseline, agent = self._profiles()
+        self.assertEqual(agent['defaultAction'], 'SCMP_ACT_ERRNO')
+
+
+class AuditChainVerificationTests(unittest.TestCase):
+    """The log is hash-chained; until now nothing ever checked it."""
+
+    def _log(self, entries: int):
+        import tempfile
+        from pathlib import Path
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        path = Path(self._tmp.name) / 'audit.log'
+        for index in range(entries):
+            manager.record_spawn(
+                task_id=f'T-{index}', container_name=f'c{index}',
+                workspace_path='/ws', audit_log_path=path,
+            )
+        return path
+
+    def test_missing_log_is_not_a_failure(self) -> None:
+        from pathlib import Path
+        result = manager.verify_audit_chain(Path('/nonexistent/audit.log'))
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['entries'], 0)
+
+    def test_honest_chain_verifies(self) -> None:
+        result = manager.verify_audit_chain(self._log(3))
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['entries'], 3)
+
+    def test_edited_entry_breaks_the_following_link(self) -> None:
+        path = self._log(3)
+        lines = path.read_bytes().splitlines()
+        entry = json.loads(lines[1])
+        entry['workspace_path'] = '/somewhere-else'
+        lines[1] = json.dumps(entry, sort_keys=True).encode()
+        path.write_bytes(b'\n'.join(lines) + b'\n')
+        result = manager.verify_audit_chain(path)
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['broken_at'], 3)
+
+    def test_reordering_is_detected(self) -> None:
+        path = self._log(3)
+        lines = path.read_bytes().splitlines()
+        lines[1], lines[2] = lines[2], lines[1]
+        path.write_bytes(b'\n'.join(lines) + b'\n')
+        self.assertFalse(manager.verify_audit_chain(path)['ok'])
+
+    def test_tail_truncation_is_NOT_detected(self) -> None:
+        # Pinning the documented residual rather than pretending it away:
+        # a shorter prefix is still internally consistent, and no hash
+        # chain can catch that without an external anchor.
+        path = self._log(3)
+        lines = path.read_bytes().splitlines()
+        path.write_bytes(b'\n'.join(lines[:2]) + b'\n')
+        result = manager.verify_audit_chain(path)
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['entries'], 2)
+
+    def test_garbage_line_is_reported_not_raised(self) -> None:
+        path = self._log(1)
+        path.write_bytes(path.read_bytes() + b'not json\n')
+        result = manager.verify_audit_chain(path)
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['broken_at'], 2)
+
+
+class ContainerLifetimeCapTests(unittest.TestCase):
+    """A wedged container must not hold a workspace mount open forever."""
+
+    def test_cap_reaps_a_container_whose_owner_is_healthy(self) -> None:
+        from sandbox_core_lib.sandbox_core_lib import watchdog as wd
+        read_fd, write_fd = os.pipe()          # owner stays ALIVE
+        self.addCleanup(os.close, write_fd)
+        clock = {'t': 0.0}
+
+        def fake_now():
+            clock['t'] += 31.0                 # one idle poll per call
+            return clock['t']
+
+        with mock.patch.object(wd, '_container_labels', return_value={'a': 'b'}), \
+             mock.patch.object(wd.select, 'select', return_value=([], [], [])):
+            reason = wd._wait_for_reap_trigger(read_fd, 'c1', 60.0, fake_now)
+        self.assertEqual(reason, 'max-lifetime-exceeded')
+
+    def test_zero_disables_the_cap(self) -> None:
+        from sandbox_core_lib.sandbox_core_lib import watchdog as wd
+        read_fd, write_fd = os.pipe()
+        os.close(write_fd)                     # EOF → owner-lost path
+        with mock.patch.object(wd, '_container_labels', return_value={'a': 'b'}):
+            reason = wd._wait_for_reap_trigger(read_fd, 'c1', 0.0, lambda: 1e9)
+        self.assertEqual(reason, 'owner-process-lost')
+
+    def test_default_cap_is_generous_but_finite(self) -> None:
+        with mock.patch.dict(manager.os.environ, {}, clear=True):
+            self.assertEqual(manager._max_container_lifetime_seconds(), 8 * 60 * 60)
+
+    def test_env_override_and_bad_values(self) -> None:
+        key = manager.MAX_CONTAINER_LIFETIME_ENV_KEY
+        with mock.patch.dict(manager.os.environ, {key: '120'}, clear=True):
+            self.assertEqual(manager._max_container_lifetime_seconds(), 120.0)
+        with mock.patch.dict(manager.os.environ, {key: '0'}, clear=True):
+            self.assertEqual(manager._max_container_lifetime_seconds(), 0.0)
+        with mock.patch.dict(manager.os.environ, {key: 'nonsense'}, clear=True):
+            self.assertEqual(manager._max_container_lifetime_seconds(), 8 * 60 * 60)
+
+
 class SandboxFlagAssertionTests(unittest.TestCase):
     def _passing_argv(self) -> list[str]:
         argv = ['docker', 'run']

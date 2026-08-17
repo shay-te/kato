@@ -19,6 +19,7 @@ Stored at ``~/.kato/forgotten_tasks.json`` (override via
 from __future__ import annotations
 
 import json
+import os
 import threading
 from pathlib import Path
 
@@ -73,10 +74,33 @@ def is_forgotten(task_id: str) -> bool:
     }
 
 
+def _is_plausible_task_id(value: str) -> bool:
+    """Whether ``value`` could name a task on any supported platform.
+
+    Deliberately permissive — ticket ids differ wildly across trackers
+    (``UNA-2913``, a GitHub issue's ``1247``, a GitLab ``group/proj#4``).
+    This only rejects what can NEVER be one: traversal tokens and path
+    separators, which arrive from a URL segment rather than a tracker.
+    """
+    if value in ('.', '..'):
+        return False
+    return not any(separator in value for separator in ('/', '\\', os.sep))
+
+
 def forget(task_id: str) -> None:
-    """Mark a task forgotten so the scan skips it until it is re-adopted."""
+    """Mark a task forgotten so the scan skips it until it is re-adopted.
+
+    Ids that cannot name a task are rejected rather than stored. The
+    DELETE route takes the id straight from the URL and marks it
+    forgotten BEFORE the workspace layer gets a chance to reject it, so
+    anything the caller sends lands here — which is how ``..``,
+    ``lessons`` and ``lesson-candidates`` ended up in a real operator's
+    file. That matters beyond untidiness: every id in this file is
+    silently skipped by the review-comment scan, so junk here is a
+    standing instruction to ignore work.
+    """
     raw = str(task_id or '').strip()
-    if not raw:
+    if not raw or not _is_plausible_task_id(raw):
         return
     with _lock:
         ids = forgotten_task_ids()

@@ -159,6 +159,7 @@ def main(cfg: DictConfig) -> int:
             gvisor_runtime_available,
             install_host_egress_backstop,
             prune_stale_secret_dirs,
+            verify_audit_chain,
             reap_orphan_sandbox_containers,
         )
         check_docker_or_exit()
@@ -215,6 +216,10 @@ def main(cfg: DictConfig) -> int:
             # rules still leaves only TCP/443 + pinned DNS. Best-effort:
             # the primary control applies regardless.
             install_host_egress_backstop(logger=logger)
+            # The spawn log is hash-chained for tamper-evidence, which is
+            # only worth anything if something reads it. Read-only, never
+            # raises; a broken chain logs an error rather than blocking.
+            verify_audit_chain(logger=logger)
         except Exception:
             logger.warning(
                 'sandbox: orphan container sweep failed; continuing boot',

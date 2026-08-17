@@ -117,9 +117,18 @@ def _write_incident(path: str, payload: dict) -> None:
         pass
 
 
-def watch(read_fd: int, container: str, owner_pid: str, owner_boot: str,
-          incident_path: str = '', pid_label: str = '', boot_label: str = '') -> int:
-    """Block until the owner disarms or dies; reap on death. Returns rc."""
+def _wait_for_reap_trigger(
+    read_fd: int,
+    container: str,
+    max_lifetime_seconds: float,
+    now,
+) -> str | None:
+    """Block until something says "reap"; return why, or ``None`` to stand down.
+
+    ``None`` means the watchdog should exit quietly — the owner disarmed
+    (clean shutdown) or the container is already gone.
+    """
+    started = now()
     with os.fdopen(read_fd, 'rb', buffering=0) as pipe:
         while True:
             # Wake periodically even with nothing on the pipe, so a
@@ -130,22 +139,43 @@ def watch(read_fd: int, container: str, owner_pid: str, owner_boot: str,
             try:
                 ready, _, _ = select.select([pipe], [], [], _IDLE_POLL_SECONDS)
             except (OSError, ValueError):
-                break
+                return 'owner-process-lost'
             if not ready:
                 if _container_labels(container) is None:
-                    return 0                  # container gone; nothing to guard
+                    return None               # container gone; nothing to guard
+                if max_lifetime_seconds and (now() - started) >= max_lifetime_seconds:
+                    return 'max-lifetime-exceeded'
                 continue
             try:
                 chunk = pipe.read(1)
             except OSError:
                 chunk = b''
             if chunk == DISARM_BYTE:
-                return 0                      # clean shutdown; owner handled it
+                return None                   # clean shutdown; owner handled it
             if chunk == b'':
-                break                         # EOF → the owner is gone
+                return 'owner-process-lost'   # EOF → the owner is gone
             # Any other byte: ignore, keep waiting. The channel carries
             # exactly one meaningful signal and unknown noise must not be
             # read as "the owner died" — that would kill a live container.
+
+
+def watch(read_fd: int, container: str, owner_pid: str, owner_boot: str,
+          incident_path: str = '', pid_label: str = '', boot_label: str = '',
+          max_lifetime_seconds: float = 0.0, now=time.monotonic) -> int:
+    """Block until the owner disarms or dies; reap on death. Returns rc.
+
+    ``max_lifetime_seconds`` (0 disables) also reaps a container that
+    outlives its cap even while its owner is perfectly healthy. A wedged
+    agent — stuck in a retry loop, waiting on something that will never
+    arrive — otherwise holds the workspace mount and its credentials
+    open indefinitely, and nothing in the system notices because the
+    owner never died.
+    """
+    reason = _wait_for_reap_trigger(
+        read_fd, container, max_lifetime_seconds, now,
+    )
+    if reason is None:
+        return 0
 
     if not _still_ours(container, owner_pid, owner_boot, pid_label, boot_label):
         return 0
@@ -168,7 +198,7 @@ def watch(read_fd: int, container: str, owner_pid: str, owner_boot: str,
         'owner_boot': owner_boot,
         'removed': removed,
         'verified_absent': not still_present,
-        'reason': 'owner-process-lost',
+        'reason': reason,
     })
     return 0 if removed and not still_present else 1
 
@@ -182,10 +212,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--incident-path', default='')
     parser.add_argument('--pid-label', required=True)
     parser.add_argument('--boot-label', required=True)
+    parser.add_argument('--max-lifetime-seconds', type=float, default=0.0)
     args = parser.parse_args(argv)
     return watch(
         args.fd, args.container, args.owner_pid, args.owner_boot,
         args.incident_path, args.pid_label, args.boot_label,
+        args.max_lifetime_seconds,
     )
 
 
