@@ -95,6 +95,24 @@ _PASS_THROUGH_ENV = (
 _IMAGE_IDENTITY_LABEL = 'org.kato.sandbox'
 _IMAGE_IDENTITY_VALUE = 'true'
 
+# Ownership labels for the orphan reaper, DERIVED from the identity
+# label's namespace rather than written out again (this lib is meant to
+# carry no product brand of its own; deriving keeps the brand to the one
+# constant above).
+_LABEL_NAMESPACE = _IMAGE_IDENTITY_LABEL.rsplit('.', 1)[0]
+_OWNER_PID_LABEL = f'{_LABEL_NAMESPACE}.owner-pid'
+_OWNER_BOOT_LABEL = f'{_LABEL_NAMESPACE}.owner-boot'
+
+# Seccomp profile shipped WITH this lib and pinned explicitly on every
+# spawn. See the ``--security-opt seccomp=`` block in ``wrap_command``
+# for why we don't rely on the daemon's own default.
+_SECCOMP_PROFILE_PATH = Path(__file__).resolve().parent / 'seccomp' / 'default.json'
+
+# Where the per-spawn secret drop is mounted inside the container. The
+# entrypoint reads an ALLOWLIST of names from here — never "export
+# everything present", which would let a poisoned drop inject LD_PRELOAD.
+_ENV_SRC_MOUNT = '/env-src'
+
 # Refuse to bind-mount any of these — handing Claude the operator's
 # whole machine through a misconfigured workspace path would defeat
 # the entire sandbox. The list is intentionally aggressive: better to
@@ -225,13 +243,13 @@ _REQUIRED_DOCKER_FLAGS = frozenset({
     '--network=kato-sandbox-net',
     '--ipc=none',
     '--cgroupns=private',
-    '--pid=container',
-    '--uts=private',
     '--cap-drop=ALL',
     '--cap-add=NET_ADMIN',
     '--cap-add=NET_RAW',
     '--cap-add=SETUID',
     '--cap-add=SETGID',
+    '--cap-add=CHOWN',
+    '--cap-add=SETPCAP',
     '--security-opt=no-new-privileges',
     '--security-opt=apparmor=docker-default',
     '--read-only',
@@ -264,6 +282,14 @@ _FORBIDDEN_DOCKER_FLAGS = frozenset({
 # login flows guarantee. Mechanical verification of each property lives
 # in entrypoint.sh, wrap_command, login_command, and the Makefile. The
 # drift guard ensures the named SET stays in sync with the doc.
+_SECRET_DELIVERY_INVARIANTS = frozenset({
+    'values-never-in-docker-config-env',
+    'staged-file-mode-0600-in-dir-0700',
+    'mounted-read-only',
+    'entrypoint-reads-name-allowlist-only',
+    'dropped-pruned-when-container-not-running',
+})
+
 _AUTH_VOLUME_INVARIANTS = frozenset({
     'spawn-source-readonly',
     'spawn-target-tmpfs',
@@ -282,13 +308,26 @@ _FIREWALL_GUARANTEES = frozenset({
     'default-drop-policy',
     'allowlist-only-anthropic-tcp-443',
     'dns-only-cloudflare',
-    'dns-rate-limit-60-per-minute',
+    'dns-rate-limit-60-per-minute-udp-and-tcp',
     'rfc1918-explicit-deny',
     'cloud-metadata-explicit-deny',
     'icmp-blocked',
     'ipv6-disabled',
     'fail-closed-on-anthropic-unreachable',
     'refuses-private-ip-in-allowlist',
+})
+
+# Seccomp guarantees — named tags for properties of the pinned profile.
+# The flag itself carries an absolute path (install-location dependent),
+# so it cannot be a literal in ``_REQUIRED_DOCKER_FLAGS``; these named
+# tags are how the doc and the code stay in sync instead. Mechanical
+# enforcement lives in ``_assert_seccomp_pinned``.
+_SECCOMP_GUARANTEES = frozenset({
+    'explicit-profile-pinned-not-daemon-default',
+    'profile-file-vendored-in-lib',
+    'profile-default-action-errno',
+    'never-unconfined',
+    'single-seccomp-option',
 })
 
 # Threat-model classification terms used in BYPASS_PROTECTIONS.md
@@ -1010,12 +1049,19 @@ def wrap_command(
       container exit so this task can persist nothing either.
     """
     workspace = _validate_workspace_path(workspace_path)
+    # Resolve the container name ONCE. It is used twice — for ``--name``
+    # and to key the out-of-band secret drop — and ``make_container_name``
+    # embeds a random suffix, so calling it twice produced a drop whose
+    # directory name did not match any running container. The prune sweep
+    # keys on exactly that name, so the mismatch would have let a later
+    # spawn delete a LIVE container's credentials.
+    resolved_container_name = container_name or make_container_name(task_id or '')
     argv: list[str] = [
         'docker', 'run',
         '--rm',
         '-i',
         '--init',                              # tini reaps zombies inside container
-        '--name', container_name or make_container_name(task_id or ''),
+        '--name', resolved_container_name,
     ]
     # Forensic labels — surface in ``docker ps --format '{{.Labels}}'``
     # and ``docker inspect`` so an investigator can correlate a running
@@ -1027,6 +1073,14 @@ def wrap_command(
         '--label', f'org.kato.task-id={(task_id or "unknown")[:64]}',
         '--label', f'org.kato.workspace={workspace[:200]}',
         '--label', f'org.kato.auth-volume={_AUTH_VOLUME_NAME}',
+        # Ownership stamps — unlike the four above, these ARE load-bearing:
+        # ``reap_orphan_sandbox_containers`` uses them to tell a container
+        # whose controlling process died (reap it) from one a live process
+        # is still driving (leave it alone). ``--rm`` only fires when the
+        # container's own process exits, so a hard crash of the controller
+        # otherwise leaves a container running with the workspace mounted.
+        '--label', f'{_OWNER_PID_LABEL}={os.getpid()}',
+        '--label', f'{_OWNER_BOOT_LABEL}={host_boot_identity()}',
     ])
     # gVisor (runsc) when available — adds a userspace kernel between
     # the container and the host, neutralising most kernel-CVE escape
@@ -1038,8 +1092,15 @@ def wrap_command(
         '--network', _SANDBOX_NETWORK_NAME,    # custom bridge with --icc=false
         '--ipc=none',                          # no shared memory / sysv IPC channel
         '--cgroupns=private',                  # private cgroup namespace (host cgroup tree is invisible)
-        '--pid=container',                     # explicit: own PID namespace, not host's
-        '--uts=private',                       # explicit: own hostname namespace
+        # NOTE: there is deliberately no ``--pid`` flag. Docker accepts
+        # only ``host`` or ``container:<id>``; a bare ``--pid=container``
+        # (or podman's ``--pid=private``) is rejected by the daemon with
+        # "invalid PID mode" and kills the spawn. Omitting the flag IS
+        # the private-PID-namespace default, and ``--pid=host`` stays in
+        # _FORBIDDEN_DOCKER_FLAGS so the guarantee is still enforced.
+        # ``--uts`` is omitted for the same reason as ``--pid``: Docker
+        # accepts only ``--uts=host``, so the default already IS a private
+        # UTS namespace and the host variant stays forbidden.
         '--cap-drop', 'ALL',
         '--cap-add', 'NET_ADMIN',              # needed only by init-firewall
         '--cap-add', 'NET_RAW',                # needed only by init-firewall
@@ -1050,6 +1111,19 @@ def wrap_command(
         # the running Claude process never holds them.
         '--cap-add', 'SETUID',
         '--cap-add', 'SETGID',
+        # Needed only by the entrypoint's ``chown`` of the per-task
+        # config tmpfs to the claude user. Without it the chown fails
+        # and the agent gets a config dir it can neither read nor
+        # write. Wiped by the same ``--bounding-set=-all`` as the rest.
+        '--cap-add', 'CHOWN',
+        # Needed by ``setpriv --bounding-set=-all``: dropping a capability
+        # from the BOUNDING set requires CAP_SETPCAP. Without it setpriv
+        # cleared the inheritable set and left the bounding set intact —
+        # the runtime verifier caught CapBnd=0x30c1 (exactly the caps
+        # added here) surviving into the agent process, so the wipe this
+        # sandbox documents was never happening. SETPCAP is itself in the
+        # set that gets wiped.
+        '--cap-add', 'SETPCAP',
         '--security-opt', 'no-new-privileges',
         # AppArmor: explicitly pin to docker-default. On hosts where
         # AppArmor is loaded (Ubuntu, Debian) this gives an additional
@@ -1058,6 +1132,18 @@ def wrap_command(
         # hosts without AppArmor (macOS / many distros) Docker
         # silently ignores this flag — no-op, but documents intent.
         '--security-opt', 'apparmor=docker-default',
+        # Seccomp: pin the VENDORED profile explicitly rather than
+        # inheriting "whatever this daemon calls default". The daemon's
+        # default is host-settable (``dockerd --seccomp-profile
+        # /some/weak.json``), so a permissive host silently weakened
+        # every sandbox and the old "is it unconfined?" check stayed
+        # green because the flag was simply absent. Pinning a file we
+        # ship makes the enforced syscall set a property of THIS lib,
+        # identical on every host. (``seccomp=builtin`` would express
+        # the same intent in one word but only exists on Docker >= 25 —
+        # on older daemons it is read as a FILENAME and every spawn
+        # dies with "opening seccomp profile (builtin) failed".)
+        '--security-opt', f'seccomp={_SECCOMP_PROFILE_PATH}',
         '--read-only',                         # rootfs immutable
         # Tmpfs ceilings: bounded against runaway disk fill but
         # generous enough that legitimate tooling (pip wheel
@@ -1124,15 +1210,18 @@ def wrap_command(
         # path it had been using breaks.
         '-w', _container_workdir(workdir_subpath),
     ])
-    for var in _PASS_THROUGH_ENV:
-        if var in os.environ:
-            # `-e VAR` (no value) means "pass through from the host
-            # env" — keeps the secret out of the docker argv that
-            # shows up in `ps`.
-            argv.extend(['-e', var])
+    # Secrets travel out-of-band: staged as 0600 files in a 0700 dir and
+    # bind-mounted read-only, then read into the environment by the
+    # entrypoint. ``-e VAR`` pass-through used to be the mechanism; it
+    # kept the value out of ``ps`` but wrote it into the container's
+    # ``Config.Env``, where ``docker inspect`` hands it to any holder of
+    # the docker socket. Docker never sees the value now.
+    secret_dir = materialize_env_secrets(resolved_container_name)
+    if secret_dir is not None:
+        argv.extend(['-v', f'{secret_dir}:{_ENV_SRC_MOUNT}:ro'])
     # JIT image-identity pin: resolve the *current* digest of the tag
-    # right now and refer to the image by ``tag@sha256:<digest>`` in
-    # the docker run argv. Defends against a TOCTOU where someone with
+    # right now and refer to the image by that exact ID in the docker
+    # run argv. Defends against a TOCTOU where someone with
     # local Docker access retags ``kato/claude-sandbox:latest`` to a
     # different image after ``ensure_image`` returned. If the digest
     # can't be resolved we fail closed rather than fall back to the
@@ -1159,14 +1248,25 @@ def wrap_command(
             'without a JIT-pinned image digest; do not work around '
             'this with an env-var bypass — investigate the daemon.)',
         ) from exc
-    if digest.startswith('sha256:'):
-        argv.append(f'{image_tag}@{digest}')
-    else:
-        argv.append(f'{image_tag}@sha256:{digest.split(":")[-1]}')
+    # Reference the image by its ID, NOT by ``tag@sha256:<id>``. Docker's
+    # ``name@sha256:`` form resolves a *registry manifest* digest, and a
+    # locally-built image has none (``RepoDigests`` is empty), so the
+    # tag@id form sent Docker to the registry and every spawn died with
+    # "pull access denied for <tag>". A bare image ID resolves locally
+    # and pins the exact same bits — it IS the content address of the
+    # image config, so the TOCTOU-retag defence this block exists for is
+    # fully preserved (a retag cannot change which ID we run).
+    argv.append(digest if digest.startswith('sha256:') else f'sha256:{digest.split(":")[-1]}')
     # Defense-in-depth: refuse to ever pass ``--security-opt
     # seccomp=unconfined`` even if a future maintainer copies a bad
     # config. Run this last so the check sees the final argv.
     _assert_seccomp_not_unconfined(argv)
+    _assert_seccomp_pinned(argv)
+    # Whole-argv invariant check, immediately before the argv is handed
+    # to the caller for Popen. Runs on the DOCKER portion only — the
+    # inner Claude command is appended after this point so a user
+    # prompt can never satisfy (or trip) a docker-flag assertion.
+    _assert_sandbox_flags(argv)
     argv.extend(inner_command)
     return argv
 
@@ -1770,6 +1870,333 @@ def _assert_seccomp_not_unconfined(argv: list[str]) -> None:
             )
 
 
+def _secret_dir_root() -> Path:
+    """Root for per-spawn secret drops (derived, not a second literal)."""
+    return _DEFAULT_AUDIT_LOG_PATH.parent / 'sandbox-env'
+
+
+def materialize_env_secrets(container_name: str) -> Path | None:
+    """Stage pass-through secrets as files for an out-of-band mount.
+
+    Replaces ``docker run -e VAR``. The pass-through form (``-e NAME``
+    with no value) already kept the secret out of the docker ARGV — it
+    never showed up in ``ps`` — but the value still landed in the
+    container's ``Config.Env``, which means ``docker inspect`` handed
+    ``ANTHROPIC_API_KEY=sk-...`` to anyone holding the docker socket, and
+    it stayed there for the container's whole lifetime.
+
+    Instead the values are written to a 0600 file in a 0700 per-spawn
+    directory, bind-mounted read-only, and read back by the entrypoint
+    into the process environment. Docker never learns the value, so no
+    daemon-side metadata carries it.
+
+    Returns the directory to mount, or ``None`` when there is nothing to
+    pass through (the common case: credentials come from the auth volume).
+    """
+    present = [var for var in _PASS_THROUGH_ENV if os.environ.get(var)]
+    if not present:
+        return None
+    prune_stale_secret_dirs()
+    directory = _secret_dir_root() / (container_name or 'unknown')
+    directory.mkdir(parents=True, exist_ok=True)
+    os.chmod(directory, 0o700)
+    for var in present:
+        target = directory / var
+        # Create with 0600 from the start — writing then chmod'ing leaves
+        # a window where the secret is world-readable.
+        handle = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(handle, 'w', encoding='utf-8') as stream:
+            stream.write(os.environ[var])
+    return directory
+
+
+def prune_stale_secret_dirs() -> list[str]:
+    """Delete per-spawn secret drops whose container is no longer running.
+
+    The drop has to outlive ``docker run``'s start (the entrypoint reads
+    it), so it cannot be deleted inline. Pruning on the next spawn and at
+    boot keeps the set bounded to live containers.
+    """
+    root = _secret_dir_root()
+    if not root.is_dir():
+        return []
+    try:
+        listed = subprocess.run(
+            ['docker', 'ps', '--format', '{{.Names}}'],
+            capture_output=True, text=True,
+            encoding='utf-8', errors='replace',
+            timeout=30,
+        )
+        running = set(listed.stdout.split()) if listed.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired):
+        running = None
+    if running is None:
+        # Docker unreachable: leave everything alone rather than delete a
+        # live container's secrets out from under it.
+        return []
+    removed: list[str] = []
+    for child in root.iterdir():
+        if not child.is_dir() or child.name in running:
+            continue
+        shutil.rmtree(child, ignore_errors=True)
+        removed.append(child.name)
+    return removed
+
+
+def host_boot_identity() -> str:
+    """A string that changes when the host reboots ('' if unknowable).
+
+    Used to disambiguate the one case a PID check gets wrong: after a
+    reboot, PIDs are reused from scratch, so a dead controller's PID
+    can easily be alive again as something unrelated — and the stale
+    container would be spared forever. A boot identity that differs
+    from the label's is proof the owner is gone.
+    """
+    linux_boot_id = Path('/proc/sys/kernel/random/boot_id')
+    try:
+        if linux_boot_id.is_file():
+            return linux_boot_id.read_text(encoding='utf-8').strip()
+    except OSError:
+        return ''
+    try:
+        result = subprocess.run(
+            ['sysctl', '-n', 'kern.boottime'],
+            capture_output=True, text=True,
+            encoding='utf-8', errors='replace',
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ''
+    if result.returncode != 0:
+        return ''
+    # macOS/BSD print e.g. ``{ sec = 1755..., usec = 1 } Sun Aug 17 ...``.
+    # The seconds field alone is stable and reboot-unique.
+    text = result.stdout.strip()
+    for chunk in text.replace(',', ' ').split():
+        if chunk.isdigit() and len(chunk) >= 9:
+            return chunk
+    return text[:64]
+
+
+def _process_is_alive(pid: int) -> bool:
+    """True when ``pid`` exists. EPERM counts as alive (other user)."""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return True
+    return True
+
+
+def reap_orphan_sandbox_containers(
+    *,
+    logger: logging.Logger | None = None,
+) -> list[str]:
+    """Force-remove sandbox containers whose controlling process is gone.
+
+    ``docker run --rm`` cleans up when the CONTAINER's process exits —
+    it does nothing when the process that launched it dies instead. A
+    hard crash (SIGKILL, power loss, a panicked terminal) therefore
+    leaves a container running with the task workspace bind-mounted and
+    credentials in its tmpfs, for as long as the machine stays up.
+
+    Called at boot, before any new sandbox is spawned. A container is
+    reaped when its recorded boot identity differs from the current one
+    (host rebooted — the owner cannot possibly be alive) or its owner
+    PID is no longer running. Containers owned by a LIVE process are
+    left strictly alone, so a second concurrent instance on the same
+    host never has its sandboxes pulled out from under it.
+
+    Returns the container ids removed. Never raises: a reap failure
+    must not block startup.
+    """
+    separator = '\t'
+    fmt = separator.join((
+        '{{.ID}}',
+        f'{{{{.Label "{_OWNER_PID_LABEL}"}}}}',
+        f'{{{{.Label "{_OWNER_BOOT_LABEL}"}}}}',
+    ))
+    try:
+        listed = subprocess.run(
+            [
+                'docker', 'ps', '--no-trunc',
+                '--filter', f'label={_IMAGE_IDENTITY_LABEL}={_IMAGE_IDENTITY_VALUE}',
+                '--format', fmt,
+            ],
+            capture_output=True, text=True,
+            encoding='utf-8', errors='replace',
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        if logger is not None:
+            logger.warning('sandbox orphan sweep could not list containers: %s', exc)
+        return []
+    if listed.returncode != 0:
+        if logger is not None:
+            logger.warning(
+                'sandbox orphan sweep could not list containers: rc=%s %s',
+                listed.returncode, (listed.stderr or '').strip()[:200],
+            )
+        return []
+
+    current_boot = host_boot_identity()
+    removed: list[str] = []
+    for line in listed.stdout.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split(separator)
+        container_id = parts[0].strip()
+        owner_pid = parts[1].strip() if len(parts) > 1 else ''
+        owner_boot = parts[2].strip() if len(parts) > 2 else ''
+        if not container_id:
+            continue
+        if not _orphaned(owner_pid, owner_boot, current_boot):
+            continue
+        try:
+            removal = subprocess.run(
+                ['docker', 'rm', '--force', container_id],
+                capture_output=True, text=True,
+                encoding='utf-8', errors='replace',
+                timeout=60,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            if logger is not None:
+                logger.warning(
+                    'failed to reap orphan sandbox %s: %s', container_id[:12], exc,
+                )
+            continue
+        if removal.returncode != 0:
+            if logger is not None:
+                logger.warning(
+                    'failed to reap orphan sandbox %s: %s',
+                    container_id[:12], (removal.stderr or '').strip()[:200],
+                )
+            continue
+        removed.append(container_id)
+        if logger is not None:
+            logger.warning(
+                'reaped orphaned sandbox container %s (owner pid %s, boot %s) — '
+                'its controlling process is gone',
+                container_id[:12], owner_pid or 'unknown', owner_boot or 'unknown',
+            )
+    return removed
+
+
+def _orphaned(owner_pid: str, owner_boot: str, current_boot: str) -> bool:
+    """Whether a labelled container's owner is provably gone.
+
+    Unlabelled containers (older builds, or something else wearing the
+    sandbox label) are treated as orphans ONLY when the PID label is
+    absent entirely — there is no owner to protect in that case, and
+    leaving them running is the very leak this sweep exists to close.
+    """
+    if owner_boot and current_boot and owner_boot != current_boot:
+        return True
+    if not owner_pid:
+        return True
+    try:
+        pid = int(owner_pid)
+    except ValueError:
+        return True
+    return not _process_is_alive(pid)
+
+
+def flag_present_in_argv(argv: list[str], flag: str) -> bool:
+    """True if ``flag`` is in ``argv``, in either form Docker accepts.
+
+    * ``--key=value`` as a single token, or
+    * ``--key value`` as two adjacent tokens.
+
+    Boolean flags (``--read-only``) match verbatim. Lives here rather
+    than in the drift-guard test because the SPAWN path now enforces
+    the same sets at runtime — one matcher, one meaning.
+    """
+    if '=' not in flag:
+        return flag in argv
+    if flag in argv:
+        return True
+    key, value = flag.split('=', 1)
+    for i, token in enumerate(argv):
+        if token == key and i + 1 < len(argv) and argv[i + 1] == value:
+            return True
+    return False
+
+
+def _assert_sandbox_flags(argv: list[str]) -> None:
+    """Enforce the required/forbidden flag sets against the REAL argv.
+
+    The drift-guard test already asserts these sets against a
+    representative argv — but that proves the code in CI, not the
+    command about to run on THIS machine. Anything that builds argv by
+    another path (a future caller, an env-driven branch, a bad merge)
+    would ship a downgraded sandbox with every test still green. This
+    check runs microseconds before ``Popen`` and fails closed.
+    """
+    missing = sorted(
+        flag for flag in _REQUIRED_DOCKER_FLAGS
+        if not flag_present_in_argv(argv, flag)
+    )
+    forbidden = sorted(
+        flag for flag in _FORBIDDEN_DOCKER_FLAGS
+        if flag_present_in_argv(argv, flag)
+    )
+    if not missing and not forbidden:
+        return
+    problems = []
+    if missing:
+        problems.append(f'missing required flag(s): {", ".join(missing)}')
+    if forbidden:
+        problems.append(f'forbidden flag(s) present: {", ".join(forbidden)}')
+    raise SandboxError(
+        'refusing to spawn a sandbox that does not match the declared '
+        'security invariants — ' + '; '.join(problems) + '. Fix the argv '
+        'builder; do NOT relax the invariant sets in manager.py without '
+        'updating SANDBOX_PROTECTIONS.md and re-reading the threat model.',
+    )
+
+
+def _assert_seccomp_pinned(argv: list[str]) -> None:
+    """Require exactly one seccomp option, pinned to the vendored profile.
+
+    ``_assert_seccomp_not_unconfined`` only catches an explicit
+    downgrade; a spawn with NO seccomp option at all used to pass it
+    while silently inheriting whatever the daemon calls "default" —
+    which the host controls via ``dockerd --seccomp-profile``. This
+    asserts the positive property instead.
+    """
+    values = [
+        argv[i + 1] for i, token in enumerate(argv)
+        if token == '--security-opt' and i + 1 < len(argv)
+        and argv[i + 1].startswith('seccomp=')
+    ]
+    values += [
+        token.split('=', 1)[1] for token in argv
+        if token.startswith('--security-opt=seccomp=')
+    ]
+    if len(values) != 1:
+        raise SandboxError(
+            f'sandbox argv must carry exactly one seccomp option, found '
+            f'{len(values)} — refusing to spawn.',
+        )
+    pinned = values[0].split('=', 1)[1]
+    if pinned != str(_SECCOMP_PROFILE_PATH):
+        raise SandboxError(
+            f'sandbox seccomp profile must be the vendored '
+            f'{_SECCOMP_PROFILE_PATH}, got {pinned!r} — refusing to spawn.',
+        )
+    if not _SECCOMP_PROFILE_PATH.is_file():
+        raise SandboxError(
+            f'vendored seccomp profile is missing at '
+            f'{_SECCOMP_PROFILE_PATH} — refusing to spawn without an '
+            'explicitly pinned syscall policy.',
+        )
+
+
 def login_command(image_tag: str = SANDBOX_IMAGE_TAG) -> list[str]:
     """One-time interactive ``claude /login`` invocation for the sandbox.
 
@@ -1797,13 +2224,16 @@ def login_command(image_tag: str = SANDBOX_IMAGE_TAG) -> list[str]:
         '--network', _SANDBOX_NETWORK_NAME,
         '--ipc=none',
         '--cgroupns=private',
-        '--pid=container',
-        '--uts=private',
         '--cap-drop', 'ALL',
         '--cap-add', 'NET_ADMIN',
         '--cap-add', 'NET_RAW',
         '--cap-add', 'SETUID',
         '--cap-add', 'SETGID',
+        # Same reason as the spawn path: the shared entrypoint chowns
+        # the config dir to the claude user and now fails loudly if it
+        # cannot.
+        '--cap-add', 'CHOWN',
+        '--cap-add', 'SETPCAP',
         '--security-opt', 'no-new-privileges',
         '--security-opt', 'apparmor=docker-default',
         '--read-only',

@@ -147,7 +147,17 @@ class VerifyModuleEntryPointTests(unittest.TestCase):
 
     def test_running_as_script_calls_main_via_sys_exit(self):
         import runpy
-        with patch('sandbox_core_lib.sandbox_core_lib.verify.docker_available',
+        # Patch the DEFINING module, not ``verify``'s copy of the name.
+        # ``runpy.run_module`` executes a FRESH module namespace whose
+        # own ``from ... manager import docker_available`` re-reads the
+        # attribute — so patching ``verify.docker_available`` (as this
+        # test used to) never took effect, and the "no real container
+        # spawns" promise in the docstring above was false: the test ran
+        # the entire live verification suite, taking ~80s and passing
+        # only because the sandbox happened to be broken in CI (it
+        # returned 1 for the wrong reason). Patching the source makes
+        # the fresh import see the mock.
+        with patch('sandbox_core_lib.sandbox_core_lib.manager.docker_available',
                    return_value=False), \
              patch('sys.stderr', new_callable=StringIO):
             # Running as ``__main__`` triggers ``sys.exit(main())`` which

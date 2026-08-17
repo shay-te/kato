@@ -94,26 +94,11 @@ def _normalize_path_for_doc(path: Path) -> str:
     return '~' if str(rel) == '.' else f'~/{rel}'
 
 
-def _flag_in_argv(argv: list[str], flag: str) -> bool:
-    """True if ``flag`` (in either single-token or two-token argv form) is present.
-
-    Recognises both forms because Docker accepts both:
-
-    * ``--key=value`` as a single token, or
-    * ``--key value`` as two adjacent tokens.
-
-    Boolean flags (``--read-only``) are matched verbatim.
-    """
-    if '=' in flag:
-        # The argv builder may have written either form; check both.
-        if flag in argv:
-            return True
-        key, value = flag.split('=', 1)
-        for i, token in enumerate(argv):
-            if token == key and i + 1 < len(argv) and argv[i + 1] == value:
-                return True
-        return False
-    return flag in argv
+# The matcher now lives in production code: the SPAWN path enforces the
+# same flag sets at runtime (``manager._assert_sandbox_flags``), so the
+# test and the guard agree by construction instead of by a copy that can
+# drift into disagreeing about what "present" means.
+_flag_in_argv = manager.flag_present_in_argv
 
 
 def _build_argv() -> list[str]:
@@ -211,6 +196,24 @@ class BypassProtectionsDocConsistencyTests(unittest.TestCase):
             set(manager._FIREWALL_GUARANTEES),
             _parse_anchor('firewall-guarantees'),
             'firewall guarantees',
+        )
+
+    def test_seccomp_guarantees_match(self):
+        self.assertEqual(
+            set(manager._SECCOMP_GUARANTEES),
+            _parse_anchor('seccomp-guarantees'),
+            'seccomp guarantees drifted: add the new tag to BOTH '
+            'manager._SECCOMP_GUARANTEES and the seccomp-guarantees '
+            'anchor in SANDBOX_PROTECTIONS.md.',
+        )
+
+    def test_secret_delivery_invariants_match(self):
+        self.assertEqual(
+            set(manager._SECRET_DELIVERY_INVARIANTS),
+            _parse_anchor('secret-delivery-invariants'),
+            'secret-delivery invariants drifted: update BOTH '
+            'manager._SECRET_DELIVERY_INVARIANTS and the '
+            'secret-delivery-invariants anchor in SANDBOX_PROTECTIONS.md.',
         )
 
     def test_classification_terms_match(self):

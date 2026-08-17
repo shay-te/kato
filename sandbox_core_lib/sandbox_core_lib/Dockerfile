@@ -88,10 +88,16 @@ RUN userdel --remove node 2>/dev/null || true \
 
 # Firewall init runs as root with NET_ADMIN; entrypoint drops to
 # ``claude`` user before exec'ing the CLI.
-COPY init-firewall.sh /usr/local/bin/init-firewall.sh
-COPY entrypoint.sh    /usr/local/bin/entrypoint.sh
+COPY init-firewall.sh        /usr/local/bin/init-firewall.sh
+COPY entrypoint.sh           /usr/local/bin/entrypoint.sh
+# Final gate: verifies the ACHIEVED runtime state (uid, capability sets,
+# no-new-privileges, seccomp mode, LSM profile) as the last step of the
+# privilege drop, then execs the agent.
+COPY verify-runtime-state.sh /usr/local/bin/verify-runtime-state.sh
 RUN chown root:root /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh \
-    && chmod 755    /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh
+        /usr/local/bin/verify-runtime-state.sh \
+    && chmod 755    /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh \
+        /usr/local/bin/verify-runtime-state.sh
 
 # Workspace bind mount target. Read-only image FS means everything
 # else writes to the per-task volume mounts only.

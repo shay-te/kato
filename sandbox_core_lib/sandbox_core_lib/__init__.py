@@ -27,6 +27,11 @@ from sandbox_core_lib.sandbox_core_lib.manager import (  # noqa: F401
     ensure_image,
     ensure_network,
     wrap_command,
+    reap_orphan_sandbox_containers,
+    materialize_env_secrets,
+    prune_stale_secret_dirs,
+    host_boot_identity,
+    flag_present_in_argv,
     scan_workspace_for_secrets,
     enforce_no_workspace_secrets,
     make_container_name,
@@ -44,6 +49,8 @@ from sandbox_core_lib.sandbox_core_lib.manager import (  # noqa: F401
     _FORBIDDEN_DOCKER_FLAGS,
     _AUTH_VOLUME_INVARIANTS,
     _FIREWALL_GUARANTEES,
+    _SECCOMP_GUARANTEES,
+    _SECRET_DELIVERY_INVARIANTS,
     _CLASSIFICATION_TERMS,
 )
 from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (  # noqa: F401

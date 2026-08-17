@@ -157,6 +157,8 @@ def main(cfg: DictConfig) -> int:
             check_gvisor_or_exit,
             docker_running_rootless,
             gvisor_runtime_available,
+            prune_stale_secret_dirs,
+            reap_orphan_sandbox_containers,
         )
         check_docker_or_exit()
         # gVisor is required by default for any docker-mode spawn —
@@ -184,6 +186,32 @@ def main(cfg: DictConfig) -> int:
                 'stricter isolation (a container escape stays in your '
                 'user account, not full root on the host) consider '
                 'rootless Docker: https://docs.docker.com/engine/security/rootless/',
+            )
+        # Sweep sandbox containers left behind by a PREVIOUS kato that
+        # died without unwinding (SIGKILL, power loss, closed terminal).
+        # ``docker run --rm`` only fires when the container's own process
+        # exits, so those keep running — workspace bind-mounted, creds in
+        # tmpfs — until something removes them. Containers owned by a
+        # LIVE process are left alone, so a second kato on the same host
+        # is unaffected. Best-effort: never blocks startup.
+        try:
+            reaped = reap_orphan_sandbox_containers(logger=logger)
+            if reaped:
+                logger.warning(
+                    'sandbox: reaped %d orphaned container(s) from a '
+                    'previous run', len(reaped),
+                )
+            # Same sweep for the out-of-band secret drops: a drop whose
+            # container is gone is a stray file holding an API key.
+            dropped = prune_stale_secret_dirs()
+            if dropped:
+                logger.info(
+                    'sandbox: pruned %d stale secret drop(s)', len(dropped),
+                )
+        except Exception:
+            logger.warning(
+                'sandbox: orphan container sweep failed; continuing boot',
+                exc_info=True,
             )
     print_security_posture()
     print_action_guard_posture()

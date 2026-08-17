@@ -45,7 +45,30 @@ class DiffWorkspaceStatusTests(unittest.TestCase):
             self.assertEqual(body.get('workspace_status'), 'review')
 
 
-class ForgetWorkspaceEndpointTests(unittest.TestCase):
+class _IsolatedKatoStateMixin(object):
+    """Point the endpoint's persistent writes at a temp dir.
+
+    The DELETE handler marks the task forgotten and clears its plan-mode
+    lock in ``~/.kato`` — the OPERATOR's real state. Without this, every
+    run of the suite appended this class's fixture id to the live
+    ``forgotten_tasks.json``, and a forgotten id is skipped by the
+    review-comment scan until the task is re-adopted. A test must never
+    be able to make kato ignore a real ticket.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        tmp = tempfile.TemporaryDirectory()
+        env = patch.dict(os.environ, {
+            'KATO_FORGOTTEN_TASKS_PATH': os.path.join(tmp.name, 'forgotten.json'),
+            'KATO_PLAN_MODE_PATH': os.path.join(tmp.name, 'plan_mode.json'),
+        })
+        env.start()
+        self.addCleanup(env.stop)
+        self.addCleanup(tmp.cleanup)
+
+
+class ForgetWorkspaceEndpointTests(_IsolatedKatoStateMixin, unittest.TestCase):
     def test_forget_calls_delete_on_manager(self) -> None:
         wm = _FakeWorkspaceManager()
         app = create_app(
@@ -68,7 +91,7 @@ class ForgetWorkspaceEndpointTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 503)
 
 
-class ForgetWorkspaceMarkDoneTests(unittest.TestCase):
+class ForgetWorkspaceMarkDoneTests(_IsolatedKatoStateMixin, unittest.TestCase):
     """``?done=1`` — the dialog's "this task is done" checkbox.
 
     The delete itself is local, but this flag reaches the TICKET on the
@@ -76,18 +99,6 @@ class ForgetWorkspaceMarkDoneTests(unittest.TestCase):
     moves first, and a failed move aborts the whole delete (the operator
     keeps the tab, and with it the ability to retry).
     """
-
-    def setUp(self) -> None:
-        # Keep the endpoint's forgotten-task / plan-mode writes inside a
-        # temp dir — the real ~/.kato belongs to the operator.
-        self._tmp = tempfile.TemporaryDirectory()
-        env = patch.dict(os.environ, {
-            'KATO_FORGOTTEN_TASKS_PATH': os.path.join(self._tmp.name, 'forgotten.json'),
-            'KATO_PLAN_MODE_PATH': os.path.join(self._tmp.name, 'plan_mode.json'),
-        })
-        env.start()
-        self.addCleanup(env.stop)
-        self.addCleanup(self._tmp.cleanup)
 
     @staticmethod
     def _app(workspace_manager, session_manager, agent_service):

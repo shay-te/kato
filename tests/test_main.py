@@ -604,6 +604,90 @@ class MainTests(unittest.TestCase):
         mock_gvisor_runtime.assert_not_called()
         mock_rootless.assert_not_called()
 
+    def test_docker_mode_on_reaps_orphaned_sandbox_containers(self) -> None:
+        """Boot must sweep sandboxes left by a kato that died hard.
+
+        ``docker run --rm`` only fires when the CONTAINER's process
+        exits — a SIGKILLed kato leaves its sandbox running with the
+        task workspace bind-mounted and credentials in tmpfs, and
+        nothing else ever removes it. If this wiring is dropped, that
+        leak comes back silently: no test fails and no error is logged,
+        the containers just accumulate.
+        """
+        app = types.SimpleNamespace(logger=Mock())
+
+        with patch(
+            'kato_core_lib.main.collect_config_errors', return_value=[],
+        ), patch(
+            'kato_core_lib.main.validate_bypass_permissions'
+        ), patch(
+            'kato_core_lib.main.print_security_posture'
+        ), patch(
+            'kato_core_lib.main.KatoInstance.init'
+        ), patch(
+            'kato_core_lib.main.KatoInstance.get', return_value=app,
+        ), patch(
+            'kato_core_lib.main._finalize_configured_boot'
+        ), patch(
+            'kato_core_lib.main._run_task_scan_loop'
+        ), patch(
+            'sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator.is_docker_mode_enabled',
+            return_value=True,
+        ), patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.check_docker_or_exit'
+        ), patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.check_gvisor_or_exit'
+        ), patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.gvisor_runtime_available',
+            return_value=True,
+        ), patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.docker_running_rootless',
+            return_value=True,
+        ), patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.reap_orphan_sandbox_containers',
+            return_value=['deadbeef'],
+        ) as mock_reap:
+            main(self.cfg)
+
+        mock_reap.assert_called_once()
+
+    def test_boot_survives_a_failing_orphan_sweep(self) -> None:
+        """A broken sweep must not take the whole boot down with it."""
+        app = types.SimpleNamespace(logger=Mock())
+
+        with patch(
+            'kato_core_lib.main.collect_config_errors', return_value=[],
+        ), patch(
+            'kato_core_lib.main.validate_bypass_permissions'
+        ), patch(
+            'kato_core_lib.main.print_security_posture'
+        ), patch(
+            'kato_core_lib.main.KatoInstance.init'
+        ), patch(
+            'kato_core_lib.main.KatoInstance.get', return_value=app,
+        ), patch(
+            'kato_core_lib.main._finalize_configured_boot'
+        ), patch(
+            'kato_core_lib.main._run_task_scan_loop'
+        ), patch(
+            'sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator.is_docker_mode_enabled',
+            return_value=True,
+        ), patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.check_docker_or_exit'
+        ), patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.check_gvisor_or_exit'
+        ), patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.gvisor_runtime_available',
+            return_value=True,
+        ), patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.docker_running_rootless',
+            return_value=True,
+        ), patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.reap_orphan_sandbox_containers',
+            side_effect=RuntimeError('docker exploded'),
+        ):
+            main(self.cfg)  # must not raise
+
 
 class MainTlsPinIntegrationTests(unittest.TestCase):
     """Locks the OG4 wiring: ``main()`` calls the TLS pin validator.

@@ -4,7 +4,8 @@
 # Default-DROP iptables policy. The only outbound destinations the
 # container can reach are:
 #   - api.anthropic.com  (Claude must talk to its model — non-negotiable)
-#   - DNS over UDP/53    (needed to resolve api.anthropic.com — rate-limited)
+#   - DNS over UDP/53 and TCP/53 (needed to resolve api.anthropic.com —
+#     BOTH rate-limited; TCP DNS is the higher-bandwidth channel)
 #   - loopback           (intra-container)
 #
 # Everything else — github, npm, statsig, sentry, pastebins, exfil
@@ -114,6 +115,20 @@ iptables -A OUTPUT -p udp --dport 53 -d 1.0.0.1/32 \
     --hashlimit-mode dstip -j DROP
 iptables -A OUTPUT -p udp --dport 53 -d 1.1.1.1/32 -j ACCEPT
 iptables -A OUTPUT -p udp --dport 53 -d 1.0.0.1/32 -j ACCEPT
+# TCP/53 carries the SAME rate limit. It used to be accepted outright,
+# which left the documented "DNS exfil is bandwidth-bounded" guarantee
+# false in the direction that matters most: TCP DNS has no 512-byte
+# message ceiling, so per query it is the HIGHER-bandwidth channel of
+# the two. Bounding UDP while leaving TCP open simply moved the tunnel
+# one flag over. (Found in an external review of this file.)
+iptables -A OUTPUT -p tcp --dport 53 -d 1.1.1.1/32 \
+    -m hashlimit --hashlimit-name dns-out-tcp \
+    --hashlimit-above 60/minute --hashlimit-burst 20 \
+    --hashlimit-mode dstip -j DROP
+iptables -A OUTPUT -p tcp --dport 53 -d 1.0.0.1/32 \
+    -m hashlimit --hashlimit-name dns-out-tcp2 \
+    --hashlimit-above 60/minute --hashlimit-burst 20 \
+    --hashlimit-mode dstip -j DROP
 iptables -A OUTPUT -p tcp --dport 53 -d 1.1.1.1/32 -j ACCEPT
 iptables -A OUTPUT -p tcp --dport 53 -d 1.0.0.1/32 -j ACCEPT
 

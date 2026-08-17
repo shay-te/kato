@@ -327,7 +327,7 @@ runtime. These are the most common real-world escape paths.
 | 3 | **Mounted Docker socket** (`/var/run/docker.sock`) — agent runs `docker run --privileged -v /:/host` and creates a sibling container with full host access. One-line escape. | Never mount `docker.sock`; validate workspace paths against a forbidden list. | **Mitigated** (workspace path validator's `forbidden-mount-subtree` includes `/var/run/docker.sock`, `/var/lib/docker`, `/var/lib/containerd`, `/run/docker.sock`, `/run/containerd`; pre-spawn workspace scan also refuses if a stray `docker.sock`/`containerd.sock` is found at workspace top-level). |
 | 4 | **Mounted sensitive host paths** — `/`, `/etc`, `/var/lib/docker`, `~/.ssh` bind-mounted in. Read/write to host without an exploit. | Workspace path validator with subtree-forbidden + exact-forbidden lists. | **Mitigated** (Layer 4 + the `forbidden-mount-subtree` / `forbidden-mount-exact` invariant blocks; refuses `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.gcp`, `~/.kube`, `~/.docker`, system roots, macOS sensitive subtrees, etc.). |
 | 5 | **Seccomp/AppArmor disabled** — `--security-opt seccomp=unconfined` lets the agent call dangerous syscalls (`kexec`, `init_module`) the default profile blocks. | Use Docker defaults (`apparmor=docker-default`, default seccomp); never `unconfined`. | **Mitigated** (Layer 6; drift-guard's `forbidden-docker-flags` block lists `--security-opt=seccomp=unconfined`, `--security-opt=apparmor=unconfined`, `--security-opt=systempaths=unconfined`, `--security-opt=label=disable` as forbidden). |
-| 6 | **Shared namespaces** — `--pid=host`, `--network=host`, `--ipc=host`. Container shares the host's process table / network / IPC; trivial reach into host processes. | `--pid=container`, `--network=<custom-bridge>`, `--ipc=none`, `--uts=private`. | **Mitigated** (Layer 6; required-flags block lists all four; forbidden-flags block lists the host variants). |
+| 6 | **Shared namespaces** — `--pid=host`, `--network=host`, `--ipc=host`. Container shares the host's process table / network / IPC; trivial reach into host processes. | `--network=<custom-bridge>`, `--ipc=none`, plus private PID and UTS namespaces by omission (Docker has no explicit spelling for either — see below). | **Mitigated** (Layer 6; required-flags block lists the explicit three; forbidden-flags block lists every host variant including `--pid=host`). |
 | 7 | **runc / containerd vulnerabilities** — bugs in the container runtime itself (CVE-2019-5736: write to host runc binary from inside a container). | Keep `runc`/`containerd`/Docker patched; subscribe to CVE feeds; restart containers after runtime upgrades. | **Operator-discretionary** — kato cannot patch the runtime for the operator; deployment patterns name keeping the package set current. The `--security-opt no-new-privileges` flag (Layer 6) reduces some runtime-bug exploit paths. |
 | 8 | **Kernel module loading** — if `CAP_SYS_MODULE` is present or modules can be loaded indirectly, load a malicious module that runs in kernel space. | `--cap-drop=ALL` removes `CAP_SYS_MODULE`; default seccomp denies `init_module`/`finit_module`/`delete_module`. | **Mitigated** (Layer 6 + Docker default seccomp). |
 
@@ -944,7 +944,10 @@ The container is launched with:
 - `--security-opt apparmor=docker-default` (no-op on hosts without
   AppArmor; explicit pin where it's available).
 - `--read-only` rootfs.
-- `--ipc=none`, `--cgroupns=private`, `--pid=container`,
+- `--ipc=none`, `--cgroupns=private`, plus private PID and UTS namespaces by
+  omission (Docker accepts only `--pid=host`/`--pid=container:<id>` and
+  `--uts=host`, so the default IS the private namespace in both cases, and both
+  host variants are in the forbidden-flags block),
   `--uts=private`: explicit namespace isolation for IPC, cgroups,
   PIDs, hostname.
 - `--init`: tini reaps zombie child processes.
@@ -1322,13 +1325,13 @@ key/value flags, `--key` for boolean flags. Two-token argv form
 - --network=kato-sandbox-net
 - --ipc=none
 - --cgroupns=private
-- --pid=container
-- --uts=private
 - --cap-drop=ALL
 - --cap-add=NET_ADMIN
 - --cap-add=NET_RAW
 - --cap-add=SETUID
 - --cap-add=SETGID
+- --cap-add=CHOWN
+- --cap-add=SETPCAP
 - --security-opt=no-new-privileges
 - --security-opt=apparmor=docker-default
 - --read-only
@@ -1482,7 +1485,7 @@ keeps the named set in sync with the code constant.
 - default-drop-policy
 - allowlist-only-anthropic-tcp-443
 - dns-only-cloudflare
-- dns-rate-limit-60-per-minute
+- dns-rate-limit-60-per-minute-udp-and-tcp
 - rfc1918-explicit-deny
 - cloud-metadata-explicit-deny
 - icmp-blocked
@@ -1490,6 +1493,68 @@ keeps the named set in sync with the code constant.
 - fail-closed-on-anthropic-unreachable
 - refuses-private-ip-in-allowlist
 <!-- SECURITY-INVARIANTS:firewall-guarantees:END -->
+
+### Seccomp guarantees
+
+Properties of the syscall policy applied to every spawn. The profile is
+**vendored in this lib** (`sandbox_core_lib/seccomp/default.json`) and
+pinned by absolute path on the `docker run` line, rather than inheriting
+whatever the daemon calls "default".
+
+That distinction is the whole point: `dockerd --seccomp-profile
+/some/weak.json` re-defines the daemon default host-wide, and a sandbox
+that simply omits the flag would silently run under it while every
+check stayed green. Pinning a file we ship makes the enforced syscall
+set a property of this lib, identical on every host.
+
+`seccomp=builtin` expresses the same intent in one word but only exists
+on Docker >= 25 — older daemons read `builtin` as a *filename* and every
+spawn fails with `opening seccomp profile (builtin) failed`. The
+vendored file works on all supported daemons.
+
+Enforced by `_assert_seccomp_pinned` at spawn time (in addition to the
+older `_assert_seccomp_not_unconfined` downgrade check).
+
+<!-- SECURITY-INVARIANTS:seccomp-guarantees:BEGIN -->
+- explicit-profile-pinned-not-daemon-default
+- profile-file-vendored-in-lib
+- profile-default-action-errno
+- never-unconfined
+- single-seccomp-option
+<!-- SECURITY-INVARIANTS:seccomp-guarantees:END -->
+
+### Secret delivery guarantees
+
+Host-side secrets (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`) reach
+the agent as **files**, not as `docker run -e`.
+
+`-e NAME` pass-through was already careful about one leak — the value
+never appeared in the docker argv, so `ps` did not show it. But Docker
+still recorded it in the container's `Config.Env`, so `docker inspect`
+handed the key to anyone holding the docker socket, for the container's
+whole lifetime.
+
+Instead kato writes each value to a `0600` file inside a `0700`
+per-spawn directory, bind-mounts that directory **read-only** at
+`/env-src`, and the entrypoint reads an **allowlist of names** back into
+the environment before the privilege drop. Docker never receives the
+value, so no daemon-side metadata can carry it.
+
+The allowlist matters as much as the mount: exporting every file found
+in the drop would let a poisoned directory inject `LD_PRELOAD`,
+`NODE_OPTIONS` or `PATH` into the process it is supposed to configure.
+
+Drops outlive `docker run` (the entrypoint has to read them), so they are
+pruned on the next spawn and at boot — any drop whose container is not
+running is removed.
+
+<!-- SECURITY-INVARIANTS:secret-delivery-invariants:BEGIN -->
+- values-never-in-docker-config-env
+- staged-file-mode-0600-in-dir-0700
+- mounted-read-only
+- entrypoint-reads-name-allowlist-only
+- dropped-pruned-when-container-not-running
+<!-- SECURITY-INVARIANTS:secret-delivery-invariants:END -->
 
 ### Threat-model classification terms
 

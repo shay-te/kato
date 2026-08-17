@@ -123,19 +123,67 @@ if [ -d "$AUTH_SRC" ]; then
     done
 fi
 
-chown -R claude:users "$CLAUDE_HOME" 2>/dev/null \
-    || chown -R claude  "$CLAUDE_HOME" 2>/dev/null \
-    || true
+# ----- out-of-band secrets -----
+#
+# Values the host passes in as FILES (0600, in a 0700 dir bind-mounted
+# read-only at /env-src) rather than as ``docker run -e``. The pass-through
+# form kept the secret out of ``ps``, but it still ended up in the
+# container's Config.Env, where ``docker inspect`` exposes it to anyone
+# with the docker socket. Reading files here means Docker never handles
+# the value at all.
+#
+# The names are an ALLOWLIST, deliberately not "export every file in the
+# directory": a poisoned drop could otherwise inject LD_PRELOAD,
+# PATH, or NODE_OPTIONS and take over the process it is meant to
+# configure.
+ENV_SRC=/env-src
+if [ -d "$ENV_SRC" ]; then
+    for name in ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN; do
+        if [ -f "$ENV_SRC/$name" ]; then
+            export "$name=$(cat "$ENV_SRC/$name")"
+        fi
+    done
+fi
+
+# Hand the config dir to the unprivileged user. This needs CAP_CHOWN,
+# which the spawn adds for exactly this line and which the bounding-set
+# wipe below removes again before any agent code runs.
+#
+# This used to end in ``|| true`` with stderr discarded. With CAP_CHOWN
+# absent from the cap-add list the chown silently failed, leaving
+# ``/home/claude/.claude`` as root:root 0700 — a directory the claude
+# user cannot read OR write. The CLI then starts with no credentials and
+# no writable state dir, and the only symptom is a confusing auth error
+# much later. Fail loudly here instead: a sandbox that cannot hand over
+# its own config dir is broken, not degraded.
+# ORDER MATTERS: chmod BEFORE chown. Once the directory belongs to
+# claude, root can no longer chmod it — changing the mode of a file you
+# don't own needs CAP_FOWNER, and this container drops everything except
+# the four capabilities the entrypoint genuinely uses. Doing it in the
+# other order fails with "Operation not permitted".
 chmod 700 "$CLAUDE_HOME"
+if ! chown -R claude:users "$CLAUDE_HOME" 2>/dev/null \
+    && ! chown -R claude "$CLAUDE_HOME" 2>/dev/null; then
+    echo "[kato-sandbox] FATAL: cannot chown $CLAUDE_HOME to claude." >&2
+    echo "[kato-sandbox]   The container is missing CAP_CHOWN (--cap-add CHOWN)." >&2
+    echo "[kato-sandbox]   Refusing to start: the agent would run with an" >&2
+    echo "[kato-sandbox]   unreadable, unwritable config directory." >&2
+    exit 1
+fi
 
 # Drop to the unprivileged user with no inherited or bounding-set
 # capabilities. Even if a setuid binary somehow lands inside (none do
 # in this image), the bounding-set wipe makes it impossible to gain
 # back NET_ADMIN to tamper with the firewall.
+# The setpriv target is the runtime-state verifier, not the agent: it
+# reads /proc/self/status in the exact process that is about to BECOME
+# the agent, fails closed if the drop did not actually take, and only
+# then execs the real command. Asserting the argv we requested cannot
+# tell us what the daemon actually built.
 exec setpriv \
     --reuid=claude \
     --regid=100 \
     --init-groups \
     --inh-caps=-all \
     --bounding-set=-all \
-    -- "$@"
+    -- /usr/local/bin/verify-runtime-state.sh "$@"

@@ -370,27 +370,37 @@ class WrapCommandSecurityBranchesTests(unittest.TestCase):
         idx = argv.index('--runtime')
         self.assertEqual(argv[idx + 1], 'runsc')
 
-    def test_pass_through_env_vars_are_forwarded_when_set_on_host(self) -> None:
-        # Line 1126: ``-e VAR`` (no value) means "pass through from host
-        # env" — keeps the secret out of the docker argv visible in
-        # ``ps``. Required for ANTHROPIC_API_KEY/CLAUDE_CODE_OAUTH_TOKEN.
-        with patch.dict(os.environ,
+    def test_host_secrets_travel_out_of_band_not_via_dash_e(self) -> None:
+        # This used to assert ``-e ANTHROPIC_API_KEY`` pass-through. That
+        # form kept the VALUE out of the argv (so ``ps`` was clean) but
+        # Docker still stored it in the container's ``Config.Env``, where
+        # ``docker inspect`` hands it to any holder of the docker socket.
+        # Secrets are now staged as 0600 files and bind-mounted read-only,
+        # so Docker never receives the value at all.
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as drop_root, \
+             patch.dict(os.environ,
                         {'ANTHROPIC_API_KEY': 'sk-test'},
                         clear=False), \
+             patch.object(manager, '_secret_dir_root',
+                          return_value=Path(drop_root) / 'sandbox-env'), \
+             patch.object(manager, 'prune_stale_secret_dirs', return_value=[]), \
              patch.object(manager, 'gvisor_runtime_available',
                           return_value=False), \
              patch.object(manager, '_image_digest_strict',
                           return_value='sha256:' + 'd' * 64):
             argv = wrap_command(['claude', '-p', 'x'], workspace_path='/ws')
-        # The env-var name appears as a pass-through (`-e VAR`),
-        # NOT as `-e VAR=value`.
-        self.assertIn('ANTLITERAL_NEVER', argv + ['ANTLITERAL_NEVER'])  # no-op guard
-        # Find the pass-through `-e ANTHROPIC_API_KEY` pairing.
-        self.assertIn('ANTHROPIC_API_KEY', argv)
-        idx = argv.index('ANTHROPIC_API_KEY')
-        self.assertEqual(argv[idx - 1], '-e')
-        # The secret value is NOT in the argv.
+        # Neither the name nor the value is handed to docker.
+        self.assertNotIn('ANTHROPIC_API_KEY', argv)
         self.assertNotIn('sk-test', ' '.join(argv))
+        # The staged drop is mounted read-only instead.
+        mounts = [a for a in argv if a.endswith('/env-src:ro')]
+        self.assertEqual(len(mounts), 1)
+        # And the drop directory is keyed to THIS container, so the prune
+        # sweep cannot mistake a live container's drop for a stale one.
+        container_name = argv[argv.index('--name') + 1]
+        self.assertTrue(mounts[0].split(':')[0].endswith(container_name))
 
     def test_refuses_when_image_missing_from_local_cache(self) -> None:
         # Lines 1140-1147: kato refuses to spawn without a JIT-pinned
@@ -425,17 +435,20 @@ class WrapCommandSecurityBranchesTests(unittest.TestCase):
         self.assertIn('docker info', msg)
 
     def test_digest_without_sha256_prefix_is_normalized(self) -> None:
-        # Line 1159: the safety net — if the digest doesn't start with
-        # ``sha256:``, we still emit a canonical ``image@sha256:...``
-        # form rather than passing the raw value through. Prevents a
-        # weird digest-format change in docker from silently disabling
-        # the pin.
+        # The safety net — if the digest doesn't start with ``sha256:``,
+        # we still emit a canonical ``sha256:...`` reference rather than
+        # passing the raw value through. Prevents a weird digest-format
+        # change in docker from silently disabling the pin.
+        #
+        # The reference is the bare image ID, NOT ``tag@sha256:<id>``:
+        # that older form made Docker resolve a REGISTRY manifest digest,
+        # which a locally built image doesn't have, so every spawn died
+        # with "pull access denied". See DaemonAcceptsArgvTests.
         with patch.object(manager, '_image_digest_strict',
                           return_value='blake2:' + 'e' * 64):
             argv = wrap_command(['claude', '-p', 'x'], workspace_path='/ws')
-        # Image arg is normalized to sha256:<digest>.
-        image_token = next(t for t in argv if '@sha256:' in t)
-        self.assertTrue(image_token.endswith('sha256:' + 'e' * 64))
+        image_token = next(t for t in argv if t.startswith('sha256:'))
+        self.assertEqual(image_token, 'sha256:' + 'e' * 64)
 
 
 # --------------------------------------------------------------------------
