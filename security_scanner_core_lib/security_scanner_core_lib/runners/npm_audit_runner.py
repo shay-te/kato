@@ -22,6 +22,7 @@ config.
 from __future__ import annotations
 
 import json
+import os
 import logging
 import shutil
 import subprocess
@@ -45,6 +46,28 @@ _NPM_TO_KATO_SEVERITY = {
     'low':      Severity.LOW,
     'info':     Severity.LOW,
 }
+
+
+_REGISTRY_URL = 'https://registry.npmjs.org/'
+
+# Environment npm actually needs. Everything else — provider tokens, the
+# Anthropic key, CI secrets — is deliberately absent: a scanner reading
+# an untrusted project has no business holding them, and an ``.npmrc``
+# that redirects the registry cannot leak what was never in scope.
+_NPM_ENV_ALLOWLIST = ('PATH', 'HOME', 'SystemRoot', 'COMSPEC', 'TMPDIR', 'TEMP', 'TMP')
+
+
+def _minimal_npm_env() -> dict:
+    """A credential-free environment for the audit subprocess."""
+    env = {
+        name: os.environ[name]
+        for name in _NPM_ENV_ALLOWLIST
+        if name in os.environ
+    }
+    # Belt and braces: npm reads these directly for auth/proxying.
+    env['npm_config_ignore_scripts'] = 'true'
+    env['npm_config_registry'] = _REGISTRY_URL
+    return env
 
 
 def _find_npm_projects(workspace: Path):
@@ -83,13 +106,32 @@ def run(
         return []
     findings: list[SecurityFinding] = []
     for project_dir in _find_npm_projects(workspace):
-        cmd = ['npm', 'audit', '--json']
+        # ``npm audit`` runs npm INSIDE a project the agent controls, and
+        # npm executes project-controlled configuration: ``.npmrc`` can
+        # redirect the registry (sending the dependency list, and any
+        # token in the host environment, to a chosen host) and lifecycle
+        # config can run commands. On the host that is agent-controlled
+        # input to a process holding the operator's environment.
+        #
+        # ``--ignore-scripts`` blocks lifecycle execution, ``--userconfig
+        # /dev/null`` and ``--globalconfig /dev/null`` drop the project's
+        # and user's npmrc, and ``--registry`` pins the destination. The
+        # environment is reduced to the minimum npm needs, so nothing
+        # secret is in scope to leak in the first place.
+        cmd = [
+            'npm', 'audit', '--json',
+            '--ignore-scripts',
+            '--userconfig', os.devnull,
+            '--globalconfig', os.devnull,
+            '--registry', _REGISTRY_URL,
+        ]
         try:
             result = subprocess.run(
                 cmd, cwd=str(project_dir),
                 capture_output=True, text=True,
                 encoding='utf-8', errors='replace',
                 timeout=timeout_seconds, check=False,
+                env=_minimal_npm_env(),
             )
         except FileNotFoundError as exc:
             raise RunnerUnavailableError(

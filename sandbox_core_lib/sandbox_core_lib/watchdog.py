@@ -30,9 +30,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import select
 import subprocess
 import sys
+import threading
 import time
 
 DISARM_BYTE = b'\x01'
@@ -117,11 +117,112 @@ def _write_incident(path: str, payload: dict) -> None:
         pass
 
 
+# Workspace ceilings. The per-file ``fsize`` ulimit on the container
+# stops ONE huge file; it does nothing about a hundred thousand small
+# ones, which fills the host disk just as effectively and takes the
+# operator's machine down with it.
+_DEFAULT_MAX_WORKSPACE_BYTES = 20 * 1024 * 1024 * 1024      # 20 GiB
+_DEFAULT_MAX_WORKSPACE_INODES = 500_000
+# Bound the measurement itself: walking an agent-controlled tree is the
+# same denial-of-service in miniature.
+_QUOTA_WALK_MAX_ENTRIES = 2_000_000
+
+
+def _workspace_usage(workspace: str) -> tuple[int, int]:
+    """``(bytes, inodes)`` under ``workspace``; best-effort."""
+    total_bytes = 0
+    inodes = 0
+    for root, dirs, files in os.walk(workspace, onerror=lambda _e: None):
+        inodes += len(dirs) + len(files)
+        if inodes > _QUOTA_WALK_MAX_ENTRIES:
+            break
+        for name in files:
+            try:
+                total_bytes += os.lstat(os.path.join(root, name)).st_size
+            except OSError:
+                continue
+    return total_bytes, inodes
+
+
+def _quota_breach(workspace: str, max_bytes: int, max_inodes: int) -> str:
+    """Reason string when the workspace is over a ceiling, else ``''``."""
+    if not workspace or (max_bytes <= 0 and max_inodes <= 0):
+        return ''
+    try:
+        used_bytes, used_inodes = _workspace_usage(workspace)
+    except OSError:
+        return ''
+    if max_bytes > 0 and used_bytes > max_bytes:
+        return f'workspace-bytes-exceeded ({used_bytes} > {max_bytes})'
+    if max_inodes > 0 and used_inodes > max_inodes:
+        return f'workspace-inodes-exceeded ({used_inodes} > {max_inodes})'
+    return ''
+
+
+_DISARMED = 'disarmed'
+_OWNER_GONE = 'owner-gone'
+_STILL_WAITING = 'waiting'
+
+
+class _OwnerLostSignal:
+    """Cross-platform "has the owner died?" watcher.
+
+    ``select()`` on a pipe is POSIX-only — on Windows it accepts sockets
+    and nothing else, so the original loop would raise there and the
+    watchdog would never guard anything. A blocking read on a background
+    thread behaves identically on all three platforms: the read returns
+    EOF exactly when the last writer (the owner) goes away, whatever
+    killed it, and the main loop just waits on an Event with a timeout.
+    """
+
+    def __init__(self, read_fd: int) -> None:
+        self._result: str | None = None
+        self._done = threading.Event()
+        self._read_fd = read_fd
+        self._thread = threading.Thread(target=self._read, daemon=True)
+        self._thread.start()
+
+    def _read(self) -> None:
+        try:
+            with os.fdopen(self._read_fd, 'rb', buffering=0) as pipe:
+                while True:
+                    try:
+                        chunk = pipe.read(1)
+                    except OSError:
+                        chunk = b''
+                    if chunk == DISARM_BYTE:
+                        self._result = _DISARMED
+                        break
+                    if chunk == b'':
+                        self._result = _OWNER_GONE
+                        break
+                    # Any other byte: ignore. The channel carries exactly
+                    # one meaningful signal, and unknown noise must not be
+                    # read as "the owner died" — that would kill a live
+                    # container.
+        finally:
+            self._done.set()
+
+    def wait(self, timeout: float) -> str:
+        if self._done.wait(timeout):
+            return self._result or _OWNER_GONE
+        return _STILL_WAITING
+
+    def close(self) -> None:
+        try:
+            os.close(self._read_fd)
+        except OSError:
+            pass
+
+
 def _wait_for_reap_trigger(
     read_fd: int,
     container: str,
     max_lifetime_seconds: float,
     now,
+    workspace: str = '',
+    max_bytes: int = 0,
+    max_inodes: int = 0,
 ) -> str | None:
     """Block until something says "reap"; return why, or ``None`` to stand down.
 
@@ -129,39 +230,34 @@ def _wait_for_reap_trigger(
     (clean shutdown) or the container is already gone.
     """
     started = now()
-    with os.fdopen(read_fd, 'rb', buffering=0) as pipe:
+    lost = _OwnerLostSignal(read_fd)
+    try:
         while True:
             # Wake periodically even with nothing on the pipe, so a
             # watchdog whose container is already gone can retire itself.
             # Without this, every spawn would leave a process alive for
             # the whole life of the owner (one per container, forever),
             # since the common path never calls disarm.
-            try:
-                ready, _, _ = select.select([pipe], [], [], _IDLE_POLL_SECONDS)
-            except (OSError, ValueError):
-                return 'owner-process-lost'
-            if not ready:
-                if _container_labels(container) is None:
-                    return None               # container gone; nothing to guard
-                if max_lifetime_seconds and (now() - started) >= max_lifetime_seconds:
-                    return 'max-lifetime-exceeded'
-                continue
-            try:
-                chunk = pipe.read(1)
-            except OSError:
-                chunk = b''
-            if chunk == DISARM_BYTE:
+            outcome = lost.wait(_IDLE_POLL_SECONDS)
+            if outcome == _DISARMED:
                 return None                   # clean shutdown; owner handled it
-            if chunk == b'':
-                return 'owner-process-lost'   # EOF → the owner is gone
-            # Any other byte: ignore, keep waiting. The channel carries
-            # exactly one meaningful signal and unknown noise must not be
-            # read as "the owner died" — that would kill a live container.
+            if outcome == _OWNER_GONE:
+                return 'owner-process-lost'
+            if _container_labels(container) is None:
+                return None                   # container gone; nothing to guard
+            if max_lifetime_seconds and (now() - started) >= max_lifetime_seconds:
+                return 'max-lifetime-exceeded'
+            breach = _quota_breach(workspace, max_bytes, max_inodes)
+            if breach:
+                return breach
+    finally:
+        lost.close()
 
 
 def watch(read_fd: int, container: str, owner_pid: str, owner_boot: str,
           incident_path: str = '', pid_label: str = '', boot_label: str = '',
-          max_lifetime_seconds: float = 0.0, now=time.monotonic) -> int:
+          max_lifetime_seconds: float = 0.0, now=time.monotonic,
+          workspace: str = '', max_bytes: int = 0, max_inodes: int = 0) -> int:
     """Block until the owner disarms or dies; reap on death. Returns rc.
 
     ``max_lifetime_seconds`` (0 disables) also reaps a container that
@@ -173,6 +269,7 @@ def watch(read_fd: int, container: str, owner_pid: str, owner_boot: str,
     """
     reason = _wait_for_reap_trigger(
         read_fd, container, max_lifetime_seconds, now,
+        workspace, max_bytes, max_inodes,
     )
     if reason is None:
         return 0
@@ -213,11 +310,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--pid-label', required=True)
     parser.add_argument('--boot-label', required=True)
     parser.add_argument('--max-lifetime-seconds', type=float, default=0.0)
+    parser.add_argument('--workspace', default='')
+    parser.add_argument('--max-bytes', type=int, default=_DEFAULT_MAX_WORKSPACE_BYTES)
+    parser.add_argument('--max-inodes', type=int, default=_DEFAULT_MAX_WORKSPACE_INODES)
     args = parser.parse_args(argv)
     return watch(
         args.fd, args.container, args.owner_pid, args.owner_boot,
         args.incident_path, args.pid_label, args.boot_label,
-        args.max_lifetime_seconds,
+        args.max_lifetime_seconds, args.workspace, args.max_bytes,
+        args.max_inodes,
     )
 
 

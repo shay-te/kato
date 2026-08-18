@@ -22,6 +22,7 @@ from __future__ import annotations
 from utils_core_lib.utils_core_lib.text_utils import text_from_mapping
 
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -1266,6 +1267,14 @@ def wrap_command(
         # path it had been using breaks.
         '-w', _container_workdir(workdir_subpath),
     ])
+    # NOTE: the SNI proxy (``ensure_egress_proxy`` / ``sni_proxy.py``) is
+    # deliberately NOT wired in here yet. Routing the container at a proxy
+    # on the sandbox bridge does not work: that bridge runs with
+    # ``enable_icc=false`` so containers cannot reach each other — this
+    # lib's own inter-container isolation, working as intended, makes an
+    # on-bridge proxy unreachable. Making it work needs a design decision
+    # (host-side proxy reached via host-gateway, or a per-task network),
+    # not another flag, so the IP allowlist stays in force until then.
     # Secrets travel out-of-band: staged as 0600 files in a 0700 dir and
     # bind-mounted read-only, then read into the environment by the
     # entrypoint. ``-e VAR`` pass-through used to be the mechanism; it
@@ -1336,6 +1345,21 @@ def wrap_command(
 # ``id_ecdsa``) are always suspicious. ``credentials`` files under
 # ``.aws`` / ``gcloud`` are always suspicious. Public keys (``*.pub``)
 # are fine.
+# Paths the most recent scan of a workspace could NOT inspect. The scanner
+# keeps its ``list[str]`` return type (many call sites), so completeness is
+# reported alongside rather than by changing every signature.
+_LAST_SCAN_SKIPPED: dict[str, list[str]] = {}
+
+
+def last_scan_gaps(workspace_path: str) -> list[str]:
+    """What the last ``scan_workspace_for_secrets`` could not look at."""
+    try:
+        root = str(Path(workspace_path).resolve())
+    except (OSError, RuntimeError):
+        return []
+    return list(_LAST_SCAN_SKIPPED.get(root, []))
+
+
 _SUSPICIOUS_FILE_NAMES = frozenset({
     '.env',
     '.env.local',
@@ -1423,6 +1447,7 @@ def scan_workspace_for_secrets(
     if not root.is_dir():
         return []
     findings: list[str] = []
+    skipped: list[str] = []
     scanned = 0
     truncated = False
     try:
@@ -1430,6 +1455,7 @@ def scan_workspace_for_secrets(
             scanned += 1
             if scanned > _SECRET_SCAN_FILE_CAP:
                 truncated = True
+                skipped.append(f'file cap reached at {_SECRET_SCAN_FILE_CAP} entries')
                 break
             if not entry.is_file():
                 continue
@@ -1453,8 +1479,12 @@ def scan_workspace_for_secrets(
                 continue
             try:
                 if entry.stat().st_size > _SECRET_SCAN_PER_FILE_BYTES_CAP:
+                    # Not scanned — record it. A large file is exactly
+                    # where a dump of credentials would hide.
+                    skipped.append(f'{relative_str} (larger than 1 MiB)')
                     continue
             except OSError:
+                skipped.append(f'{relative_str} (stat failed)')
                 continue
             try:
                 # ``errors='ignore'`` quietly drops bytes that aren't
@@ -1463,6 +1493,7 @@ def scan_workspace_for_secrets(
                 # actually look for.
                 text = entry.read_text(encoding='utf-8', errors='ignore')
             except (OSError, PermissionError):
+                skipped.append(f'{relative_str} (unreadable)')
                 continue
             content_findings = find_credential_patterns(text)
             if content_findings:
@@ -1480,10 +1511,9 @@ def scan_workspace_for_secrets(
                     findings.append(
                         f'{relative_str} (content: {finding.pattern_name})'
                     )
-    except (OSError, PermissionError):
-        # Best-effort: if we can't traverse a subtree we just log
-        # what we found so far and move on.
-        pass
+    except (OSError, PermissionError) as exc:
+        # A subtree we could not walk is UNSCANNED, not clean.
+        skipped.append(f'traversal stopped: {exc}')
     if findings and logger is not None:
         head = ', '.join(findings[:5])
         rest = f' (+{len(findings) - 5} more)' if len(findings) > 5 else ''
@@ -1495,6 +1525,13 @@ def scan_workspace_for_secrets(
             'remove or .gitignore them before continuing.',
             root, len(findings), head, rest, truncated_note,
         )
+    if skipped and logger is not None:
+        logger.warning(
+            'sandbox workspace %s: secret scan could not inspect %d path(s) '
+            '(e.g. %s). "No findings" from an incomplete scan is not the same '
+            'as "no secrets".', root, len(skipped), '; '.join(skipped[:3]),
+        )
+    _LAST_SCAN_SKIPPED[str(root)] = skipped
     return findings
 
 
@@ -1519,6 +1556,28 @@ def enforce_no_workspace_secrets(
     fixtures whose names happen to match) — operator's explicit call.
     """
     findings = scan_workspace_for_secrets(workspace_path, logger=logger)
+    gaps = last_scan_gaps(workspace_path)
+    if not findings and gaps:
+        # THE TRI-STATE. "No findings" from a scan that skipped files is
+        # not "clean" — it is "unknown", and reporting it as clean is the
+        # same false assurance pattern that let three broken sandbox flags
+        # ship green. An incomplete scan needs the operator's explicit
+        # acceptance, exactly like a positive finding does.
+        if _env_flag_true(env, ALLOW_WORKSPACE_SECRETS_ENV_KEY):
+            if logger is not None:
+                logger.warning(
+                    'workspace secret scan was INCOMPLETE (%d path(s) not '
+                    'inspected) — proceeding because %s=true is set',
+                    len(gaps), ALLOW_WORKSPACE_SECRETS_ENV_KEY,
+                )
+            return
+        raise SandboxError(
+            'refusing to spawn: the workspace secret scan could not inspect '
+            f'{len(gaps)} path(s), so "no secrets found" is not a result — '
+            f'examples: {"; ".join(gaps[:3])}. Make them readable (or remove '
+            f'them), or accept the gap explicitly with '
+            f'{ALLOW_WORKSPACE_SECRETS_ENV_KEY}=true.',
+        )
     if not findings:
         return
     if _env_flag_true(env, ALLOW_WORKSPACE_SECRETS_ENV_KEY):
@@ -1609,6 +1668,47 @@ _SPAWN_RATE_WINDOW_SEC = 60
 _SPAWN_RATE_LIMIT = 30
 
 
+_AUDIT_KEY_FILENAME = 'sandbox-audit.key'
+
+
+def _audit_key_path() -> Path:
+    """Where the audit MAC key lives — beside the log, never inside it."""
+    return _DEFAULT_AUDIT_LOG_PATH.parent / _AUDIT_KEY_FILENAME
+
+
+def _audit_key(*, create: bool = True) -> bytes:
+    """The HMAC key, created 0600 on first use. ``b''`` when unavailable.
+
+    HONEST SCOPE: this key sits on the same host, readable by the same
+    user the agent's owner runs as. It defeats a tamperer who edits the
+    log file — recomputing a valid chain now also requires the key — but
+    it does NOT defeat an attacker who already has that user's
+    filesystem access. Tamper-evidence you can lean on needs entries
+    shipped append-only off this machine; that is a deployment decision,
+    not something this function can fake.
+    """
+    path = _audit_key_path()
+    try:
+        if path.is_file():
+            return path.read_bytes().strip()
+        if not create:
+            return b''
+        path.parent.mkdir(parents=True, exist_ok=True)
+        key = os.urandom(32).hex().encode('ascii')
+        handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(handle, 'wb') as stream:
+            stream.write(key)
+        return key
+    except OSError:
+        return b''
+
+
+def _audit_mac(key: bytes, payload: bytes) -> str:
+    """HMAC-SHA256 of one raw entry line."""
+    import hmac
+    return hmac.new(key, payload, hashlib.sha256).hexdigest() if key else ''
+
+
 def _last_audit_chain_hash(target: Path) -> str:
     """Return ``sha256(last_line_text)`` of the audit log, or genesis.
 
@@ -1675,11 +1775,31 @@ def verify_audit_chain(
         result['error'] = f'cannot read audit log: {exc}'
         return result
     expected = _AUDIT_GENESIS_HASH
+    key = _audit_key(create=False)
     for index, raw in enumerate(lines, start=1):
         try:
             entry = json.loads(raw)
         except ValueError:
             result.update(ok=False, broken_at=index, error='entry is not valid JSON')
+            break
+        recorded_mac = str(entry.pop('mac', ''))
+        if recorded_mac:
+            body = json.dumps(entry, ensure_ascii=False, sort_keys=True)
+            if not hmac.compare_digest(
+                recorded_mac, _audit_mac(key, body.encode('utf-8')),
+            ):
+                result.update(
+                    ok=False, broken_at=index,
+                    error='entry MAC does not verify — the line was altered, '
+                          'or was written with a different key',
+                )
+                break
+        elif key:
+            result.update(
+                ok=False, broken_at=index,
+                error='entry carries no MAC but a signing key exists — the '
+                      'line was not written by this installation',
+            )
             break
         if str(entry.get('prev_hash', '')) != expected:
             result.update(
@@ -1836,6 +1956,13 @@ def record_spawn(
                 0o600,
             )
             try:
+                # MAC over the entry as written, then appended to it. The
+                # chain alone proves internal consistency, which anyone who
+                # can edit the file can re-establish; the MAC means doing so
+                # also requires the key, which lives outside the log dir.
+                body = json.dumps(entry, ensure_ascii=False, sort_keys=True)
+                mac = _audit_mac(_audit_key(), body.encode('utf-8'))
+                entry['mac'] = mac
                 line = (json.dumps(entry, ensure_ascii=False) + '\n').encode('utf-8')
                 os.write(fd, line)
                 os.fsync(fd)
@@ -2009,6 +2136,16 @@ def _max_container_lifetime_seconds() -> float:
         return float(_DEFAULT_MAX_CONTAINER_LIFETIME_SECONDS)
 
 
+def _detached_process_kwargs() -> dict:
+    """Popen kwargs that detach a child from this process's signal group."""
+    if sys.platform == 'win32':                  # pragma: no cover - platform
+        creation_flags = 0
+        for name in ('DETACHED_PROCESS', 'CREATE_NEW_PROCESS_GROUP'):
+            creation_flags |= getattr(subprocess, name, 0)
+        return {'creationflags': creation_flags}
+    return {'start_new_session': True}
+
+
 class WatchdogHandle(object):
     """Live parent-loss watchdog for one container.
 
@@ -2061,6 +2198,7 @@ class WatchdogHandle(object):
 def arm_container_watchdog(
     container_name: str,
     *,
+    workspace_path: str = '',
     logger: logging.Logger | None = None,
 ):
     """Start a watchdog that reaps ``container_name`` if THIS process dies.
@@ -2086,12 +2224,18 @@ def arm_container_watchdog(
                 '--pid-label', _OWNER_PID_LABEL,
                 '--boot-label', _OWNER_BOOT_LABEL,
                 '--max-lifetime-seconds', str(_max_container_lifetime_seconds()),
+                # Total-size ceilings: the container's per-file ulimit
+                # stops one huge file, not a million small ones.
+                '--workspace', str(workspace_path or ''),
             ],
             pass_fds=(read_fd,),
-            # Own session: a terminal group signal aimed at this process
-            # (Ctrl-C, closing shell) must not also kill the watchdog —
-            # that is precisely when it has work to do.
-            start_new_session=True,
+            # Detach from this process's signal group. A terminal group
+            # signal aimed at the owner (Ctrl-C, a closing shell) must not
+            # also kill the watchdog — that is precisely when it has work
+            # to do. ``start_new_session`` is POSIX-only; Windows needs
+            # the equivalent creation flags instead, and passing the POSIX
+            # kwarg there raises.
+            **_detached_process_kwargs(),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -2121,6 +2265,109 @@ def arm_container_watchdog(
             container_name, process.pid,
         )
     return WatchdogHandle(process, write_fd, container_name)
+
+
+_EGRESS_PROXY_CONTAINER = f'{_SANDBOX_NETWORK_NAME}-egress-proxy'
+# 443, because the container reaches the proxy by resolving
+# ``api.anthropic.com`` — the URL carries the port, so the proxy has to
+# answer on the one the client would have used. It is a private netns, so
+# nothing on the host is affected.
+_EGRESS_PROXY_PORT = 443
+# Python, because the proxy is python. Pinned by digest at run time the
+# same way the sandbox image is.
+_EGRESS_PROXY_IMAGE = 'python:3.11-slim'
+EGRESS_PROXY_ENV_KEY = 'AGENT_SANDBOX_EGRESS_PROXY_IP'
+
+
+def _egress_proxy_ip() -> str:
+    """IP of the running proxy on the sandbox network, or ''."""
+    try:
+        result = subprocess.run(
+            [
+                'docker', 'inspect', _EGRESS_PROXY_CONTAINER,
+                '--format',
+                '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}',
+            ],
+            capture_output=True, text=True,
+            encoding='utf-8', errors='replace', timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ''
+    return result.stdout.strip() if result.returncode == 0 else ''
+
+
+def ensure_egress_proxy(*, logger: logging.Logger | None = None) -> str:
+    """Start (idempotently) the SNI-pinning proxy; return its IP or ''.
+
+    Why this exists: the in-container firewall allowlists the ADDRESSES
+    ``api.anthropic.com`` resolved to, and those are shared cloud
+    addresses. Code in the container picks its own hostname, so it can
+    reach any other tenant behind the same IP with a valid certificate —
+    an IP allowlist is not a hostname allowlist. The proxy reads the
+    ClientHello, enforces the exact hostname, and forwards bytes without
+    terminating TLS (no key, no certificate, no interception).
+
+    Best-effort: a failure here leaves the existing IP-based allowlist in
+    force rather than blocking spawns.
+    """
+    existing = _egress_proxy_ip()
+    if existing:
+        return existing
+    try:
+        ensure_network(logger=logger)
+    except SandboxError:
+        return ''
+    proxy_source = Path(__file__).resolve().parent / 'sni_proxy.py'
+    try:
+        subprocess.run(
+            ['docker', 'rm', '-f', _EGRESS_PROXY_CONTAINER],
+            capture_output=True, timeout=60,
+        )
+        result = subprocess.run(
+            [
+                'docker', 'run', '-d',
+                '--name', _EGRESS_PROXY_CONTAINER,
+                '--network', _SANDBOX_NETWORK_NAME,
+                '--label', f'{_IMAGE_IDENTITY_LABEL}={_IMAGE_IDENTITY_VALUE}',
+                '--label', f'{_OWNER_PID_LABEL}={os.getpid()}',
+                '--label', f'{_OWNER_BOOT_LABEL}={host_boot_identity()}',
+                # The proxy needs no privileges of any kind: it reads a
+                # socket and opens another one.
+                '--cap-drop', 'ALL',
+                # The one capability it needs: bind a port below 1024.
+                '--cap-add', 'NET_BIND_SERVICE',
+                '--security-opt', 'no-new-privileges',
+                '--read-only',
+                '--tmpfs', '/tmp:rw,nosuid,nodev,size=8m',
+                '--memory', '128m', '--pids-limit', '64',
+                '--restart', 'no',
+                '-v', f'{proxy_source}:/app/sni_proxy.py:ro',
+                _EGRESS_PROXY_IMAGE,
+                'python3', '/app/sni_proxy.py',
+                '--port', str(_EGRESS_PROXY_PORT),
+                '--allow', 'api.anthropic.com',
+            ],
+            capture_output=True, text=True,
+            encoding='utf-8', errors='replace', timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        if logger is not None:
+            logger.warning('egress proxy not started: %s', exc)
+        return ''
+    if result.returncode != 0:
+        if logger is not None:
+            logger.warning(
+                'egress proxy not started: %s',
+                (result.stderr or '').strip()[:200],
+            )
+        return ''
+    address = _egress_proxy_ip()
+    if address and logger is not None:
+        logger.info(
+            'egress proxy running at %s: only TLS to api.anthropic.com is '
+            'forwarded, by SNI rather than by IP', address,
+        )
+    return address
 
 
 def _backstop_tag() -> str:
@@ -2402,6 +2649,17 @@ def host_boot_identity() -> str:
     container would be spared forever. A boot identity that differs
     from the label's is proof the owner is gone.
     """
+    if sys.platform == 'win32':                  # pragma: no cover - platform
+        # No /proc and no sysctl. Boot time = now - uptime; GetTickCount64
+        # returns milliseconds since boot and is monotonic across the
+        # session, so the derived value is stable within a boot and
+        # changes across one — exactly what the reaper needs.
+        try:
+            import ctypes
+            uptime_ms = ctypes.windll.kernel32.GetTickCount64()
+            return str(int(time.time() - (uptime_ms / 1000.0)))
+        except Exception:
+            return ''
     linux_boot_id = Path('/proc/sys/kernel/random/boot_id')
     try:
         if linux_boot_id.is_file():
@@ -2429,9 +2687,39 @@ def host_boot_identity() -> str:
 
 
 def _process_is_alive(pid: int) -> bool:
-    """True when ``pid`` exists. EPERM counts as alive (other user)."""
+    """True when ``pid`` exists. EPERM counts as alive (another user).
+
+    WINDOWS MATTERS HERE. ``os.kill(pid, 0)`` is the POSIX idiom for
+    "does this process exist", but on Windows Python maps any signal
+    other than CTRL_C_EVENT/CTRL_BREAK_EVENT onto ``TerminateProcess``
+    — so the POSIX spelling would KILL the very process it is asking
+    about. The reaper calls this for every labelled container's owner,
+    which on Windows means it would kill live owner processes.
+    """
     if pid <= 0:
         return False
+    if sys.platform == 'win32':                  # pragma: no cover - platform
+        import ctypes
+        from ctypes import wintypes
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        handle = kernel32.OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION, False, pid,
+        )
+        if not handle:
+            # ACCESS_DENIED means it exists but belongs to someone else;
+            # anything else (typically INVALID_PARAMETER) means it is gone.
+            ERROR_ACCESS_DENIED = 5
+            return ctypes.get_last_error() == ERROR_ACCESS_DENIED
+        try:
+            code = wintypes.DWORD()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return True                      # exists, cannot read status
+            return code.value == STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

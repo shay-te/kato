@@ -30,6 +30,7 @@ import {
   TEXT_REJECT_REASON,
 } from '../utils/textAttachment.js';
 import { toast } from '../stores/toastStore.js';
+import { readPromptHistory, rememberPrompt } from '../utils/promptHistory.js';
 import { useAutoSizeTextarea } from '../hooks/useAutoSizeTextarea.js';
 import { usePublishedHeight } from '../hooks/usePublishedHeight.js';
 import { appendComposerFragment } from '../utils/chatComposerHelpers.js';
@@ -104,6 +105,9 @@ const MessageForm = forwardRef(function MessageForm({
   // SessionDetail keys this component on the active task, so this
   // hydrates correctly when the operator tabs back to the task.
   const [value, setValue] = useState(() => readDraft(taskId));
+  // Shell-style prompt recall. ``-1`` means "not browsing history"; any
+  // other index is a position in the newest-first list.
+  const historyIndexRef = useRef(-1);
   // Attached images live in component state because the composer is the only
   // thing that reads / writes them. They're ALSO mirrored to IndexedDB
   // (composerImageDraft) per task — base64 image data is too big for
@@ -328,6 +332,12 @@ const MessageForm = forwardRef(function MessageForm({
     // from re-applying the just-sent images.
     const sentText = value;
     const sentAttachments = attachments;
+    // Recall history is written on SEND, not on every keystroke: the up
+    // arrow should offer things the operator actually asked for, not
+    // half-typed fragments. Recorded before the await so a send that
+    // errors still leaves the prompt recallable.
+    rememberPrompt(taskId, sentText);
+    historyIndexRef.current = -1;
     markDraftSettled();
     setMention(MENTION_CLOSED);
     setValue('');
@@ -429,6 +439,9 @@ const MessageForm = forwardRef(function MessageForm({
     // this, and the draft is now safe to write back to the server.
     draftEditedRef.current = true;
     draftSyncReadyRef.current = true;
+    // Typing means the operator is composing, not browsing: the next Up
+    // must start again from the newest entry.
+    historyIndexRef.current = -1;
     setValue(event.target.value);
     syncMention(event.target.value, event.target.selectionStart);
   }
@@ -453,6 +466,30 @@ const MessageForm = forwardRef(function MessageForm({
         selectMention(mentionMatches[mention.index] || mentionMatches[0]);
         return;
       }
+    }
+    // Up arrow recalls previous prompts, but ONLY from an empty composer:
+    // in a non-empty one the arrow has to keep moving the caret, or
+    // editing a multi-line message becomes impossible. Once recall is
+    // active, further Up/Down walk the list.
+    if (event.key === 'ArrowUp' && (value === '' || historyIndexRef.current >= 0)) {
+      const history = readPromptHistory(taskId);
+      if (history.length) {
+        event.preventDefault();
+        const next = Math.min(historyIndexRef.current + 1, history.length - 1);
+        historyIndexRef.current = next;
+        setValue(history[next]);
+        return;
+      }
+    }
+    if (event.key === 'ArrowDown' && historyIndexRef.current >= 0) {
+      event.preventDefault();
+      const history = readPromptHistory(taskId);
+      const next = historyIndexRef.current - 1;
+      historyIndexRef.current = next;
+      // Stepping past the newest entry returns to the empty composer the
+      // operator started from, rather than sticking on the last prompt.
+      setValue(next < 0 ? '' : (history[next] || ''));
+      return;
     }
     if (event.key === 'Enter' && !event.shiftKey) {
       submit(event);

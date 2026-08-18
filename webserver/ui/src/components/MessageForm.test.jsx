@@ -978,3 +978,66 @@ describe('MessageForm — @ file mention picker', () => {
     });
   });
 });
+
+// --------------------------------------------------------------------------
+// Up-arrow prompt recall
+// --------------------------------------------------------------------------
+
+describe('MessageForm — prompt recall with the up arrow', () => {
+  beforeEach(() => { window.localStorage.clear(); });
+
+  function composer(props = {}) {
+    return render(
+      <MessageForm taskId="T-1" onSubmit={vi.fn().mockResolvedValue({})} {...props} />,
+    );
+  }
+
+  test('up arrow on an EMPTY composer recalls the previous prompt', async () => {
+    const onSubmit = vi.fn().mockResolvedValue({});
+    composer({ onSubmit });
+    const box = screen.getByRole('textbox');
+    fireEvent.change(box, { target: { value: 'first prompt' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    await waitFor(() => expect(box.value).toBe(''));
+
+    fireEvent.keyDown(box, { key: 'ArrowUp' });
+    await waitFor(() => expect(box.value).toBe('first prompt'));
+  });
+
+  test('up arrow in a NON-empty composer still moves the caret', () => {
+    // Recall must not hijack the arrow while composing, or editing a
+    // multi-line message becomes impossible.
+    composer();
+    const box = screen.getByRole('textbox');
+    window.localStorage.setItem(
+      'kato.promptHistory.v1.T-1', JSON.stringify(['older']),
+    );
+    fireEvent.change(box, { target: { value: 'half typed' } });
+    fireEvent.keyDown(box, { key: 'ArrowUp' });
+    expect(box.value).toBe('half typed');
+  });
+
+  test('repeated up walks further back, down comes forward and empties', async () => {
+    composer();
+    const box = screen.getByRole('textbox');
+    window.localStorage.setItem(
+      'kato.promptHistory.v1.T-1', JSON.stringify(['newest', 'older']),
+    );
+    fireEvent.keyDown(box, { key: 'ArrowUp' });
+    await waitFor(() => expect(box.value).toBe('newest'));
+    fireEvent.keyDown(box, { key: 'ArrowUp' });
+    await waitFor(() => expect(box.value).toBe('older'));
+    fireEvent.keyDown(box, { key: 'ArrowDown' });
+    await waitFor(() => expect(box.value).toBe('newest'));
+    fireEvent.keyDown(box, { key: 'ArrowDown' });
+    await waitFor(() => expect(box.value).toBe(''));
+  });
+
+  test('no history means the arrow does nothing', () => {
+    composer();
+    const box = screen.getByRole('textbox');
+    fireEvent.keyDown(box, { key: 'ArrowUp' });
+    expect(box.value).toBe('');
+  });
+});

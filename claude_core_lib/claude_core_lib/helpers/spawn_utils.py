@@ -184,5 +184,7 @@ def wrap_spawn_for_docker(
     # ownership labels before removing anything, so an un-disarmed
     # watchdog is harmless. Never raises — failing to arm must not block
     # a spawn, and the boot-time sweep still covers the gap.
-    arm_container_watchdog(container_name, logger=logger)
+    arm_container_watchdog(
+        container_name, workspace_path=workspace_path, logger=logger,
+    )
     return wrapped, container_name

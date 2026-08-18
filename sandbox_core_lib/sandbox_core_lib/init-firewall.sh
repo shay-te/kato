@@ -82,6 +82,15 @@ iptables -A OUTPUT -o lo -j ACCEPT
 # silent timeout rather than a fast "admin-prohibited" — prevents
 # the sandboxed process from quickly enumerating which addresses
 # are denied vs unreachable.
+# The SNI proxy sits on the sandbox bridge, inside RFC1918 space, so its
+# ACCEPT must come BEFORE the private-range denies below — otherwise the
+# only permitted destination is dropped by the rule meant to stop the
+# container reaching the LAN. Exact address, port 443 only, and the value
+# comes from the HOST (--add-host / -e), never from the container.
+if [ -n "${AGENT_SANDBOX_EGRESS_PROXY_IP:-}" ]; then
+    iptables -A OUTPUT -d "${AGENT_SANDBOX_EGRESS_PROXY_IP}/32" -p tcp --dport 443 -j ACCEPT
+    echo "[kato-sandbox] egress via SNI proxy ${AGENT_SANDBOX_EGRESS_PROXY_IP}:443 only"
+fi
 iptables -A OUTPUT -d 169.254.169.254/32 -j DROP   # AWS IMDS / GCP metadata
 iptables -A OUTPUT -d 169.254.0.0/16    -j DROP    # link-local (incl. APIPA)
 iptables -A OUTPUT -d 10.0.0.0/8        -j DROP    # RFC1918
@@ -158,6 +167,16 @@ resolve_into_set() {
         if [[ ! "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
             echo "[kato-sandbox] ERROR: invalid IP for $domain: $ip" >&2
             exit 1
+        fi
+        # The SNI proxy lives on the sandbox bridge, so its address IS
+        # private. It is the one private destination we accept, and only
+        # because the HOST placed it in /etc/hosts via --add-host — code
+        # in the container cannot nominate an address here.
+        if [ -n "${AGENT_SANDBOX_EGRESS_PROXY_IP:-}" ] \
+            && [ "$ip" = "$AGENT_SANDBOX_EGRESS_PROXY_IP" ]; then
+            ipset add allowed-domains "$ip" -exist
+            echo "[kato-sandbox]   $ip (egress proxy — SNI-pinned)"
+            continue
         fi
         # Defense-in-depth: refuse to allowlist a private/link-local
         # address even if DNS returns one. The earlier explicit DROPs

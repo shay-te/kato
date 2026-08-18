@@ -221,7 +221,10 @@ class AuditChainVerificationTests(unittest.TestCase):
         path.write_bytes(b'\n'.join(lines) + b'\n')
         result = manager.verify_audit_chain(path)
         self.assertFalse(result['ok'])
-        self.assertEqual(result['broken_at'], 3)
+        # Caught ON the tampered entry now, not on the next one: the MAC
+        # fails immediately, where the chain link only broke downstream.
+        self.assertEqual(result['broken_at'], 2)
+        self.assertIn('MAC', result['error'])
 
     def test_reordering_is_detected(self) -> None:
         path = self._log(3)
@@ -240,6 +243,37 @@ class AuditChainVerificationTests(unittest.TestCase):
         result = manager.verify_audit_chain(path)
         self.assertTrue(result['ok'])
         self.assertEqual(result['entries'], 2)
+
+    def test_a_fully_rebuilt_chain_is_still_rejected(self) -> None:
+        # The criticism this closes: a plain hash chain can be recomputed
+        # end-to-end by anyone who can write the file, so "the chain
+        # verifies" proved nothing about authenticity. Entries are now
+        # MAC'd with a key kept outside the log directory.
+        import hashlib
+        path = self._log(2)
+        rebuilt = []
+        prev = manager._AUDIT_GENESIS_HASH
+        for index in range(2):
+            entry = {
+                'timestamp': 'x', 'event': 'spawn', 'task_id': f'FAKE-{index}',
+                'container_name': 'c', 'image_tag': 't', 'image_digest': '',
+                'workspace_path': '/w', 'prev_hash': prev,
+            }
+            raw = json.dumps(entry, ensure_ascii=False).encode()
+            rebuilt.append(raw)
+            prev = hashlib.sha256(raw).hexdigest()
+        path.write_bytes(b'\n'.join(rebuilt) + b'\n')
+        result = manager.verify_audit_chain(path)
+        self.assertFalse(result['ok'])
+        self.assertIn('MAC', result['error'])
+
+    def test_the_signing_key_lives_outside_the_log_directory_and_is_0600(self) -> None:
+        import stat
+        key_path = manager._audit_key_path()
+        manager._audit_key()                      # create on first use
+        if key_path.exists():
+            self.assertEqual(stat.S_IMODE(key_path.stat().st_mode), 0o600)
+        self.assertNotEqual(key_path, manager._DEFAULT_AUDIT_LOG_PATH)
 
     def test_garbage_line_is_reported_not_raised(self) -> None:
         path = self._log(1)
@@ -262,8 +296,10 @@ class ContainerLifetimeCapTests(unittest.TestCase):
             clock['t'] += 31.0                 # one idle poll per call
             return clock['t']
 
+        # The waiter never fires (owner healthy); the cap must still trip.
         with mock.patch.object(wd, '_container_labels', return_value={'a': 'b'}), \
-             mock.patch.object(wd.select, 'select', return_value=([], [], [])):
+             mock.patch.object(wd._OwnerLostSignal, 'wait', return_value=wd._STILL_WAITING), \
+             mock.patch.object(wd._OwnerLostSignal, 'close'):
             reason = wd._wait_for_reap_trigger(read_fd, 'c1', 60.0, fake_now)
         self.assertEqual(reason, 'max-lifetime-exceeded')
 
@@ -429,6 +465,50 @@ class ConfigDirHandoverTests(unittest.TestCase):
         self.assertIn('--cap-add=CHOWN', manager._REQUIRED_DOCKER_FLAGS)
 
 
+class CrossPlatformTests(unittest.TestCase):
+    """Windows and Linux are supported targets, not afterthoughts.
+
+    Two things here were POSIX-shaped and would have misbehaved on
+    Windows — one of them destructively.
+    """
+
+    def test_liveness_check_does_not_use_os_kill_on_windows(self) -> None:
+        # ``os.kill(pid, 0)`` is the POSIX idiom, but on Windows Python
+        # maps every signal except CTRL_C/CTRL_BREAK onto TerminateProcess
+        # — the "check" would kill the process it asks about, and the
+        # reaper asks about every live owner.
+        import inspect
+        source = inspect.getsource(manager._process_is_alive)
+        self.assertIn("sys.platform == 'win32'", source)
+        self.assertIn('OpenProcess', source)
+        # The Windows branch must RETURN before the POSIX call is reached.
+        # ``rindex``: the docstring mentions os.kill to explain the hazard,
+        # so compare against the actual CALL, which is last.
+        self.assertLess(
+            source.index("sys.platform == 'win32'"), source.rindex('os.kill('),
+        )
+
+    def test_watchdog_does_not_select_on_a_pipe(self) -> None:
+        # ``select()`` accepts only sockets on Windows, so the watchdog
+        # would raise there and guard nothing.
+        from pathlib import Path
+        source = (
+            Path(manager.__file__).resolve().parent / 'watchdog.py'
+        ).read_text(encoding='utf-8')
+        self.assertNotIn('import select', source)
+        self.assertIn('threading.Thread', source)
+
+    def test_detach_kwargs_match_the_platform(self) -> None:
+        kwargs = manager._detached_process_kwargs()
+        if manager.sys.platform == 'win32':      # pragma: no cover - platform
+            self.assertIn('creationflags', kwargs)
+        else:
+            self.assertEqual(kwargs, {'start_new_session': True})
+
+    def test_boot_identity_is_available_on_this_platform(self) -> None:
+        self.assertTrue(manager.host_boot_identity())
+
+
 class ParentLossWatchdogTests(unittest.TestCase):
     """Reap the container the moment its owner dies, not at next boot.
 
@@ -514,7 +594,7 @@ class ParentLossWatchdogTests(unittest.TestCase):
         import inspect
         source = inspect.getsource(manager.arm_container_watchdog)
         self.assertIn('os.close(read_fd)', source)
-        self.assertIn('start_new_session=True', source)
+        self.assertIn('_detached_process_kwargs()', source)
 
 
 class HostEgressBackstopTests(unittest.TestCase):
