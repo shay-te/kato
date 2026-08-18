@@ -559,7 +559,6 @@ class MainTests(unittest.TestCase):
 
         mock_check_docker.assert_called_once()
         mock_check_gvisor.assert_called_once()
-        mock_gvisor_runtime.assert_called_once()
         mock_rootless.assert_called_once()
 
     def test_docker_mode_off_skips_sandbox_preflight(self) -> None:
@@ -601,7 +600,6 @@ class MainTests(unittest.TestCase):
 
         mock_check_docker.assert_not_called()
         mock_check_gvisor.assert_not_called()
-        mock_gvisor_runtime.assert_not_called()
         mock_rootless.assert_not_called()
 
     def test_docker_mode_on_reaps_orphaned_sandbox_containers(self) -> None:

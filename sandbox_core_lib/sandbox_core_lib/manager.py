@@ -415,49 +415,55 @@ def docker_running_rootless() -> bool:
 
 
 def check_gvisor_or_exit(*, env: dict | None = None) -> None:
-    """Refuse to start unless gVisor is configured, or operator overrides.
+    """Refuse to start without gVisor. No override.
 
-    gVisor (``runsc``) puts a userspace kernel between the container
-    and the host, so most Linux-kernel CVEs cannot be used to escape
-    the sandbox. With bypass mode on, that's a meaningful additional
-    layer — Claude can run any command, and the container's only
-    remaining isolation from the host is the kernel itself.
+    gVisor (``runsc``) puts a userspace kernel between the container and
+    the host, so a Linux-kernel CVE cannot simply be used to escape. It
+    is the only layer here that survives a kernel bug, which makes it the
+    difference between "hard to escape" and "one CVE away".
 
-    Strict by default: if gVisor isn't available kato refuses to
-    start. The override ``KATO_SANDBOX_ALLOW_NO_GVISOR=true`` exists
-    for environments where gVisor can't be installed (most notably
-    Docker Desktop on macOS / Windows, where the underlying VM is
-    locked down).
+    This used to be waivable with ``KATO_SANDBOX_ALLOW_NO_GVISOR=true``
+    for environments where gVisor cannot be installed — notably Docker
+    Desktop, whose VM is locked down. That escape hatch is GONE by
+    operator decision: an isolation guarantee that any environment can
+    switch off is a guarantee nobody can rely on, and the waiver was
+    reached by exactly the setups that most needed the layer.
+
+    The consequence is deliberate and worth stating plainly: on Docker
+    Desktop (macOS / Windows) sandbox mode will not start at all. Run
+    kato on a Linux host, or in a VM where ``runsc`` can be registered as
+    a Docker runtime.
+
+    ``env`` is still accepted so callers and tests keep one signature;
+    nothing in it can re-enable a spawn without gVisor.
     """
+    del env  # no flag can waive this any more
     if gvisor_runtime_available():
-        return
-    if _env_flag_true(env, ALLOW_NO_GVISOR_ENV_KEY):
         return
     bar = '=' * 78
     sys.stderr.write(
         '\n'.join((
             '',
             bar,
-            'Kato cannot start: gVisor (runsc) is required for bypass mode.',
+            'Kato cannot start: gVisor (runsc) is required for sandbox mode.',
             '',
-            'When KATO_CLAUDE_BYPASS_PERMISSIONS=true, kato runs Claude inside',
-            'a hardened sandbox. Without gVisor, the only thing isolating the',
-            'container from your host is the Linux kernel itself — a single',
-            'kernel CVE could be used to escape. gVisor adds a userspace',
-            'kernel between them, which is much harder to break.',
+            'Sandbox mode runs the agent inside a container. Without gVisor,',
+            'the only thing between that container and your host is the Linux',
+            'kernel itself — one kernel CVE is an escape. gVisor puts a',
+            'userspace kernel in between, which is much harder to break.',
+            '',
+            'There is no override for this. It was removed deliberately: the',
+            'environments that used the waiver were the ones that needed the',
+            'layer most, and a guarantee that can be switched off is not one.',
             '',
             'Pick one:',
             '  1. Install gVisor and register it as a Docker runtime:',
             '       https://gvisor.dev/docs/user_guide/install/',
             '       (then `docker info` should list "runsc" under Runtimes)',
-            '  2. If you cannot install gVisor (e.g. Docker Desktop on macOS',
-            '     or Windows where the underlying VM is locked down), you can',
-            '     accept the residual kernel-CVE risk by setting:',
-            f'       export {ALLOW_NO_GVISOR_ENV_KEY}=true',
-            '     The other 8 sandbox layers (cap-drop, read-only rootfs,',
-            '     egress firewall, etc.) still apply. See BYPASS_PROTECTIONS.md.',
-            '  3. Or unset KATO_CLAUDE_BYPASS_PERMISSIONS to run Claude on',
-            '     the host with permission prompts in the planning UI.',
+            '     Docker Desktop cannot do this — use a Linux host or a VM',
+            '     (Lima / Colima) where the runtime can be registered.',
+            '  2. Or unset KATO_CLAUDE_DOCKER to run the agent on the host',
+            '     with permission prompts in the planning UI.',
             bar,
             '',
         )),
@@ -1012,6 +1018,51 @@ def _container_workdir(workdir_subpath: str) -> str:
     return posixpath.join(_WORKSPACE_MOUNT, normalized)
 
 
+_GIT_DIR_SCAN_MAX_DEPTH = 3
+
+
+def _git_dir_readonly_mounts(workspace: str) -> list[str]:
+    """``-v <clone>/.git:<container path>:ro`` for every clone in the workspace.
+
+    THE reason this exists: a workspace clone's ``.git`` is agent-writable
+    and the HOST later runs git against that same clone. Git config is a
+    command-execution surface — ``core.fsmonitor`` alone gave a working
+    sandbox-to-host RCE, reproduced against this codebase — and the
+    dangerous keys cannot all be neutralised with flags, because content
+    filters take attacker-chosen names. Overriding keys treats symptoms;
+    making the file unwritable removes the input.
+
+    The working tree stays read-write. Only ``.git`` is frozen, so the
+    agent can still read history (``git log``, ``git diff``) and edit any
+    source file — it just cannot rewrite the repository's configuration,
+    hooks, or refs. The host application's own commits and pushes run
+    outside the container, where the directory is writable as usual, so
+    the normal task flow is unaffected.
+
+    Depth-limited: clones live at ``<workspace>/<repo>/.git`` (and one
+    level deeper for nested layouts). An unbounded walk of an
+    agent-controlled tree is its own denial-of-service.
+    """
+    root = Path(workspace)
+    mounts: list[str] = []
+    seen: set[str] = set()
+    for depth in range(1, _GIT_DIR_SCAN_MAX_DEPTH + 1):
+        for git_dir in root.glob('/'.join(['*'] * (depth - 1) + ['.git'])):
+            try:
+                if not git_dir.is_dir():
+                    continue                     # worktree/submodule ``.git`` FILE
+                relative = git_dir.relative_to(root).as_posix()
+            except (OSError, ValueError):
+                continue
+            if relative in seen:
+                continue
+            seen.add(relative)
+            mounts.extend([
+                '-v', f'{git_dir}:{_WORKSPACE_MOUNT}/{relative}:ro',
+            ])
+    return mounts
+
+
 def wrap_command(
     inner_command: list[str],
     *,
@@ -1191,6 +1242,10 @@ def wrap_command(
         '--dns', '1.0.0.1',
         '--hostname', 'kato-sandbox',
         '-v', f'{workspace}:{_WORKSPACE_MOUNT}:rw',
+        # Then re-mount every ``.git`` inside it READ-ONLY on top. Later
+        # binds overlay earlier ones, so the working tree stays writable
+        # while git metadata does not. See ``_git_dir_readonly_mounts``.
+        *_git_dir_readonly_mounts(workspace),
         # Auth volume: read-only source mount. Entrypoint copies an
         # allowlisted subset of files into the per-task .claude tmpfs.
         # See entrypoint.sh + ``_AUTH_SOURCE_MOUNT`` for the full
@@ -2108,10 +2163,30 @@ def _run_host_netfilter_script(script: str, *, timeout: int = 120):
         'if command -v iptables-legacy >/dev/null 2>&1; then IPT=iptables-legacy; '
         'else IPT=iptables; fi\n' + script
     )
+    # NOT ``--privileged``. The first version of this helper ran the
+    # sandbox image with full privileges on the host network, which
+    # promoted any compromise of that image into a privileged host-network
+    # container — a much worse outcome than the leak the backstop exists
+    # to prevent. Editing netfilter needs exactly CAP_NET_ADMIN (plus
+    # NET_RAW for iptables' own socket); everything else is dropped, and
+    # the image is pinned to the ID we resolved rather than a mutable tag.
+    try:
+        image = _image_digest_strict(SANDBOX_IMAGE_TAG)
+    except _DigestLookupError:
+        image = SANDBOX_IMAGE_TAG
     return subprocess.run(
         [
-            'docker', 'run', '--rm', '--privileged', '--net=host',
-            '--entrypoint', 'sh', SANDBOX_IMAGE_TAG, '-c', wrapper,
+            'docker', 'run', '--rm',
+            '--net=host',
+            '--cap-drop', 'ALL',
+            '--cap-add', 'NET_ADMIN',
+            '--cap-add', 'NET_RAW',
+            '--security-opt', 'no-new-privileges',
+            '--read-only',
+            # iptables takes /run/xtables.lock; a read-only rootfs without
+            # this makes every rule edit fail with "can't open lock file".
+            '--tmpfs', '/run:rw,nosuid,nodev,size=1m',
+            '--entrypoint', 'sh', image, '-c', wrapper,
         ],
         capture_output=True, text=True,
         encoding='utf-8', errors='replace',
@@ -2175,6 +2250,18 @@ def install_host_egress_backstop(*, logger: logging.Logger | None = None) -> boo
     when it cannot be installed would be worse than the exposure it
     closes. Returns True when the rules are in place.
     """
+    # Create the isolated bridge FIRST. At boot this runs before anything
+    # has spawned, so the network often does not exist yet — the backstop
+    # would look up an empty subnet and silently skip, leaving the host
+    # layer absent exactly when the first task starts.
+    try:
+        ensure_network(logger=logger)
+    except SandboxError as exc:
+        if logger is not None:
+            logger.warning(
+                'host egress backstop skipped: sandbox network unavailable (%s)', exc,
+            )
+        return False
     subnet = _sandbox_bridge_subnet()
     if not subnet:
         if logger is not None:
@@ -2560,6 +2647,21 @@ def _assert_seccomp_pinned(argv: list[str]) -> None:
         )
 
 
+def _pinned_image_reference(image_tag: str) -> str:
+    """The image's resolved ID, or the tag if it cannot be resolved.
+
+    Referencing the mutable tag lets anything that can retag it choose
+    what runs; the spawn path has always pinned, and the login path had
+    not. Falls back to the tag rather than refusing, because a failure
+    here would block the operator's only way to seed credentials.
+    """
+    try:
+        digest = _image_digest_strict(image_tag)
+    except _DigestLookupError:
+        return image_tag
+    return digest if digest.startswith('sha256:') else f'sha256:{digest.split(":")[-1]}'
+
+
 def login_command(image_tag: str = SANDBOX_IMAGE_TAG) -> list[str]:
     """One-time interactive ``claude /login`` invocation for the sandbox.
 
@@ -2576,7 +2678,7 @@ def login_command(image_tag: str = SANDBOX_IMAGE_TAG) -> list[str]:
     mounted **read-write** here (and only here) so the operator's
     typed credentials persist across containers.
     """
-    return [
+    argv = [
         'docker', 'run',
         '--rm',
         '-it',
@@ -2599,6 +2701,12 @@ def login_command(image_tag: str = SANDBOX_IMAGE_TAG) -> list[str]:
         '--cap-add', 'SETPCAP',
         '--security-opt', 'no-new-privileges',
         '--security-opt', 'apparmor=docker-default',
+        # Parity with the spawn path. This container types the operator's
+        # real credentials and writes them to the persistent volume, so
+        # "the login container is only used briefly" is a reason to harden
+        # it, not to skip it: the pinned profile was missing here while
+        # every spawn had it.
+        '--security-opt', f'seccomp={_SECCOMP_PROFILE_PATH}',
         '--read-only',
         '--tmpfs', '/tmp:rw,nosuid,nodev,size=64m',
         '--tmpfs', '/run:rw,nosuid,nodev,size=8m',
@@ -2618,9 +2726,15 @@ def login_command(image_tag: str = SANDBOX_IMAGE_TAG) -> list[str]:
         # /auth-src mount, no tmpfs). Entrypoint detects the absence
         # of /auth-src and skips the copy-in step.
         '-v', f'{_AUTH_VOLUME_NAME}:{_CLAUDE_HOME}/.claude:rw',
-        image_tag,
+        _pinned_image_reference(image_tag),
         'claude', '/login',
     ]
+    # Same kernel boundary as a spawn. gVisor is mandatory for spawns; the
+    # login container handles the credentials those spawns will use, so it
+    # gets the runtime too whenever it is available.
+    if gvisor_runtime_available():
+        argv[2:2] = ['--runtime', 'runsc']
+    return argv
 
 
 def stamp_auth_volume_manifest(

@@ -6,6 +6,10 @@ import types
 import unittest
 import base64
 from unittest.mock import Mock, patch
+from git_core_lib.git_core_lib.helpers.git_command_utils import (
+    build_safe_git_command,
+)
+
 
 
 from kato_core_lib.data_layers.service.repository_inventory_service import (
@@ -145,13 +149,13 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
             [
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'checkout', 'main'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'pull', '--ff-only', 'origin', 'main'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
+                build_safe_git_command('.', ['rev-parse', '--abbrev-ref', 'HEAD']),
+                build_safe_git_command('.', ['status', '--porcelain']),
+                build_safe_git_command('.', ['checkout', 'main']),
+                build_safe_git_command('.', ['rev-parse', '--abbrev-ref', 'HEAD']),
+                build_safe_git_command('.', ['pull', '--ff-only', 'origin', 'main']),
+                build_safe_git_command('.', ['rev-parse', '--abbrev-ref', 'HEAD']),
+                build_safe_git_command('.', ['status', '--porcelain']),
             ],
         )
 
@@ -181,11 +185,11 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
             [
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'pull', '--ff-only', 'origin', 'main'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
+                build_safe_git_command('.', ['rev-parse', '--abbrev-ref', 'HEAD']),
+                build_safe_git_command('.', ['status', '--porcelain']),
+                build_safe_git_command('.', ['pull', '--ff-only', 'origin', 'main']),
+                build_safe_git_command('.', ['rev-parse', '--abbrev-ref', 'HEAD']),
+                build_safe_git_command('.', ['status', '--porcelain']),
             ],
         )
 
@@ -217,9 +221,9 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
             [
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'checkout', 'master'],
+                build_safe_git_command('.', ['rev-parse', '--abbrev-ref', 'HEAD']),
+                build_safe_git_command('.', ['status', '--porcelain']),
+                build_safe_git_command('.', ['checkout', 'master']),
             ],
         )
 
@@ -251,10 +255,10 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
             [
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'checkout', '-f', 'master'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'clean', '-fd'],
+                build_safe_git_command('.', ['rev-parse', '--abbrev-ref', 'HEAD']),
+                build_safe_git_command('.', ['status', '--porcelain']),
+                build_safe_git_command('.', ['checkout', '-f', 'master']),
+                build_safe_git_command('.', ['clean', '-fd']),
             ],
         )
 
@@ -413,7 +417,11 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(kwargs['timeout'], RepositoryService.GIT_SUBPROCESS_TIMEOUT_SECONDS)
         self.assertEqual(kwargs['env']['GIT_TERMINAL_PROMPT'], '0')
         self.assertEqual(kwargs['env']['GIT_CONFIG_COUNT'], '1')
-        self.assertEqual(kwargs['env']['GIT_CONFIG_KEY_0'], 'http.extraHeader')
+        # URL-SCOPED now: a bare ``http.extraHeader`` is sent to whatever
+        # host the (agent-writable) remote resolves to.
+        key = kwargs['env']['GIT_CONFIG_KEY_0']
+        self.assertTrue(key.startswith('http.') and key.endswith('.extraHeader'))
+        self.assertNotEqual(key, 'http.extraHeader')
         self.assertTrue(kwargs['env']['GIT_CONFIG_VALUE_0'].startswith('Authorization: '))
 
     def test_prepare_task_branches_creates_new_task_branch_from_destination_branch(self) -> None:
@@ -448,13 +456,13 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
             [
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'fetch', 'origin'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'reset', '--hard', 'origin/main'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'checkout', '-b', 'UNA-2398'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
+                build_safe_git_command('.', ['rev-parse', '--abbrev-ref', 'HEAD']),
+                build_safe_git_command('.', ['status', '--porcelain']),
+                build_safe_git_command('.', ['fetch', 'origin']),
+                build_safe_git_command('.', ['reset', '--hard', 'origin/main']),
+                build_safe_git_command('.', ['checkout', '-b', 'UNA-2398']),
+                build_safe_git_command('.', ['rev-parse', '--abbrev-ref', 'HEAD']),
+                build_safe_git_command('.', ['status', '--porcelain']),
             ],
         )
 
@@ -491,12 +499,12 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
             [
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'fetch', 'origin'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'checkout', 'UNA-2398'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
+                build_safe_git_command('.', ['rev-parse', '--abbrev-ref', 'HEAD']),
+                build_safe_git_command('.', ['status', '--porcelain']),
+                build_safe_git_command('.', ['fetch', 'origin']),
+                build_safe_git_command('.', ['checkout', 'UNA-2398']),
+                build_safe_git_command('.', ['rev-parse', '--abbrev-ref', 'HEAD']),
+                build_safe_git_command('.', ['status', '--porcelain']),
             ],
         )
 
@@ -536,15 +544,15 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
             [
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'fetch', 'origin'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'checkout', 'UNA-2398'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rebase', 'origin/UNA-2398'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
+                build_safe_git_command('.', ['rev-parse', '--abbrev-ref', 'HEAD']),
+                build_safe_git_command('.', ['status', '--porcelain']),
+                build_safe_git_command('.', ['fetch', 'origin']),
+                build_safe_git_command('.', ['checkout', 'UNA-2398']),
+                build_safe_git_command('.', ['rev-parse', '--abbrev-ref', 'HEAD']),
+                build_safe_git_command('.', ['status', '--porcelain']),
+                build_safe_git_command('.', ['rebase', 'origin/UNA-2398']),
+                build_safe_git_command('.', ['rev-parse', '--abbrev-ref', 'HEAD']),
+                build_safe_git_command('.', ['status', '--porcelain']),
             ],
         )
 
@@ -581,12 +589,12 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
             [
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'fetch', 'origin'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'checkout', '-b', 'UNA-2398', 'origin/UNA-2398'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
+                build_safe_git_command('.', ['rev-parse', '--abbrev-ref', 'HEAD']),
+                build_safe_git_command('.', ['status', '--porcelain']),
+                build_safe_git_command('.', ['fetch', 'origin']),
+                build_safe_git_command('.', ['checkout', '-b', 'UNA-2398', 'origin/UNA-2398']),
+                build_safe_git_command('.', ['rev-parse', '--abbrev-ref', 'HEAD']),
+                build_safe_git_command('.', ['status', '--porcelain']),
             ],
         )
 
@@ -1185,12 +1193,12 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
             [
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'add', '-A'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'add', '-A'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'commit', '-m', 'Implement PROJ-1'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
+                build_safe_git_command('.', ['rev-parse', '--abbrev-ref', 'HEAD']),
+                build_safe_git_command('.', ['status', '--porcelain']),
+                build_safe_git_command('.', ['add', '-A']),
+                build_safe_git_command('.', ['add', '-A']),
+                build_safe_git_command('.', ['commit', '-m', 'Implement PROJ-1']),
+                build_safe_git_command('.', ['status', '--porcelain']),
                 # ``-c core.hooksPath=/dev/null`` added by the security
                 # hardening for risk #24 (pre-commit hook installation).
                 # Every kato git command now disables hooks so a malicious
@@ -1198,9 +1206,9 @@ class RepositoryServiceTests(unittest.TestCase):
                 # Refreshed first: the ahead/behind verdict is only as good as
                 # the ref it compares against, and a per-task clone never
                 # updates its own destination branch.
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'fetch', 'origin', 'main'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--verify', 'origin/main'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-list', '--count', 'origin/main..feature/proj-1/backend'],
+                build_safe_git_command('.', ['fetch', 'origin', 'main']),
+                build_safe_git_command('.', ['rev-parse', '--verify', 'origin/main']),
+                build_safe_git_command('.', ['rev-list', '--count', 'origin/main..feature/proj-1/backend']),
             ],
         )
         data_access.create_pull_request.assert_called_once_with(
@@ -1290,21 +1298,21 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
                 [
-                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
-                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'add', '-A'],
-                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'reset', 'HEAD', '--', 'validation_report.md'],
-                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'clean', '-fd', '--', 'validation_report.md'],
-                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'add', '-A'],
-                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'commit', '-m', 'Implement PROJ-1'],
-                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
+                    build_safe_git_command('.', ['rev-parse', '--abbrev-ref', 'HEAD']),
+                    build_safe_git_command('.', ['status', '--porcelain']),
+                    build_safe_git_command('.', ['add', '-A']),
+                    build_safe_git_command('.', ['reset', 'HEAD', '--', 'validation_report.md']),
+                    build_safe_git_command('.', ['clean', '-fd', '--', 'validation_report.md']),
+                    build_safe_git_command('.', ['add', '-A']),
+                    build_safe_git_command('.', ['commit', '-m', 'Implement PROJ-1']),
+                    build_safe_git_command('.', ['status', '--porcelain']),
                     # ``core.hooksPath=/dev/null`` security hardening for risk #24.
                     # Refreshed first: the ahead/behind verdict is only as good as
                     # the ref it compares against, and a per-task clone never
                     # updates its own destination branch.
-                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'fetch', 'origin', 'main'],
-                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--verify', 'origin/main'],
-                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-list', '--count', 'origin/main..feature/proj-1/backend'],
+                    build_safe_git_command('.', ['fetch', 'origin', 'main']),
+                    build_safe_git_command('.', ['rev-parse', '--verify', 'origin/main']),
+                    build_safe_git_command('.', ['rev-list', '--count', 'origin/main..feature/proj-1/backend']),
                 ],
         )
         mock_restore_repositories.assert_called_once_with([repository], force=True)
@@ -1327,7 +1335,10 @@ class RepositoryServiceTests(unittest.TestCase):
         status_call_count = {'count': 0}
 
         def subprocess_side_effect(command, **kwargs):
-            tail = tuple(command[7:])
+            # Everything after ``-C <path>``. Computed rather than a fixed
+            # offset: the hardening prefix grows whenever another
+            # command-executing git config key has to be neutralised.
+            tail = tuple(command[command.index('-C') + 2:])
             if tail == ('rev-parse', '--abbrev-ref', 'HEAD'):
                 return Mock(returncode=0, stdout='feature/proj-1/backend\n', stderr='')
             if tail == ('status', '--porcelain'):
@@ -1398,16 +1409,16 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
                 [
-                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--abbrev-ref', 'HEAD'],
-                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
-                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'add', '-A'],
-                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'reset', 'HEAD', '--', 'build'],
-                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'clean', '-fd', '--', 'build'],
-                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'reset', 'HEAD', '--', 'validation_report.md'],
-                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'clean', '-fd', '--', 'validation_report.md'],
-                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'add', '-A'],
-                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'commit', '-m', 'Implement PROJ-1'],
-                    ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'status', '--porcelain'],
+                    build_safe_git_command('.', ['rev-parse', '--abbrev-ref', 'HEAD']),
+                    build_safe_git_command('.', ['status', '--porcelain']),
+                    build_safe_git_command('.', ['add', '-A']),
+                    build_safe_git_command('.', ['reset', 'HEAD', '--', 'build']),
+                    build_safe_git_command('.', ['clean', '-fd', '--', 'build']),
+                    build_safe_git_command('.', ['reset', 'HEAD', '--', 'validation_report.md']),
+                    build_safe_git_command('.', ['clean', '-fd', '--', 'validation_report.md']),
+                    build_safe_git_command('.', ['add', '-A']),
+                    build_safe_git_command('.', ['commit', '-m', 'Implement PROJ-1']),
+                    build_safe_git_command('.', ['status', '--porcelain']),
                 ],
             )
         mock_restore_repositories.assert_called_once_with([repository], force=True)
@@ -1693,22 +1704,12 @@ class RepositoryServiceTests(unittest.TestCase):
 
         self.assertEqual(
             mock_run.call_args.args[0],
-            [
-                'git',
-                '-c',
-                'safe.directory=.',
-                '-c',
-                'core.hooksPath=/dev/null',
-                '-C',
-                '.',
-                'pull',
-                '--ff-only',
-                'origin',
-                'main',
-            ],
+            build_safe_git_command('.', ['pull', '--ff-only', 'origin', 'main']),
         )
         self.assertEqual(mock_run.call_args.kwargs['env']['GIT_CONFIG_COUNT'], '1')
-        self.assertEqual(mock_run.call_args.kwargs['env']['GIT_CONFIG_KEY_0'], 'http.extraHeader')
+        key = mock_run.call_args.kwargs['env']['GIT_CONFIG_KEY_0']
+        self.assertTrue(key.startswith('http.') and key.endswith('.extraHeader'))
+        self.assertNotEqual(key, 'http.extraHeader')
         self.assertEqual(
             mock_run.call_args.kwargs['env']['GIT_CONFIG_VALUE_0'],
             expected_header,
@@ -1739,22 +1740,12 @@ class RepositoryServiceTests(unittest.TestCase):
 
         self.assertEqual(
             mock_run.call_args.args[0],
-            [
-                'git',
-                '-c',
-                'safe.directory=.',
-                '-c',
-                'core.hooksPath=/dev/null',
-                '-C',
-                '.',
-                'push',
-                '-u',
-                'origin',
-                'feature/proj-1/backend',
-            ],
+            build_safe_git_command('.', ['push', '-u', 'origin', 'feature/proj-1/backend']),
         )
         self.assertEqual(mock_run.call_args.kwargs['env']['GIT_CONFIG_COUNT'], '1')
-        self.assertEqual(mock_run.call_args.kwargs['env']['GIT_CONFIG_KEY_0'], 'http.extraHeader')
+        key = mock_run.call_args.kwargs['env']['GIT_CONFIG_KEY_0']
+        self.assertTrue(key.startswith('http.') and key.endswith('.extraHeader'))
+        self.assertNotEqual(key, 'http.extraHeader')
         self.assertEqual(
             mock_run.call_args.kwargs['env']['GIT_CONFIG_VALUE_0'],
             expected_header,
@@ -1778,6 +1769,14 @@ class RepositoryServiceTests(unittest.TestCase):
         ), patch(
             'git_core_lib.git_core_lib.client.git_client.subprocess.run',
             side_effect=[
+                # The push path now verifies the remote first: git is asked
+                # which URL it would ACTUALLY use, and a drifted answer
+                # aborts before the token is sent.
+                Mock(
+                    returncode=0,
+                    stdout='https://bitbucket.org/workspace/repo.git\n',
+                    stderr='',
+                ),
                 Mock(
                     returncode=1,
                     stdout='',
@@ -1798,27 +1797,17 @@ class RepositoryServiceTests(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
             [
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'push', '-u', 'origin', 'UNA-2265'],
-                [
-                    'git',
-                    '-c',
-                    'safe.directory=.',
-                    '-c',
-                    'core.hooksPath=/dev/null',
-                    '-C',
-                    '.',
-                    'fetch',
-                    'origin',
-                    'UNA-2265:refs/remotes/origin/UNA-2265',
-                ],
+                build_safe_git_command('.', ['ls-remote', '--get-url', 'origin']),
+                build_safe_git_command('.', ['push', '-u', 'origin', 'UNA-2265']),
+                build_safe_git_command('.', ['fetch', 'origin', 'UNA-2265:refs/remotes/origin/UNA-2265']),
                 # ``core.hooksPath=/dev/null`` security hardening for risk #24
                 # — applied to read-only verifications too so any
                 # ``post-checkout`` / ``post-rewrite`` hook Claude
                 # writes into ``.git/hooks/`` cannot fire on the host
                 # during kato's branch state checks.
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rev-parse', '--verify', 'origin/UNA-2265'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'rebase', 'origin/UNA-2265'],
-                ['git', '-c', 'safe.directory=.', '-c', 'core.hooksPath=/dev/null', '-C', '.', 'push', '-u', 'origin', 'UNA-2265'],
+                build_safe_git_command('.', ['rev-parse', '--verify', 'origin/UNA-2265']),
+                build_safe_git_command('.', ['rebase', 'origin/UNA-2265']),
+                build_safe_git_command('.', ['push', '-u', 'origin', 'UNA-2265']),
             ],
         )
         service.logger.warning.assert_called_once_with(
@@ -2213,7 +2202,9 @@ class RepositoryServiceTests(unittest.TestCase):
         # The auth header is injected via env vars, not argv (so it
         # never lands in ``ps``-visible process state).
         env = mock_run.call_args.kwargs['env']
-        self.assertEqual(env['GIT_CONFIG_KEY_0'], 'http.extraHeader')
+        key = env['GIT_CONFIG_KEY_0']
+        self.assertTrue(key.startswith('http.') and key.endswith('.extraHeader'))
+        self.assertNotEqual(key, 'http.extraHeader')
         self.assertTrue(
             env['GIT_CONFIG_VALUE_0'].startswith('Authorization: '),
             f'expected Authorization header in GIT_CONFIG_VALUE_0, got {env["GIT_CONFIG_VALUE_0"]!r}',

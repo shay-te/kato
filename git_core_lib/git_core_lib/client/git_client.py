@@ -86,6 +86,62 @@ class GitClientMixin:
     def _failure_detail(result) -> str:
         return result.stderr.strip() or result.stdout.strip() or 'git command failed'
 
+    @staticmethod
+    def _configured_remote_url(repository) -> str:
+        """The remote URL from the TRUSTED config, not from ``.git/config``."""
+        return str(getattr(repository, 'remote_url', '') or '').strip()
+
+    @classmethod
+    def _auth_header_config_key(cls, repository) -> str:
+        """``http.<configured-url>.extraHeader``, or the bare key.
+
+        Falls back to the unscoped key only when no remote URL is
+        configured — in that case there is nothing to scope to, and the
+        header builder would have had no repository to work from either.
+        """
+        url = cls._configured_remote_url(repository)
+        return f'http.{url}.extraHeader' if url else 'http.extraHeader'
+
+    @staticmethod
+    def _normalized_remote_url(value: str) -> str:
+        """Compare-able form: no credentials, no trailing ``/`` or ``.git``."""
+        text = str(value or '').strip()
+        if '@' in text and '://' in text:
+            scheme, _, rest = text.partition('://')
+            text = f'{scheme}://{rest.rpartition("@")[2]}'
+        text = text.rstrip('/')
+        if text.endswith('.git'):
+            text = text[:-len('.git')]
+        return text.lower()
+
+    def _assert_remote_is_the_configured_one(self, local_path: str, repository) -> None:
+        """Refuse to talk to a remote the agent redirected.
+
+        ``origin`` lives in the workspace clone's ``.git/config``, which
+        the agent can write, and ``url.<base>.insteadOf`` can rewrite even
+        an explicitly passed URL. ``ls-remote --get-url`` asks git for the
+        URL it would ACTUALLY use, after every rewrite — comparing that to
+        the configured one is the only check that sees what git sees.
+        """
+        configured = self._configured_remote_url(repository)
+        if not configured:
+            return
+        result = self._run_capture(
+            self._git_command(local_path, ['ls-remote', '--get-url', 'origin']),
+        )
+        effective = (result.stdout or '').strip()
+        if not effective:
+            return
+        if self._normalized_remote_url(effective) != self._normalized_remote_url(configured):
+            raise RuntimeError(
+                f'refusing to use remote {effective!r} for repository at '
+                f'{local_path}: the configured remote is {configured!r}. The '
+                f'workspace ``.git/config`` is agent-writable, so a changed '
+                f'remote (or a url.*.insteadOf rewrite) is treated as an '
+                f'attempt to redirect credentials, not as a configuration '
+                f'change.',
+            )
+
     def _run_git_subprocess(
         self,
         local_path: str,
@@ -97,7 +153,15 @@ class GitClientMixin:
         auth_header = self._build_git_http_auth_header(repository)
         if auth_header:
             env['GIT_CONFIG_COUNT'] = '1'
-            env['GIT_CONFIG_KEY_0'] = 'http.extraHeader'
+            # SCOPE the credential to the configured remote URL. A bare
+            # ``http.extraHeader`` applies to every host git contacts in
+            # this invocation, and the remote it contacts comes from the
+            # AGENT-WRITABLE ``.git/config`` — so an agent that repointed
+            # ``origin`` (or added a ``url.<x>.insteadOf`` rewrite) would
+            # be handed the provider token the moment an operator approved
+            # a push. URL-scoped config makes git send the header only to
+            # the URL the caller configured.
+            env['GIT_CONFIG_KEY_0'] = self._auth_header_config_key(repository)
             env['GIT_CONFIG_VALUE_0'] = auth_header
         else:
             env.pop('GIT_CONFIG_COUNT', None)
@@ -302,6 +366,10 @@ class GitClientMixin:
         *,
         dry_run: bool = False,
     ) -> None:
+        # Verify BEFORE the push: this is the operation that carries the
+        # provider token, and an approved push to a redirected remote
+        # hands that token to whoever owns it.
+        self._assert_remote_is_the_configured_one(local_path, repository)
         push_args = ['push']
         if dry_run:
             push_args.append('--dry-run')

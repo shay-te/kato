@@ -156,32 +156,22 @@ def main(cfg: DictConfig) -> int:
             check_docker_or_exit,
             check_gvisor_or_exit,
             docker_running_rootless,
-            gvisor_runtime_available,
             install_host_egress_backstop,
             prune_stale_secret_dirs,
             verify_audit_chain,
             reap_orphan_sandbox_containers,
         )
         check_docker_or_exit()
-        # gVisor is required by default for any docker-mode spawn —
-        # refuses to start without it unless the operator explicitly
-        # accepts the residual via KATO_SANDBOX_ALLOW_NO_GVISOR=true.
-        # The check applies regardless of bypass; docker-only mode
-        # gets the same kernel-CVE-isolation floor as the original
-        # bypass mode.
+        # gVisor is REQUIRED for any docker-mode spawn. There is no
+        # override any more: it is the only layer that survives a kernel
+        # bug, so a sandbox without it is not the sandbox kato claims.
+        # On Docker Desktop this means sandbox mode refuses to start —
+        # that is the intended, stated consequence.
         check_gvisor_or_exit()
-        if gvisor_runtime_available():
-            logger.info(
-                'sandbox: gVisor (runsc) runtime detected — using it '
-                'for syscall-level isolation on top of namespaces',
-            )
-        else:
-            logger.warning(
-                'sandbox: starting WITHOUT gVisor (operator override '
-                'KATO_SANDBOX_ALLOW_NO_GVISOR=true). Container relies '
-                'on the host kernel for isolation; a kernel CVE could '
-                'be used to escape. Other 8 sandbox layers still apply.',
-            )
+        logger.info(
+            'sandbox: gVisor (runsc) runtime active — syscall-level '
+            'isolation on top of namespaces',
+        )
         if not docker_running_rootless():
             logger.info(
                 'sandbox: Docker daemon is running in rooted mode. For '
@@ -1178,7 +1168,7 @@ def _start_planning_webserver_if_enabled(app) -> None:
     url = f'{scheme}://{host}:{port}'
     app.planning_webserver_url = url
     app.logger.info('planning webserver listening on %s', url)
-    _open_browser_when_ready(url, app.logger)
+    _open_browser_when_ready(_browser_url(scheme, host, port), app.logger)
 
 
 def _resolve_webserver_tls(logger) -> tuple[str, tuple[str, str] | None]:
@@ -1242,6 +1232,29 @@ def _serve_flask_with_bind_retry(
         except Exception:
             logger.exception('planning webserver crashed')
             return
+
+
+def _browser_url(scheme: str, host: str, port: int) -> str:
+    """The URL to hand the BROWSER, which is not always the bind address.
+
+    kato binds ``127.0.0.1`` — the literal loopback address — and that is
+    the right thing to bind. But on Windows the browser frequently cannot
+    load ``http://127.0.0.1:<port>``, while ``http://localhost:<port>``
+    to the very same socket works: proxy-bypass rules, IPv6 preference
+    and some security software all treat the literal address differently
+    from the name. Operators saw a blank tab and assumed kato had failed
+    to start.
+
+    So the bind stays numeric and only the DISPLAYED/opened URL uses the
+    hostname. ``localhost`` resolves to loopback, so this widens nothing:
+    the socket is still reachable only from this machine. A non-loopback
+    bind (the operator explicitly exposed kato) is passed through
+    untouched — rewriting that to ``localhost`` would open a tab pointing
+    at the wrong host entirely.
+    """
+    if host in ('127.0.0.1', '::1'):
+        return f'{scheme}://localhost:{port}'
+    return f'{scheme}://{host}:{port}'
 
 
 def _open_browser_when_ready(url: str, logger) -> None:

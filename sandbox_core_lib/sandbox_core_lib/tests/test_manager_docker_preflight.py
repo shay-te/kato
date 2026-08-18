@@ -154,34 +154,48 @@ class DockerRunningRootlessTests(unittest.TestCase):
 
 
 class CheckGvisorOrExitTests(unittest.TestCase):
+    """gVisor is mandatory. These tests used to assert the opposite.
+
+    The gate was waivable with ``KATO_SANDBOX_ALLOW_NO_GVISOR=true`` for
+    environments where runsc cannot be registered — which in practice
+    meant Docker Desktop, i.e. exactly the setups relying on the sandbox
+    hardest. Operator decision: the waiver is gone. gVisor is the only
+    layer that survives a kernel bug, and a guarantee any environment can
+    switch off is not a guarantee.
+    """
+
     def test_returns_silently_when_gvisor_available(self):
         with patch('sandbox_core_lib.sandbox_core_lib.manager.gvisor_runtime_available', return_value=True):
             check_gvisor_or_exit()  # no exception
 
-    def test_returns_silently_when_allow_no_gvisor_env_set(self):
-        with patch('sandbox_core_lib.sandbox_core_lib.manager.gvisor_runtime_available', return_value=False):
-            check_gvisor_or_exit(env={ALLOW_NO_GVISOR_ENV_KEY: 'true'})  # no exception
-
-    def test_exits_with_1_when_gvisor_unavailable_and_no_override(self):
-        stderr = io.StringIO()
+    def test_exits_when_gvisor_unavailable(self):
         with patch('sandbox_core_lib.sandbox_core_lib.manager.gvisor_runtime_available', return_value=False), \
              patch('sys.exit') as mock_exit:
             check_gvisor_or_exit(env={})
         mock_exit.assert_called_once_with(1)
 
-    def test_error_message_names_the_env_var_override(self):
+    def test_the_old_override_no_longer_waives_the_requirement(self):
+        # The inversion that matters: every truthy spelling of the retired
+        # flag must still exit. If this ever passes silently again, the
+        # waiver is back and the sandbox quietly lost its kernel boundary.
+        for value in ('1', 'yes', 'on', 'true', 'TRUE'):
+            with self.subTest(value=value):
+                with patch(
+                    'sandbox_core_lib.sandbox_core_lib.manager.gvisor_runtime_available',
+                    return_value=False,
+                ), patch('sys.exit') as mock_exit:
+                    check_gvisor_or_exit(env={ALLOW_NO_GVISOR_ENV_KEY: value})
+                mock_exit.assert_called_once_with(1)
+
+    def test_error_message_says_there_is_no_override(self):
         stderr = io.StringIO()
         with patch('sandbox_core_lib.sandbox_core_lib.manager.gvisor_runtime_available', return_value=False), \
              patch('sys.stderr', stderr), \
              patch('sys.exit'):
             check_gvisor_or_exit(env={})
-        self.assertIn(ALLOW_NO_GVISOR_ENV_KEY, stderr.getvalue())
-
-    def test_allow_no_gvisor_truthy_values(self):
-        for value in ('1', 'yes', 'on', 'true', 'TRUE'):
-            with self.subTest(value=value):
-                with patch('sandbox_core_lib.sandbox_core_lib.manager.gvisor_runtime_available', return_value=False):
-                    check_gvisor_or_exit(env={ALLOW_NO_GVISOR_ENV_KEY: value})
+        message = stderr.getvalue()
+        self.assertIn('no override', message.lower())
+        self.assertIn('gvisor.dev', message)
 
 
 # ---------------------------------------------------------------------------

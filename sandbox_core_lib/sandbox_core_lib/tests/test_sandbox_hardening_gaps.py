@@ -63,6 +63,82 @@ class SeccompPinTests(unittest.TestCase):
         self.assertIn('vendored', str(caught.exception))
 
 
+class GitDirIsReadOnlyTests(unittest.TestCase):
+    """``.git`` must not be writable by the agent.
+
+    Git config is a command-execution surface, and the HOST runs git
+    against the same clone the agent edits. ``core.fsmonitor`` in a
+    workspace ``.git/config`` gave a working sandbox-to-host RCE —
+    reproduced against this codebase, not theorised. Overriding the
+    dangerous keys treats symptoms and cannot cover content filters,
+    whose driver names are attacker-chosen. Freezing the directory
+    removes the input instead.
+    """
+
+    def _workspace(self, layout):
+        import tempfile
+        from pathlib import Path
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        for relative in layout:
+            (root / relative).mkdir(parents=True)
+        return str(root)
+
+    def test_each_clone_git_dir_is_mounted_read_only(self) -> None:
+        workspace = self._workspace(['client/.git', 'server/.git'])
+        mounts = manager._git_dir_readonly_mounts(workspace)
+        joined = ' '.join(mounts)
+        self.assertIn('/client/.git:/workspace/client/.git:ro', joined)
+        self.assertIn('/server/.git:/workspace/server/.git:ro', joined)
+        self.assertEqual(mounts.count('-v'), 2)
+
+    def test_nested_layouts_are_covered(self) -> None:
+        workspace = self._workspace(['group/service/.git'])
+        joined = ' '.join(manager._git_dir_readonly_mounts(workspace))
+        self.assertIn('/workspace/group/service/.git:ro', joined)
+
+    def test_a_workspace_without_clones_adds_no_mounts(self) -> None:
+        self.assertEqual(manager._git_dir_readonly_mounts(self._workspace(['src'])), [])
+
+    def test_git_file_worktrees_are_skipped(self) -> None:
+        # Submodules and linked worktrees use a ``.git`` FILE. Bind-mounting
+        # it read-only would be pointless and could break the link.
+        import tempfile
+        from pathlib import Path
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        (root / 'sub').mkdir()
+        (root / 'sub' / '.git').write_text('gitdir: /elsewhere\n', encoding='utf-8')
+        self.assertEqual(manager._git_dir_readonly_mounts(str(root)), [])
+
+    def test_the_overlay_comes_after_the_writable_workspace_mount(self) -> None:
+        # Docker applies later binds on top of earlier ones, so ordering
+        # is the whole mechanism: reversed, the read-only overlay would be
+        # replaced by the writable parent and .git would be writable again.
+        import tempfile
+        from pathlib import Path
+        fake_id = 'sha256:' + 'c' * 64
+        with tempfile.TemporaryDirectory(dir=Path.home()) as workspace:
+            (Path(workspace) / 'repo' / '.git').mkdir(parents=True)
+            with mock.patch.object(
+                manager, '_image_digest_strict', return_value=fake_id,
+            ):
+                argv = manager.wrap_command(
+                    ['claude'], workspace_path=workspace, task_id='T',
+                )
+        workspace_mount = next(
+            index for index, token in enumerate(argv)
+            if token.endswith(':/workspace:rw')
+        )
+        git_mount = next(
+            index for index, token in enumerate(argv)
+            if token.endswith('/repo/.git:ro')
+        )
+        self.assertLess(workspace_mount, git_mount)
+
+
 class AgentSeccompProfileTests(unittest.TestCase):
     """The spawn uses the TIGHTENED profile, and its delta stays auditable."""
 
@@ -459,9 +535,45 @@ class HostEgressBackstopTests(unittest.TestCase):
             captured['script'] = cmd[-1]
             return subprocess.CompletedProcess(cmd, 0, '7\n', '')
 
-        with mock.patch.object(manager.subprocess, 'run', side_effect=fake_run):
+        with mock.patch.object(manager.subprocess, 'run', side_effect=fake_run), \
+             mock.patch.object(manager, 'ensure_network'), \
+             mock.patch.object(manager, '_image_digest_strict', return_value='sha256:' + 'e' * 64):
             self.assertTrue(manager.install_host_egress_backstop())
         return captured['script']
+
+    def test_helper_is_not_privileged(self) -> None:
+        # The helper edits host netfilter, so it needs NET_ADMIN — and
+        # nothing else. Running it ``--privileged`` promoted any
+        # compromise of the sandbox image into a privileged host-network
+        # container, which is worse than the leak this closes.
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            if cmd[:3] == ['docker', 'network', 'inspect']:
+                return subprocess.CompletedProcess(cmd, 0, '172.18.0.0/16 ', '')
+            captured['cmd'] = cmd
+            return subprocess.CompletedProcess(cmd, 0, '7\n', '')
+
+        with mock.patch.object(manager.subprocess, 'run', side_effect=fake_run), \
+             mock.patch.object(manager, 'ensure_network'), \
+             mock.patch.object(manager, '_image_digest_strict', return_value='sha256:' + 'e' * 64):
+            manager.install_host_egress_backstop()
+        cmd = captured['cmd']
+        self.assertNotIn('--privileged', cmd)
+        self.assertIn('NET_ADMIN', cmd)
+        self.assertIn('ALL', cmd)                    # --cap-drop ALL
+        self.assertIn('no-new-privileges', cmd)
+        self.assertIn('--read-only', cmd)
+        # Pinned by resolved image ID, not a mutable tag.
+        self.assertTrue(any(str(a).startswith('sha256:') for a in cmd))
+
+    def test_network_is_created_before_the_subnet_lookup(self) -> None:
+        # At boot nothing has spawned yet, so the bridge may not exist —
+        # the backstop would look up an empty subnet and silently skip.
+        with mock.patch.object(manager, 'ensure_network') as ensure, \
+             mock.patch.object(manager, '_sandbox_bridge_subnet', return_value=''):
+            self.assertFalse(manager.install_host_egress_backstop())
+        ensure.assert_called_once()
 
     def test_rules_are_scoped_to_the_sandbox_bridge_only(self) -> None:
         script = self._captured_script()

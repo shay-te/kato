@@ -29,11 +29,18 @@ class RunGitTests(unittest.TestCase):
             out = git_diff_utils.run_git('/repo', ['rev-parse', 'HEAD'], timeout=5)
         self.assertEqual(out, 'hello\n')
         args, kwargs = mock_run.call_args
-        self.assertEqual(
-            args[0],
-            ['git', '-c', 'safe.directory=/repo', '-c', 'core.hooksPath=/dev/null',
-             '-C', '/repo', 'rev-parse', 'HEAD'],
+        # Built from the shared helper rather than a literal list: the
+        # hardening flag set grows when a new command-executing git config
+        # key is discovered, and re-pinning 20 tokens in every call-site
+        # test just makes that growth expensive without proving anything.
+        from git_core_lib.git_core_lib.helpers.git_command_utils import (
+            build_safe_git_command,
         )
+        self.assertEqual(
+            args[0], build_safe_git_command('/repo', ['rev-parse', 'HEAD']),
+        )
+        self.assertIn('core.hooksPath=/dev/null', args[0])
+        self.assertIn('core.fsmonitor=false', args[0])
         self.assertEqual(kwargs['timeout'], 5)
         self.assertEqual(kwargs['encoding'], 'utf-8')
 

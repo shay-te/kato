@@ -524,7 +524,7 @@ def print_security_posture(*, env: dict | None = None, stderr=None) -> None:
             '    • Default-DROP egress firewall (api.anthropic.com:443 only)',
             '    • Capability drop ALL + non-root container user',
             '    • Read-only rootfs + per-task tmpfs for /home/claude/.claude',
-            '    • gVisor runtime (or KATO_SANDBOX_ALLOW_NO_GVISOR=true override)',
+            '    • gVisor runtime (required — no override)',
             '    • Audit log with hash chain at ~/.kato/sandbox-audit.log',
             '',
             '  See BYPASS_PROTECTIONS.md for the full layer breakdown.',

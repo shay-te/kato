@@ -830,7 +830,7 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         """Repo-relative paths with conflict (unmerged) index entries."""
         result = self._run_git_subprocess(
             local_path,
-            ['diff', '--name-only', '--diff-filter=U'],
+            ['diff', '--no-ext-diff', '--name-only', '--diff-filter=U'],
         )
         if result.returncode != 0:
             return []
@@ -1203,7 +1203,7 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
     def _staged_paths(self, local_path: str) -> list[str]:
         output = self._git_stdout(
             local_path,
-            ['diff', '--cached', '--name-only'],
+            ['diff', '--no-ext-diff', '--cached', '--name-only'],
             f'failed to inspect staged paths for repository at {local_path}',
         )
         return [line for line in output.splitlines() if line.strip()]

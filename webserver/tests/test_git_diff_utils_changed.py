@@ -114,7 +114,12 @@ class DiffBaseTests(unittest.TestCase):
         ) as mock_rg:
             git_diff_utils.changed_paths('/repo', 'origin/master')
         diff_call = mock_rg.call_args_list[1].args[1]
-        self.assertEqual(diff_call, ['diff', '--name-only', 'f0rkp0int'])
+        # ``--no-ext-diff`` is part of the contract: without it a
+        # ``diff.external`` line in the agent-writable .git/config runs a
+        # host command whenever a diff is generated.
+        self.assertEqual(
+            diff_call, ['diff', '--no-ext-diff', '--name-only', 'f0rkp0int'],
+        )
 
 
 if __name__ == '__main__':

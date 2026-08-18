@@ -347,7 +347,13 @@ def changed_paths(cwd: str, base_ref: str) -> list[str]:
     if not cwd or not base_ref:
         return []
     paths: set[str] = set()
-    tracked = run_git(cwd, ['diff', '--name-only', _diff_base(cwd, base_ref)], timeout=20)
+    # ``--no-ext-diff``: the repo is agent-writable, so ``diff.external``
+    # in its .git/config would otherwise run an attacker-chosen command
+    # on the HOST whenever a diff is generated.
+    tracked = run_git(
+        cwd, ['diff', '--no-ext-diff', '--name-only', _diff_base(cwd, base_ref)],
+        timeout=20,
+    )
     if tracked:
         for line in tracked.splitlines():
             path = line.strip()
@@ -489,7 +495,9 @@ def diff_against_base(cwd: str, base_ref: str, full_paths=()) -> str:
       * Large untracked files get a placeholder hunk instead of dumping
         megabytes into the response.
     """
-    main_diff = run_git(cwd, ['diff', _diff_base(cwd, base_ref)], timeout=30) or ''
+    main_diff = run_git(
+        cwd, ['diff', '--no-ext-diff', _diff_base(cwd, base_ref)], timeout=30,
+    ) or ''
     return (
         _elide_oversized_file_diffs(main_diff, full_paths=full_paths)
         + _untracked_files_as_diff(cwd)

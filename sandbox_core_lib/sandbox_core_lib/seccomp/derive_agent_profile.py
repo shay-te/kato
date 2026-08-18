@@ -50,6 +50,21 @@ DENIED_SYSCALLS = {
     # subsystem. Neither has any use here.
     'kcmp',
     'lookup_dcookie',
+    # io_uring: a large, fast-moving kernel subsystem that submits work
+    # asynchronously, which has both produced a steady stream of CVEs and
+    # been used to bypass syscall-level auditing (the work is queued, not
+    # syscalled). Node and the CLI do not need it; if a future runtime
+    # does, the failure is loud and this list is one line to revisit.
+    'io_uring_setup',
+    'io_uring_enter',
+    'io_uring_register',
+    # Legacy AIO, same reasoning and no modern user here.
+    'io_setup',
+    'io_submit',
+    'io_destroy',
+    'io_getevents',
+    'io_cancel',
+    'io_pgetevents',
 }
 
 
