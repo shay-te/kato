@@ -114,6 +114,13 @@ iptables -A OUTPUT -d 255.255.255.255/32 -j DROP   # limited broadcast
 # Rate limit: 60 queries / minute with a burst of 20. Normal Claude
 # operation needs maybe a dozen DNS lookups per session; this leaves
 # headroom for retries while making bulk exfil impractical.
+# With the per-task proxy in play the container resolves its ONE
+# permitted name from /etc/hosts, so it needs no DNS at all — and the
+# rate-limited DNS exfiltration channel disappears entirely rather than
+# being merely bounded.
+if [ -n "${AGENT_SANDBOX_EGRESS_PROXY_IP:-}" ]; then
+    echo "[kato-sandbox] DNS disabled: egress is proxy-pinned, nothing to resolve"
+else
 iptables -A OUTPUT -p udp --dport 53 -d 1.1.1.1/32 \
     -m hashlimit --hashlimit-name dns-out \
     --hashlimit-above 60/minute --hashlimit-burst 20 \
@@ -140,6 +147,7 @@ iptables -A OUTPUT -p tcp --dport 53 -d 1.0.0.1/32 \
     --hashlimit-mode dstip -j DROP
 iptables -A OUTPUT -p tcp --dport 53 -d 1.1.1.1/32 -j ACCEPT
 iptables -A OUTPUT -p tcp --dport 53 -d 1.0.0.1/32 -j ACCEPT
+fi
 
 # ICMP entirely off — no ping, no traceroute, no ICMP-tunnel exfil.
 iptables -A OUTPUT -p icmp -j DROP
@@ -217,7 +225,22 @@ ipset list allowed-domains | tail -n +8 | sed 's/^/[kato-sandbox]   /'
 # error spirals (retries hammering a dead endpoint, MCP fallbacks
 # activating, etc.) — and is potentially dangerous if the operator
 # misreads the failure as "Claude is working but slow." Fail closed.
-if ! curl --connect-timeout 5 -sI https://api.anthropic.com/ >/dev/null 2>&1; then
+# Retry before declaring failure. The check runs microseconds after the
+# rules land, and when egress goes through a freshly started per-task
+# proxy the FIRST request also pays that proxy's cold start (interpreter
+# up, upstream DNS, first TLS). A single 5s shot failed there while the
+# very next attempt succeeded — which looked like "the firewall is
+# broken" and refused to start a perfectly healthy sandbox. Still
+# fail-closed; just not on the first stumble.
+anthropic_reachable=0
+for attempt in 1 2 3; do
+    if curl --connect-timeout 5 -sI https://api.anthropic.com/ >/dev/null 2>&1; then
+        anthropic_reachable=1
+        break
+    fi
+    sleep 2
+done
+if [ "$anthropic_reachable" -ne 1 ]; then
     echo "[kato-sandbox] ERROR: cannot reach api.anthropic.com — refusing to start (firewall and/or upstream broken)" >&2
     exit 1
 fi

@@ -1322,7 +1322,6 @@ key/value flags, `--key` for boolean flags. Two-token argv form
 (`--key value`) is matched as if it were single-token (`--key=value`).
 
 <!-- SECURITY-INVARIANTS:required-docker-flags:BEGIN -->
-- --network=kato-sandbox-net
 - --ipc=none
 - --cgroupns=private
 - --cap-drop=ALL
@@ -1492,6 +1491,7 @@ keeps the named set in sync with the code constant.
 - ipv6-disabled
 - fail-closed-on-anthropic-unreachable
 - refuses-private-ip-in-allowlist
+- isolated-non-default-network
 <!-- SECURITY-INVARIANTS:firewall-guarantees:END -->
 
 ### Seccomp guarantees

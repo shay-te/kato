@@ -242,7 +242,6 @@ _FORBIDDEN_MOUNT_SOURCES_EXACT = frozenset({
 # matcher accepts either single-token (``--ipc=none``) or two-token
 # (``--ipc none``) form in argv.
 _REQUIRED_DOCKER_FLAGS = frozenset({
-    '--network=kato-sandbox-net',
     '--ipc=none',
     '--cgroupns=private',
     '--cap-drop=ALL',
@@ -317,6 +316,7 @@ _FIREWALL_GUARANTEES = frozenset({
     'ipv6-disabled',
     'fail-closed-on-anthropic-unreachable',
     'refuses-private-ip-in-allowlist',
+    'isolated-non-default-network',
 })
 
 # Seccomp guarantees — named tags for properties of the pinned profile.
@@ -1141,8 +1141,13 @@ def wrap_command(
     # silently use the default (runc) otherwise.
     if gvisor_runtime_available():
         argv.extend(['--runtime', 'runsc'])
+    # Per-task egress: the sandbox joins ONLY its private 2-member network
+    # and reaches the internet solely through its own SNI-pinning proxy.
+    # Falls back to the shared bridge + address allowlist if the proxy
+    # cannot be started — a weaker rule is better than a spawn that fails.
+    task_network, proxy_ip = start_task_egress_proxy(resolved_container_name)
     argv.extend([
-        '--network', _SANDBOX_NETWORK_NAME,    # custom bridge with --icc=false
+        '--network', task_network or _SANDBOX_NETWORK_NAME,
         '--ipc=none',                          # no shared memory / sysv IPC channel
         '--cgroupns=private',                  # private cgroup namespace (host cgroup tree is invisible)
         # NOTE: there is deliberately no ``--pid`` flag. Docker accepts
@@ -1267,6 +1272,14 @@ def wrap_command(
         # path it had been using breaks.
         '-w', _container_workdir(workdir_subpath),
     ])
+    if proxy_ip:
+        argv.extend([
+            # The name resolves to the proxy INSIDE the container, so the
+            # firewall (which resolves it) allowlists the proxy and the
+            # sandbox never learns the real addresses.
+            '--add-host', f'{EGRESS_ALLOWED_HOST}:{proxy_ip}',
+            '-e', f'{EGRESS_PROXY_ENV_KEY}={proxy_ip}',
+        ])
     # NOTE: the SNI proxy (``ensure_egress_proxy`` / ``sni_proxy.py``) is
     # deliberately NOT wired in here yet. Routing the container at a proxy
     # on the sandbox bridge does not work: that bridge runs with
@@ -1331,6 +1344,7 @@ def wrap_command(
     # to the caller for Popen. Runs on the DOCKER portion only — the
     # inner Claude command is appended after this point so a user
     # prompt can never satisfy (or trip) a docker-flag assertion.
+    _assert_isolated_network(argv)
     _assert_sandbox_flags(argv)
     argv.extend(inner_command)
     return argv
@@ -2267,26 +2281,26 @@ def arm_container_watchdog(
     return WatchdogHandle(process, write_fd, container_name)
 
 
-_EGRESS_PROXY_CONTAINER = f'{_SANDBOX_NETWORK_NAME}-egress-proxy'
-# 443, because the container reaches the proxy by resolving
-# ``api.anthropic.com`` — the URL carries the port, so the proxy has to
-# answer on the one the client would have used. It is a private netns, so
-# nothing on the host is affected.
-_EGRESS_PROXY_PORT = 443
-# Python, because the proxy is python. Pinned by digest at run time the
-# same way the sandbox image is.
 _EGRESS_PROXY_IMAGE = 'python:3.11-slim'
+_EGRESS_PROXY_PORT = 443
 EGRESS_PROXY_ENV_KEY = 'AGENT_SANDBOX_EGRESS_PROXY_IP'
+EGRESS_ALLOWED_HOST = 'api.anthropic.com'
 
 
-def _egress_proxy_ip() -> str:
-    """IP of the running proxy on the sandbox network, or ''."""
+def _task_network_name(container_name: str) -> str:
+    return f'{container_name}-net'
+
+
+def _task_proxy_name(container_name: str) -> str:
+    return f'{container_name}-proxy'
+
+
+def _container_ip_on(container: str, network: str) -> str:
     try:
         result = subprocess.run(
             [
-                'docker', 'inspect', _EGRESS_PROXY_CONTAINER,
-                '--format',
-                '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}',
+                'docker', 'inspect', container, '--format',
+                '{{with index .NetworkSettings.Networks "' + network + '"}}{{.IPAddress}}{{end}}',
             ],
             capture_output=True, text=True,
             encoding='utf-8', errors='replace', timeout=30,
@@ -2296,78 +2310,159 @@ def _egress_proxy_ip() -> str:
     return result.stdout.strip() if result.returncode == 0 else ''
 
 
-def ensure_egress_proxy(*, logger: logging.Logger | None = None) -> str:
-    """Start (idempotently) the SNI-pinning proxy; return its IP or ''.
+def _wait_for_proxy_listening(
+    proxy: str,
+    *,
+    timeout: float = 20.0,
+    logger: logging.Logger | None = None,
+) -> bool:
+    """Poll until the proxy accepts connections on its port."""
+    probe = (
+        'import socket,sys;'
+        's=socket.create_connection(("127.0.0.1",%d),timeout=1);s.close()'
+        % _EGRESS_PROXY_PORT
+    )
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            result = subprocess.run(
+                ['docker', 'exec', proxy, 'python3', '-c', probe],
+                capture_output=True, timeout=15,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        if result.returncode == 0:
+            return True
+        time.sleep(0.25)
+    if logger is not None:
+        logger.warning('egress proxy %s never started listening', proxy)
+    return False
 
-    Why this exists: the in-container firewall allowlists the ADDRESSES
-    ``api.anthropic.com`` resolved to, and those are shared cloud
-    addresses. Code in the container picks its own hostname, so it can
-    reach any other tenant behind the same IP with a valid certificate —
-    an IP allowlist is not a hostname allowlist. The proxy reads the
-    ClientHello, enforces the exact hostname, and forwards bytes without
-    terminating TLS (no key, no certificate, no interception).
 
-    Best-effort: a failure here leaves the existing IP-based allowlist in
-    force rather than blocking spawns.
+def start_task_egress_proxy(
+    container_name: str,
+    *,
+    owner_labels: bool = True,
+    logger: logging.Logger | None = None,
+) -> tuple[str, str]:
+    """Private network + SNI proxy for ONE sandbox. ``(network, proxy_ip)``.
+
+    Topology, and why it is shaped this way:
+
+        sandbox ──(private 2-member network)── proxy ──(sandbox bridge)── internet
+
+    The sandbox joins ONLY the private network, so it has no route to the
+    internet at all; its single reachable peer is the proxy. The proxy is
+    two-legged: it also sits on the main sandbox bridge, which is where
+    its own outbound traffic goes.
+
+    That arrangement is what makes hostname pinning enforceable. The old
+    single-bridge design allowlisted the IP addresses ``api.anthropic.com``
+    resolved to — shared cloud addresses, so anything else behind them was
+    reachable and the client picked its own hostname. Here the sandbox
+    never learns those addresses: ``api.anthropic.com`` is pointed at the
+    proxy, and the proxy enforces the name from the TLS ClientHello.
+
+    The private network has exactly two members, so inter-container
+    communication on it grants precisely the one conversation intended —
+    the main bridge keeps ``enable_icc=false`` and sandboxes still cannot
+    reach each other.
+
+    Returns ``('', '')`` on any failure; the caller then falls back to the
+    plain bridge, because a spawn that cannot start is worse than one
+    running under the older, weaker egress rule.
     """
-    existing = _egress_proxy_ip()
-    if existing:
-        return existing
-    try:
-        ensure_network(logger=logger)
-    except SandboxError:
-        return ''
+    network = _task_network_name(container_name)
+    proxy = _task_proxy_name(container_name)
+    labels: list[str] = []
+    if owner_labels:
+        labels = [
+            '--label', f'{_IMAGE_IDENTITY_LABEL}={_IMAGE_IDENTITY_VALUE}',
+            '--label', f'{_OWNER_PID_LABEL}={os.getpid()}',
+            '--label', f'{_OWNER_BOOT_LABEL}={host_boot_identity()}',
+        ]
     proxy_source = Path(__file__).resolve().parent / 'sni_proxy.py'
     try:
-        subprocess.run(
-            ['docker', 'rm', '-f', _EGRESS_PROXY_CONTAINER],
-            capture_output=True, timeout=60,
+        ensure_network(logger=logger)
+        created = subprocess.run(
+            ['docker', 'network', 'create', '--driver', 'bridge', *labels, network],
+            capture_output=True, text=True,
+            encoding='utf-8', errors='replace', timeout=60,
         )
-        result = subprocess.run(
+        if created.returncode != 0 and 'already exists' not in (created.stderr or ''):
+            raise SandboxError((created.stderr or '').strip()[:200])
+        started = subprocess.run(
             [
                 'docker', 'run', '-d',
-                '--name', _EGRESS_PROXY_CONTAINER,
-                '--network', _SANDBOX_NETWORK_NAME,
-                '--label', f'{_IMAGE_IDENTITY_LABEL}={_IMAGE_IDENTITY_VALUE}',
-                '--label', f'{_OWNER_PID_LABEL}={os.getpid()}',
-                '--label', f'{_OWNER_BOOT_LABEL}={host_boot_identity()}',
-                # The proxy needs no privileges of any kind: it reads a
-                # socket and opens another one.
+                '--name', proxy,
+                '--network', network,
+                *labels,
+                # The proxy needs no privileges beyond binding :443 in its
+                # own namespace.
                 '--cap-drop', 'ALL',
-                # The one capability it needs: bind a port below 1024.
                 '--cap-add', 'NET_BIND_SERVICE',
                 '--security-opt', 'no-new-privileges',
                 '--read-only',
                 '--tmpfs', '/tmp:rw,nosuid,nodev,size=8m',
                 '--memory', '128m', '--pids-limit', '64',
-                '--restart', 'no',
                 '-v', f'{proxy_source}:/app/sni_proxy.py:ro',
                 _EGRESS_PROXY_IMAGE,
                 'python3', '/app/sni_proxy.py',
                 '--port', str(_EGRESS_PROXY_PORT),
-                '--allow', 'api.anthropic.com',
+                '--allow', EGRESS_ALLOWED_HOST,
             ],
             capture_output=True, text=True,
             encoding='utf-8', errors='replace', timeout=120,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        if logger is not None:
-            logger.warning('egress proxy not started: %s', exc)
-        return ''
-    if result.returncode != 0:
+        if started.returncode != 0:
+            raise SandboxError((started.stderr or '').strip()[:200])
+        # Second leg: the route OUT. Without this the proxy cannot reach
+        # the host it exists to forward to.
+        attached = subprocess.run(
+            ['docker', 'network', 'connect', _SANDBOX_NETWORK_NAME, proxy],
+            capture_output=True, text=True,
+            encoding='utf-8', errors='replace', timeout=60,
+        )
+        if attached.returncode != 0:
+            raise SandboxError((attached.stderr or '').strip()[:200])
+    except (OSError, subprocess.TimeoutExpired, SandboxError) as exc:
         if logger is not None:
             logger.warning(
-                'egress proxy not started: %s',
-                (result.stderr or '').strip()[:200],
+                'per-task egress proxy unavailable (%s); falling back to the '
+                'address-based allowlist', exc,
             )
-        return ''
-    address = _egress_proxy_ip()
-    if address and logger is not None:
+        remove_task_egress_proxy(container_name)
+        return '', ''
+    address = _container_ip_on(proxy, network)
+    if not address:
+        remove_task_egress_proxy(container_name)
+        return '', ''
+    # WAIT for the listener. The sandbox starts immediately after this
+    # returns and its firewall self-check dials the proxy straight away —
+    # without this the spawn races the interpreter's startup and fails
+    # closed with "cannot reach api.anthropic.com", which reads like a
+    # network fault rather than a few hundred milliseconds of Python.
+    if not _wait_for_proxy_listening(proxy, logger=logger):
+        remove_task_egress_proxy(container_name)
+        return '', ''
+    if logger is not None:
         logger.info(
-            'egress proxy running at %s: only TLS to api.anthropic.com is '
-            'forwarded, by SNI rather than by IP', address,
+            'egress for %s is pinned to %s via its own proxy at %s',
+            container_name, EGRESS_ALLOWED_HOST, address,
         )
-    return address
+    return network, address
+
+
+def remove_task_egress_proxy(container_name: str) -> None:
+    """Tear down one sandbox's proxy container and private network."""
+    for command in (
+        ['docker', 'rm', '-f', _task_proxy_name(container_name)],
+        ['docker', 'network', 'rm', _task_network_name(container_name)],
+    ):
+        try:
+            subprocess.run(command, capture_output=True, timeout=60)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
 
 
 def _backstop_tag() -> str:
@@ -2863,6 +2958,35 @@ def flag_present_in_argv(argv: list[str], flag: str) -> bool:
         if token == key and i + 1 < len(argv) and argv[i + 1] == value:
             return True
     return False
+
+
+def _assert_isolated_network(argv: list[str]) -> None:
+    """The sandbox must join an isolated network, never a shared default.
+
+    This replaced a literal ``--network=<fixed name>`` requirement. The
+    name is no longer fixed — each task now gets its own two-member
+    network — but the PROPERTY still has to hold, and it is the property
+    the threat model depends on: never the host stack, never Docker's
+    default bridge (where every unrelated container on the machine is a
+    neighbour), never ``none``.
+    """
+    values = [
+        argv[index + 1] for index, token in enumerate(argv)
+        if token == '--network' and index + 1 < len(argv)
+    ]
+    values += [
+        token.split('=', 1)[1] for token in argv if token.startswith('--network=')
+    ]
+    if len(values) != 1:
+        raise SandboxError(
+            f'sandbox argv must join exactly one network, found {len(values)}',
+        )
+    network = values[0]
+    if network in ('host', 'bridge', 'none', 'default', ''):
+        raise SandboxError(
+            f'sandbox must not use the {network!r} network — it needs an '
+            f'isolated bridge, not the host stack or the shared default.',
+        )
 
 
 def _assert_sandbox_flags(argv: list[str]) -> None:
