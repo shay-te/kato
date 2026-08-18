@@ -5,7 +5,7 @@
 // closes, Ctrl/Cmd+W closes the focused tab.
 
 import { describe, test, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 
 import FileTabStrip from './FileTabStrip.jsx';
 
@@ -270,5 +270,96 @@ describe('FileTabStrip — diff/file view toggle', () => {
 
     expect(container.querySelector('.file-tab-view-toggle')).toBeNull();
     expect(container.querySelector('.file-tab svg')).toBeInTheDocument();
+  });
+});
+
+// --------------------------------------------------------------------------
+// Reveal-on-tree-click + right-click menu
+// --------------------------------------------------------------------------
+
+describe('FileTabStrip — reveal and context menu', () => {
+  const tabs = [
+    { key: 'a', relativePath: 'src/app.py', view: 'file' },
+    { key: 'b', relativePath: 'src/other.py', view: 'file' },
+  ];
+
+  function strip(props = {}) {
+    return render(
+      <FileTabStrip
+        tabs={tabs}
+        activeKey="a"
+        onSelect={() => {}}
+        onClose={() => {}}
+        {...props}
+      />,
+    );
+  }
+
+  test('scrolls the active tab into view only when the reveal id changes', () => {
+    const scrollIntoView = vi.fn();
+    window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    const { rerender } = strip({ revealRequestId: 1 });
+    scrollIntoView.mockClear();
+
+    // A re-render that is NOT a new tree click must not move the strip —
+    // this is the "don't fight my scrolling" requirement.
+    rerender(
+      <FileTabStrip tabs={tabs} activeKey="b" onSelect={() => {}} onClose={() => {}}
+        revealRequestId={1} />,
+    );
+    expect(scrollIntoView).not.toHaveBeenCalled();
+
+    rerender(
+      <FileTabStrip tabs={tabs} activeKey="b" onSelect={() => {}} onClose={() => {}}
+        revealRequestId={2} />,
+    );
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+  });
+
+  test('right-click opens the menu with every action', () => {
+    strip({ onCloseAll: vi.fn(), onCloseOthers: vi.fn(), onTogglePin: vi.fn() });
+    fireEvent.contextMenu(screen.getByText('app.py'));
+    const menu = screen.getByRole('menu');
+    for (const label of ['Close', 'Close others', 'Close all', 'Pin tab', 'Copy file name']) {
+      expect(within(menu).getByText(label)).toBeInTheDocument();
+    }
+  });
+
+  test('close others is disabled when it is the only tab', () => {
+    render(
+      <FileTabStrip tabs={[tabs[0]]} activeKey="a" onSelect={() => {}} onClose={() => {}}
+        onCloseOthers={vi.fn()} />,
+    );
+    fireEvent.contextMenu(screen.getByText('app.py'));
+    expect(screen.getByText('Close others')).toBeDisabled();
+  });
+
+  test('each action fires for the tab that was right-clicked, not the active one', () => {
+    const onClose = vi.fn();
+    const onCloseOthers = vi.fn();
+    const onTogglePin = vi.fn();
+    strip({ onClose, onCloseOthers, onTogglePin, onCloseAll: vi.fn() });
+    fireEvent.contextMenu(screen.getByText('other.py'));   // the INACTIVE tab
+    fireEvent.click(screen.getByText('Close others'));
+    expect(onCloseOthers).toHaveBeenCalledWith('b');
+  });
+
+  test('a pinned tab offers Unpin', () => {
+    render(
+      <FileTabStrip
+        tabs={[{ ...tabs[0], pinned: true }]}
+        activeKey="a" onSelect={() => {}} onClose={() => {}} onTogglePin={vi.fn()}
+      />,
+    );
+    fireEvent.contextMenu(screen.getByText('app.py'));
+    expect(screen.getByText('Unpin tab')).toBeInTheDocument();
+  });
+
+  test('the menu dismisses on outside click', () => {
+    strip({ onCloseAll: vi.fn() });
+    fireEvent.contextMenu(screen.getByText('app.py'));
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    fireEvent.click(window);
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
 });

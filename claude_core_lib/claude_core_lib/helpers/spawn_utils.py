@@ -137,6 +137,7 @@ def wrap_spawn_for_docker(
         enforce_no_workspace_secrets,
         make_container_name,
         record_spawn,
+        start_task_egress_proxy,
         wrap_command,
     )
 
@@ -159,9 +160,21 @@ def wrap_spawn_for_docker(
         raise RuntimeError(
             f'sandbox spawn blocked: {exc}',
         ) from exc
+    # Per-task egress: a private ``--internal`` network with exactly this
+    # sandbox and its own SNI-pinning proxy. Raises (rather than quietly
+    # using a weaker rule) if it cannot be created — the guarantee is not
+    # worth having if it can silently switch itself off.
+    try:
+        task_network, proxy_ip = start_task_egress_proxy(
+            container_name, logger=logger,
+        )
+    except SandboxError as exc:
+        raise RuntimeError(f'sandbox egress setup failed: {exc}') from exc
     wrapped = wrap_command(
         command,
         workspace_path=workspace_path,
+        task_network=task_network,
+        proxy_ip=proxy_ip,
         # Set when the mount is WIDER than the directory the agent should
         # start in (task folder mounted, primary repo as cwd).
         workdir_subpath=workdir_subpath,

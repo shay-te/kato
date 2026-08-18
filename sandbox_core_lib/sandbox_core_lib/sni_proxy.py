@@ -39,6 +39,60 @@ MAX_CLIENT_HELLO = 16384
 UPSTREAM_PORT = 443
 
 
+NAME_TYPE_HOST_NAME = 0x00
+
+
+def _parse_server_name_list(ext_body: bytes) -> str:
+    """Parse the server_name extension STRICTLY, or return ''.
+
+    This is where a parser differential turns into a bypass. The
+    extension is a LIST of typed entries, and the first version of this
+    function read bytes 3..5 as "the name" — skipping the list length and
+    never checking the entry TYPE. A ClientHello carrying
+
+        entry[0]: type=0xFF, "api.anthropic.com"
+        entry[1]: type=0x00, "attacker.example"
+
+    would then be allowed on the strength of a name the real server never
+    looks at, while the bytes forwarded verbatim ask the far end for the
+    attacker's host — precisely the shared-address bypass this proxy
+    exists to prevent.
+
+    So: walk the list properly, accept ONLY a host_name entry, and refuse
+    anything anomalous rather than trying to guess which entry a given
+    TLS stack would honour. Real clients send exactly one host_name.
+    Emulating other implementations' recovery behaviour is how the two
+    ends end up disagreeing, which is the bug class itself.
+    """
+    list_length = int.from_bytes(ext_body[0:2], 'big')
+    entries = ext_body[2:2 + list_length]
+    if len(entries) != list_length:
+        return ''                              # declared length is a lie
+    host = ''
+    pos = 0
+    while pos + 3 <= len(entries):
+        name_type = entries[pos]
+        name_length = int.from_bytes(entries[pos + 1:pos + 3], 'big')
+        value = entries[pos + 3:pos + 3 + name_length]
+        if len(value) != name_length:
+            return ''
+        pos += 3 + name_length
+        if name_type != NAME_TYPE_HOST_NAME:
+            # A non-host_name entry is not something a legitimate client
+            # sends. Refuse rather than skip: skipping is exactly what
+            # lets a crafted list mean two different things.
+            return ''
+        if host:
+            return ''                          # duplicate host_name
+        try:
+            host = value.decode('ascii').lower()
+        except UnicodeDecodeError:
+            return ''
+    if pos != len(entries):
+        return ''                              # trailing bytes
+    return host
+
+
 def parse_sni(data: bytes) -> str:
     """Extract the SNI host from a TLS ClientHello, or '' if absent.
 
@@ -78,13 +132,9 @@ def parse_sni(data: bytes) -> str:
             ext_length = int.from_bytes(body[pos + 2:pos + 4], 'big')
             ext_body = body[pos + 4:pos + 4 + ext_length]
             pos += 4 + ext_length
-            if ext_type != EXTENSION_SERVER_NAME or len(ext_body) < 5:
+            if ext_type != EXTENSION_SERVER_NAME or len(ext_body) < 2:
                 continue
-            name_length = int.from_bytes(ext_body[3:5], 'big')
-            host = ext_body[5:5 + name_length]
-            if len(host) != name_length:
-                return ''
-            return host.decode('ascii', errors='replace').lower()
+            return _parse_server_name_list(ext_body)
     except (IndexError, ValueError):
         return ''
     return ''
@@ -124,6 +174,7 @@ async def handle_client(
     allowlist: frozenset[str],
     upstream_port: int = UPSTREAM_PORT,
     resolve=socket.gethostbyname,
+    upstream_ips: dict[str, str] | None = None,
 ) -> None:
     """Read the ClientHello, allow or drop, then splice both directions."""
     peer = writer.get_extra_info('peername')
@@ -140,9 +191,13 @@ async def handle_client(
         writer.close()
         return
     try:
-        # Resolve OUTSIDE the container's view. The client cannot choose
-        # the address for a name it does not resolve itself.
-        address = resolve(host)
+        # Prefer an address resolved on the HOST and handed to us at
+        # startup. Nothing in this container then performs DNS at all:
+        # no resolver to poison, no lookup to tunnel data through, and no
+        # dependency on an embedded resolver whose forwarding path is
+        # itself firewalled. Falls back to a lookup only if none was
+        # supplied.
+        address = (upstream_ips or {}).get(host) or resolve(host)
         upstream_reader, upstream_writer = await asyncio.open_connection(
             address, upstream_port,
         )
@@ -160,11 +215,13 @@ async def handle_client(
 
 
 async def serve(
-    host: str, port: int, allowlist: frozenset[str], *, upstream_port: int = UPSTREAM_PORT,
+    host: str, port: int, allowlist: frozenset[str], *,
+    upstream_port: int = UPSTREAM_PORT, upstream_ips: dict[str, str] | None = None,
 ):
     async def _handler(reader, writer):
         await handle_client(
             reader, writer, allowlist=allowlist, upstream_port=upstream_port,
+            upstream_ips=upstream_ips,
         )
 
     server = await asyncio.start_server(_handler, host, port)
@@ -179,6 +236,10 @@ def main(argv: list[str] | None = None) -> int:
         '--allow', action='append', default=[],
         help='hostname permitted through (exact match; repeatable)',
     )
+    parser.add_argument(
+        '--upstream', action='append', default=[],
+        help='host=ip resolved by the CALLER, so this process never does DNS',
+    )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format='[sni-proxy] %(message)s')
     allowlist = frozenset(a.strip().lower() for a in args.allow if a.strip())
@@ -186,8 +247,16 @@ def main(argv: list[str] | None = None) -> int:
         _LOGGER.error('refusing to start with an empty allowlist')
         return 2
 
+    upstream_ips = {}
+    for pair in args.upstream:
+        name, _, address = pair.partition('=')
+        if name.strip() and address.strip():
+            upstream_ips[name.strip().lower()] = address.strip()
+
     async def _run():
-        server = await serve(args.listen, args.port, allowlist)
+        server = await serve(
+            args.listen, args.port, allowlist, upstream_ips=upstream_ips,
+        )
         _LOGGER.info('listening on %s:%s, allowing %s',
                      args.listen, args.port, ', '.join(sorted(allowlist)))
         async with server:

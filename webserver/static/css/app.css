@@ -4082,6 +4082,25 @@ code {
   color: #a3a3a3;
 }
 
+/* Only what the shared menu classes do not already cover. */
+.file-tab-menu {
+  margin: 0;
+  list-style: none;
+}
+
+.file-tab-menu button:disabled {
+  color: #525252;
+  cursor: default;
+}
+
+/* A pinned tab keeps a visible marker — otherwise "Pin tab" silently
+   does nothing an operator can see, and they pin it twice. */
+.file-tab.pinned .file-tab-label::before {
+  content: "📌";
+  margin-right: 4px;
+  font-size: 10px;
+}
+
 /* ───── middle pane — VS Code-style open-file tab strip + Monaco editor ───── */
 .center-pane-with-tabs > #editor-pane,
 .center-pane-with-tabs > .diff-pane {

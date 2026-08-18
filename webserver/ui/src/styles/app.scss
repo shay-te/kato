@@ -4148,6 +4148,25 @@ code {
   color: $C-NEUTRAL-64;
 }
 
+/* Only what the shared menu classes do not already cover. */
+.file-tab-menu {
+  margin: 0;
+  list-style: none;
+}
+
+.file-tab-menu button:disabled {
+  color: $C-NEUTRAL-32;
+  cursor: default;
+}
+
+/* A pinned tab keeps a visible marker — otherwise "Pin tab" silently
+   does nothing an operator can see, and they pin it twice. */
+.file-tab.pinned .file-tab-label::before {
+  content: "📌";
+  margin-right: $SPACE-4;
+  font-size: $TEXT-10;
+}
+
 /* ───── middle pane — VS Code-style open-file tab strip + Monaco editor ───── */
 
 // Modifier on the centre card's ``.panel-card-content`` wrapper (see

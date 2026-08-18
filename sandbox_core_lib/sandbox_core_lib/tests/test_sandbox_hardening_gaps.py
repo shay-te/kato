@@ -22,6 +22,8 @@ from unittest import mock
 from sandbox_core_lib.sandbox_core_lib import manager
 
 
+
+
 class SeccompPinTests(unittest.TestCase):
     def test_vendored_profile_exists_and_denies_by_default(self) -> None:
         # A profile whose default action is not ERRNO would allow every

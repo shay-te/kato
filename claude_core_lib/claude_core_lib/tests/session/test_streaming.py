@@ -1573,6 +1573,9 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
             'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
             return_value=None,
         ), patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.start_task_egress_proxy',
+            return_value=('stub-net', '10.255.255.2'),
+        ), patch(
             'sandbox_core_lib.sandbox_core_lib.manager.check_spawn_rate',
             side_effect=SandboxError('too many spawns'),
         ), patch(
@@ -1591,6 +1594,9 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         with patch(
             'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
             return_value=None,
+        ), patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.start_task_egress_proxy',
+            return_value=('stub-net', '10.255.255.2'),
         ), patch(
             'sandbox_core_lib.sandbox_core_lib.manager.check_spawn_rate',
             return_value=None,
@@ -1616,6 +1622,7 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
             check_spawn_rate=MagicMock(return_value=None),
             enforce_no_workspace_secrets=MagicMock(return_value=None),
             make_container_name=MagicMock(return_value='container'),
+            start_task_egress_proxy=MagicMock(return_value=('stub-net', '10.255.255.2')),
             wrap_command=MagicMock(return_value=['docker', 'run']),
             record_spawn=MagicMock(side_effect=SandboxError('audit log unavailable')),
         ), patch(
@@ -1924,6 +1931,9 @@ class StreamingClaudeSessionDockerModeTests(unittest.TestCase):
             return_value='/usr/local/bin/claude',
         ), patch(
             'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
+        ), patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.start_task_egress_proxy',
+            return_value=('stub-net', '10.255.255.2'),
         ), patch(
             'sandbox_core_lib.sandbox_core_lib.manager.check_spawn_rate',
         ), patch(

@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { cx } from '../utils/cx.js';
 import { basenameOf } from '../utils/basenameOf.js';
 import { useHorizontalWheelScroll } from '../hooks/useHorizontalWheelScroll.js';
@@ -14,12 +15,52 @@ import DiffKindIcon from './DiffKindIcon.jsx';
 // not this strip) plus native drag-the-thumb scrolling for overflow.
 export default function FileTabStrip({
   tabs, activeKey, onSelect, onClose, onToggleView,
+  onCloseAll, onCloseOthers, onTogglePin,
+  // Bumped ONLY when the operator opened a file from the tree. Scrolling
+  // the tab into view is a response to that click and nothing else — see
+  // the effect below.
+  revealRequestId = 0,
 }) {
   // Callback ref, not useRef + useEffect — this component returns
   // null (no DOM node at all) whenever tabs is empty, which a plain
   // useEffect-on-a-stable-ref-object would miss the very first time
   // a tab actually opens (see the hook for the full explanation).
   const wheelRef = useHorizontalWheelScroll();
+  const activeTabRef = useRef(null);
+  const lastRevealRef = useRef(revealRequestId);
+  const [menu, setMenu] = useState(null);
+
+  // Bring the active tab into view — but ONLY when the reveal id changed,
+  // i.e. the operator just clicked a file in the tree. Deliberately NOT
+  // keyed on activeKey or on tabs: those change while scrolling, on
+  // refresh, and on view toggles, and re-centring then would drag the
+  // strip back under the operator's cursor every time they tried to look
+  // at something else. A scroll is intent too, and it must win.
+  useEffect(() => {
+    if (revealRequestId === lastRevealRef.current) { return; }
+    lastRevealRef.current = revealRequestId;
+    const node = activeTabRef.current;
+    // Guarded: jsdom has no scrollIntoView, and neither do a couple of
+    // older embedded browsers. Not being able to scroll is cosmetic —
+    // it must never take the strip down with it.
+    if (typeof node?.scrollIntoView === 'function') {
+      node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    }
+  }, [revealRequestId]);
+
+  useEffect(() => {
+    if (!menu) { return undefined; }
+    const dismiss = () => setMenu(null);
+    window.addEventListener('click', dismiss);
+    window.addEventListener('keydown', dismiss);
+    window.addEventListener('resize', dismiss);
+    return () => {
+      window.removeEventListener('click', dismiss);
+      window.removeEventListener('keydown', dismiss);
+      window.removeEventListener('resize', dismiss);
+    };
+  }, [menu]);
+
   if (!tabs || tabs.length === 0) { return null; }
   return (
     <nav className="file-tab-strip" aria-label="Open files" ref={wheelRef}>
@@ -29,18 +70,105 @@ export default function FileTabStrip({
             key={tab.key}
             tab={tab}
             active={tab.key === activeKey}
+            nodeRef={tab.key === activeKey ? activeTabRef : null}
             onSelect={onSelect}
             onClose={onClose}
             onToggleView={onToggleView}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              setMenu({ key: tab.key, tab, x: event.clientX, y: event.clientY });
+            }}
           />
         ))}
       </ul>
+      {menu && (
+        <FileTabMenu
+          menu={menu}
+          tabCount={tabs.length}
+          onClose={onClose}
+          onCloseAll={onCloseAll}
+          onCloseOthers={onCloseOthers}
+          onTogglePin={onTogglePin}
+          dismiss={() => setMenu(null)}
+        />
+      )}
     </nav>
   );
 }
 
+
+function FileTabMenu({
+  menu, tabCount, onClose, onCloseAll, onCloseOthers, onTogglePin, dismiss,
+}) {
+  const { tab, x, y } = menu;
+  const name = basenameOf(tab.relativePath || tab.absolutePath) || tab.relativePath;
+
+  function run(action) {
+    return (event) => {
+      event.stopPropagation();
+      dismiss();
+      action();
+    };
+  }
+
+  async function copyName() {
+    // The file NAME, which is what the tab shows and what someone
+    // right-clicking a tab is almost always after — the full path is
+    // already on the tab's title tooltip.
+    try {
+      await navigator.clipboard.writeText(name);
+    } catch {
+      // Clipboard permission denied / insecure context: nothing to
+      // recover, and a failed copy must not take the menu down noisily.
+    }
+  }
+
+  const items = [
+    { label: 'Close', action: () => onClose(tab.key), enabled: true },
+    {
+      label: 'Close others',
+      action: () => onCloseOthers && onCloseOthers(tab.key),
+      enabled: typeof onCloseOthers === 'function' && tabCount > 1,
+    },
+    {
+      label: 'Close all',
+      action: () => onCloseAll && onCloseAll(),
+      enabled: typeof onCloseAll === 'function',
+    },
+    {
+      label: tab.pinned ? 'Unpin tab' : 'Pin tab',
+      action: () => onTogglePin && onTogglePin(tab.key),
+      enabled: typeof onTogglePin === 'function',
+    },
+    { label: 'Copy file name', action: copyName, enabled: true },
+  ];
+
+  return (
+    <ul
+      className="files-tab-context-menu file-tab-menu"
+      role="menu"
+      style={{ left: x, top: y }}
+      onClick={(event) => event.stopPropagation()}
+    >
+      {items.map((item) => (
+        <li key={item.label} role="none">
+          <button
+            type="button"
+            role="menuitem"
+            className="files-tab-context-menu-item"
+            disabled={!item.enabled}
+            onClick={run(item.action)}
+          >
+            {item.label}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function FileTab({
-  tab, active, onSelect, onClose, onToggleView,
+  tab, active, nodeRef, onSelect, onClose, onToggleView, onContextMenu,
 }) {
   const name = basenameOf(tab.relativePath || tab.absolutePath) || tab.relativePath;
   const title = tab.repoId ? `${tab.repoId}/${tab.relativePath}` : tab.relativePath;
@@ -83,9 +211,11 @@ function FileTab({
 
   return (
     <li
-      className={cx('file-tab', active && 'active')}
+      ref={nodeRef}
+      className={cx('file-tab', active && 'active', tab.pinned && 'pinned')}
       title={title}
       onClick={handleSelect}
+      onContextMenu={onContextMenu}
       onAuxClick={handleAuxClick}
       onKeyDown={handleKeyDown}
       tabIndex={0}

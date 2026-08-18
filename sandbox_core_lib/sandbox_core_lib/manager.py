@@ -1072,6 +1072,8 @@ def wrap_command(
     image_tag: str = SANDBOX_IMAGE_TAG,
     container_name: str | None = None,
     task_id: str | None = None,
+    task_network: str = '',
+    proxy_ip: str = '',
 ) -> list[str]:
     """Wrap ``inner_command`` (the Claude CLI argv) in a ``docker run`` argv.
 
@@ -1141,11 +1143,13 @@ def wrap_command(
     # silently use the default (runc) otherwise.
     if gvisor_runtime_available():
         argv.extend(['--runtime', 'runsc'])
-    # Per-task egress: the sandbox joins ONLY its private 2-member network
-    # and reaches the internet solely through its own SNI-pinning proxy.
-    # Falls back to the shared bridge + address allowlist if the proxy
-    # cannot be started — a weaker rule is better than a spawn that fails.
-    task_network, proxy_ip = start_task_egress_proxy(resolved_container_name)
+    # Per-task egress: the sandbox joins ONLY its private, ``--internal``
+    # 2-member network and reaches the outside solely through its own
+    # SNI-pinning proxy. The network and proxy are created by the SPAWN
+    # path (``wrap_spawn_for_docker``) and passed in — building them here
+    # would make argv construction spawn Docker infrastructure, which is
+    # both a surprising side effect and why unit tests started creating a
+    # network apiece until Docker ran out of address pools.
     argv.extend([
         '--network', task_network or _SANDBOX_NETWORK_NAME,
         '--ipc=none',                          # no shared memory / sysv IPC channel
@@ -2382,10 +2386,33 @@ def start_task_egress_proxy(
             '--label', f'{_OWNER_BOOT_LABEL}={host_boot_identity()}',
         ]
     proxy_source = Path(__file__).resolve().parent / 'sni_proxy.py'
+    # Resolve on the HOST, where DNS works, and hand the address to the
+    # proxy. Nothing inside either container then performs a lookup.
+    upstream_args: list[str] = []
+    try:
+        import socket as _socket
+        upstream_args = [
+            '--upstream',
+            f'{EGRESS_ALLOWED_HOST}={_socket.gethostbyname(EGRESS_ALLOWED_HOST)}',
+        ]
+    except OSError:
+        upstream_args = []
     try:
         ensure_network(logger=logger)
         created = subprocess.run(
-            ['docker', 'network', 'create', '--driver', 'bridge', *labels, network],
+            [
+                'docker', 'network', 'create', '--driver', 'bridge',
+                # ``--internal`` is what makes the "no route to the
+                # internet" claim TRUE rather than aspirational. Without
+                # it this is an ordinary NAT-ed bridge and the sandbox can
+                # reach anything directly — the in-container firewall was
+                # the only thing stopping it, which is precisely the
+                # single layer this topology is supposed to be independent
+                # of. The proxy still reaches out via its SECOND leg on
+                # the routed bridge.
+                '--internal',
+                *labels, network,
+            ],
             capture_output=True, text=True,
             encoding='utf-8', errors='replace', timeout=60,
         )
@@ -2395,7 +2422,14 @@ def start_task_egress_proxy(
             [
                 'docker', 'run', '-d',
                 '--name', proxy,
-                '--network', network,
+                # ROUTED network FIRST. A container keeps the default
+                # route of the network it was CREATED on, and
+                # ``docker network connect`` never adds one — so starting
+                # the proxy on the ``--internal`` bridge left it with no
+                # route out at all: every upstream lookup died with
+                # "Temporary failure in name resolution". Created here,
+                # attached to the private bridge below.
+                '--network', _SANDBOX_NETWORK_NAME,
                 *labels,
                 # The proxy needs no privileges beyond binding :443 in its
                 # own namespace.
@@ -2410,33 +2444,40 @@ def start_task_egress_proxy(
                 'python3', '/app/sni_proxy.py',
                 '--port', str(_EGRESS_PROXY_PORT),
                 '--allow', EGRESS_ALLOWED_HOST,
+                *upstream_args,
             ],
             capture_output=True, text=True,
             encoding='utf-8', errors='replace', timeout=120,
         )
         if started.returncode != 0:
             raise SandboxError((started.stderr or '').strip()[:200])
-        # Second leg: the route OUT. Without this the proxy cannot reach
-        # the host it exists to forward to.
+        # Second leg: the private side the sandbox talks to.
         attached = subprocess.run(
-            ['docker', 'network', 'connect', _SANDBOX_NETWORK_NAME, proxy],
+            ['docker', 'network', 'connect', network, proxy],
             capture_output=True, text=True,
             encoding='utf-8', errors='replace', timeout=60,
         )
         if attached.returncode != 0:
             raise SandboxError((attached.stderr or '').strip()[:200])
     except (OSError, subprocess.TimeoutExpired, SandboxError) as exc:
-        if logger is not None:
-            logger.warning(
-                'per-task egress proxy unavailable (%s); falling back to the '
-                'address-based allowlist', exc,
-            )
         remove_task_egress_proxy(container_name)
-        return '', ''
+        # FAIL CLOSED. This used to fall back to the address-based
+        # allowlist, which meant a proxy that failed to start silently
+        # downgraded egress to the weaker rule the proxy exists to
+        # replace — a security property you cannot rely on is not one.
+        # Same reasoning as the gVisor requirement: refuse rather than
+        # quietly run with less.
+        raise SandboxError(
+            f'cannot start the per-task egress proxy for {container_name}: '
+            f'{exc}. Refusing to spawn — falling back to the address-based '
+            f'allowlist would silently drop hostname pinning.',
+        ) from exc
     address = _container_ip_on(proxy, network)
     if not address:
         remove_task_egress_proxy(container_name)
-        return '', ''
+        raise SandboxError(
+            f'egress proxy for {container_name} has no address on {network}',
+        )
     # WAIT for the listener. The sandbox starts immediately after this
     # returns and its firewall self-check dials the proxy straight away —
     # without this the spawn races the interpreter's startup and fails
@@ -2444,7 +2485,9 @@ def start_task_egress_proxy(
     # network fault rather than a few hundred milliseconds of Python.
     if not _wait_for_proxy_listening(proxy, logger=logger):
         remove_task_egress_proxy(container_name)
-        return '', ''
+        raise SandboxError(
+            f'egress proxy for {container_name} never began listening',
+        )
     if logger is not None:
         logger.info(
             'egress for %s is pinned to %s via its own proxy at %s',

@@ -72,6 +72,71 @@ class ParseSniTests(unittest.TestCase):
         self.assertEqual(parse_sni(bytes(full)), '')
 
 
+class ParserDifferentialTests(unittest.TestCase):
+    """A crafted server_name LIST must not mean two different things.
+
+    The first version read bytes 3..5 as "the name" — it never checked the
+    entry TYPE and never validated the list length. A ClientHello with
+
+        entry[0]: type=0xFF "api.anthropic.com"
+        entry[1]: type=0x00 "attacker.example"
+
+    was therefore allowed on the strength of a name the real server never
+    reads, while the bytes forwarded verbatim asked the far end for the
+    attacker's host. On shared addresses that is a complete bypass of the
+    control this proxy exists to provide.
+    """
+
+    @staticmethod
+    def _entry(name_type: int, name: bytes) -> bytes:
+        return bytes([name_type]) + len(name).to_bytes(2, 'big') + name
+
+    def _hello(self, entries: bytes) -> bytes:
+        ext_body = len(entries).to_bytes(2, 'big') + entries
+        ext = b'\x00\x00' + len(ext_body).to_bytes(2, 'big') + ext_body
+        extensions = len(ext).to_bytes(2, 'big') + ext
+        body = (
+            b'\x03\x03' + b'\x00' * 32 + b'\x00'
+            + b'\x00\x02\x00\x2f' + b'\x01\x00' + extensions
+        )
+        handshake = b'\x01' + len(body).to_bytes(3, 'big') + body
+        return b'\x16\x03\x01' + len(handshake).to_bytes(2, 'big') + handshake
+
+    def test_legitimate_single_host_name_still_parses(self) -> None:
+        hello = self._hello(self._entry(0x00, b'api.anthropic.com'))
+        self.assertEqual(parse_sni(hello), 'api.anthropic.com')
+
+    def test_type_confusion_is_refused(self) -> None:
+        hello = self._hello(
+            self._entry(0xFF, b'api.anthropic.com')
+            + self._entry(0x00, b'attacker.example'),
+        )
+        self.assertEqual(parse_sni(hello), '')
+
+    def test_duplicate_host_names_are_refused(self) -> None:
+        hello = self._hello(
+            self._entry(0x00, b'api.anthropic.com')
+            + self._entry(0x00, b'attacker.example'),
+        )
+        self.assertEqual(parse_sni(hello), '')
+
+    def test_list_length_that_lies_is_refused(self) -> None:
+        self.assertEqual(parse_sni(self._hello(b'\x00\x00\x05ab')), '')
+
+    def test_trailing_bytes_after_the_list_are_refused(self) -> None:
+        entries = self._entry(0x00, b'api.anthropic.com')
+        ext_body = len(entries).to_bytes(2, 'big') + entries + b'\x00'
+        ext = b'\x00\x00' + len(ext_body).to_bytes(2, 'big') + ext_body
+        extensions = len(ext).to_bytes(2, 'big') + ext
+        body = (
+            b'\x03\x03' + b'\x00' * 32 + b'\x00'
+            + b'\x00\x02\x00\x2f' + b'\x01\x00' + extensions
+        )
+        handshake = b'\x01' + len(body).to_bytes(3, 'big') + body
+        hello = b'\x16\x03\x01' + len(handshake).to_bytes(2, 'big') + handshake
+        self.assertEqual(parse_sni(hello), 'api.anthropic.com')
+
+
 class AllowlistTests(unittest.TestCase):
     ALLOW = frozenset({'api.anthropic.com'})
 

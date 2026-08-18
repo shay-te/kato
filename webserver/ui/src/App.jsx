@@ -231,6 +231,10 @@ export default function App() {
   // Per task: { tabs, activeKey }. Restored wholesale on task switch.
   const fileViewByTaskRef = useRef({});
   const openFileRequestRef = useRef(0);
+  // Separate from openFileRequestRef because it drives RENDER (the strip
+  // scrolls when it changes), while openFileRequestRef is bookkeeping
+  // inside the tab model.
+  const [tabRevealRequest, setTabRevealRequest] = useState(0);
   const fileTreeFocusRequestRef = useRef(0);
 
   const doForgetTask = useCallback(async (taskId, markDone = false) => {
@@ -479,6 +483,9 @@ export default function App() {
     setOrchestratorOpen(false);
     setPlanOpen(false);
     openFileRequestRef.current += 1;
+    // The operator just asked for this file — that is the one moment the
+    // strip is allowed to move itself.
+    setTabRevealRequest((value) => value + 1);
     // Every open either focuses an ALREADY-open tab for this repo+path
     // (same file, possibly toggling file<->diff view) or appends a
     // brand new tab right after the current one — it never replaces a
@@ -495,6 +502,38 @@ export default function App() {
     setOpenTabs(tabs);
     setActiveTabKey(activeKey);
   }, [activeTaskId]);
+  // Tab context-menu actions. All three go through the same
+  // ref-then-state flush the other tab mutations use, so a view-state
+  // patch sitting in the ref is not lost when we re-render.
+  const applyTabs = useCallback((tabs, activeKey) => {
+    openTabsRef.current = tabs;
+    activeTabKeyRef.current = activeKey;
+    rememberTabsView(activeTaskId, tabs, activeKey);
+    setOpenTabs(tabs);
+    setActiveTabKey(activeKey);
+  }, [activeTaskId]);
+
+  const handleCloseAllFileTabs = useCallback(() => {
+    applyTabs([], null);
+  }, [applyTabs]);
+
+  const handleCloseOtherFileTabs = useCallback((key) => {
+    // Pinned tabs survive "close others" — pinning is the operator
+    // saying "keep this one", and a bulk close that ignored it would
+    // make the pin meaningless.
+    const kept = openTabsRef.current.filter(
+      (tab) => tab.key === key || tab.pinned,
+    );
+    applyTabs(kept, kept.some((tab) => tab.key === key) ? key : (kept[0]?.key ?? null));
+  }, [applyTabs]);
+
+  const handleToggleFileTabPin = useCallback((key) => {
+    const tabs = openTabsRef.current.map(
+      (tab) => (tab.key === key ? { ...tab, pinned: !tab.pinned } : tab),
+    );
+    applyTabs(tabs, activeTabKeyRef.current);
+  }, [applyTabs]);
+
   // Switch which already-open tab is active (file-tab-strip click).
   // Flushes openTabsRef into state first: view-state patches
   // (handleFileViewStateChange, below) only touch the ref between
@@ -622,6 +661,12 @@ export default function App() {
           onSelect={handleSelectFileTab}
           onClose={handleCloseFileTab}
           onToggleView={handleToggleTabView}
+          onCloseAll={handleCloseAllFileTabs}
+          onCloseOthers={handleCloseOtherFileTabs}
+          onTogglePin={handleToggleFileTabPin}
+          // Only a tree click bumps this, so the strip scrolls the tab
+          // into view then and never while the operator is scrolling.
+          revealRequestId={tabRevealRequest}
         />
         {filePane}
       </>
