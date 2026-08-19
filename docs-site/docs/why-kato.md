@@ -19,7 +19,7 @@ without losing sleep over what it might do.
   every repo — lives in one tabbed UI.
 - **One agent for every tracker & git host.** YouTrack, Jira, GitHub, GitLab,
   Bitbucket — Kato picks up assigned tickets and opens PRs wherever they belong.
-- **Run on the agent you like.** Claude, Codex, or OpenHands behind the same UI;
+- **Run on the agent you like.** Claude or OpenHands behind the same UI;
   pick the model and effort per task.
 - **End-to-end busywork handled** — clone, branch, code, test, open the PR, post
   a summary, and fix or answer review comments in-thread.

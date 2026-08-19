@@ -7,7 +7,7 @@ title: What is Kato
 
 **Kato is an autonomous coding agent with a governance cockpit.** Assign it a
 ticket in YouTrack, Jira, GitHub, GitLab, or Bitbucket and Kato clones the repo,
-writes the code with your chosen agent (Claude, Codex, or OpenHands), runs your
+writes the code with your chosen agent (Claude or OpenHands), runs your
 tests, opens a pull request, and posts a summary back on the ticket. If reviewers
 leave comments, Kato fixes them or answers in the thread.
 

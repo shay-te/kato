@@ -57,7 +57,22 @@ branches — so allowing it can't race the orchestrator.
 A **whole-tree** revert (`git restore .`) is different and asks first: nothing
 is committed until Kato publishes, so discarding every uncommitted change
 destroys the entire task with no commit and no reflog entry to recover from.
-Layer 2 tells the two apart by reading the pathspec.
+Layer 2 tells the two apart by reading the pathspec — and the test is an
+allowlist: a revert counts as scoped only if every pathspec is demonstrably a
+plain narrow path. Git's magic-pathspec grammar (`:!x`, `:(exclude)x`,
+`:(glob)**`, a bare `:`) all mean "the whole tree", so anything that is not
+clearly narrow — magic, glob, traversal, built at runtime, or read from a file
+Kato can't see — is treated as whole-tree and goes to you. Unknown means ask,
+never allow.
+
+Remembered approvals are keyed per git **subcommand**, so an "always allow" on
+`git status` never covers `git restore`, and approving a scoped revert never
+pre-approves the whole-tree one.
+
+One exception, by design: in `bypassPermissions` there is no per-tool prompt,
+so layer 2 never runs and there is nobody to ask. `git restore` is denied
+outright in that mode rather than allowed unsupervised — the capability exists
+in every attended mode, and withdraws where it cannot be reviewed.
 
 ## Out-of-folder writes always ask
 

@@ -38,6 +38,7 @@ from kato_core_lib.helpers.explain_mode_utils import (
     explain_prompt,
     resolve_explain_spawn,
 )
+from kato_core_lib.helpers.plan_mode_store import task_permission_mode
 from kato_core_lib.helpers.task_definition_prompt import task_definition_block
 from kato_core_lib.helpers.workspace_refusal_guidance import (
     KATO_WORKSPACE_REFUSAL_GUIDANCE,
@@ -60,6 +61,30 @@ def _positive_int_or_none(value) -> int | None:
     except (TypeError, ValueError):
         return None
     return parsed if parsed > 0 else None
+
+
+def _task_mode_spawn(task_id: str) -> dict:
+    """Spawn overrides for a task's persisted mode lock (``{}`` when none).
+
+    Explain is not a raw ``--permission-mode``: it resolves to ``default``
+    PLUS a read-only tool set, so the lock has to be expanded here rather
+    than passed through as a bare mode string — handing ``'explain'`` to the
+    CLI would fail the spawn, and dropping the tool set would leave a session
+    the operator believes is read-only able to edit.
+
+    Never raises: a corrupt or unreadable lock file must not stop a spawn,
+    and the configured default is the safe fallback.
+    """
+    try:
+        mode = task_permission_mode(task_id)
+        if not mode:
+            return {}
+        explain = resolve_explain_spawn(mode)
+        if explain['permission_mode']:
+            return explain
+        return {'permission_mode': mode, 'allowed_tools': '', 'disallowed_tools': ''}
+    except Exception:
+        return {}
 
 
 class SessionStoppedByUserError(RuntimeError):
@@ -638,6 +663,22 @@ class PlanningSessionRunner(object):
         workspace_root: str = '',
         additional_dirs: list[str] | None = None,
     ):
+        # The operator's per-task mode lock, applied HERE because this is the
+        # single funnel every spawn path goes through: chat, autonomous
+        # implementation, review-comment fixes, diff-comment respawns.
+        #
+        # It used to be read only by the webserver's chat-send route, so a
+        # task locked to Plan still got a fully editing session from every
+        # other entrypoint — the next 180s scan tick would pick it up and
+        # start editing files. That is the "I kept it on Plan but it is still
+        # editing" report, and no test covered it because the one path that
+        # DID honour the lock was the one under test.
+        #
+        # Precedence: an explicit caller argument wins (the chat route has
+        # already resolved the same lock, and Explain's read-only tool set is
+        # threaded through the same call), then the persisted lock, then the
+        # configured default.
+        locked = _task_mode_spawn(task_id) if not permission_mode else {}
         return self._session_manager.start_session(
             task_id=task_id,
             task_summary=task_summary,
@@ -645,13 +686,25 @@ class PlanningSessionRunner(object):
             cwd=cwd,
             binary=self._defaults.binary,
             model=model or self._defaults.model,
-            permission_mode=permission_mode or self._defaults.permission_mode,
+            permission_mode=(
+                permission_mode
+                or locked.get('permission_mode', '')
+                or self._defaults.permission_mode
+            ),
             permission_prompt_tool=self._defaults.permission_prompt_tool,
             # Per-spawn tool overrides exist for the read-only composer modes
             # (Explain), which restrict BEYOND the configured defaults. Empty
             # means "no override" so every other spawn keeps the defaults.
-            allowed_tools=allowed_tools or self._defaults.allowed_tools,
-            disallowed_tools=disallowed_tools or self._defaults.disallowed_tools,
+            allowed_tools=(
+                allowed_tools
+                or locked.get('allowed_tools', '')
+                or self._defaults.allowed_tools
+            ),
+            disallowed_tools=(
+                disallowed_tools
+                or locked.get('disallowed_tools', '')
+                or self._defaults.disallowed_tools
+            ),
             max_turns=self._defaults.max_turns,
             effort=effort or self._defaults.effort,
             expected_branch=branch_name,

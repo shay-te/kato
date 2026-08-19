@@ -1156,7 +1156,8 @@ def _register_http_routes(app: Flask) -> None:
         # fail the toggle the operator just made in the live session.
         from kato_core_lib.helpers.plan_mode_store import set_plan_mode
         set_plan_mode(task_id, on)
-        return jsonify({'plan_mode': on})
+        stopped = _stop_live_session_on_tightening(app, task_id, value)
+        return jsonify({'plan_mode': on, 'session_stopped': stopped})
 
     @app.get('/api/sessions/<task_id>/agent-mode')
     def get_session_agent_mode(task_id: str):
@@ -1191,7 +1192,8 @@ def _register_http_routes(app: Flask) -> None:
         # the operator just made in the live session.
         from kato_core_lib.helpers.plan_mode_store import set_task_mode
         set_task_mode(task_id, mode)
-        return jsonify({'mode': mode})
+        stopped = _stop_live_session_on_tightening(app, task_id, mode)
+        return jsonify({'mode': mode, 'session_stopped': stopped})
 
     @app.get('/api/sessions/<task_id>/plan')
     def get_session_plan(task_id: str):
@@ -3654,6 +3656,13 @@ def _register_agent_version_upgrade_route(app: Flask) -> None:
 _HIGH_RISK_ACTION_GUARD_CATEGORIES = frozenset({
     'credential_read', 'network_exfil', 'remote_exec', 'sandbox_escape',
 })
+# Tools whose approval can NEVER be remembered or auto-resolved, because
+# approving them changes the agent's PERMISSIONS rather than performing a
+# single action. ``ExitPlanMode`` is the whole of plan mode's enforcement:
+# plan mode passes only ``--permission-mode plan`` with no tool denial, so
+# the exit prompt is the gate. Remembering it disarms the lock globally and
+# permanently. Kept as a set so the next such tool has an obvious home.
+_NEVER_AUTO_RESOLVED_TOOLS = frozenset({'ExitPlanMode'})
 
 
 def _maybe_auto_resolve_pending(
@@ -3682,6 +3691,16 @@ def _maybe_auto_resolve_pending(
     if not tool_name or is_answerable_question(tool_input):
         return False
     if outside_sandbox:
+        return False
+    # Leaving plan mode is the operator's decision, every time. A remembered
+    # decision here is stored under the bare tool key (no command signature
+    # for a non-Bash tool), so it is GLOBAL across tasks and survives
+    # restarts: one "Allow always" would silently take every future plan
+    # session — including the autonomous wait-planning hold — out of plan
+    # mode with no human in the loop and no popup to notice. A safety lock
+    # that can be permanently disarmed by one click on an unrelated task is
+    # not a lock.
+    if tool_name in _NEVER_AUTO_RESOLVED_TOOLS:
         return False
     verdict = _classify_action_for(session, tool_name, tool_input)
     if (
@@ -4124,6 +4143,44 @@ def _plan_mode_change_needs_respawn(app: Flask, manager, task_id: str, images) -
     if images:
         return False
     return not bool(getattr(session, 'is_working', False))
+
+
+def _stop_live_session_on_tightening(app: Flask, task_id: str, requested: str) -> bool:
+    """Kill the live subprocess when the operator TIGHTENS the mode.
+
+    Selecting Plan or Explain is a safety decision, and it used to do
+    nothing until the operator happened to send another message: the
+    override was written, the running subprocess kept its spawn-time
+    ``--permission-mode``, and the agent carried on editing files. That is
+    the "I kept it on Plan but it is still editing" report — the lock was
+    real, it just applied later than anyone would assume.
+
+    Only TIGHTENING stops a session. Loosening (Plan → Edit automatically)
+    deliberately does not: interrupting a working agent to give it MORE
+    permission has no safety value and would throw away an in-flight turn.
+    The next message respawns via ``--resume``, so no context is lost.
+
+    Returns whether a session was actually stopped, for the response body.
+    """
+    if not _requested_restriction(requested):
+        return False
+    manager = app.config.get('SESSION_MANAGER')
+    if manager is None:
+        return False
+    try:
+        session = manager.get_session(task_id)
+        if session is None or not getattr(session, 'is_alive', False):
+            return False
+        if _live_restriction(session) == _requested_restriction(requested):
+            return False
+        # Keep the record: the mode change must not lose the chat history
+        # or the resume id — the next message picks the session back up.
+        manager.terminate_session(task_id, remove_record=False)
+    except Exception:
+        # A failed stop must not fail the operator's choice; the override is
+        # already persisted and the next spawn honours it either way.
+        return False
+    return True
 
 
 def _requested_restriction(requested: str) -> str:

@@ -23,6 +23,7 @@ as a HookResult; the rest of kato keeps running.
 from __future__ import annotations
 
 import json
+import os
 import logging
 import re
 import subprocess
@@ -67,6 +68,23 @@ def _substitute(command: str, event: dict) -> str:
         value = event.get(key, '')
         return '' if value is None else str(value)
     return _PLACEHOLDER_RE.sub(repl, command)
+
+
+def _shell_argv(command: str) -> list[str]:
+    """The argv that runs ``command`` through the platform's shell.
+
+    ``/bin/sh`` does not exist on Windows, so every hook — including the
+    fail-closed security hooks kato refuses to boot without — died with
+    FileNotFoundError there. Windows gets ``cmd.exe /c`` (``COMSPEC`` when
+    set, since a locked-down box may relocate it).
+
+    Deliberately not ``shell=True``: the argv form keeps the command a
+    single argument that the shell parses, rather than something Python
+    re-quotes per platform.
+    """
+    if os.name == 'nt':
+        return [os.environ.get('COMSPEC') or 'cmd.exe', '/c', command]
+    return ['/bin/sh', '-c', command]
 
 
 class HookRunner(object):
@@ -149,7 +167,7 @@ class HookRunner(object):
         stdin_payload = json.dumps(event, default=str)
         try:
             completed = self._run(
-                ['/bin/sh', '-c', rendered],
+                _shell_argv(rendered),
                 input=stdin_payload,
                 capture_output=True,
                 text=True,

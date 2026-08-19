@@ -39,6 +39,7 @@ base64, or fetched data is invisible here — OS-level confinement
 
 from __future__ import annotations
 
+import posixpath
 import re
 from dataclasses import dataclass
 from enum import Enum
@@ -46,6 +47,7 @@ from enum import Enum
 from agent_core_lib.agent_core_lib.helpers.command_introspection import (
     classify_command_escape,
     deobfuscate_command,
+    program_token_index,
     segment_program,
     split_command_segments,
 )
@@ -281,63 +283,198 @@ def _rm_analysis(segment: str):
 #   git checkout -- ':/'     → whole tree, ASK
 # NOT floor severity: "undo everything you did" is a legitimate thing for an
 # operator to approve — it just must never happen without them seeing it.
-_GIT_REVERT_VERB = re.compile(
-    r'\bgit\b(?:\s+-[cC]\s+\S+|\s+--\S+(?:=\S+)?)*\s+(?:restore|checkout)\b',
-)
-# Pathspecs meaning "everything": ``.``, ``./``, ``*``, ``:/`` (repo-root
-# magic), ``:(top)``, and an explicit ``--all``/``-a``. Quotes are stripped
-# before comparison so ``'.'`` and ``":/"`` are caught too.
-_GIT_WHOLE_TREE_PATHSPECS = frozenset({
-    '.', './', '.\\', '*', '**', ':/', ':(top)', ':/*', '--all', '-a',
+# The breadth test is an ALLOWLIST, and that direction is the whole point.
+#
+# The first version of this rule enumerated the pathspecs that mean
+# "everything" (``.``, ``*``, ``:/``, ``:(top)``) and treated the rest as
+# scoped. That inverts the burden of proof against an open-ended grammar and
+# it did not survive contact: git's magic-pathspec syntax alone supplies
+# ``:!x`` / ``:(exclude)x`` (an exclude-only pathspec matches the WHOLE tree),
+# ``:(glob)**``, ``:(attr:!binary)`` and a bare ``:`` — every one of which
+# reverted an entire scratch repo while being classified ALLOW.
+#
+# So: a pathspec is scoped only if it is demonstrably a plain narrow path.
+# Anything else — magic prefix, glob, traversal, runtime-built, or a pathspec
+# set we cannot read at all — counts as whole-tree and goes to the operator.
+# Unknown means ASK, never ALLOW.
+_GIT_GLOB_CHARS = '*?['
+# Options that take their value as the FOLLOWING token, so the value is not a
+# pathspec. Missing one used to be exploitable in the opposite direction too:
+# ``git --work-tree . restore .`` slipped past a regex that only modelled
+# ``-c``/``-C`` and ``--flag=value``.
+_GIT_PRECOMMAND_VALUE_OPTIONS = frozenset({
+    '-c', '-C', '--git-dir', '--work-tree', '--namespace', '--exec-path',
+    '--super-prefix', '--config-env',
 })
+_GIT_REVERT_VALUE_OPTIONS = frozenset({'--source', '-s'})
+# We cannot read the file, so we cannot know the breadth — fail closed.
+_GIT_PATHSPEC_FROM_FILE = '--pathspec-from-file'
+_SHELL_PROGRAMS = frozenset({'sh', 'bash', 'zsh', 'dash', 'ksh', 'busybox'})
 
 
-def _git_revert_targets(segment: str) -> list:
-    """Pathspec tokens of a ``git restore``/``git checkout`` segment.
+def _git_tokens(segment: str) -> list:
+    """Tokenize a segment for git parsing: quotes stripped, comment dropped.
 
-    Everything that is not a pathspec is dropped: the ``git`` program, any
-    pre-command options, the subcommand, each ``-flag``/``--flag=value``, and
-    the ``--`` separator. ``--source``/``-s``/``--pathspec-from-file`` consume
-    the FOLLOWING token (a tree-ish or a file of patterns, not a pathspec) so
-    a commit name can never be mistaken for a path.
+    Shell grouping punctuation is trimmed off the ends so ``(git restore .)``
+    — which ``split_command_segments`` does not break apart — parses as the
+    command it is rather than yielding the pathspec ``.)``.
     """
-    targets: list = []
-    seen_subcommand = False
+    text = str(segment or '').strip()
+    tokens = [t for t in text.split() if t]
+    if tokens:
+        tokens[0] = tokens[0].lstrip('(){}')
+        tokens[-1] = tokens[-1].rstrip('){};')
+        tokens = [t for t in tokens if t]
+    cleaned: list = []
+    for token in tokens:
+        # A trailing shell comment is not an argument. Without this,
+        # ``git restore --pathspec-from-file=x # revert everything`` handed
+        # three fake "pathspecs" to the breadth test and read as scoped.
+        if token.startswith('#'):
+            break
+        cleaned.append(token.strip('\'"'))
+    return cleaned
+
+
+def _is_narrow_pathspec(raw: str) -> bool:
+    """True only for a plain path naming something narrower than the tree."""
+    text = str(raw or '').strip().strip('\'"').strip()
+    if not text:
+        return False
+    # Magic pathspec grammar (``:!x``, ``:(exclude)x``, ``:(glob)**``, ``:/``,
+    # a bare ``:``) — repo-root anchored and/or whole-tree matching.
+    if text.startswith(':'):
+        return False
+    # Built at runtime — invisible to static analysis.
+    if '$' in text or '`' in text:
+        return False
+    if any(char in text for char in _GIT_GLOB_CHARS):
+        return False
+    if text.startswith('~'):
+        return False
+    normalized = posixpath.normpath(text.replace('\\', '/'))
+    if normalized in ('.', '..', '/', ''):
+        return False
+    return not normalized.startswith('../')
+
+
+def _git_subcommand_head(segment: str):
+    """``(subcommand, remaining_tokens)`` for a git invocation, else ``None``.
+
+    Anchored on the PROGRAM, not on a substring: ``echo "run git restore ."``
+    and ``grep -rn "git restore ." docs/`` merely mention the command, and a
+    substring match routed both to the approval modal — noise that trains an
+    operator to click through the popup that matters.
+    """
+    tokens = _git_tokens(segment)
+    if not tokens:
+        return None
+    index = program_token_index(tokens)
+    if index >= len(tokens):
+        return None
+    program = tokens[index].rsplit('/', 1)[-1]
+    # ``sh -c '…'`` / ``bash -c '…'`` wrap the real command in an argument.
+    if program in _SHELL_PROGRAMS:
+        for position in range(index + 1, len(tokens)):
+            if tokens[position] == '-c':
+                return _git_subcommand_head(' '.join(tokens[position + 1:]))
+        return None
+    if program != 'git':
+        return None
+    index += 1
+    while index < len(tokens) and tokens[index].startswith('-'):
+        option = tokens[index].split('=', 1)[0]
+        if option in _GIT_PRECOMMAND_VALUE_OPTIONS and '=' not in tokens[index]:
+            index += 2
+        else:
+            index += 1
+    if index >= len(tokens):
+        return None
+    return tokens[index], tokens[index + 1:]
+
+
+def git_subcommand_of(segment: str) -> str:
+    """``'restore'`` for ``git -C x restore a.js``; ``''`` for a non-git segment.
+
+    Public because the remembered-permission signature needs the SAME notion
+    of "which git" this module uses. Keying a remembered approval on the bare
+    program meant one "always allow" on ``git status`` also granted every
+    future ``git restore`` — the read-only grant an operator would give
+    without a second thought, silently covering the destructive one.
+    """
+    head = _git_subcommand_head(segment)
+    return head[0] if head else ''
+
+
+def _git_revert_pathspecs(segment: str):
+    """``(subcommand, pathspecs, opaque)`` for a git restore/checkout segment.
+
+    ``None`` when the segment does not invoke ``git restore``/``git checkout``
+    at all. ``opaque`` marks a pathspec set that cannot be determined
+    statically, which the caller must treat as whole-tree.
+    """
+    head = _git_subcommand_head(segment)
+    if head is None:
+        return None
+    subcommand, rest = head
+    if subcommand not in ('restore', 'checkout'):
+        return None
+
+    pathspecs: list = []
+    opaque = False
+    after_separator = False
     skip_next = False
-    for token in segment.split():
+    for token in rest:
         if skip_next:
             skip_next = False
             continue
-        if not seen_subcommand:
-            if token in ('restore', 'checkout'):
-                seen_subcommand = True
-            continue
-        if token in ('--source', '-s', '--pathspec-from-file'):
-            skip_next = True
-            continue
-        if token == '--':
-            continue
-        if token.startswith('-'):
-            continue
-        targets.append(token.strip('\'"'))
-    return targets
+        if not after_separator:
+            if token == '--':
+                # Everything past ``--`` is a pathspec, flag-looking or not.
+                # Parsing flags beyond it let ``git checkout -- -s .`` consume
+                # the ``.`` as an option value and read as scoped.
+                after_separator = True
+                continue
+            if token.split('=', 1)[0] == _GIT_PATHSPEC_FROM_FILE:
+                opaque = True
+                if '=' not in token:
+                    skip_next = True
+                continue
+            if token in _GIT_REVERT_VALUE_OPTIONS:
+                skip_next = True
+                continue
+            if token.startswith('-'):
+                continue
+        pathspecs.append(token)
+    return subcommand, pathspecs, opaque
+
+
+def git_revert_breadth(segment: str) -> str:
+    """``'whole-tree'`` / ``'scoped'`` / ``''`` (not a git working-tree revert).
+
+    Public for the same reason as :func:`git_subcommand_of`: a remembered
+    approval of a SCOPED revert must not silently cover the whole-tree form,
+    which is the unrecoverable one.
+    """
+    parsed = _git_revert_pathspecs(segment)
+    if parsed is None:
+        return ''
+    subcommand, pathspecs, opaque = parsed
+    if not pathspecs and subcommand == 'checkout' and not opaque:
+        # Pathspec-less ``git checkout`` is branch movement — owned by the
+        # transport's --disallowedTools floor and the prompt, not here.
+        return ''
+    if opaque or not pathspecs or not all(_is_narrow_pathspec(p) for p in pathspecs):
+        return 'whole-tree'
+    return 'scoped'
 
 
 def _detect_git_whole_tree_revert(segments) -> list:
     for segment in segments:
-        if not _GIT_REVERT_VERB.search(segment):
-            continue
-        targets = _git_revert_targets(segment)
-        # A pathspec-less ``git restore`` is whole-tree. A pathspec-less
-        # ``git checkout`` is branch movement instead — owned by the
-        # transport floor and the prompt, not by this classifier.
-        bare_restore = not targets and re.search(
-            r'\bgit\b[^|;&\n]*\brestore\b', segment,
-        )
-        if bare_restore or any(t in _GIT_WHOLE_TREE_PATHSPECS for t in targets):
+        if git_revert_breadth(segment) == 'whole-tree':
             return [_Candidate(
                 RiskCategory.DESTRUCTIVE_FS, False,
-                'discards ALL uncommitted work in the repository — the task '
+                'discards uncommitted work across the repository — the task '
                 'output is not committed yet, so this is unrecoverable',
                 'fs.git_revert_all',
             )]

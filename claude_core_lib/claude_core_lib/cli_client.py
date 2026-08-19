@@ -92,6 +92,15 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
         'init', 'config', 'gc', 'prune', 'filter-branch', 'filter-repo',
         'update-ref', 'update-index', 'symbolic-ref', 'worktree', 'submodule',
         'sparse-checkout', 'bisect', 'notes', 'replace', 'fast-import',
+        # PLUMBING. Listing only the porcelain left the same capabilities
+        # reachable one layer down: ``hash-object -w`` + ``mktree`` +
+        # ``commit-tree`` builds a commit, and ``send-pack`` publishes it —
+        # the exact branch-state race the porcelain entries above exist to
+        # prevent, with none of them invoked. ``checkout-index -a -f`` is
+        # additionally a whole-tree working-copy overwrite.
+        'read-tree', 'write-tree', 'commit-tree', 'hash-object', 'mktree',
+        'checkout-index', 'send-pack', 'receive-pack', 'index-pack',
+        'unpack-objects', 'pack-refs', 'reflog', 'bundle', 'prune-packed',
     )
     GIT_DENY_PATTERNS = tuple(
         pattern
@@ -121,6 +130,16 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
         pattern
         for program in _ACTION_GUARD_DENY_PROGRAMS
         for pattern in (f'Bash({program}:*)', f'Bash({program} *)')
+    )
+    # Denied ONLY in bypassPermissions, where no per-tool prompt fires and so
+    # the content-aware guard (Layer B) never runs. These are actions whose
+    # safety depends on an operator seeing them first — permitted in every
+    # attended mode, withdrawn when nobody is watching.
+    _UNSUPERVISED_DENY_SUBCOMMANDS = ('restore',)
+    UNSUPERVISED_DENY_PATTERNS = tuple(
+        pattern
+        for sub in _UNSUPERVISED_DENY_SUBCOMMANDS
+        for pattern in (f'Bash(git {sub}:*)', f'Bash(git {sub} *)')
     )
     SMOKE_TEST_PROMPT = 'Reply with exactly: ok. Do not call any tools.'
     SMOKE_TEST_TIMEOUT_SECONDS = 120
@@ -896,7 +915,10 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
         merged_allowed = self._merge_allowed_with_read_only_allowlist(self._allowed_tools)
         if merged_allowed:
             command.extend(['--allowedTools', merged_allowed])
-        merged_disallowed = self._merge_disallowed_with_floor(self._disallowed_tools)
+        merged_disallowed = self._merge_disallowed_with_floor(
+            self._disallowed_tools,
+            bypass_permissions=self._bypass_permissions,
+        )
         command.extend(['--disallowedTools', merged_disallowed])
         # ``--resume`` and ``--add-dir`` come BEFORE the system prompt:
         # it is the one multiline, unbounded-length argv value, and a
@@ -995,15 +1017,30 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
         return cls._union_disallowed(operator_disallowed, cls.GIT_DENY_PATTERNS)
 
     @classmethod
-    def _merge_disallowed_with_floor(cls, operator_disallowed: str) -> str:
+    def _merge_disallowed_with_floor(
+        cls, operator_disallowed: str, *, bypass_permissions: bool = False,
+    ) -> str:
         """Apply BOTH non-overridable floors — git mutations and the Action
         Guard no-legit-use programs — to the operator's disallowed list.
 
         This is the single floor every spawn ships (one-shot AND streaming),
         so the CLI refuses these tools in every permission mode.
+
+        ``bypass_permissions`` additionally re-denies ``git restore``. That
+        looks inconsistent with allowing it everywhere else, and it is the
+        point: the whole-tree form is only safe to permit because Layer B
+        routes it to the operator, and in bypassPermissions there is no
+        per-tool prompt for Layer B to route to. Rather than let an
+        unrecoverable ``git restore .`` run unattended, the capability
+        reverts to its previous state in exactly the mode that cannot
+        supervise it. Scoped reverts stay available in every attended mode,
+        which is where the operator asked for them.
         """
         merged = cls._merge_disallowed_with_git_deny(operator_disallowed)
-        return cls._union_disallowed(merged, cls.ACTION_GUARD_DENY_PATTERNS)
+        merged = cls._union_disallowed(merged, cls.ACTION_GUARD_DENY_PATTERNS)
+        if bypass_permissions:
+            merged = cls._union_disallowed(merged, cls.UNSUPERVISED_DENY_PATTERNS)
+        return merged
 
     def _build_subprocess_env(self) -> dict[str, str]:
         # Force JSON output to stdout and prevent any TTY-dependent

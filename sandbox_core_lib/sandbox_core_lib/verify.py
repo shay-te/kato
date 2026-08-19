@@ -1,6 +1,6 @@
 """End-to-end sandbox smoke test.
 
-Run via ``make sandbox-verify``. Builds the image (if missing) and
+Run via the operator CLI's ``sandbox verify`` command. Builds the image (if missing) and
 spins up a single throwaway container that asserts every protection
 the sandbox is supposed to provide. Tears down on exit. Prints a
 clear PASS/FAIL line per check and exits non-zero on any failure.
@@ -36,11 +36,12 @@ import tempfile
 from pathlib import Path
 
 from sandbox_core_lib.sandbox_core_lib.manager import (
-    SANDBOX_IMAGE_TAG,
     SandboxError,
     docker_available,
     ensure_image,
     ensure_network,
+    remove_task_egress_proxy,
+    start_task_egress_proxy,
     wrap_command,
 )
 
@@ -185,13 +186,25 @@ def main() -> int:
     # Throwaway workspace — the verifier doesn't write production files,
     # but ``wrap_command`` needs an existing directory to bind-mount.
     with tempfile.TemporaryDirectory(prefix='kato-sandbox-verify-') as workspace:
-        argv = wrap_command(
-            inner_command=['bash', '-c', _VERIFICATION_SCRIPT],
-            workspace_path=workspace,
-            container_name=f'kato-sandbox-verify-{Path(workspace).name[-8:]}',
-        )
-        print('[verify] launching verification container...', flush=True)
+        container_name = f'kato-sandbox-verify-{Path(workspace).name[-8:]}'
+        # Build the SAME per-task egress topology a real spawn builds:
+        # a private ``--internal`` network holding only this container and
+        # its own SNI-pinning proxy. Without this the verifier ran on the
+        # shared bridge with the old IP-allowlist rules — so the only
+        # end-to-end proof of the sandbox proved a network shape that
+        # no spawn has used since the per-task proxy landed, and checks
+        # 7-10 below were exercising the wrong egress path entirely.
+        print('[verify] creating per-task egress network + proxy...', flush=True)
+        task_network, proxy_ip = start_task_egress_proxy(container_name)
         try:
+            argv = wrap_command(
+                inner_command=['bash', '-c', _VERIFICATION_SCRIPT],
+                workspace_path=workspace,
+                container_name=container_name,
+                task_network=task_network,
+                proxy_ip=proxy_ip,
+            )
+            print('[verify] launching verification container...', flush=True)
             result = subprocess.run(argv, timeout=120)
         except subprocess.TimeoutExpired:
             sys.stderr.write(
@@ -201,6 +214,11 @@ def main() -> int:
         except OSError as exc:
             sys.stderr.write(f'kato sandbox verify: docker run failed: {exc}\n')
             return 1
+        finally:
+            # Always tear the proxy + network down: a leaked ``--internal``
+            # network per verify run exhausts Docker's address pool, which
+            # then breaks real spawns.
+            remove_task_egress_proxy(container_name)
     if result.returncode == 0:
         print('[verify] sandbox verification passed.')
     else:

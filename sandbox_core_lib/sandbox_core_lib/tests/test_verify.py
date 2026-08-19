@@ -74,6 +74,9 @@ class VerifyMainContainerRunTests(unittest.TestCase):
                    return_value=True), \
              patch('sandbox_core_lib.sandbox_core_lib.verify.ensure_image'), \
              patch('sandbox_core_lib.sandbox_core_lib.verify.ensure_network'), \
+             patch('sandbox_core_lib.sandbox_core_lib.verify.start_task_egress_proxy',
+                   return_value=('net-x', '10.0.0.2')), \
+             patch('sandbox_core_lib.sandbox_core_lib.verify.remove_task_egress_proxy'), \
              patch('sandbox_core_lib.sandbox_core_lib.verify.wrap_command',
                    return_value=['docker', 'run', '--rm', 'claude', 'bash', '-c', 'x']), \
              patch('sandbox_core_lib.sandbox_core_lib.manager._validate_workspace_path',
@@ -169,3 +172,62 @@ class VerifyModuleEntryPointTests(unittest.TestCase):
                 )
             # ``docker_available=False`` → main() returns 1 → sys.exit(1).
             self.assertEqual(ctx.exception.code, 1)
+
+
+class VerifyUsesTheRealEgressTopologyTests(unittest.TestCase):
+    """``sandbox verify`` is the only end-to-end proof the sandbox
+    works — so it has to exercise the topology real spawns actually use.
+
+    It used to call ``wrap_command`` with no per-task network or proxy,
+    which put the verification container on the shared bridge under the
+    old IP-allowlist rules. Every egress check therefore proved a network
+    shape no spawn had used since the per-task SNI proxy landed: a green
+    verify said nothing about the path production traffic takes.
+    """
+
+    def _run(self, proxy=('net-x', '10.0.0.2')):
+        wrapped = MagicMock(return_value=['docker', 'run', '--rm', 'img'])
+        start = MagicMock(return_value=proxy)
+        remove = MagicMock()
+        with patch('sandbox_core_lib.sandbox_core_lib.verify.docker_available',
+                   return_value=True), \
+             patch('sandbox_core_lib.sandbox_core_lib.verify.ensure_image'), \
+             patch('sandbox_core_lib.sandbox_core_lib.verify.ensure_network'), \
+             patch('sandbox_core_lib.sandbox_core_lib.verify.start_task_egress_proxy', start), \
+             patch('sandbox_core_lib.sandbox_core_lib.verify.remove_task_egress_proxy', remove), \
+             patch('sandbox_core_lib.sandbox_core_lib.verify.wrap_command', wrapped), \
+             patch('subprocess.run', MagicMock(return_value=MagicMock(returncode=0))), \
+             patch('builtins.print'):
+            main()
+        return wrapped, start, remove
+
+    def test_the_container_is_wrapped_with_the_task_network_and_proxy(self):
+        wrapped, start, _remove = self._run()
+        self.assertTrue(start.called)
+        kwargs = wrapped.call_args.kwargs
+        self.assertEqual(kwargs['task_network'], 'net-x')
+        self.assertEqual(kwargs['proxy_ip'], '10.0.0.2')
+
+    def test_the_proxy_is_torn_down_on_success(self):
+        # A leaked --internal network per run exhausts Docker's address
+        # pool, which then breaks real spawns.
+        _wrapped, _start, remove = self._run()
+        self.assertTrue(remove.called)
+
+    def test_the_proxy_is_torn_down_even_when_the_container_fails(self):
+        start = MagicMock(return_value=('net-x', '10.0.0.2'))
+        remove = MagicMock()
+        with patch('sandbox_core_lib.sandbox_core_lib.verify.docker_available',
+                   return_value=True), \
+             patch('sandbox_core_lib.sandbox_core_lib.verify.ensure_image'), \
+             patch('sandbox_core_lib.sandbox_core_lib.verify.ensure_network'), \
+             patch('sandbox_core_lib.sandbox_core_lib.verify.start_task_egress_proxy', start), \
+             patch('sandbox_core_lib.sandbox_core_lib.verify.remove_task_egress_proxy', remove), \
+             patch('sandbox_core_lib.sandbox_core_lib.verify.wrap_command',
+                   return_value=['docker', 'run']), \
+             patch('subprocess.run',
+                   MagicMock(side_effect=OSError('no docker'))), \
+             patch('sys.stderr', new_callable=StringIO), \
+             patch('builtins.print'):
+            main()
+        self.assertTrue(remove.called)

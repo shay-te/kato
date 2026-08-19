@@ -222,7 +222,17 @@ const MessageForm = forwardRef(function MessageForm({
     writeDraft(taskId, value);
   }, [taskId, value]);
 
+  // Persist only a REAL toggle, never the mount value. Writing on mount
+  // stamped the Settings default onto the task as though the operator had
+  // chosen it, which quietly defeats the whole point of the default: the
+  // task stops being "untouched", so later changing the default no longer
+  // reaches it. The ref skips the first run for each task.
+  const ultracodeMountedRef = useRef('');
   useEffect(() => {
+    if (ultracodeMountedRef.current !== taskId) {
+      ultracodeMountedRef.current = taskId;
+      return;
+    }
     writeUltracode(taskId, ultracode);
   }, [taskId, ultracode]);
 

@@ -12,7 +12,11 @@ dependencies = [
   # Self-signed TLS cert generation for the planning webserver
   # (kato_core_lib/helpers/tls_cert_utils.py) so it can serve HTTPS
   # without a third-party CA (impossible for a loopback address anyway).
-  "cryptography>=41",
+  # >=42, not >=41: tls_cert_utils reads ``cert.not_valid_after_utc``,
+  # a property added in cryptography 42.0. On 41 the TLS bootstrap
+  # raises AttributeError outside a try, so the webserver fails to
+  # start with a traceback that names neither TLS nor the version.
+  "cryptography>=42",
   # Security scanner runners (kato_core_lib/data_layers/service/
   # security_scanner_runners/). Each runner gracefully degrades to a
   # ``RunnerUnavailableError`` warning if its tool is missing, so

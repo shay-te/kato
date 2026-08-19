@@ -466,3 +466,34 @@ describe('AskUserQuestion — long forms stay usable', () => {
     expect(scroll.contains(actions)).toBe(false);
   });
 });
+
+describe('PermissionModal — permission-changing tools are never remembered', () => {
+  function envelopeFor(toolName) {
+    return _raw({ request: { request_id: 'req-1', tool_name: toolName, input: {} } });
+  }
+
+  test('ExitPlanMode does not offer "Allow always"', () => {
+    // Leaving plan mode is the whole of plan mode's enforcement, and the
+    // grant would be stored under the bare tool name — global across every
+    // task, surviving restarts. One click would disarm the lock everywhere.
+    render(<PermissionModal raw={envelopeFor('ExitPlanMode')} onDecide={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /allow always/i })).toBeNull();
+    // The one-off decision is still available.
+    expect(screen.getByRole('button', { name: /allow once/i })).toBeTruthy();
+  });
+
+  test('an ordinary tool still offers "Allow always"', () => {
+    render(<PermissionModal raw={envelopeFor('Read')} onDecide={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /allow always/i })).toBeTruthy();
+  });
+
+  test('Shift+Enter cannot smuggle a remembered ExitPlanMode grant', () => {
+    // The keyboard path has its own remember flag — it must respect the
+    // same withholding, or the button being hidden means nothing.
+    const onDecide = vi.fn();
+    render(<PermissionModal raw={envelopeFor('ExitPlanMode')} onDecide={onDecide} />);
+    fireEvent.keyDown(window, { key: 'Enter', shiftKey: true });
+    expect(onDecide).toHaveBeenCalled();
+    expect(onDecide.mock.calls[0][0].remember).toBe(false);
+  });
+});

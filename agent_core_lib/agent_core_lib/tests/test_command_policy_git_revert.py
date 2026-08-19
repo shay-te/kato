@@ -22,15 +22,23 @@ from agent_core_lib.agent_core_lib.helpers.command_policy import (
     Decision,
     RiskCategory,
     _detect_git_whole_tree_revert,
-    _git_revert_targets,
+    _git_revert_pathspecs,
     classify_action,
+    git_revert_breadth,
+    git_subcommand_of,
+)
+from agent_core_lib.agent_core_lib.helpers.command_introspection import (
+    split_command_segments,
 )
 
 _DEFAULT = CommandPolicy.secure_default()
 
 
 def _flags(command: str) -> bool:
-    return bool(_detect_git_whole_tree_revert([command]))
+    # Split the way the real pipeline does. The rule is anchored on the
+    # segment's PROGRAM, so handing it an unsplit ``a && b`` would test a
+    # shape production never produces.
+    return bool(_detect_git_whole_tree_revert(split_command_segments(command)))
 
 
 def _verdict(command: str):
@@ -131,6 +139,140 @@ class WholeTreeRevertMustReachTheOperatorTests(unittest.TestCase):
         self.assertNotEqual(verdict.category, RiskCategory.DESTRUCTIVE_FS)
 
 
+class ReproducedBypassRegressionTests(unittest.TestCase):
+    """Every command below reverted a real scratch repo while classified ALLOW.
+
+    The first version of this rule enumerated the pathspecs that mean
+    "everything" and treated everything else as scoped — a denylist against
+    git's open-ended magic-pathspec grammar. An adversarial pass broke it
+    fifteen different ways, each reproduced against real git.
+
+    The fix inverts the test: a pathspec counts as scoped only if it is
+    demonstrably a plain narrow path. These cases are kept as the record of
+    why, because the enumerating version looked entirely reasonable.
+    """
+
+    # An exclude-only pathspec matches the WHOLE tree.
+    MAGIC_PATHSPECS = (
+        "git restore ':!nonexistent'",
+        "git restore ':(exclude)zzz'",
+        "git restore ':'",
+        "git restore ':(attr:!binary)'",
+        "git restore ':(glob)**'",
+        "git restore ':(glob)**/*'",
+        "git restore ':(glob)*'",
+        "git restore ':(top)'",
+    )
+    # A pre-command option the old verb regex did not model de-anchored the
+    # whole match, so the command was never even examined.
+    PRE_COMMAND_OPTIONS = (
+        'git -P restore .',
+        'git -p restore .',
+        'git --work-tree . restore .',
+        'git --namespace foo restore .',
+        'git --git-dir .git restore .',
+    )
+    # Paths that normalize to the tree root, and globs.
+    PATH_NORMALIZATION = (
+        'git restore ./.',
+        'git restore ../',
+        'git restore ./*',
+        'git restore "src/.."',
+        'git restore $(pwd)',
+    )
+    # Parser tricks: a trailing comment supplied fake pathspecs, subshell
+    # parens rode along in the token, and ``-s`` swallowed the pathspec.
+    PARSER_TRICKS = (
+        'git restore --pathspec-from-file=/tmp/all.txt # revert everything',
+        'git restore --pathspec-from-file /tmp/all.txt',
+        '(git restore .)',
+        'git checkout -- -s .',
+        'echo . | git checkout --pathspec-from-file=-',
+        "sh -c 'git restore .'",
+    )
+
+    def _assert_all_ask(self, commands, why: str) -> None:
+        for command in commands:
+            with self.subTest(command=command):
+                verdict = _verdict(command)
+                self.assertEqual(
+                    verdict.decision, Decision.ASK,
+                    f'{command!r} {why} — it must reach the operator',
+                )
+                self.assertEqual(verdict.rule_id, 'fs.git_revert_all')
+
+    def test_magic_pathspecs(self) -> None:
+        self._assert_all_ask(
+            self.MAGIC_PATHSPECS, 'reverts the whole tree via pathspec magic',
+        )
+
+    def test_pre_command_options(self) -> None:
+        self._assert_all_ask(
+            self.PRE_COMMAND_OPTIONS, 'reverts the whole tree',
+        )
+
+    def test_path_normalization(self) -> None:
+        self._assert_all_ask(
+            self.PATH_NORMALIZATION, 'resolves to the whole tree',
+        )
+
+    def test_parser_tricks(self) -> None:
+        self._assert_all_ask(
+            self.PARSER_TRICKS, 'defeats naive argv tokenization',
+        )
+
+    def test_an_unreadable_pathspec_set_fails_closed(self) -> None:
+        # --pathspec-from-file names a file we cannot read, so breadth is
+        # unknowable. Unknown must mean ASK, never ALLOW.
+        self.assertTrue(_flags('git restore --pathspec-from-file=/tmp/x.txt'))
+
+
+class MentionsAreNotInvocationsTests(unittest.TestCase):
+    """False positives are a security bug too.
+
+    The substring-matching version flagged any command whose TEXT contained
+    "git restore ." — writing docs about it, grepping for it. Popups for
+    things that are not happening are how an operator learns to click through
+    the popup that matters.
+    """
+
+    MENTIONS = (
+        'grep -rn "git restore ." docs/',
+        'echo "run git restore . to undo"',
+        "echo 'to undo, run git restore .' >> docs/undo.md",
+        'rg --files-with-matches "git restore ."',
+    )
+
+    def test_merely_naming_the_command_is_not_running_it(self) -> None:
+        for command in self.MENTIONS:
+            with self.subTest(command=command):
+                self.assertFalse(
+                    _flags(command),
+                    f'{command!r} only MENTIONS the command; flagging it is '
+                    'noise that erodes the value of the approval prompt',
+                )
+
+
+class BreadthApiTests(unittest.TestCase):
+    """The public helpers the remembered-permission key depends on."""
+
+    def test_git_subcommand_is_extracted_past_pre_command_options(self) -> None:
+        self.assertEqual(git_subcommand_of('git -C /r -c a.b=c restore x'), 'restore')
+        self.assertEqual(git_subcommand_of('git -P status'), 'status')
+        self.assertEqual(git_subcommand_of('echo git restore .'), '')
+        self.assertEqual(git_subcommand_of('npm test'), '')
+
+    def test_breadth_distinguishes_scoped_from_whole_tree(self) -> None:
+        self.assertEqual(git_revert_breadth('git restore src/a.js'), 'scoped')
+        self.assertEqual(git_revert_breadth('git restore .'), 'whole-tree')
+        self.assertEqual(git_revert_breadth('git status'), '')
+        # ``git checkout main`` is branch movement, but git's own grammar
+        # cannot tell a branch name from a path here either. It reads as
+        # scoped, which is harmless: the whole-tree answer is the only one
+        # that changes a decision, and branch movement is denied at Layer A.
+        self.assertNotEqual(git_revert_breadth('git checkout main'), 'whole-tree')
+
+
 class BranchMovementIsNotThisRulesJobTests(unittest.TestCase):
     """Invariant A stays where it belongs.
 
@@ -147,35 +289,43 @@ class BranchMovementIsNotThisRulesJobTests(unittest.TestCase):
 
 
 class TargetParsingTests(unittest.TestCase):
-    """``_git_revert_targets`` must return pathspecs and nothing else."""
+    """``_git_revert_pathspecs`` must return pathspecs and nothing else."""
+
+    @staticmethod
+    def _paths(command: str) -> list:
+        return _git_revert_pathspecs(command)[1]
 
     def test_flags_and_separators_are_dropped(self) -> None:
         self.assertEqual(
-            _git_revert_targets('git restore --staged --worktree -- src/a.js'),
+            self._paths('git restore --staged --worktree -- src/a.js'),
             ['src/a.js'],
         )
 
     def test_source_consumes_its_tree_ish_in_both_forms(self) -> None:
         # A commit name must never be mistaken for a pathspec — in the
-        # separated form it would otherwise land in targets and make a
-        # whole-tree revert look scoped.
+        # separated form it would otherwise land in the pathspec list and
+        # make a whole-tree revert look scoped.
         self.assertEqual(
-            _git_revert_targets('git restore --source HEAD~2 src/a.js'), ['src/a.js'],
+            self._paths('git restore --source HEAD~2 src/a.js'), ['src/a.js'],
         )
         self.assertEqual(
-            _git_revert_targets('git restore --source=HEAD~2 src/a.js'), ['src/a.js'],
+            self._paths('git restore --source=HEAD~2 src/a.js'), ['src/a.js'],
         )
-        self.assertEqual(_git_revert_targets('git restore --source HEAD~2 .'), ['.'])
+        self.assertEqual(self._paths('git restore --source HEAD~2 .'), ['.'])
 
     def test_pre_command_options_are_dropped(self) -> None:
         self.assertEqual(
-            _git_revert_targets('git -C /repo -c core.pager=cat restore src/a.js'),
+            self._paths('git -C /repo -c core.pager=cat restore src/a.js'),
             ['src/a.js'],
         )
 
+    def test_everything_after_the_separator_is_a_pathspec(self) -> None:
+        # Past ``--`` a flag-looking token IS a path. Continuing to parse
+        # options there let ``-s`` consume the real pathspec.
+        self.assertEqual(self._paths('git checkout -- -s .'), ['-s', '.'])
+
     def test_quotes_are_stripped_so_a_quoted_dot_is_still_a_dot(self) -> None:
-        self.assertEqual(_git_revert_targets("git restore '.'"), ['.'])
-        self.assertEqual(_git_revert_targets('git restore ".""'.rstrip('"')), ['.'])
+        self.assertEqual(self._paths("git restore '.'"), ['.'])
 
 
 if __name__ == '__main__':

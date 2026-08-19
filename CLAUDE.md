@@ -69,7 +69,17 @@ kato_core_lib                  ← orchestrator (imports any lib below; wires PR
 ├── youtrack_core_lib          ← YouTrack API client (fully black-box, see standard below)
 ├── jira_core_lib
 ├── workspace_core_lib         ← workspace folder management
-└── provider_client_base       ← ReviewComment and shared provider types
+├── provider_client_base       ← ReviewComment and shared provider types
+├── utils_core_lib             ← genuinely shared primitives (atomic_write, file_lock,
+│                                 text_utils). ANY lib may import it — it is a shared
+│                                 base, not a peer transport. It was missing from this
+│                                 diagram for a long time, which is how the same helper
+│                                 kept getting re-forked with divergent guarantees
+├── security_scanner_core_lib  ← pluggable workspace security scanners (bandit,
+│                                 detect-secrets, npm audit, env-file)
+├── agent_provider_contracts   ← the shared agent-transport interface types
+├── vcs_provider_contracts     ← the shared VCS-provider interface types
+└── openrouter_core_lib        ← OpenRouter model catalog
 ```
 
 **Rule:** reusable agent/LLM-behavior code belongs in `agent_core_lib`; the agent transports import it (plus `sandbox_core_lib` for sandbox/prompt-injection concerns and `provider_client_base` for the shared `ReviewComment` type — these three are the full set of sanctioned peer-imports for a transport lib). Provider/transport specifics stay in their own lib. Anything product-specific (ticket workflow, repo publishing, Kato UI, and the *text* of product-specific prompt guidance) stays in `kato_core_lib` and is injected into agent clients as a parameter — `agent_core_lib` must never contain kato-specific workflow/product text. Glue between the non-agent black-box libs still belongs in `kato_core_lib`.

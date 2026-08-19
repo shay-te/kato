@@ -353,3 +353,15 @@ export function commandSignatureOf(command) {
 export function decisionCommandFor(toolName, toolInput) {
   return isCommandKeyedTool(toolName) ? commandSignatureOf(commandOf(toolInput)) : '';
 }
+
+// Tools whose approval must never be REMEMBERED, because approving them
+// changes the agent's permissions rather than performing a single action.
+//
+// `ExitPlanMode` is the whole of plan mode's enforcement: plan mode passes
+// only `--permission-mode plan` with no tool denial, so this prompt is the
+// gate. A remembered grant is stored under the bare tool name (non-Bash
+// tools carry no command signature), making it global across every task and
+// persistent across restarts — one click would disarm the lock everywhere,
+// including the autonomous wait-planning hold, with no popup left to notice.
+// Mirrors the backend's `_NEVER_AUTO_RESOLVED_TOOLS`; both must agree.
+export const NEVER_REMEMBERED_TOOLS = new Set(['ExitPlanMode']);

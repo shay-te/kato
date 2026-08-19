@@ -254,6 +254,10 @@ _REQUIRED_DOCKER_FLAGS = frozenset({
     '--security-opt=no-new-privileges',
     '--security-opt=apparmor=docker-default',
     '--read-only',
+    # gVisor. Absent from this set, the argv self-check passed a container
+    # that had silently fallen back to runc — so the operator's "gVisor is
+    # always there, no questions asked" held at boot but not per spawn.
+    '--runtime=runsc',
 })
 
 # Forbidden Docker run flags. NONE of these may appear in ``wrap_command``
@@ -1141,8 +1145,20 @@ def wrap_command(
     # the container and the host, neutralising most kernel-CVE escape
     # paths. Free hardening when the operator has it installed; we
     # silently use the default (runc) otherwise.
-    if gvisor_runtime_available():
-        argv.extend(['--runtime', 'runsc'])
+    #
+    # NOT conditional any more. It read ``if gvisor_runtime_available()``,
+    # which is the shape of OPTIONAL hardening — but gVisor is mandatory:
+    # ``check_gvisor_or_exit`` refuses to boot without it. The conditional
+    # meant a probe that failed transiently (a slow daemon, a racing
+    # ``docker info``) silently produced a runc container with no userspace
+    # kernel and no error — the one failure mode a mandatory control must
+    # not have.
+    #
+    # Emitted unconditionally, and listed in ``_REQUIRED_DOCKER_FLAGS`` so
+    # the pre-Popen self-check enforces it. If runsc really is gone, Docker
+    # itself refuses the run — loudly, which is the point. No probe here:
+    # argv construction stays pure, so building a command never shells out.
+    argv.extend(['--runtime', 'runsc'])
     # Per-task egress: the sandbox joins ONLY its private, ``--internal``
     # 2-member network and reaches the outside solely through its own
     # SNI-pinning proxy. The network and proxy are created by the SPAWN
@@ -1284,14 +1300,15 @@ def wrap_command(
             '--add-host', f'{EGRESS_ALLOWED_HOST}:{proxy_ip}',
             '-e', f'{EGRESS_PROXY_ENV_KEY}={proxy_ip}',
         ])
-    # NOTE: the SNI proxy (``ensure_egress_proxy`` / ``sni_proxy.py``) is
-    # deliberately NOT wired in here yet. Routing the container at a proxy
-    # on the sandbox bridge does not work: that bridge runs with
-    # ``enable_icc=false`` so containers cannot reach each other — this
-    # lib's own inter-container isolation, working as intended, makes an
-    # on-bridge proxy unreachable. Making it work needs a design decision
-    # (host-side proxy reached via host-gateway, or a per-task network),
-    # not another flag, so the IP allowlist stays in force until then.
+    # The SNI proxy IS wired in — see the ``--network``/``--add-host``
+    # block above. This note used to say the opposite, six lines below the
+    # code that contradicted it: the original blocker was that a proxy on
+    # the SHARED sandbox bridge is unreachable, because that bridge runs
+    # ``enable_icc=false`` and containers cannot reach each other. The
+    # design decision it was waiting for is the per-task network — each
+    # spawn gets its own two-member ``--internal`` network holding exactly
+    # the sandbox and its own proxy, so isolation stays total and the
+    # proxy is still reachable.
     # Secrets travel out-of-band: staged as 0600 files in a 0700 dir and
     # bind-mounted read-only, then read into the environment by the
     # entrypoint. ``-e VAR`` pass-through used to be the mechanism; it
@@ -2286,6 +2303,40 @@ def arm_container_watchdog(
 
 
 _EGRESS_PROXY_IMAGE = 'python:3.11-slim'
+_EGRESS_PROXY_IMAGE_ENV_KEY = 'AGENT_SANDBOX_EGRESS_PROXY_IMAGE'
+
+
+def _egress_proxy_image() -> str:
+    """The image reference the egress proxy runs from — by ID, not by tag.
+
+    The proxy is on the security path: every byte the sandbox sends to the
+    internet goes through it. Running it from a mutable Docker Hub tag meant
+    an implicit ``docker pull`` of whatever ``python:3.11-slim`` pointed at
+    that day, on a network the operator has no visibility into — a
+    supply-chain hole in the very control that exists to close one.
+
+    So: resolve the tag to the LOCAL image ID and run that. The image has to
+    already be present, which makes the pull an explicit, auditable step the
+    operator takes once rather than an invisible one on every spawn.
+    ``AGENT_SANDBOX_EGRESS_PROXY_IMAGE`` accepts a digest-pinned reference
+    for operators who mirror their own.
+    """
+    configured = str(os.environ.get(_EGRESS_PROXY_IMAGE_ENV_KEY, '') or '').strip()
+    reference = configured or _EGRESS_PROXY_IMAGE
+    if '@sha256:' in reference:
+        return reference
+    try:
+        image_id = _image_digest_strict(reference)
+    except _DigestLookupError as exc:
+        raise SandboxError(
+            f'the sandbox egress proxy image {reference!r} is not available '
+            f'locally ({exc}). Pull it once — ``docker pull {reference}`` — '
+            f'or set {_EGRESS_PROXY_IMAGE_ENV_KEY} to a digest-pinned '
+            'reference you mirror. It is not pulled implicitly: the '
+            'proxy carries all sandbox egress, so its image is not something '
+            'to fetch silently at spawn time.',
+        ) from exc
+    return image_id
 _EGRESS_PROXY_PORT = 443
 EGRESS_PROXY_ENV_KEY = 'AGENT_SANDBOX_EGRESS_PROXY_IP'
 EGRESS_ALLOWED_HOST = 'api.anthropic.com'
@@ -2440,7 +2491,7 @@ def start_task_egress_proxy(
                 '--tmpfs', '/tmp:rw,nosuid,nodev,size=8m',
                 '--memory', '128m', '--pids-limit', '64',
                 '-v', f'{proxy_source}:/app/sni_proxy.py:ro',
-                _EGRESS_PROXY_IMAGE,
+                _egress_proxy_image(),
                 'python3', '/app/sni_proxy.py',
                 '--port', str(_EGRESS_PROXY_PORT),
                 '--allow', EGRESS_ALLOWED_HOST,

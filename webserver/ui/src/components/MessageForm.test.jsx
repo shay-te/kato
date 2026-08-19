@@ -1074,3 +1074,47 @@ describe('MessageForm — prompt recall with the up arrow', () => {
     expect(box.value).toBe('');
   });
 });
+
+describe('MessageForm — the ultracode default does not stamp itself onto tasks', () => {
+  test('mounting a task does NOT record a choice it never made', async () => {
+    const { ultracodeStorageKey } = await import('../utils/composerDraft.js');
+    localStorage.clear();
+    renderForm({ taskId: 'untouched' });
+    // Nothing written: the task stays "never chose", so a later change to
+    // the Settings default still reaches it.
+    expect(localStorage.getItem(ultracodeStorageKey('untouched'))).toBeNull();
+  });
+
+  test('a later change to the default still reaches an untouched task', async () => {
+    const { writeUltracodeByDefault, _resetUltracodeDefaultPref } =
+      await import('../utils/ultracodeDefaultPref.js');
+    localStorage.clear();
+    _resetUltracodeDefaultPref();
+
+    // Operator opens the task, does not touch the chip, leaves.
+    const { unmount } = renderForm({ taskId: 'untouched' });
+    expect(ultracodeToggle()).toHaveAttribute('aria-checked', 'false');
+    unmount();
+
+    // Then turns the default on. The untouched task must pick it up.
+    writeUltracodeByDefault(true);
+    renderForm({ taskId: 'untouched' });
+    expect(ultracodeToggle()).toHaveAttribute('aria-checked', 'true');
+    _resetUltracodeDefaultPref();
+  });
+
+  test('an explicit toggle IS still persisted', async () => {
+    const { ultracodeStorageKey } = await import('../utils/composerDraft.js');
+    localStorage.clear();
+    renderForm({ taskId: 'decided' });
+    // Open the Modes popover once — it stays open across clicks, and
+    // re-opening it would toggle it shut instead.
+    const toggle = ultracodeToggle();
+    fireEvent.click(toggle);
+    expect(localStorage.getItem(ultracodeStorageKey('decided'))).toBe('on');
+    fireEvent.click(toggle);
+    // 'off', not null: an explicit off must stay distinguishable from
+    // "never chose", or the Settings default would re-arm this task.
+    expect(localStorage.getItem(ultracodeStorageKey('decided'))).toBe('off');
+  });
+});

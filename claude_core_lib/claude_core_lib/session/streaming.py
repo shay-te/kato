@@ -1272,7 +1272,12 @@ class StreamingClaudeSession(object):
         # ACTION_GUARD_DENY_PATTERNS for rationale.
         from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient as _CliClient
         merged_disallowed = _CliClient._merge_disallowed_with_floor(
-            self._disallowed_tools
+            self._disallowed_tools,
+            # bypassPermissions skips the per-tool prompt entirely, so the
+            # content-aware guard never runs and ``git restore`` loses the
+            # operator review that makes it safe to permit. See
+            # ``UNSUPERVISED_DENY_PATTERNS``.
+            bypass_permissions=self._permission_mode == 'bypassPermissions',
         )
         command.extend(['--disallowedTools', merged_disallowed])
         # When ``the docker setting=true`` the agent gets a short

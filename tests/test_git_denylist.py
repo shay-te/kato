@@ -119,5 +119,49 @@ class CommandIncludesGitDenyTests(unittest.TestCase):
             self.assertIn(pattern, flag_value)
 
 
+
+class UnsupervisedModeWithdrawsRestoreTests(unittest.TestCase):
+    """``git restore`` is permitted because Layer B can route the dangerous
+    form to the operator. In ``bypassPermissions`` no per-tool prompt fires,
+    so Layer B never runs and there is nobody to route to — the capability
+    is withdrawn in exactly the mode that cannot supervise it.
+    """
+
+    def _flag_value(self, **kwargs) -> str:
+        client = ClaudeCliClient(binary='claude', **kwargs)
+        command = client._build_command(additional_dirs=[], agent_session_id='')
+        return command[command.index('--disallowedTools') + 1]
+
+    def test_attended_mode_allows_restore(self) -> None:
+        # The operator's actual request: revert a file while they are watching.
+        items = self._flag_value(bypass_permissions=False).split(',')
+        self.assertNotIn('Bash(git restore:*)', items)
+
+    def test_bypass_mode_denies_restore(self) -> None:
+        items = self._flag_value(bypass_permissions=True).split(',')
+        self.assertIn(
+            'Bash(git restore:*)', items,
+            'in bypassPermissions the content-aware guard never runs, so an '
+            'unrecoverable "git restore ." would execute with nobody watching',
+        )
+        self.assertIn('Bash(git restore *)', items)
+
+    def test_bypass_mode_keeps_every_other_floor_entry(self) -> None:
+        items = self._flag_value(bypass_permissions=True).split(',')
+        for pattern in ClaudeCliClient.GIT_DENY_PATTERNS:
+            self.assertIn(pattern, items)
+        for pattern in ClaudeCliClient.ACTION_GUARD_DENY_PATTERNS:
+            self.assertIn(pattern, items)
+
+    def test_plumbing_subcommands_are_denied_in_both_modes(self) -> None:
+        # hash-object + mktree + commit-tree builds a commit and send-pack
+        # publishes it — the porcelain denials alone left that path open.
+        for bypass in (False, True):
+            items = self._flag_value(bypass_permissions=bypass).split(',')
+            for sub in ('hash-object', 'commit-tree', 'send-pack',
+                        'read-tree', 'checkout-index', 'mktree'):
+                self.assertIn(f'Bash(git {sub}:*)', items, f'{sub} bypass={bypass}')
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -50,8 +50,14 @@ class CommandSignatureOfTests(unittest.TestCase):
 
     def test_dedups_repeats_keeps_first_seen_order(self) -> None:
         self.assertEqual(
+            command_signature_of('git commit -m x && git commit -m y'),
+            'git commit',
+        )
+        # Distinct git subcommands stay distinct — see
+        # ``test_git_subcommands_do_not_share_a_remembered_key`` for why.
+        self.assertEqual(
             command_signature_of('git add . && git commit -m x && git push'),
-            'git',
+            'git add git commit git push',
         )
         self.assertEqual(
             command_signature_of('docker build . && mvn test && docker push'),
@@ -79,7 +85,7 @@ class CommandSignatureOfTests(unittest.TestCase):
             base,
         )
         self.assertEqual(
-            command_signature_of('git log --oneline | wc -l'), 'git',
+            command_signature_of('git log --oneline | wc -l'), 'git log',
         )
 
     def test_sort_and_uniq_are_NOT_output_shaping_they_can_write_files(self) -> None:
@@ -223,9 +229,10 @@ class CommandSignatureOfTests(unittest.TestCase):
             self.assertNotEqual(decision_command_for('Bash', {'command': cmd}), '', cmd)
 
     def test_quoted_shell_metacharacters_inside_an_argument_do_not_fork_the_key(self) -> None:
-        self.assertEqual(command_signature_of('git commit -m "fix bug"'), 'git')
+        self.assertEqual(command_signature_of('git commit -m "fix bug"'), 'git commit')
         self.assertEqual(
-            command_signature_of('git commit -m "fix a; b && c | d bug"'), 'git',
+            command_signature_of('git commit -m "fix a; b && c | d bug"'),
+            'git commit',
         )
         self.assertEqual(command_signature_of('grep -rn "foo|bar" src/'), 'grep')
         self.assertEqual(command_signature_of('sed -n "s/a|b/c/" file.txt'), 'sed')
@@ -243,8 +250,8 @@ class CommandSignatureOfTests(unittest.TestCase):
             'EOF\n'
             ')"',
         )
-        self.assertEqual(plain, 'git')
-        self.assertEqual(via_heredoc, 'git')
+        self.assertEqual(plain, 'git commit')
+        self.assertEqual(via_heredoc, 'git commit')
         self.assertEqual(plain, via_heredoc)
 
         self.assertEqual(
@@ -315,3 +322,51 @@ class IsAnswerableQuestionTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class GitRememberedKeyGranularityTests(unittest.TestCase):
+    """A remembered "always allow" must not spill across git subcommands.
+
+    ``git`` alone was the remembered key for every git invocation, so one
+    "allow always" on a read-only ``git status`` — the grant an operator
+    would give without thinking — silently covered every future
+    ``git restore``, which discards uncommitted work. Now that the agent is
+    permitted to revert files at all, that spill is the difference between
+    an approval the operator understood and one they never saw.
+    """
+
+    def test_git_subcommands_do_not_share_a_remembered_key(self) -> None:
+        status = command_signature_of('git status')
+        restore = command_signature_of('git restore src/a.js')
+        self.assertNotEqual(status, restore)
+        self.assertEqual(status, 'git status')
+        self.assertEqual(restore, 'git restore')
+
+    def test_the_same_subcommand_still_shares_a_key_across_paths(self) -> None:
+        # The point of a remembered decision: approve once, don't re-prompt
+        # for the same operation on a different file.
+        self.assertEqual(
+            command_signature_of('git restore src/a.js'),
+            command_signature_of('git restore lib/b.py'),
+        )
+
+    def test_a_whole_tree_revert_keys_apart_from_a_scoped_one(self) -> None:
+        # Approving "revert this file" must not pre-approve "revert
+        # everything" — the second is unrecoverable, since nothing is
+        # committed until kato publishes.
+        scoped = command_signature_of('git restore src/a.js')
+        whole = command_signature_of('git restore .')
+        self.assertNotEqual(scoped, whole)
+        self.assertIn('whole tree', whole)
+
+    def test_pre_command_options_do_not_fork_the_key(self) -> None:
+        # Same operation, same key — otherwise every ``-C <path>`` variant
+        # re-prompts and the remembered decision is worthless.
+        self.assertEqual(
+            command_signature_of('git -C /repo restore src/a.js'),
+            command_signature_of('git restore src/a.js'),
+        )
+
+    def test_a_non_git_program_is_unaffected(self) -> None:
+        self.assertEqual(command_signature_of('npm test'), 'npm')
+        self.assertEqual(command_signature_of('echo git restore .'), 'echo')

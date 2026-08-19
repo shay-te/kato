@@ -26,7 +26,19 @@ use tauri_plugin_shell::ShellExt;
 
 use wsl::BackendTarget;
 
+// Bind/probe address: numeric, because that is what the sidecar binds and
+// what a TCP readiness probe needs.
 const HOST: &str = "127.0.0.1";
+// Address the WEBVIEW is pointed at. Deliberately different from HOST.
+//
+// Two reasons it must be the name, not the number. On Windows the webview
+// renders a blank page for the numeric loopback address but loads fine for
+// `localhost` — the operator-visible symptom that started this. And browser
+// certificate exceptions are per ORIGIN, so `https://127.0.0.1` and
+// `https://localhost` are separate trust decisions; pinning the UI to one
+// name keeps kato's local CA doing its job instead of the operator clicking
+// through a warning.
+const UI_HOST: &str = "localhost";
 const DEFAULT_PORT: u16 = 5050;
 // First boot can take ~a minute — the frozen sidecar validates the agent CLI +
 // provider connections before the webserver comes up — so allow generous slack.
@@ -241,7 +253,7 @@ fn main() {
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_millis())
                         .unwrap_or(0);
-                    let url = format!("http://{HOST}:{port}/?_={nonce}");
+                    let url = format!("http://{UI_HOST}:{port}/?_={nonce}");
                     // Open a FRESH window pointed straight at the local server,
                     // then close the splash — instead of navigate()-ing the
                     // existing splash webview to the external URL. Navigating an

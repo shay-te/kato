@@ -3,6 +3,7 @@ import {
   unpackPermissionEnvelope,
   decisionCommandFor,
   isHighRiskActionGuard,
+  NEVER_REMEMBERED_TOOLS,
 } from '../utils/permissionEnvelope.js';
 import { extractAnswerableQuestions } from '../utils/answerableQuestion.js';
 import DialogShell from './DialogShell.jsx';
@@ -29,10 +30,23 @@ export default function PermissionModal({
   // shortcuts below can skip the AskUserQuestion form, which has its own
   // controls. See the ``if (askQuestions)`` branch further down.
   const askQuestions = extractAnswerableQuestions(toolInput);
-  // Out-of-task asks AND high-risk Action Guard categories never offer the
-  // remembered ("Allow always") scope — a persisted grant for those is exactly
-  // what must never be one click (or keystroke) away.
-  const withholdAllowAlways = outsideSandbox || isHighRiskActionGuard(actionGuard);
+  // Out-of-task asks, high-risk Action Guard categories, AND permission-
+  // changing tools never offer the remembered ("Allow always") scope — a
+  // persisted grant for those is exactly what must never be one click (or
+  // keystroke) away.
+  //
+  // ``ExitPlanMode`` is in that last group because it is not one action, it
+  // is the whole of plan mode's enforcement. The grant would be stored under
+  // the bare tool name, so it applies to EVERY task and survives restarts:
+  // one click here and no plan-locked session ever asks again. The backend
+  // refuses to auto-resolve it too (_NEVER_AUTO_RESOLVED_TOOLS); this hides
+  // the button so the operator is never offered a choice that would not be
+  // honoured.
+  const withholdAllowAlways = (
+    outsideSandbox
+    || isHighRiskActionGuard(actionGuard)
+    || NEVER_REMEMBERED_TOOLS.has(toolName)
+  );
 
   // Keyboard shortcuts: Esc = Deny, Enter = Allow once, Shift+Enter = Allow
   // always (falls back to Allow once when the remembered scope is withheld).

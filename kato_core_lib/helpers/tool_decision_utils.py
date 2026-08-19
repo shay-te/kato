@@ -16,6 +16,10 @@ import re
 from agent_core_lib.agent_core_lib.helpers.command_introspection import (
     program_token_index,
 )
+from agent_core_lib.agent_core_lib.helpers.command_policy import (
+    git_revert_breadth,
+    git_subcommand_of,
+)
 
 # Tools whose remembered decision is keyed by the COMMAND, not the tool
 # name — so "Allow always" on `mvn ...` does NOT silently allow `docker ...`.
@@ -148,7 +152,30 @@ def _program_of_segment(segment: str) -> str:
         target = _escalation_target_token(tokens, i)
         if target:
             return f'{prog} {target}'
+    if prog == 'git':
+        return _git_signature(segment, prog)
     return prog
+
+
+def _git_signature(segment: str, prog: str) -> str:
+    """Fold the git SUBCOMMAND (and revert breadth) into the remembered key.
+
+    ``git`` alone is far too coarse a key now that the agent may revert
+    files: ``git status`` and ``git restore .`` both reduced to ``git``, so
+    one "always allow" on a read-only status check silently granted every
+    future working-tree revert — a grant no operator would knowingly give.
+
+    The breadth suffix draws the second line: approving ``git restore
+    src/a.js`` must not also pre-approve ``git restore .``, which discards
+    the whole uncommitted task with nothing to recover from.
+    """
+    subcommand = git_subcommand_of(segment)
+    if not subcommand:
+        return prog
+    breadth = git_revert_breadth(segment)
+    if breadth == 'whole-tree':
+        return f'{prog} {subcommand} (whole tree)'
+    return f'{prog} {subcommand}'
 
 
 def _match_heredoc_start(command: str, i: int):

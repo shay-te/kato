@@ -117,3 +117,26 @@ def set_task_mode(task_id: str, mode: object) -> None:
 def set_plan_mode(task_id: str, on: bool) -> None:
     """Persist (``on``) or clear (``not on``) the plan-mode lock for a task."""
     set_task_mode(task_id, PLAN_MODE if on else '')
+
+
+def task_permission_mode(task_id: str, default: str = '') -> str:
+    """The operator's persisted ``--permission-mode`` for a task, or ``default``.
+
+    The single read-side entry point for "what mode did the operator lock
+    this task to". It exists because the lock used to be reachable ONLY
+    through the webserver's in-memory override map, so exactly one spawn
+    site (the chat-send route) honoured it: autonomous implementation,
+    review-comment fixes, and diff-comment respawns all started with the
+    configured editing mode instead. A task the operator had locked to
+    Plan would sit there and then edit files on the next scan tick —
+    which is precisely what a safety lock must not do.
+
+    Reads the file each call rather than caching: the operator can flip
+    the mode at any moment from the composer, a stale cache would keep
+    spawning under the OLD mode, and a lock that applies late is not a
+    lock. The file is small and spawns are rare.
+    """
+    task = _norm(task_id)
+    if not task:
+        return default
+    return read_task_modes().get(task, '') or default
