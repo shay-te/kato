@@ -477,6 +477,8 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
             'claude_core_lib.claude_core_lib.cli_client.subprocess.run',
             return_value=completed,
         ) as mock_run, patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.assert_gvisor_or_raise',
+        ), patch(
             'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
         ), patch(
             'sandbox_core_lib.sandbox_core_lib.manager.start_task_egress_proxy',
@@ -529,6 +531,8 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
             'claude_core_lib.claude_core_lib.cli_client.subprocess.run',
             return_value=completed,
         ), patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.assert_gvisor_or_raise',
+        ), patch(
             'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
         ), patch(
             'sandbox_core_lib.sandbox_core_lib.manager.start_task_egress_proxy',
@@ -563,6 +567,8 @@ class ClaudeCliClientDockerModeTests(unittest.TestCase):
         with patch(
             'claude_core_lib.claude_core_lib.cli_client.subprocess.run',
             return_value=completed,
+        ), patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.assert_gvisor_or_raise',
         ), patch(
             'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
         ), patch(
@@ -1338,6 +1344,8 @@ class RunPromptDockerErrorPaths(unittest.TestCase):
         from sandbox_core_lib.sandbox_core_lib.manager import SandboxError
         client = self._client()
         with patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.assert_gvisor_or_raise',
+        ), patch(
             'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
             side_effect=SandboxError('image pull failed'),
         ):
@@ -1352,6 +1360,8 @@ class RunPromptDockerErrorPaths(unittest.TestCase):
         from sandbox_core_lib.sandbox_core_lib.manager import SandboxError
         client = self._client()
         with patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.assert_gvisor_or_raise',
+        ), patch(
             'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
             return_value=None,
         ), patch(
@@ -1372,6 +1382,8 @@ class RunPromptDockerErrorPaths(unittest.TestCase):
         from sandbox_core_lib.sandbox_core_lib.manager import SandboxError
         client = self._client()
         with patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.assert_gvisor_or_raise',
+        ), patch(
             'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
             return_value=None,
         ), patch(
@@ -1396,6 +1408,7 @@ class RunPromptDockerErrorPaths(unittest.TestCase):
         client = self._client()
         with patch.multiple(
             'sandbox_core_lib.sandbox_core_lib.manager',
+            assert_gvisor_or_raise=MagicMock(return_value=None),
             ensure_image=MagicMock(return_value=None),
             check_spawn_rate=MagicMock(return_value=None),
             enforce_no_workspace_secrets=MagicMock(return_value=None),
@@ -1424,6 +1437,7 @@ class RunPromptDockerTimeoutKillsContainerTests(unittest.TestCase):
         )
         with patch.multiple(
             'sandbox_core_lib.sandbox_core_lib.manager',
+            assert_gvisor_or_raise=MagicMock(return_value=None),
             ensure_image=MagicMock(return_value=None),
             check_spawn_rate=MagicMock(return_value=None),
             enforce_no_workspace_secrets=MagicMock(return_value=None),

@@ -1554,6 +1554,8 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
             task_id='PROJ-1', cwd='/tmp', docker_mode_on=True,
         )
         with patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.assert_gvisor_or_raise',
+        ), patch(
             'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
             side_effect=SandboxError('image pull failed'),
         ), patch(
@@ -1570,6 +1572,8 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
             task_id='PROJ-2', cwd='/tmp', docker_mode_on=True,
         )
         with patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.assert_gvisor_or_raise',
+        ), patch(
             'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
             return_value=None,
         ), patch(
@@ -1592,6 +1596,8 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
             task_id='PROJ-3', cwd='/tmp', docker_mode_on=True,
         )
         with patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.assert_gvisor_or_raise',
+        ), patch(
             'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
             return_value=None,
         ), patch(
@@ -1618,6 +1624,7 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         )
         with patch.multiple(
             'sandbox_core_lib.sandbox_core_lib.manager',
+            assert_gvisor_or_raise=MagicMock(return_value=None),
             ensure_image=MagicMock(return_value=None),
             check_spawn_rate=MagicMock(return_value=None),
             enforce_no_workspace_secrets=MagicMock(return_value=None),
@@ -1929,6 +1936,8 @@ class StreamingClaudeSessionDockerModeTests(unittest.TestCase):
         ) as mock_popen, patch(
             'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
+        ), patch(
+            'sandbox_core_lib.sandbox_core_lib.manager.assert_gvisor_or_raise',
         ), patch(
             'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
         ), patch(

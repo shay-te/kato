@@ -800,6 +800,8 @@ class KatoCoreLibTests(unittest.TestCase):
                 'claude_core_lib.claude_core_lib.cli_client.subprocess.run',
                 return_value=completed,
             ) as mock_run, patch(
+                'sandbox_core_lib.sandbox_core_lib.manager.assert_gvisor_or_raise',
+            ), patch(
                 'sandbox_core_lib.sandbox_core_lib.manager.ensure_image',
             ), patch(
                 'sandbox_core_lib.sandbox_core_lib.manager.check_spawn_rate',

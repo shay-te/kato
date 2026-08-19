@@ -132,6 +132,7 @@ def wrap_spawn_for_docker(
     from sandbox_core_lib.sandbox_core_lib.manager import (
         SandboxError,
         arm_container_watchdog,
+        assert_gvisor_or_raise,
         check_spawn_rate,
         ensure_image,
         enforce_no_workspace_secrets,
@@ -141,6 +142,13 @@ def wrap_spawn_for_docker(
         wrap_command,
     )
 
+    # gVisor first: if the daemon lost runsc since boot, say so in those
+    # words rather than letting ``docker run`` fail later with a bare
+    # "Unknown runtime specified runsc" that names neither cause nor fix.
+    try:
+        assert_gvisor_or_raise()
+    except SandboxError as exc:
+        raise RuntimeError(str(exc)) from exc
     try:
         ensure_image(logger=logger)
     except SandboxError as exc:

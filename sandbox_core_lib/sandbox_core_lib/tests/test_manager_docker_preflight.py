@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, call, patch
 from sandbox_core_lib.sandbox_core_lib.manager import (
     SANDBOX_IMAGE_TAG,
     SandboxError,
+    assert_gvisor_or_raise,
     _AUTH_VOLUME_NAME,
     _SANDBOX_NETWORK_NAME,
     check_docker_or_exit,
@@ -532,3 +533,34 @@ class StampAuthVolumeManifestTests(unittest.TestCase):
             stamp_auth_volume_manifest()
 
         self.assertIn('--read-only', captured.get('cmd', []))
+
+
+class AssertGvisorOrRaiseTests(unittest.TestCase):
+    """The spawn-path twin of the boot check.
+
+    Boot asks "was runsc there when we started"; this asks "is it there for
+    THIS container". Without it, a daemon restarted into a config without
+    runsc surfaced as a bare ``Unknown runtime specified runsc`` from
+    Docker — fail-closed and correct, but naming neither cause nor fix.
+    """
+
+    _MODULE = 'sandbox_core_lib.sandbox_core_lib.manager.gvisor_runtime_available'
+
+    def test_passes_when_runsc_is_registered(self) -> None:
+        with patch(self._MODULE, return_value=True):
+            assert_gvisor_or_raise()   # must not raise
+
+    def test_raises_when_runsc_is_gone(self) -> None:
+        with patch(self._MODULE, return_value=False):
+            with self.assertRaises(SandboxError) as caught:
+                assert_gvisor_or_raise()
+        message = str(caught.exception)
+        self.assertIn('runsc', message)
+        self.assertIn('no override', message.lower())
+
+    def test_it_raises_rather_than_exiting(self) -> None:
+        # A live spawn must fail the ONE task, not take the whole process
+        # down — that is what separates this from check_gvisor_or_exit.
+        with patch(self._MODULE, return_value=False):
+            with self.assertRaises(SandboxError):
+                assert_gvisor_or_raise()

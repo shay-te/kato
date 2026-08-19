@@ -477,6 +477,35 @@ def check_gvisor_or_exit(*, env: dict | None = None) -> None:
     sys.exit(1)
 
 
+def assert_gvisor_or_raise() -> None:
+    """Raise ``SandboxError`` when runsc is not a registered Docker runtime.
+
+    The spawn-path twin of ``check_gvisor_or_exit``. Boot already refuses to
+    start without gVisor, but the two answer different questions: boot asks
+    "was it there when we started", this asks "is it there for THIS
+    container". A daemon restarted into a config without runsc would
+    otherwise surface as a bare ``Unknown runtime specified runsc`` from
+    Docker — correct and fail-closed, but it names neither the cause nor the
+    fix, and it arrives long after the operator changed anything.
+
+    Deliberately NOT in ``wrap_command``: argv construction stays pure, so
+    building a command never shells out. This belongs with the other
+    pre-spawn steps that already talk to Docker.
+    """
+    if gvisor_runtime_available():
+        return
+    raise SandboxError(
+        'gVisor (runsc) is not registered as a Docker runtime, so this '
+        'container cannot be given the userspace kernel the sandbox '
+        'guarantees — refusing to spawn a weaker sandbox. This normally '
+        'means the Docker daemon was restarted into a configuration '
+        'without runsc since startup. Re-register the runtime (see '
+        'https://gvisor.dev/docs/user_guide/install/ — "runsc" must appear '
+        'under Runtimes in ``docker info``). There is deliberately no '
+        'override.',
+    )
+
+
 def check_docker_or_exit() -> None:
     """Print a clear CLI message and ``sys.exit(1)`` if Docker is unavailable.
 
