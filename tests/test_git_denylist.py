@@ -25,6 +25,30 @@ class GitDenylistMergeTests(unittest.TestCase):
                     'branch', 'merge', 'fetch', 'pull', 'clone'):
             self.assertIn(f'Bash(git {sub}:*)', items, sub)
 
+    def test_git_restore_is_NOT_denied_so_a_file_can_be_reverted(self) -> None:
+        # An operator asked the agent to revert one file and got back "I
+        # can't, the orchestration layer forbids any git command" — a refusal
+        # for something the orchestrator does not own.
+        #
+        # ``git restore`` is the one file-scoped member of this family: it
+        # cannot move HEAD or switch branches, so permitting it cannot race
+        # the branch state machine. The residual risk (``git restore .``
+        # discarding the whole task) is caught by argv in Layer B
+        # (agent_core_lib.command_policy, rule fs.git_revert_all), which can
+        # tell a path from a whole-tree pathspec — something a prefix-matching
+        # ``--disallowedTools`` entry fundamentally cannot do.
+        items = ClaudeCliClient._merge_disallowed_with_git_deny('').split(',')
+        self.assertNotIn('Bash(git restore:*)', items)
+        self.assertNotIn('Bash(git restore *)', items)
+
+    def test_branch_movement_is_still_denied_alongside_restore(self) -> None:
+        # The reason ``restore`` could be opened up is precisely that these
+        # stay shut. If a later change lets ``checkout``/``switch`` through,
+        # the agent can move HEAD mid-task and race the orchestrator.
+        items = ClaudeCliClient._merge_disallowed_with_git_deny('').split(',')
+        for sub in ('checkout', 'switch', 'reset', 'branch', 'commit', 'push'):
+            self.assertIn(f'Bash(git {sub}:*)', items, sub)
+
     def test_read_only_git_is_NOT_denied(self) -> None:
         # status/log/diff/show/blame must fall through to the approval prompt
         # so the self-review workflow can read the branch diff.

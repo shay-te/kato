@@ -72,9 +72,22 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
     # operator approves it, or "allow always git"). Each mutating subcommand is
     # listed in both the colon-form (`Bash(git push:*)`) and bare-form
     # (`Bash(git push *)`) that different Claude versions accept.
+    #
+    # ``restore`` is DELIBERATELY ABSENT. Reverting a file to its committed
+    # state is a routine, explicitly-requested part of implementing a task,
+    # and blocking it left the agent telling operators "I can't, git is
+    # forbidden" for an operation the orchestrator does not own. Crucially,
+    # ``git restore`` is the one file-scoped member of this family: unlike
+    # ``checkout``, it CANNOT move HEAD or switch branches (that is ``git
+    # switch``, still denied), so permitting it cannot race the branch state
+    # machine. The residual risk — ``git restore .`` discarding the whole
+    # task's uncommitted work — is not a branch-state problem and is caught
+    # precisely, by argv, in Layer B (``agent_core_lib.command_policy``
+    # ``fs.git_revert_all``), which routes it to the operator instead of
+    # blanket-refusing every revert.
     _GIT_MUTATING_SUBCOMMANDS = (
         'push', 'commit', 'merge', 'rebase', 'reset', 'checkout', 'switch',
-        'restore', 'cherry-pick', 'revert', 'am', 'apply', 'add', 'rm', 'mv',
+        'cherry-pick', 'revert', 'am', 'apply', 'add', 'rm', 'mv',
         'clean', 'stash', 'tag', 'branch', 'remote', 'fetch', 'pull', 'clone',
         'init', 'config', 'gc', 'prune', 'filter-branch', 'filter-repo',
         'update-ref', 'update-index', 'symbolic-ref', 'worktree', 'submodule',

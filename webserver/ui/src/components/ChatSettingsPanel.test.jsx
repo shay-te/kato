@@ -1,7 +1,8 @@
-// Tests for the Chat settings tab — the "steer vs send immediately" choice,
-// backed by the composerSteerPref localStorage store.
+// Tests for the Chat settings tab — the "steer vs send immediately" choice
+// and the "ultracode for new tasks" default, both backed by localStorage
+// preference stores.
 
-import { describe, test, expect, beforeEach } from 'vitest';
+import { describe, test, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 
 import {
@@ -9,11 +10,29 @@ import {
   writeSteerWhileWorking,
   _resetSteerWhileWorkingPref,
 } from '../utils/composerSteerPref.js';
+import {
+  readUltracodeByDefault,
+  writeUltracodeByDefault,
+  _resetUltracodeDefaultPref,
+} from '../utils/ultracodeDefaultPref.js';
 import ChatSettingsPanel from './ChatSettingsPanel.jsx';
+
+// The installed agent CLI's capability gates the ultracode setting — offering
+// it against a CLI with no workflow support would promise something the
+// keyword cannot deliver. Default: supported.
+const { _agentVer } = vi.hoisted(
+  () => ({ _agentVer: { value: { supports_workflows: true } } }),
+);
+vi.mock('../hooks/useAgentVersion.js', () => ({
+  useAgentVersion: () => _agentVer.value,
+  resetAgentVersionCacheForTests: () => {},
+}));
 
 beforeEach(() => {
   try { localStorage.clear(); } catch (_) { /* jsdom */ }
   _resetSteerWhileWorkingPref();
+  _resetUltracodeDefaultPref();
+  _agentVer.value = { supports_workflows: true };
 });
 
 describe('ChatSettingsPanel', () => {
@@ -48,5 +67,44 @@ describe('ChatSettingsPanel', () => {
     writeSteerWhileWorking(false);
     render(<ChatSettingsPanel />);
     expect(immediateRadio().checked).toBe(true);
+  });
+});
+
+describe('ChatSettingsPanel — ultracode default', () => {
+  const ultracodeCheckbox = () =>
+    screen.getByRole('checkbox', { name: /ultracode for new tasks/i });
+
+  test('is off by default — workflow mode is opt-in, not a surprise on the bill', () => {
+    render(<ChatSettingsPanel />);
+    expect(ultracodeCheckbox().checked).toBe(false);
+  });
+
+  test('checking it persists to the pref', () => {
+    render(<ChatSettingsPanel />);
+    fireEvent.click(ultracodeCheckbox());
+    expect(ultracodeCheckbox().checked).toBe(true);
+    expect(readUltracodeByDefault()).toBe(true);
+  });
+
+  test('reflects an already-stored preference on mount', () => {
+    writeUltracodeByDefault(true);
+    render(<ChatSettingsPanel />);
+    expect(ultracodeCheckbox().checked).toBe(true);
+  });
+
+  test('is hidden when the installed CLI has no workflow support', () => {
+    _agentVer.value = { supports_workflows: false };
+    render(<ChatSettingsPanel />);
+    expect(
+      screen.queryByRole('checkbox', { name: /ultracode for new tasks/i }),
+    ).toBeNull();
+  });
+
+  test('is hidden while the agent version is still unknown', () => {
+    _agentVer.value = null;
+    render(<ChatSettingsPanel />);
+    expect(
+      screen.queryByRole('checkbox', { name: /ultracode for new tasks/i }),
+    ).toBeNull();
   });
 });

@@ -303,11 +303,22 @@ test('writeUltracode(true) round-trips through readUltracode', function () {
   assert.equal(readUltracode('T1', store), true);
 });
 
-test('writeUltracode(false) removes the entry so the default is false again', function () {
+test('writeUltracode(false) RECORDS the off — it does not erase the choice', function () {
+  // Storing 'off' rather than clearing the key is what lets the Settings →
+  // Chat default apply only to tasks the operator never decided on. If off
+  // erased the entry, turning that default on would silently re-arm workflow
+  // mode on every task they had deliberately turned it off for.
   const store = fakeStorage([[`${ULTRACODE_STORAGE_PREFIX}T1`, 'on']]);
   writeUltracode('T1', false, store);
-  assert.equal(store.getItem(`${ULTRACODE_STORAGE_PREFIX}T1`), null);
+  assert.equal(store.getItem(`${ULTRACODE_STORAGE_PREFIX}T1`), 'off');
   assert.equal(readUltracode('T1', store), false);
+  assert.equal(readUltracode('T1', store, true), false);
+});
+
+test('an untouched task falls back to the supplied default', function () {
+  const store = fakeStorage();
+  assert.equal(readUltracode('T1', store), false);
+  assert.equal(readUltracode('T1', store, true), true);
 });
 
 test('ultracode is isolated per task — arming A does not arm B', function () {

@@ -357,7 +357,12 @@ def repository_scope_text(task, prepared_task=None) -> str:
             f'the orchestration layer already prepared branch {repository_branch_name} from '
             f'{destination_text}. Stay on the current branch and do not run git checkout, git switch, '
             'git branch, git pull, git push, or git commit; the orchestration layer owns branch movement, '
-            'commit creation, and publishing. Do not create the pull request yourself; the orchestration layer '
+            'commit creation, and publishing. You MAY run "git restore <path>" to revert a specific file '
+            'to its committed state — that is file-level editing, not branch movement, so it is yours to '
+            'do when the task or the operator asks for it. Name the paths explicitly: a whole-tree revert '
+            '("git restore .") would discard every uncommitted change in the repository, which is the '
+            'entire task output, since nothing is committed until the orchestration layer publishes. '
+            'Do not create the pull request yourself; the orchestration layer '
             'will publish it after implementation is ready.'
         )
     lines = '\n'.join(repository_lines)

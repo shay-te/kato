@@ -40,6 +40,7 @@ import {
   readUltracode,
   writeUltracode,
 } from '../utils/composerDraft.js';
+import { readUltracodeByDefault } from '../utils/ultracodeDefaultPref.js';
 import {
   readImageDraft,
   writeImageDraft,
@@ -142,7 +143,13 @@ const MessageForm = forwardRef(function MessageForm({
   // Claude supports it). Off by default — it can trigger expensive fan-out.
   // Persisted per-task in localStorage (same idiom as the text draft) so the
   // toggle survives tab switches and page reloads.
-  const [ultracode, setUltracode] = useState(() => readUltracode(taskId));
+  // Starting value: this task's explicit choice if it has one, otherwise the
+  // Settings → Chat default. Read once at mount — the component is keyed by
+  // task, and a later change to the default must not yank the chip out from
+  // under a task the operator already decided on.
+  const [ultracode, setUltracode] = useState(
+    () => readUltracode(taskId, undefined, readUltracodeByDefault()),
+  );
   // Only offer ultracode when the installed agent CLI actually supports
   // multi-agent workflows — otherwise the keyword is inert and the toggle
   // misleads. ``null`` (still loading) keeps it hidden until confirmed.

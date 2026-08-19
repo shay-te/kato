@@ -30,7 +30,7 @@ harmful actions that holds in every run mode.
 | Network exfiltration | **Block** | reverse shells, `curl -d @file`, `scp`/`nc` to a host |
 | Remote-exec | **Block (floor)** | `curl … \| sh`, `bash -c "$(curl …)"` |
 | Sandbox escape | **Block (floor)** | `nsenter`, `unshare`, `chroot` |
-| Destructive FS | **Ask** | `rm -rf`, `chmod` on in-scope paths (catastrophic targets like `/`, `~` stay a hard block) |
+| Destructive FS | **Ask** | `rm -rf`, `chmod` on in-scope paths (catastrophic targets like `/`, `~` stay a hard block); a whole-tree `git restore .` |
 | Persistence / priv-esc | **Ask** | writes to `~/.bashrc`, crontab; `sudo`, `docker` |
 | Out-of-scope writes | **Ask** | writing outside the task workspace |
 | Network tools | **Ask** | WebFetch / WebSearch / MCP connectors (dual-use) |
@@ -39,6 +39,25 @@ harmful actions that holds in every run mode.
 You tune each category (Block / Ask / Allow) from the **Action Guard** settings
 panel — live, no restart. The **floor** categories and detections (reverse
 shell, fork bomb, `mkfs`, dd-to-device) can **never** be loosened below Block.
+
+## Git: the orchestrator owns the branch, you own the files
+
+Kato drives the branch state machine — it prepares the branch, creates the
+commit, and publishes. So the agent is hard-denied `git commit`, `push`,
+`checkout`, `switch`, `branch`, `reset`, `rebase`, `merge` and friends at layer
+1, in **every** permission mode. Read-only git (`status`, `log`, `diff`,
+`show`, `blame`) is not denied — the self-review step needs it.
+
+`git restore <path>` is deliberately allowed. Reverting a file to its committed
+state is ordinary editing, not branch movement, and blocking it meant the agent
+had to refuse when an operator said "just revert that file". `git restore` is
+the only file-scoped member of the family — it cannot move `HEAD` or switch
+branches — so allowing it can't race the orchestrator.
+
+A **whole-tree** revert (`git restore .`) is different and asks first: nothing
+is committed until Kato publishes, so discarding every uncommitted change
+destroys the entire task with no commit and no reflog entry to recover from.
+Layer 2 tells the two apart by reading the pathspec.
 
 ## Out-of-folder writes always ask
 

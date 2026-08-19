@@ -31,6 +31,7 @@ from __future__ import annotations
 import datetime
 import logging
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -337,6 +338,10 @@ def _install_ca_trust(ca_cert_path: str, logger) -> bool:
     """
     if sys.platform == 'darwin':
         return _install_ca_trust_macos(ca_cert_path, logger)
+    if sys.platform == 'win32':
+        return _install_ca_trust_windows(ca_cert_path, logger)
+    if sys.platform.startswith('linux'):
+        return _install_ca_trust_linux(ca_cert_path, logger)
     logger.info(
         'kato local CA generated at %s but auto-trust is not implemented '
         'for this OS yet; the browser will show a one-time '
@@ -345,6 +350,98 @@ def _install_ca_trust(ca_cert_path: str, logger) -> bool:
         ca_cert_path,
     )
     return False
+
+
+def _install_ca_trust_windows(ca_cert_path: str, logger) -> bool:
+    """Add the CA to the CURRENT USER's Root store via ``certutil``.
+
+    ``-user`` matters: the machine store needs an elevated prompt, and a
+    local development CA has no business being trusted machine-wide. The
+    user store is enough for Chrome and Edge, which read it directly.
+
+    Until this ran, Windows operators got ``ERR_CERT_AUTHORITY_INVALID``
+    on every fresh origin and had to click through — which looks exactly
+    like a broken deployment, and quietly trains people to dismiss
+    certificate warnings.
+    """
+    try:
+        result = subprocess.run(
+            ['certutil', '-addstore', '-user', '-f', 'Root', ca_cert_path],
+            capture_output=True, text=True, timeout=120,
+        )
+    except Exception as exc:
+        logger.warning(
+            "could not install kato's local CA into the Windows user Root "
+            'store (%s); the browser will keep showing the certificate '
+            'warning until this succeeds (kato retries on each restart)',
+            exc,
+        )
+        return False
+    if result.returncode != 0:
+        logger.warning(
+            "Windows declined to trust kato's local CA (%s); the browser "
+            'will keep showing the certificate warning until this succeeds',
+            (result.stderr or result.stdout or '').strip()[:200]
+            or f'exit code {result.returncode}',
+        )
+        return False
+    logger.info(
+        "kato's local CA is now trusted in the Windows user Root store — "
+        'the planning UI loads over HTTPS without a warning.',
+    )
+    return True
+
+
+def _install_ca_trust_linux(ca_cert_path: str, logger) -> bool:
+    """Add the CA to the user's NSS database (Chrome / Chromium / Firefox).
+
+    Deliberately NOT the system store (``/usr/local/share/ca-certificates``
+    + ``update-ca-certificates``): that needs root, and asking a
+    development tool for sudo to install a CA machine-wide is a bigger
+    ask than the warning it removes. Chrome on Linux reads the per-user
+    NSS db, which needs no privileges.
+
+    Requires ``certutil`` from ``libnss3-tools``; absent, we say so once
+    with the exact package name rather than failing silently.
+    """
+    nssdb = Path.home() / '.pki' / 'nssdb'
+    if shutil.which('certutil') is None:
+        logger.info(
+            "kato's local CA cannot be auto-trusted: ``certutil`` is not "
+            'installed (apt install libnss3-tools / dnf install nss-tools). '
+            'The browser will show a one-time certificate warning until '
+            'then; the connection is still encrypted.',
+        )
+        return False
+    if not nssdb.is_dir():
+        logger.info(
+            "kato's local CA cannot be auto-trusted: no NSS database at %s "
+            '(it appears the first time a Chromium/Firefox profile is '
+            'created). The browser will show a one-time warning.', nssdb,
+        )
+        return False
+    try:
+        result = subprocess.run(
+            [
+                'certutil', '-d', f'sql:{nssdb}', '-A',
+                '-t', 'C,,', '-n', 'kato local CA', '-i', ca_cert_path,
+            ],
+            capture_output=True, text=True, timeout=120,
+        )
+    except Exception as exc:
+        logger.warning("could not install kato's local CA into NSS (%s)", exc)
+        return False
+    if result.returncode != 0:
+        logger.warning(
+            "NSS declined to trust kato's local CA (%s)",
+            (result.stderr or '').strip()[:200] or f'exit code {result.returncode}',
+        )
+        return False
+    logger.info(
+        "kato's local CA is now trusted in the user's NSS database — "
+        'Chromium-based browsers load the planning UI without a warning.',
+    )
+    return True
 
 
 def _install_ca_trust_macos(ca_cert_path: str, logger) -> bool:

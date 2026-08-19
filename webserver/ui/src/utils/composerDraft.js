@@ -70,10 +70,18 @@ export function ultracodeStorageKey(taskId) {
   return taskId ? `${ULTRACODE_STORAGE_PREFIX}${taskId}` : '';
 }
 
-export function readUltracode(taskId, storage) {
-  return readDraftByKey(ultracodeStorageKey(taskId), storage) === 'on';
+// ``fallback`` is the value for a task that has never been toggled — the
+// Settings → Chat default. Note the stored strings are 'on'/'off', NOT
+// 'on'/'': an explicit OFF has to be distinguishable from "never chose", or
+// turning the default on would silently re-enable the chip on every task the
+// operator had deliberately turned it off for.
+export function readUltracode(taskId, storage, fallback = false) {
+  const stored = readDraftByKey(ultracodeStorageKey(taskId), storage);
+  if (stored === 'on') { return true; }
+  if (stored === 'off') { return false; }
+  return !!fallback;
 }
 
 export function writeUltracode(taskId, on, storage) {
-  writeDraftByKey(ultracodeStorageKey(taskId), on ? 'on' : '', storage);
+  writeDraftByKey(ultracodeStorageKey(taskId), on ? 'on' : 'off', storage);
 }

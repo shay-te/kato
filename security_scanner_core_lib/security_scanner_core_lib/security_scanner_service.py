@@ -96,6 +96,9 @@ class SecurityScannerService:
     ) -> None:
         self._config = config or default_config()
         self.logger = logger or logging.getLogger(self.__class__.__name__)
+        # Runners already reported as unavailable. A missing optional tool
+        # does not change between scans, so it is said once.
+        self._reported_unavailable: set[str] = set()
 
     @property
     def enabled(self) -> bool:
@@ -150,10 +153,18 @@ class SecurityScannerService:
                     continue
                 except RunnerUnavailableError as exc:
                     runner_errors.append((runner.name, str(exc)))
-                    self.logger.info(
-                        'security scanner: %s unavailable, skipping (%s)',
-                        runner.name, exc,
-                    )
+                    # ONCE per runner per process. A missing optional tool
+                    # is a standing fact, not an event: logged per repo per
+                    # scan it produced a dozen identical lines every few
+                    # minutes and buried everything worth reading. The
+                    # result still carries the error for the caller.
+                    if runner.name not in self._reported_unavailable:
+                        self._reported_unavailable.add(runner.name)
+                        self.logger.info(
+                            'security scanner: %s unavailable, skipping (%s). '
+                            'This is logged once per run, not per scan.',
+                            runner.name, exc,
+                        )
                     continue
                 except Exception as exc:
                     runner_errors.append((runner.name, str(exc)))

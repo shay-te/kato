@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -84,7 +85,42 @@ class GitClientMixin:
 
     @staticmethod
     def _failure_detail(result) -> str:
-        return result.stderr.strip() or result.stdout.strip() or 'git command failed'
+        return GitClientMixin._condense_git_output(
+            result.stderr.strip() or result.stdout.strip() or 'git command failed',
+        )
+
+    # Lines git emits as PROGRESS, not as information. A long rebase
+    # produces one per commit — 261 of them in one observed failure —
+    # and every one ended up inside the RuntimeError message, so the
+    # actual cause ("could not apply <sha>") scrolled off the top of a
+    # wall of "Rebasing (n/N)". Dropped entirely; the counts tell the
+    # reader nothing once the command has already failed.
+    _PROGRESS_LINE_PATTERNS = (
+        re.compile(r'^Rebasing \(\d+/\d+\)$'),
+        re.compile(r'^Applying: '),
+        re.compile(r'^remote: (Counting|Compressing|Total|Resolving) '),
+        re.compile(r'^(Receiving|Resolving|Counting|Compressing) objects:'),
+        re.compile(r'^Updating files:'),
+        re.compile(r'^\s*$'),
+    )
+    # Enough to carry the error plus git's hint block; beyond this the
+    # message stops being read.
+    _MAX_DETAIL_LINES = 18
+
+    @classmethod
+    def _condense_git_output(cls, text: str) -> str:
+        """Strip progress spam and cap the length of a git failure message."""
+        kept = [
+            line for line in str(text or '').splitlines()
+            if not any(p.match(line) for p in cls._PROGRESS_LINE_PATTERNS)
+        ]
+        if not kept:
+            return str(text or '').strip()[:400] or 'git command failed'
+        if len(kept) > cls._MAX_DETAIL_LINES:
+            dropped = len(kept) - cls._MAX_DETAIL_LINES
+            kept = kept[-cls._MAX_DETAIL_LINES:]
+            kept.insert(0, f'… {dropped} earlier line(s) omitted')
+        return '\n'.join(kept).strip()
 
     @staticmethod
     def _configured_remote_url(repository) -> str:

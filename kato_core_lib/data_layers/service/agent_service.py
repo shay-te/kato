@@ -517,14 +517,25 @@ class AgentService(MissionStepLoggerMixin, Service):
         # folders) get normalized to a common case before comparison —
         # see ``_norm_task_id``.
         live_norm = assigned_norm | current_review_norm
+        # A task the operator DELETED is not "stale work to tidy up" — it
+        # is gone. Touching it again, or narrating it every scan, is the
+        # system refusing to accept an instruction it was already given.
+        from kato_core_lib.helpers.forgotten_tasks_store import forgotten_task_ids
+        forgotten = {self._norm_task_id(tid) for tid in forgotten_task_ids()}
         for task_id in self._stale_planning_task_ids(live_norm):
-            self.logger.info(
-                'task %s is no longer assigned or in review; '
-                'marking workspace as done (no delete — operator '
-                'must use the explicit DELETE endpoint)',
-                task_id,
-            )
-            self._mark_workspace_done_silent(task_id)
+            if self._norm_task_id(task_id) in forgotten:
+                continue
+            # Log ONLY on the transition. This used to log unconditionally,
+            # so every already-done workspace reprinted the same line every
+            # scan — fifteen identical lines every three minutes, which is
+            # how a log stops being read at all.
+            if self._mark_workspace_done_silent(task_id):
+                self.logger.info(
+                    'task %s is no longer assigned or in review; '
+                    'marking workspace as done (no delete — operator '
+                    'must use the explicit DELETE endpoint)',
+                    task_id,
+                )
 
     def _stale_planning_task_ids(self, live_norm: set[str]) -> set[str]:
         """Task ids known to either manager that aren't live anymore.
@@ -661,8 +672,11 @@ class AgentService(MissionStepLoggerMixin, Service):
             return 'protected'
         return 'stale'
 
-    def _mark_workspace_done_silent(self, task_id: str) -> None:
+    def _mark_workspace_done_silent(self, task_id: str) -> bool:
         """Flag a workspace as ``done`` without touching disk.
+
+        Returns True only when the status actually CHANGED, so callers
+        can log a transition rather than a steady state.
 
         Replaces the old ``_delete_workspace_silent`` because the
         operator policy is now NEVER auto-delete a workspace folder.
@@ -673,16 +687,26 @@ class AgentService(MissionStepLoggerMixin, Service):
         when (and if) they want to.
         """
         if self._workspace_manager is None:
-            return
+            return False
         update = getattr(self._workspace_manager, 'update_status', None)
         if not callable(update):
-            return
+            return False
+        # Already done? Nothing changed, so the caller must not announce a
+        # transition that is not happening.
+        try:
+            record = self._workspace_manager.get(task_id)
+            if str(getattr(record, 'status', '') or '') == WORKSPACE_STATUS_DONE:
+                return False
+        except Exception:
+            pass
         try:
             update(task_id, WORKSPACE_STATUS_DONE)
         except Exception:
             self.logger.exception(
                 'failed to mark workspace done for task %s', task_id,
             )
+            return False
+        return True
 
     def _delete_workspace_silent(self, _task_id: str) -> None:
         """Deprecated: kept as a no-op for backwards compatibility.

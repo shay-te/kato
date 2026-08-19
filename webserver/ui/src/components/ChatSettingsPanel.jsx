@@ -4,6 +4,12 @@ import {
   writeSteerWhileWorking,
   subscribeSteerWhileWorking,
 } from '../utils/composerSteerPref.js';
+import {
+  readUltracodeByDefault,
+  writeUltracodeByDefault,
+  subscribeUltracodeByDefault,
+} from '../utils/ultracodeDefaultPref.js';
+import { useAgentVersion } from '../hooks/useAgentVersion.js';
 
 // Settings → Chat. Operator preference for what happens to a message sent
 // while Claude is still working on the previous turn. Pure client-side
@@ -12,6 +18,16 @@ import {
 export default function ChatSettingsPanel() {
   const [steer, setSteer] = useState(() => readSteerWhileWorking());
   useEffect(() => subscribeSteerWhileWorking(setSteer), []);
+
+  const [ultracodeByDefault, setUltracodeByDefault] = useState(
+    () => readUltracodeByDefault(),
+  );
+  useEffect(() => subscribeUltracodeByDefault(setUltracodeByDefault), []);
+  // Same gate the composer chip uses: only offer this where the installed
+  // agent CLI actually runs multi-agent workflows, or the setting promises
+  // something the keyword cannot deliver.
+  const agentVersion = useAgentVersion();
+  const supportsWorkflows = !!(agentVersion && agentVersion.supports_workflows);
 
   return (
     <div className="settings-drawer-panel chat-settings-panel">
@@ -69,6 +85,35 @@ export default function ChatSettingsPanel() {
           </span>
         </label>
       </fieldset>
+
+      {supportsWorkflows && (
+        <fieldset className="chat-settings-fieldset">
+          <legend className="chat-settings-legend">Workflow mode</legend>
+
+          <label
+            className="chat-settings-option"
+            title="Start the composer's ultracode chip switched on for tasks you haven't toggled it on yourself. Tasks where you already chose keep your choice."
+          >
+            <input
+              type="checkbox"
+              checked={ultracodeByDefault}
+              onChange={(event) => writeUltracodeByDefault(event.target.checked)}
+            />
+            <span className="chat-settings-option-text">
+              <span className="chat-settings-option-label">
+                Turn on ultracode for new tasks
+              </span>
+              <span className="chat-settings-option-hint">
+                Prepends the <code>ultracode</code> keyword so Claude authors
+                and runs multi-agent workflows at high effort. It can fan out
+                to many agents and cost significantly more tokens, so it stays
+                off unless you ask for it. Tasks where you already flipped the
+                chip yourself keep that choice.
+              </span>
+            </span>
+          </label>
+        </fieldset>
+      )}
     </div>
   );
 }

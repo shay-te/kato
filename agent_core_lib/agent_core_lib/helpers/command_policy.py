@@ -267,6 +267,83 @@ def _rm_analysis(segment: str):
     return recursive, force, no_preserve, targets
 
 
+# --- git working-tree reverts ---------------------------------------------
+# ``git restore`` / ``git checkout -- <path>`` discard uncommitted changes.
+# In an orchestrated task that is sharper than it sounds: the agent's work is
+# NOT committed until the publish step, so the working tree IS the
+# deliverable. Reverting the one file the operator asked about is routine;
+# reverting the WHOLE tree destroys the entire task, and ``git reflog`` does
+# not help because nothing was ever committed.
+#
+# So this classifier splits on PATHSPEC BREADTH, not on the subcommand:
+#   git restore src/a.js     → scoped, no candidate (normal permission flow)
+#   git restore .            → whole tree, ASK
+#   git checkout -- ':/'     → whole tree, ASK
+# NOT floor severity: "undo everything you did" is a legitimate thing for an
+# operator to approve — it just must never happen without them seeing it.
+_GIT_REVERT_VERB = re.compile(
+    r'\bgit\b(?:\s+-[cC]\s+\S+|\s+--\S+(?:=\S+)?)*\s+(?:restore|checkout)\b',
+)
+# Pathspecs meaning "everything": ``.``, ``./``, ``*``, ``:/`` (repo-root
+# magic), ``:(top)``, and an explicit ``--all``/``-a``. Quotes are stripped
+# before comparison so ``'.'`` and ``":/"`` are caught too.
+_GIT_WHOLE_TREE_PATHSPECS = frozenset({
+    '.', './', '.\\', '*', '**', ':/', ':(top)', ':/*', '--all', '-a',
+})
+
+
+def _git_revert_targets(segment: str) -> list:
+    """Pathspec tokens of a ``git restore``/``git checkout`` segment.
+
+    Everything that is not a pathspec is dropped: the ``git`` program, any
+    pre-command options, the subcommand, each ``-flag``/``--flag=value``, and
+    the ``--`` separator. ``--source``/``-s``/``--pathspec-from-file`` consume
+    the FOLLOWING token (a tree-ish or a file of patterns, not a pathspec) so
+    a commit name can never be mistaken for a path.
+    """
+    targets: list = []
+    seen_subcommand = False
+    skip_next = False
+    for token in segment.split():
+        if skip_next:
+            skip_next = False
+            continue
+        if not seen_subcommand:
+            if token in ('restore', 'checkout'):
+                seen_subcommand = True
+            continue
+        if token in ('--source', '-s', '--pathspec-from-file'):
+            skip_next = True
+            continue
+        if token == '--':
+            continue
+        if token.startswith('-'):
+            continue
+        targets.append(token.strip('\'"'))
+    return targets
+
+
+def _detect_git_whole_tree_revert(segments) -> list:
+    for segment in segments:
+        if not _GIT_REVERT_VERB.search(segment):
+            continue
+        targets = _git_revert_targets(segment)
+        # A pathspec-less ``git restore`` is whole-tree. A pathspec-less
+        # ``git checkout`` is branch movement instead — owned by the
+        # transport floor and the prompt, not by this classifier.
+        bare_restore = not targets and re.search(
+            r'\bgit\b[^|;&\n]*\brestore\b', segment,
+        )
+        if bare_restore or any(t in _GIT_WHOLE_TREE_PATHSPECS for t in targets):
+            return [_Candidate(
+                RiskCategory.DESTRUCTIVE_FS, False,
+                'discards ALL uncommitted work in the repository — the task '
+                'output is not committed yet, so this is unrecoverable',
+                'fs.git_revert_all',
+            )]
+    return []
+
+
 def _detect_destructive_fs(command: str, segments) -> list:
     found: list = []
     if _FORK_BOMB.search(command):
@@ -701,6 +778,7 @@ def _detect_in_command(command, cwd, additional_dirs, allowed_paths,
     candidates += _detect_remote_exec(command, deob, segments)
     candidates += _detect_escape(command)
     candidates += _detect_destructive_fs(deob, segments)
+    candidates += _detect_git_whole_tree_revert(segments)
     candidates += _detect_credential_read(deob, cwd)
     candidates += _detect_persistence_command(deob)
     candidates += _out_of_scope_candidate(

@@ -24,15 +24,35 @@ python -m pip install -e .
 python -m kato_webserver.app
 ```
 
-Then open https://127.0.0.1:5050 . A loopback address can't get a
+Then open https://localhost:5050 . A loopback address can't get a
 certificate from a real CA, so kato generates its own local CA (like
 `mkcert`) plus a server cert signed by it, all persisted under
-`~/.kato/tls/`. On macOS kato installs that CA into your login
-Keychain automatically on first run — you may see a one-time Keychain
-authorization prompt, after which the browser never shows a
-certificate warning again (on other OSes, or if you decline the
-prompt, the browser shows the usual one-time "connection is not
-private" click-through instead).
+`~/.kato/tls/`. The leaf cert covers `localhost`, `127.0.0.1` and
+`::1`, so any of the three works.
+
+Kato then installs that CA into the **current user's** trust store on
+first run, so the browser stops warning:
+
+| OS | Where the CA goes | Needs admin? |
+| --- | --- | --- |
+| macOS | login Keychain (`security add-trusted-cert`) | No — one-time Keychain prompt |
+| Windows | user `Root` store (`certutil -addstore -user`) | No |
+| Linux | user NSS db (`certutil -d sql:~/.pki/nssdb`) — Chrome/Chromium/Firefox | No — needs `libnss3-tools` (`apt install libnss3-tools` / `dnf install nss-tools`) |
+
+Never the machine-wide store: a local development CA that browsers
+trust for every site on the box is not something to install with
+elevation behind an operator's back.
+
+If the install can't run (you decline the prompt, `certutil` is
+missing, no NSS profile exists yet) kato logs the reason and the
+browser falls back to the usual one-time "connection is not private"
+click-through. The install is retried on each restart, and a trust
+marker keeps it from re-prompting once it has succeeded for the
+current CA.
+
+Note that the click-through exception a browser remembers is **per
+origin**: accepting it on `https://127.0.0.1:5050` does nothing for
+`https://localhost:5050`. Trusting the CA is what fixes both.
 
 ## Configuration
 

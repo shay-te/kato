@@ -289,6 +289,39 @@ describe('MessageForm — draft persistence (operator scenario)', () => {
     expect(toggleAAgain).toHaveAttribute('aria-checked', 'true');
   });
 
+  test('the Settings default seeds a task that was never toggled', async () => {
+    const { writeUltracodeByDefault, _resetUltracodeDefaultPref } =
+      await import('../utils/ultracodeDefaultPref.js');
+    _resetUltracodeDefaultPref();
+    writeUltracodeByDefault(true);
+    renderForm({ taskId: 'never-touched' });
+    expect(ultracodeToggle()).toHaveAttribute('aria-checked', 'true');
+    _resetUltracodeDefaultPref();
+  });
+
+  test('the Settings default does NOT override a task turned off by hand', async () => {
+    const { writeUltracodeByDefault, _resetUltracodeDefaultPref } =
+      await import('../utils/ultracodeDefaultPref.js');
+    _resetUltracodeDefaultPref();
+
+    // Operator arms then disarms this task explicitly.
+    const { unmount } = renderForm({ taskId: 'decided' });
+    const toggle = ultracodeToggle();
+    fireEvent.click(toggle);
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    unmount();
+
+    // Later they turn the global default on. The task they deliberately
+    // disarmed must stay disarmed — silently re-arming a fan-out that costs
+    // real tokens is the failure mode this whole 'off'-vs-unset split exists
+    // to prevent.
+    writeUltracodeByDefault(true);
+    renderForm({ taskId: 'decided' });
+    expect(ultracodeToggle()).toHaveAttribute('aria-checked', 'false');
+    _resetUltracodeDefaultPref();
+  });
+
   test('Bug: draft + textarea survive when onSubmit returns false (send failed)', async () => {
     // Operator clicks Send → backend returns an error envelope →
     // SessionDetail's onSendMessage returns false. The draft must
